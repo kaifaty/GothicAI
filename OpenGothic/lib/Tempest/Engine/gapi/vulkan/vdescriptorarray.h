@@ -18,6 +18,7 @@ class VDescriptorArray : public AbstractGraphicsApi::DescArray {
     ~VDescriptorArray();
 
     size_t size() const;
+    void setTexture(size_t index, AbstractGraphicsApi::Texture* texture) override;
     auto   set() const -> VkDescriptorSet { return dset; }
 
     NonUniqResId     nonUniqId = NonUniqResId::I_None;
@@ -31,6 +32,9 @@ class VDescriptorArray : public AbstractGraphicsApi::DescArray {
     size_t           cnt  = 0;
     VkDescriptorPool pool = VK_NULL_HANDLE;
     VkDescriptorSet  dset = VK_NULL_HANDLE;
+    VkSampler        sampler = VK_NULL_HANDLE;
+    uint32_t         mipLevel = uint32_t(-1);
+    bool             textureArray = false;
   };
 
 class VDescriptorHeapArray : public AbstractGraphicsApi::DescArray {
@@ -39,6 +43,8 @@ class VDescriptorHeapArray : public AbstractGraphicsApi::DescArray {
     VDescriptorHeapArray(VDevice& dev, AbstractGraphicsApi::Texture** tex, size_t cnt, uint32_t mipLevel);
     VDescriptorHeapArray(VDevice& dev, AbstractGraphicsApi::Buffer**  buf, size_t cnt);
     ~VDescriptorHeapArray();
+
+    void setTexture(size_t index, AbstractGraphicsApi::Texture* texture) override;
 
     uint32_t handleR()  const { return dPtrR; }
     uint32_t handleS()  const { return dPtrS; }
@@ -52,6 +58,8 @@ class VDescriptorHeapArray : public AbstractGraphicsApi::DescArray {
     uint32_t dPtrR = 0xFFFFFFFF;
     uint32_t dPtrS = 0xFFFFFFFF;
     uint32_t cnt   = 0;
+    uint32_t mipLevel = uint32_t(-1);
+    bool     textureArray = false;
   };
 
 }}

@@ -1,0 +1,181 @@
+# The hero's start outfit on the new body (reports/content/2026-11-clothing/outfit-pilot.md) in the poses the other
+# body benches do not film: do the clothes hold in every pose, does the skin come through, do the stiff pieces
+# (knee pads, shin guards, bracers, the flap) pass through cloth or limbs. Poses are Gothic's own clips played in
+# place, so the pass is about the body and the clothes, not about the game's rules for swimming or dying. No ladder:
+# its clips carry the hero up and away from the camera.
+# hero-body-naked.bench (still shots, walk, run, cheer, 1H attack) and hero-rig-audit.bench (sneak, bends, 2H, mobs)
+# are the other two thirds of the pass: run all three on the same root. A new game, noon, no armour.
+#   TIMEOUT=900 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=local WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=<root> \
+#     scripts/bench.sh scripts/bench/hero-outfit.bench <abs out>
+seed 73013
+cheat god
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 3000
+watch player
+overlay off
+# close on the pieces, standing: the chest and the belt, the legs from the front and from behind
+cam look 125
+cam follow 150 135 20
+wait 2500
+shot chest
+wait 500
+cam follow 150 135 160
+wait 1500
+shot chest_back
+wait 500
+cam look 55
+cam follow 170 70 25
+wait 1500
+shot legs_front
+wait 500
+cam follow 170 70 155
+wait 1500
+shot legs_behind
+wait 500
+# a run with a turn and a stop, from three quarters: the flap and the loose thighs in motion
+walkmode run
+cam look 95
+cam follow 300 120 40
+wait 1200
+rec run_quarter
+hold forward 1500
+wait 1700
+hold right 500
+wait 700
+hold forward 1200
+wait 2200
+stop
+# a jump forward
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+cam follow 330 110 90
+wait 1200
+rec jump_side
+press forward
+wait 500
+tap jump
+wait 1500
+release all
+wait 800
+stop
+# sitting on the ground and sleeping there: the knees fully bent, the trunk folded
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+cam look 60
+cam follow 240 100 60
+wait 1200
+rec sit_ground
+ani player T_STAND_2_SIT force
+wait 2500
+ani player S_SIT force
+wait 2000
+stop
+shot sit_ground
+wait 500
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+rec sleep_ground
+ani player T_STAND_2_SLEEPGROUND force
+wait 3000
+ani player S_SLEEPGROUND force
+wait 2000
+stop
+shot sleep_ground
+wait 500
+# praying on the knees, washing bent over
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+rec pray
+ani player T_STAND_2_PRAY force
+wait 2500
+ani player S_PRAY force
+wait 2000
+stop
+rec wash
+ani player T_STAND_2_WASH force
+wait 2500
+ani player S_WASH force
+wait 2000
+stop
+# swimming and diving poses: the body level, arms ahead
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+cam look 80
+cam follow 300 150 70
+wait 1200
+rec swim
+ani player S_SWIMF force
+wait 3000
+ani player S_DIVEF force
+wait 3000
+stop
+# wounded on the ground and dead, both ways
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+cam look 40
+cam follow 260 150 50
+wait 1200
+rec wounded_dead
+ani player T_STAND_2_WOUNDED force
+wait 2500
+ani player T_WOUNDED_2_DEAD force
+wait 2500
+stop
+shot dead
+wait 500
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+rec wounded_dead_back
+ani player T_STAND_2_WOUNDEDB force
+wait 2500
+ani player T_WOUNDEDB_2_DEADB force
+wait 2500
+stop
+shot dead_back
+wait 500
+# a roll with the sword drawn
+goto NW_CITY_MERCHANT_TRADE_04
+wait 1500
+melee-shadow weapon 1h
+cam look 90
+cam follow 340 120 90
+wait 2500
+rec roll_side
+press forward
+tap dodge
+wait 1600
+release all
+wait 800
+stop
+disarm
+# the bow: drawn and aimed
+equip ItRw_Bow_L_01
+give ItRw_Arrow 20
+wait 800
+draw bow
+cam look 130
+cam follow 250 140 60
+wait 2500
+rec bow_aim
+aim on
+hold attack 2500
+wait 3200
+aim off
+stop
+disarm
+# armour over it: Gothic's armour is a whole body on Gothic's skeleton, so the new body leaves and comes back
+cam look 100
+cam follow 280 110 20
+wait 1500
+shot armour_before
+wait 500
+equip ITAR_Leather_L
+wait 2000
+shot armour_on
+wait 500
+equip ITAR_Leather_L
+wait 2000
+shot armour_again
+wait 500
+wait 1500

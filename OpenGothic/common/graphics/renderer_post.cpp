@@ -1,0 +1,471 @@
+#include "renderer.h"
+#include "settings.h"
+
+#include <Tempest/Log>
+#include <cstdio>
+
+#include "camera.h"
+
+using namespace Tempest;
+
+void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
+  // the path tracer accumulates its own frames, with a camera that stands still
+  // the temporal upscale (graphics plan 1g) takes the jitter and the history of the TAA in its own way
+  temporal.active = settings.taaEnabled && !settings.pathTraceEnabled && temporal.outSize.w>0;
+  taa.active      = settings.taaEnabled && !settings.pathTraceEnabled && (!taa.output.isEmpty() || temporal.active);
+  if(!taa.active) {
+    taa.valid = false;
+    wview.setJitter(nullptr);
+    wview.setMipBias(0);
+    wview.setTaaFrame(false, false, 0);
+    return;
+    }
+  wview.setMipBias(temporal.active ? temporal.mipBias : settings.taaMipBias);
+
+  // the camera pair without jitter (updateCamera); the shadows (Camera::viewShadow*) are made from it too
+  if(!camHistory.continuous)
+    taa.valid = false;
+
+  wview.setTaaFrame(true, settings.vsmLampTaa, taa.frame);
+  const Vec2 px = temporal.active ? Taa::jitterPx(taa.frame++, temporal.phases) : Taa::jitterPx(taa.frame++);
+  const auto j  = Taa::jitterMatrix(px, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
+  taa.jitter    = px;
+  if(taa.valid)
+    taa.reproject = Taa::reprojection(camHistory.cur, camHistory.prev, j);
+
+  // the main view only: the frustum, SSAO and everything in SceneGlobals; not the shadows, UI or inventory
+  auto m = j; m.mul(proj);        proj        = m;
+  m      = j; m.mul(viewProj);    viewProj    = m;
+  m      = j; m.mul(viewProjLwc); viewProjLwc = m;
+  wview.setJitter(&j);
+  }
+
+void Renderer::prepareMotion(WorldView& wview) {
+  // Motion vectors of objects (graphics plan 1b): the camera's part of the residual, with this frame's jitter on both
+  // sides so that the difference has none. On a cut, a jump or the first frame no reprojection and the previous
+  // camera is this one: the residual of a moving object then comes from its own move only
+  const auto jitter = taa.active ? Taa::jitterMatrix(taa.jitter, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()))
+                                 : Matrix4x4::mkIdentity();
+  const auto mc = Taa::motionCamera(camHistory.cur, camHistory.prev, camHistory.continuous, jitter);
+  wview.setMotionVectors(settings.motionVectors, mc.reprojectClip, mc.viewProjectPrev);
+  }
+
+void Renderer::drawMotionView(Attachment& result, Encoder<CommandBuffer>& cmd) {
+  if(!settings.motionView || gbufMotion.isEmpty())
+    return;
+  // debug: the frame is the residual, direction as hue, length as brightness (motion_view.frag)
+  struct Push {
+    float pxPerUnitX = 0; // pixels of the internal resolution per texture coordinate
+    float pxPerUnitY = 0;
+    float fullPx     = 2; // px/frame of full brightness
+    } push;
+  push.pxPerUnitX = float(gbufMotion.w());
+  push.pxPerUnitY = float(gbufMotion.h());
+  push.fullPx     = settings.motionViewPx;
+  cmd.setDebugMarker("Motion-view");
+  cmd.setFramebuffer({{result, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, gbufMotion, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.motionView);
+  cmd.draw(nullptr, 0, 3);
+  }
+
+void Renderer::drawReactiveView(Attachment& result, Encoder<CommandBuffer>& cmd) {
+  if(!settings.taaReactiveView || taa.reactive.isEmpty())
+    return;
+  // debug: the frame is the TAA reactive mask as it was written, before the ceiling (reactive_view.frag)
+  cmd.setDebugMarker("Reactive-view");
+  cmd.setFramebuffer({{result, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, taa.reactive, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPipeline(shaders.reactiveView);
+  cmd.draw(nullptr, 0, 3);
+  }
+
+void Renderer::drawSsaoView(Attachment& result, Encoder<CommandBuffer>& cmd) {
+  if((benchSsaoStudy & 2u)==0 || !ssao.valid || ssao.ssaoBlur.isEmpty() || ssao.ssaoBlur.size()!=result.size())
+    return;
+  // debug: the frame is the blurred occlusion as the ambient light takes it, in the red channel (1 open)
+  cmd.setDebugMarker("SSAO-view");
+  cmd.setFramebuffer({{result, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, ssao.ssaoBlur, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPipeline(shaders.copy);
+  cmd.draw(nullptr, 0, 3);
+  }
+
+void Renderer::drawBloom(Encoder<CommandBuffer>& cmd, bool fused) {
+  if(!settings.bloomEnabled || bloomChain[0].isEmpty())
+    return;
+  cmd.setDebugMarker("Bloom");
+  // down: the scene to half resolution (Karis-weighted), then each level to the next
+  for(size_t i=0; i<bloomChain.size(); ++i) {
+    cmd.setFramebuffer({{bloomChain[i], Tempest::Discard, Tempest::Preserve}});
+    if(i==0 && temporal.active && !temporal.taau)
+      cmd.setBinding(0, temporal.output, Sampler::bilinear(ClampMode::ClampToEdge));
+    else if(i==0 && fused)
+      cmd.setBinding(0, taa.history[taa.cur^1], Sampler::bilinear(ClampMode::ClampToEdge));
+    else
+      cmd.setBinding(0, i==0 ? sceneLinear : bloomChain[i-1], Sampler::bilinear(ClampMode::ClampToEdge));
+    if(i==0) {
+      // the glare (bloom_down.frag): thresholds in the white of the frame as the tone mapping shows it
+      struct Glare {
+        float from     = 0;
+        float invRange = 0;
+        float boost    = 0;
+        } glare;
+      const float mul = std::max(eye.mul(), 1e-3f);
+      glare.from      = settings.bloomGlareFrom/mul;
+      glare.invRange  = mul/std::max(settings.bloomGlareTo-settings.bloomGlareFrom, 1e-3f);
+      glare.boost     = settings.bloomGlare;
+      cmd.setPushData(glare);
+      }
+    cmd.setPipeline(i==0 ? shaders.bloomDownKaris : shaders.bloomDown);
+    cmd.draw(nullptr, 0, 3);
+    }
+  // up: each level adds its tent-filtered smaller one, so the half level ends up with all of them
+  for(size_t i=bloomChain.size()-1; i>0; --i) {
+    cmd.setFramebuffer({{bloomChain[i-1], Tempest::Preserve, Tempest::Preserve}});
+    cmd.setBinding(0, bloomChain[i], Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setPipeline(shaders.bloomUp);
+    cmd.draw(nullptr, 0, 3);
+    }
+  if(temporal.active || fused)
+    return; // the tonemapping mixes it in (drawTonemappingTemporal, drawTonemappingTaa)
+  struct Push {
+    float strength = 0.05f;  // the share of the scene's light a lens scatters into the glow
+    float levels   = 0;
+    } push;
+  push.levels = float(bloomChain.size());
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
+  cmd.setBinding(0, bloomChain[0], Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.bloomMix);
+  cmd.draw(nullptr, 0, 3);
+  }
+
+void Renderer::drawTonemapping(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+  struct Push {
+    float brightness = 0;
+    float contrast   = 1;
+    float gamma      = 1.f/2.2f;
+    float mul        = 1;
+    };
+
+  Push p;
+  p.brightness = (settings.zVidBrightness - 0.5f)*0.1f;
+  p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
+  p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
+
+  p.mul = eye.mul(); // 1 without GI (renderer_eye.cpp)
+  static float mul = 0.f;
+  if(mul>0)
+    p.mul = mul;
+
+  const bool native = (result.size()==sceneLinear.size());
+  auto& pso = native ? shaders.tonemapping : shaders.tonemappingUpscale;
+  cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });
+  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
+  // This Lanczos implementation pairs adjacent weights using bilinear sampling.
+  // Keep nearest sampling at native resolution.
+  const auto sampler = native ? Sampler::nearest(ClampMode::ClampToEdge) :
+                                Sampler::bilinear(ClampMode::ClampToEdge);
+  cmd.setBinding(1, sceneLinear, sampler);
+  cmd.setPushData(p);
+  cmd.setPipeline(pso);
+  cmd.draw(nullptr, 0, 3);
+  }
+
+void Renderer::drawCMAA2(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
+  auto&          pso             = shaders.cmaa2EdgeColor2x2Presets[::Settings::options().aaPreset];
+  const IVec3    inputGroupSize  = pso.workGroupSize();
+  const IVec3    outputGroupSize = inputGroupSize - IVec3(2, 2, 0);
+  const uint32_t groupCountX     = uint32_t((sceneLinear.w() + outputGroupSize.x * 2 - 1) / (outputGroupSize.x * 2));
+  const uint32_t groupCountY     = uint32_t((sceneLinear.h() + outputGroupSize.y * 2 - 1) / (outputGroupSize.y * 2));
+
+  cmd.setFramebuffer({});
+  cmd.setBinding(0, sceneLinear, Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setBinding(1, cmaa2.workingEdges);
+  cmd.setBinding(2, cmaa2.shapeCandidates);
+  cmd.setBinding(3, cmaa2.deferredBlendLocationList);
+  cmd.setBinding(4, cmaa2.deferredBlendItemList);
+  cmd.setBinding(5, cmaa2.deferredBlendItemListHeads);
+  cmd.setBinding(6, cmaa2.controlBuffer);
+  cmd.setBinding(7, cmaa2.indirectBuffer);
+
+  // detect edges
+  cmd.setPipeline(pso);
+  cmd.dispatch(groupCountX, groupCountY, 1);
+
+  // process candidates pass
+  cmd.setPipeline(shaders.cmaa2ProcessCandidates);
+  cmd.dispatchIndirect(cmaa2.indirectBuffer, 0);
+
+  // deferred color apply
+  struct Push {
+    float brightness = 0;
+    float contrast   = 1;
+    float gamma      = 1.f/2.2f;
+    float mul        = 1;
+    };
+
+  Push p;
+  p.brightness = (settings.zVidBrightness - 0.5f)*0.1f;
+  p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
+  p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
+
+  p.mul = eye.mul(); // 1 without GI (renderer_eye.cpp)
+  static float mul = 0.f;
+  if(mul>0)
+    p.mul = mul;
+
+  // CMAA2 writes pixels in sceneLinear coordinates: result must have the same size
+  auto& psoTone = shaders.tonemapping;
+  cmd.setFramebuffer({{result, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, sceneLinear, Sampler::nearest());
+  cmd.setPushData(&p, sizeof(p));
+  cmd.setPipeline(psoTone);
+  cmd.draw(nullptr, 0, 3);
+
+  cmd.setBinding(0, sceneLinear);
+  cmd.setBinding(1, cmaa2.workingEdges);
+  cmd.setBinding(2, cmaa2.shapeCandidates);
+  cmd.setBinding(3, cmaa2.deferredBlendLocationList);
+  cmd.setBinding(4, cmaa2.deferredBlendItemList);
+  cmd.setBinding(5, cmaa2.deferredBlendItemListHeads);
+  cmd.setBinding(6, cmaa2.controlBuffer);
+  cmd.setPushData(&p, sizeof(p));
+  cmd.setPipeline(shaders.cmaa2DeferredColorApply2x2);
+  cmd.drawIndirect(cmaa2.indirectBuffer, 3*sizeof(uint32_t));
+  }
+
+void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused) {
+  // In linear HDR after the translucent and underwater passes, before bloom (shader/antialiasing/taa_resolve.frag)
+  struct Push {
+    Matrix4x4 reproject;
+    float     alpha = 0.1f; // the share of the new frame
+    uint32_t  reset = 0;    // no history: the frame as it is
+    float     reactiveMax = 0.9f; // the reactive mask (graphics plan 1v): its ceiling, and 0 when it is off
+    uint32_t  reactive    = 0;
+    } push;
+  push.reproject   = taa.reproject;
+  push.reset       = taa.valid ? 0 : 1;
+  push.reactiveMax = settings.taaReactiveMax;
+  push.reactive    = settings.taaReactive ? 1 : 0;
+
+  auto& next = taa.history[taa.cur];
+  auto& prev = taa.history[taa.cur^1];
+  cmd.setDebugMarker("TAA");
+  cmd.setFramebuffer({{next, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, sceneLinear, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(1, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(2, prev,        Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setBinding(3, gbufMotion,  Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(4, taa.reactive,Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.taaResolve);
+  cmd.draw(nullptr, 0, 3);
+  taa.valid = true;
+
+  if(fused) {
+    taa.cur ^= 1; // the frame stays in the history: drawTonemappingTaa sharpens it on the way out
+    return;
+    }
+
+  // the history stays unsharpened: sharpening fed back would build up from frame to frame
+  drawTaaSharpen(cmd);
+
+  // bloom and tonemapping go on from the resolved frame
+  std::swap(sceneLinear, taa.output);
+  taa.cur ^= 1;
+  }
+
+void Renderer::drawMotionCamera(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // The camera's motion of each pixel: from its depth to where it was a frame ago, plus the object's own move
+  // (motion_camera.frag)
+  struct Push {
+    Matrix4x4 reproject;
+    } push;
+  push.reproject = taa.valid ? taa.reproject : Matrix4x4::mkIdentity();
+  cmd.setDebugMarker("Upscale-motion");
+  cmd.setFramebuffer({{temporal.motion, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, zbuffer,    Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(1, gbufMotion, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.motionCamera);
+  cmd.draw(nullptr, 0, 3);
+  }
+
+void Renderer::drawTaau(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // Our own temporal upscale (graphics plan 1g): in linear HDR where the TAA resolve would be.
+  // First, at the input's size, what the output pixels of one input texel share (taau_prepare.frag): the motion of
+  // the nearest point and the colour box the history is clipped to
+  struct Prepare {
+    Matrix4x4 reproject;
+    float     gamma    = 1;
+    float     depthOff = 0;
+    float     depthTol = 0;
+    float     pad0     = 0;
+    } prep;
+  prep.reproject = taa.valid ? taa.reproject : Matrix4x4::mkIdentity();
+  prep.gamma     = settings.taauGamma;
+  prep.depthOff  = Taa::upscaleDepthOffset(camHistory.cur.proj);
+  prep.depthTol  = taa.valid ? settings.taauDepthTol : 0.f;
+  // this frame's depth and motion; the previous frame's are the other one, as the history
+  auto& depthNow = temporal.depth[taa.cur];
+  cmd.setDebugMarker("TAAU-prepare");
+  cmd.setFramebuffer({{temporal.boxMid, Tempest::Discard, Tempest::Preserve},
+                      {temporal.boxExt, Tempest::Discard, Tempest::Preserve},
+                      {depthNow,        Tempest::Discard, Tempest::Preserve},
+                      {temporal.flags,  Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, zbuffer,      Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(1, gbufMotion,   Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(2, sceneLinear,  Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(3, temporal.depth[taa.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPushData(prep);
+  cmd.setPipeline(shaders.taauPrepare);
+  cmd.draw(nullptr, 0, 3);
+
+  // Then the resolve at the swapchain's size (taau_resolve.frag). The history stays unsharpened:
+  // drawTonemappingTaa sharpens it on the way out
+  struct Push {
+    Vec2      jitter;             // this frame's offset, input pixels (Taa::jitterPx)
+    float     wMax        = 4;
+    uint32_t  reset       = 0;
+    float     reactiveMax = 0.9f;
+    uint32_t  reactive    = 0;
+    float     kernel      = 6;
+    float     clipTrust   = 4;
+    float     boxStatic   = 1;
+    float     boxMotion   = 1;
+    float     histSharp   = 0.5f;
+    float     moveConf    = 1;
+    float     moveSpeed   = 1;
+    float     depthClip   = 1;
+    float     edgeBox     = 1;
+    float     moveWeight  = 1;
+    } push;
+  push.jitter      = taa.jitter;
+  push.wMax        = 1.f/settings.taauAlpha - 1.f;
+  push.reset       = taa.valid ? 0 : 1;
+  push.reactiveMax = settings.taaReactiveMax;
+  push.reactive    = settings.taaReactive ? 1 : 0;
+  push.kernel      = settings.taauKernel;
+  push.clipTrust   = settings.taauClipTrust;
+  push.boxStatic   = settings.taauBoxStatic;
+  push.boxMotion   = settings.taauBoxMotion;
+  push.histSharp   = Taa::upscaleHistSharp(settings.taauHistSharp, uint32_t(sceneLinear.w()), uint32_t(temporal.outSize.w));
+  // the enlarged frame's weight in motion from its share against a full history; no share: no motion at any speed
+  push.moveWeight  = std::min(settings.taauMoveWeight, push.wMax);
+  push.moveConf    = Taa::upscaleMoveConf(settings.taauMoveShare, push.moveWeight);
+  push.moveSpeed   = settings.taauMoveShare>0.f ? settings.taauMoveSpeed : 1e9f;
+  push.depthClip   = settings.taauDepthClip;
+  push.edgeBox     = settings.taauEdgeBox;
+
+  auto& next = taa.history[taa.cur];
+  auto& prev = taa.history[taa.cur^1];
+  cmd.setDebugMarker("TAAU");
+  cmd.setFramebuffer({{next, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, sceneLinear,     Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setBinding(1, temporal.boxMid, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(2, temporal.boxExt, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(3, prev,            Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setBinding(4, taa.reactive,    Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(5, temporal.flags,  Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.taauResolve);
+  cmd.draw(nullptr, 0, 3);
+  taa.valid = true;
+  taa.cur  ^= 1; // the frame stays in the history, as drawTaa's fused way
+  }
+
+void Renderer::drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // In linear HDR after the translucent and underwater passes, where the TAA resolve would be (graphics plan 1g).
+  drawMotionCamera(cmd);
+
+  // Apple's conventions: the jitter is the pixel's centre minus where it was sampled, in input pixels: the picture
+  // moved by +jitter (Taa::jitterMatrix), so the centre shows the point at centre - jitter. The vectors are in the
+  // input's texture coordinates, the scale makes pixels of them. The depth is not reversed: the sky is 1.
+  // OPENGOTHIC_UPSCALE_JITTER_SIGN=<x>,<y> (a study of the convention): multipliers of the jitter given to MetalFX
+  static const Vec2 sign = [] {
+    Vec2 s(1, 1);
+    if(const char* e = std::getenv("OPENGOTHIC_UPSCALE_JITTER_SIGN"))
+      if(std::sscanf(e, "%f,%f", &s.x, &s.y)==2)
+        Log::i("render: temporal upscale jitter sign = ", s.x, ",", s.y);
+    return s;
+    }();
+  TemporalUpscaleDesc desc;
+  desc.jitterX       = taa.jitter.x*sign.x;
+  desc.jitterY       = taa.jitter.y*sign.y;
+  desc.motionScaleX  = float(temporal.motion.w());
+  desc.motionScaleY  = float(temporal.motion.h());
+  desc.inputW        = uint32_t(sceneLinear.w());
+  desc.inputH        = uint32_t(sceneLinear.h());
+  desc.reset         = !taa.valid;
+  desc.depthReversed = false;
+  cmd.setFramebuffer({});
+  cmd.setDebugMarker("Upscale-temporal");
+  cmd.upscaleTemporal(sceneLinear, zbuffer, temporal.motion, temporal.output, desc);
+  taa.valid = true;
+  }
+
+void Renderer::drawTonemappingTaa(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+  // drawTaaSharpen, the mix of drawBloom and drawTonemapping in one pass (tonemapping.frag BLOOM, RCAS)
+  struct Push {
+    float brightness    = 0;
+    float contrast      = 1;
+    float gamma         = 1.f/2.2f;
+    float mul           = 1;
+    float bloomStrength = 0.05f; // as drawBloom's mix
+    float bloomLevels   = 1;
+    float sharpness     = 0;
+    } p;
+  p.brightness  = (settings.zVidBrightness - 0.5f)*0.1f;
+  p.contrast    = std::max(1.5f - settings.zVidContrast, 0.01f);
+  p.gamma       = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
+  p.bloomLevels = float(bloomChain.size());
+  p.sharpness   = settings.taaSharpness;
+  p.mul         = eye.mul();
+  // our own upscale comes here with the bloom off too: the frame itself stands in for it, with no share
+  const bool bloom = settings.bloomEnabled && !bloomChain[0].isEmpty();
+  if(!bloom)
+    p.bloomStrength = 0;
+
+  cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });
+  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, taa.history[taa.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(2, bloom ? bloomChain[0] : taa.history[taa.cur^1], Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setPushData(p);
+  cmd.setPipeline(shaders.tonemappingTaa);
+  cmd.draw(nullptr, 0, 3);
+  }
+
+void Renderer::drawTonemappingTemporal(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+  // drawTonemapping at the output resolution, from the upscaled frame; the bloom goes in here (tonemapping.frag BLOOM)
+  struct Push {
+    float brightness    = 0;
+    float contrast      = 1;
+    float gamma         = 1.f/2.2f;
+    float mul           = 1;
+    float bloomStrength = 0.05f; // as drawBloom's mix
+    float bloomLevels   = 1;
+    } p;
+  p.brightness = (settings.zVidBrightness - 0.5f)*0.1f;
+  p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
+  p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
+  p.mul        = eye.mul();
+
+  const bool bloom = settings.bloomEnabled && !bloomChain[0].isEmpty();
+  cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });
+  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, temporal.output, Sampler::nearest(ClampMode::ClampToEdge));
+  if(bloom) {
+    p.bloomLevels = float(bloomChain.size());
+    cmd.setBinding(2, bloomChain[0], Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setPushData(p);
+    cmd.setPipeline(shaders.tonemappingBloom);
+    } else {
+    cmd.setPushData(&p, 4*sizeof(float));
+    cmd.setPipeline(shaders.tonemapping);
+    }
+  cmd.draw(nullptr, 0, 3);
+  }

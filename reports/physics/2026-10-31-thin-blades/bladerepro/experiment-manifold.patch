@@ -1,0 +1,20 @@
+--- a/OpenGothic/lib/JoltPhysics/Jolt/Physics/Collision/ManifoldBetweenTwoFaces.cpp
++++ b/OpenGothic/lib/JoltPhysics/Jolt/Physics/Collision/ManifoldBetweenTwoFaces.cpp
+@@ -136,0 +137,2 @@
++int gManifoldMode = 0;
++
+@@ -262,0 +265,14 @@
++	// Experiment: keep the deepest point too when the clipped face misses it
++	if (gManifoldMode == 1 && outContactPoints1.size() != old_size)
++	{
++		bool near = false;
++		for (ContactPoints::size_type p = old_size; p < outContactPoints1.size(); ++p)
++			if ((outContactPoints1[p] - inContactPoint1).LengthSq() < 1.0e-6f)
++				near = true;
++		if (!near && outContactPoints1.size() < outContactPoints1.capacity())
++		{
++			outContactPoints1.push_back(inContactPoint1);
++			outContactPoints2.push_back(inContactPoint2);
++		}
++	}
++

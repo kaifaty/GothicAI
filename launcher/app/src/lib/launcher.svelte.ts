@@ -4,6 +4,7 @@ import { providerTitle } from "./status";
 import {
   call,
   onCore,
+  restartApp,
   showWindow,
   toMenuBar,
   type CoreMessage,
@@ -17,6 +18,7 @@ export type Tone = "plain" | "you" | "npc" | "warn" | "bad";
 export type Line = { t: number; tone: Tone; text: string; meta?: string };
 
 export const SERVICE_NAMES: Record<string, string> = {
+  prepare: "Подготовка базы игры",
   asr: "Голос игрока",
   tts: "Озвучка NPC",
   server: "ИИ-сервер",
@@ -80,6 +82,7 @@ export function serviceLine(e: ServiceEvent, t = Date.now() / 1000): Line | null
     case "waiting":
       return { t, tone: "plain", text: e.detail };
     case "starting":
+      if (e.proc === "prepare") return { t, tone: "plain", text: name };
       return e.proc === "game" ? { t, tone: "plain", text: "Запускаю игру" } : null;
     case "ready":
       if (e.detail === "after restart") return { t, tone: "plain", text: `${name}: снова работает` };
@@ -92,6 +95,7 @@ export function serviceLine(e: ServiceEvent, t = Date.now() / 1000): Line | null
     case "failed":
       return { t, tone: "bad", text: `${name}: не запустился`, meta: firstLine(e.detail) };
     case "status": {
+      if (e.proc === "prepare") return { t, tone: "plain", text: e.detail };
       if (e.proc === "microphone") return { t, tone: "warn", text: e.detail };
       const h = e.data;
       if (!h?.ok) return { t, tone: "warn", text: `${name}: не отвечает` };
@@ -195,6 +199,18 @@ class Launcher {
     await call("session.stop");
   }
 
+  /** Brings the personal Ryzen install up to main; the app restarts itself when the core is done. */
+  async update(): Promise<void> {
+    try {
+      const update = await call<State["update"]>("update.start");
+      // progress events may already be ahead of this answer
+      if (this.state && update && !this.state.update?.updating) this.state.update = update;
+      this.error = null;
+    } catch (err) {
+      this.error = String(err);
+    }
+  }
+
   private onMessage(m: CoreMessage): void {
     const s = this.state;
     switch (m.event) {
@@ -228,6 +244,13 @@ class Launcher {
       case "voice_test":
         if (m.data.level !== undefined) this.voiceTest.levels = [...this.voiceTest.levels, m.data.level].slice(-24);
         if (m.data.partial !== undefined) this.voiceTest.partial = m.data.partial;
+        break;
+      case "update":
+        if (s) s.update = m.data;
+        // the checkout under the old core changed: start the rebuilt app (the panel leaves it to the window)
+        if (this.role === "window" && m.data?.updating?.state === "finished") {
+          void restartApp().catch((err) => (this.error = `Не удалось перезапустить лаунчер: ${err}`));
+        }
         break;
       case "core_exit":
         this.coreDown = true;

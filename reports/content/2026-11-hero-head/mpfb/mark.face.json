@@ -1,0 +1,722 @@
+{
+  "version": 1,
+  "about": "Face profile of a head with Mark's shapes (Audio2Face v3.0, carried by shapes/head_shapes.py): the MPFB template's (test-head.face.json) weights re-scaled by shapes/mark_profile.py so that every expression, cue, leak and brow move reaches as far as on MPFB's shapes. Do not edit by hand: change the template and run mark_profile.py.",
+  "mouth": [
+    "mouth",
+    "jaw",
+    "viseme_",
+    "tongue",
+    "cheekPuff"
+  ],
+  "eyes": {
+    "about": "The eyeballs turn as rigid parts around their centres (eye_L is the character's own left eye, its lid shapes end in Left, eye_R in Right). Limits of the eye in its socket, degrees. Lids: per gaze direction the shapes that follow the eye, weight = max * clamp((angle - from) / (to - from), 0, 1), {side} is Left or Right. The upper lid follows a look down almost one to one: eyeLookDown covers ~14 deg of the ball, a part of eyeBlink takes it further.",
+    "parts": {
+      "left": "eye_L",
+      "right": "eye_R"
+    },
+    "limits_deg": {
+      "out": 35,
+      "in": 35,
+      "up": 25,
+      "down": 30
+    },
+    "lids": {
+      "down": [
+        {
+          "target": "eyeLookDown{side}",
+          "from": 0,
+          "to": 20,
+          "max": 1.0
+        },
+        {
+          "target": "eyeBlink{side}",
+          "from": 15,
+          "to": 30,
+          "max": 0.3
+        }
+      ],
+      "up": [
+        {
+          "target": "eyeLookUp{side}",
+          "from": 0,
+          "to": 22,
+          "max": 1.0
+        }
+      ],
+      "in": [
+        {
+          "target": "eyeLookIn{side}",
+          "from": 0,
+          "to": 30,
+          "max": 1.0
+        }
+      ],
+      "out": [
+        {
+          "target": "eyeLookOut{side}",
+          "from": 0,
+          "to": 30,
+          "max": 1.0
+        }
+      ]
+    }
+  },
+  "anims": {
+    "S_NEUTRAL": {
+      "layer": 1,
+      "blend_in_ms": 1000,
+      "blend_out_ms": 1000,
+      "duration_ms": -1,
+      "frame_ms": 1000,
+      "frames": [
+        {}
+      ]
+    },
+    "S_FRIENDLY": {
+      "layer": 1,
+      "blend_in_ms": 1000,
+      "blend_out_ms": 1000,
+      "duration_ms": -1,
+      "frame_ms": 1000,
+      "frames": [
+        {
+          "mouthSmileLeft": 0.53,
+          "mouthSmileRight": 0.424,
+          "cheekSquintLeft": 0.329,
+          "cheekSquintRight": 0.237,
+          "eyeSquintLeft": 0.164,
+          "eyeSquintRight": 0.131,
+          "browInnerUp": 0.161
+        }
+      ]
+    },
+    "S_ANGRY": {
+      "layer": 1,
+      "blend_in_ms": 1000,
+      "blend_out_ms": 1000,
+      "duration_ms": -1,
+      "frame_ms": 1000,
+      "frames": [
+        {
+          "browDownLeft": 1.0,
+          "browDownRight": 0.895,
+          "noseSneerLeft": 0.216,
+          "noseSneerRight": 0.173,
+          "eyeSquintLeft": 0.721,
+          "eyeSquintRight": 0.618,
+          "mouthPressLeft": 0.246,
+          "mouthPressRight": 0.219,
+          "mouthFrownLeft": 0.003,
+          "mouthFrownRight": 0.003,
+          "jawForward": 0.0
+        }
+      ]
+    },
+    "S_HOSTILE": {
+      "layer": 1,
+      "blend_in_ms": 1000,
+      "blend_out_ms": 1000,
+      "duration_ms": -1,
+      "frame_ms": 1000,
+      "frames": [
+        {
+          "browDownLeft": 0.63,
+          "browDownRight": 0.55,
+          "eyeSquintLeft": 0.557,
+          "eyeSquintRight": 0.468,
+          "mouthPressLeft": 0.452,
+          "mouthPressRight": 0.411,
+          "noseSneerLeft": 0.302
+        }
+      ]
+    },
+    "S_FRIGHTENED": {
+      "layer": 1,
+      "blend_in_ms": 1000,
+      "blend_out_ms": 1000,
+      "duration_ms": -1,
+      "frame_ms": 100,
+      "frames": [
+        {
+          "browInnerUp": 1.0,
+          "browOuterUpLeft": 0.355,
+          "browOuterUpRight": 0.408,
+          "eyeWideLeft": 0.725,
+          "eyeWideRight": 0.725,
+          "jawOpen": 0.057,
+          "mouthStretchLeft": 0.297,
+          "mouthStretchRight": 0.297,
+          "mouthLowerDownLeft": 0.44,
+          "mouthLowerDownRight": 0.44
+        },
+        {
+          "browInnerUp": 0.993,
+          "browOuterUpLeft": 0.337,
+          "browOuterUpRight": 0.381,
+          "eyeWideLeft": 0.677,
+          "eyeWideRight": 0.69,
+          "jawOpen": 0.067,
+          "mouthStretchLeft": 0.296,
+          "mouthStretchRight": 0.315,
+          "mouthLowerDownLeft": 0.6,
+          "mouthLowerDownRight": 0.547
+        }
+      ]
+    },
+    "S_EYESCLOSED": {
+      "layer": 1,
+      "blend_in_ms": 100,
+      "blend_out_ms": 100,
+      "duration_ms": -1,
+      "frame_ms": 1000,
+      "frames": [
+        {
+          "eyeBlinkLeft": 1.0,
+          "eyeBlinkRight": 1.0
+        }
+      ]
+    },
+    "R_EYESBLINK": {
+      "layer": 4,
+      "blend_in_ms": 40,
+      "blend_out_ms": 40,
+      "duration_ms": 0,
+      "frame_ms": 1000,
+      "frames": [
+        {
+          "eyeBlinkLeft": 1.0,
+          "eyeBlinkRight": 1.0
+        }
+      ]
+    },
+    "T_HURT": {
+      "layer": 1,
+      "blend_in_ms": 100,
+      "blend_out_ms": 100,
+      "duration_ms": -1,
+      "frame_ms": 1000,
+      "frames": [
+        {
+          "eyeSquintLeft": 0.915,
+          "eyeSquintRight": 0.801,
+          "eyeBlinkLeft": 0.45,
+          "eyeBlinkRight": 0.55,
+          "browDownLeft": 0.546,
+          "browDownRight": 0.455,
+          "browInnerUp": 1.0,
+          "noseSneerLeft": 0.215,
+          "noseSneerRight": 0.189,
+          "mouthStretchLeft": 0.334,
+          "mouthStretchRight": 0.294,
+          "jawOpen": 0.244,
+          "mouthUpperUpLeft": 0.0,
+          "mouthUpperUpRight": 0.0
+        }
+      ]
+    },
+    "T_EAT": {
+      "layer": 1,
+      "blend_in_ms": 100,
+      "blend_out_ms": 100,
+      "duration_ms": 2000,
+      "frame_ms": 333,
+      "frames": [
+        {
+          "jawOpen": 0.0,
+          "mouthClose": 0.0
+        },
+        {
+          "jawOpen": 0.151,
+          "mouthClose": 0.0,
+          "jawLeft": 0.0
+        },
+        {
+          "jawOpen": 0.249,
+          "mouthClose": 0.0,
+          "jawLeft": 0.0,
+          "cheekPuff": 0.0
+        },
+        {
+          "jawOpen": 0.077,
+          "mouthClose": 0.0,
+          "jawRight": 0.023
+        },
+        {
+          "jawOpen": 0.101,
+          "mouthClose": 0.0,
+          "jawRight": 0.533,
+          "cheekPuff": 0.0
+        },
+        {
+          "jawOpen": 0.037,
+          "mouthClose": 0.0
+        }
+      ]
+    },
+    "VISEME": {
+      "layer": 2,
+      "blend_in_ms": 100,
+      "blend_out_ms": 100,
+      "duration_ms": -1,
+      "frame_ms": 200,
+      "frames": [
+        {
+          "viseme_sil": 1.0
+        },
+        {
+          "viseme_sil": 0.6,
+          "viseme_PP": 0.3
+        },
+        {
+          "viseme_I": 0.4
+        },
+        {
+          "viseme_E": 0.4
+        },
+        {
+          "viseme_E": 0.55,
+          "viseme_I": 0.2
+        },
+        {
+          "viseme_E": 0.6,
+          "viseme_aa": 0.15
+        },
+        {
+          "viseme_O": 0.4,
+          "viseme_E": 0.3
+        },
+        {
+          "viseme_O": 0.55,
+          "viseme_aa": 0.2
+        },
+        {
+          "viseme_aa": 0.4,
+          "viseme_E": 0.3
+        },
+        {
+          "viseme_aa": 0.5,
+          "viseme_O": 0.2
+        },
+        {
+          "viseme_aa": 0.6,
+          "viseme_E": 0.2
+        },
+        {
+          "viseme_aa": 0.7,
+          "viseme_O": 0.15
+        },
+        {
+          "viseme_aa": 0.8
+        },
+        {
+          "viseme_aa": 0.85,
+          "viseme_E": 0.15
+        },
+        {
+          "viseme_aa": 0.9,
+          "viseme_O": 0.1
+        },
+        {
+          "viseme_aa": 1.0
+        }
+      ]
+    }
+  },
+  "cues": {
+    "flash": {
+      "zone": "upper",
+      "parts": [
+        {
+          "weights": {
+            "browInnerUp": 1.0,
+            "browOuterUpLeft": 0.45,
+            "browOuterUpRight": 0.45,
+            "eyeWideLeft": 0.289,
+            "eyeWideRight": 0.289
+          },
+          "delay_ms": 0,
+          "on_ms": 100,
+          "hold_ms": 80,
+          "off_ms": 160
+        }
+      ]
+    },
+    "doubt": {
+      "zone": "upper",
+      "side": "L",
+      "parts": [
+        {
+          "weights": {
+            "browOuterUpLeft": 0.695,
+            "browInnerUp": 1.0,
+            "browDownRight": 1.0,
+            "eyeSquintRight": 0.436
+          },
+          "delay_ms": 0,
+          "on_ms": 250,
+          "hold_ms": 550,
+          "off_ms": 300
+        }
+      ]
+    },
+    "smirk": {
+      "zone": "mouth",
+      "side": "L",
+      "parts": [
+        {
+          "weights": {
+            "mouthSmileLeft": 0.668,
+            "mouthDimpleLeft": 1.0,
+            "cheekSquintLeft": 0.0,
+            "mouthPressRight": 0.422
+          },
+          "delay_ms": 0,
+          "on_ms": 200,
+          "hold_ms": 400,
+          "off_ms": 300
+        }
+      ]
+    },
+    "press": {
+      "zone": "mouth",
+      "parts": [
+        {
+          "weights": {
+            "mouthPressLeft": 0.0,
+            "mouthPressRight": 0.0,
+            "mouthRollLower": 1.0,
+            "mouthRollUpper": 0.279,
+            "mouthShrugLower": 0.687
+          },
+          "delay_ms": 0,
+          "on_ms": 150,
+          "hold_ms": 400,
+          "off_ms": 200
+        }
+      ]
+    },
+    "disgust": {
+      "zone": "upper",
+      "parts": [
+        {
+          "weights": {
+            "noseSneerLeft": 0.04,
+            "noseSneerRight": 0.04,
+            "mouthUpperUpLeft": 0.266,
+            "mouthUpperUpRight": 0.266,
+            "cheekSquintLeft": 0.83,
+            "cheekSquintRight": 0.83,
+            "browDownLeft": 0.486,
+            "browDownRight": 0.486
+          },
+          "delay_ms": 0,
+          "on_ms": 150,
+          "hold_ms": 300,
+          "off_ms": 200
+        }
+      ]
+    },
+    "squint": {
+      "zone": "upper",
+      "parts": [
+        {
+          "weights": {
+            "eyeSquintLeft": 0.76,
+            "eyeSquintRight": 0.76,
+            "eyeBlinkLeft": 0.12,
+            "eyeBlinkRight": 0.12,
+            "browDownLeft": 0.007,
+            "browDownRight": 0.007
+          },
+          "delay_ms": 0,
+          "on_ms": 250,
+          "hold_ms": 800,
+          "off_ms": 350
+        }
+      ]
+    },
+    "frown": {
+      "zone": "upper",
+      "parts": [
+        {
+          "weights": {
+            "browDownLeft": 0.993,
+            "browDownRight": 0.993,
+            "eyeSquintLeft": 0.278,
+            "eyeSquintRight": 0.278
+          },
+          "delay_ms": 0,
+          "on_ms": 300,
+          "hold_ms": 900,
+          "off_ms": 400
+        }
+      ]
+    },
+    "chin": {
+      "zone": "mouth",
+      "parts": [
+        {
+          "weights": {
+            "mouthShrugLower": 0.337,
+            "mouthShrugUpper": 0.283,
+            "mouthPressLeft": 0.0,
+            "mouthPressRight": 0.0,
+            "mouthFrownLeft": 0.0,
+            "mouthFrownRight": 0.0
+          },
+          "delay_ms": 0,
+          "on_ms": 150,
+          "hold_ms": 400,
+          "off_ms": 250
+        }
+      ]
+    },
+    "wince": {
+      "zone": "upper",
+      "parts": [
+        {
+          "weights": {
+            "cheekSquintLeft": 1.0,
+            "cheekSquintRight": 1.0,
+            "eyeSquintLeft": 0.825,
+            "eyeSquintRight": 0.825,
+            "noseSneerLeft": 0.347,
+            "noseSneerRight": 0.347,
+            "browDownLeft": 0.351,
+            "browDownRight": 0.351,
+            "eyeBlinkLeft": 0.25,
+            "eyeBlinkRight": 0.25
+          },
+          "delay_ms": 0,
+          "on_ms": 80,
+          "hold_ms": 100,
+          "off_ms": 200
+        }
+      ]
+    },
+    "glance": {
+      "zone": "eyes",
+      "side": "R",
+      "look": {
+        "move": "jump",
+        "side_deg": 22,
+        "up_deg": -4,
+        "on_ms": 80,
+        "hold_ms": 600,
+        "off_ms": 120
+      }
+    },
+    "roll": {
+      "zone": "eyes",
+      "side": "R",
+      "look": {
+        "move": "arc",
+        "side_deg": 10,
+        "up_deg": 22,
+        "on_ms": 250,
+        "hold_ms": 300,
+        "off_ms": 300
+      },
+      "parts": [
+        {
+          "weights": {
+            "eyeBlinkLeft": 0.2,
+            "eyeBlinkRight": 0.2
+          },
+          "delay_ms": 0,
+          "on_ms": 250,
+          "hold_ms": 300,
+          "off_ms": 300
+        }
+      ]
+    }
+  },
+  "leaks": {
+    "on_ms": 120,
+    "hold_ms": 120,
+    "off_ms": 160,
+    "felt": {
+      "angry": {
+        "upper": {
+          "browDownLeft": 0.629,
+          "browDownRight": 0.627,
+          "eyeBlinkLeft": 0.089,
+          "eyeBlinkRight": 0.088,
+          "eyeSquintRight": 0.213
+        },
+        "lower": {
+          "noseSneerRight": 0.005,
+          "noseSneerLeft": 0.004,
+          "mouthShrugUpper": 0.345,
+          "mouthStretchLeft": 0.005,
+          "mouthStretchRight": 0.005,
+          "mouthUpperUpRight": 0.294,
+          "mouthUpperUpLeft": 0.272
+        }
+      },
+      "afraid": {
+        "upper": {
+          "browInnerUp": 0.263,
+          "browOuterUpRight": 0.06,
+          "browOuterUpLeft": 0.058,
+          "browDownLeft": 0.132,
+          "browDownRight": 0.128,
+          "eyeWideRight": 0.267,
+          "eyeWideLeft": 0.267
+        },
+        "lower": {
+          "mouthFrownLeft": 0.483,
+          "mouthFrownRight": 0.479
+        }
+      },
+      "hostile": {
+        "upper": {
+          "browDownLeft": 0.525,
+          "browDownRight": 0.523,
+          "eyeSquintRight": 0.449,
+          "eyeSquintLeft": 0.367,
+          "eyeBlinkLeft": 0.174,
+          "eyeBlinkRight": 0.172
+        },
+        "lower": {
+          "noseSneerRight": 0.223,
+          "noseSneerLeft": 0.22,
+          "cheekSquintRight": 0.332,
+          "cheekSquintLeft": 0.332,
+          "mouthStretchLeft": 0.106,
+          "mouthStretchRight": 0.104,
+          "mouthDimpleLeft": 0.198,
+          "mouthDimpleRight": 0.198,
+          "mouthShrugLower": 0.002,
+          "mouthFrownLeft": 0.046,
+          "mouthFrownRight": 0.045
+        }
+      },
+      "friendly": {
+        "upper": {
+          "eyeSquintRight": 0.439,
+          "eyeSquintLeft": 0.4,
+          "browInnerUp": 1.0,
+          "browOuterUpRight": 0.241,
+          "browOuterUpLeft": 0.241
+        },
+        "lower": {
+          "mouthSmileRight": 0.061,
+          "mouthSmileLeft": 0.06,
+          "mouthUpperUpLeft": 0.0,
+          "mouthUpperUpRight": 0.0,
+          "mouthStretchLeft": 0.69,
+          "mouthStretchRight": 0.667,
+          "cheekSquintRight": 0.0,
+          "cheekSquintLeft": 0.0,
+          "mouthDimpleRight": 0.986,
+          "mouthDimpleLeft": 0.954
+        }
+      },
+      "pain": {
+        "upper": {
+          "browDownLeft": 1.0,
+          "browDownRight": 0.993,
+          "eyeSquintRight": 0.557,
+          "eyeSquintLeft": 0.544,
+          "browOuterUpRight": 0.593,
+          "browOuterUpLeft": 0.583,
+          "eyeBlinkLeft": 0.067,
+          "eyeBlinkRight": 0.066
+        },
+        "lower": {
+          "cheekSquintRight": 0.91,
+          "cheekSquintLeft": 0.906,
+          "mouthFrownLeft": 0.166,
+          "mouthFrownRight": 0.165,
+          "noseSneerRight": 0.202,
+          "noseSneerLeft": 0.193,
+          "mouthSmileLeft": 0.0,
+          "mouthSmileRight": 0.0,
+          "mouthStretchLeft": 0.326,
+          "mouthDimpleLeft": 0.26,
+          "mouthStretchRight": 0.287,
+          "mouthUpperUpRight": 0.0,
+          "mouthUpperUpLeft": 0.0,
+          "mouthDimpleRight": 0.239,
+          "mouthShrugLower": 0.012
+        }
+      }
+    }
+  },
+  "speech_brows": {
+    "about": "The brows of the speaker on the accents of its voice (eyes.md, 'План: брови по тону'): a syllable where the tone rises rise_st semitones within rise_ms and the voice reaches loud raises them (up) from lead_ms before it; an angry or hostile line lowers them (down: S_ANGRY already holds the brows near 1, so the squint and the sneer carry the stress there). A gap and a chance by the seed keep them off most accents (about one move in 2.4 s on 42 voice samples). Limits picked by the clip, the look is the user's.",
+    "rise_st": 3,
+    "rise_ms": 200,
+    "syllable_ms": 150,
+    "loud": 0.5,
+    "lead_ms": 100,
+    "on_ms": 120,
+    "hold_ms": 150,
+    "off_ms": 300,
+    "gap_ms": 1000,
+    "chance": 0.7,
+    "up": {
+      "browInnerUp": 0.716,
+      "browOuterUpLeft": 0.427,
+      "browOuterUpRight": 0.427
+    },
+    "down": {
+      "browDownLeft": 0.459,
+      "browDownRight": 0.459,
+      "eyeSquintLeft": 0.249,
+      "eyeSquintRight": 0.249,
+      "noseSneerLeft": 0.09,
+      "noseSneerRight": 0.09
+    },
+    "quiet_cues": [
+      "flash",
+      "doubt",
+      "frown",
+      "squint",
+      "disgust",
+      "wince"
+    ]
+  },
+  "listen_face": {
+    "about": "The face of the one listening on its nods (eyes.md, 'План: брови по тону и лицо слушающего', item 3): now and then a nod as the other one speaks comes with a flash of the brows smaller and shorter than the flash cue (its weights times weight, its times times time); a friendly listener smiles a little instead (S_FRIENDLY times smile.weight, smile.chance) or smiles and flashes (smile.flash); an angry or hostile one frowns a moment instead (the frown cue made smaller and shorter), never smiles or flashes. A face on about one nod in two or three (chance) and at most once in gap_ms. Limits picked by the clip, the look is the user's.",
+    "chance": 0.45,
+    "gap_ms": 4000,
+    "flash": {
+      "cue": "flash",
+      "weight": 0.6,
+      "time": 0.8
+    },
+    "frown": {
+      "cue": "frown",
+      "weight": 0.6,
+      "time": 0.45
+    },
+    "smile": {
+      "weight": 0.5,
+      "on_ms": 400,
+      "hold_ms": 700,
+      "off_ms": 600,
+      "chance": 0.6,
+      "flash": 0.3
+    }
+  },
+  "speech_face": {
+    "about": "The face from the voice (engine-plan.md, step 10) on a head with Mark's shapes (face-shapes.md, 'Формы Mark в игре'): a track of Audio2Face v3.0 weights, solved for Mark's shapes, plays as it is but for mouthClose x1.4 (our lips are fuller than Mark's: where Mark shuts them, Vino's stayed 1.0-1.3 mm apart in 6 % of the frames of the clip, 1 % with it; the lip over the upper one unchanged) - no cap; eyeLook* dropped (the gaze is Eyes'). The track's eyeBlink* is the level of the lids, the blinks go over it. A track made with an emotion has the expression: the mood faces of the line give way to it while it shows and come back after it.",
+    "fade_in_ms": 80,
+    "fade_out_ms": 250,
+    "scale": {
+      "mouthClose": 1.4
+    },
+    "drop": [
+      "eyeLook*"
+    ],
+    "mood_faces": [
+      "S_FRIENDLY",
+      "S_ANGRY",
+      "S_HOSTILE",
+      "S_FRIGHTENED",
+      "T_HURT"
+    ]
+  }
+}

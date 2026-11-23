@@ -1,4 +1,7 @@
 import json
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -13,6 +16,7 @@ from gothic_ai.protocol import (
     FIGHT_REACTION_PROTOCOL,
     NOISE_PROTOCOL,
     NPC_CRIME_PROTOCOL,
+    NPC_FAR_FIGHT_PROTOCOL,
     NPC_FAR_PROTOCOL,
     PACE_PROTOCOL,
     PROTOCOL_VERSION,
@@ -22,6 +26,7 @@ from gothic_ai.protocol import (
     BeastCmd,
     BeastEvent,
     Beasts,
+    BodyPolicy,
     Chest,
     CombatHit,
     DebugCmd,
@@ -42,9 +47,14 @@ from gothic_ai.protocol import (
     NpcThing,
     NpcViews,
     PerceptionHeld,
+    PttAudioCmd,
     RoutineEntry,
+    RoutineInfo,
+    SayAudioCmd,
     SayCmd,
+    SayFaceCmd,
     Snapshot,
+    StoryEffect,
     StoryEffectCmd,
     StoryNpcCmd,
     StoryProgramCmd,
@@ -56,6 +66,43 @@ from gothic_ai.protocol import (
     parse_game_message,
 )
 from tests.fake_game import FakeGame
+
+
+def test_native_chronicle_parser_contract(tmp_path):
+    compiler = shutil.which("c++")
+    if compiler is None:
+        pytest.skip("needs a C++ compiler for the native chronicle parser")
+    engine = Path(__file__).resolve().parents[2] / "OpenGothic"
+    bridge = engine / "ai_bridge"
+    executable = tmp_path / "chronicle-contract"
+    subprocess.run(
+        [compiler, "-std=c++20", "-Wall", "-Wconversion", "-Werror",
+         "-I", str(bridge), "-I", str(engine / "common"),
+         "-isystem", str(engine / "lib" / "rapidjson" / "include"),
+         str(bridge / "tests" / "chronicle_contract.cpp"), str(bridge / "chronicledata.cpp"),
+         str(bridge / "textcodec.cpp"), "-o", str(executable)],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+    checked = subprocess.run([str(executable)], check=True, capture_output=True, text=True, timeout=10)
+    assert checked.stdout == "Chronicle contract: 29 checks passed\n"
+
+
+@pytest.mark.parametrize("counters", [{}, {
+    "selected_actions": {"continue": 2, "wait_200": 3},
+    "accepted_actions": {"wait_200": 3}, "hidden_reset": 1,
+}])
+def test_body_policy_optional_interval_counters(counters):
+    msg = parse_game_message(_json({
+        "type": "body_policy", "session_epoch": 1, "world_epoch": 2, "entity_id": 3,
+        "control_generation": 4, "goal_version": 5, "target_entity_id": 6,
+        "t_game_ms": 1000, "t_wall_ms": 2000, "decisions": 3, "fallbacks": {},
+        "steps": 20, "p50_us": 50, "p99_us": 100, "final": False, "reason": "",
+        "future_counter": 7, **counters,
+    }))
+    assert isinstance(msg, BodyPolicy)
+    assert msg.selected_actions == counters.get("selected_actions", {})
+    assert msg.accepted_actions == counters.get("accepted_actions", {})
+    assert msg.hidden_reset == counters.get("hidden_reset", 0)
 
 
 def test_parses_snapshot_from_game():
@@ -96,7 +143,6 @@ def test_v51_combat_hit_reports_actual_health_loss(kind):
 
 
 def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
-    assert PROTOCOL_VERSION == 53
     msg = parse_game_message(_json({
         "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
         "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,
@@ -106,6 +152,42 @@ def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
         "svm-1", "X", "$KILLENEMY", "Ещё одним монстром меньше.", "WOLF", True,
     )
     assert json.loads(SvmModeCmd(replace=True).to_json()) == {"type": "svm_mode", "replace": True}
+
+
+def test_v64_player_audio_is_a_silent_pcm_stream_with_delivery_timing():
+    assert PROTOCOL_VERSION >= 64
+    chunk = PttAudioCmd(data="AAE=", rate=16000, sequence=0, received_at_us=1794567890123456)
+    assert json.loads(chunk.to_json()) == {
+        "type": "ptt_audio", "data": "AAE=", "rate": 16000,
+        "sequence": 0, "received_at_us": 1794567890123456,
+    }
+
+
+def test_v65_routine_distinguishes_unavailable_catalog_from_legacy_bridge():
+    assert PROTOCOL_VERSION == 65
+    payload = {"type": "routine", "npc": "X"}
+    legacy = parse_game_message(_json(payload))
+    assert isinstance(legacy, RoutineInfo) and legacy.event_activities is None
+
+    for catalog in ([], ["ZS_SIT_CAMPFIRE", "ZS_STAND_WP"]):
+        routine = parse_game_message(_json({**payload, "event_activities": catalog}))
+        assert isinstance(routine, RoutineInfo) and routine.event_activities == catalog
+
+
+def test_word_timings_are_optional_for_streamed_and_whole_audio():
+    old = SayAudioCmd.model_validate_json('{"type":"say_audio","npc":"X","line":"AIB_1","data":"AA=="}')
+    assert old.words is None and "words" not in json.loads(old.to_json())
+    timings = [(2, 0.123, 0.456)]
+    chunk = SayAudioCmd(npc="X", line="AIB_1", data="AA==", words=timings)
+    whole = SayCmd(npc="X", line="AIB_1", text="Ты опять здесь.", audio="AA==", words=timings)
+    assert json.loads(chunk.to_json())["words"] == json.loads(whole.to_json())["words"] == [[2, 0.123, 0.456]]
+
+
+def test_v63_face_track_leaves_out_a_neutral_emotion():
+    face = SayFaceCmd(npc="X", line="AIB_1", fps=30, shapes=["jawOpen"], data="AA==")
+    assert json.loads(face.to_json()) == {
+        "type": "say_face", "npc": "X", "line": "AIB_1", "fps": 30, "shapes": ["jawOpen"], "data": "AA==",
+    }
 
 
 def test_hero_deed_retains_ownership_ids_and_engine_witnesses():
@@ -285,6 +367,48 @@ def test_v48_chest_take_names_the_source_and_keeps_self_as_taker():
     }
 
 
+@pytest.mark.parametrize("loss", [0, 10_000])
+@pytest.mark.parametrize("kind", ["knockout", "wound"])
+def test_v59_far_fight_names_both_participants_and_preserves_zero_or_large_loss(loss, kind):
+    assert PROTOCOL_VERSION >= NPC_FAR_FIGHT_PROTOCOL == 59
+    effect = {"do": kind, "by": "BAU_950_LOBART", "loss": loss}
+    if kind == "wound":
+        effect["by_loss"] = loss
+    assert StoryEffect.model_validate(effect).do == kind
+    command = StoryEffectCmd(req="far-fight", npc="BAU_951_HILDA", effects=[effect])
+    assert json.loads(command.to_json()) == {
+        "type": "story_effect", "req": "far-fight", "npc": "BAU_951_HILDA", "effects": [effect],
+    }
+    value = {"winner_hp": 1, "dropped": None} if kind == "knockout" else {"self_hp": 1, "by_hp": 1}
+    result = parse_game_message(_json({
+        "type": "result", "req": command.req, "ok": True,
+        "value": value,
+    }))
+    assert result.value == value
+
+
+@pytest.mark.parametrize("fields", [
+    {"by": "LOBART"}, {"loss": 0}, {"by": "", "loss": 0},
+    {"by": "LOBART", "loss": -1}, {"by": "LOBART", "loss": 1.5},
+    {"by": "LOBART", "loss": True}, {"by": "LOBART", "loss": "0"},
+])
+@pytest.mark.parametrize("kind", ["knockout", "wound"])
+def test_v59_far_fight_requires_by_and_nonnegative_integer_loss(fields, kind):
+    if kind == "wound":
+        fields = {**fields, "by_loss": 0}
+    with pytest.raises(ValidationError):
+        StoryEffectCmd(req="far-fight", npc="HILDA", effects=[{"do": kind, **fields}])
+
+
+@pytest.mark.parametrize("fields", [{}, {"by_loss": -1}, {"by_loss": 1.5}, {"by_loss": True},
+                                     {"by_loss": "0"}])
+def test_v59_wound_requires_nonnegative_integer_by_loss(fields):
+    with pytest.raises(ValidationError):
+        StoryEffectCmd(req="far-timeout", npc="HILDA", effects=[{
+            "do": "wound", "by": "LOBART", "loss": 0, **fields,
+        }])
+
+
 def test_v48_story_state_preserves_batch_world_positions_and_legacy_absence():
     command = StoryStateCmd(req="far-positions", npcs=["HILDA", "LOBART", "PC_HERO"])
     assert json.loads(command.to_json())["npcs"] == ["HILDA", "LOBART", "PC_HERO"]
@@ -394,6 +518,17 @@ def test_hero_deed_requires_known_action_and_position():
 def test_action_command_omits_empty_fields():
     cmd = ActionCmd(id="a1", npc="X", action="wait", args={"ms": 500})
     assert cmd.to_json() == '{"type":"action","id":"a1","npc":"X","action":"wait","args":{"ms":500}}'
+
+
+def test_v61_say_serializes_optional_face_cues_and_leak():
+    assert PROTOCOL_VERSION >= 61
+    fields = {"npc": "X", "line": "AIB_1", "text": "Ну да, конечно."}
+    assert json.loads(SayCmd(**fields).to_json()) == {"type": "say", **fields}
+    cues = [{"cue": "doubt", "word": 2}]
+    leak = {"felt": "afraid", "half": "upper", "word": 0}
+    assert json.loads(SayCmd(**fields, cues=cues, leak=leak).to_json()) == {
+        "type": "say", **fields, "cues": cues, "leak": leak,
+    }
 
 
 def test_v15_npc_to_npc():
@@ -755,7 +890,9 @@ def test_v37_physical_traces_and_noise_clock():
         "hero_cm",
         "from_hero",
         "age",
+        "npc",  # v58: only a body's, whose body it is; never who caused a trace
     }
+    assert trace.npc is None
     legacy = parse_game_message('{"type":"npc_views","t":1,"views":[{"npc":"X","name":"x"}]}')
     assert isinstance(legacy, NpcViews) and legacy.views[0].traces == []
     noise = parse_game_message('{"type":"npc_event","npc":"X","kind":"noise","time":725}')
@@ -801,5 +938,6 @@ def test_v40_broken_trace_has_age_and_no_culprit(age):
     assert (trace.kind, trace.name, trace.age) == ("broken", "сломанный забор", age)
     assert trace.waypoint == "NW_FARM1_OUT_02" and trace.distance == 210
     assert set(trace.model_dump()) == {
-        "id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age",
+        "id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age", "npc",
     }
+    assert trace.npc is None  # v58's field is a dead body's id, absent from debris

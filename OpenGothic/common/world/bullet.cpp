@@ -2,14 +2,18 @@
 
 #include <Tempest/Log>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <unordered_map>
 
 #include "graphics/visualfx.h"
+#include "world/arrowdepth.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/objects/interactive.h"
 #include "world.h"
-#include "testbench.h"
-#include "gothic.h"
+#include "world/benchhooks.h"
+#include "settings.h"
 
 using namespace Tempest;
 
@@ -24,14 +28,16 @@ Bullet::Bullet(World& owner, const Item& itm, const Vec3& pos)
   if(itm.isSpellOrRune()) {
     material   = ItemMaterial::MAT_COUNT;
     int32_t id = itm.spellId();
-    const VisualFx* vfx = owner.script().spellVfx(id);
+    const VisualFx* vfx = owner.rules().spellVfx(id);
     if(vfx!=nullptr) {
       auto e = Effect(*vfx,owner,pos,SpellFxKey::Cast);
       setView(std::move(e));
       }
     } else {
     material = uint8_t(itm.handle().material);
-    setView(owner.addView(itm.handle()));
+    // the item's view with its effect, as the arrow in the hand: shot, Gothic's SetLevel(2)
+    setView(ItemView(owner,itm.handle()));
+    view.setLevel(2);
     }
 
   setPosition(pos);
@@ -61,7 +67,7 @@ void Bullet::setTargetRange(float t) {
   obj->setTargetRange(t);
   }
 
-void Bullet::setView(MeshObjects::Mesh &&m) {
+void Bullet::setView(ItemView&& m) {
   view = std::move(m);
   updateMatrix();
   }
@@ -123,10 +129,10 @@ void Bullet::onStop() {
   if(precise && zone==HitZones::None && !landed && !isFinished()) {
     const auto p = obj->position();
     char buf[160];
-    const auto by = TestBench::who(origin());
+    const auto by = Bench::who(origin());
     std::snprintf(buf,sizeof(buf),"arrow missed: flew out at %.0f %.0f %.0f, flew %.0f cm, by %.*s",p.x,p.y,p.z,double(pathLength()),
                   int(by.size()),by.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   flg = Flg(flg|Stopped);
   updateMatrix();
@@ -142,14 +148,14 @@ Tempest::Vec3 Bullet::direction() const {
 
 void Bullet::onMove() {
   updateMatrix();
-  if(!isSpell() && TestBench::isActive()) {
+  if(!isSpell() && Bench::isActive()) {
     const auto p = position();
-    TestBench::arrowAt(this,p.x,p.y,p.z);
+    Bench::arrowAt(this,p.x,p.y,p.z);
     }
   }
 
 bool Bullet::stopsAtWorldHit() const {
-  return !isSpell() && Gothic::physicsFlags().arrowSticking;
+  return !isSpell() && Settings::physicsFlags().arrowSticking;
   }
 
 void Bullet::onSpellWorldHit(const DynamicWorld::BulletWorldHit& hit) {
@@ -159,19 +165,35 @@ void Bullet::onSpellWorldHit(const DynamicWorld::BulletWorldHit& hit) {
   onCollide(hit.material);
   }
 
+ItemView&& Bullet::stuckView() {
+  view.fadeEffectIn(StuckEffectMs);
+  return std::move(view);
+  }
+
+void Bullet::hitLevel() {
+  if(view.level()<3)
+    view.setLevel(3);
+  }
+
 void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
-  TestBench::ownMeshArrowHit(hit.movable!=nullptr ? hit.movable->zenId : uint32_t(-1),hit.point,hit.normal);
+  hitLevel();
+  Bench::ownMeshArrowHit(hit.movable!=nullptr ? hit.movable->zenId : uint32_t(-1),hit.point,hit.normal);
   impactAt = hit.point;
   impactOwner = hit.bone;
   impactKnown = true;
   auto matrix = obj->matrix();
+  // the visible arrow only: its tip past the hit point (world/arrowdepth)
+  const float tip = ArrowDepth::tipLength(view.protoMesh());
   if(auto* npc = wrld->npcForRagdoll(hit.ragdoll)) {
     npc->addCorpseArrowImpulse(*this);
-    if(npc->stickArrow(std::move(view),hit.bone,matrix,visualName)) {
+    auto inBody = matrix;
+    ArrowDepth::sink(inBody,hit.point,ArrowDepth::Body,tip);
+    // the bone by the hit, not by the moved mesh's origin
+    if(npc->stickArrow(stuckView(),hit.bone,inBody,visualName,&hit.point)) {
       char buf[160];
-      const auto who = TestBench::who(npc);
+      const auto who = Bench::who(npc);
       std::snprintf(buf,sizeof(buf),"arrow stuck corpse %.*s bone %zu",int(who.size()),who.data(),hit.bone);
-      TestBench::note(buf);
+      Bench::note(buf);
       return;
       }
     }
@@ -181,12 +203,16 @@ void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
   const auto sightPoint = hit.point+sightNormal*3.f;
   const auto surface = hit.vob!=nullptr && hit.vob->isDoor() ? "door" :
                        (std::abs(hit.normal.y)<.7f ? "wall" : "ground");
-  if(wrld->stickArrow(std::move(view),matrix,visualName,hit.movable,origin(),&sightPoint,surface)) {
+  // without a tip's length the arrow stays as before, turned as well
+  if(tip>0.f)
+    ArrowDepth::faceSurface(matrix,hit.incoming,-sightNormal);
+  ArrowDepth::sink(matrix,hit.point,ArrowDepth::world(hit.material),tip);
+  if(wrld->stickArrow(stuckView(),matrix,visualName,hit.movable,origin(),&sightPoint,surface)) {
     char buf[256];
-    std::snprintf(buf,sizeof(buf),"arrow stuck world: at %.9g %.9g %.9g normal %.9g %.9g %.9g material %u",
+    std::snprintf(buf,sizeof(buf),"arrow stuck world: at %.9g %.9g %.9g normal %.9g %.9g %.9g material %u tip %.9g",
                   double(hit.point.x),double(hit.point.y),double(hit.point.z),
-                  double(hit.normal.x),double(hit.normal.y),double(hit.normal.z),unsigned(hit.material));
-    TestBench::note(buf);
+                  double(hit.normal.x),double(hit.normal.y),double(hit.normal.z),unsigned(hit.material),double(tip));
+    Bench::note(buf);
     }
   }
 
@@ -199,11 +225,12 @@ void Bullet::onCollide(asset::MaterialGroup matId) {
     landed = true;
     const auto p = obj->position();
     char buf[160];
-    const auto by = TestBench::who(origin());
+    const auto by = Bench::who(origin());
     std::snprintf(buf,sizeof(buf),"arrow missed: came down at %.0f %.0f %.0f, flew %.0f cm, by %.*s",p.x,p.y,p.z,double(pathLength()),
                   int(by.size()),by.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
+  hitLevel();
   if(matId != asset::MaterialGroup::NONE) {
     if(material < ItemMaterial::MAT_COUNT) {
       auto s = wrld->addLandHitEffect(ItemMaterial(material),matId,obj->matrix());
@@ -217,7 +244,7 @@ void Bullet::onCollide(asset::MaterialGroup matId) {
   }
 
 bool Bullet::onCollidePrecise(Npc& npc, const Vec3& from, const Vec3& to) {
-  if(&npc==origin() || isFinished())
+  if(&npc==origin() || isFinished() || &npc==passedDodger)
     return false;
   // between the arm and the trunk, over the head: past it
   float t = 0;
@@ -231,39 +258,63 @@ bool Bullet::onCollidePrecise(Npc& npc, const Vec3& from, const Vec3& to) {
   impactKnown = true;
   const int32_t hp = npc.attribute(ATR_HITPOINTS);
   const bool    ret = onCollide(npc);
-  if(TestBench::isActive()) {
+  if(!ret && &npc==passedDodger) {
+    if(Bench::isActive()) {
+      const auto who = Bench::who(&npc);
+      const auto by  = Bench::who(origin());
+      char buf[256];
+      std::snprintf(buf,sizeof(buf),"arrow passed %.*s: inside its dodge window, flies on, by %.*s",
+                    int(who.size()),who.data(),int(by.size()),by.data());
+      Bench::note(buf);
+      }
+    return false;
+    }
+  if(Bench::isActive()) {
     const auto p   = from + Vec3::normalize(to-from)*t;
-    const auto who = TestBench::who(&npc);
-    const auto by  = TestBench::who(origin());
+    const auto who = Bench::who(&npc);
+    const auto by  = Bench::who(origin());
     char buf[256];
     std::snprintf(buf,sizeof(buf),"arrow hit %.*s: %.*s, hp %d -> %d, draw %.2f, flew %.0f cm, at %.0f %.0f %.0f, by %.*s",
                   int(who.size()),who.data(),int(HitZones::name(z).size()),HitZones::name(z).data(),
                   int(hp),int(npc.attribute(ATR_HITPOINTS)),double(drawK),double(pathLength()+t),p.x,p.y,p.z,
                   int(by.size()),by.data());
-    TestBench::note(buf);
+    Bench::note(buf);
     }
   return ret;
   }
 
 bool Bullet::onCollide(Npc& npc) {
-  if(&npc==origin() || isFinished())
+  if(&npc==origin() || isFinished() || &npc==passedDodger)
     return false;
 
+  // An arrow or a bolt into a dodger inside the dodge's window: takeDamage refuses it (and logs it); it is not
+  // pinned into the body and does not stop, it flies on as a miss. A spell still bursts there, harmless.
+  const bool passes = !isSpell() && npc.isMeleeDodgeInvulnerable();
   if(ow!=nullptr) {
     // no damage between ally npc's, only emit pfx effect
-    const bool friendlyFire = wrld->script().isFriendlyFire(*ow, npc);
+    const bool friendlyFire = wrld->rules().isFriendlyFire(*ow, npc);
     if(!friendlyFire) {
       if(isSpell())
         npc.takeDamage(*ow,this,vfx.handle(),spellId()); else
         npc.takeDamage(*ow,this);
       }
     }
+  if(passes) {
+    passedDodger = &npc;
+    zone         = HitZones::None;
+    impactOwner  = size_t(-1);
+    impactKnown  = false;
+    return false;
+    }
+  hitLevel();
   applySpellPhysics(&npc);
   vfx.setKey(*wrld,SpellFxKey::Collide);
   vfx.setLooped(false);
   vfx.setPhysicsDisable();
   wrld->runEffect(std::move(vfx));
 
+  // where the tip goes: 12 cm past the entry into the hit zone, at the body's centre when that is unknown
+  float depth = ArrowDepth::Body;
   if(stopsAtWorldHit() && !impactKnown) {
     // Damage and the existing physical reaction consumed the legacy impact
     // metadata above. Resolve this additional frame only for the visual pin.
@@ -278,6 +329,7 @@ bool Bullet::onCollide(Npc& npc) {
       }
     else {
       impactAt = npc.collosionCenter();
+      depth    = 0;
       }
     impactKnown = true;
     }
@@ -288,13 +340,14 @@ bool Bullet::onCollide(Npc& npc) {
     matrix.set(3,0,point.x);
     matrix.set(3,1,point.y);
     matrix.set(3,2,point.z);
-    if(npc.stickArrow(std::move(view),impactOwner,matrix,visualName)) {
+    ArrowDepth::sink(matrix,point,depth,ArrowDepth::tipLength(view.protoMesh()));
+    if(npc.stickArrow(stuckView(),impactOwner,matrix,visualName,&point)) {
       Npc::ArrowPinProbe pin;
       npc.stuckArrowProbe(npc.stuckArrowCount()-1,pin);
       char buf[160];
-      const auto who = TestBench::who(&npc);
+      const auto who = Bench::who(&npc);
       std::snprintf(buf,sizeof(buf),"arrow stuck npc %.*s bone %zu",int(who.size()),who.data(),pin.bone);
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     }
   return true;
@@ -312,12 +365,80 @@ void Bullet::updateMatrix() {
   }
 
 void Bullet::applySpellPhysics(Npc* target) {
-  if(!isSpell() || spellPhysicsApplied || !Gothic::physicsFlags().spellPhysics)
+  if(!isSpell() || spellPhysicsApplied || !Settings::physicsFlags().spellPhysics)
     return;
-  const auto kind = wrld->script().physicalSpell(spellId());
-  if(kind!=GameScript::PhysicalSpell::WindFist && kind!=GameScript::PhysicalSpell::Fireball)
+  const auto kind = wrld->rules().physicalSpell(spellId());
+  if(kind!=::PhysicalSpell::WindFist && kind!=::PhysicalSpell::Fireball)
     return;
   spellPhysicsApplied = true;
   const auto point = target!=nullptr ? target->collosionCenter() : impactPoint();
   wrld->applySpellImpact(spellId(),point,origin(),target);
   }
+
+// Opt-in flight evidence; observes the queries and callbacks used by the actual
+// projectile instead of issuing extra collision tests or consuming random draws.
+namespace ArrowTrace {
+struct Output {
+  Output() {
+    const auto* path=std::getenv("OPENGOTHIC_ARROW_TRACE");
+    if(path!=nullptr && path[0]!='\0')
+      file=std::fopen(path,"w");
+    if(file!=nullptr)
+      std::fputs("id,step,game_ms,phase,dt,x,y,z,dx,dy,dz,path_cm,bounces,range_cm,spell,precise,stopped,origin,target,target_x,target_y,target_z,npc,npc_x,npc_y,npc_z,has_hit,fraction,hit_x,hit_y,hit_z,nx,ny,nz,material,category,reflect_threshold,hit_limit,path_limit,living_bodies,arrow_physics,arrow_sticking\n",file);
+    }
+  ~Output() { if(file!=nullptr) std::fclose(file); }
+  std::FILE* file=nullptr;
+  uint64_t next=0;
+  std::unordered_map<const void*,uint64_t> ids;
+  };
+
+inline Output& output() {
+  static Output value;
+  return value;
+  }
+
+struct Writer final : DynamicWorld::BulletTrace {
+void forget(const DynamicWorld::BulletBody& body) override {
+  auto& out=output();
+  if(out.file!=nullptr) out.ids.erase(&body);
+  }
+
+void write(const DynamicWorld::BulletBody& body, DynamicWorld::BulletCallback* callback,
+           const char* phase, uint64_t dt, const void* npcPtr,
+           bool hasHit, float fraction,
+           Tempest::Vec3 hit, Tempest::Vec3 normal, unsigned material, unsigned category) override {
+  auto& out=output();
+  if(out.file==nullptr) return;
+  const auto* npc=static_cast<const Npc*>(npcPtr);
+  const auto* bullet=dynamic_cast<const Bullet*>(callback);
+  auto* origin=bullet!=nullptr ? bullet->origin() : nullptr;
+  const auto* target=origin!=nullptr ? origin->target() : nullptr;
+  auto [entry,inserted]=out.ids.try_emplace(&body,0);
+  if(inserted) entry->second=++out.next;
+  const auto p=body.position(), d=body.direction();
+  const auto tp=target!=nullptr ? target->collosionCenter() : Tempest::Vec3{};
+  const auto np=npc!=nullptr ? npc->collosionCenter() : Tempest::Vec3{};
+  const auto by=Bench::who(origin), at=Bench::who(target), who=Bench::who(npc);
+  std::fprintf(out.file,"%llu,%llu,%llu,%s,%llu,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%d,%.9g,%d,%d,%d,%.*s,%.*s,%.9g,%.9g,%.9g,%.*s,%.9g,%.9g,%.9g,%d,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%u,%u,%.9g,%d,%d,%d,%d,%d\n",
+    static_cast<unsigned long long>(entry->second),static_cast<unsigned long long>(Bench::stepCount()),
+    static_cast<unsigned long long>(origin!=nullptr ? origin->world().tickCount() : 0),phase,
+    static_cast<unsigned long long>(dt),double(p.x),double(p.y),double(p.z),
+    double(d.x),double(d.y),double(d.z),double(body.pathLength()),body.hitCount(),double(body.targetRange()),
+    int(body.isSpell()),int(callback!=nullptr && callback->isPrecise()),int(bullet!=nullptr && bullet->isFinished()),
+    int(by.size()),by.data(),int(at.size()),at.data(),double(tp.x),double(tp.y),double(tp.z),
+    int(who.size()),who.data(),double(np.x),double(np.y),double(np.z),int(hasHit),double(fraction),
+    double(hit.x),double(hit.y),double(hit.z),double(normal.x),double(normal.y),double(normal.z),material,category,
+    double(body.speed()*fraction),int(body.hitCount()>3),int(body.pathLength()>10000),
+    Settings::getI("GAME","living_bodies"),Settings::getI("GAME","arrow_physics"),
+    Settings::getI("GAME","arrow_sticking"));
+  std::fflush(out.file);
+  }
+};
+
+DynamicWorld::BulletTrace* hook() {
+  const auto* path=std::getenv("OPENGOTHIC_ARROW_TRACE");
+  if(path==nullptr || path[0]=='\0') return nullptr;
+  static Writer value;
+  return &value;
+  }
+}

@@ -1,0 +1,85 @@
+# Water look: the sea around the lighthouse at noon and at 16:00 from four sides (one faces the sun, for
+# the glint), and the cauldron up close. Before/after for engine water changes (IOR, sun glint);
+# cameras from khorinis-bible.bench and city-hearth-fire.bench.
+cheat god
+clear 1000000
+overlay off
+view hide animated morph pfx
+cam lift off
+
+# lighthouse-noon
+set time 12 0
+cam look -2000.000
+goto pos -1650.000 5500.000 16340.000
+cam world 3924.041 -1300.000 -36.607
+wait 34
+cam hold
+wait 6000
+set time 12 0
+wait 300
+shot lighthouse-noon
+wait 300
+
+# sea-16-0
+set time 16 0
+cam look -2000.000
+goto pos -1650.000 5500.000 16340.000
+cam world 3924.041 -1300.000 -36.607
+wait 34
+cam hold
+wait 6000
+set time 16 0
+wait 300
+shot sea-16-0
+wait 300
+
+# sea-16-90
+set time 16 0
+cam look -2000.000
+goto pos -1650.000 5500.000 16340.000
+cam world 3924.041 -1300.000 53.393
+wait 34
+cam hold
+wait 6000
+set time 16 0
+wait 300
+shot sea-16-90
+wait 300
+
+# sea-16-180
+set time 16 0
+cam look -2000.000
+goto pos -1650.000 5500.000 16340.000
+cam world 3924.041 -1300.000 143.393
+wait 34
+cam hold
+wait 6000
+set time 16 0
+wait 300
+shot sea-16-180
+wait 300
+
+# sea-16-270
+set time 16 0
+cam look -2000.000
+goto pos -1650.000 5500.000 16340.000
+cam world 3924.041 -1300.000 233.393
+wait 34
+cam hold
+wait 6000
+set time 16 0
+wait 300
+shot sea-16-270
+wait 300
+
+# cauldron close, poor quarter; vob 21097 CAULDRON_OC
+set time 12 0
+cam look -600.000
+goto pos 2421.000 532.000 -6253.000
+cam world 149.883 -500.000 65.144763
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot cauldron-close
+wait 300

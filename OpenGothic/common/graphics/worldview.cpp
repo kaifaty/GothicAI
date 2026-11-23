@@ -1,23 +1,684 @@
 #include "worldview.h"
 
 #include <Tempest/Application>
+#include <condition_variable>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <mutex>
+#include <numeric>
+#include <stdexcept>
+#include <thread>
 
 #include "graphics/mesh/submesh/packedmesh.h"
-#include "game/gametime.h"
+#include "graphics/streamedvisual.h"
+#include "graphics/grass/grassfield.h"
 #include "camera.h"
 #include "shaders.h"
+#include "world/chunkresidency.h"
+#include "loadprobe.h"
+#include "frameprofile.h"
+#include "utils/workers.h"
+#include "gameservices.h"
+#include "physics/dynamicworld.h"
+#include "physics/worldwind.h"
 
 using namespace Tempest;
 
+struct WorldView::VobStreaming : std::enable_shared_from_this<VobStreaming> {
+  struct Chunk {
+    std::vector<StreamedVisual*> visuals;
+    ChunkResidency::State state = ChunkResidency::State::Outside;
+    size_t cursor = 0;
+    size_t unpublished = 0, missing = 0;
+    bool queued = false;
+    };
+  using Key = std::pair<int32_t,int32_t>;
+  ChunkResidency& residency;
+  std::map<Key,Chunk> chunks;
+  std::deque<Key> pending;
+  uint64_t subscription = 0;
+  bool enabled = true, workQueued = false, started = false;
+  ChunkResidency::Clock::time_point firstUpdate, previousUpdate;
+
+  explicit VobStreaming(ChunkResidency& residency):residency(residency) {
+    const auto* flag=std::getenv("OPENGOTHIC_VOB_STREAMING");
+    enabled=flag==nullptr || std::strcmp(flag,"0")!=0;
+    subscription=residency.subscribe([this](ChunkId id, ChunkResidency::State, ChunkResidency::State) {
+      auto found=chunks.find({id.x,id.z});
+      if(found!=chunks.end())
+        transition(found->first,found->second,this->residency.desired(id,found->second.state));
+      });
+    }
+
+  ~VobStreaming() {
+    residency.unsubscribe(subscription);
+    for(auto& [id,chunk]:chunks)
+      for(auto* visual:chunk.visuals)
+        visual->streamView=nullptr;
+    }
+
+  void publish(Chunk& chunk, StreamedVisual& visual) {
+    if(visual.isViewPublished())
+      return;
+    const bool wasMissing=visual.isViewMissing();
+    const auto before=ChunkResidency::Clock::now();
+    visual.createView();
+    chunk.unpublished-=visual.isViewPublished();
+    chunk.missing-=wasMissing && !visual.isViewMissing();
+    auto& stats=residency.vobStats();
+    const double ms=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-before).count();
+    ++stats.vobCreated;
+    stats.vobDrawInstances+=visual.viewNodesCount();
+    stats.vobPublicationMs+=ms;
+    stats.vobCreateMs+=ms;
+    }
+
+  void release(Chunk& chunk, StreamedVisual& visual) {
+    if(!visual.isViewPublished())
+      return;
+    const bool wasMissing=visual.isViewMissing();
+    visual.releaseView();
+    chunk.missing+=!wasMissing && visual.isViewMissing();
+    ++chunk.unpublished;
+    ++residency.vobStats().vobReleased;
+    }
+
+  void queue(Key id, Chunk& chunk) {
+    if(chunk.queued)
+      return;
+    chunk.queued=true;
+    chunk.cursor=0;
+    pending.push_back(id);
+    }
+
+  void transition(Key id, Chunk& chunk, ChunkResidency::State next) {
+    chunk.state=next;
+    if(!enabled)
+      return;
+    if(next==ChunkResidency::State::Near)
+      for(auto* visual:chunk.visuals)
+        publish(chunk,*visual);
+    else if(next==ChunkResidency::State::Outside)
+      for(auto* visual:chunk.visuals)
+        release(chunk,*visual);
+    else
+      queue(id,chunk);
+    }
+
+  void prepare() {
+    if(!started) {
+      firstUpdate=previousUpdate=ChunkResidency::Clock::now();
+      started=true;
+      }
+    residency.vobStats().vobPublicationMs=0;
+    if(workQueued || pending.empty())
+      return;
+    workQueued=true;
+    // A frame owns one cooperative slice. Retain only the small cell cursor
+    // between slices so a dense city cell never becomes one long callback.
+    residency.enqueue([weak=weak_from_this()](ChunkResidency::Clock::time_point deadline) {
+      auto self=weak.lock();
+      if(!self)
+        return true;
+      while(!self->pending.empty() && ChunkResidency::Clock::now()<deadline) {
+        const auto key=self->pending.front();
+        auto found=self->chunks.find(key);
+        if(found==self->chunks.end()) {
+          self->pending.pop_front();
+          continue;
+          }
+        auto& chunk=found->second;
+        if(chunk.state==ChunkResidency::State::Far) {
+          while(chunk.cursor<chunk.visuals.size() && ChunkResidency::Clock::now()<deadline)
+            self->publish(chunk,*chunk.visuals[chunk.cursor++]);
+          if(chunk.cursor<chunk.visuals.size())
+            break;
+          }
+        chunk.queued=false;
+        self->pending.pop_front();
+        }
+      self->workQueued=false;
+      return true;
+      });
+    }
+
+  void finish() {
+    const auto now=ChunkResidency::Clock::now();
+    if(!started) {
+      firstUpdate=previousUpdate=now;
+      started=true;
+      }
+    auto& stats=residency.vobStats();
+    stats.vobNear=stats.vobFar=stats.vobOutside=stats.vobPending=stats.vobNearMissing=0;
+    for(auto& [key,chunk]:chunks) {
+      const auto next=residency.desired({key.first,key.second},chunk.state);
+      if(next!=chunk.state)
+        transition(key,chunk,next);
+      switch(chunk.state) {
+        case ChunkResidency::State::Near: stats.vobNear+=chunk.visuals.size(); break;
+        case ChunkResidency::State::Far: stats.vobFar+=chunk.visuals.size(); break;
+        case ChunkResidency::State::Outside: stats.vobOutside+=chunk.visuals.size(); break;
+        }
+      if(chunk.state==ChunkResidency::State::Outside)
+        continue;
+      stats.vobPending+=chunk.unpublished;
+      if(chunk.state==ChunkResidency::State::Near)
+        stats.vobNearMissing+=chunk.missing;
+      }
+    stats.vobNearMissingSeconds+=double(stats.vobNearMissing)*std::chrono::duration<double>(now-previousUpdate).count();
+    previousUpdate=now;
+    if(stats.vobPending==0 && stats.vobReadyMs<0)
+      stats.vobReadyMs=std::chrono::duration<double,std::milli>(now-firstUpdate).count();
+    }
+
+  bool ready() const { return residency.stats().vobPending==0 && !workQueued; }
+  std::string waitState() const {
+    return "pending="+std::to_string(residency.stats().vobPending)+" queued="+std::to_string(int(workQueued));
+    }
+  };
+
+struct WorldView::LandscapeStreaming {
+  struct Chunk {
+    std::unique_ptr<Landscape> gpu;
+    std::unique_ptr<PackedMesh> ready;
+    size_t meshlets=0, legacyMeshlets=0;
+    std::exception_ptr error;
+    bool failed=false;
+    bool nearFailed=false;
+    bool failureReported=false;
+    uint64_t generation=0;
+    };
+  WorldView& view;
+  ChunkResidency& residency;
+  std::shared_ptr<const ChunkMeshSource> source;
+  std::vector<std::vector<uint32_t>> triangles;
+  std::vector<uint32_t> materials;
+  LandscapePages pages;
+  std::vector<Chunk> chunks;
+  std::mutex mutex;
+  std::condition_variable wake;
+  std::deque<std::pair<size_t,uint64_t>> jobs;
+  size_t readyCount=0;
+  bool packing=false;
+  size_t releasedSourceBytes=0;
+  bool stopping=false;
+  bool firstUpdate=true;
+  bool wasPending=true;
+  double preloadMs=0;
+  double initialPackMs=0;
+  double initialReadMs=0; // the Near cells' reads within initialPackMs
+  double initialUploadMs=0;
+  uint64_t subscription=0;
+  std::thread worker;
+
+  LandscapeStreaming(WorldView& view, asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs)
+    :view(view),residency(residency),source(residency.table().source),
+     triangles(chunkSourceLists(residency.table())),materials(PackedMesh::landscapeMaterialMap(mesh)),
+     chunks(residency.table().entries.size()),preloadMs(preloadMs) {
+    if(!source)
+      throw std::runtime_error("Landscape streaming requires a file-backed chunk source");
+    // Physics and cloth have consumed the stitched mesh (a catalogue start has none). Repacking reads only
+    // the selected chunk; no dense world geometry survives on the CPU.
+    releasedSourceBytes=mesh.vertices.capacity()*sizeof(mesh.vertices[0])+
+                        mesh.features.capacity()*sizeof(mesh.features[0])+
+                        mesh.polygons.vertex_indices.capacity()*sizeof(mesh.polygons.vertex_indices[0])+
+                        mesh.polygons.feature_indices.capacity()*sizeof(mesh.polygons.feature_indices[0])+
+                        mesh.polygons.material_indices.capacity()*sizeof(mesh.polygons.material_indices[0])+
+                        mesh.polygons.lightmap_indices.capacity()*sizeof(mesh.polygons.lightmap_indices[0])+
+                        mesh.polygons.flags.capacity()*sizeof(mesh.polygons.flags[0]);
+    mesh={};
+    subscription=residency.subscribe([this](ChunkId id, ChunkResidency::State, ChunkResidency::State next) {
+      const auto& entries=this->residency.table().entries;
+      const auto at=std::find_if(entries.begin(),entries.end(),[&](const auto& e) { return e.id==id; });
+      const size_t i=size_t(at-entries.begin());
+      auto& chunk=chunks[i];
+      if(next==ChunkResidency::State::Outside) {
+        {
+        std::lock_guard guard(mutex);
+        ++chunk.generation;
+        takeReady(chunk);
+        }
+        if(chunk.gpu) {
+          chunk.gpu.reset();
+          this->residency.recordRelease();
+          }
+        if(this->view.grass)
+          this->view.grass->dropChunk(id);
+        }
+      else if(next==ChunkResidency::State::Near && !chunk.gpu) {
+        // Build Near synchronously, including teleports. Invalidate any
+        // queued/in-flight Far result rather than waiting on the worker.
+        std::unique_ptr<PackedMesh> packed;
+        bool retry=false;
+        {
+        std::lock_guard guard(mutex);
+        if(chunk.nearFailed)
+          return;
+        retry=chunk.failed;
+        ++chunk.generation;
+        packed=takeReady(chunk);
+        chunk.error=nullptr;
+        }
+        const auto t=ChunkResidency::Clock::now();
+        try {
+          if(!packed) {
+            if(retry) {
+              packed=pack(i,true);
+              }
+            else {
+              try {
+                packed=pack(i,false,firstUpdate ? &initialReadMs : nullptr);
+                }
+              catch(...) {
+                packed=pack(i,true);
+                }
+              }
+            }
+          }
+        catch(...) {
+          {
+          std::lock_guard guard(mutex);
+          chunk.failed=true;
+          chunk.nearFailed=true;
+          }
+          reportFailure(i,std::current_exception());
+          return;
+          }
+        {
+        std::lock_guard guard(mutex);
+        chunk.failed=false;
+        }
+        if(firstUpdate)
+          initialPackMs+=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
+        publish(i,*packed);
+        }
+      else if(next==ChunkResidency::State::Far && !chunk.gpu) {
+        std::lock_guard guard(mutex);
+        if(chunk.failed)
+          return;
+        jobs.emplace_back(i,++chunk.generation);
+        wake.notify_one();
+        }
+      });
+    worker=std::thread([this] { run(); });
+    }
+
+  ~LandscapeStreaming() {
+    residency.unsubscribe(subscription);
+    {
+    std::lock_guard guard(mutex);
+    stopping=true;
+    }
+    wake.notify_one();
+    worker.join();
+    }
+
+  void run() {
+    Workers::setThreadName("Landscape packing");
+    for(;;) {
+      size_t i;
+      uint64_t generation;
+      {
+      std::unique_lock guard(mutex);
+      // Publishing is limited to one package per frame; do not build an
+      // unbounded second copy of the world while that queue catches up.
+      wake.wait(guard,[&] { return stopping || (!jobs.empty() && readyCount==0); });
+      if(stopping)
+        return;
+      std::tie(i,generation)=jobs.front();
+      jobs.pop_front();
+      if(chunks[i].generation!=generation || chunks[i].failed)
+        continue;
+      packing=true;
+      }
+      std::unique_ptr<PackedMesh> packed;
+      std::exception_ptr error;
+      try {
+        packed=pack(i);
+        }
+      catch(...) {
+        error=std::current_exception();
+        }
+      std::lock_guard guard(mutex);
+      if(chunks[i].generation==generation) {
+        chunks[i].ready=std::move(packed);
+        chunks[i].error=error;
+        chunks[i].failed=bool(error);
+        readyCount+=chunks[i].ready!=nullptr;
+        }
+      else
+        packed.reset();
+      packing=false;
+      }
+    }
+
+  // Called with mutex held. Waking the worker here bounds ready CPU packages
+  // to one, without making the frame wait for any packing work.
+  std::unique_ptr<PackedMesh> takeReady(Chunk& chunk) {
+    auto packed=std::move(chunk.ready);
+    if(packed) {
+      --readyCount;
+      wake.notify_one();
+      }
+    return packed;
+    }
+
+  std::string waitState() {
+    std::lock_guard guard(mutex);
+    size_t missing=0;
+    for(size_t i=0;i<chunks.size();++i)
+      if(residency.desired(i)!=ChunkResidency::State::Outside && !chunks[i].gpu && !chunks[i].failed)
+        ++missing;
+    return "packing="+std::to_string(int(packing))+" ready_packs="+std::to_string(readyCount)+
+           " jobs="+std::to_string(jobs.size())+" residency_idle="+std::to_string(int(residency.idle()))+
+           " missing_chunks="+std::to_string(missing);
+    }
+
+  bool ready() {
+    std::lock_guard guard(mutex);
+    if(packing || readyCount!=0 || !jobs.empty() || !residency.idle())
+      return false;
+    for(size_t i=0;i<chunks.size();++i)
+      if(residency.desired(i)!=ChunkResidency::State::Outside && !chunks[i].gpu && !chunks[i].failed)
+        return false;
+    return true;
+    }
+
+  void reportFailure(size_t i, std::exception_ptr error) {
+    if(chunks[i].failureReported)
+      return;
+    chunks[i].failureReported=true;
+    const auto& chunk=residency.table().entries[i];
+    try {
+      std::rethrow_exception(error);
+      }
+    catch(const std::exception& e) {
+      Log::e("Landscape chunk ",chunk.id.x,",",chunk.id.z," (",chunk.file,") packing failed: ",e.what());
+      }
+    catch(...) {
+      Log::e("Landscape chunk ",chunk.id.x,",",chunk.id.z," (",chunk.file,") packing failed: unknown exception");
+      }
+    }
+
+  std::unique_ptr<PackedMesh> pack(size_t i, bool currentFile=false, double* readMs=nullptr) const {
+    const auto t=ChunkResidency::Clock::now();
+    auto chunk=source->catalogue() ? source->readLandscape(i,currentFile) : source->read(i,triangles[i],currentFile);
+    if(readMs!=nullptr)
+      *readMs+=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
+    if(view.grass)
+      view.grass->addChunk(residency.table().entries[i].id,chunk.mesh);
+    const auto packLegacy = [&]() {
+      std::vector<uint32_t> selected(chunk.mesh.polygons.material_indices.size());
+      std::iota(selected.begin(),selected.end(),uint32_t(0));
+      return std::make_unique<PackedMesh>(chunk.mesh,selected,materials,chunk.vertexIds,chunk.featureIds);
+      };
+    if(chunk.clusterHierarchy) {
+      try {
+        auto packed = std::make_unique<PackedMesh>(chunk,materials);
+        if(LoadProbe::enabled())
+          packed->legacyLandscapeMeshlets = packLegacy()->meshletBounds.size();
+        return packed;
+        }
+      catch(const std::runtime_error& e) {
+        const auto& cell = residency.table().entries[i];
+        Log::e("[cluster-lod] ",cell.file," uses ordinary meshlets: ",e.what());
+        }
+      }
+    return packLegacy();
+    }
+
+  void publish(size_t i, const PackedMesh& packed) {
+    const auto t=ChunkResidency::Clock::now();
+    const auto id=residency.table().entries[i].id;
+    const Vec3 texturePosition((float(id.x)+0.5f)*ChunkId::Size,0,(float(id.z)+0.5f)*ChunkId::Size);
+    Resources::TextureLoadScope textureLoadScope(true);
+    chunks[i].gpu=std::make_unique<Landscape>(view.visuals,packed,pages,texturePosition);
+    chunks[i].meshlets=packed.meshletBounds.size();
+    chunks[i].legacyMeshlets=packed.clusterLevels.empty() ? packed.meshletBounds.size() : packed.legacyLandscapeMeshlets;
+    const auto ms=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
+    residency.recordPublication(ms,residency.desired(i)==ChunkResidency::State::Far);
+    if(firstUpdate)
+      initialUploadMs+=ms;
+    }
+
+  void prepare() {
+    std::vector<std::pair<size_t,std::exception_ptr>> errors;
+    {
+    std::lock_guard guard(mutex);
+    for(size_t i=0;i<chunks.size();++i)
+      if(chunks[i].error) {
+        errors.emplace_back(i,std::move(chunks[i].error));
+        chunks[i].error=nullptr;
+        }
+    }
+    for(auto& error:errors)
+      reportFailure(error.first,error.second);
+    // Exactly one Far publication is admitted each frame. Only complete CPU
+    // packages enter the frame queue; it never waits for the packing worker.
+    residency.enqueue([this](ChunkResidency::Clock::time_point deadline) {
+      if(residency.stats().published!=publishedBefore || ChunkResidency::Clock::now()>=deadline)
+        return true;
+      for(size_t i=0;i<chunks.size();++i) {
+        if(chunks[i].gpu || residency.desired(i)!=ChunkResidency::State::Far)
+          continue;
+        std::unique_ptr<PackedMesh> packed;
+        {
+        std::lock_guard guard(mutex);
+        if(chunks[i].failed)
+          continue;
+        packed=takeReady(chunks[i]);
+        }
+        if(packed) {
+          publish(i,*packed);
+          break;
+          }
+        }
+      return true;
+      });
+    publishedBefore=residency.stats().published;
+    }
+  uint64_t publishedBefore=0;
+
+  void finish() {
+    size_t pending=0;
+    size_t readyBytes=0;
+    {
+    std::lock_guard guard(mutex);
+    for(size_t i=0;i<chunks.size();++i) {
+      pending+=residency.desired(i)!=ChunkResidency::State::Outside && !chunks[i].gpu && !chunks[i].failed;
+      if(firstUpdate && chunks[i].ready) {
+        const auto& packed=*chunks[i].ready;
+        readyBytes+=packed.vertices.capacity()*sizeof(packed.vertices[0])+
+                    packed.indices.capacity()*sizeof(packed.indices[0])+
+                    packed.indices8.capacity()*sizeof(packed.indices8[0])+
+                    packed.meshletBounds.capacity()*sizeof(packed.meshletBounds[0])+
+                    packed.clusterLevels.capacity()*sizeof(packed.clusterLevels[0]);
+        }
+      }
+    }
+    residency.setPending(pending);
+    const auto pageStats=pages.stats();
+    residency.setLandscapePages(pageStats.occupiedBytes,pageStats.freeBytes,pageStats.retiredBytes,pageStats.pageCount);
+    if((firstUpdate || (wasPending && pending==0)) && LoadProbe::enabled()) {
+      size_t nearMeshlets=0, nearLevels=0, nearLegacy=0, meshlets=0, levels=0, legacy=0;
+      for(size_t i=0; i<chunks.size(); ++i) {
+        const auto& cell = chunks[i];
+        if(!cell.gpu)
+          continue;
+        meshlets += cell.meshlets;
+        levels += cell.gpu->levelRecordCount();
+        legacy += cell.legacyMeshlets;
+        if(residency.desired(i)==ChunkResidency::State::Near) {
+          nearMeshlets += cell.meshlets;
+          nearLevels += cell.gpu->levelRecordCount();
+          nearLegacy += cell.legacyMeshlets;
+          }
+        }
+      const size_t geometryStride = PackedMesh::MaxVert*sizeof(PackedMesh::Vertex)+PackedMesh::MaxPrim*4+
+                                    (Shaders::options().doRtScene ? PackedMesh::MaxInd*sizeof(uint32_t) : 0);
+      Log::i("[cluster-lod] near pending=",pending," near_geom_bytes=",nearMeshlets*geometryStride,
+             " near_meshlets=",nearMeshlets," near_level_records=",nearLevels,
+             " near_legacy_geom_bytes=",nearLegacy*geometryStride," near_legacy_meshlets=",nearLegacy);
+      Log::i("[cluster-lod] live_geom_bytes=",pageStats.occupiedBytes," live_meshlets=",meshlets,
+             " live_level_records=",levels," live_legacy_geom_bytes=",legacy*geometryStride,
+             " live_legacy_meshlets=",legacy," level_record_bytes=",sizeof(PackedMesh::ClusterLevel));
+      Log::i("[cluster-lod] level_buffer_bytes_prior_frame=",view.visuals.clusters().levelBufferBytes(),
+             " reserved_geom_bytes=",pageStats.occupiedBytes+pageStats.freeBytes+pageStats.retiredBytes);
+      }
+    wasPending = pending!=0;
+    if(firstUpdate) {
+      if(LoadProbe::enabled()) {
+        size_t sourceBytes=source->memoryBytes()+materials.capacity()*sizeof(materials[0]);
+        for(const auto& list:triangles)
+          sourceBytes+=list.capacity()*sizeof(list[0]);
+        LoadProbe::mark("landscape_pack",initialPackMs,"near_chunks="+std::to_string(residency.stats().near)+" read_ms="+std::to_string(initialReadMs));
+        LoadProbe::mark("landscape_view",preloadMs+initialPackMs+initialUploadMs,
+                        "streaming=1 published="+std::to_string(residency.stats().published)+
+                        " source_geometry_bytes="+std::to_string(sourceBytes)+
+                        " ready_geometry_bytes="+std::to_string(readyBytes)+
+                        " released_source_bytes="+std::to_string(releasedSourceBytes));
+        }
+      firstUpdate=false;
+      }
+    }
+  };
+
 WorldView::WorldView(const PackedMesh& wmesh, std::string_view skyPreset)
-    : aabb(wmesh.bbox()), gSky(skyPreset), gLights(sGlobal), visuals(sGlobal,wmesh.bbox()),
-    objGroup(visuals), pfxGroup(*this,sGlobal,visuals), land(visuals,wmesh) {
+    : WorldView(wmesh.bbox(),skyPreset) {
+  land=std::make_unique<Landscape>(visuals,wmesh);
+  }
+
+WorldView::WorldView(std::pair<Vec3,Vec3> bounds, std::string_view skyPreset)
+    : aabb(bounds), gSky(skyPreset), gLights(sGlobal), houses(Resources::worldOverrideDir(skyPreset)),
+    visuals(sGlobal,bounds), objGroup(visuals), pfxGroup(*this,sGlobal,visuals),
+    worldContent(Resources::worldOverrideDir(skyPreset)) {
   pfxGroup.resetTicks();
+  // how open a fire's place is to the wind (particles.d "wind"): none under a roof within 30 m, a third behind a
+  // wall within 6 m upwind. Static geometry only; without a physics world every place is open
+  pfxGroup.setShelter([](const Vec3& at, const Vec3& wind) {
+    const auto* physics = GameServices::inst().physicsWorld();
+    if(physics==nullptr)
+      return 1.f;
+    const Vec3 from = at+Vec3(0,30,0);
+    if(physics->rayStatic(from, from+Vec3(0,3000,0)).hasCol)
+      return 0.f;
+    const Vec3  flat = Vec3(wind.x,0,wind.z);
+    const float len  = flat.length();
+    if(len>0 && physics->rayStatic(from, from-flat*(600.f/len)).hasCol)
+      return 0.35f;
+    return 1.f;
+    });
+  // particles.d "land": a falling drop meets the ground, a wall or a roof, not a man (static geometry only)
+  pfxGroup.setGround([](const Vec3& from, const Vec3& to, Vec3& hit) {
+    const auto* physics = GameServices::inst().physicsWorld();
+    if(physics==nullptr || from==to)
+      return false;
+    const auto r = physics->rayStatic(from, to);
+    if(!r.hasCol)
+      return false;
+    // a hair off the surface, so the landing effect is not born inside it
+    hit = r.v + r.n*2.f;
+    return true;
+    });
+  sGlobal.setHouses(houses.houses());
+  // A scene without a single lamp still binds the (empty) light buffer: VSM visibility reads it unconditionally
+  sGlobal.lights = &gLights.lightsSsbo();
   }
 
 WorldView::~WorldView() {
   // cmd buffers must not be in use
   Resources::device().waitIdle();
+  streaming.reset();
+  grass.reset();
+  vobStreaming.reset();
+  }
+
+void WorldView::startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs) {
+  if(Grass::enabled().mode!=Grass::Off && Resources::materialMapsEnabled()) {
+    std::vector<ChunkId> ids;
+    for(auto& e:residency.table().entries)
+      if(e.triangleCount!=0)
+        ids.push_back(e.id);
+    grass=std::make_unique<GrassField>(sGlobal,std::move(ids),worldContent);
+    }
+  streaming=std::make_unique<LandscapeStreaming>(*this,std::move(mesh),residency,preloadMs);
+  }
+
+void WorldView::startVobStreaming(ChunkResidency& residency) {
+  vobStreaming=std::make_shared<VobStreaming>(residency);
+  }
+
+void WorldView::addVob(StreamedVisual& visual, ChunkId id) {
+  if(!vobStreaming)
+    return;
+  visual.streamView=this;
+  visual.streamCell=id;
+  auto& streaming=*vobStreaming;
+  auto& chunk=streaming.chunks[{id.x,id.z}];
+  chunk.visuals.push_back(&visual);
+  chunk.unpublished+=!visual.isViewPublished();
+  chunk.missing+=visual.isViewMissing();
+  chunk.cursor=0;
+  chunk.state=streaming.residency.desired(id,chunk.state);
+  if(!streaming.enabled || chunk.state==ChunkResidency::State::Near)
+    streaming.publish(chunk,visual);
+  else if(chunk.state==ChunkResidency::State::Far)
+    streaming.queue({id.x,id.z},chunk);
+  }
+
+void WorldView::removeVob(StreamedVisual& visual, bool release) {
+  auto& streaming=*vobStreaming;
+  auto& chunk=streaming.chunks.at({visual.streamCell.x,visual.streamCell.z});
+  if(release)
+    streaming.release(chunk,visual);
+  chunk.unpublished-=!visual.isViewPublished();
+  chunk.missing-=visual.isViewMissing();
+  const auto found=std::find(chunk.visuals.begin(),chunk.visuals.end(),&visual);
+  *found=chunk.visuals.back();
+  chunk.visuals.pop_back();
+  chunk.cursor=0;
+  visual.streamView=nullptr;
+  }
+
+void WorldView::moveVob(StreamedVisual& visual, ChunkId id) {
+  removeVob(visual,false);
+  addVob(visual,id);
+  if(vobStreaming->enabled && vobStreaming->chunks.at({id.x,id.z}).state==ChunkResidency::State::Outside)
+    vobStreaming->release(vobStreaming->chunks.at({id.x,id.z}),visual);
+  }
+
+void WorldView::replaceVob(StreamedVisual& previous, StreamedVisual& next) {
+  auto& chunk=vobStreaming->chunks.at({previous.streamCell.x,previous.streamCell.z});
+  *std::find(chunk.visuals.begin(),chunk.visuals.end(),&previous)=&next;
+  next.streamView=this;
+  next.streamCell=previous.streamCell;
+  previous.streamView=nullptr;
+  }
+
+void WorldView::prepareLandscapeWork() {
+  if(streaming)
+    streaming->prepare();
+  if(vobStreaming)
+    vobStreaming->prepare();
+  }
+
+void WorldView::finishLandscapeUpdate() {
+  if(streaming)
+    streaming->finish();
+  if(vobStreaming)
+    vobStreaming->finish();
+  }
+
+bool WorldView::landscapeReady() const {
+  return (!streaming || streaming->ready()) && (!vobStreaming || vobStreaming->ready()) && Resources::texturesReady();
+  }
+
+std::string WorldView::landscapeWaitState() const {
+  std::string ret="landscape: "+(streaming ? streaming->waitState() : std::string("whole"));
+  if(vobStreaming)
+    ret+="; vobs: "+vobStreaming->waitState();
+  return ret+"; textures: "+Resources::texturesWaitState();
   }
 
 const LightSource& WorldView::mainLight() const {
@@ -52,15 +713,33 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   sGlobal.setUnderWater(camera.isInWater());
   sGlobal.setSky(gSky);
   sGlobal.setWorld(*this);
+  houses.tick(gSky.dayHour());
 
   pfxGroup.setViewerPos(camera.originLwc());
+  // the same wind as the cloth's and the vegetation's, m/s -> cm/ms
+  pfxGroup.setWind(WorldWind::sample(tickCount, sGlobal.windPeriod, sGlobal.zWindEnabled, sGlobal.windScale)*0.1f);
   pfxGroup.tick(tickCount);
   gLights.tick(tickCount);
   sGlobal.setTime(tickCount);
+  if(grass)
+    grass->update();
   sGlobal.commitUbo(fId);
 
+  {
+  FrameProfile::Scope pfx(FrameProfile::Zone::PfxPrepare);
   pfxGroup.preFrameUpdate(fId);
+  }
   visuals .preFrameUpdate();
+  }
+
+void WorldView::setMotionVectors(bool enabled, const Tempest::Matrix4x4& reprojectClip,
+                                 const Tempest::Matrix4x4& viewProjectPrev) {
+  sGlobal.setMotion(enabled, reprojectClip, viewProjectPrev);
+  visuals.setInstanceHistory(enabled);
+  }
+
+void WorldView::setTaaReactiveLref(float lref) {
+  sGlobal.setTaaReactiveLref(lref);
   }
 
 void WorldView::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
@@ -102,6 +781,10 @@ void WorldView::setSceneImages(const Tempest::Texture2d& clr, const Tempest::Tex
   sGlobal.zbuffer    = &textureCast<const Texture2d&>(depthNative);
   }
 
+void WorldView::setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs) {
+  sGlobal.setFog(&lut, &lutMs);
+  }
+
 void WorldView::setWindEnabled(bool enabled, uint64_t period) {
   sGlobal.zWindEnabled = enabled && period>0;
   sGlobal.windPeriod   = period;
@@ -130,13 +813,17 @@ void WorldView::updateFrustrum(const Frustrum fr[]) {
     sGlobal.frustrum[i] = fr[i];
   }
 
-void WorldView::visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass) {
+void WorldView::visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history) {
   cmd.setDebugMarker("Visibility");
-  visuals.visibilityPass(cmd, pass);
+  visuals.visibilityPass(cmd, pass, history);
   }
 
-void WorldView::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  visuals.visibilityVsm(cmd);
+void WorldView::visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  visuals.visibilityStats(cmd, fId);
+  }
+
+void WorldView::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::StorageBuffer* geometryStats) {
+  visuals.visibilityVsm(cmd, geometryStats);
   }
 
 void WorldView::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
@@ -152,13 +839,46 @@ void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.drawVsm(cmd);
   }
 
-void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
-  visuals.drawGBuffer(cmd);
-  pfxGroup.drawGBuffer(cmd, fId);
+void WorldView::prepareGrass(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, const Texture2d& hiZ, float depthRoundoff) {
+  if(grass) {
+    grass->prepare(fId);
+    grass->cull(cmd, fId, hiZ, depthRoundoff);
+    }
+  }
+
+void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, bool landscapeOnly,
+                            DrawCommands::HistoryDraw history) {
+  // The blades go first: the ground under them then fails the depth test before its layers are shaded
+  // (reports/engine/2026-11-17-grass-cost). Their own marker gives them a row of their own in the pass timings
+  if(grass && !landscapeOnly) {
+    cmd.setDebugMarker("Grass");
+    grass->draw(cmd,fId,history!=DrawCommands::HistoryDraw::Off);
+    cmd.setDebugMarker("GBuffer");
+    }
+  visuals.drawGBuffer(cmd, fId, history);
+  if(!landscapeOnly)
+    pfxGroup.drawGBuffer(cmd, fId, history!=DrawCommands::HistoryDraw::Off);
   }
 
 void WorldView::drawWater(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.drawWater(cmd);
+  }
+
+void WorldView::drawMultiply(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  visuals.drawMultiply(cmd);
+  pfxGroup.drawMultiply(cmd, fId);
+  }
+
+bool WorldView::hasHaze(uint8_t fId) const {
+  return pfxGroup.hasHaze(fId);
+  }
+
+void WorldView::setHazeImage(const Tempest::Texture2d& frame) {
+  sGlobal.sceneHaze = &frame;
+  }
+
+void WorldView::drawHaze(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  pfxGroup.drawHaze(cmd, fId);
   }
 
 void WorldView::drawTranslucent(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
@@ -172,17 +892,20 @@ MeshObjects::Mesh WorldView::addView(std::string_view visual, int32_t headTex, i
   return MeshObjects::Mesh();
   }
 
-MeshObjects::Mesh WorldView::addView(const ProtoMesh* mesh) {
+MeshObjects::Mesh WorldView::addView(const ProtoMesh* mesh, int32_t material) {
   if(mesh!=nullptr) {
     bool staticDraw = false;
-    return MeshObjects::Mesh(objGroup,*mesh,0,0,0,staticDraw);
+    return MeshObjects::Mesh(objGroup,*mesh,material,0,material,staticDraw);
     }
   return MeshObjects::Mesh();
   }
 
 MeshObjects::Mesh WorldView::addItmView(std::string_view visual, int32_t material) {
-  if(auto mesh=Resources::loadMesh(visual))
-    return MeshObjects::Mesh(objGroup,*mesh,material,0,0,true);
+  if(auto mesh=Resources::loadMesh(visual)) {
+    auto view=MeshObjects::Mesh(objGroup,*mesh,material,0,0,true);
+    view.setTextureCategory(Resources::TextureCategory::Dynamic);
+    return view;
+    }
   return MeshObjects::Mesh();
   }
 
@@ -214,6 +937,12 @@ LightGroup::Light WorldView::addLight(const asset::VLight& vob, const uint64_t t
   return l;
   }
 
+LightGroup::Light WorldView::addLight(const asset::LightPreset& preset, const uint64_t timeOffset) {
+  auto l = gLights.add(preset);
+  l.setTimeOffset(timeOffset);
+  return l;
+  }
+
 LightGroup::Light WorldView::addLight(std::string_view preset, const uint64_t timeOffset) {
   auto l = gLights.add(preset);
   l.setTimeOffset(timeOffset);
@@ -228,19 +957,11 @@ const DrawClusters& WorldView::clusters() const {
   return visuals.clusters();
   }
 
-const DrawCommands& WorldView::drawCommands() const {
-  return visuals.drawCommands();
-  }
-
 const DrawBuckets& WorldView::drawBuckets() const {
   return visuals.drawBuckets();
   }
 
-const Tempest::StorageBuffer& WorldView::instanceSsbo() const {
-  return visuals.instanceSsbo();
-  }
-
-bool WorldView::updateLights(const gtime gameTime) {
+bool WorldView::updateLights(int64_t gameTime) {
   gSky.updateLight(gameTime);
   if(!gLights.updateLights())
     return false;
@@ -248,14 +969,30 @@ bool WorldView::updateLights(const gtime gameTime) {
   return true;
   }
 
-bool WorldView::updateRtScene() {
+void WorldView::updateRtScene(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
   if(!Shaders::options().doRtScene)
-    return false;
-  if(!visuals.updateRtScene(sGlobal.rtScene))
-    return false;
-  return true;
+    return;
+  FrameProfile::Scope profile(FrameProfile::Zone::RtScene);
+  visuals.updateRtScene(sGlobal.rtScene, cmd, fId);
+  sGlobal.rtScene.refreshTextures();
   }
 
 void WorldView::postFrameupdate() {
   visuals.postFrameupdate();
+  }
+
+
+void WorldView::probeMemory(std::string_view stage) const {
+  if(!LoadProbe::enabled()) return;
+  size_t source=0,physics=0;
+  if(streaming) {
+    source=streaming->source->memoryBytes()+streaming->materials.capacity()*sizeof(streaming->materials[0])+
+           streaming->triangles.capacity()*sizeof(streaming->triangles[0]);
+    for(const auto& list:streaming->triangles) source+=list.capacity()*sizeof(list[0]);
+    }
+  if(vobStreaming)
+    for(const auto& [key,chunk]:vobStreaming->chunks)
+      for(const auto* visual:chunk.visuals) physics+=visual->probePhysicsBytes();
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=world_source_cpu bytes=",source);
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=physicmesh_items_cpu bytes=",physics);
   }

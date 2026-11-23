@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import AsyncIterator, Collection, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
 
 from gothic_ai.game import GameLink, GameServer
+from gothic_ai.llm import Item, LLMBackend, LLMEvent, Message, Tool, ToolChoice, ToolResult
+from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.protocol import PROTOCOL_VERSION
 
 KNOWN_ANIMS = {
@@ -593,3 +596,69 @@ async def connected(fake: FakeGame):
         game.cancel()
         serving.cancel()
         await asyncio.gather(game, serving, return_exceptions=True)
+
+
+class ClaimScript:
+    """A giver's conversational model, scripted by what it hears: the step for a phrase in the hero's words
+    or the cue (`said`), or in the outcome of its last tool call (`told`); else a plain reply."""
+
+    name = "claim-script"
+
+    def __init__(
+        self,
+        said: list[tuple[str, FakeStep]],
+        told: list[tuple[str, FakeStep]],
+        default: str = "Ну?",
+        only: str | None = None,
+        others: LLMBackend | None = None,
+    ) -> None:
+        """`only`: the scripted npc's name; the other npc's turns go to `others` (the live model)."""
+        self.said, self.told, self.default = said, told, default
+        self.only, self.others = only, others
+        self.calls: list[tuple[str, list[Item], list[Tool]]] = []
+        self.outputs: list[str] = []  # what came of its tool calls
+
+    async def aclose(self) -> None:
+        pass
+
+    async def stream(
+        self,
+        *,
+        instructions: str,
+        messages: Sequence[Item],
+        tools: list[Tool] | None = None,
+        tool_choice: ToolChoice | None = None,
+        allowed: Collection[str] | None = None,
+        cache_key: str | None = None,
+    ) -> AsyncIterator[LLMEvent]:
+        if self.others is not None and self.only is not None and f"по имени {self.only}" not in instructions:
+            async for event in self.others.stream(
+                instructions=instructions,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                allowed=allowed,
+                cache_key=cache_key,
+            ):
+                yield event
+            return
+        self.calls.append(
+            (instructions, list(messages), [t for t in tools or [] if allowed is None or t.name in allowed])
+        )
+        last = messages[-1] if messages else None
+        if isinstance(last, ToolResult):
+            self.outputs.append(last.output)
+            rules, text = self.told, last.output
+        else:
+            rules, text = self.said, last.content if isinstance(last, Message) else ""
+        step = next((s for k, s in rules if k in text), FakeStep(self.default))
+        fake = FakeBackend(script=[step], delay=0)
+        async for event in fake.stream(
+            instructions=instructions,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            allowed=allowed,
+            cache_key=cache_key,
+        ):
+            yield event

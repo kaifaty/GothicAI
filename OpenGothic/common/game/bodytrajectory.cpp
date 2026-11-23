@@ -142,7 +142,7 @@ Completion classify(const Active& active,const std::vector<Pose::CombatLayer>& l
   for(const auto& original:active.layers) {
     if(!original.sequence) continue;
     const auto current=std::find_if(layers.begin(),layers.end(),[&](const Pose::CombatLayer& layer) {
-      return layer.sequence==original.sequence && layer.start==original.start && layer.combination==original.combination;
+      return layer.sequence==original.sequence && layer.origin==original.origin && layer.combination==original.combination;
       });
     if(current!=layers.end()) {
       if(!current->sequence->isFinished(current->time,current->start,active.comboLength)) unfinished=true;
@@ -266,7 +266,7 @@ void BodyTrajectory::nativeAfterAttemptImpl(Npc& npc) {
   active.started=true; active.startedPose=after; active.comboLength=npc.visual.pose().comboLength();
   for(const auto& layer:npc.visual.pose().combatLayers(npc.world().tickCount())) {
     const auto old=std::find_if(active.beforeLayers.begin(),active.beforeLayers.end(),[&](const Pose::CombatLayer& prior) {
-      return prior.sequence==layer.sequence && prior.start==layer.start && prior.combination==layer.combination && prior.state==layer.state;
+      return prior.sequence==layer.sequence && prior.origin==layer.origin && prior.combination==layer.combination && prior.state==layer.state;
       });
     if(old==active.beforeLayers.end()) active.layers.push_back(layer);
     }

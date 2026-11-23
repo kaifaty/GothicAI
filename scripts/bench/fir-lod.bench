@@ -1,0 +1,38 @@
+# The levels of detail of the modern spruce A (reports/engine/2026-11-16-modern-trees/tree-lod.md): one clip of the
+# camera flying away from the spruce through all four thresholds of its levels, on the set of
+# `scripts/content/fir_set.py probe <set> --levels` (fir-probe-4 with the levels; run with OPENGOTHIC_CONTENT=<set>),
+# at noon. The route extends the line of sight of fir-wind-fade.bench from the south-south-west with a final leg
+# to about 400 m from the middle of the spruce, where its projected height is under 40 px at 1920x1080.
+# `cam fly` takes 46 s without a cut. Run once with mesh levels enabled. The hero stands on the ground
+# under the 100 m camera. The cameras stand by PROBE of the script
+# (spruce A: 41250, 3323.5, 650): change both together.
+#   OPENGOTHIC_CONTENT=<set> OPENGOTHIC_MESH_LEVELS=1 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen scripts/bench.sh fir-lod
+# @timeout 1200
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+set time 12 0
+
+goto pos 36500 3900 -7577
+clear 3000
+streaming wait
+grass wait
+cam at 40000 3924 -1515 41250 4200 650
+wait 5000
+rec lod-fly
+wait 1000
+cam fly 39150 4816 -2987 41250 4200 650 6000
+wait 6000
+cam fly 36500 6365 -7577 41250 4200 650 10000
+wait 10000
+cam fly 34600 7540 -10868 41250 4200 650 6000
+wait 6000
+cam fly 32200 8945 -15025 41250 4200 650 8000
+wait 8000
+cam fly 21900 14345 -32865 41250 4200 650 16000
+wait 16000
+wait 1000
+stop
+wait 500

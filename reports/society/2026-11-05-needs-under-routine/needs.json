@@ -1,0 +1,3805 @@
+{
+ "world_hash": "d61da63506831f77",
+ "config_hash": "40427f4db371c519",
+ "seed": 0,
+ "needs": [
+  {
+   "id": "food",
+   "name": "еда",
+   "empty_hours": 16,
+   "low": 0.4,
+   "critical": 0.15,
+   "awake_only": false
+  },
+  {
+   "id": "sleep",
+   "name": "сон",
+   "empty_hours": 20,
+   "low": 0.35,
+   "critical": 0.1,
+   "awake_only": true
+  },
+  {
+   "id": "toilet",
+   "name": "туалет",
+   "empty_hours": 8,
+   "low": 0.3,
+   "critical": 0.1,
+   "awake_only": false
+  },
+  {
+   "id": "social",
+   "name": "общение",
+   "empty_hours": 24,
+   "low": 0.3,
+   "critical": 0.1,
+   "awake_only": true
+  },
+  {
+   "id": "work",
+   "name": "дело",
+   "empty_hours": 12,
+   "low": 0.3,
+   "critical": 0.1,
+   "awake_only": true
+  },
+  {
+   "id": "faith",
+   "name": "вера",
+   "empty_hours": 48,
+   "low": 0.3,
+   "critical": 0.1,
+   "awake_only": true
+  },
+  {
+   "id": "leisure",
+   "name": "досуг",
+   "empty_hours": 24,
+   "low": 0.3,
+   "critical": 0.1,
+   "awake_only": true
+  }
+ ],
+ "runs": [
+  {
+   "days": 1,
+   "people": 370,
+   "needs": [
+    {
+     "need": "food",
+     "name": "еда",
+     "people": 370,
+     "routine_fills": 51,
+     "fill_states": [
+      "ZS_COOK_CAULDRON",
+      "ZS_COOK_PAN",
+      "ZS_COOK_STOVE",
+      "ZS_MM_RTN_EATGROUND",
+      "ZS_ROAST_SCAVENGER",
+      "ZS_STAND_DRINKING",
+      "ZS_STAND_EATING"
+     ],
+     "went_low": 344,
+     "went_critical": 323,
+     "low_hours_median": 14.13,
+     "critical_hours_median": 10.01,
+     "critical_hours_median_of_critical": 10.36,
+     "critical_hours_max": 12.17,
+     "critical_person_hours": 3287.7,
+     "last_day_critical": 323,
+     "last_day_critical_hours_median": 10.01,
+     "by_fill": {
+      "with_fill": {
+       "people": 51,
+       "went_critical": 4,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 4,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 319,
+       "went_critical": 319,
+       "critical_hours_median": 10.4,
+       "last_day_critical": 319,
+       "last_day_critical_hours_median": 10.4
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_SLEEP",
+       "hours": 613.5,
+       "share": 0.187
+      },
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 477.0,
+       "share": 0.145
+      },
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 395.0,
+       "share": 0.12
+      },
+      {
+       "state": "ZS_SIT_CAMPFIRE",
+       "hours": 269.3,
+       "share": 0.082
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 234.1,
+       "share": 0.071
+      }
+     ],
+     "worst": [
+      {
+       "key": "BDT_1002_BANDIT_L#1",
+       "name": "Бродяга",
+       "guild": "бандиты",
+       "day_state": "ZS_BANDIT",
+       "critical_hours": 12.2
+      },
+      {
+       "key": "VLK_476_FENIA#0",
+       "name": "Феня",
+       "guild": "горожане",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 12.2
+      },
+      {
+       "key": "VLK_4005_ARBEITER#0",
+       "name": "Рабочий",
+       "guild": "горожане",
+       "day_state": "ZS_STAND_SWEEPING",
+       "critical_hours": 12.2
+      },
+      {
+       "key": "KDW_1400_ADDON_SATURAS_NW#0",
+       "name": "Сатурас",
+       "guild": "маги Воды",
+       "day_state": "ZS_STUDY_WP",
+       "critical_hours": 12.2
+      },
+      {
+       "key": "MIL_313_BOLTAN#0",
+       "name": "Болтан",
+       "guild": "ополчение",
+       "day_state": "ZS_SIT_CHAIR",
+       "critical_hours": 12.1
+      }
+     ]
+    },
+    {
+     "need": "sleep",
+     "name": "сон",
+     "people": 370,
+     "routine_fills": 105,
+     "fill_states": [
+      "ZS_MM_RTN_SLEEP",
+      "ZS_SLEEP",
+      "ZS_SLEEP_GROUND"
+     ],
+     "went_low": 355,
+     "went_critical": 271,
+     "low_hours_median": 10.29,
+     "critical_hours_median": 4.97,
+     "critical_hours_median_of_critical": 6.06,
+     "critical_hours_max": 8.34,
+     "critical_person_hours": 1578.6,
+     "last_day_critical": 271,
+     "last_day_critical_hours_median": 4.97,
+     "by_fill": {
+      "with_fill": {
+       "people": 105,
+       "went_critical": 6,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 6,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 265,
+       "went_critical": 265,
+       "critical_hours_median": 6.08,
+       "last_day_critical": 265,
+       "last_day_critical_hours_median": 6.08
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 276.4,
+       "share": 0.175
+      },
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 198.5,
+       "share": 0.126
+      },
+      {
+       "state": "ZS_SIT_CAMPFIRE",
+       "hours": 162.2,
+       "share": 0.103
+      },
+      {
+       "state": "ZS_BANDIT",
+       "hours": 130.2,
+       "share": 0.082
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 129.4,
+       "share": 0.082
+      }
+     ],
+     "worst": [
+      {
+       "key": "VLK_449_LARES#0",
+       "name": "Ларес",
+       "guild": "без гильдии",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 8.3
+      },
+      {
+       "key": "BDT_10313_ADDON_RANGERBANDIT_L#0",
+       "name": "Бандит",
+       "guild": "бандиты",
+       "day_state": "ZS_BANDIT",
+       "critical_hours": 8.3
+      },
+      {
+       "key": "VLK_432_MOE#0",
+       "name": "Мо",
+       "guild": "без гильдии",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 8.3
+      },
+      {
+       "key": "BDT_1047_BANDIT_L#0",
+       "name": "Бандит",
+       "guild": "бандиты",
+       "day_state": "ZS_SIT_CAMPFIRE",
+       "critical_hours": 8.3
+      },
+      {
+       "key": "PAL_234_RITTER#0",
+       "name": "Рыцарь",
+       "guild": "паладины",
+       "day_state": "ZS_SMALLTALK",
+       "critical_hours": 8.3
+      }
+     ]
+    },
+    {
+     "need": "toilet",
+     "name": "туалет",
+     "people": 370,
+     "routine_fills": 2,
+     "fill_states": [
+      "ZS_PEE"
+     ],
+     "went_low": 369,
+     "went_critical": 369,
+     "low_hours_median": 18.4,
+     "critical_hours_median": 16.8,
+     "critical_hours_median_of_critical": 16.8,
+     "critical_hours_max": 17.74,
+     "critical_person_hours": 6171.1,
+     "last_day_critical": 369,
+     "last_day_critical_hours_median": 16.8,
+     "by_fill": {
+      "with_fill": {
+       "people": 2,
+       "went_critical": 1,
+       "critical_hours_median": 2.55,
+       "last_day_critical": 1,
+       "last_day_critical_hours_median": 2.55
+      },
+      "without_fill": {
+       "people": 368,
+       "went_critical": 368,
+       "critical_hours_median": 16.8,
+       "last_day_critical": 368,
+       "last_day_critical_hours_median": 16.8
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 858.8,
+       "share": 0.139
+      },
+      {
+       "state": "ZS_SLEEP",
+       "hours": 819.1,
+       "share": 0.133
+      },
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 774.8,
+       "share": 0.126
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 468.6,
+       "share": 0.076
+      },
+      {
+       "state": "ZS_BANDIT",
+       "hours": 368.6,
+       "share": 0.06
+      }
+     ],
+     "worst": [
+      {
+       "key": "PAL_220_SCHIFFSWACHE#0",
+       "name": "Корабельный стражник",
+       "guild": "паладины",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 17.7
+      },
+      {
+       "key": "PAL_240_RITTER#0",
+       "name": "Рыцарь",
+       "guild": "паладины",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 17.7
+      },
+      {
+       "key": "BDT_10312_ADDON_RANGERBANDIT_L#0",
+       "name": "Бандит",
+       "guild": "бандиты",
+       "day_state": "ZS_BANDIT",
+       "critical_hours": 17.7
+      },
+      {
+       "key": "BAU_941_KATI#0",
+       "name": "Кати",
+       "guild": "поселенцы",
+       "day_state": "ZS_STAND_ARMSCROSSED",
+       "critical_hours": 17.7
+      },
+      {
+       "key": "BAU_920_BAUER#0",
+       "name": "Крестьянин",
+       "guild": "крестьяне",
+       "day_state": "ZS_SMALLTALK",
+       "critical_hours": 17.7
+      }
+     ]
+    },
+    {
+     "need": "social",
+     "name": "общение",
+     "people": 370,
+     "routine_fills": 120,
+     "fill_states": [
+      "ZS_DANCE",
+      "ZS_SIT_CAMPFIRE",
+      "ZS_SMALLTALK"
+     ],
+     "went_low": 208,
+     "went_critical": 151,
+     "low_hours_median": 3.01,
+     "critical_hours_median": 0.0,
+     "critical_hours_median_of_critical": 3.67,
+     "critical_hours_max": 9.36,
+     "critical_person_hours": 554.3,
+     "last_day_critical": 151,
+     "last_day_critical_hours_median": 0.0,
+     "by_fill": {
+      "with_fill": {
+       "people": 120,
+       "went_critical": 1,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 1,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 250,
+       "went_critical": 150,
+       "critical_hours_median": 1.66,
+       "last_day_critical": 150,
+       "last_day_critical_hours_median": 1.66
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 138.1,
+       "share": 0.249
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 86.3,
+       "share": 0.156
+      },
+      {
+       "state": "ZS_MM_RTN_ROAM",
+       "hours": 45.9,
+       "share": 0.083
+      },
+      {
+       "state": "ZS_STAND_EATING",
+       "hours": 33.8,
+       "share": 0.061
+      },
+      {
+       "state": "ZS_BANDIT",
+       "hours": 32.5,
+       "share": 0.059
+      }
+     ],
+     "worst": [
+      {
+       "key": "VLK_420_CORAGON#0",
+       "name": "Корагон",
+       "guild": "горожане",
+       "day_state": "ZS_STAND_ARMSCROSSED",
+       "critical_hours": 9.4
+      },
+      {
+       "key": "VLK_434_BORKA#0",
+       "name": "Борка",
+       "guild": "горожане",
+       "day_state": "ZS_STAND_ARMSCROSSED",
+       "critical_hours": 9.1
+      },
+      {
+       "key": "BAU_936_ROSI#0",
+       "name": "Рози",
+       "guild": "крестьяне",
+       "day_state": "ZS_COOK_STOVE",
+       "critical_hours": 9.1
+      },
+      {
+       "key": "NOV_608_GARWIG#0",
+       "name": "Гарвиг",
+       "guild": "послушники",
+       "day_state": "ZS_GUARD_HAMMER",
+       "critical_hours": 9.0
+      },
+      {
+       "key": "VLK_458_RUPERT#0",
+       "name": "Руперт",
+       "guild": "горожане",
+       "day_state": "ZS_PEE",
+       "critical_hours": 8.6
+      }
+     ]
+    },
+    {
+     "need": "work",
+     "name": "дело",
+     "people": 370,
+     "routine_fills": 185,
+     "fill_states": [
+      "ZS_ANNOUNCE_HEROLD",
+      "ZS_COOK_CAULDRON",
+      "ZS_COOK_PAN",
+      "ZS_COOK_STOVE",
+      "ZS_GUARD_HAMMER",
+      "ZS_GUARD_PASSAGE",
+      "ZS_PICK_FP",
+      "ZS_PICK_ORE",
+      "ZS_POTION_ALCHEMY",
+      "ZS_PRACTICE_MAGIC",
+      "ZS_PRACTICE_SWORD",
+      "ZS_PREACH_VATRAS",
+      "ZS_RAKE_FP",
+      "ZS_REPAIR_HUT",
+      "ZS_ROAST_SCAVENGER",
+      "ZS_SAW",
+      "ZS_SIT_THRONE",
+      "ZS_SMITH_ANVIL",
+      "ZS_SMITH_COOL",
+      "ZS_SMITH_FIRE",
+      "ZS_SMITH_SHARP",
+      "ZS_STAND_GUARDING",
+      "ZS_STAND_SWEEPING",
+      "ZS_STOMP_HERB",
+      "ZS_STUDY_WP",
+      "ZS_SWEEP_FP"
+     ],
+     "went_low": 233,
+     "went_critical": 209,
+     "low_hours_median": 10.29,
+     "critical_hours_median": 7.86,
+     "critical_hours_median_of_critical": 12.85,
+     "critical_hours_max": 14.6,
+     "critical_person_hours": 2447.7,
+     "last_day_critical": 209,
+     "last_day_critical_hours_median": 7.86,
+     "by_fill": {
+      "with_fill": {
+       "people": 185,
+       "went_critical": 26,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 26,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 185,
+       "went_critical": 183,
+       "critical_hours_median": 13.02,
+       "last_day_critical": 183,
+       "last_day_critical_hours_median": 13.02
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 467.6,
+       "share": 0.191
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 299.8,
+       "share": 0.123
+      },
+      {
+       "state": "ZS_BANDIT",
+       "hours": 279.9,
+       "share": 0.114
+      },
+      {
+       "state": "ZS_SLEEP",
+       "hours": 258.5,
+       "share": 0.106
+      },
+      {
+       "state": "ZS_MM_RTN_ROAM",
+       "hours": 241.6,
+       "share": 0.099
+      }
+     ],
+     "worst": [
+      {
+       "key": "SLD_814_SENTENZA#0",
+       "name": "Сентенза",
+       "guild": "наёмники",
+       "day_state": "ZS_STAND_EATING",
+       "critical_hours": 14.6
+      },
+      {
+       "key": "ORCWARRIOR_ROAM#2",
+       "name": "Орк-воин",
+       "guild": "орки",
+       "day_state": "ZS_MM_RTN_ROAM",
+       "critical_hours": 14.6
+      },
+      {
+       "key": "ORCWARRIOR_ROAM#15",
+       "name": "Орк-воин",
+       "guild": "орки",
+       "day_state": "ZS_MM_RTN_ROAM",
+       "critical_hours": 14.6
+      },
+      {
+       "key": "BDT_10302_ADDON_RANGERBANDIT_L#0",
+       "name": "Бандит",
+       "guild": "бандиты",
+       "day_state": "ZS_STAND_ARMSCROSSED",
+       "critical_hours": 14.6
+      },
+      {
+       "key": "VLK_415_MELDOR#0",
+       "name": "Мелдор",
+       "guild": "горожане",
+       "day_state": "ZS_SMOKE_JOINT",
+       "critical_hours": 14.6
+      }
+     ]
+    },
+    {
+     "need": "faith",
+     "name": "вера",
+     "people": 370,
+     "routine_fills": 13,
+     "fill_states": [
+      "ZS_PRAY_INNOS",
+      "ZS_PRAY_INNOS_FP",
+      "ZS_PRAY_SLEEPER",
+      "ZS_PREACH_VATRAS"
+     ],
+     "went_low": 0,
+     "went_critical": 0,
+     "low_hours_median": 0.0,
+     "critical_hours_median": 0.0,
+     "critical_hours_median_of_critical": 0.0,
+     "critical_hours_max": 0.0,
+     "critical_person_hours": 0.0,
+     "last_day_critical": 0,
+     "last_day_critical_hours_median": 0.0,
+     "by_fill": {
+      "with_fill": {
+       "people": 13,
+       "went_critical": 0,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 0,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 357,
+       "went_critical": 0,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 0,
+       "last_day_critical_hours_median": 0.0
+      }
+     },
+     "critical_by_state": [],
+     "worst": [
+      {
+       "key": "BAU_4300_ADDON_CAVALORN#0",
+       "name": "Кавалорн",
+       "guild": "без гильдии",
+       "day_state": "ZS_STAND_EATING",
+       "critical_hours": 0.0
+      },
+      {
+       "key": "BAU_900_ONAR#0",
+       "name": "Онар",
+       "guild": "крестьяне",
+       "day_state": "ZS_SIT_THRONE",
+       "critical_hours": 0.0
+      },
+      {
+       "key": "BAU_901_BAUER#0",
+       "name": "Крестьянин",
+       "guild": "крестьяне",
+       "day_state": "ZS_STAND_EATING",
+       "critical_hours": 0.0
+      },
+      {
+       "key": "BAU_902_GUNNAR#0",
+       "name": "Гуннар",
+       "guild": "крестьяне",
+       "day_state": "ZS_SIT_CHAIR",
+       "critical_hours": 0.0
+      },
+      {
+       "key": "BAU_903_BODO#0",
+       "name": "Бодо",
+       "guild": "крестьяне",
+       "day_state": "ZS_SMALLTALK",
+       "critical_hours": 0.0
+      }
+     ]
+    },
+    {
+     "need": "leisure",
+     "name": "досуг",
+     "people": 370,
+     "routine_fills": 42,
+     "fill_states": [
+      "ZS_DANCE",
+      "ZS_PLAY_LUTE",
+      "ZS_READ_BOOKSTAND",
+      "ZS_SMOKE_JOINT",
+      "ZS_SMOKE_WATERPIPE",
+      "ZS_STAND_DRINKING"
+     ],
+     "went_low": 279,
+     "went_critical": 209,
+     "low_hours_median": 6.1,
+     "critical_hours_median": 0.68,
+     "critical_hours_median_of_critical": 2.83,
+     "critical_hours_max": 5.17,
+     "critical_person_hours": 563.6,
+     "last_day_critical": 209,
+     "last_day_critical_hours_median": 0.68,
+     "by_fill": {
+      "with_fill": {
+       "people": 42,
+       "went_critical": 0,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 0,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 328,
+       "went_critical": 209,
+       "critical_hours_median": 1.13,
+       "last_day_critical": 209,
+       "last_day_critical_hours_median": 1.13
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 96.7,
+       "share": 0.172
+      },
+      {
+       "state": "ZS_SIT_CAMPFIRE",
+       "hours": 67.7,
+       "share": 0.12
+      },
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 60.8,
+       "share": 0.108
+      },
+      {
+       "state": "ZS_MM_RTN_ROAM",
+       "hours": 58.4,
+       "share": 0.104
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 41.7,
+       "share": 0.074
+      }
+     ],
+     "worst": [
+      {
+       "key": "BAU_972_BAUER#0",
+       "name": "Крестьянин",
+       "guild": "поселенцы",
+       "day_state": "ZS_SMALLTALK",
+       "critical_hours": 5.2
+      },
+      {
+       "key": "ORCSHAMAN_SIT#2",
+       "name": "Орк-шаман",
+       "guild": "орки",
+       "day_state": "ZS_MM_RTN_ORCSIT",
+       "critical_hours": 5.1
+      },
+      {
+       "key": "BDT_10312_ADDON_RANGERBANDIT_L#0",
+       "name": "Бандит",
+       "guild": "бандиты",
+       "day_state": "ZS_BANDIT",
+       "critical_hours": 5.1
+      },
+      {
+       "key": "ORCWARRIOR_ROAM#5",
+       "name": "Орк-воин",
+       "guild": "орки",
+       "day_state": "ZS_MM_RTN_ROAM",
+       "critical_hours": 5.1
+      },
+      {
+       "key": "SLD_802_BUSTER#0",
+       "name": "Бастер",
+       "guild": "наёмники",
+       "day_state": "ZS_SMALLTALK",
+       "critical_hours": 5.1
+      }
+     ]
+    }
+   ],
+   "by_guild": [
+    {
+     "group": "горожане",
+     "people": 92,
+     "critical_share": {
+      "food": 0.696,
+      "sleep": 0.435,
+      "toilet": 0.989,
+      "social": 0.207,
+      "work": 0.554,
+      "faith": 0.0,
+      "leisure": 0.25
+     },
+     "critical_hours_per_day": {
+      "food": 6.87,
+      "sleep": 2.19,
+      "toilet": 16.38,
+      "social": 0.93,
+      "work": 5.93,
+      "faith": 0.0,
+      "leisure": 0.61
+     }
+    },
+    {
+     "group": "бандиты",
+     "people": 50,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.98,
+      "toilet": 1.0,
+      "social": 0.5,
+      "work": 0.84,
+      "faith": 0.0,
+      "leisure": 0.76
+     },
+     "critical_hours_per_day": {
+      "food": 10.4,
+      "sleep": 5.86,
+      "toilet": 16.86,
+      "social": 1.53,
+      "work": 10.78,
+      "faith": 0.0,
+      "leisure": 1.97
+     }
+    },
+    {
+     "group": "паладины",
+     "people": 41,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.829,
+      "toilet": 1.0,
+      "social": 0.488,
+      "work": 0.317,
+      "faith": 0.0,
+      "leisure": 0.732
+     },
+     "critical_hours_per_day": {
+      "food": 10.39,
+      "sleep": 5.21,
+      "toilet": 16.77,
+      "social": 1.56,
+      "work": 3.53,
+      "faith": 0.0,
+      "leisure": 2.13
+     }
+    },
+    {
+     "group": "поселенцы",
+     "people": 40,
+     "critical_share": {
+      "food": 0.875,
+      "sleep": 0.825,
+      "toilet": 1.0,
+      "social": 0.3,
+      "work": 0.475,
+      "faith": 0.0,
+      "leisure": 0.7
+     },
+     "critical_hours_per_day": {
+      "food": 8.9,
+      "sleep": 4.8,
+      "toilet": 16.72,
+      "social": 1.27,
+      "work": 4.54,
+      "faith": 0.0,
+      "leisure": 1.82
+     }
+    },
+    {
+     "group": "ополчение",
+     "people": 28,
+     "critical_share": {
+      "food": 0.893,
+      "sleep": 0.75,
+      "toilet": 1.0,
+      "social": 0.571,
+      "work": 0.286,
+      "faith": 0.0,
+      "leisure": 0.536
+     },
+     "critical_hours_per_day": {
+      "food": 9.22,
+      "sleep": 3.86,
+      "toilet": 16.69,
+      "social": 1.78,
+      "work": 3.2,
+      "faith": 0.0,
+      "leisure": 1.44
+     }
+    },
+    {
+     "group": "наёмники",
+     "people": 25,
+     "critical_share": {
+      "food": 0.88,
+      "sleep": 0.72,
+      "toilet": 1.0,
+      "social": 0.28,
+      "work": 0.72,
+      "faith": 0.0,
+      "leisure": 0.52
+     },
+     "critical_hours_per_day": {
+      "food": 8.38,
+      "sleep": 3.79,
+      "toilet": 16.83,
+      "social": 0.82,
+      "work": 9.03,
+      "faith": 0.0,
+      "leisure": 1.41
+     }
+    },
+    {
+     "group": "орки",
+     "people": 23,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.87,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.87
+     },
+     "critical_hours_per_day": {
+      "food": 10.0,
+      "sleep": 6.04,
+      "toilet": 16.66,
+      "social": 2.59,
+      "work": 13.36,
+      "faith": 0.0,
+      "leisure": 2.97
+     }
+    },
+    {
+     "group": "крестьяне",
+     "people": 21,
+     "critical_share": {
+      "food": 0.762,
+      "sleep": 0.762,
+      "toilet": 1.0,
+      "social": 0.333,
+      "work": 0.619,
+      "faith": 0.0,
+      "leisure": 0.667
+     },
+     "critical_hours_per_day": {
+      "food": 7.88,
+      "sleep": 4.71,
+      "toilet": 16.92,
+      "social": 1.65,
+      "work": 6.29,
+      "faith": 0.0,
+      "leisure": 1.48
+     }
+    },
+    {
+     "group": "без гильдии",
+     "people": 18,
+     "critical_share": {
+      "food": 0.889,
+      "sleep": 0.944,
+      "toilet": 1.0,
+      "social": 0.556,
+      "work": 0.611,
+      "faith": 0.0,
+      "leisure": 0.778
+     },
+     "critical_hours_per_day": {
+      "food": 8.89,
+      "sleep": 6.43,
+      "toilet": 16.85,
+      "social": 2.57,
+      "work": 7.41,
+      "faith": 0.0,
+      "leisure": 2.0
+     }
+    },
+    {
+     "group": "послушники",
+     "people": 14,
+     "critical_share": {
+      "food": 0.929,
+      "sleep": 0.286,
+      "toilet": 1.0,
+      "social": 0.286,
+      "work": 0.357,
+      "faith": 0.0,
+      "leisure": 0.143
+     },
+     "critical_hours_per_day": {
+      "food": 9.61,
+      "sleep": 1.53,
+      "toilet": 16.65,
+      "social": 1.5,
+      "work": 4.88,
+      "faith": 0.0,
+      "leisure": 0.21
+     }
+    },
+    {
+     "group": "маги Огня",
+     "people": 11,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.818,
+      "toilet": 1.0,
+      "social": 0.636,
+      "work": 0.273,
+      "faith": 0.0,
+      "leisure": 0.545
+     },
+     "critical_hours_per_day": {
+      "food": 10.9,
+      "sleep": 5.61,
+      "toilet": 16.85,
+      "social": 2.11,
+      "work": 3.53,
+      "faith": 0.0,
+      "leisure": 1.55
+     }
+    },
+    {
+     "group": "маги Воды",
+     "people": 6,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.667,
+      "work": 0.333,
+      "faith": 0.0,
+      "leisure": 0.833
+     },
+     "critical_hours_per_day": {
+      "food": 10.99,
+      "sleep": 5.85,
+      "toilet": 16.54,
+      "social": 3.76,
+      "work": 4.77,
+      "faith": 0.0,
+      "leisure": 2.39
+     }
+    },
+    {
+     "group": "пираты",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 10.33,
+      "sleep": 3.5,
+      "toilet": 17.03,
+      "social": 0.0,
+      "work": 12.95,
+      "faith": 0.0,
+      "leisure": 4.04
+     }
+    }
+   ],
+   "by_day_state": [
+    {
+     "group": "ZS_STAND_GUARDING",
+     "people": 61,
+     "critical_share": {
+      "food": 0.934,
+      "sleep": 0.803,
+      "toilet": 1.0,
+      "social": 0.672,
+      "work": 0.049,
+      "faith": 0.0,
+      "leisure": 0.656
+     },
+     "critical_hours_per_day": {
+      "food": 9.46,
+      "sleep": 4.83,
+      "toilet": 16.59,
+      "social": 2.43,
+      "work": 0.04,
+      "faith": 0.0,
+      "leisure": 1.56
+     }
+    },
+    {
+     "group": "ZS_SMALLTALK",
+     "people": 56,
+     "critical_share": {
+      "food": 0.875,
+      "sleep": 0.661,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.875,
+      "faith": 0.0,
+      "leisure": 0.518
+     },
+     "critical_hours_per_day": {
+      "food": 8.63,
+      "sleep": 3.94,
+      "toilet": 16.71,
+      "social": 0.0,
+      "work": 11.09,
+      "faith": 0.0,
+      "leisure": 1.31
+     }
+    },
+    {
+     "group": "ZS_STAND_ARMSCROSSED",
+     "people": 38,
+     "critical_share": {
+      "food": 0.947,
+      "sleep": 0.763,
+      "toilet": 1.0,
+      "social": 0.605,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.579
+     },
+     "critical_hours_per_day": {
+      "food": 9.73,
+      "sleep": 4.14,
+      "toilet": 16.82,
+      "social": 2.57,
+      "work": 11.55,
+      "faith": 0.0,
+      "leisure": 1.37
+     }
+    },
+    {
+     "group": "ZS_BANDIT",
+     "people": 22,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.591,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.727
+     },
+     "critical_hours_per_day": {
+      "food": 10.63,
+      "sleep": 5.92,
+      "toilet": 16.76,
+      "social": 1.48,
+      "work": 12.72,
+      "faith": 0.0,
+      "leisure": 1.8
+     }
+    },
+    {
+     "group": "ZS_MM_RTN_ROAM",
+     "people": 18,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.889,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.944
+     },
+     "critical_hours_per_day": {
+      "food": 10.08,
+      "sleep": 6.23,
+      "toilet": 16.53,
+      "social": 2.55,
+      "work": 13.42,
+      "faith": 0.0,
+      "leisure": 3.24
+     }
+    },
+    {
+     "group": "ZS_SIT_BENCH",
+     "people": 14,
+     "critical_share": {
+      "food": 0.786,
+      "sleep": 0.571,
+      "toilet": 1.0,
+      "social": 0.429,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.357
+     },
+     "critical_hours_per_day": {
+      "food": 8.14,
+      "sleep": 3.4,
+      "toilet": 16.82,
+      "social": 1.8,
+      "work": 10.89,
+      "faith": 0.0,
+      "leisure": 0.98
+     }
+    },
+    {
+     "group": "ZS_PICK_FP",
+     "people": 12,
+     "critical_share": {
+      "food": 0.917,
+      "sleep": 0.75,
+      "toilet": 1.0,
+      "social": 0.167,
+      "work": 0.25,
+      "faith": 0.0,
+      "leisure": 0.583
+     },
+     "critical_hours_per_day": {
+      "food": 9.21,
+      "sleep": 4.07,
+      "toilet": 16.55,
+      "social": 0.27,
+      "work": 0.09,
+      "faith": 0.0,
+      "leisure": 1.81
+     }
+    },
+    {
+     "group": "ZS_PRACTICE_SWORD",
+     "people": 12,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.417,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.083,
+      "faith": 0.0,
+      "leisure": 0.417
+     },
+     "critical_hours_per_day": {
+      "food": 10.05,
+      "sleep": 2.5,
+      "toilet": 16.75,
+      "social": 0.0,
+      "work": 0.03,
+      "faith": 0.0,
+      "leisure": 0.75
+     }
+    },
+    {
+     "group": "ZS_GUARD_PASSAGE",
+     "people": 11,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.545,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.727
+     },
+     "critical_hours_per_day": {
+      "food": 9.87,
+      "sleep": 5.89,
+      "toilet": 16.87,
+      "social": 0.99,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 2.78
+     }
+    },
+    {
+     "group": "ZS_SIT_THRONE",
+     "people": 11,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.545,
+      "toilet": 1.0,
+      "social": 0.273,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.364
+     },
+     "critical_hours_per_day": {
+      "food": 10.45,
+      "sleep": 3.62,
+      "toilet": 17.03,
+      "social": 1.21,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 1.34
+     }
+    },
+    {
+     "group": "ZS_RAKE_FP",
+     "people": 9,
+     "critical_share": {
+      "food": 0.889,
+      "sleep": 0.667,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.667
+     },
+     "critical_hours_per_day": {
+      "food": 8.47,
+      "sleep": 4.2,
+      "toilet": 16.55,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 1.95
+     }
+    },
+    {
+     "group": "ZS_SIT_CAMPFIRE",
+     "people": 9,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 10.23,
+      "sleep": 5.94,
+      "toilet": 16.62,
+      "social": 0.0,
+      "work": 13.07,
+      "faith": 0.0,
+      "leisure": 3.19
+     }
+    },
+    {
+     "group": "ZS_SIT_CHAIR",
+     "people": 8,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.875,
+      "toilet": 1.0,
+      "social": 0.25,
+      "work": 0.875,
+      "faith": 0.0,
+      "leisure": 0.625
+     },
+     "critical_hours_per_day": {
+      "food": 9.37,
+      "sleep": 4.24,
+      "toilet": 17.11,
+      "social": 0.92,
+      "work": 10.15,
+      "faith": 0.0,
+      "leisure": 1.95
+     }
+    },
+    {
+     "group": "ZS_STAND_DRINKING",
+     "people": 8,
+     "critical_share": {
+      "food": 0.0,
+      "sleep": 0.875,
+      "toilet": 1.0,
+      "social": 0.5,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 0.0,
+      "sleep": 4.88,
+      "toilet": 16.86,
+      "social": 2.72,
+      "work": 13.19,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_STAND_EATING",
+     "people": 8,
+     "critical_share": {
+      "food": 0.0,
+      "sleep": 0.625,
+      "toilet": 1.0,
+      "social": 0.625,
+      "work": 0.875,
+      "faith": 0.0,
+      "leisure": 0.625
+     },
+     "critical_hours_per_day": {
+      "food": 0.0,
+      "sleep": 3.33,
+      "toilet": 16.79,
+      "social": 3.37,
+      "work": 11.16,
+      "faith": 0.0,
+      "leisure": 0.93
+     }
+    },
+    {
+     "group": "ZS_READ_BOOKSTAND",
+     "people": 7,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.571,
+      "toilet": 1.0,
+      "social": 0.286,
+      "work": 0.857,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 10.8,
+      "sleep": 4.07,
+      "toilet": 17.08,
+      "social": 1.15,
+      "work": 9.28,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_SAW",
+     "people": 7,
+     "critical_share": {
+      "food": 0.857,
+      "sleep": 0.714,
+      "toilet": 1.0,
+      "social": 0.429,
+      "work": 0.286,
+      "faith": 0.0,
+      "leisure": 0.714
+     },
+     "critical_hours_per_day": {
+      "food": 9.19,
+      "sleep": 4.62,
+      "toilet": 16.76,
+      "social": 1.63,
+      "work": 0.08,
+      "faith": 0.0,
+      "leisure": 1.0
+     }
+    },
+    {
+     "group": "ZS_STAND_SWEEPING",
+     "people": 6,
+     "critical_share": {
+      "food": 0.667,
+      "sleep": 0.333,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.167,
+      "faith": 0.0,
+      "leisure": 0.333
+     },
+     "critical_hours_per_day": {
+      "food": 7.85,
+      "sleep": 1.78,
+      "toilet": 16.63,
+      "social": 0.0,
+      "work": 0.07,
+      "faith": 0.0,
+      "leisure": 0.8
+     }
+    },
+    {
+     "group": "ZS_STAND_WP",
+     "people": 6,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.833,
+      "toilet": 1.0,
+      "social": 0.5,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.833
+     },
+     "critical_hours_per_day": {
+      "food": 10.51,
+      "sleep": 5.14,
+      "toilet": 16.47,
+      "social": 1.23,
+      "work": 13.19,
+      "faith": 0.0,
+      "leisure": 2.62
+     }
+    },
+    {
+     "group": "ZS_COOK_STOVE",
+     "people": 5,
+     "critical_share": {
+      "food": 0.0,
+      "sleep": 0.6,
+      "toilet": 1.0,
+      "social": 0.6,
+      "work": 0.2,
+      "faith": 0.0,
+      "leisure": 0.6
+     },
+     "critical_hours_per_day": {
+      "food": 0.0,
+      "sleep": 4.01,
+      "toilet": 16.92,
+      "social": 2.88,
+      "work": 0.35,
+      "faith": 0.0,
+      "leisure": 2.21
+     }
+    },
+    {
+     "group": "ZS_REPAIR_HUT",
+     "people": 4,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.5,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.25,
+      "faith": 0.0,
+      "leisure": 0.5
+     },
+     "critical_hours_per_day": {
+      "food": 10.42,
+      "sleep": 1.88,
+      "toilet": 16.48,
+      "social": 0.0,
+      "work": 0.03,
+      "faith": 0.0,
+      "leisure": 1.07
+     }
+    },
+    {
+     "group": "ZS_SMITH_ANVIL",
+     "people": 4,
+     "critical_share": {
+      "food": 0.75,
+      "sleep": 0.25,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 5.55,
+      "sleep": 0.34,
+      "toilet": 16.64,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_STUDY_WP",
+     "people": 4,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 10.94,
+      "sleep": 4.87,
+      "toilet": 16.27,
+      "social": 5.26,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 4.08
+     }
+    },
+    {
+     "group": "ZS_MM_RTN_ORCSIT",
+     "people": 3,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.667,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.333
+     },
+     "critical_hours_per_day": {
+      "food": 10.43,
+      "sleep": 5.49,
+      "toilet": 16.99,
+      "social": 2.51,
+      "work": 12.5,
+      "faith": 0.0,
+      "leisure": 1.72
+     }
+    },
+    {
+     "group": "ZS_POTION_ALCHEMY",
+     "people": 3,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.333,
+      "toilet": 1.0,
+      "social": 0.667,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.333
+     },
+     "critical_hours_per_day": {
+      "food": 10.09,
+      "sleep": 2.71,
+      "toilet": 17.51,
+      "social": 0.47,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 1.58
+     }
+    },
+    {
+     "group": "ZS_SMITH_SHARP",
+     "people": 3,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.333,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 11.63,
+      "sleep": 0.28,
+      "toilet": 16.84,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_SMOKE_JOINT",
+     "people": 3,
+     "critical_share": {
+      "food": 0.667,
+      "sleep": 0.667,
+      "toilet": 1.0,
+      "social": 0.667,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 7.53,
+      "sleep": 2.77,
+      "toilet": 16.68,
+      "social": 2.04,
+      "work": 13.41,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_STOMP_HERB",
+     "people": 3,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.0,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 9.37,
+      "sleep": 0.0,
+      "toilet": 16.72,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_COOK_CAULDRON",
+     "people": 2,
+     "critical_share": {
+      "food": 0.0,
+      "sleep": 0.5,
+      "toilet": 1.0,
+      "social": 0.5,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.5
+     },
+     "critical_hours_per_day": {
+      "food": 0.0,
+      "sleep": 3.04,
+      "toilet": 16.57,
+      "social": 2.51,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.03
+     }
+    },
+    {
+     "group": "ZS_MM_RTN_REST",
+     "people": 2,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 8.71,
+      "sleep": 5.08,
+      "toilet": 17.35,
+      "social": 3.05,
+      "work": 14.09,
+      "faith": 0.0,
+      "leisure": 2.42
+     }
+    },
+    {
+     "group": "ZS_PRAY_INNOS_FP",
+     "people": 2,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.5,
+      "toilet": 1.0,
+      "social": 0.5,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.5
+     },
+     "critical_hours_per_day": {
+      "food": 11.42,
+      "sleep": 3.72,
+      "toilet": 16.75,
+      "social": 0.52,
+      "work": 13.47,
+      "faith": 0.0,
+      "leisure": 0.39
+     }
+    },
+    {
+     "group": "только сон",
+     "people": 2,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.0,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 11.4,
+      "sleep": 0.0,
+      "toilet": 16.66,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_ANNOUNCE_HEROLD",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 11.1,
+      "sleep": 5.88,
+      "toilet": 16.28,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 3.13
+     }
+    },
+    {
+     "group": "ZS_GUARD_HAMMER",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 8.05,
+      "sleep": 4.51,
+      "toilet": 16.48,
+      "social": 9.01,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_PEE",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 0.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 11.12,
+      "sleep": 4.7,
+      "toilet": 0.0,
+      "social": 8.59,
+      "work": 11.42,
+      "faith": 0.0,
+      "leisure": 4.25
+     }
+    },
+    {
+     "group": "ZS_PLAY_LUTE",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 10.68,
+      "sleep": 5.53,
+      "toilet": 17.28,
+      "social": 3.99,
+      "work": 12.07,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_PRAY_INNOS",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 11.43,
+      "sleep": 5.83,
+      "toilet": 16.38,
+      "social": 2.44,
+      "work": 12.91,
+      "faith": 0.0,
+      "leisure": 3.29
+     }
+    },
+    {
+     "group": "ZS_PREACH_VATRAS",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 10.0,
+      "sleep": 6.79,
+      "toilet": 16.22,
+      "social": 7.39,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 1.01
+     }
+    },
+    {
+     "group": "ZS_SWEEP_FP",
+     "people": 1,
+     "critical_share": {
+      "food": 0.0,
+      "sleep": 0.0,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 0.0,
+      "sleep": 0.0,
+      "toilet": 15.83,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    }
+   ]
+  },
+  {
+   "days": 7,
+   "people": 370,
+   "needs": [
+    {
+     "need": "food",
+     "name": "еда",
+     "people": 370,
+     "routine_fills": 51,
+     "fill_states": [
+      "ZS_COOK_CAULDRON",
+      "ZS_COOK_PAN",
+      "ZS_COOK_STOVE",
+      "ZS_MM_RTN_EATGROUND",
+      "ZS_ROAST_SCAVENGER",
+      "ZS_STAND_DRINKING",
+      "ZS_STAND_EATING"
+     ],
+     "went_low": 348,
+     "went_critical": 339,
+     "low_hours_median": 158.13,
+     "critical_hours_median": 154.01,
+     "critical_hours_median_of_critical": 154.28,
+     "critical_hours_max": 156.17,
+     "critical_person_hours": 49821.1,
+     "last_day_critical": 339,
+     "last_day_critical_hours_median": 24.0,
+     "by_fill": {
+      "with_fill": {
+       "people": 51,
+       "went_critical": 20,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 20,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 319,
+       "went_critical": 319,
+       "critical_hours_median": 154.4,
+       "last_day_critical": 319,
+       "last_day_critical_hours_median": 24.0
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 7872.5,
+       "share": 0.158
+      },
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 6777.9,
+       "share": 0.136
+      },
+      {
+       "state": "ZS_SLEEP",
+       "hours": 4699.9,
+       "share": 0.094
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 4612.7,
+       "share": 0.093
+      },
+      {
+       "state": "ZS_BANDIT",
+       "hours": 3401.9,
+       "share": 0.068
+      }
+     ],
+     "worst": [
+      {
+       "key": "BDT_1002_BANDIT_L#1",
+       "name": "Бродяга",
+       "guild": "бандиты",
+       "day_state": "ZS_BANDIT",
+       "critical_hours": 156.2
+      },
+      {
+       "key": "VLK_476_FENIA#0",
+       "name": "Феня",
+       "guild": "горожане",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 156.2
+      },
+      {
+       "key": "VLK_4005_ARBEITER#0",
+       "name": "Рабочий",
+       "guild": "горожане",
+       "day_state": "ZS_STAND_SWEEPING",
+       "critical_hours": 156.2
+      },
+      {
+       "key": "KDW_1400_ADDON_SATURAS_NW#0",
+       "name": "Сатурас",
+       "guild": "маги Воды",
+       "day_state": "ZS_STUDY_WP",
+       "critical_hours": 156.2
+      },
+      {
+       "key": "MIL_313_BOLTAN#0",
+       "name": "Болтан",
+       "guild": "ополчение",
+       "day_state": "ZS_SIT_CHAIR",
+       "critical_hours": 156.1
+      }
+     ]
+    },
+    {
+     "need": "sleep",
+     "name": "сон",
+     "people": 370,
+     "routine_fills": 105,
+     "fill_states": [
+      "ZS_MM_RTN_SLEEP",
+      "ZS_SLEEP",
+      "ZS_SLEEP_GROUND"
+     ],
+     "went_low": 360,
+     "went_critical": 297,
+     "low_hours_median": 154.26,
+     "critical_hours_median": 148.97,
+     "critical_hours_median_of_critical": 149.69,
+     "critical_hours_max": 152.34,
+     "critical_person_hours": 41155.1,
+     "last_day_critical": 297,
+     "last_day_critical_hours_median": 24.0,
+     "by_fill": {
+      "with_fill": {
+       "people": 105,
+       "went_critical": 32,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 32,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 265,
+       "went_critical": 265,
+       "critical_hours_median": 150.08,
+       "last_day_critical": 265,
+       "last_day_critical_hours_median": 24.0
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 7017.1,
+       "share": 0.171
+      },
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 5625.7,
+       "share": 0.137
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 3820.1,
+       "share": 0.093
+      },
+      {
+       "state": "ZS_BANDIT",
+       "hours": 3298.2,
+       "share": 0.08
+      },
+      {
+       "state": "ZS_MM_RTN_ROAM",
+       "hours": 2704.2,
+       "share": 0.066
+      }
+     ],
+     "worst": [
+      {
+       "key": "VLK_449_LARES#0",
+       "name": "Ларес",
+       "guild": "без гильдии",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 152.3
+      },
+      {
+       "key": "BDT_10313_ADDON_RANGERBANDIT_L#0",
+       "name": "Бандит",
+       "guild": "бандиты",
+       "day_state": "ZS_BANDIT",
+       "critical_hours": 152.3
+      },
+      {
+       "key": "VLK_432_MOE#0",
+       "name": "Мо",
+       "guild": "без гильдии",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 152.3
+      },
+      {
+       "key": "BDT_1047_BANDIT_L#0",
+       "name": "Бандит",
+       "guild": "бандиты",
+       "day_state": "ZS_SIT_CAMPFIRE",
+       "critical_hours": 152.3
+      },
+      {
+       "key": "PAL_234_RITTER#0",
+       "name": "Рыцарь",
+       "guild": "паладины",
+       "day_state": "ZS_SMALLTALK",
+       "critical_hours": 152.3
+      }
+     ]
+    },
+    {
+     "need": "toilet",
+     "name": "туалет",
+     "people": 370,
+     "routine_fills": 2,
+     "fill_states": [
+      "ZS_PEE"
+     ],
+     "went_low": 369,
+     "went_critical": 369,
+     "low_hours_median": 162.4,
+     "critical_hours_median": 160.8,
+     "critical_hours_median_of_critical": 160.8,
+     "critical_hours_max": 161.74,
+     "critical_person_hours": 59214.2,
+     "last_day_critical": 369,
+     "last_day_critical_hours_median": 24.0,
+     "by_fill": {
+      "with_fill": {
+       "people": 2,
+       "went_critical": 1,
+       "critical_hours_median": 28.07,
+       "last_day_critical": 1,
+       "last_day_critical_hours_median": 4.25
+      },
+      "without_fill": {
+       "people": 368,
+       "went_critical": 368,
+       "critical_hours_median": 160.8,
+       "last_day_critical": 368,
+       "last_day_critical_hours_median": 24.0
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 8493.8,
+       "share": 0.143
+      },
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 7742.0,
+       "share": 0.131
+      },
+      {
+       "state": "ZS_SLEEP",
+       "hours": 5932.5,
+       "share": 0.1
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 4994.5,
+       "share": 0.084
+      },
+      {
+       "state": "ZS_BANDIT",
+       "hours": 3536.6,
+       "share": 0.06
+      }
+     ],
+     "worst": [
+      {
+       "key": "PAL_220_SCHIFFSWACHE#0",
+       "name": "Корабельный стражник",
+       "guild": "паладины",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 161.7
+      },
+      {
+       "key": "PAL_240_RITTER#0",
+       "name": "Рыцарь",
+       "guild": "паладины",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 161.7
+      },
+      {
+       "key": "BDT_10312_ADDON_RANGERBANDIT_L#0",
+       "name": "Бандит",
+       "guild": "бандиты",
+       "day_state": "ZS_BANDIT",
+       "critical_hours": 161.7
+      },
+      {
+       "key": "BAU_941_KATI#0",
+       "name": "Кати",
+       "guild": "поселенцы",
+       "day_state": "ZS_STAND_ARMSCROSSED",
+       "critical_hours": 161.7
+      },
+      {
+       "key": "BAU_920_BAUER#0",
+       "name": "Крестьянин",
+       "guild": "крестьяне",
+       "day_state": "ZS_SMALLTALK",
+       "critical_hours": 161.7
+      }
+     ]
+    },
+    {
+     "need": "social",
+     "name": "общение",
+     "people": 370,
+     "routine_fills": 120,
+     "fill_states": [
+      "ZS_DANCE",
+      "ZS_SIT_CAMPFIRE",
+      "ZS_SMALLTALK"
+     ],
+     "went_low": 258,
+     "went_critical": 251,
+     "low_hours_median": 147.01,
+     "critical_hours_median": 140.85,
+     "critical_hours_median_of_critical": 145.65,
+     "critical_hours_max": 153.36,
+     "critical_person_hours": 35926.0,
+     "last_day_critical": 251,
+     "last_day_critical_hours_median": 24.0,
+     "by_fill": {
+      "with_fill": {
+       "people": 120,
+       "went_critical": 3,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 3,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 250,
+       "went_critical": 248,
+       "critical_hours_median": 145.66,
+       "last_day_critical": 248,
+       "last_day_critical_hours_median": 24.0
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 7498.5,
+       "share": 0.209
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 3897.8,
+       "share": 0.108
+      },
+      {
+       "state": "ZS_BANDIT",
+       "hours": 3178.4,
+       "share": 0.088
+      },
+      {
+       "state": "ZS_SLEEP",
+       "hours": 2943.5,
+       "share": 0.082
+      },
+      {
+       "state": "ZS_MM_RTN_ROAM",
+       "hours": 2636.3,
+       "share": 0.073
+      }
+     ],
+     "worst": [
+      {
+       "key": "VLK_420_CORAGON#0",
+       "name": "Корагон",
+       "guild": "горожане",
+       "day_state": "ZS_STAND_ARMSCROSSED",
+       "critical_hours": 153.4
+      },
+      {
+       "key": "VLK_434_BORKA#0",
+       "name": "Борка",
+       "guild": "горожане",
+       "day_state": "ZS_STAND_ARMSCROSSED",
+       "critical_hours": 153.1
+      },
+      {
+       "key": "BAU_936_ROSI#0",
+       "name": "Рози",
+       "guild": "крестьяне",
+       "day_state": "ZS_COOK_STOVE",
+       "critical_hours": 153.1
+      },
+      {
+       "key": "NOV_608_GARWIG#0",
+       "name": "Гарвиг",
+       "guild": "послушники",
+       "day_state": "ZS_GUARD_HAMMER",
+       "critical_hours": 153.0
+      },
+      {
+       "key": "VLK_458_RUPERT#0",
+       "name": "Руперт",
+       "guild": "горожане",
+       "day_state": "ZS_PEE",
+       "critical_hours": 152.6
+      }
+     ]
+    },
+    {
+     "need": "work",
+     "name": "дело",
+     "people": 370,
+     "routine_fills": 185,
+     "fill_states": [
+      "ZS_ANNOUNCE_HEROLD",
+      "ZS_COOK_CAULDRON",
+      "ZS_COOK_PAN",
+      "ZS_COOK_STOVE",
+      "ZS_GUARD_HAMMER",
+      "ZS_GUARD_PASSAGE",
+      "ZS_PICK_FP",
+      "ZS_PICK_ORE",
+      "ZS_POTION_ALCHEMY",
+      "ZS_PRACTICE_MAGIC",
+      "ZS_PRACTICE_SWORD",
+      "ZS_PREACH_VATRAS",
+      "ZS_RAKE_FP",
+      "ZS_REPAIR_HUT",
+      "ZS_ROAST_SCAVENGER",
+      "ZS_SAW",
+      "ZS_SIT_THRONE",
+      "ZS_SMITH_ANVIL",
+      "ZS_SMITH_COOL",
+      "ZS_SMITH_FIRE",
+      "ZS_SMITH_SHARP",
+      "ZS_STAND_GUARDING",
+      "ZS_STAND_SWEEPING",
+      "ZS_STOMP_HERB",
+      "ZS_STUDY_WP",
+      "ZS_SWEEP_FP"
+     ],
+     "went_low": 233,
+     "went_critical": 217,
+     "low_hours_median": 99.97,
+     "critical_hours_median": 80.16,
+     "critical_hours_median_of_critical": 156.77,
+     "critical_hours_max": 158.6,
+     "critical_person_hours": 29549.3,
+     "last_day_critical": 216,
+     "last_day_critical_hours_median": 12.77,
+     "by_fill": {
+      "with_fill": {
+       "people": 185,
+       "went_critical": 34,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 33,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 185,
+       "went_critical": 183,
+       "critical_hours_median": 157.02,
+       "last_day_critical": 183,
+       "last_day_critical_hours_median": 24.0
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 6275.1,
+       "share": 0.212
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 4248.5,
+       "share": 0.144
+      },
+      {
+       "state": "ZS_BANDIT",
+       "hours": 3447.9,
+       "share": 0.117
+      },
+      {
+       "state": "ZS_MM_RTN_ROAM",
+       "hours": 2833.6,
+       "share": 0.096
+      },
+      {
+       "state": "ZS_SLEEP",
+       "hours": 1912.8,
+       "share": 0.065
+      }
+     ],
+     "worst": [
+      {
+       "key": "SLD_814_SENTENZA#0",
+       "name": "Сентенза",
+       "guild": "наёмники",
+       "day_state": "ZS_STAND_EATING",
+       "critical_hours": 158.6
+      },
+      {
+       "key": "ORCWARRIOR_ROAM#2",
+       "name": "Орк-воин",
+       "guild": "орки",
+       "day_state": "ZS_MM_RTN_ROAM",
+       "critical_hours": 158.6
+      },
+      {
+       "key": "ORCWARRIOR_ROAM#15",
+       "name": "Орк-воин",
+       "guild": "орки",
+       "day_state": "ZS_MM_RTN_ROAM",
+       "critical_hours": 158.6
+      },
+      {
+       "key": "BDT_10302_ADDON_RANGERBANDIT_L#0",
+       "name": "Бандит",
+       "guild": "бандиты",
+       "day_state": "ZS_STAND_ARMSCROSSED",
+       "critical_hours": 158.6
+      },
+      {
+       "key": "VLK_415_MELDOR#0",
+       "name": "Мелдор",
+       "guild": "горожане",
+       "day_state": "ZS_SMOKE_JOINT",
+       "critical_hours": 158.6
+      }
+     ]
+    },
+    {
+     "need": "faith",
+     "name": "вера",
+     "people": 370,
+     "routine_fills": 13,
+     "fill_states": [
+      "ZS_PRAY_INNOS",
+      "ZS_PRAY_INNOS_FP",
+      "ZS_PRAY_SLEEPER",
+      "ZS_PREACH_VATRAS"
+     ],
+     "went_low": 256,
+     "went_critical": 252,
+     "low_hours_median": 90.33,
+     "critical_hours_median": 67.84,
+     "critical_hours_median_of_critical": 79.82,
+     "critical_hours_max": 130.11,
+     "critical_person_hours": 20351.4,
+     "last_day_critical": 252,
+     "last_day_critical_hours_median": 24.0,
+     "by_fill": {
+      "with_fill": {
+       "people": 13,
+       "went_critical": 0,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 0,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 357,
+       "went_critical": 252,
+       "critical_hours_median": 70.32,
+       "last_day_critical": 252,
+       "last_day_critical_hours_median": 24.0
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 4473.7,
+       "share": 0.22
+      },
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 2835.4,
+       "share": 0.139
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 1816.7,
+       "share": 0.089
+      },
+      {
+       "state": "ZS_SLEEP",
+       "hours": 1370.9,
+       "share": 0.067
+      },
+      {
+       "state": "ZS_GUARD_PASSAGE",
+       "hours": 1062.2,
+       "share": 0.052
+      }
+     ],
+     "worst": [
+      {
+       "key": "KDF_500_PYROKAR#0",
+       "name": "Пирокар",
+       "guild": "маги Огня",
+       "day_state": "ZS_SIT_THRONE",
+       "critical_hours": 130.1
+      },
+      {
+       "key": "PAL_298_RITTER#0",
+       "name": "Рыцарь",
+       "guild": "паладины",
+       "day_state": "ZS_GUARD_PASSAGE",
+       "critical_hours": 128.8
+      },
+      {
+       "key": "KDF_510_HYGLAS#0",
+       "name": "Хиглас",
+       "guild": "маги Огня",
+       "day_state": "ZS_READ_BOOKSTAND",
+       "critical_hours": 128.5
+      },
+      {
+       "key": "KDF_501_SERPENTES#0",
+       "name": "Серпентес",
+       "guild": "маги Огня",
+       "day_state": "ZS_SIT_THRONE",
+       "critical_hours": 128.4
+      },
+      {
+       "key": "PAL_225_SCHIFFSWACHE#0",
+       "name": "Корабельный стражник",
+       "guild": "паладины",
+       "day_state": "ZS_STAND_GUARDING",
+       "critical_hours": 128.3
+      }
+     ]
+    },
+    {
+     "need": "leisure",
+     "name": "досуг",
+     "people": 370,
+     "routine_fills": 42,
+     "fill_states": [
+      "ZS_DANCE",
+      "ZS_PLAY_LUTE",
+      "ZS_READ_BOOKSTAND",
+      "ZS_SMOKE_JOINT",
+      "ZS_SMOKE_WATERPIPE",
+      "ZS_STAND_DRINKING"
+     ],
+     "went_low": 333,
+     "went_critical": 331,
+     "low_hours_median": 150.1,
+     "critical_hours_median": 144.68,
+     "critical_hours_median_of_critical": 145.1,
+     "critical_hours_max": 149.17,
+     "critical_person_hours": 47124.5,
+     "last_day_critical": 331,
+     "last_day_critical_hours_median": 24.0,
+     "by_fill": {
+      "with_fill": {
+       "people": 42,
+       "went_critical": 6,
+       "critical_hours_median": 0.0,
+       "last_day_critical": 6,
+       "last_day_critical_hours_median": 0.0
+      },
+      "without_fill": {
+       "people": 328,
+       "went_critical": 325,
+       "critical_hours_median": 145.13,
+       "last_day_critical": 325,
+       "last_day_critical_hours_median": 24.0
+      }
+     },
+     "critical_by_state": [
+      {
+       "state": "ZS_STAND_GUARDING",
+       "hours": 7545.2,
+       "share": 0.16
+      },
+      {
+       "state": "ZS_SMALLTALK",
+       "hours": 6497.2,
+       "share": 0.138
+      },
+      {
+       "state": "ZS_STAND_ARMSCROSSED",
+       "hours": 4146.5,
+       "share": 0.088
+      },
+      {
+       "state": "ZS_SLEEP",
+       "hours": 3849.5,
+       "share": 0.082
+      },
+      {
+       "state": "ZS_BANDIT",
+       "hours": 3202.3,
+       "share": 0.068
+      }
+     ],
+     "worst": [
+      {
+       "key": "BAU_972_BAUER#0",
+       "name": "Крестьянин",
+       "guild": "поселенцы",
+       "day_state": "ZS_SMALLTALK",
+       "critical_hours": 149.2
+      },
+      {
+       "key": "ORCSHAMAN_SIT#2",
+       "name": "Орк-шаман",
+       "guild": "орки",
+       "day_state": "ZS_MM_RTN_ORCSIT",
+       "critical_hours": 149.1
+      },
+      {
+       "key": "BDT_10312_ADDON_RANGERBANDIT_L#0",
+       "name": "Бандит",
+       "guild": "бандиты",
+       "day_state": "ZS_BANDIT",
+       "critical_hours": 149.1
+      },
+      {
+       "key": "ORCWARRIOR_ROAM#5",
+       "name": "Орк-воин",
+       "guild": "орки",
+       "day_state": "ZS_MM_RTN_ROAM",
+       "critical_hours": 149.1
+      },
+      {
+       "key": "SLD_802_BUSTER#0",
+       "name": "Бастер",
+       "guild": "наёмники",
+       "day_state": "ZS_SMALLTALK",
+       "critical_hours": 149.1
+      }
+     ]
+    }
+   ],
+   "by_guild": [
+    {
+     "group": "горожане",
+     "people": 92,
+     "critical_share": {
+      "food": 0.837,
+      "sleep": 0.696,
+      "toilet": 0.989,
+      "social": 0.533,
+      "work": 0.62,
+      "faith": 0.978,
+      "leisure": 0.761
+     },
+     "critical_hours_per_day": {
+      "food": 15.29,
+      "sleep": 10.27,
+      "toilet": 22.54,
+      "social": 10.47,
+      "work": 10.47,
+      "faith": 8.47,
+      "leisure": 14.66
+     }
+    },
+    {
+     "group": "бандиты",
+     "people": 50,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.98,
+      "toilet": 1.0,
+      "social": 0.76,
+      "work": 0.84,
+      "faith": 0.0,
+      "leisure": 0.98
+     },
+     "critical_hours_per_day": {
+      "food": 22.06,
+      "sleep": 21.0,
+      "toilet": 22.98,
+      "social": 15.75,
+      "work": 18.82,
+      "faith": 0.0,
+      "leisure": 20.42
+     }
+    },
+    {
+     "group": "паладины",
+     "people": 41,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.829,
+      "toilet": 1.0,
+      "social": 0.683,
+      "work": 0.317,
+      "faith": 0.951,
+      "leisure": 0.927
+     },
+     "critical_hours_per_day": {
+      "food": 22.06,
+      "sleep": 17.8,
+      "toilet": 22.97,
+      "social": 14.14,
+      "work": 6.07,
+      "faith": 16.5,
+      "leisure": 19.26
+     }
+    },
+    {
+     "group": "поселенцы",
+     "people": 40,
+     "critical_share": {
+      "food": 0.9,
+      "sleep": 0.825,
+      "toilet": 1.0,
+      "social": 0.525,
+      "work": 0.5,
+      "faith": 0.95,
+      "leisure": 0.925
+     },
+     "critical_hours_per_day": {
+      "food": 19.4,
+      "sleep": 17.66,
+      "toilet": 22.96,
+      "social": 10.84,
+      "work": 8.03,
+      "faith": 10.34,
+      "leisure": 18.75
+     }
+    },
+    {
+     "group": "ополчение",
+     "people": 28,
+     "critical_share": {
+      "food": 0.929,
+      "sleep": 0.821,
+      "toilet": 1.0,
+      "social": 0.786,
+      "work": 0.286,
+      "faith": 1.0,
+      "leisure": 0.893
+     },
+     "critical_hours_per_day": {
+      "food": 19.9,
+      "sleep": 16.07,
+      "toilet": 22.96,
+      "social": 16.25,
+      "work": 5.13,
+      "faith": 10.18,
+      "leisure": 18.47
+     }
+    },
+    {
+     "group": "наёмники",
+     "people": 25,
+     "critical_share": {
+      "food": 0.88,
+      "sleep": 0.72,
+      "toilet": 1.0,
+      "social": 0.6,
+      "work": 0.72,
+      "faith": 0.0,
+      "leisure": 0.92
+     },
+     "critical_hours_per_day": {
+      "food": 18.86,
+      "sleep": 14.69,
+      "toilet": 22.98,
+      "social": 12.2,
+      "work": 15.29,
+      "faith": 0.0,
+      "leisure": 18.82
+     }
+    },
+    {
+     "group": "орки",
+     "people": 23,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.0,
+      "sleep": 21.43,
+      "toilet": 22.95,
+      "social": 20.93,
+      "work": 22.48,
+      "faith": 0.0,
+      "leisure": 20.98
+     }
+    },
+    {
+     "group": "крестьяне",
+     "people": 21,
+     "critical_share": {
+      "food": 0.762,
+      "sleep": 0.762,
+      "toilet": 1.0,
+      "social": 0.619,
+      "work": 0.667,
+      "faith": 0.905,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 16.8,
+      "sleep": 16.35,
+      "toilet": 22.99,
+      "social": 12.47,
+      "work": 10.86,
+      "faith": 9.65,
+      "leisure": 20.39
+     }
+    },
+    {
+     "group": "без гильдии",
+     "people": 18,
+     "critical_share": {
+      "food": 0.944,
+      "sleep": 0.944,
+      "toilet": 1.0,
+      "social": 0.833,
+      "work": 0.611,
+      "faith": 1.0,
+      "leisure": 0.889
+     },
+     "critical_hours_per_day": {
+      "food": 19.7,
+      "sleep": 20.35,
+      "toilet": 22.98,
+      "social": 17.31,
+      "work": 12.72,
+      "faith": 11.26,
+      "leisure": 18.5
+     }
+    },
+    {
+     "group": "послушники",
+     "people": 14,
+     "critical_share": {
+      "food": 0.929,
+      "sleep": 0.286,
+      "toilet": 1.0,
+      "social": 0.857,
+      "work": 0.357,
+      "faith": 0.286,
+      "leisure": 0.929
+     },
+     "critical_hours_per_day": {
+      "food": 20.47,
+      "sleep": 6.1,
+      "toilet": 22.95,
+      "social": 17.24,
+      "work": 8.04,
+      "faith": 5.07,
+      "leisure": 18.46
+     }
+    },
+    {
+     "group": "маги Огня",
+     "people": 11,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.818,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.273,
+      "faith": 0.909,
+      "leisure": 0.818
+     },
+     "critical_hours_per_day": {
+      "food": 22.13,
+      "sleep": 17.63,
+      "toilet": 22.98,
+      "social": 20.57,
+      "work": 6.11,
+      "faith": 15.64,
+      "leisure": 16.94
+     }
+    },
+    {
+     "group": "маги Воды",
+     "people": 6,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.667,
+      "work": 0.333,
+      "faith": 1.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.14,
+      "sleep": 21.41,
+      "toilet": 22.93,
+      "social": 14.25,
+      "work": 7.54,
+      "faith": 17.34,
+      "leisure": 20.9
+     }
+    },
+    {
+     "group": "пираты",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.05,
+      "sleep": 21.07,
+      "toilet": 23.0,
+      "social": 0.0,
+      "work": 22.42,
+      "faith": 0.0,
+      "leisure": 21.15
+     }
+    }
+   ],
+   "by_day_state": [
+    {
+     "group": "ZS_STAND_GUARDING",
+     "people": 61,
+     "critical_share": {
+      "food": 0.984,
+      "sleep": 0.852,
+      "toilet": 1.0,
+      "social": 0.951,
+      "work": 0.049,
+      "faith": 0.869,
+      "leisure": 0.967
+     },
+     "critical_hours_per_day": {
+      "food": 20.59,
+      "sleep": 17.42,
+      "toilet": 22.72,
+      "social": 19.75,
+      "work": 0.08,
+      "faith": 11.6,
+      "leisure": 19.83
+     }
+    },
+    {
+     "group": "ZS_SMALLTALK",
+     "people": 56,
+     "critical_share": {
+      "food": 0.929,
+      "sleep": 0.714,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.964,
+      "faith": 0.679,
+      "leisure": 0.893
+     },
+     "critical_hours_per_day": {
+      "food": 19.14,
+      "sleep": 14.34,
+      "toilet": 22.96,
+      "social": 0.0,
+      "work": 19.19,
+      "faith": 7.35,
+      "leisure": 17.66
+     }
+    },
+    {
+     "group": "ZS_STAND_ARMSCROSSED",
+     "people": 38,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.895,
+      "toilet": 1.0,
+      "social": 0.816,
+      "work": 1.0,
+      "faith": 0.789,
+      "leisure": 0.895
+     },
+     "critical_hours_per_day": {
+      "food": 21.09,
+      "sleep": 16.56,
+      "toilet": 22.97,
+      "social": 17.08,
+      "work": 19.49,
+      "faith": 8.92,
+      "leisure": 18.45
+     }
+    },
+    {
+     "group": "ZS_BANDIT",
+     "people": 22,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.09,
+      "sleep": 21.42,
+      "toilet": 22.97,
+      "social": 20.64,
+      "work": 22.39,
+      "faith": 0.0,
+      "leisure": 20.79
+     }
+    },
+    {
+     "group": "ZS_MM_RTN_ROAM",
+     "people": 18,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.01,
+      "sleep": 21.46,
+      "toilet": 22.93,
+      "social": 20.92,
+      "work": 22.49,
+      "faith": 0.0,
+      "leisure": 21.03
+     }
+    },
+    {
+     "group": "ZS_SIT_BENCH",
+     "people": 14,
+     "critical_share": {
+      "food": 0.929,
+      "sleep": 0.786,
+      "toilet": 1.0,
+      "social": 0.857,
+      "work": 1.0,
+      "faith": 0.857,
+      "leisure": 0.857
+     },
+     "critical_hours_per_day": {
+      "food": 17.65,
+      "sleep": 13.14,
+      "toilet": 22.97,
+      "social": 16.34,
+      "work": 19.57,
+      "faith": 7.49,
+      "leisure": 17.46
+     }
+    },
+    {
+     "group": "ZS_PICK_FP",
+     "people": 12,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.75,
+      "toilet": 1.0,
+      "social": 0.417,
+      "work": 0.333,
+      "faith": 0.917,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 20.6,
+      "sleep": 16.01,
+      "toilet": 22.94,
+      "social": 8.39,
+      "work": 0.24,
+      "faith": 9.8,
+      "leisure": 19.38
+     }
+    },
+    {
+     "group": "ZS_PRACTICE_SWORD",
+     "people": 12,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.5,
+      "toilet": 1.0,
+      "social": 0.25,
+      "work": 0.083,
+      "faith": 0.917,
+      "leisure": 0.917
+     },
+     "critical_hours_per_day": {
+      "food": 22.01,
+      "sleep": 8.95,
+      "toilet": 22.96,
+      "social": 4.62,
+      "work": 0.03,
+      "faith": 11.74,
+      "leisure": 18.56
+     }
+    },
+    {
+     "group": "ZS_GUARD_PASSAGE",
+     "people": 11,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.0,
+      "faith": 0.909,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 21.98,
+      "sleep": 21.41,
+      "toilet": 22.98,
+      "social": 20.41,
+      "work": 0.0,
+      "faith": 13.79,
+      "leisure": 20.93
+     }
+    },
+    {
+     "group": "ZS_SIT_THRONE",
+     "people": 11,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.636,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.0,
+      "faith": 0.818,
+      "leisure": 0.909
+     },
+     "critical_hours_per_day": {
+      "food": 22.06,
+      "sleep": 12.24,
+      "toilet": 23.0,
+      "social": 19.8,
+      "work": 0.0,
+      "faith": 8.78,
+      "leisure": 18.44
+     }
+    },
+    {
+     "group": "ZS_RAKE_FP",
+     "people": 9,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.778,
+      "toilet": 1.0,
+      "social": 0.333,
+      "work": 0.0,
+      "faith": 0.778,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 20.12,
+      "sleep": 14.55,
+      "toilet": 22.94,
+      "social": 6.6,
+      "work": 0.0,
+      "faith": 8.1,
+      "leisure": 20.58
+     }
+    },
+    {
+     "group": "ZS_SIT_CAMPFIRE",
+     "people": 9,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 1.0,
+      "faith": 0.333,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.03,
+      "sleep": 21.42,
+      "toilet": 22.95,
+      "social": 0.0,
+      "work": 22.44,
+      "faith": 4.02,
+      "leisure": 21.03
+     }
+    },
+    {
+     "group": "ZS_SIT_CHAIR",
+     "people": 8,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.875,
+      "toilet": 1.0,
+      "social": 0.75,
+      "work": 0.875,
+      "faith": 0.5,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 19.67,
+      "sleep": 16.54,
+      "toilet": 23.02,
+      "social": 15.29,
+      "work": 17.38,
+      "faith": 4.91,
+      "leisure": 20.62
+     }
+    },
+    {
+     "group": "ZS_STAND_DRINKING",
+     "people": 8,
+     "critical_share": {
+      "food": 0.0,
+      "sleep": 0.875,
+      "toilet": 1.0,
+      "social": 0.875,
+      "work": 1.0,
+      "faith": 0.875,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 0.0,
+      "sleep": 18.7,
+      "toilet": 22.98,
+      "social": 16.09,
+      "work": 22.46,
+      "faith": 11.34,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_STAND_EATING",
+     "people": 8,
+     "critical_share": {
+      "food": 0.0,
+      "sleep": 0.625,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.875,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 0.0,
+      "sleep": 13.33,
+      "toilet": 22.97,
+      "social": 20.65,
+      "work": 20.25,
+      "faith": 7.15,
+      "leisure": 19.11
+     }
+    },
+    {
+     "group": "ZS_READ_BOOKSTAND",
+     "people": 7,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.571,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.857,
+      "faith": 1.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.11,
+      "sleep": 12.34,
+      "toilet": 23.01,
+      "social": 20.2,
+      "work": 16.23,
+      "faith": 11.7,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_SAW",
+     "people": 7,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.857,
+      "toilet": 1.0,
+      "social": 0.571,
+      "work": 0.429,
+      "faith": 0.714,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 19.7,
+      "sleep": 16.7,
+      "toilet": 22.97,
+      "social": 11.8,
+      "work": 0.19,
+      "faith": 6.49,
+      "leisure": 20.51
+     }
+    },
+    {
+     "group": "ZS_STAND_SWEEPING",
+     "people": 6,
+     "critical_share": {
+      "food": 0.833,
+      "sleep": 0.333,
+      "toilet": 1.0,
+      "social": 0.5,
+      "work": 0.167,
+      "faith": 0.667,
+      "leisure": 0.833
+     },
+     "critical_hours_per_day": {
+      "food": 15.22,
+      "sleep": 7.11,
+      "toilet": 22.95,
+      "social": 9.79,
+      "work": 0.07,
+      "faith": 6.11,
+      "leisure": 16.81
+     }
+    },
+    {
+     "group": "ZS_STAND_WP",
+     "people": 6,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.833,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.833,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.07,
+      "sleep": 17.88,
+      "toilet": 22.92,
+      "social": 20.37,
+      "work": 22.46,
+      "faith": 10.58,
+      "leisure": 20.75
+     }
+    },
+    {
+     "group": "ZS_COOK_STOVE",
+     "people": 5,
+     "critical_share": {
+      "food": 0.0,
+      "sleep": 0.8,
+      "toilet": 1.0,
+      "social": 0.8,
+      "work": 0.2,
+      "faith": 0.8,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 0.0,
+      "sleep": 14.26,
+      "toilet": 22.99,
+      "social": 16.68,
+      "work": 0.35,
+      "faith": 9.36,
+      "leisure": 20.64
+     }
+    },
+    {
+     "group": "ZS_REPAIR_HUT",
+     "people": 4,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.5,
+      "work": 0.25,
+      "faith": 0.75,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.06,
+      "sleep": 14.13,
+      "toilet": 22.93,
+      "social": 9.98,
+      "work": 0.03,
+      "faith": 8.19,
+      "leisure": 20.58
+     }
+    },
+    {
+     "group": "ZS_SMITH_ANVIL",
+     "people": 4,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.25,
+      "toilet": 1.0,
+      "social": 0.75,
+      "work": 0.0,
+      "faith": 0.75,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 14.45,
+      "sleep": 2.98,
+      "toilet": 22.95,
+      "social": 14.84,
+      "work": 0.0,
+      "faith": 4.52,
+      "leisure": 15.76
+     }
+    },
+    {
+     "group": "ZS_STUDY_WP",
+     "people": 4,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.0,
+      "faith": 1.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.13,
+      "sleep": 21.27,
+      "toilet": 22.9,
+      "social": 21.32,
+      "work": 0.0,
+      "faith": 15.72,
+      "leisure": 21.15
+     }
+    },
+    {
+     "group": "ZS_MM_RTN_ORCSIT",
+     "people": 3,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.06,
+      "sleep": 21.36,
+      "toilet": 23.0,
+      "social": 20.93,
+      "work": 22.36,
+      "faith": 0.0,
+      "leisure": 20.73
+     }
+    },
+    {
+     "group": "ZS_POTION_ALCHEMY",
+     "people": 3,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.667,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.0,
+      "faith": 1.0,
+      "leisure": 0.667
+     },
+     "critical_hours_per_day": {
+      "food": 22.01,
+      "sleep": 10.01,
+      "toilet": 23.07,
+      "social": 20.23,
+      "work": 0.0,
+      "faith": 10.08,
+      "leisure": 13.67
+     }
+    },
+    {
+     "group": "ZS_SMITH_SHARP",
+     "people": 3,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.333,
+      "toilet": 1.0,
+      "social": 0.333,
+      "work": 0.0,
+      "faith": 0.667,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.23,
+      "sleep": 1.62,
+      "toilet": 22.98,
+      "social": 5.7,
+      "work": 0.0,
+      "faith": 5.48,
+      "leisure": 19.63
+     }
+    },
+    {
+     "group": "ZS_SMOKE_JOINT",
+     "people": 3,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.667,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 15.22,
+      "sleep": 16.2,
+      "toilet": 22.95,
+      "social": 20.84,
+      "work": 22.49,
+      "faith": 6.86,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_STOMP_HERB",
+     "people": 3,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.333,
+      "toilet": 1.0,
+      "social": 0.667,
+      "work": 0.0,
+      "faith": 0.333,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 21.91,
+      "sleep": 2.54,
+      "toilet": 22.96,
+      "social": 12.8,
+      "work": 0.0,
+      "faith": 3.23,
+      "leisure": 19.82
+     }
+    },
+    {
+     "group": "ZS_COOK_CAULDRON",
+     "people": 2,
+     "critical_share": {
+      "food": 0.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.5,
+      "work": 0.0,
+      "faith": 1.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 0.0,
+      "sleep": 13.88,
+      "toilet": 22.94,
+      "social": 10.64,
+      "work": 0.0,
+      "faith": 9.32,
+      "leisure": 20.53
+     }
+    },
+    {
+     "group": "ZS_MM_RTN_REST",
+     "people": 2,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 21.82,
+      "sleep": 21.3,
+      "toilet": 23.05,
+      "social": 21.01,
+      "work": 22.58,
+      "faith": 0.0,
+      "leisure": 20.92
+     }
+    },
+    {
+     "group": "ZS_PRAY_INNOS_FP",
+     "people": 2,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.5,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.2,
+      "sleep": 10.82,
+      "toilet": 22.96,
+      "social": 20.22,
+      "work": 22.5,
+      "faith": 0.0,
+      "leisure": 20.33
+     }
+    },
+    {
+     "group": "только сон",
+     "people": 2,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 0.0,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.2,
+      "sleep": 0.0,
+      "toilet": 22.95,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_ANNOUNCE_HEROLD",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.0,
+      "faith": 1.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.16,
+      "sleep": 21.41,
+      "toilet": 22.9,
+      "social": 19.91,
+      "work": 0.0,
+      "faith": 10.19,
+      "leisure": 21.02
+     }
+    },
+    {
+     "group": "ZS_GUARD_HAMMER",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.0,
+      "faith": 1.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 21.72,
+      "sleep": 21.22,
+      "toilet": 22.93,
+      "social": 21.86,
+      "work": 0.0,
+      "faith": 17.93,
+      "leisure": 20.55
+     }
+    },
+    {
+     "group": "ZS_PEE",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 0.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 1.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.16,
+      "sleep": 21.24,
+      "toilet": 0.0,
+      "social": 21.8,
+      "work": 22.2,
+      "faith": 11.53,
+      "leisure": 21.18
+     }
+    },
+    {
+     "group": "ZS_PLAY_LUTE",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 1.0,
+      "leisure": 0.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.1,
+      "sleep": 21.36,
+      "toilet": 23.04,
+      "social": 21.14,
+      "work": 22.3,
+      "faith": 11.79,
+      "leisure": 0.0
+     }
+    },
+    {
+     "group": "ZS_PRAY_INNOS",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 1.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.2,
+      "sleep": 21.4,
+      "toilet": 22.91,
+      "social": 20.92,
+      "work": 22.42,
+      "faith": 0.0,
+      "leisure": 21.04
+     }
+    },
+    {
+     "group": "ZS_PREACH_VATRAS",
+     "people": 1,
+     "critical_share": {
+      "food": 1.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 1.0,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 22.0,
+      "sleep": 21.54,
+      "toilet": 22.89,
+      "social": 21.63,
+      "work": 0.0,
+      "faith": 0.0,
+      "leisure": 20.72
+     }
+    },
+    {
+     "group": "ZS_SWEEP_FP",
+     "people": 1,
+     "critical_share": {
+      "food": 0.0,
+      "sleep": 1.0,
+      "toilet": 1.0,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 1.0,
+      "leisure": 1.0
+     },
+     "critical_hours_per_day": {
+      "food": 0.0,
+      "sleep": 7.63,
+      "toilet": 22.83,
+      "social": 0.0,
+      "work": 0.0,
+      "faith": 6.24,
+      "leisure": 20.23
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "baseimport.h"
+#include "baseidentity.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -56,6 +56,7 @@ class Reader {
 std::string formatSha256();
 std::vector<Source> sources(const std::filesystem::path& gothic);
 Identity identify(const std::filesystem::path& gothic, const std::atomic_bool* cancelled=nullptr);
+Identity identifyFromBase(const std::filesystem::path& base, const std::atomic_bool* cancelled=nullptr);
 std::vector<Entry> readIndex(const std::filesystem::path& dir);
 // Cache/store hits verify the index and file sizes; publication also verifies every file SHA-256.
 bool matches(const std::filesystem::path& dir, const Identity& identity, bool verifyFiles=false,

@@ -19,13 +19,6 @@ namespace {
 using namespace asset;
 using Json = rapidjson::Value;
 using Alloc = rapidjson::Document::AllocatorType;
-using zenkit::Vec2;
-using zenkit::Vec3;
-using zenkit::Quat;
-using zenkit::Mat4;
-using zenkit::Color;
-using zenkit::AxisAlignedBoundingBox;
-using zenkit::OrientedBoundingBox;
 namespace fs = std::filesystem;
 
 [[noreturn]] void fail(const std::string& reason) {
@@ -318,13 +311,13 @@ Json encode(Encoder& w, const Mat4& v) {
 void decode(Decoder&, const Json& v, Mat4& out) {
   array(v,16); for(unsigned col=0;col<4;++col) for(unsigned row=0;row<4;++row) out[col][row]=real(v[col*4+row]);
   }
-Json encode(Encoder& w, const AxisAlignedBoundingBox& v) {
+Json encode(Encoder& w, const Aabb& v) {
   Json out(rapidjson::kArrayType); out.PushBack(encode(w,v.min),w.alloc); out.PushBack(encode(w,v.max),w.alloc); return out;
   }
-void decode(Decoder& r, const Json& v, AxisAlignedBoundingBox& out) {
+void decode(Decoder& r, const Json& v, Aabb& out) {
   array(v,2); decode(r,v[0],out.min); decode(r,v[1],out.max);
   }
-Json encode(Encoder& w, const OrientedBoundingBox& v) {
+Json encode(Encoder& w, const Obb& v) {
   Json out(rapidjson::kObjectType);
   put(w,out,"center",encode(w,v.center));
   Json axes(rapidjson::kArrayType); for(const auto& axis:v.axes) axes.PushBack(encode(w,axis),w.alloc);
@@ -334,7 +327,7 @@ Json encode(Encoder& w, const OrientedBoundingBox& v) {
   put(w,out,"children",std::move(children));
   return out;
   }
-void decode(Decoder& r, const Json& v, OrientedBoundingBox& out) {
+void decode(Decoder& r, const Json& v, Obb& out) {
   decode(r,member(v,"center"),out.center);
   const auto& axes=member(v,"axes"); array(axes,3);
   for(unsigned i=0;i<3;++i) decode(r,axes[i],out.axes[i]);

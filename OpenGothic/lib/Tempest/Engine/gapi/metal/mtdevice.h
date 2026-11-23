@@ -6,28 +6,30 @@
 #include <Tempest/Except>
 
 #include <Metal/Metal.hpp>
+#include <MetalFX/MetalFX.hpp>
 #include <Foundation/Foundation.hpp>
 
 #include "../utility/compiller_hints.h"
 #include "gapi/shaderreflection.h"
 #include "gapi/metal/mtsync.h"
+#include "gapi/metal/mtpipelinecache.h"
+#include "gapi/metal/mtshadercache.h"
 #include "gapi/metal/mtsamplercache.h"
 #include "nsptr.h"
+
+#include <mutex>
+#include <deque>
+#include <vector>
 
 class MTLDevice;
 
 namespace Tempest {
 namespace Detail {
 
+void probeMetalUploadBuffer(MTL::Buffer* buffer);
+
 inline MTL::StorageMode hostVisibleStorageMode(MTL::Device& dev) {
-#ifdef __IOS__
-  // Managed storage is unavailable on iOS. The Simulator can still report
-  // hasUnifiedMemory()==false, so platform support is authoritative here.
-  (void)dev;
-  return MTL::StorageModeShared;
-#else
   return dev.hasUnifiedMemory() ? MTL::StorageModeShared : MTL::StorageModeManaged;
-#endif
   }
 
 inline MTL::ResourceOptions hostVisibleResourceOptions(MTL::Device& dev) {
@@ -90,6 +92,8 @@ inline MTL::PixelFormat nativeFormat(TextureFormat frm) {
       return MTL::PixelFormatRG11B10Float;
     case RGBA16F:
       return MTL::PixelFormatRGBA16Float;
+    case RG16F:
+      return MTL::PixelFormatRG16Float;
     }
   return MTL::PixelFormatInvalid;
   }
@@ -281,6 +285,11 @@ class MtDevice : public AbstractGraphicsApi::Device {
     void     onSubmit();
     void     onFinish();
     void     waitIdle() override;
+    void     savePipelineCache() override;
+    AbstractGraphicsApi::MemoryBudget memoryBudget() override;
+    void     uploadBuffer(MTL::Buffer& target, const void* data, size_t off, size_t size, bool wait);
+    std::unique_lock<std::mutex> lockUpload(size_t bytes);
+    void     submitUpload(MTL::CommandBuffer& cmd, size_t bytes);
 
     std::shared_ptr<MtFence> findAvailableFence();
     void                     waitAny(std::unique_lock<std::mutex>& guard);
@@ -290,8 +299,13 @@ class MtDevice : public AbstractGraphicsApi::Device {
 
     static void handleError(NS::Error* err);
 
+    MTLFX::SpatialScaler&      spatialScaler(MTL::Texture& src, MTL::Texture& dst);
+    MTLFX::TemporalScaler&     temporalScaler(MTL::Texture& color, MTL::Texture& depth, MTL::Texture& motion,
+                                              MTL::Texture& dst);
+
     NsPtr<MTL::Device>         impl;
     NsPtr<MTL::CommandQueue>   queue;
+    NsPtr<MTL::CommandQueue>   uploadQueue;
 
     std::condition_variable    devIdleCv;
     std::mutex                 devIdleSync;
@@ -301,9 +315,27 @@ class MtDevice : public AbstractGraphicsApi::Device {
 
     Props                      prop;
     MtSamplerCache             samplers;
+    MtPipelineCache            psoCache;
+    MtShaderCache              mslCache;
     bool                       validation = false;
+    bool                       syncBufferUploads = false;
+    bool                       syncTextureUploads = false;
+
+    std::mutex                 scalerSync;
+    std::vector<NsPtr<MTLFX::SpatialScaler>> scalers;
+    std::vector<NsPtr<MTLFX::TemporalScaler>> temporalScalers;
 
     static void deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev);
+
+  private:
+    struct Upload {
+      NsPtr<MTL::CommandBuffer> command;
+      size_t                   bytes = 0;
+      };
+    std::mutex                 uploadSync;
+    std::condition_variable    uploadCv;
+    std::deque<Upload>         uploads;
+    size_t                     uploadBytes = 0;
   };
 
 inline void mtAssert(void* obj, NS::Error* err) {

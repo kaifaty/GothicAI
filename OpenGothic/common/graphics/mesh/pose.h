@@ -1,9 +1,10 @@
 #pragma once
 
 #include <Tempest/Matrix4x4>
+#include <optional>
 #include <vector>
 
-#include "game/constants.h"
+#include "engineconstants.h"
 #include "animation.h"
 #include "animblend.h"
 #include "animationsolver.h"
@@ -13,17 +14,24 @@
 #include "aim.h"
 #include "aimwalk.h"
 #include "bowdraw.h"
+#include "quiverhand.h"
 #include "flinch.h"
+#include "reach.h"
 #include "resources.h"
 
 class Skeleton;
-class Serialize;
+class SaveArchive;
 class AnimationSolver;
-class Npc;
 
 class Pose final {
   public:
     Pose();
+
+    struct LogicEventObserver final {
+      void* context = nullptr;
+      void (*fired)(void*, const Animation::Sequence*, uint64_t origin,
+                    const Animation::LogicEvent&, uint64_t now) = nullptr;
+      };
 
     enum Flags {
       NoFlags       = 0,
@@ -38,8 +46,8 @@ class Pose final {
     static uint8_t     calcAniComb(const Tempest::Vec3& dpos, float rotation);
     static uint8_t     calcAniCombVert(const Tempest::Vec3& dpos);
 
-    void               save(Serialize& fout);
-    void               load(Serialize& fin, const AnimationSolver &solver);
+    void               save(SaveArchive& fout);
+    void               load(SaveArchive& fin, const AnimationSolver &solver);
 
     void               setFlags(Flags f);
     BodyState          bodyState() const;
@@ -49,7 +57,8 @@ class Pose final {
     bool               startAnim(const AnimationSolver &solver, const Animation::Sequence* sq,
                                  uint8_t comb, BodyState bs,
                                  StartHint hint, uint64_t tickCount);
-    bool               stopAnim(std::string_view name);
+    // atEase: its bones come to rest slowly (AnimBlend::easeOut: the hands of one whose voice is over)
+    bool               stopAnim(std::string_view name, bool atEase=false);
     bool               stopWalkAnim();
     void               interrupt();
     void               stopAllAnim();
@@ -58,12 +67,12 @@ class Pose final {
     bool               update(uint64_t tickCount, bool force);
 
     void               processLayers(AnimationSolver &solver, uint64_t tickCount);
-    bool               processEvents(uint64_t& barrier, uint64_t now, Animation::EvCount &ev) const;
+    bool               processEvents(uint64_t& barrier, uint64_t now, Animation::EvCount &ev, const LogicEventObserver* logic=nullptr) const;
 
     Tempest::Vec3      animMoveSpeed(uint64_t tickCount, uint64_t dt) const;
-    void               processSfx(Npc &npc, uint64_t tickCount);
-    void               processSfx(Interactive& mob, uint64_t tickCount);
-    void               processPfx(MdlVisual& visual, World& world, uint64_t tickCount);
+    void               processSfx(AnimationGroundSound &npc, uint64_t tickCount);
+    void               processSfx(AnimationSound& mob, uint64_t tickCount);
+    void               processPfx(AnimationPfx& world, uint64_t tickCount);
     bool               isDefParWindow(uint64_t tickCount) const;
     bool               isDefWindow(uint64_t tickCount) const;
     bool               isDefence(uint64_t tickCount) const;
@@ -71,6 +80,7 @@ class Pose final {
     bool               isJumpAnim() const;
     bool               isFlyAnim() const;
     bool               isStanding() const;
+    bool               isUsingItemInHand() const;
     bool               isPrehit(uint64_t now) const;
     bool               isAttackAnim() const;
     bool               isIdle() const;
@@ -110,14 +120,31 @@ class Pose final {
     // The animation of that name as it is at `at` (0..1 of it): bone `to` relative to its ancestor `from`;
     // false: it does not play
     bool               animRelative(std::string_view name, float at, size_t from, size_t to, Tempest::Matrix4x4& out) const;
+    // the reload from the quiver plays (its own clip as T_BOWRELOAD, BowDraw::QuiverReloadAnim)
+    bool               isOwnReload() const;
     // The animation of that name plays k times as fast, from its next start on (1: as it is)
     void               setAnimSpeed(std::string_view name, float k);
+    // the playing layer of seq goes on k times as fast from now, without a jump
+    void               setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now);
+    // hit stop: the layers playing now go on k times as fast from the last shown frame until `until`;
+    // their events, windows and root motion hold with them. Then the rest of a one-off animation
+    // plays a little faster and ends when it would have without the hold
+    void               hitStop(uint64_t until, float k);
     BowDraw&           bowDrawIk() { return bowDraw; }
     AimWalk&           aimWalk() { return walk; }
     bool               updateAimWalk(const AimWalk::Input& in);
     bool               updateBowDraw(const BowDraw::Input& in);
+    const QuiverHand&  quiverHandIk() const { return qhand; }
+    bool               updateQuiverHand(const QuiverHand::Input& in);
     Flinch&            flinchIk() { return flinch; }
     bool               updateFlinch(const Flinch::Input& in);
+    Reach&             reachIk() { return reach; }
+    const Reach&       reachIk() const { return reach; }
+    bool               updateReach(const Reach::Input& in);
+    // A body pressed into an obstacle stands (reports/physics/2026-11-15-reach-wall): the pose shown goes over to
+    // `stand` by `weight`, the animation under it plays on and asks its move. nullptr or 0: the animation alone
+    void               setHalt(const Animation::Sequence* stand, float weight);
+    float              haltWeight() const { return haltSeq!=nullptr ? haltK : 0.f; }
     bool               updateLean(const Lean::Input& in);
     // Physical bone frames are world-space, in centimetres, indexed by the same skeleton as tr.
     // Only mapped bones are replaced; their unmapped children retain the animated local relation.
@@ -126,13 +153,17 @@ class Pose final {
     void               clearRagdollPose(bool blendFromPhysical=false, uint64_t tickCount=0);
     bool               hasRagdollPose() const { return !physical.empty(); }
     bool               isRagdollBlending() const { return physicalReturning; }
-    void               saveRagdollRecovery(Serialize& fout) const;
-    void               loadRagdollRecovery(Serialize& fin);
-    void               setAnimRotate(const AnimationSolver &solver, const Npc &npc, WeaponState fightMode, AnimationSolver::TurnType turn, int dir);
-    auto               setAnimItem(const AnimationSolver &solver, Npc &npc, std::string_view scheme, int state) -> const Animation::Sequence*;
+    void               saveRagdollRecovery(SaveArchive& fout) const;
+    void               loadRagdollRecovery(SaveArchive& fin);
+    void               setAnimRotate(const AnimationSolver &solver, WalkBit walkMode, uint64_t tickCount, WeaponState fightMode, AnimationSolver::TurnType turn, int dir);
+    auto               setAnimItem(const AnimationSolver &solver, uint64_t tickCount, std::string_view scheme, int state) -> const Animation::Sequence*;
     bool               stopItemStateAnim(const AnimationSolver &solver, uint64_t tickCount);
+    void               interruptItemUse();
 
     const Tempest::Matrix4x4* transform() const;
+    // Changes whenever transform() or boneCount() may have changed: equal
+    // revisions of one Pose mean the same world-space bones.
+    uint64_t           revision() const { return trRevision; }
 
     // The animated pose for the test bench: joints in the model space, before the post-passes
     // (lean, foot IK, gaze), and what plays
@@ -154,12 +185,45 @@ class Pose final {
     struct CombatLayer final {
       const Animation::Sequence* sequence = nullptr;
       uint64_t start = 0;
+      uint64_t origin = 0; // the start as the animation began: a hit stop moves `start`, not this
       uint64_t time = 0;
       float speed = 1;
       uint8_t combination = 0;
       BodyState state = BS_NONE;
       };
     auto               combatLayers(uint64_t tickCount) const -> std::vector<CombatLayer>;
+    size_t             logicalLayerCount() const { return lay.size(); }
+    bool               isRotationLayer(const Animation::Sequence* sequence) const { return sequence!=nullptr && rotation==sequence; }
+    CombatLayer        logicalLayer(size_t index) const;
+    const auto&        logicalDefaultSpeeds() const { return speeds; }
+
+    // NPC-owned poses retain mutation inputs until the main-thread audit.
+    // Natural layer/weapon changes are observations, not predictor inputs.
+    struct LogicalInput final {
+      enum class Kind : uint8_t { LayerSet, LayerRemove, Speed, HitStop, HitStopEnd, Combo, Weapon };
+      enum class Cause : uint8_t { Explicit, Natural };
+      Kind kind = Kind::LayerSet;
+      Cause cause = Cause::Explicit;
+      const Animation::Sequence* sequence = nullptr;
+      uint64_t at=0, start=0, origin=0, until=0;
+      float speed=1;
+      BodyState state=BS_NONE;
+      uint16_t combo=0;
+      WeaponState weapon=WeaponState::NoWeapon;
+      std::string name;
+      };
+    void               enableLogicalInputs() { logicalInputEnabled=true; }
+    void               disableLogicalInputs() { logicalInputEnabled=false; logicalInputQueue.clear(); }
+    const auto&        logicalInputs() const { return logicalInputQueue; }
+    void               clearLogicalInputs() { logicalInputQueue.clear(); }
+    void               recordLogicalWeapon(WeaponState weapon, bool natural);
+
+    struct MeleeContact final {
+      const Animation::Sequence* sequence = nullptr;
+      uint64_t origin = 0;
+      uint64_t contact = 0; // game time, after the current layer's speed and hit stop
+      };
+    auto               nextMeleeContact(uint64_t tickCount) const -> std::optional<MeleeContact>;
 
   private:
     friend class PoseOriginReplayContract;
@@ -178,13 +242,23 @@ class Pose final {
     struct Layer final {
       const Animation::Sequence* seq      = nullptr;
       uint64_t                   sAnim    = 0;
+      uint64_t                   sOrigin  = 0;  // sAnim as it began; a speed change moves sAnim only
       float                      speed    = 1;  // plays that many times as fast, from its start (setAnimSpeed)
+      float                      stopFrom = 0;  // its speed before a hit stop; 0: not held
+      float                      catchFrom = 0; // its own speed while it makes up a hit stop; 0: on time
+      uint64_t                   dueStart = 0;  // the start it keeps to at its own speed, without the hold
       uint8_t                    comb     = 0;
       BodyState                  bs       = BS_NONE;
       };
 
     // the layer's own clock at the time t: its animation plays `speed` times as fast from its start
     static uint64_t layerTime(const Layer& l, uint64_t t);
+    // the transition out of a moving loop from its right foot (stopfoot.h); null: the usual one
+    const Animation::Sequence* footTransition(const AnimationSolver& solver, const Layer& l,
+                                              const Animation::Sequence& to, uint64_t tickCount) const;
+    // from `at` on the layer plays k times as fast, without a jump: the time it has played stays
+    static bool     rebaseLayer(Layer& l, float k, uint64_t at);
+    void            endHitStop();
     float           speedOf(const Animation::Sequence* seq) const;
 
     struct ComboState {
@@ -204,13 +278,26 @@ class Pose final {
     void applyRagdollPose(size_t bone, const Tempest::Matrix4x4* animated, bool* done);
     void applyRagdollReturn();
 
-    bool updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTime, uint64_t now);
+    // sOrigin names the play for AnimBlend: a speed change moves sTime, it is no switch
+    bool updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTime, uint64_t sOrigin, uint64_t now);
+    // The root of a clip sampled on a curve (animsample.h) against the straight line the body travels by: what
+    // drives the root this frame and how far its curve is off that line, along the ground
+    struct RootDriver final {
+      const Animation::Sequence* seq    = nullptr;
+      uint64_t                   origin = 0;
+      Tempest::Vec3              shift;
+      };
+    // rootShift from this frame's root; true if it changed
+    bool settleRootShift(uint64_t now);
+    bool applyHalt(uint64_t now);
 
     const Animation::Sequence* solveNext(const AnimationSolver& solver, const Layer& lay);
 
     void addLayer(const Animation::Sequence* seq, BodyState bs, uint8_t comb, uint64_t tickCount);
-    void onAddLayer   (Layer& l);
-    void onRemoveLayer(const Layer& l);
+    void onAddLayer   (Layer& l, LogicalInput::Cause cause=LogicalInput::Cause::Explicit, uint64_t at=uint64_t(-1));
+    void onRemoveLayer(const Layer& l, LogicalInput::Cause cause=LogicalInput::Cause::Explicit, uint64_t at=uint64_t(-1));
+    void recordLogicalInput(LogicalInput::Kind kind, const Layer* layer, uint64_t at,
+                            LogicalInput::Cause cause=LogicalInput::Cause::Explicit, uint64_t until=0);
 
     static bool hasLayerEvents(const Layer& l);
 
@@ -225,14 +312,21 @@ class Pose final {
     float                           trY=0;
     Flags                           flag=NoFlags;
     uint64_t                        lastUpdate=0;
+    uint64_t                        stopUntil=0; // hitStop
     ComboState                      combo;
     bool                            needToUpdate = true;
     uint8_t                         hasEvents = 0;
     uint8_t                         isFlyCombined = 0;
     uint8_t                         hasTransitions = 0;
     std::vector<std::pair<std::string,float>> speeds; // setAnimSpeed
+    bool                            logicalInputEnabled=false;
+    std::vector<LogicalInput>       logicalInputQueue;
 
     float                           headRotX = 0, headRotY = 0;
+    RootDriver                      rootNow, rootShown;  // sampled this frame; the one rootShift was made from
+    Tempest::Vec3                   rootShift;           // shown: the pose's root off the body, x and z
+    Tempest::Vec3                   rootCarry;           // what is left of the last root's shift after a switch
+    uint64_t                        rootCarryStart = 0;
     FootIk                          ik;
     Gaze                            gaze;
     Lean                            lean;
@@ -240,7 +334,11 @@ class Pose final {
     Aim                             aim;
     AimWalk                         walk;
     BowDraw                         bowDraw;
+    QuiverHand                      qhand;
     Flinch                          flinch;
+    Reach                           reach;
+    const Animation::Sequence*      haltSeq = nullptr;
+    float                           haltK   = 0;
 
     std::vector<Tempest::Matrix4x4> physical;
     std::vector<uint8_t>            physicalMask;
@@ -262,5 +360,6 @@ class Pose final {
     asset::AnimationSample         base      [Resources::MAX_NUM_SKELETAL_NODES] = {};  // shown: raw blended by AnimBlend
     asset::AnimationSample         raw       [Resources::MAX_NUM_SKELETAL_NODES] = {};  // what the animations give
     Tempest::Matrix4x4              tr        [Resources::MAX_NUM_SKELETAL_NODES] = {};
+    uint64_t                        trRevision = 0;
     Tempest::Matrix4x4              pos;
   };

@@ -4,9 +4,10 @@
 
 #include "physics/dynamicworld.h"
 
-#include "game/damagecalculator.h"
+#include "game/damagetypes.h"
 #include "graphics/meshobjects.h"
 #include "graphics/effect.h"
+#include "graphics/itemview.h"
 #include "graphics/mesh/hitzones.h"
 
 class World;
@@ -34,8 +35,10 @@ class Bullet final : public DynamicWorld::BulletCallback {
     auto     direction() const -> Tempest::Vec3;
     void     setTargetRange(float tgRange);
 
-    void     setView      (MeshObjects::Mesh&&   m);
+    void     setView      (ItemView&& m);
     void     setView      (Effect&& p);
+    // an arrow's or a bolt's mesh with its item's effect (graphics/itemview): level 2 shot, 3 since it first hit
+    const ItemView& itemView() const { return view; }
 
     bool     isSpell() const;
     int32_t  spellId() const;
@@ -48,11 +51,9 @@ class Bullet final : public DynamicWorld::BulletCallback {
     Flg      flags()     const { return flg;  }
     ItemMaterial itemMaterial() const;
 
-    auto     damage() const -> const DamageCalculator::Damage& { return dmg; }
-    void     setDamage(DamageCalculator::Damage d) { dmg=d; }
+    auto     damage() const -> const Damage& { return dmg; }
+    void     setDamage(Damage d) { dmg=d; }
 
-    float    critChance() const { return critCh; }
-    void     setCritChance(float v) { critCh=v; }
     float    hitChance() const { return hitCh; }
     void     setHitChance(float v) { hitCh=v; }
 
@@ -85,9 +86,8 @@ class Bullet final : public DynamicWorld::BulletCallback {
     World*                    wrld=nullptr;
     Npc*                      ow=nullptr;
 
-    DamageCalculator::Damage  dmg        = {};
+    Damage  dmg        = {};
     float                     hitCh      = 1.f;
-    float                     critCh     = 0.f;
     bool                      precise    = false;
     float                     drawK      = 1.f;
     HitZones::Zone            zone       = HitZones::None;
@@ -96,15 +96,27 @@ class Bullet final : public DynamicWorld::BulletCallback {
     Tempest::Vec3             impactAt;
     bool                      impactKnown = false;
     bool                      spellPhysicsApplied = false;
+    // an arrow that went past a dodger inside the dodge's window (melee_dodge): it flies on as a miss and does
+    // not meet that npc again (compared, never dereferenced)
+    const Npc*                passedDodger = nullptr;
 
-    MeshObjects::Mesh         view;
+    ItemView                  view;
     std::string               visualName;
     Effect                    vfx;
 
     uint8_t                   material=0;
     Flg                       flg=NoFlags;
 
+    // a stuck arrow keeps its effect that long, Gothic's arrow fading out (oCAIArrow timeLeft 1 -> 0)
+    static constexpr uint64_t StuckEffectMs = 20000;
+    // the view handed to the one it sticks in, its effect fading
+    ItemView&& stuckView();
     void updateMatrix();
+    // Gothic's oCAIArrow: the item's effect goes to level 3 at the first hit of the world or a body
+    void hitLevel();
     void applySpellPhysics(Npc* target);
   };
 
+namespace ArrowTrace {
+DynamicWorld::BulletTrace* hook();
+}

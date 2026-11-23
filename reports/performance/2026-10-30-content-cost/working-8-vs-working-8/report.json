@@ -1,0 +1,160 @@
+{
+  "metadata": {
+    "a": "working-8",
+    "b": "working-8",
+    "places": [
+      "harbour",
+      "market"
+    ],
+    "order": [
+      "A",
+      "B",
+      "B",
+      "A"
+    ],
+    "git_commit": "ac23f28b0cefb957423870cefa4431d89166b3d3",
+    "dirty_files": 3,
+    "content_sha256": {
+      "working-8": "3497b8d4062dc76cd7588dafbf793724ad8ef452d3aea47c2bed8d2c54642b80"
+    },
+    "archive": "/mnt/shared/gothic-ai/perf-content-claude-c1-content-perf/runs/perf-content-20261030T011911Z-78983",
+    "settings": {
+      "PERF_WINDOW": "1728x1117",
+      "PERF_VID_RES": "0",
+      "PERF_ARGS": "",
+      "PERF_ENV": "",
+      "PERF_INI": ""
+    }
+  },
+  "noise_p95_pct": 2.0,
+  "threshold_p95_pct": 5.0,
+  "drawable": [
+    1728,
+    1117
+  ],
+  "timing": "Frame intervals are differences between consecutive submitted attempt begin_ns timestamps in the same contiguous perf-PLACE/view-N segment. Intervening FenceBusy attempts count toward elapsed time and zone costs, never as rendered frames. Partial time before the first and after the last submitted attempt of each segment is omitted. FPS is interval count / measured wall time; percentiles use linear interpolation. appcadence.csv is retained as a clock diagnostic, not used for these statistics.",
+  "noise_method": "Absolute p95 delta <= calibrated noise band in percent. Repeat max-min spread is descriptive only. Percentiles pool frame intervals from both repeats.",
+  "places": {
+    "harbour": {
+      "p50": {
+        "a": 9.639313,
+        "b": 9.675701,
+        "delta": 0.03638800000000053,
+        "delta_pct": 0.37749578211642815,
+        "spread_a_ms": 0.03788500000000106,
+        "spread_b_ms": 0.13027600000000028
+      },
+      "p95": {
+        "a": 10.4318446,
+        "b": 10.4897254,
+        "delta": 0.05788079999999951,
+        "delta_pct": 0.5548472223215395,
+        "spread_a_ms": 0.027149100000000814,
+        "spread_b_ms": 0.07563000000000031
+      },
+      "within_threshold": true,
+      "p95_verdict": "в шуме",
+      "counters": {
+        "A": {
+          "triangles": 1264998.2134746404,
+          "draw_calls": 83.07115821347465,
+          "completed_frames": 6605,
+          "submitted_frames": 6605
+        },
+        "B": {
+          "triangles": 1265108.0518158334,
+          "draw_calls": 83.07369700653396,
+          "completed_frames": 6581,
+          "submitted_frames": 6581
+        }
+      },
+      "repeats": {
+        "A": [
+          {
+            "p50_ms": 9.619396,
+            "p95_ms": 10.4252487,
+            "frames": 3303
+          },
+          {
+            "p50_ms": 9.657281000000001,
+            "p95_ms": 10.4523978,
+            "frames": 3294
+          }
+        ],
+        "B": [
+          {
+            "p50_ms": 9.73841,
+            "p95_ms": 10.517282999999999,
+            "frames": 3267
+          },
+          {
+            "p50_ms": 9.608134,
+            "p95_ms": 10.441652999999999,
+            "frames": 3306
+          }
+        ]
+      }
+    },
+    "market": {
+      "p50": {
+        "a": 10.009445,
+        "b": 9.9227465,
+        "delta": -0.0866984999999989,
+        "delta_pct": -0.8661669053578785,
+        "spread_a_ms": 0.06137499999999996,
+        "spread_b_ms": 0.0015330000000002286
+      },
+      "p95": {
+        "a": 10.85443555,
+        "b": 10.6966265,
+        "delta": -0.15780904999999912,
+        "delta_pct": -1.4538669401376576,
+        "spread_a_ms": 0.010513149999999527,
+        "spread_b_ms": 0.13790095000000058
+      },
+      "within_threshold": true,
+      "p95_verdict": "в шуме",
+      "counters": {
+        "A": {
+          "triangles": 1163387.6144559423,
+          "draw_calls": 81.34070241455001,
+          "completed_frames": 6378,
+          "submitted_frames": 6378
+        },
+        "B": {
+          "triangles": 1163189.1449860292,
+          "draw_calls": 81.34026699782676,
+          "completed_frames": 6442,
+          "submitted_frames": 6442
+        }
+      },
+      "repeats": {
+        "A": [
+          {
+            "p50_ms": 10.0422265,
+            "p95_ms": 10.84809865,
+            "frames": 3178
+          },
+          {
+            "p50_ms": 9.9808515,
+            "p95_ms": 10.8586118,
+            "frames": 3192
+          }
+        ],
+        "B": [
+          {
+            "p50_ms": 9.923598,
+            "p95_ms": 10.7622769,
+            "frames": 3214
+          },
+          {
+            "p50_ms": 9.922065,
+            "p95_ms": 10.62437595,
+            "frames": 3220
+          }
+        ]
+      }
+    }
+  },
+  "conclusions": []
+}

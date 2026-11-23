@@ -52,7 +52,7 @@ sync_sources() {
 set -euo pipefail
 mkdir -p "$HOME/$1/source/scripts/bench" "$HOME/$1/source/evals/npc-body" "$HOME/$1/provenance" "$HOME/$1/data"
 REMOTE_SCRIPT
-  rsync -a "$ROOT/scripts/body-trajectories-remote.sh" "$ROOT/scripts/body_trajectory_recorder.py" \
+  rsync -a "$ROOT/scripts/body-trajectories-remote.sh" "$ROOT/scripts/body_trajectory_recorder.py" "$ROOT/scripts/base-ensure.sh" \
     "$ROOT/scripts/body_trajectory_dataset.py" "$ROOT/scripts/body_trajectory_suite.py" \
     "$ROOT/scripts/body_trajectory_report.py" \
     "$ROOT/scripts/body_arena_env.py" "$ROOT/scripts/body_arena_suite.py" "$ROOT/scripts/body_arena_report.py" \
@@ -86,7 +86,7 @@ suite_args=()
 [[ "$suite_mode" != smoke ]] || suite_args+=(--smoke)
 out="$task_root/data/$run_name"
 binary="$engine_root/build/opengothic/gothic-body-runner"
-[[ -x "$binary" && -f "$engine_root/build/libOpenGothic.a" ]] || { echo 'Build runner first' >&2; exit 1; }
+[[ -x "$binary" ]] || { echo 'Build runner first' >&2; exit 1; }
 if gq_available; then
   exec 8>"$engine_root/build.lock"
   flock -n 8 || { echo 'Build owns the engine snapshot; wait for its owner' >&2; exit 1; }
@@ -109,14 +109,22 @@ cp "$engine_root/build/opengothic/gothic-body-resolver-test" "$out/reference/"
 nice -n 10 tar -czf "$out/source.tar.gz" -C "$engine_root/source" OpenGothic -C "$task_root/source" scripts evals
 suite_source="$task_root/source"
 engine_source="$engine_root/source/OpenGothic"
-engine_library="$engine_root/build/libOpenGothic.a"
+engine_library="$engine_root/build"
 if gq_available; then
   suite_source="$out/reference/source"
   mkdir -p "$suite_source"
   tar -xzf "$out/source.tar.gz" -C "$suite_source"
   engine_source="$suite_source/OpenGothic"
-  cp "$engine_library" "$out/reference/libOpenGothic.a"
-  engine_library="$out/reference/libOpenGothic.a"
+  mkdir -p "$out/reference/engine-libraries"
+  for library in libOpenGothic.a libengine-platform.a; do
+    [[ -f "$engine_library/$library" ]] || { echo "Engine library missing: $library" >&2; exit 1; }
+  done
+  while IFS= read -r -d '' library; do
+    relative="${library#"$engine_library"/}"
+    mkdir -p "$out/reference/engine-libraries/$(dirname "$relative")"
+    cp "$library" "$out/reference/engine-libraries/$relative"
+  done < <(find "$engine_library" -type d \( -name lib -o -name _deps \) -prune -o -name '*.a' ! -name libminiz.a -print0)
+  engine_library="$out/reference/engine-libraries"
   flock -u 8
   exec 8>&-
 fi

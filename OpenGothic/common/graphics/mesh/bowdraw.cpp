@@ -10,6 +10,7 @@
 #include "ikmath.h"
 #include "aimframe.h"
 #include "skeleton.h"
+#include "quiver.h"
 
 using namespace Tempest;
 using namespace IkMath;
@@ -35,10 +36,61 @@ constexpr float Shelf    = 10.f;  // cm the bow goes up in the hand: the arrow a
 constexpr float Follow   = 4.f;   // cm the hand flies back past the face as the string goes...
 constexpr float FollowT  = BowDraw::FollowTime; // ...for that long, there and back (smooth at both ends)
 
+// the release as an archer's (reports/archery/2026-11-03-release-follow-through): times from the shot
+constexpr float Snap      = 3.f;   // cm the fingers fly back off the string at once...
+constexpr float SnapT     = 0.06f; // ...in that many seconds
+constexpr float BackMin   = 3.f;   // cm on back along the neck toward the ear, a light bow drawn short...
+constexpr float BackKick  = 6.f;   // ...and that much more for the hardest kick
+constexpr float BackT     = 0.3f;  // seconds: there by then (eased out), held
+constexpr float OutMin    = 1.5f;  // cm out from the head with the snap (the fingers go back along the cheek: not into it)...
+constexpr float OutKick   = 1.f;
+constexpr float FadeAt    = 0.6f;  // seconds: the hand let go of the follow through (if not gone on to the
+constexpr float FadeT     = 0.3f;  // quiver), so slowly
+constexpr float BowKickMin = 0.5f; // cm the bow hand is thrown back toward the archer...
+constexpr float BowKickK   = 1.f;
+constexpr float BowKickT   = 0.03f; // ...in that long (Klopsteg's photographs), back on the line after
+constexpr float BowBackT   = 0.09f;
+constexpr float TurnMin   = 2.f;   // degrees the bow turns in the closed hand, the top limb forward...
+constexpr float TurnKick  = 6.f;
+constexpr float TurnT     = 0.03f; // ...at once, upright again in TurnBack
+constexpr float TurnBack  = 0.2f;
+constexpr float ShakeDeg  = 1.5f;  // degrees: the bow's shake at the hardest kick...
+constexpr float ShakeHz   = 16.f;  // ...as the limbs ring (14..18 Hz)...
+constexpr float ShakeTau  = 0.1f;  // ...dying out (seconds, by the archer's strength: Archery::releaseSettle)
+constexpr float RelT      = FadeAt+FadeT; // seconds the release goes on
+constexpr float HeadIn    = 1.5f;  // cm: the follow through takes the hand no deeper into the head (the capsule
+                                   // of the hair) than that, or than the pose had it
+
 bool enabled = []() {
   const char* v = std::getenv("OPENGOTHIC_BOWDRAW");
   return v==nullptr || v[0]!='0';
   }();
+
+bool quiverReload = []() {
+  const char* v = std::getenv("OPENGOTHIC_QUIVERRELOAD");
+  return v==nullptr || v[0]!='0';
+  }();
+
+// the trunk for the reload's bench: an upright elliptic cylinder round the spine from the pelvis to the chest's
+// top (cm, half its width and depth, the naked body; reports/archery/2026-11-05-quiver-reload)
+// the arrow's mesh (ITRW_ARROW, 94 cm): its nock and tip from the slot it sits in (the reload's bench; the follow
+// through keeps G2's NockBack, TipAhead)
+constexpr float ArrowNock = 23.f;
+constexpr float ArrowTip  = 71.f;
+constexpr float TrunkWide = 15.f;
+constexpr float TrunkDeep = 11.f;
+constexpr float TrunkTop  = 15.f; // cm up the spine over BIP01 SPINE2 (the shoulders are over it: not counted)
+
+bool releaseOn = []() {
+  const char* v = std::getenv("OPENGOTHIC_BOWRELEASE");
+  return v==nullptr || v[0]!='0';
+  }();
+
+float easeOut(float x) {
+  x = std::clamp(x,0.f,1.f);
+  const float y = 1.f-x;
+  return 1.f-y*y*y;
+  }
 
 float smooth(float x) {
   x = std::clamp(x,0.f,1.f);
@@ -106,6 +158,23 @@ void BowDraw::setEnabled(bool e) {
   Log::i("bowdraw: ", e ? "on" : "off");
   }
 
+bool BowDraw::isQuiverReload() {
+  return quiverReload;
+  }
+
+bool BowDraw::isReleaseEnabled() {
+  return releaseOn;
+  }
+
+void BowDraw::setReleaseEnabled(bool e) {
+  releaseOn = e;
+  Log::i("bowrelease: ", e ? "on" : "off");
+  }
+
+float BowDraw::looseIntensity(float kick) {
+  return releaseOn ? 0.4f + 0.6f*std::clamp(kick,0.f,1.f) : 1.f;
+  }
+
 void BowDraw::setSkeleton(const Skeleton* sk) {
   *this = BowDraw();
   if(sk==nullptr)
@@ -133,10 +202,14 @@ void BowDraw::setSkeleton(const Skeleton* sk) {
   upper   = find("BIP01 R UPPERARM");
   fore    = find("BIP01 R FOREARM");
   hand    = find("BIP01 R HAND");
+  finger  = find("BIP01 R FINGER0");
   slot    = find("ZS_RIGHTHAND"); // the arrow sits there
   head    = find("BIP01 HEAD");
   crown   = find("ZS_HELMET");
   chest   = find("BIP01 SPINE2");
+  neck    = find("BIP01 NECK");
+  clav    = find("BIP01 R CLAVICLE");
+  pelvis  = find("BIP01 PELVIS");
   bowHand = find("ZS_LEFTHAND");  // the bow
   if(bowHand==size_t(-1))
     bowHand = find("BIP01 L HAND");
@@ -170,6 +243,14 @@ void BowDraw::setSkeleton(const Skeleton* sk) {
     return;
   tree(spine,bodyTree);
   heldRel.resize(nodes.size());
+  spine0 = spine;
+  // the own reload's clip moves the drawing arm (from its clavicle on the neck) and the head
+  if(neck!=size_t(-1) && clav!=size_t(-1) && pelvis!=size_t(-1) && nodes[clav].parent==neck &&
+     isUnder(upper,clav) && isUnder(head,neck)) {
+    tree(clav,armTree);
+    tree(head,headTree);
+    ownRel.resize(nodes.size());
+    }
   }
 
 bool BowDraw::grabNodes(size_t& c, size_t& h, size_t& e) const {
@@ -205,6 +286,14 @@ bool BowDraw::update(const Input& in) {
     grabHand  = in.grabHand;
     grabElbow = in.grabElbow;
     }
+  own         = in.own && in.reload>=0.f && !armTree.empty();
+  ownKnown    = own && in.ownKnown;
+  ownHand0    = in.ownHand0;
+  ownHead0    = in.ownHead0;
+  quiverKnown = in.quiverKnown;
+  quiverNow   = in.quiverNow;
+  quiverClip  = in.quiverClip;
+  reloadP     = in.reload;
   // the aim pose is taken while the bow is held still; the reload holds it
   capture  = in.active && in.ready && enabled && !bodyTree.empty();
   holding  = in.active && in.reload>=0.f && enabled && held && !bodyTree.empty();
@@ -213,15 +302,47 @@ bool BowDraw::update(const Input& in) {
   const float nock = std::max(NockAt,grab+0.3f);
   toQuiver = holding ? smooth(in.reload/grab) : 0.f;
   toString = holding ? smooth((in.reload-grab)/(nock-grab)) : 0.f;
+  if(holding && own) {
+    // the own clip: it reaches the quiver itself; the string as the aim has it from StringFrom
+    toQuiver = smooth(in.reload/OwnGrab);
+    toString = smooth((in.reload-StringFrom)/(StringAt-StringFrom));
+    }
   // the shot: the string held drawn goes (not held still any more, not let down): the hand follows through
   if(in.active && wasReady && !in.ready && draw>=MinShot && weight>0.f) {
-    followT = 0;
-    shotAt  = travel;
+    followT   = 0;
+    shotAt    = travel;
+    kickK     = std::clamp(in.kick,0.f,1.f);
+    settleK   = in.settle;
     }
   wasReady = in.active && in.ready;
-  followT  = std::min(FollowT, followT+dt);
-  const float bump = std::sin(float(M_PI)*followT/FollowT);
-  follow   = followT<FollowT ? Follow*bump*bump : 0.f;
+  const float prevKick = bowKick, prevTurn2 = bowTurn, prevOut = relOut, prevFade = relFade;
+  if(releaseOn) {
+    // the hand flies back off the string and on toward the ear, does not come back: the reload takes it on
+    // from there; the bow hand is thrown back and comes to the line again, the bow turns in it and rings
+    followT = std::min(RelT, followT+dt);
+    const float t = followT;
+    const bool  on = t<RelT;
+    relBack = on ? Snap*easeOut(t/SnapT) + (BackMin+BackKick*kickK)*easeOut((t-SnapT)/(BackT-SnapT)) : 0.f;
+    relOut  = on ? (OutMin+OutKick*kickK)*easeOut(t/SnapT) : 0.f;
+    relFade = on ? 1.f - smooth((t-FadeAt)/FadeT) : 0.f;
+    follow  = relBack*relFade;
+    const float kick = BowKickMin+BowKickK*kickK;
+    bowKick = t<BowKickT ? kick*easeOut(t/BowKickT) : kick*(1.f-smooth((t-BowKickT)/BowBackT));
+    const float tau   = ShakeTau*settleK;
+    const float turn  = TurnMin+TurnKick*kickK;
+    const float shape = t<TurnT ? easeOut(t/TurnT) : 1.f-smooth((t-TurnT)/TurnBack);
+    const float shake = ShakeDeg*kickK*std::exp(-t/std::max(tau,1e-3f))*std::sin(2.f*float(M_PI)*ShakeHz*t);
+    bowTurn = on ? turn*shape + shake : 0.f;
+    } else {
+    followT = std::min(FollowT, followT+dt);
+    const float bump = std::sin(float(M_PI)*followT/FollowT);
+    follow  = followT<FollowT ? Follow*bump*bump : 0.f;
+    relBack = follow;
+    relOut  = 0;
+    relFade = 1;
+    bowKick = 0;
+    bowTurn = 0;
+    }
   if(on) {
     weight = std::min(1.f, weight + dt/BlendIn);
     // drawn as it is; let down (no shot) back a bit slower
@@ -242,6 +363,7 @@ bool BowDraw::update(const Input& in) {
     alignT = std::max(0.f, alignT - dt/BlendOut);
   align = smooth(alignT);
   return weight!=prev || (weight>0.f && draw!=prevDraw) || follow!=prevBack || holding || align!=prevTurn ||
+         bowKick!=prevKick || bowTurn!=prevTurn2 || relOut!=prevOut || relFade!=prevFade ||
          (align>0.f && cantK!=prevCant);
   }
 
@@ -252,8 +374,27 @@ void BowDraw::hold(Matrix4x4* tr, size_t numBones, const Matrix4x4& object) {
   const Matrix4x4 frame = compose(rotationOf(object),position(tr[bodyRoot]));
   frameNow = frame;
   if(holding) {
+    // the own clip: its drawing arm and head relative to its neck, and the quiver it takes the arrow from, before
+    // the upper body is held
+    ownHeld = false;
+    if(own && !armTree.empty() && armTree.back()<numBones && headTree.back()<numBones && neck<numBones &&
+       pelvis<numBones) {
+      Matrix4x4 inv = tr[neck];
+      inv.inverse();
+      for(auto i:armTree)
+        ownRel[i] = inv*tr[i];
+      for(auto i:headTree)
+        ownRel[i] = inv*tr[i];
+      quiverOfNeck = inv*tr[pelvis]*quiverClip;
+      ownHeld = true;
+      }
     for(auto i:bodyTree)
       tr[i] = frame*heldRel[i];
+    if(ownHeld) {
+      Matrix4x4 inv = tr[neck];
+      inv.inverse();
+      clavHeld = inv*tr[clav];
+      }
     return;
     }
   if(capture) {
@@ -282,6 +423,7 @@ void BowDraw::measureHead(const Matrix4x4* tr, size_t numBones) {
 void BowDraw::apply(Matrix4x4* tr, size_t numBones) {
   implApply(tr,numBones);
   measureHead(tr,numBones);
+  measureReload(tr,numBones);
   if(hand<numBones) {
     Matrix4x4 inv = frameNow;
     inv.inverse();
@@ -319,7 +461,8 @@ void BowDraw::alignBow(Matrix4x4* tr, const Vec3& up, const Vec3& nock, const Ve
   Vec3 rest, pull;
   stringNow(tr,rest,pull);
   const Vec3 from = position(tr[lHand]);
-  Vec3       to   = from + (nock-(rest+pull))*align;
+  // after the shot the bow hand is thrown back toward the archer a moment, along the arrow
+  Vec3       to   = from + (nock-(rest+pull))*align - axis*bowKick;
   Mat3       turn = rotationOf(tr[lHand]);
   if(lean!=0.f) {
     const Mat3 r = axisAngle(axis,lean);
@@ -337,6 +480,63 @@ void BowDraw::alignBow(Matrix4x4* tr, const Vec3& up, const Vec3& nock, const Ve
   // the hand keeps its turn: the bow upright (canted as it is turned)
   rotateAbout(tr,lHandTree,mul(turn,transpose(rotationOf(tr[lHand]))),position(tr[lHand]));
   bowMiss = length(position(tr[lHand])-to);
+  }
+
+Vec3 BowDraw::releaseOffset(const Matrix4x4* tr, size_t numBones, const Vec3& axis) const {
+  if(!releaseOn)
+    return axis*(-follow);
+  const float back = relBack*relFade;
+  const float out  = relOut*relFade;
+  if(back<=0.f && out<=0.f)
+    return Vec3();
+  // out: across the arrow, level, away from the head (the hand's side of it)
+  Vec3 side = cross(Up,axis);
+  if(length(side)<1e-3f)
+    return axis*(-back);
+  side = normalize(side);
+  if(head<numBones && hand<numBones && dot(side,position(tr[hand])-position(tr[head]))<0.f)
+    side = side*-1.f;
+  return axis*(-back) + side*out;
+  }
+
+float BowDraw::followBefore() const {
+  if(followT>=FollowT)
+    return 0.f;
+  const float bump = std::sin(float(M_PI)*followT/FollowT);
+  return Follow*bump*bump;
+  }
+
+Vec3 BowDraw::clearHead(const Matrix4x4* tr, size_t numBones, const Vec3& base, const Vec3& off) const {
+  if(head>=numBones || off==Vec3())
+    return off;
+  // the hand goes back along the cheek to the ear: off the head's axis as far as it has to
+  const Vec3  h0 = position(tr[head]);
+  const Vec3  h1 = crown<numBones ? position(tr[crown]) : h0+Vec3(0,20,0);
+  const Vec3  hd = h1-h0;
+  const float hl = dot(hd,hd);
+  auto        on = [&](const Vec3& p) { return h0 + hd*(hl>0.f ? std::clamp(dot(p-h0,hd)/hl,0.f,1.f) : 0.f); };
+  const float limit = std::min(length(base-on(base))-HeadR,-HeadIn);
+  const Vec3  p  = base+off;
+  const Vec3  c  = on(p);
+  const Vec3  r  = p-c;
+  const float gap = length(r)-HeadR;
+  if(gap>=limit || length(r)<1e-3f)
+    return off;
+  return off + normalize(r)*(limit-gap);
+  }
+
+void BowDraw::turnBow(Matrix4x4* tr, const Vec3& up, const Vec3& axis) {
+  if(bowTurn==0.f || bowHand==size_t(-1))
+    return;
+  // about the grip (the bow is slid up in the hand that far), the top limb toward the arrow's way
+  const Vec3 n = cross(up,axis);
+  if(length(n)<1e-3f)
+    return;
+  const Mat3 r    = axisAngle(normalize(n),bowTurn*float(M_PI)/180.f);
+  const Vec3 at   = position(tr[bowHand]);
+  const Vec3 grip = at-slid;
+  slid = mul(r,slid);
+  tr[bowHand] = compose(mul(r,rotationOf(tr[bowHand])),grip+slid);
   }
 
 void BowDraw::cantHand(Matrix4x4* tr, const Vec3& at, const Vec3& axis, float lean) {
@@ -415,8 +615,17 @@ void BowDraw::reload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const Vec
     turn  = toMat3(slerp(toQuat(rB),toQuat(rA),s));
     elbow = eB + (eA-eB)*s;
     }
-  // the follow through: back past the face
-  at -= axis*follow;
+  // the follow through: back past the face (to the ear), the way to the quiver goes on from there
+  if(toString<=0.f) {
+    // let go of slowly at first: the hand is off to the quiver as soon as the reload starts (40 ms after the
+    // shot), the follow through would hardly show
+    const Vec3 off = clearHead(tr,numBones,at,releaseOffset(tr,numBones,axis)*(1.f-toQuiver*toQuiver));
+    relShown = length(off);
+    seen     = off + axis*followBefore();
+    at += off;
+    } else {
+    seen     = axis*followBefore();
+    }
   if(!moveHand(tr,at,&elbow))
     return;
   rotateAbout(tr,handTree,mul(turn,transpose(rotationOf(tr[hand]))),position(tr[hand]));
@@ -424,6 +633,8 @@ void BowDraw::reload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const Vec
   }
 
 void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
+  relShown = 0;
+  seen     = Vec3();
   travel   = 0;
   miss     = 0;
   shown    = 1;
@@ -431,6 +642,9 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
   bowMiss  = 0;
   overGrip = atMiddle = nockGap = square = cant = 0;
   slid     = Vec3();
+  // the own clip's start is taken anew each reload: from the hand shown as it begins
+  if(!holding)
+    ownStarted = false;
   if(!valid || upperTree.back()>=numBones || foreTree.back()>=numBones || handTree.back()>=numBones ||
      slot>=numBones || bowHand>=numBones)
     return;
@@ -463,6 +677,7 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
   // held so that it is drawn straight back to there, the hand going straight along the arrow
   Vec3 shift = {};
   Vec3 up    = {};
+  bool bowHeld = false; // the bow held as an archer holds it: it turns in the hand after the shot
   Vec3 nock  = slotAt;
   if(hasString) {
     const Vec3 high = turnOf(tr[bowHand],stringHigh);
@@ -492,6 +707,7 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
           lean = 0;
         }
       alignBow(tr,up,nock,axis,lean);
+      bowHeld = true;
       stringNow(tr,rest,pull);
       // the limbs as the bow is held now
       if(lean!=0.f)
@@ -523,21 +739,33 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
   if(holding) {
     // the reload: the string rests till the nock is at it, then shows drawn as far as it is (a little)
     shown = (1.f - full/span)*smooth((toString-0.8f)/0.2f);
-    reload(tr,numBones,h0+way*full,axis);
+    if(own && ownHeld) {
+      ownReload(tr,numBones,h0+way*full,axis);
+      } else {
+      ownStarted = false;
+      reload(tr,numBones,h0+way*full,axis);
+      }
+    if(bowHeld)
+      turnBow(tr,up,axis);
     if(hasString)
       measurePose(tr,numBones,slotAt,axis,up,nock,handAnim);
     return;
     }
+  if(bowHeld)
+    turnBow(tr,up,axis);
   if(hasString)
     measurePose(tr,numBones,slotAt,axis,up,nock,handAnim);
-  if(weight<=0.f && follow<=0.f)
+  if(weight<=0.f && relBack*relFade<=0.f)
     return;
 
   // the whole draw over what the arm reaches: the hand moves all the way, the string with it
   travel = full*(1.f-draw)*weight;
   shown  = 1.f - travel/span;
   // the follow through: back past the face
-  const Vec3 move = shift + way*travel - axis*follow;
+  const Vec3 off  = clearHead(tr,numBones,position(tr[hand])+shift+way*travel,releaseOffset(tr,numBones,axis));
+  relShown = length(off);
+  seen     = off + axis*followBefore();
+  const Vec3 move = shift + way*travel + off;
   if(length(move)<0.01f)
     return;
   const Vec3 target = position(tr[hand]) + move;
@@ -556,6 +784,9 @@ void BowDraw::probe(Probe& p) const {
   p.travel  = travel;
   p.miss    = miss;
   p.follow  = follow;
+  p.back    = relShown;
+  p.kick    = bowKick;
+  p.turn    = bowTurn;
   p.fit     = fit;
   p.offset  = offset;
   p.angle   = angle;
@@ -568,9 +799,224 @@ void BowDraw::probe(Probe& p) const {
   p.bowMiss  = bowMiss;
   p.aligned  = align;
   p.holding = holding;
-  p.nock    = toString>0.f ? 1.f+toString : toQuiver;
+  p.nock    = toString>0.f ? 1.f+toString : (holding && own ? smooth(reloadP/OwnTake) : toQuiver);
   p.handAt  = handAt;
   p.head    = gapHand;
   p.fore    = gapFore;
   p.arrow   = gapArrow;
+  p.own        = rq.own;
+  p.reload     = rq.reload;
+  p.quiver     = rq.quiver;
+  p.qMouth     = rq.qMouth;
+  p.qAxis      = rq.qAxis;
+  p.headAt     = rq.headAt;
+  p.crownAt    = rq.crownAt;
+  p.shoulderAt = rq.shoulderAt;
+  p.gripAt     = rq.gripAt;
+  p.nockAt     = rq.nockAt;
+  p.slotAt     = rq.slotAt;
+  p.arrowNock  = rq.arrowNock;
+  p.arrowTip   = rq.arrowTip;
+  p.foreAt     = rq.foreAt;
+  p.torsoHand  = rq.torsoHand;
+  p.torsoFore  = rq.torsoFore;
+  p.torsoArrow = rq.torsoArrow;
+  p.tubeHand   = rq.tubeHand;
+  p.tubeFore   = rq.tubeFore;
+  p.tipIn      = rq.tipIn;
+  p.offAxis    = rq.offAxis;
+  p.led        = rq.led;
+  p.wrist      = rq.wrist;
+  p.elbow      = rq.elbow;
+  }
+
+void BowDraw::ownReload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const Vec3& axis) {
+  // the own clip (QuiverReloadAnim): the drawing arm and the head as the clip has them relative to the neck, over
+  // the held aim. The hand starts where the aim and the follow through had it, is led to the quiver as it hangs
+  // round the grab and the draw out of it, and to the string as the aim has it at the end
+  if(chest>=numBones || head>=numBones || neck>=numBones || clav>=numBones || pelvis>=numBones)
+    return;
+  const float     p   = std::clamp(reloadP,0.f,1.f);
+  const Vec3      hA  = position(tr[hand]);
+  const Mat3      rA  = rotationOf(tr[hand]);
+  const Vec3      eA  = position(tr[fore])-position(tr[upper]);
+  const Matrix4x4 nk  = tr[neck];
+  Matrix4x4 nkInv = nk;
+  nkInv.inverse();
+  Matrix4x4 heldInv = clavHeld;
+  heldInv.inverse();
+  // the aim turns the arms about the chest (Aim): the drawing arm leaves that turn on its way to the quiver and
+  // takes it again on its way to the bow
+  Matrix4x4 none;
+  none.identity();
+  const Matrix4x4 turnFull = nkInv*tr[clav]*heldInv;
+  const float     wArm     = p<OwnOut ? 1.f-smooth((p-OwnLeave)/(OwnGrab-OwnLeave)) : smooth((p-OwnOut)/(OwnShelf-OwnOut));
+  const Matrix4x4 base     = nk*blend(none,turnFull,wArm);
+  for(auto i:armTree)
+    tr[i] = base*ownRel[i];
+  // the head looks as the clip has it from its first frame
+  if(ownKnown) {
+    Matrix4x4 h0 = ownHead0;
+    h0.inverse();
+    const Matrix4x4 look = h0*ownRel[head];
+    const Matrix4x4 hm   = tr[head];
+    Matrix4x4 hmInv = hm;
+    hmInv.inverse();
+    const Matrix4x4 m = hm*look*hmInv;
+    for(auto i:headTree)
+      tr[i] = m*tr[i];
+    }
+
+  Vec3 at   = position(tr[hand]);
+  Mat3 turn = rotationOf(tr[hand]);
+  Vec3 bend = position(tr[fore])-position(tr[upper]);
+  // from where the hand was as the reload began (the aim, the follow through, a short draw), the clip's way from
+  // there on, by the grab all of it
+  seen = axis*followBefore();
+  if(ownKnown && toQuiver<1.f) {
+    const Matrix4x4 k0  = nk*turnFull*ownHand0;
+    const Vec3      off = clearHead(tr,numBones,hA,releaseOffset(tr,numBones,axis));
+    if(!ownStarted) {
+      ownStart   = handAt;
+      ownStarted = true;
+      }
+    Vec3            start = ownStart;
+    frameNow.project(start);
+    const float     k   = 1.f-toQuiver*toQuiver;
+    at  += (start-position(k0))*k;
+    turn = mul(toMat3(slerp(Quat(),toQuat(mul(rA,transpose(rotationOf(k0)))),k)),turn);
+    relShown = length(off)*k;
+    seen    += off*k;
+    }
+  if(!ownKnown)
+    ownStarted = false;
+  // the quiver as it hangs (the give, the gait's turn, the armour's push) against the one the clip reaches
+  qFollow = p<OwnOut ? smooth((p-OwnLeave)/(OwnGrab-OwnLeave)) : 1.f-smooth((p-OwnOut)/(OwnShelf-OwnOut));
+  // the arrow's tip out of the tube (past K3): the quiver goes back alone, the hand keeps the lead it had till the
+  // reload is over (the arrow turned toward the bow may dip under the mouth's plane again, beside the tube)
+  if(p<OwnTake)
+    leadFrozen = false;
+  else if(p>=OwnOut-0.1f && rq.own && rq.tipIn<=0.f && !leadFrozen && quiverKnown) {
+    leadFrozen = true;
+    lead       = quiverNow;
+    }
+  if(quiverKnown && qFollow>0.f) {
+    Matrix4x4 clip = nk*blend(none,turnFull,wArm)*quiverOfNeck;
+    clip.inverse();
+    const Matrix4x4 lead = tr[pelvis]*(leadFrozen ? this->lead : quiverNow)*clip;
+    const Matrix4x4 led  = blend(compose(turn,at),lead*compose(turn,at),qFollow);
+    at   = position(led);
+    turn = rotationOf(led);
+    bend = bend + (mul(rotationOf(lead),bend)-bend)*qFollow;
+    }
+  // the string as the aim has it (the hand's turn of the aim)
+  if(toString>0.f) {
+    at   = at + (nock-at)*toString;
+    turn = toMat3(slerp(toQuat(turn),toQuat(rA),toString));
+    bend = bend + (eA-bend)*toString;
+    }
+  if(!moveHand(tr,at,&bend))
+    return;
+  rotateAbout(tr,handTree,mul(turn,transpose(rotationOf(tr[hand]))),position(tr[hand]));
+  miss = length(position(tr[hand])-at);
+  }
+
+void BowDraw::measureReload(const Matrix4x4* tr, size_t numBones) {
+  rq = Probe();
+  drawn = -1;
+  rq.own    = holding && own && ownHeld;
+  rq.reload = holding ? reloadP : -1.f;
+  rq.led    = rq.own ? qFollow : 0.f;
+  if(!valid || chest>=numBones || head>=numBones || hand>=numBones || fore>=numBones || slot>=numBones)
+    return;
+  Matrix4x4 inv = tr[chest];
+  inv.inverse();
+  auto in = [&](const Vec3& w) { Vec3 v = w; inv.project(v); return v; };
+  rq.headAt     = in(position(tr[head]));
+  rq.crownAt    = crown<numBones ? in(position(tr[crown])) : rq.headAt;
+  rq.shoulderAt = in(position(tr[upper]));
+  rq.gripAt     = bowHand<numBones ? in(position(tr[bowHand])-slid) : Vec3();
+  rq.slotAt     = in(position(tr[slot]));
+  rq.foreAt     = in(position(tr[fore]));
+  {
+    auto bend = [](Vec3 a, Vec3 b) {
+      const float la = a.length(), lb = b.length();
+      if(la<1e-4f || lb<1e-4f)
+        return -1.f;
+      return std::acos(std::clamp(Vec3::dotProduct(a,b)/(la*lb),-1.f,1.f))*180.f/float(M_PI);
+      };
+    const Vec3 sh = position(tr[upper]), el = position(tr[fore]), wr = position(tr[hand]);
+    rq.elbow = bend(el-sh,wr-el);
+    if(finger<numBones)
+      rq.wrist = bend(wr-el,position(tr[finger])-wr);
+  }
+  const Vec3 ax = arrowAxis(tr[slot]);
+  const Vec3 sl = position(tr[slot]);
+  rq.arrowNock  = in(sl-ax*ArrowNock);
+  rq.arrowTip   = in(sl+ax*ArrowTip);
+  if(hasString && bowHand<numBones) {
+    Vec3 rest, pull;
+    stringNow(tr,rest,pull);
+    rq.nockAt = in(rest);
+    }
+  // the trunk: in the chest's frame, round the line from the pelvis up the spine
+  const Vec3 pv = pelvis<numBones ? in(position(tr[pelvis])) : Vec3(-25,0,0);
+  auto trunk = [&](const Vec3& q) {
+    if(q.x>TrunkTop || q.x<pv.x)
+      return 99.f;
+    const float t  = (q.x-pv.x)/std::max(-pv.x,1.f);
+    const float cy = pv.y*(1.f-std::clamp(t,0.f,1.f)), cz = pv.z*(1.f-std::clamp(t,0.f,1.f));
+    const float y  = q.y-cy, z = q.z-cz;
+    const float r  = std::sqrt(y*y+z*z);
+    const float k  = std::sqrt((y/TrunkWide)*(y/TrunkWide)+(z/TrunkDeep)*(z/TrunkDeep));
+    return k>1e-4f ? r*(1.f-1.f/k) : -std::min(TrunkWide,TrunkDeep);
+    };
+  auto along = [&](const Vec3& a, const Vec3& b, auto f) {
+    float best = 99.f;
+    for(int i=0; i<=8; ++i)
+      best = std::min(best,f(a+(b-a)*(float(i)/8.f)));
+    return best;
+    };
+  const Vec3 hd = in(position(tr[hand]));
+  const Vec3 fm = (rq.foreAt+hd)*0.5f;
+  rq.torsoHand  = trunk(hd);
+  rq.torsoFore  = along(fm,hd,trunk);
+  rq.torsoArrow = inHand ? along(rq.arrowNock,rq.arrowTip,trunk) : 99.f;
+  if(!quiverKnown || pelvis>=numBones)
+    return;
+  const Matrix4x4 q = tr[pelvis]*quiverNow;
+  const Vec3 mouth  = position(q);
+  const Vec3 down   = normalize(Vec3(-q.at(1,0),-q.at(1,1),-q.at(1,2)));
+  rq.quiver = true;
+  rq.qMouth = in(mouth);
+  rq.qAxis  = in(mouth+down)-rq.qMouth;
+  // the tube: from the mouth to the bottom, narrowing
+  auto tube = [&](const Vec3& w) {
+    const float t = dot(w-mouth,down);
+    if(t<0.f || t>Quiver::Length)
+      return 99.f;
+    const float r = Quiver::MouthRadius + (Quiver::BottomRadius-Quiver::MouthRadius)*t/Quiver::Length;
+    return length(w-mouth-down*t)-r;
+    };
+  const Vec3 hw = position(tr[hand]);
+  const Vec3 fw = (position(tr[fore])+hw)*0.5f;
+  rq.tubeHand = tube(hw);
+  rq.tubeFore = along(fw,hw,tube);
+  if(inHand) {
+    const Vec3 tip = sl+ax*ArrowTip, nk = sl-ax*ArrowNock;
+    rq.tipIn = dot(tip-mouth,down);
+    if(rq.tipIn>0.f) {
+      // the arrow's points under the mouth: how far off the axis
+      float off = 0;
+      for(int i=0; i<=16; ++i) {
+        const Vec3  w = nk+(tip-nk)*(float(i)/16.f);
+        const float t = dot(w-mouth,down);
+        if(t>=0.f)
+          off = std::max(off,length(w-mouth-down*t));
+        }
+      rq.offAxis = off;
+      }
+    if(rq.own && rq.tipIn>0.f && reloadP>=OwnTake-0.02f && reloadP<OwnShelf)
+      drawn = std::max(0.f,TipDepth-rq.tipIn);
+    }
   }

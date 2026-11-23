@@ -1,0 +1,6 @@
+# A fresh process loads session-created.sav of blood-stains (SAVE=<out>/session-created.sav,
+# no WORLD): the same stain ids, positions and birth times; the `blood` traces keep their ids
+# and their age continues from the saved clock.
+cheat god
+blood_stains sample
+quit

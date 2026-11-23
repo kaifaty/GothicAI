@@ -17,6 +17,7 @@ class BodyArena final {
   public:
     struct Config final {
       std::string scenario = "native_duel";
+      std::string weapon = "1h";
       uint32_t seed = 17;
       unsigned side = 0;
       float distanceCm = 300;

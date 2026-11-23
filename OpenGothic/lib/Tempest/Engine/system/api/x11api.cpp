@@ -139,6 +139,9 @@ struct WPayload {
   bool             fullscreen = false;
   bool             positionPending = false;
   int              initialX = 0, initialY = 0;
+  // TEMPEST_OFFSCREEN: the window has no X window, only this client area
+  bool             offscreen = false;
+  uint32_t         width = 0, height = 0;
   };
 
 struct X11Api::Private {
@@ -153,9 +156,19 @@ struct X11Api::Private {
     windows[w] = p;
     }
 
+  void onCreateOffscreen(SystemApi::Window* w, Tempest::Window *owner, uint32_t width, uint32_t height) {
+    WPayload p;
+    p.owner     = owner;
+    p.offscreen = true;
+    p.width     = width;
+    p.height    = height;
+    windows[w] = p;
+    }
+
   void onDestroyWindow(SystemApi::Window* w){
     if(auto p = findWindow(w)) {
-      XDestroyIC(p->xic);
+      if(p->xic!=nullptr)
+        XDestroyIC(p->xic);
       }
     windows.erase(w); //NOTE: X11 can send events to dead window
     }
@@ -235,6 +248,11 @@ X11Api::X11Api() {
 
   impl.reset(new Private());
 
+  if(SystemApi::isOffscreen()) {
+    // no display at all: works without DISPLAY, WAYLAND_DISPLAY and XAUTHORITY
+    return;
+    }
+
   XInitThreads();
   XrmInitialize();
   dpy = XOpenDisplay(nullptr);
@@ -270,6 +288,28 @@ void* X11Api::display() {
   return dpy;
   }
 
+static bool windowSizeFromEnv(uint32_t& width, uint32_t& height) {
+  if(const char* sz = std::getenv("TEMPEST_WINDOW_SIZE")) {
+    unsigned sw = 0, sh = 0;
+    if(std::sscanf(sz,"%ux%u",&sw,&sh)==2 && sw>0 && sh>0) {
+      width  = sw;
+      height = sh;
+      return true;
+      }
+    }
+  return false;
+  }
+
+SystemApi::Window* X11Api::createOffscreen(Tempest::Window *owner, uint32_t w, uint32_t h) {
+  // any handle unique among this process' windows: there are no X windows to clash with
+  static ::Window lastId = 0;
+  HWND win(++lastId);
+  auto ret = reinterpret_cast<SystemApi::Window*>(win.ptr());
+  impl->onCreateOffscreen(ret, owner, w, h);
+  Log::i("[window] offscreen client size=",w,"x",h,", no display");
+  return ret;
+  }
+
 void X11Api::alignGeometry(SystemApi::Window *w, Tempest::Window& owner) {
   XWindowAttributes xwa={};
   if(XGetWindowAttributes(dpy, HWND(w), &xwa)) {
@@ -284,6 +324,8 @@ SystemApi::Window *X11Api::implCreateWindow(Tempest::Window *owner, uint32_t w, 
   }
 
 SystemApi::Window *X11Api::implCreateWindow(Tempest::Window *owner, uint32_t w, uint32_t h, bool fixedSize) {
+  if(SystemApi::isOffscreen())
+    return createOffscreen(owner,w,h);
   if(dpy==nullptr)
     return nullptr;
 
@@ -367,6 +409,11 @@ SystemApi::Window *X11Api::implCreateWindow(Tempest::Window *owner, uint32_t w, 
   }
 
 SystemApi::Window *X11Api::implCreateWindow(Tempest::Window *owner, SystemApi::ShowMode sm) {
+  uint32_t windowWidth = 800, windowHeight = 600;
+  const bool fixedSize = windowSizeFromEnv(windowWidth,windowHeight);
+  if(SystemApi::isOffscreen())
+    return createOffscreen(owner,windowWidth,windowHeight);
+
   if(dpy==nullptr)
     return nullptr;
 
@@ -376,16 +423,6 @@ SystemApi::Window *X11Api::implCreateWindow(Tempest::Window *owner, SystemApi::S
 
   int width = s->width;
   int height = s->height;
-  uint32_t windowWidth = 800, windowHeight = 600;
-  bool fixedSize = false;
-  if(const char* sz = std::getenv("TEMPEST_WINDOW_SIZE")) {
-    unsigned sw = 0, sh = 0;
-    if(std::sscanf(sz,"%ux%u",&sw,&sh)==2 && sw>0 && sh>0) {
-      windowWidth = sw;
-      windowHeight = sh;
-      fixedSize = true;
-      }
-    }
   SystemApi::Window* hwnd = nullptr;
 
   switch(sm) {
@@ -421,10 +458,13 @@ SystemApi::Window *X11Api::implCreateWindow(Tempest::Window *owner, SystemApi::S
 
 void X11Api::implDestroyWindow(SystemApi::Window *w) {
   impl->onDestroyWindow(w);
-  XDestroyWindow(dpy, HWND(w));
+  if(dpy!=nullptr)
+    XDestroyWindow(dpy, HWND(w));
   }
 
 bool X11Api::implSetAsFullscreen(SystemApi::Window *w, bool fullScreen) {
+  if(dpy==nullptr)
+    return false;
   // https://specifications.freedesktop.org/wm-spec/1.3/ar01s05.html#idm45164785855248
   const int _NET_WM_STATE_REMOVE = 0;
   const int _NET_WM_STATE_ADD    = 1;
@@ -497,11 +537,15 @@ float X11Api::implUiScale(SystemApi::Window *w) {
   }
 
 void X11Api::implSetWindowTitle(SystemApi::Window *w, const char *utf8) {
+  if(dpy==nullptr)
+    return;
   // XStoreName(dpy, HWND(w), utf8);
   Xutf8SetWMProperties(dpy, HWND(w), utf8, nullptr, nullptr, 0, nullptr, nullptr, nullptr);
   }
 
 void X11Api::implSetCursorPosition(SystemApi::Window *w, int x, int y) {
+  if(dpy==nullptr)
+    return;
   // activeCursorChange = 1;
   XWarpPointer(dpy, None, HWND(w), 0, 0, 0, 0, x, y);
   XFlush(dpy);
@@ -515,6 +559,8 @@ void X11Api::implSetCursorPosition(SystemApi::Window *w, int x, int y) {
   }
 
 void X11Api::implShowCursor(SystemApi::Window *w, CursorShape show) {
+  if(dpy==nullptr)
+    return;
   HWND hwnd(w);
 
   if(show==CursorShape::Hidden) {
@@ -568,6 +614,9 @@ void X11Api::implShowCursor(SystemApi::Window *w, CursorShape show) {
   }
 
 Rect X11Api::implWindowClientRect(SystemApi::Window *w) {
+  if(auto p = impl->findWindow(w); p!=nullptr && p->offscreen)
+    return Rect(0, 0, int(p->width), int(p->height));
+
   XWindowAttributes xwa;
   XGetWindowAttributes(dpy, HWND(w), &xwa);
 
@@ -591,8 +640,8 @@ int X11Api::implExec(SystemApi::AppCallBack &cb) {
   }
 
 void X11Api::implProcessEvents(SystemApi::AppCallBack &cb) {
-  // main message loop
-  if(XPending(dpy)>0) {
+  // main message loop; an offscreen window has no events, only timers and rendering
+  if(dpy!=nullptr && XPending(dpy)>0) {
     XEvent xev={};
     XNextEvent(dpy, &xev);
 

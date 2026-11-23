@@ -3,19 +3,22 @@
 #include <cstdint>
 #include <deque>
 
-#include "game/gamescript.h"
-#include "game/constants.h"
+#include "game/scripttypes.h"
+#include "game/rpgvocabulary.h"
 
 class Npc;
 class Item;
 class WayPoint;
 class Serialize;
+class World;
 
 class AiQueue {
   public:
     AiQueue();
 
     struct AiAction final {
+      static constexpr int SavedGuardCommand = -1; // unused i1 of a guard's walk, alignment or animation
+      static constexpr int ExternalPointWalk = -2; // saved as a positive point ordinal, with an empty s0
       Action            act   =AI_None;
       Npc*              target=nullptr;
       Npc*              victim=nullptr;
@@ -33,22 +36,32 @@ class AiQueue {
       Npc*              nativeCombatTarget=nullptr;
       // Transient: only state changes queued by the physical-noise callback.
       bool              physicsNoiseState=false;
+      // Set by an event activity. The point executor also marks its own commands in the saved queue.
+      bool              activity=false;
+      bool hasExactPoint() const {
+        return act==AI_GoToPoint && (i1==ExternalPointWalk || (i1==SavedGuardCommand && !s0.empty()));
+        }
       };
 
-    void     save(Serialize& fout) const;
-    void     load(Serialize& fin);
+    void     save(Serialize& fout, const World& world) const;
+    void     load(Serialize& fin, const World& world);
 
     size_t   size() const { return aiActions.size(); }
     const AiAction* front() const { return aiActions.empty() ? nullptr : &aiActions.front(); }
     void     clear();
-    void     pushBack (AiAction&& a);
+    void     pushBack (AiAction&& a, const Npc* actor);
     void     pushFront(AiAction&& a);
     AiAction pop();
     AiAction popPhysicsNoiseState();
+    void     removeActivity();
     int      aiOutputOrderId() const;
+    bool     hasItemUse() const;
+    bool     hasMovement() const;
     bool     nativeCombatOnly(const Npc* target) const;
 
     void     onWldItemRemoved(const Item& itm);
+
+    static const char* actionName(uint32_t action);
 
     static AiAction aiLookAt(const WayPoint* to);
     static AiAction aiLookAtNpc(Npc* other);

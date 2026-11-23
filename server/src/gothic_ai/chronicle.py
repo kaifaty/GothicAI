@@ -48,7 +48,7 @@ class Chronicle:
         self.tags: dict[str, Tag] = {}
         self.on_fact: list[Callable[[Fact], None]] = []  # every new fact, after it is written
         self.on_entry: list[Callable[[int, Fact], None]] = []
-        self._hero_kills: dict[str, bool] = {}  # hero_kill precedes npc_died; its explicit monster flag
+        self._hero_kills: dict[str, HeroKill] = {}  # hero_kill precedes npc_died
         self._background: set[asyncio.Task[Any]] = set()
         # the branch's facts as read so far: each read takes only the newer rows (by seq), since trust,
         # deals and the rumors read them on every turn
@@ -80,7 +80,11 @@ class Chronicle:
         return [fact for _, fact in self.entries(kind)]
 
     def entries(self, kind: str | None = None) -> list[tuple[int, Fact]]:
-        """The branch's facts with their save sequence numbers, oldest first, optionally by kind."""
+        """The branch's facts with their save sequence numbers, oldest first, optionally by kind.
+
+        Defeat counts are daily snapshots: keep their history in the log for save rollback, but expose
+        only the latest count for each victim and day.
+        """
         if self.branch is None:
             return []
         if self._cached != self.branch:
@@ -91,7 +95,12 @@ class Chronicle:
             self._all.append((seq, f))
             self._by_kind.setdefault(f.get("fact"), []).append((seq, f))
             self._seq = seq
-        return list(self._all) if kind is None else list(self._by_kind.get(kind, ()))
+        entries = list(self._all) if kind is None else list(self._by_kind.get(kind, ()))
+        if kind in {None, "defeated"}:
+            latest = {(f["npc"], f["day"]): seq for seq, f in self._by_kind.get("defeated", ())}
+            entries = [(seq, f) for seq, f in entries
+                       if f.get("fact") != "defeated" or latest[f["npc"], f["day"]] == seq]
+        return entries
 
     def killed(self, tag: str, by: str | None = None) -> int:
         """How many of the tag died (by `by`, e.g. PLAYER), as written down."""
@@ -117,9 +126,9 @@ class Chronicle:
             case HeroKill():
                 # Only humans and tagged monsters also produce npc_died. Do not retain every wild kill.
                 self._hero_kills.clear()
-                self._hero_kills[msg.npc] = msg.monster
+                self._hero_kills[msg.npc] = msg
             case NpcDied():
-                monster = self._hero_kills.pop(msg.npc, None)
+                kill = self._hero_kills.pop(msg.npc, None)
                 self.record(
                     {
                         "fact": "died",
@@ -127,7 +136,7 @@ class Chronicle:
                         "name": msg.name,
                         "tag": msg.tag,
                         "killer": msg.killer,
-                        **({"monster": monster} if monster is not None else {}),
+                        **({"monster": kill.monster, "guild": kill.guild} if kill is not None else {}),
                     }
                 )
             case StoryWorld():

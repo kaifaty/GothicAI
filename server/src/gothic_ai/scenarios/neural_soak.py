@@ -17,12 +17,18 @@ from ..bodies import Bodies
 from ..bodypilot import ACQUIRE_WINDOW, WORLD_STOP_REASONS, BodyFight, BodyPilot, FightSummary
 from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
-from ..llm.fake import FakeBackend
 from ..protocol import BodyLease, GameMessage, LineStarted, NpcSpec, RoutineEntry, Session
-from .common import _save_or_fail, _until, _until_async, wait_message
+from .common import _save_or_fail, _until, _until_async, model_off, wait_message
 from .neural_load import _policy_resets
 from .neural_soak_capture import CaptureTracker
 from .neural_soak_metrics import SoakMetrics, release_within_deadline
+
+SCENARIOS = {
+    "neural-soak": ("OFF", {
+        "save": False, "timeout": 900, "exclusive": True,
+        "env": {"GOTHIC_SOAK_SECONDS": "300", "BENCH_CLASS": "quiet"},
+    }),
+}
 
 log = logging.getLogger("gothic_ai.scenarios")
 BANDITS = tuple(f"DIR_NPC_SOAK_BANDIT_{i}" for i in range(1, 5))
@@ -204,9 +210,7 @@ async def neural_soak_scenario(
     if control and pilot is not None:
         raise GameError("neural-soak control requires --no-neural-body")
     if not control and (pilot is None or pilot.max_fights != 4):
-        raise GameError("neural-soak requires GOTHIC_BODY_URL and --neural-body-max=4")
-    if dialogue.llm.name != "fake":
-        raise GameError("neural-soak requires LLM=fake")
+        raise GameError("neural-soak requires an available body policy and --neural-body-max=4")
     duration = float(os.environ.get("GOTHIC_SOAK_SECONDS", "1800"))
     if not 90 <= duration <= 2100:
         raise GameError("GOTHIC_SOAK_SECONDS must be between 90 and 2100")
@@ -388,23 +392,27 @@ async def neural_soak_scenario(
             lease = fight.lease
             if link.body_leases.get(lease.entity_id) != lease:
                 continue
-            if id(fight) not in episodes and resets.get(fight.client):
+            engine = fight.policy == "engine"
+            reset_seen = fight._policy_memory_resets > 0 if engine else bool(resets.get(fight.client))
+            policy_identity = fight if engine else fight.client
+            if id(fight) not in episodes and reset_seen:
                 episodes[id(fight)] = Episode(fight, npc, lease, fight._target_kind, wave, now, now)
                 previous = latest_identity.get(npc)
                 if previous is not None and previous[0] != lease:
                     reacquire_checks.append(bool(
-                        previous[1] is not fight.client and resets.get(fight.client)
-                        and resets[fight.client][0]["world_epoch"] == lease.world_epoch
-                        and resets[fight.client][0]["session_epoch"] == lease.session_epoch
+                        previous[1] is not policy_identity and reset_seen and (engine or (
+                            resets[fight.client][0]["world_epoch"] == lease.world_epoch
+                            and resets[fight.client][0]["session_epoch"] == lease.session_epoch
+                        ))
                     ))
-                latest_identity[npc] = (lease, fight.client)
+                latest_identity[npc] = (lease, policy_identity)
                 for loaded in load_checks:
                     old_worlds = loaded["old_worlds"]
                     if (not loaded["reacquired"]
                             and lease.session_epoch == loaded["new_world"][0]
                             and lease.world_epoch >= loaded["new_world"][1]
                             and [lease.session_epoch, lease.world_epoch] not in old_worlds):
-                        loaded["reacquired"] = bool(resets.get(fight.client))
+                        loaded["reacquired"] = reset_seen
                         metrics.event("load_reacquire", cause=loaded["cause"], npc=npc,
                                       ok=loaded["reacquired"], lease=lease)
         for episode in list(episodes.values()):
@@ -568,6 +576,10 @@ async def neural_soak_scenario(
         await link.debug("npc_goto", npc=TALKER, to="PC_HERO", distance=150, face="PC_HERO")
         await link.attach(TALKER)
         mark = len(lines)
+        model_off(dialogue).given(
+            "Given: the traveler's line between waves", who=TALKER,
+            line="Пока спокойно. Держи меч наготове.",
+        )
         await link.debug("type", text="Путник, как дорога? Всё спокойно?")
         answered = await _until(lambda: len(lines) > mark, 15)
         conversations.append(answered)
@@ -605,15 +617,14 @@ async def neural_soak_scenario(
     await check_companion()
     await link.debug("player_equip", item="ITMW_1H_BAU_MACE")
     saved = await _save_or_fail(link, 7)
-    original_llm = dialogue.llm
-    dialogue.llm = FakeBackend("Пока спокойно. Держи меч наготове.", delay=.15)
     link.raw_body_listeners.append(observe)
     link.listeners.append(heard)
     try:
         metrics.started = time.monotonic()
         if capture is not None:
             capture.started = metrics.started
-        reset_observer = contextlib.nullcontext({}) if control else _policy_resets()
+        reset_observer = (_policy_resets() if pilot is not None and pilot.policy == "service"
+                          else contextlib.nullcontext({}))
         with metrics.observe(), reset_observer as resets:
             started = time.monotonic()
             metrics.event("run_start", control=control, duration_s=duration)
@@ -659,6 +670,10 @@ async def neural_soak_scenario(
                 await link.debug("npc_goto", npc=COMPANION, waypoint=REFUGE)
                 await heal()
                 await link.debug("player_equip", item="ITMW_1H_BAU_MACE")
+                await check_companion()
+                # Restoring an armed hero can threaten the nearby talker while
+                # the post-load graph is replayed. Keep the checkpoint peaceful.
+                saved = await _save_or_fail(link, 7)
                 try:
                     await _soak_player_weapon(link, "melee", timeout=15)
                 except GameError:
@@ -667,8 +682,6 @@ async def neural_soak_scenario(
                     raise
                 if control:
                     await link.body_watch(["PLAYER"], rate_hz=20)
-                await check_companion()
-                saved = await _save_or_fail(link, 7)
                 await calls([["call", "WLD_INSERTNPC", ["sym", npc], ["str", PLACES[1]]]
                              for npc in BANDITS[:count]])
                 await calls([
@@ -720,10 +733,10 @@ async def neural_soak_scenario(
                              for index, npc in enumerate(BANDITS[:count])])
                 loaded = False
                 combat_deadline = started + duration + (30 if probe_only else 0)
+                # A final load probe still gives every attacker time to acquire:
+                # the first fresh lease must not cut off the rest of the wave.
                 while time.monotonic() - wave_start < 75 and time.monotonic() < combat_deadline:
                     await poll(break_stalls=True)
-                    if probe_only and not pending_probe():
-                        break
                     if cause := death_cause():
                         await load_wave(saved, cause=cause)
                         loaded = True
@@ -863,6 +876,5 @@ async def neural_soak_scenario(
             sampler.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await sampler
-        dialogue.llm = original_llm
         link.raw_body_listeners.remove(observe)
         link.listeners.remove(heard)

@@ -18,6 +18,8 @@ from torch import Tensor, nn
 
 HEAD_SIZES = {"forward": 3, "strafe": 3, "turn": 3, "walk": 2, "jump": 2, "climb": 2}
 BC3_HEAD_SIZES = {"forward": 3, "strafe": 3, "turn": 3, "walk": 2, "maneuver": 3}
+# Format 5 reads the pace as an input; walk/run is no longer an action head.
+PACE_HEAD_SIZES = {"forward": 3, "strafe": 3, "turn": 3, "maneuver": 3}
 FORMAT_NAME = "gothic-nav-bc"
 FORMAT_VERSION = 1
 
@@ -38,10 +40,11 @@ class NavPolicy(nn.Module):
             raise ValueError("vector_size and hidden_size must be positive")
         self.vector_size = int(vector_size)
         self.hidden_size = int(hidden_size)
-        if format_version not in (1, 2, 3, 4):
+        if format_version not in (1, 2, 3, 4, 5):
             raise ValueError("unsupported navigation weight format")
         self.format_version = format_version
-        self.head_sizes = HEAD_SIZES if format_version == 1 else BC3_HEAD_SIZES
+        self.head_sizes = (HEAD_SIZES if format_version == 1 else
+                           PACE_HEAD_SIZES if format_version == 5 else BC3_HEAD_SIZES)
         channels = 11 if format_version == 4 else 10
         self.near_shape = (channels, 64, 64) if format_version >= 3 else (9, 32, 32)
         self.far_shape = (channels, 50, 100) if format_version >= 3 else (9, 25, 25)

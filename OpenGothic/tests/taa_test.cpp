@@ -1,0 +1,505 @@
+// TAA by the camera (graphics/taa): the jitter sequence, the reprojection of the history and the camera jump
+// rule. CPU only: no device, no game data.
+#include "graphics/taa.h"
+
+#include <Tempest/Matrix4x4>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+using namespace Tempest;
+
+namespace {
+size_t assertions = 0;
+
+void require(bool condition, const std::string& message) {
+  ++assertions;
+  if(!condition)
+    throw std::runtime_error(message);
+  }
+
+constexpr uint32_t Width  = 3840;
+constexpr uint32_t Height = 2160;
+
+// the camera's matrices as Camera::mkView builds them
+Matrix4x4 mkViewLwc(const Vec3& spin) {
+  auto view = Matrix4x4::mkIdentity();
+  view.scale(-1,-1,-1);
+  auto rot = Matrix4x4::mkIdentity();
+  rot.rotateOX(spin.x);
+  rot.rotateOY(spin.y);
+  rot.rotateOZ(spin.z);
+  rot.rotateOY(90);
+  view.mul(rot);
+  return view;
+  }
+
+Taa::View mkView(const Vec3& origin, const Vec3& spin) {
+  Taa::View v;
+  v.proj.perspective(67.5f, float(Width)/float(Height), 10.f, 100000.f);
+  v.viewLwc = mkViewLwc(spin);
+  v.origin  = origin;
+  return v;
+  }
+
+Vec4 apply(const Matrix4x4& m, const Vec4& v) {
+  Vec4 r = v;
+  m.project(r);
+  return r;
+  }
+
+// NDC difference in pixels of the target
+float pixels(float ax, float ay, float bx, float by) {
+  const float dx = (ax-bx)*0.5f*float(Width);
+  const float dy = (ay-by)*0.5f*float(Height);
+  return std::sqrt(dx*dx + dy*dy);
+  }
+
+void jitterSequence() {
+  float    sx = 0, sy = 0;
+  Vec2     seen[Taa::Phases];
+  for(uint32_t i=0; i<Taa::Phases; ++i) {
+    const Vec2 j = Taa::jitterPx(i);
+    require(std::abs(j.x)<=0.5f && std::abs(j.y)<=0.5f, "jitter beyond half a pixel at phase " + std::to_string(i));
+    for(uint32_t k=0; k<i; ++k)
+      require(seen[k].x!=j.x || seen[k].y!=j.y, "jitter phase repeats within 8 frames");
+    seen[i] = j;
+    sx += j.x;
+    sy += j.y;
+    }
+  sx /= float(Taa::Phases);
+  sy /= float(Taa::Phases);
+  require(std::abs(sx)<0.06f && std::abs(sy)<0.06f, "jitter mean is not about zero");
+  // the sequence repeats after 8 frames
+  for(uint32_t i=0; i<Taa::Phases; ++i) {
+    const Vec2 a = Taa::jitterPx(i), b = Taa::jitterPx(i+Taa::Phases);
+    require(a.x==b.x && a.y==b.y, "jitter is not 8 phases");
+    }
+  // the matrix moves the picture by the offset in pixels
+  const Vec2 px  = Taa::jitterPx(3);
+  const auto jm  = Taa::jitterMatrix(px, Width, Height);
+  const Vec4 c   = apply(jm, Vec4(0.25f, -0.4f, 0.5f, 2.f));
+  const float dx = (c.x/c.w - 0.125f)*0.5f*float(Width);
+  const float dy = (c.y/c.w + 0.2f  )*0.5f*float(Height);
+  require(std::abs(dx-px.x)<1e-3f && std::abs(dy-px.y)<1e-3f, "jitter matrix does not move by the offset");
+  std::printf("jitter mean %.4f %.4f px\n", double(sx), double(sy));
+  }
+
+void staticCamera() {
+  // a camera that stands still: no offset of the history, also far from the world origin
+  const Vec3 origins[] = {Vec3(0,0,0), Vec3(-1200,300,800), Vec3(120000,4000,-95000), Vec3(-250000,-8000,310000)};
+  float worst = 0;
+  for(const Vec3& o:origins) {
+    const auto view = mkView(o, Vec3(12,137,0));
+    for(uint32_t f=0; f<Taa::Phases; ++f) {
+      const auto j = Taa::jitterMatrix(Taa::jitterPx(f), Width, Height);
+      const auto m = Taa::reprojection(view, view, j);
+      for(float y=-1; y<=1.001f; y+=0.25f)
+        for(float x=-1; x<=1.001f; x+=0.25f)
+          for(float z:{0.5f, 0.99f, 0.99999f, 1.f}) {
+            const Vec4 p = apply(m, Vec4(x,y,z,1));
+            require(p.w>0, "static reprojection behind the camera");
+            worst = std::max(worst, pixels(p.x/p.w, p.y/p.w, x, y));
+            }
+      }
+    }
+  require(worst<1e-3f, "static camera moves the history by " + std::to_string(worst) + " px");
+  std::printf("static camera: worst offset %.6f px\n", double(worst));
+  }
+
+void movingCamera() {
+  // a point at a known place: the reprojection finds it where the previous camera saw it
+  const Vec3 prevOrigin = Vec3(120000,4000,-95000);
+  const Vec3 curOrigin  = prevOrigin + Vec3(31,-4,17);
+  const auto prev = mkView(prevOrigin, Vec3(12,137,0));
+  const auto cur  = mkView(curOrigin,  Vec3(13,139.5f,0));
+  const auto j    = Taa::jitterMatrix(Taa::jitterPx(5), Width, Height);
+  const auto m    = Taa::reprojection(cur, prev, j);
+
+  auto jvp = [&](const Taa::View& v) {
+    auto r = j;
+    r.mul(v.proj);
+    r.mul(v.viewLwc);
+    return r;
+    };
+  const auto curVp  = jvp(cur);
+  const auto prevVp = jvp(prev);
+  const Vec3 delta  = Vec3(31,-4,17); // curOrigin-prevOrigin, exact
+
+  float worst = 0;
+  int   tested = 0;
+  for(float a=-60; a<=60; a+=15)
+    for(float b=-30; b<=30; b+=15)
+      for(float d:{150.f, 900.f, 7000.f, 60000.f}) {
+        // relative to the current camera, in front of it
+        const auto  rot = mkViewLwc(Vec3(13,139.5f,0));
+        auto        inv = rot;
+        inv.inverse();
+        const float ra = a*float(M_PI)/180.f, rb = b*float(M_PI)/180.f;
+        Vec3 dirView = Vec3(std::sin(ra)*std::cos(rb), std::sin(rb), std::cos(ra)*std::cos(rb));
+        Vec4 pv = Vec4(dirView.x*d, dirView.y*d, dirView.z*d, 1);
+        // the view looks along -z or +z: take whichever side lands in front of the projection
+        Vec4 c  = apply(cur.proj, pv);
+        if(c.w<=0) {
+          pv = Vec4(-pv.x, -pv.y, -pv.z, 1);
+          c  = apply(cur.proj, pv);
+          }
+        const Vec4 lwc   = apply(inv, pv);
+        const Vec4 cClip = apply(curVp, lwc);
+        const Vec3 ndc   = Vec3(cClip.x/cClip.w, cClip.y/cClip.w, cClip.z/cClip.w);
+        if(std::abs(ndc.x)>1 || std::abs(ndc.y)>1)
+          continue;
+        const Vec4 pLwc  = Vec4(lwc.x+delta.x, lwc.y+delta.y, lwc.z+delta.z, 1);
+        const Vec4 pClip = apply(prevVp, pLwc);
+        const Vec4 r     = apply(m, Vec4(ndc.x, ndc.y, ndc.z, 1));
+        require(r.w>0, "moving reprojection behind the camera");
+        worst = std::max(worst, pixels(r.x/r.w, r.y/r.w, pClip.x/pClip.w, pClip.y/pClip.w));
+        ++tested;
+        }
+  require(tested>50, "too few points in view: " + std::to_string(tested));
+  require(worst<0.05f, "moving camera reprojects off by " + std::to_string(worst) + " px");
+  std::printf("moving camera: %d points, worst error %.4f px\n", tested, double(worst));
+  }
+
+// Motion vectors of objects (graphics plan 1b): the residual against the direct projection of p and p+d
+void motionResidual() {
+  const Vec3 prevOrigin = Vec3(120000,4000,-95000);
+  const Vec3 move       = Vec3(31,-4,17);
+  const auto prev = mkView(prevOrigin,      Vec3(12,137,0));
+  const auto cur  = mkView(prevOrigin+move, Vec3(13,139.5f,0));
+  const auto rot  = mkViewLwc(Vec3(13,139.5f,0));
+  auto       inv  = rot;
+  inv.inverse();
+
+  // the camera's NDC of a world point given relative to the current camera, in double through the lwc chain
+  auto ndcOf = [](const Taa::View& v, const Matrix4x4& j, const Vec3& rel) {
+    auto m = j;
+    m.mul(v.proj);
+    m.mul(v.viewLwc);
+    const Vec4 c = apply(m, Vec4(rel.x, rel.y, rel.z, 1));
+    return Vec4(c.x/c.w, c.y/c.w, c.z/c.w, c.w);
+    };
+
+  const Vec3 ds[] = {Vec3(0,0,0), Vec3(3,0,0), Vec3(0,-2.5f,1), Vec3(-6,1,4), Vec3(0,0,12)};
+  float worst = 0, worstJitter = 0, zeroWorst = 0;
+  int   tested = 0;
+  for(bool jittered:{false, true}) {
+    const auto j  = jittered ? Taa::jitterMatrix(Taa::jitterPx(5), Width, Height) : Matrix4x4::mkIdentity();
+    const auto mc = Taa::motionCamera(cur, prev, true, j);
+    auto curVp = j;
+    curVp.mul(cur.proj);
+    curVp.mul(cur.viewLwc);
+    for(float a=-50; a<=50; a+=25)
+      for(float b=-25; b<=25; b+=25)
+        for(float dist:{200.f, 1500.f, 9000.f}) {
+          const float ra = a*float(M_PI)/180.f, rb = b*float(M_PI)/180.f;
+          Vec4 pv = Vec4(std::sin(ra)*std::cos(rb)*dist, std::sin(rb)*dist, std::cos(ra)*std::cos(rb)*dist, 1);
+          if(apply(cur.proj, pv).w<=0)
+            pv = Vec4(-pv.x, -pv.y, -pv.z, 1);
+          const Vec4 lwc  = apply(inv, pv);             // relative to the current camera
+          const Vec3 rel  = Vec3(lwc.x, lwc.y, lwc.z);
+          const Vec4 clip = apply(curVp, Vec4(rel.x, rel.y, rel.z, 1));
+          if(std::abs(clip.x/clip.w)>1 || std::abs(clip.y/clip.w)>1)
+            continue;
+          for(const Vec3& d:ds) {
+            const Vec2 r = Taa::motionResidual(mc.reprojectClip, mc.viewProjectPrev, clip, d);
+            // directly: the previous camera sees p and p+d; relative to it they are rel+move and rel+move+d
+            const Vec4 p0 = ndcOf(prev, j, rel+move);
+            const Vec4 p1 = ndcOf(prev, j, rel+move+d);
+            const float ex = (p1.x-p0.x)*0.5f, ey = (p1.y-p0.y)*0.5f;
+            const float err = std::hypot((r.x-ex)*float(Width), (r.y-ey)*float(Height));
+            if(d.x==0 && d.y==0 && d.z==0) {
+              require(r.x==0 && r.y==0, "d=0 gives a residual under a moving camera");
+              zeroWorst = std::max(zeroWorst, std::hypot(r.x, r.y));
+              }
+            worst = std::max(worst, err);
+            // no jitter in the residual: the same point and move without it
+            if(jittered) {
+              const auto m0 = Taa::motionCamera(cur, prev, true, Matrix4x4::mkIdentity());
+              auto vp0 = cur.proj;
+              vp0.mul(cur.viewLwc);
+              const Vec2 r0 = Taa::motionResidual(m0.reprojectClip, m0.viewProjectPrev,
+                                                  apply(vp0, Vec4(rel.x, rel.y, rel.z, 1)), d);
+              worstJitter = std::max(worstJitter, std::hypot((r.x-r0.x)*float(Width), (r.y-r0.y)*float(Height)));
+              }
+            ++tested;
+            }
+          }
+    }
+  require(tested>100, "too few motion points in view: " + std::to_string(tested));
+  require(worst<0.01f, "residual is off the direct projection by " + std::to_string(worst) + " px");
+  require(worstJitter<0.01f, "jitter leaks into the residual by " + std::to_string(worstJitter) + " px");
+
+  // a cut: no reprojection, the previous camera is this one; a still point gives 0, a moving one its move as this
+  // camera sees it
+  const auto j   = Taa::jitterMatrix(Taa::jitterPx(2), Width, Height);
+  const auto cut = Taa::motionCamera(cur, prev, false, j);
+  const auto id  = Matrix4x4::mkIdentity();
+  for(int c=0; c<4; ++c)
+    for(int r=0; r<4; ++r)
+      require(cut.reprojectClip.at(c,r)==id.at(c,r), "a cut reprojects the camera");
+  const auto same = Taa::viewProjectPrev(cur, j);
+  for(int c=0; c<4; ++c)
+    for(int r=0; r<4; ++r)
+      require(cut.viewProjectPrev.at(c,r)==same.at(c,r), "a cut takes another previous camera than this one");
+  auto curVp = j;
+  curVp.mul(cur.proj);
+  curVp.mul(cur.viewLwc);
+  const Vec3 rel  = Vec3(apply(inv, Vec4(0, 0, 900, 1)).x, apply(inv, Vec4(0, 0, 900, 1)).y, apply(inv, Vec4(0, 0, 900, 1)).z);
+  Vec3 relFront   = rel;
+  if(apply(curVp, Vec4(rel.x, rel.y, rel.z, 1)).w<=0)
+    relFront = Vec3(-rel.x, -rel.y, -rel.z);
+  const Vec4 clip = apply(curVp, Vec4(relFront.x, relFront.y, relFront.z, 1));
+  const Vec2 still = Taa::motionResidual(cut.reprojectClip, cut.viewProjectPrev, clip, Vec3());
+  require(still.x==0 && still.y==0, "a still point moves on a cut");
+  const Vec3 d   = Vec3(5,2,-3);
+  const Vec2 mv  = Taa::motionResidual(cut.reprojectClip, cut.viewProjectPrev, clip, d);
+  const Vec4 q0  = ndcOf(cur, j, relFront);
+  const Vec4 q1  = ndcOf(cur, j, relFront+d);
+  const float ce = std::hypot((mv.x-(q1.x-q0.x)*0.5f)*float(Width), (mv.y-(q1.y-q0.y)*0.5f)*float(Height));
+  require(ce<0.01f, "a moving point on a cut is off its own move by " + std::to_string(ce) + " px");
+  std::printf("motion residual: %d cases, worst %.5f px, jitter %.5f px, d=0 %.1g, cut %.5f px\n",
+              tested, double(worst), double(worstJitter), double(zeroWorst), double(ce));
+  }
+
+void cameraJump() {
+  const Vec3 o = Vec3(120000,4000,-95000);
+  const auto a = mkView(o, Vec3(10,40,0));
+  require(!Taa::isCameraJump(a, a), "a camera standing still is a jump");
+  require(!Taa::isCameraJump(mkView(o+Vec3(300,0,-390),Vec3(10,40,0)), a), "4.9 m is a jump");     // 492 cm
+  require( Taa::isCameraJump(mkView(o+Vec3(300,0,-410),Vec3(10,40,0)), a), "5.1 m is not a jump"); // 508 cm
+  require(!Taa::isCameraJump(mkView(o,Vec3(10,69,0)), a), "29 degrees is a jump");
+  require( Taa::isCameraJump(mkView(o,Vec3(10,71,0)), a), "31 degrees is not a jump");
+  require( Taa::isCameraJump(mkView(o,Vec3(10,220,0)), a), "a turn about is not a jump");
+  require(!Taa::isCameraJump(mkView(o,Vec3(-15,40,0)), a), "25 degrees of pitch is a jump");
+  require( Taa::isCameraJump(mkView(o,Vec3(45,40,0)), a), "35 degrees of pitch is not a jump");
+  const float r = Taa::rotationAngle(mkViewLwc(Vec3(10,40,0)), mkViewLwc(Vec3(10,52,0)));
+  require(std::abs(r-12.f)<0.05f, "rotation angle of 12 degrees reads " + std::to_string(r));
+  }
+}
+
+// the temporal upscale (graphics plan 1г): Apple's phase count and mip bias, and the longer sequence stays in a pixel
+void upscaleSequence() {
+  require(Taa::upscalePhases(1728, 959, 3456, 1918)==32, "2x upscale is not 32 phases");
+  require(Taa::upscalePhases(2315, 1285, 3456, 1918)==18, "1.5x upscale is not 18 phases");
+  require(Taa::upscalePhases(2592, 1438, 3456, 1918)==15, "1.33x upscale is not 15 phases");
+  require(Taa::upscalePhases(3456, 1918, 3456, 1918)==Taa::Phases, "no upscale is not TAA's phases");
+  require(std::abs(Taa::upscaleMipBias(1728, 3456) + 2.f)<1e-6f, "2x mip bias is not -2");
+  require(std::abs(Taa::upscaleMipBias(3456, 3456) + 1.f)<1e-6f, "1x mip bias is not -1");
+  for(uint32_t phases : {18u, 32u}) {
+    float sx = 0, sy = 0;
+    for(uint32_t i=0; i<phases; ++i) {
+      const Vec2 j = Taa::jitterPx(i, phases);
+      require(std::abs(j.x)<=0.5f && std::abs(j.y)<=0.5f, "upscale jitter beyond half a pixel");
+      for(uint32_t k=0; k<i; ++k) {
+        const Vec2 o = Taa::jitterPx(k, phases);
+        require(o.x!=j.x || o.y!=j.y, "upscale jitter phase repeats");
+        }
+      const Vec2 again = Taa::jitterPx(i+phases, phases);
+      require(again.x==j.x && again.y==j.y, "upscale jitter does not repeat after its phases");
+      sx += j.x;
+      sy += j.y;
+      }
+    // Halton from index 1 is not centred: -0.036/-0.033 px at 18 phases, -0.015/-0.019 at 32; the scaler knows each one
+    require(std::abs(sx/float(phases))<0.06f && std::abs(sy/float(phases))<0.06f, "upscale jitter mean is not about zero");
+    }
+  // TAA's sequence is the first 8 of them
+  for(uint32_t i=0; i<Taa::Phases; ++i) {
+    const Vec2 a = Taa::jitterPx(i), b = Taa::jitterPx(i, 32);
+    require(a.x==b.x && a.y==b.y, "TAA jitter changed");
+    }
+  }
+
+// our own temporal upscale (graphics plan 1г, taau_resolve.frag): which input sample an output pixel takes
+void upscaleTaps() {
+  const float kernel = 2.29f;
+  // no upscale, no jitter: the pixel itself, at its centre, with the whole share
+  for(uint32_t x : {0u, 7u, 1727u}) {
+    const auto t = Taa::upscaleTap(x, 3, 1728, 959, 1728, 959, Vec2(0,0));
+    require(t.x==int32_t(x) && t.y==3, "1x tap is not the pixel itself");
+    require(std::abs(t.offset.x)<1e-4f && std::abs(t.offset.y)<1e-4f, "1x tap is off the centre");
+    require(std::abs(Taa::upscaleConfidence(t.offset, 1, 1, kernel) - 1.f)<1e-4f, "1x tap is not trusted");
+    }
+  // The frame moved by +jitter: texel i sampled the scene at i + 0.5 - jitter. The output pixel whose centre is
+  // that very point takes it with a zero offset; a jitter the other way would miss by twice the jitter
+  {
+    const Vec2 j(0.25f, -0.25f);
+    // 2x: output pixel 2*i has its centre at i + 0.25 of the input, i.e. texel i sampled with jitter.x = 0.25
+    const auto t = Taa::upscaleTap(200, 101, 3456, 1918, 1728, 959, j);
+    require(t.x==100 && t.y==50, "2x tap is not the texel under the pixel");
+    require(std::abs(t.offset.x)<1e-4f && std::abs(t.offset.y)<1e-4f, "2x tap by the jitter is off the centre");
+    const auto o = Taa::upscaleTap(200, 101, 3456, 1918, 1728, 959, Vec2(-j.x, -j.y));
+    require(std::abs(std::abs(o.offset.x) - 0.5f)<1e-4f, "the jitter's sign does not matter");
+    }
+  // over the sequence every output pixel of an input texel's block gets a sample near its own centre, and each
+  // frame's offset stays within half an input pixel
+  for(const auto in : {std::pair<uint32_t,uint32_t>{1728, 959}, std::pair<uint32_t,uint32_t>{2304, 1278}}) {
+    const uint32_t outW = 3456, outH = 1918;
+    const float    sx   = float(outW)/float(in.first), sy = float(outH)/float(in.second);
+    const uint32_t n    = Taa::upscalePhases(in.first, in.second, outW, outH);
+    for(uint32_t oy=600; oy<604; ++oy)
+      for(uint32_t ox=900; ox<904; ++ox) {
+        float best = 0, sum = 0;
+        for(uint32_t i=0; i<n; ++i) {
+          const auto t = Taa::upscaleTap(ox, oy, outW, outH, in.first, in.second, Taa::jitterPx(i, n));
+          require(std::abs(t.offset.x)<=0.5f+1e-4f && std::abs(t.offset.y)<=0.5f+1e-4f, "tap beyond half a texel");
+          const float c = Taa::upscaleConfidence(t.offset, sx, sy, kernel);
+          best = std::max(best, c);
+          sum += c;
+          }
+        require(best>0.8f, "an output pixel gets no sample near its centre: " + std::to_string(best));
+        require(sum/float(n)>0.15f, "an output pixel is starved over the sequence: " + std::to_string(sum/float(n)));
+        }
+    }
+  // the frame's edge: the tap stays inside the input
+  const auto e = Taa::upscaleTap(3455, 1917, 3456, 1918, 1728, 959, Vec2(0.49f, 0.49f));
+  require(e.x==1727 && e.y==958, "the tap leaves the input at the edge");
+  }
+
+// its accumulation: a fresh history takes the first near sample almost whole, a full one a small share
+void upscaleShares() {
+  const float wMax = 4.f, trust = 4.f;
+  // after a cut: the smooth frame with the starting weight, then a sample at the centre
+  const auto first = Taa::upscaleShare(1.f, Taa::UpscaleWeightInit, wMax, 0.f, trust, 0.f);
+  require(first.share>0.95f, "a fresh history keeps " + std::to_string(1.f-first.share));
+  // a far sample barely touches even a fresh history
+  const auto far = Taa::upscaleShare(0.002f, Taa::UpscaleWeightInit, wMax, 0.f, trust, 0.f);
+  require(far.share<0.05f, "a far sample takes " + std::to_string(far.share));
+  // the weight fills up to the cap and stays; a full history gives a centre sample 1/(1 + wMax)
+  float w = Taa::UpscaleWeightInit;
+  for(int i=0; i<64; ++i)
+    w = Taa::upscaleShare(0.5f, w, wMax, 0.f, trust, 0.f).weight;
+  require(std::abs(w - wMax)<1e-4f, "the weight does not fill to its cap");
+  const auto full = Taa::upscaleShare(1.f, w, wMax, 0.f, trust, 0.f);
+  require(std::abs(full.share - 1.f/(1.f + wMax))<1e-3f, "a full history's share is " + std::to_string(full.share));
+  // a history the box has moved by its own extent is trusted 1/(1 + trust) as much
+  const auto clipped = Taa::upscaleShare(1.f, w, wMax, 1.f, trust, 0.f);
+  require(clipped.share>0.5f, "a clipped history keeps " + std::to_string(1.f-clipped.share));
+  // under the mask the frame is taken whole and the weight is emptied: the next frame is taken at once too
+  const auto masked = Taa::upscaleShare(0.01f, w, wMax, 0.f, trust, 0.9f);
+  require(masked.share>0.9f, "the mask leaves " + std::to_string(1.f-masked.share) + " of the history");
+  const auto after = Taa::upscaleShare(1.f, masked.weight, wMax, 0.f, trust, 0.f);
+  require(after.share>0.7f, "the frame after the mask keeps " + std::to_string(1.f-after.share));
+  // thin smoke (a mask of 1/8 and more): a near and a far sample take the same share, so the output pixels of one
+  // input texel do not differ in what changes every frame
+  for(float m : {0.125f, 0.3f, 0.9f}) {
+    const auto nearS = Taa::upscaleShare(1.f,     w, wMax, 0.f, trust, m);
+    const auto farS  = Taa::upscaleShare(0.0001f, Taa::UpscaleWeightInit, wMax, 0.f, trust, m);
+    require(std::abs(nearS.share - farS.share)<1e-5f, "the share under the mask depends on the sample's distance");
+    require(nearS.share>=m && nearS.share>=1.f/(1.f + wMax), "the share under the mask " + std::to_string(m) + " is " + std::to_string(nearS.share));
+    require(nearS.weight==Taa::UpscaleWeightInit, "the mask keeps the gathered weight");
+    }
+  // and the mask 0 changes nothing
+  const auto plain = Taa::upscaleShare(0.3f, 2.f, wMax, 0.f, trust, 0.f);
+  require(std::abs(plain.share - 0.3f/(2.3f + 1e-4f))<1e-6f && std::abs(plain.weight - 2.3f)<1e-6f, "mask 0 changes the share");
+  // in full motion the enlarged frame has one weight at every pixel: a near and a far sample take the same share, and
+  // against a full history it is the share that was asked for; a history the box has moved gives way to it at once
+  const float moveConf = Taa::upscaleMoveConf(0.2f, wMax);
+  const float nearM = Taa::upscaleConfInMotion(1.f,     moveConf, 1.f);
+  const float farM  = Taa::upscaleConfInMotion(0.0001f, moveConf, 1.f);
+  require(nearM==farM, "the weight in motion depends on the sample's distance");
+  const auto moving = Taa::upscaleShare(farM, w, wMax, 0.f, trust, 0.f);
+  require(std::abs(moving.share - 0.2f)<1e-3f, "the share in motion is " + std::to_string(moving.share));
+  require(std::abs(moving.weight - wMax)<1e-4f, "the history loses its weight in motion");
+  const auto movingClipped = Taa::upscaleShare(farM, w, wMax, 2.f, trust, 0.f);
+  require(movingClipped.share>0.65f, "a clipped history in motion keeps " + std::to_string(1.f-movingClipped.share));
+  // at rest nothing changes, half way the weights are mixed, and no share means no weight
+  require(Taa::upscaleConfInMotion(0.3f, moveConf, 0.f)==0.3f, "the motion weight at rest");
+  require(std::abs(Taa::upscaleConfInMotion(0.f, moveConf, 0.5f) - 0.5f*moveConf)<1e-6f, "the motion weight half way");
+  require(Taa::upscaleMoveConf(0.f, wMax)==0.f, "no share gives a weight in motion");
+  // a history in motion keeps a smaller weight, and the frame's weight for the same share is smaller with it: the
+  // share in motion stays, and after a stop a sample at the centre takes half instead of a fifth
+  const float capConf = Taa::upscaleMoveConf(0.2f, 1.f);
+  const auto  capped  = Taa::upscaleShare(capConf, 1.f, 1.f, 0.f, trust, 0.f);
+  require(std::abs(capped.share - 0.2f)<1e-3f && std::abs(capped.weight - 1.f)<1e-4f, "the share against a capped history");
+  const auto  stopped = Taa::upscaleShare(1.f, capped.weight, wMax, 0.f, trust, 0.f);
+  require(std::abs(stopped.share - 0.5f)<1e-3f, "the first sample after a stop takes " + std::to_string(stopped.share));
+  // the history's cubic in motion: the asked one from 2 times, Catmull-Rom up to 1.5 times
+  require(Taa::upscaleHistSharp(0.75f, 1728, 3456)==0.75f && Taa::upscaleHistSharp(0.75f, 1152, 3456)==0.75f, "the cubic at 2x and more");
+  require(Taa::upscaleHistSharp(0.75f, 2304, 3456)==0.5f && Taa::upscaleHistSharp(0.75f, 3456, 3456)==0.5f, "the cubic up to 1.5x");
+  const float hs = Taa::upscaleHistSharp(0.75f, 1975, 3456);
+  require(hs>0.55f && hs<0.7f, "the cubic at 1.75x is " + std::to_string(hs));
+  // the share of the frame by vidResIndex: the middle step is 2/3 under our own upscale, 3/4 under the spatial one
+  require(Taa::internalScale(0.f, true)==1.f && Taa::internalScale(0.f, false)==1.f, "vidResIndex 0 is the whole frame");
+  require(std::abs(Taa::internalScale(1.f, true) - 2.f/3.f)<1e-6f && Taa::internalScale(1.f, false)==0.75f, "vidResIndex 1");
+  require(Taa::internalScale(2.f, true)==0.5f && Taa::internalScale(2.f, false)==0.5f, "vidResIndex 2 is a half");
+  }
+
+// the depth test of our own upscale: 1/w from the depth by the projection's offset, and what counts as hidden
+void upscaleDepth() {
+  const float n = 10.f, f = 100000.f;
+  Matrix4x4 proj;
+  proj.perspective(67.5f, 16.f/9.f, n, f);
+  const float off = Taa::upscaleDepthOffset(proj);
+  require(std::abs(off - n/(f - n))<1e-7f, "the depth offset is " + std::to_string(off));
+  // (1 - depth) + off of two view depths are in the ratio of the depths, turned over
+  auto invW = [&](float w) {
+    float x = 0, y = 0, z = w, ww = 1;
+    proj.project(x, y, z, ww);
+    return (1.f - z/ww) + off;
+    };
+  for(float w : {50.f, 400.f, 5000.f, 60000.f}) {
+    const float r = invW(w)/invW(2.f*w);
+    require(std::abs(r - 2.f)<2e-2f, "1/w at " + std::to_string(w) + " against twice that: " + std::to_string(r));
+    }
+  require(Taa::upscaleDepthOffset(Matrix4x4::mkIdentity())==0.f, "no perspective has a depth offset");
+  // the same surface, a slope within the tolerance and something farther are not hidden; a boot 10 % nearer is
+  const float tol = 0.02f, e = invW(400.f);
+  require(Taa::upscaleHidden(e, e, tol)==0.f, "a surface hides itself");
+  require(Taa::upscaleHidden(e, invW(400.f/1.015f), tol)==0.f, "a slope inside the tolerance hides");
+  require(Taa::upscaleHidden(e, invW(800.f), tol)==0.f, "what was farther hides");
+  require(Taa::upscaleHidden(e, invW(360.f), tol)==1.f, "a surface 10 % nearer does not hide");
+  const float half = Taa::upscaleHidden(e, e*1.03f, tol);
+  require(half>0.4f && half<0.6f, "between one and two tolerances: " + std::to_string(half));
+  }
+
+// the resolve's blend with the reactive mask (graphics plan 1v): the mask 0 changes nothing, a spark under it keeps
+// its light
+void reactiveWeights() {
+  const float alpha = 0.1f;
+  for(float lc : {0.f, 0.2f, 1.f, 5.f, 40.f})
+    for(float lh : {0.f, 0.2f, 1.f, 5.f}) {
+      const auto w = Taa::resolveWeights(alpha, lc, lh, 0.f, 0.f);
+      require(w.cur==alpha/(1.f+lc) && w.hist==(1.f-alpha)/(1.f+lh),
+              "mask 0 changes the weights at " + std::to_string(lc) + "/" + std::to_string(lh));
+      }
+  // a spark of luminance 5 over a background of 0.2, this frame's mask at the ceiling 0.9; without the mask it keeps 2 %
+  const float bg = 0.2f, spark = 5.f, ceiling = 0.9f;
+  const auto  w0   = Taa::resolveWeights(alpha, spark, bg, 0.f, 0.f);
+  const float off  = (Taa::resolveBlend(w0, spark, bg) - bg)/(spark - bg);
+  require(off<0.05f, "a spark without the mask keeps " + std::to_string(off));
+  const auto  w1   = Taa::resolveWeights(alpha, spark, bg, std::min(1.f, ceiling), 0.f);
+  const float kept = (Taa::resolveBlend(w1, spark, bg) - bg)/(spark - bg);
+  require(kept>=0.85f, "a spark under the mask 0.9 keeps " + std::to_string(kept) + " of its light");
+  // the last frame's mask alone gives the same: the pixel the flame has left does not trust its history
+  const auto  w2   = Taa::resolveWeights(alpha, bg, spark, 0.f, ceiling);
+  const auto  w3   = Taa::resolveWeights(alpha, bg, spark, ceiling, 0.f);
+  require(w2.cur==w3.cur && w2.hist==w3.hist, "the last frame's mask weighs unlike this frame's");
+  require(Taa::resolveBlend(w2, bg, spark) < bg + 0.15f*(spark-bg), "the trail of a spark stays in the history");
+  }
+
+int main() {
+  try {
+    jitterSequence();
+    upscaleSequence();
+    upscaleTaps();
+    upscaleShares();
+    upscaleDepth();
+    staticCamera();
+    movingCamera();
+    cameraJump();
+    motionResidual();
+    reactiveWeights();
+    std::cout << "{\"test\":\"taa\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+    return 0;
+    }
+  catch(const std::exception& e) {
+    std::cerr << "taa test failed: " << e.what() << '\n';
+    return 1;
+    }
+  }

@@ -2,6 +2,11 @@
 
 #include <Tempest/AbstractGraphicsApi>
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+namespace MTL { class CommandBuffer; }
+namespace Tempest::Detail { void profileGpu(MTL::CommandBuffer* cmd); }
+#endif
+
 namespace Tempest {
 
 class MetalApi : public AbstractGraphicsApi {
@@ -22,12 +27,17 @@ class MetalApi : public AbstractGraphicsApi {
 
     PBuffer        createBuffer (Device* d, const void *mem, size_t size, MemUsage usage, BufferHeap flg) override;
     PTexture       createTexture(Device* d, const Pixmap& p, TextureFormat frm, uint32_t mips) override;
+    PTexture       createTextureAsync(Device* d, const Pixmap& p, TextureFormat frm, uint32_t mips) override;
     PTexture       createTexture(Device* d, const uint32_t w, const uint32_t h, uint32_t mips, TextureFormat frm) override;
     PTexture       createStorage(Device* d, const uint32_t w, const uint32_t h, uint32_t mips, TextureFormat frm) override;
     PTexture       createStorage(Device* d, const uint32_t w, const uint32_t h, const uint32_t depth, uint32_t mips, TextureFormat frm) override;
 
     PRtAs          createBottomAccelerationStruct(Device* d, const RtGeometry* geom, size_t size) override;
     PRtAs          createTopAccelerationStruct(Device* d, const RtInstance* inst, AccelerationStructure*const* as, size_t size) override;
+    PRtAs          createTopAccelerationStruct(Device* d, size_t capacity) override;
+    size_t         rtInstanceSize() const override;
+    void           packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                                  AccelerationStructure* as, void* slot) override;
 
     DescArray*     createDescriptors(Device* d, AbstractGraphicsApi::Texture** tex, size_t cnt, uint32_t mipLevel) override;
     DescArray*     createDescriptors(Device* d, AbstractGraphicsApi::Texture** tex, size_t cnt, uint32_t mipLevel, const Sampler& smp) override;

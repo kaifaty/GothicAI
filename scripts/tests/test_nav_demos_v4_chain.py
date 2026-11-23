@@ -2,7 +2,10 @@
 from copy import deepcopy
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -222,6 +225,8 @@ def test_enqueue_helper_uses_remote_gq_resources_and_waits_outside_recording_job
     assert command == [str(chain.GQ), "submit", "--class", "batch", "--threads", "12",
         "--cpu-quota", "1200%", "--mem", "8G", "--max", "2h", "--name",
         "nav demos v4 recording chain", "--", str(task / ".venv/bin/python"), "-I",
+        str(Path(chain.__file__).with_name("nav_job.py").resolve()), "--max-seconds", "7200", "--",
+        str(task / ".venv/bin/python"), "-X", "faulthandler", "-I",
         str(Path(chain.__file__).resolve()), "--task", str(task)]
     assert Path(command[0]).is_absolute()
     assert kwargs["env"]["GQ_OWNER"] == "nav-demos-v4"
@@ -230,6 +235,40 @@ def test_enqueue_helper_uses_remote_gq_resources_and_waits_outside_recording_job
     assert command == [str(chain.GQ), "wait", "012345abcdef"]
     assert kwargs["stdout"] == kwargs["stderr"] == chain.subprocess.DEVNULL
     assert json.loads(request.read_text()) == dict(status="finished", job="012345abcdef", returncode=0)
+
+
+@pytest.mark.parametrize("shell", [False, True])
+def test_navigation_guard_has_independent_pulse_timeout_and_python_stack(shell):
+    if shell and sys.platform != "linux":
+        pytest.skip("Descendant Python stacks use Linux /proc")
+    guard = Path(chain.__file__).with_name("nav_job.py")
+    command = [sys.executable, "-X", "faulthandler", "-I", "-c", "import time; time.sleep(10)"]
+    if shell:
+        command = ["bash", "-c", '"$@" & wait', "nav-job-test", *command]
+    # A short pulse exercises the same supervision loop without a 30-second test.
+    program = ("import resource,runpy,sys; resource.setrlimit(resource.RLIMIT_CORE,(0,0)); "
+               f"guard=runpy.run_path({str(guard)!r}); "
+               f"sys.exit(guard['run']({command!r},.5,heartbeat_seconds=.05))")
+    result = subprocess.run([sys.executable, "-I", "-c", program], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 124
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert events[0]["timeout_seconds"] == .45 < events[0]["gq_max_seconds"]
+    assert any(row["event"] == "nav_job_heartbeat" for row in events)
+    assert any(row["event"] == "nav_job_timeout" for row in events)
+    assert "Fatal Python error" in result.stderr and '<string>' in result.stderr
+    with pytest.raises(ProcessLookupError):
+        os.kill(events[0]["pid"], 0)
+
+
+def test_navigation_guard_preserves_command_failure():
+    guard = Path(chain.__file__).with_name("nav_job.py")
+    result = subprocess.run([sys.executable, "-I", str(guard), "--max-seconds", "60", "--",
+                             sys.executable, "-I", "-c", "raise SystemExit(7)"],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 7
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert [row["event"] for row in events] == ["nav_job_start", "nav_job_end"]
+    assert events[-1]["exit"] == 7
 
 
 def test_invalid_job_id_fails_instead_of_claiming_chain_started(tmp_path, monkeypatch):

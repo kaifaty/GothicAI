@@ -144,7 +144,7 @@ def assert_private_fields_absent(path: Path) -> int:
     """Inspect raw JSON before a schema can silently discard private fields."""
     count = 0
     private = {"actor_truth", "culprit", "traceCulprit", "trace_culprit", "appeared_at", "traceTime", "trace_time"}
-    public = {"id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age"}
+    public = {"id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age", "npc"}
 
     def inspect(value):
         nonlocal count
@@ -172,6 +172,8 @@ async def process(args, phase: str, save: Path, exercise) -> dict[str, Any]:
     existing = subprocess.run(["pgrep", "-xl", "Gothic2Notr"], text=True, capture_output=True)
     if existing.returncode == 0:
         raise RuntimeError(f"another game owns the machine; wait for it:\n{existing.stdout.strip()}")
+    subprocess.run(["bash", str(Path(__file__).with_name("base-ensure.sh")), str(args.gothic_dir)],
+                   env=dict(os.environ, GAME_BIN=str(args.game_bin)), check=True)
     directory = args.output / phase
     runtime = directory / "run"
     runtime.mkdir(parents=True)
@@ -200,7 +202,7 @@ async def process(args, phase: str, save: Path, exercise) -> dict[str, Any]:
         env = dict(os.environ, GOTHIC_AI_URL=f"ws://127.0.0.1:{server.port}", TEMPEST_BACKGROUND="1")
         with (directory / "game.log").open("w") as stream:
             game = await asyncio.create_subprocess_exec(
-                str(args.game_bin), "-g", str(args.gothic_dir), "-g2", "-window", "-save", "1", "-devmode",
+                str(args.game_bin), "-g", str(args.gothic_dir), "-window", "-save", "1", "-devmode",
                 cwd=runtime, env=env, stdout=stream, stderr=subprocess.STDOUT)
             result = await asyncio.wait_for(finished, args.timeout)
         result["production_broken_rows_checked"] = assert_private_fields_absent(directory / "wire.jsonl")

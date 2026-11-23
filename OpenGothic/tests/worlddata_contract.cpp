@@ -1,10 +1,17 @@
 #include "asset/fromzenkit.h"
+#include "baseimport.h"
 #include <zenkit/World.hh>
+#include <zenkit/Vfs.hh>
 #include "commandline.h"
 #include "gothic.h"
+#include "settings.h"
+#include "game/definitions/basescripts.h"
+#include "programdata.h"
+#include "outputunits.h"
 #include "resources.h"
 #include "sha256.h"
 #include "worldbase.h"
+#include "worldchunksruntime.h"
 #include "world/world.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -18,6 +25,7 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +40,17 @@
 namespace fs = std::filesystem;
 
 struct WorldDataContract {
+  static zenkit::Vfs& sourceVfs() {
+    static zenkit::Vfs vfs;
+    static const bool mounted=[] {
+      fs::path work;
+      BaseImport::mountRuntime(vfs,fs::path(CommandLine::inst().rootPath()),work);
+      return true;
+      }();
+    (void)mounted;
+    return vfs;
+    }
+
   using Rows = std::vector<std::pair<std::string,std::string>>;
   static void require(bool ok, const std::string& message) {
     if(!ok) throw std::runtime_error(message);
@@ -124,7 +143,7 @@ struct WorldDataContract {
     const auto nz=size_t(std::ceil(double(bounds.max.z-bounds.min.z)/400.));
     size_t samples=0,indoor=0;
     for(size_t x=0;x<=nx;++x) for(size_t z=0;z<=nz;++z) for(unsigned h=0;h<3;++h) {
-      const zenkit::Vec3 p{bounds.min.x+(bounds.max.x-bounds.min.x)*float(double(x)/double(std::max(size_t(1),nx))),
+      const asset::Vec3 p{bounds.min.x+(bounds.max.x-bounds.min.x)*float(double(x)/double(std::max(size_t(1),nx))),
                            bounds.min.y+(bounds.max.y-bounds.min.y)*float(h+1)/4.f,
                            bounds.min.z+(bounds.max.z-bounds.min.z)*float(double(z)/double(std::max(size_t(1),nz)))};
       const bool expected=WorldData::isIndoor(original.bsp.mode,original.rooms,p);
@@ -162,7 +181,7 @@ struct WorldDataContract {
     require(Resources::writeCensus(),"cannot write runtime source census");
     const auto doc=json(census);
     const auto& profile=doc["active_profile"];
-    const auto language=gothic.settingsGetI("GAME","language");
+    const auto language=Settings::getI("GAME","language");
     require(std::string_view(profile["game"].GetString())==gothic.defaultGameDatFile() &&
             std::string_view(profile["output_units"].GetString())==gothic.defaultOutputUnits() &&
             profile["language"].GetInt()==language,"runtime census active profile differs from Gothic");
@@ -186,17 +205,17 @@ struct WorldDataContract {
       const ProgramData::Source* selected=nullptr;
       if(branch=="vfs_find_request" || branch=="vfs_find_basename") {
         std::string_view selectedBranch;
-        selected=resources.basePrograms.findVfs(request,&selectedBranch);
+        selected=baseProgramIndex().findVfs(request,&selectedBranch);
         require(selectedBranch==branch,request+": native VFS branch differs from the index");
         const auto lookup=branch=="vfs_find_basename" ? fs::path(request).filename().string() : request;
-        const auto* node=Resources::vdfsIndex().resolve(imported["path"].GetString());
-        require(node!=nullptr && node==Resources::vdfsIndex().find(lookup),
+        const auto* node=sourceVfs().resolve(imported["path"].GetString());
+        require(node!=nullptr && node==sourceVfs().find(lookup),
                 request+": native provenance must retain the full selected VFS path");
         }
       else {
         require(branch=="host_ordinary" || branch=="host_localized_full" || branch=="host_localized_basename",
                 request+": unexpected native host branch");
-        selected=resources.basePrograms.findHost(imported["path"].GetString());
+        selected=baseProgramIndex().findHost(imported["path"].GetString());
         }
       require(selected!=nullptr && selected->origin==imported["origin"].GetString() &&
               selected->path==imported["path"].GetString() && selected->size==imported["size"].GetUint64() &&
@@ -204,7 +223,7 @@ struct WorldDataContract {
       require(selected->archive.empty() ? imported["archive"].IsNull() :
               imported["archive"].IsString() && selected->archive==imported["archive"].GetString(),
               request+": native provenance archive differs from the index");
-      const auto file=resources.basePrograms.path(*selected);
+      const auto file=baseProgramIndex().path(*selected);
       auto bin=file; bin.replace_extension(".bin");
       const auto& record=row["record"];
       require(std::string(record["json"].GetString())=="base/programs/"+file.filename().string() &&
@@ -266,16 +285,16 @@ struct WorldDataContract {
       const OutputUnits::Source* selected=nullptr;
       if(branch=="vfs_find_request" || branch=="vfs_find_basename") {
         std::string_view selectedBranch;
-        selected=resources.baseOutputUnits.findVfs(request,&selectedBranch);
+        selected=baseOutputUnitsIndex().findVfs(request,&selectedBranch);
         require(selectedBranch==branch,request+": native OU VFS branch differs from the index");
-        const auto& vfs=Resources::vdfsIndex();
+        const auto& vfs=sourceVfs();
         const auto* node=vfs.resolve(path.generic_string());
         const auto lookup=branch=="vfs_find_basename" ? fs::path(request).filename().string() : request;
         require(node!=nullptr && node==vfs.find(lookup),request+": native OU provenance must retain the selected VFS path");
         }
       else {
         require(branch=="host_ordinary" || branch=="host_localized",request+": unexpected native OU host branch");
-        selected=resources.baseOutputUnits.findHost(path.generic_string());
+        selected=baseOutputUnitsIndex().findHost(path.generic_string());
         }
       require(selected!=nullptr && selected->skipped.empty() &&
               selected->origin==imported["origin"].GetString() && selected->path==path.generic_string() &&
@@ -284,14 +303,14 @@ struct WorldDataContract {
       require(selected->archive.empty() ? imported["archive"].IsNull() :
               imported["archive"].IsString() && selected->archive==imported["archive"].GetString(),
               request+": imported OU archive differs from the index");
-      const auto file=resources.baseOutputUnits.path(*selected);
+      const auto file=baseOutputUnitsIndex().path(*selected);
       std::ifstream native(file,std::ios::binary);
       require(bool(native),request+": cannot read native OU oracle");
       const std::string nativeBytes{std::istreambuf_iterator<char>(native),std::istreambuf_iterator<char>()};
       const auto digest=Sha256::hash(nativeBytes);
       require(std::string(row["record"]["json"].GetString())=="base/outputunits/"+file.filename().string() &&
               digest==row["record"]["sha256"].GetString() && digest==selected->recordSha256 &&
-              resources.baseOutputUnits.records.at(selected->record)==digest,
+              baseOutputUnitsIndex().records.at(selected->record)==digest,
               request+": native OU identity differs from actual JSON bytes");
       blocks=OutputUnits::sortedBlocks(OutputUnits::readLibrary(file));
       // Original reads below are independent test oracles, after zero runtime opens were checked.
@@ -336,10 +355,11 @@ struct WorldDataContract {
             "messageByName must retain lower_bound's first result");
     // Fixed mono PCM16 at 1000 Hz; zero frames selects the existing text-duration fallback.
     const auto pcm=[](uint32_t frames) {
-      std::vector<uint8_t> bytes{
+      static constexpr std::array<uint8_t,44> header{
         'R','I','F','F',0,0,0,0,'W','A','V','E','f','m','t',' ',16,0,0,0,1,0,1,0,
         0xE8,0x03,0,0,0xD0,0x07,0,0,2,0,16,0,'d','a','t','a',0,0,0,0};
-      bytes.resize(44+2*frames);
+      std::vector<uint8_t> bytes(header.size()+2*size_t(frames));
+      std::copy(header.begin(),header.end(),bytes.begin());
       for(size_t i=0;i<4;++i) {
         bytes[4+i]=uint8_t((36+2*frames)>>(8*i));
         bytes[40+i]=uint8_t((2*frames)>>(8*i));
@@ -407,7 +427,7 @@ struct WorldDataContract {
         asset::WorldMesh loadedMesh;
         const auto manifest=readWorldChunkManifest(base/"worlds"/name);
         if(!useBase) {
-          auto reader=Resources::vdfsIndex().find(file)->open_read();
+          auto reader=sourceVfs().find(file)->open_read();
           zenkit::World archive; archive.load(reader.get(),zenkit::GameVersion::GOTHIC_2);
           original=WorldData::fromWorld(archive,manifest.source);
           loadedMesh=asset::fromZenKit(archive.world_mesh);
@@ -424,12 +444,12 @@ struct WorldDataContract {
           write(dir/"world.json",index);
           resources.automaticBase.path=reference;
           } else {
-          Resources::loadWorld(loaded,loadedMesh,file);
+          loadWorld(loaded,loadedMesh,file);
           require(zenOpens(census)==0,file+": base loader opened ZEN");
           auto restored=WorldData::read(base/"worlds"/name);
           const auto diff=WorldData::compare(original,restored);
           require(diff.empty(),file+": "+diff);
-          auto reader=Resources::vdfsIndex().find(file)->open_read(); zenkit::World zen;
+          auto reader=sourceVfs().find(file)->open_read(); zenkit::World zen;
           zen.load(reader.get(),zenkit::GameVersion::GOTHIC_2);
           const auto meshDiff=compareWorldMeshes(canonicalWorldMesh(asset::fromZenKit(zen.world_mesh)),canonicalWorldMesh(loadedMesh));
           require(meshDiff.empty(),file+": mesh "+meshDiff);
@@ -459,11 +479,11 @@ struct WorldDataContract {
     WorldData::Data fallback;
     asset::WorldMesh fallbackMesh;
     bool rejected=false;
-    try { Resources::loadWorld(fallback,fallbackMesh,"NEWWORLD.ZEN"); }
+    try { loadWorld(fallback,fallbackMesh,"NEWWORLD.ZEN"); }
     catch(const BaseStore::Error&) { rejected=true; }
     require(rejected,"archive size +1 must reject the world");
     index["archives"][0]["size"].SetUint64(size); write(dir/"world.json",index);
-    Resources::loadWorld(fallback,fallbackMesh,"NEWWORLD.ZEN");
+    loadWorld(fallback,fallbackMesh,"NEWWORLD.ZEN");
     const auto content=root/"content"; const auto overrides=content/"worlds/NEWWORLD";
     fs::create_directories(overrides);
     auto vobs=json(dir/"vobs.json");
@@ -473,14 +493,14 @@ struct WorldDataContract {
     setenv("OPENGOTHIC_CONTENT",content.c_str(),1);
     WorldData::Data changed;
     asset::WorldMesh changedMesh;
-    Resources::loadWorld(changed,changedMesh,"NEWWORLD.ZEN");
+    loadWorld(changed,changedMesh,"NEWWORLD.ZEN");
     require(changed.vobs.empty() && !fallback.vobs.empty(),"content vobs.json must replace the whole base tree");
     require(changed.waynet->edges.empty() && !fallback.waynet->edges.empty(),"content waynet.json must replace the whole base graph");
     const auto zenIndex=json(base/"zen/zen.json");
     size_t zenCount=0;
     for(const auto& entry:zenIndex["files"].GetObject()) {
       const auto name=std::string(entry.name.GetString());
-      auto source=Resources::vdfsIndex().find(name)->open_read();
+      auto source=sourceVfs().find(name)->open_read();
       source->seek(0,zenkit::Whence::END);
       std::vector<std::byte> bytes(source->tell()); source->seek(0,zenkit::Whence::BEG);
       require(source->read(bytes.data(),bytes.size())==bytes.size(),"incomplete archive ZEN");
@@ -515,8 +535,8 @@ int main() {
   try {
     const auto* gothic=std::getenv("GOTHIC_DIR");
     WorldDataContract::require(gothic && *gothic,"GOTHIC_DIR must point to a Gothic II installation");
-    const char* args[]={"gothic-worlddata-contract","-g",gothic,"-g2"};
-    CommandLine commandLine(4,args);
+    const char* args[]={"gothic-worlddata-contract","-g",gothic};
+    CommandLine commandLine(3,args);
     fs::create_directories(root);
     WorldDataContract::run(root,gothic);
     std::puts("World data contract passed");

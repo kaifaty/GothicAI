@@ -1,0 +1,75 @@
+{
+ "glb": "rigging-build/bollard/model.glb",
+ "maps_dir": "rigging-tiles",
+ "scales": {
+  "OWN_PROP_IRON_CAST": 2.0
+ },
+ "targets": {
+  "OWN_PROP_IRON_CAST": [
+   0.035,
+   0.032,
+   0.016
+  ]
+ },
+ "slots": {
+  "OWN_PROP_IRON_CAST": [
+   "OWN_BOLLARDBARE_HARBOUR_IRON",
+   "METAL"
+  ]
+ },
+ "metal": [
+  "OWN_PROP_IRON_CAST"
+ ],
+ "size": 1024,
+ "seed": 1,
+ "angle_limit": 66,
+ "margin": 0.003,
+ "contrast": {
+  "OWN_PROP_IRON_CAST": 1.35
+ },
+ "metal_scale": 0.0,
+ "wet_height": 0.15,
+ "algae": 0.6,
+ "bleach": 0.0,
+ "tone_spread": 0.1,
+ "edge_wear": {
+  "OWN_PROP_IRON_CAST": 0.5
+ },
+ "measure_ao": {
+  "OWN_PROP_IRON_CAST": 0.5
+ },
+ "streaks": {
+  "length": 0.3,
+  "rust": 0.7,
+  "dirt": 0.3,
+  "rust_colour": [
+   0.06,
+   0.03,
+   0.012
+  ],
+  "column": 0.012
+ },
+ "moss": {
+  "zones": [
+   "OWN_PROP_IRON_CAST"
+  ],
+  "cover": 0.03,
+  "scale": 0.06,
+  "top": 0.6,
+  "bottom": 1.4,
+  "low": 0.25,
+  "shade": 0.5,
+  "soft": 0.25,
+  "damp": 0.25,
+  "dark": [
+   0.018,
+   0.028,
+   0.007
+  ],
+  "light": [
+   0.045,
+   0.06,
+   0.013
+  ]
+ }
+}

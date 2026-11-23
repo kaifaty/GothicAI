@@ -1,0 +1,16 @@
+sample,cond,rep,load_1,first_frame_ms,load_s,graphics_10s_post_count,graphics_10s_post_ms,compute_load_end_count,compute_load_end_ms,library_10s_count,library_10s_ms,convert_10s_ms,cache_log
+cold-1,cold,1,3.43,1211.7,6.372,50,1234.69,97,2700.46,0,0.0,0.0,"pipeline cache: empty, will write ~/gothic-ai/pipeline-cache/cache-1/derived/pipelines/vulkan-000010de00002206.bin | pipeline cache: saved 3267815 bytes in 8 ms"
+cold-2,cold,2,2.58,1211.1,6.447,50,1231.15,97,2695.96,0,0.0,0.0,"pipeline cache: empty, will write ~/gothic-ai/pipeline-cache/cache-2/derived/pipelines/vulkan-000010de00002206.bin | pipeline cache: saved 3267821 bytes in 13 ms"
+cold-3,cold,3,5.43,1226.6,6.448,50,1249.49,97,2783.66,0,0.0,0.0,"pipeline cache: empty, will write ~/gothic-ai/pipeline-cache/cache-3/derived/pipelines/vulkan-000010de00002206.bin | pipeline cache: saved 3267822 bytes in 10 ms"
+cold-4,cold,4,7.76,1213.1,6.872,50,1236.43,97,2693.69,0,0.0,0.0,"pipeline cache: empty, will write ~/gothic-ai/pipeline-cache/cache-4/derived/pipelines/vulkan-000010de00002206.bin | pipeline cache: saved 3267838 bytes in 4 ms"
+cold-5,cold,5,3.98,1202.6,6.352,50,1226.06,97,2712.94,0,0.0,0.0,"pipeline cache: empty, will write ~/gothic-ai/pipeline-cache/cache-5/derived/pipelines/vulkan-000010de00002206.bin | pipeline cache: saved 3267807 bytes in 4 ms"
+off-1,off,1,3.42,1135.1,6.433,50,1215.18,97,2707.14,0,0.0,0.0,pipeline cache: off
+off-2,off,2,3.21,1196.3,6.452,50,1221.44,97,2693.66,0,0.0,0.0,pipeline cache: off
+off-3,off,3,3.82,1175.8,6.384,50,1205.01,97,2703.54,0,0.0,0.0,pipeline cache: off
+off-4,off,4,4.89,1213.6,6.847,50,1236.5,97,2734.43,0,0.0,0.0,pipeline cache: off
+off-5,off,5,7.6,1193.6,6.719,50,1218.58,97,2681.23,0,0.0,0.0,pipeline cache: off
+warm-1,warm,1,3.07,148.1,5.23,50,60.85,97,178.9,0,0.0,0.0,pipeline cache: loaded 3267815 bytes from ~/gothic-ai/pipeline-cache/cache-1/derived/pipelines/vulkan-000010de00002206.bin
+warm-2,warm,2,3.81,149.3,5.053,50,62.46,97,175.21,0,0.0,0.0,pipeline cache: loaded 3267821 bytes from ~/gothic-ai/pipeline-cache/cache-2/derived/pipelines/vulkan-000010de00002206.bin
+warm-3,warm,3,6.34,152.1,5.527,50,62.74,97,170.48,0,0.0,0.0,pipeline cache: loaded 3267822 bytes from ~/gothic-ai/pipeline-cache/cache-3/derived/pipelines/vulkan-000010de00002206.bin
+warm-4,warm,4,8.6,148.7,5.447,50,60.78,97,179.19,0,0.0,0.0,pipeline cache: loaded 3267838 bytes from ~/gothic-ai/pipeline-cache/cache-4/derived/pipelines/vulkan-000010de00002206.bin
+warm-5,warm,5,3.89,153.0,5.099,50,63.02,97,171.09,0,0.0,0.0,pipeline cache: loaded 3267807 bytes from ~/gothic-ai/pipeline-cache/cache-5/derived/pipelines/vulkan-000010de00002206.bin

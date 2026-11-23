@@ -5,12 +5,15 @@
 #include <Tempest/Timer>
 #include <Tempest/Color>
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
 #include <memory>
+#include <unordered_map>
+#include <vector>
 
 #include "game/savegameheader.h"
+#include "game/chronicle.h"
 #include "game/questlog.h"
 #include "utils/keycodec.h"
 
@@ -21,9 +24,9 @@ class GthFont;
 
 class GameMenu : public Tempest::Widget {
   public:
-    GameMenu(MenuRoot& owner, KeyCodec& keyCodec, zenkit::DaedalusVm& vm, std::string_view menuSection, KeyCodec::Action keyClose);
+    GameMenu(MenuRoot& owner, KeyCodec& keyCodec, daedalus::DaedalusVm& vm, std::string_view menuSection, KeyCodec::Action keyClose);
     ~GameMenu() override;
-    void resetVm(zenkit::DaedalusVm* vm);
+    void resetVm(daedalus::DaedalusVm* vm);
 
     void setPlayer(const Npc& pl);
 
@@ -32,6 +35,14 @@ class GameMenu : public Tempest::Widget {
     void processMusicTheme();
 
     KeyCodec::Action keyClose() const { return kClose; }
+
+    // the bench's `diary` command: the next diary opens on «Летопись» as set here, then it is reset
+    struct BenchDiary {
+      bool    chronicle = false;
+      int32_t feat      = -1;
+      bool    open      = false;
+      };
+    static BenchDiary benchDiary;
 
   protected:
     void paintEvent (Tempest::PaintEvent& event) override;
@@ -49,9 +60,11 @@ class GameMenu : public Tempest::Widget {
     struct ListViewDialog;
     struct KeyEditDialog;
     struct SavNameDialog;
+    struct ChronicleDialog;
+    struct ChronicleRow;
     struct Item {
       std::string                         name;
-      std::shared_ptr<zenkit::IMenuItem>  handle={};
+      std::shared_ptr<daedalus::IMenuItem>  handle={};
       const Tempest::Texture2d*           img=nullptr;
       SaveGameHeader                      savHdr;
       Tempest::Pixmap                     savPriview;
@@ -62,18 +75,18 @@ class GameMenu : public Tempest::Widget {
 
     MenuRoot&                             owner;
     KeyCodec&                             keyCodec;
-    zenkit::DaedalusVm*                   vm = nullptr;
+    daedalus::DaedalusVm*                   vm = nullptr;
     Tempest::Timer                        timer;
     const Tempest::Texture2d*             up   = nullptr;
     const Tempest::Texture2d*             down = nullptr;
 
-    std::shared_ptr<zenkit::IMenu>        menu={};
+    std::shared_ptr<daedalus::IMenu>        menu={};
     const Tempest::Texture2d*             back=nullptr;
     const Tempest::Texture2d*             slider=nullptr;
     Tempest::Texture2d                    savThumb;
     std::vector<char>                     textBuf;
 
-    Item                                  hItems[zenkit::IMenu::item_count];
+    Item                                  hItems[daedalus::IMenu::item_count];
     Item*                                 ctrlInput = nullptr;
     uint32_t                              curItem=0;
     bool                                  exitFlag=false;
@@ -81,7 +94,22 @@ class GameMenu : public Tempest::Widget {
 
     KeyCodec::Action                      kClose = KeyCodec::Escape;
 
+    // the diary's «Летопись» tab (gamemenuchronicle.cpp)
+    bool                                  diary         = false;  // MENU_LOG: it has the tab
+    bool                                  chronicleOpen = false;  // one feat shown in full
+    std::unordered_map<std::string,std::unique_ptr<Tempest::Texture2d>> chronicleImages;
+
     void                                  drawItem(Tempest::Painter& p, Item& it);
+    void                                  addChronicleItems();
+    static bool                           isChronicle(const Item& it);
+    static bool                           isChronicleSlot(const Item& it);
+    std::vector<ChronicleRow>             chronicleRows() const;
+    int32_t                               chronicleFeatCount() const;
+    const Tempest::Texture2d*             chronicleImage(const std::string& path);
+    void                                  drawChronicle(Tempest::Painter& p, Item& it, int x, int y, int w, int h);
+    void                                  execChronicle(Item& list);
+    void                                  applyBenchDiary();
+    void                                  drawChronicleFrame(Tempest::Painter& p);
     void                                  drawSlider(Tempest::Painter& p, Item& it, int x, int y, int w, int h);
     void                                  drawQuestList(Tempest::Painter& p, Item& it, int x, int y, int w, int h,
                                                         const QuestLog& log, QuestStat st);
@@ -94,10 +122,10 @@ class GameMenu : public Tempest::Widget {
     void                                  getText(const Item &it, std::vector<char>& out);
     const GthFont&                        getTextFont(const Item &it);
 
-    static bool                           isSelectable(const std::shared_ptr<zenkit::IMenuItem>& item);
-    static bool                           isHorSelectable(const std::shared_ptr<zenkit::IMenuItem>& item);
-    static bool                           isEnabled(const std::shared_ptr<zenkit::IMenuItem>& item);
-    static bool                           isHidden(const std::shared_ptr<zenkit::IMenuItem>& item);
+    static bool                           isSelectable(const std::shared_ptr<daedalus::IMenuItem>& item);
+    static bool                           isHorSelectable(const std::shared_ptr<daedalus::IMenuItem>& item);
+    static bool                           isEnabled(const std::shared_ptr<daedalus::IMenuItem>& item);
+    static bool                           isHidden(const std::shared_ptr<daedalus::IMenuItem>& item);
 
     void                                  exec         (Item &item, int slideDx, KeyCodec::Action hint);
     void                                  execSingle   (Item &it,   int slideDx, KeyCodec::Action hint);

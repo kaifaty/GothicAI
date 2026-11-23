@@ -1,10 +1,14 @@
 #if defined(TEMPEST_BUILD_METAL)
 
 #include "mtdevice.h"
+#include "mtshader.h"
 #include "thirdparty/spirv_cross/spirv_msl.hpp"
 
 #include <Tempest/Log>
 #include <Foundation/NSProcessInfo.h>
+#include <objc/runtime.h>
+#include <chrono>
+#include <cstdlib>
 // #include <Metal/MTLPixelFormat.h>
 
 using namespace Tempest;
@@ -36,8 +40,63 @@ static MTL::LanguageVersion languageVersion() {
   return std::min<MTL::LanguageVersion>(MTL::LanguageVersion3_1, opt->languageVersion());
   }
 
+static std::mutex probeDeviceSync;
+static MTL::Device* probeDevice = nullptr;
+
+bool tempestLoadProbeEnabled();
+
+static std::atomic_size_t probeStagingCount = 0;
+static std::atomic_size_t probeStagingBytes = 0;
+static char probeUploadKey;
+
+// Attach to the Metal object itself: completion of its copy alone does not
+// prove that all command-buffer and autorelease owners have released it.
+@interface TempestUploadProbe : NSObject {
+  size_t bytes;
+  }
+- (instancetype)initWithBytes:(size_t)bufferBytes;
+@end
+
+@implementation TempestUploadProbe
+- (instancetype)initWithBytes:(size_t)bufferBytes {
+  if((self=[super init])) {
+    bytes=bufferBytes;
+    ++probeStagingCount;
+    probeStagingBytes+=bytes;
+    }
+  return self;
+  }
+- (void)dealloc {
+  --probeStagingCount;
+  probeStagingBytes-=bytes;
+  [super dealloc];
+  }
+@end
+
+void Tempest::Detail::probeMetalUploadBuffer(MTL::Buffer* buffer) {
+  if(!tempestLoadProbeEnabled() || buffer==nullptr)
+    return;
+  auto* tracker=[[TempestUploadProbe alloc] initWithBytes:buffer->allocatedSize()];
+  objc_setAssociatedObject(reinterpret_cast<id>(buffer),&probeUploadKey,tracker,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  [tracker release];
+  }
+
+void tempestProbeMetalUploadBuffers(size_t& stagingCount, size_t& stagingBytes) {
+  stagingCount=probeStagingCount.load();
+  stagingBytes=probeStagingBytes.load();
+  }
+
+size_t tempestProbeMetalGpuBytes() {
+  std::lock_guard<std::mutex> guard(probeDeviceSync);
+  return probeDevice ? probeDevice->currentAllocatedSize() : 0;
+  }
+
 MtDevice::MtDevice(std::string_view name, bool validation)
   : impl(mkDevice(name)), samplers(*impl), validation(validation) {
+  const auto* syncUploads = std::getenv("OPENGOTHIC_METAL_SYNC_UPLOAD");
+  syncBufferUploads = syncUploads!=nullptr && std::strcmp(syncUploads,"1")==0;
+  const auto* syncTextures = std::getenv("OPENGOTHIC_METAL_SYNC_TEXTURE_UPLOAD");
+  syncTextureUploads = syncBufferUploads || (syncTextures!=nullptr && std::strcmp(syncTextures,"1")==0);
   if(impl.get()==nullptr)
     throw std::system_error(Tempest::GraphicsErrc::NoDevice);
 
@@ -45,7 +104,8 @@ MtDevice::MtDevice(std::string_view name, bool validation)
     throw std::system_error(Tempest::GraphicsErrc::NoDevice, "Apple Paravirtual device is not supported");
 
   queue = NsPtr<MTL::CommandQueue>(impl->newCommandQueue());
-  if(queue.get()==nullptr)
+  uploadQueue = NsPtr<MTL::CommandQueue>(impl->newCommandQueue());
+  if(queue.get()==nullptr || uploadQueue.get()==nullptr)
     throw std::system_error(Tempest::GraphicsErrc::NoDevice);
 
   int32_t majorVersion = 0, minorVersion = 0;
@@ -62,9 +122,44 @@ MtDevice::MtDevice(std::string_view name, bool validation)
     prop.transposedRtMatrix = true;
     }
   deductProps(prop,*impl);
+  {
+    std::string identity = impl->name()->utf8String();
+    identity += "\n";
+    identity += NS::ProcessInfo::processInfo()->operatingSystemVersionString()->utf8String();
+    identity += "\nmsl=" + std::to_string(uint32_t(prop.mslVersion));
+    psoCache.init(*impl,identity);
+  }
+  mslCache.init(MtShader::cacheIdentity(*this));
+  if(tempestLoadProbeEnabled()) {
+    std::lock_guard<std::mutex> guard(probeDeviceSync);
+    probeDevice = impl.get();
+    }
   }
 
 MtDevice::~MtDevice() {
+  waitIdle();
+  if(!tempestLoadProbeEnabled())
+    return;
+  std::lock_guard<std::mutex> guard(probeDeviceSync);
+  if(probeDevice==impl.get())
+    probeDevice = nullptr;
+  }
+
+AbstractGraphicsApi::MemoryBudget MtDevice::memoryBudget() {
+  // The working set Metal recommends for this device (with unified memory: a share of the system memory) and what
+  // this process has allocated on it.
+  AbstractGraphicsApi::MemoryBudget ret;
+  ret.budget   = uint64_t(impl->recommendedMaxWorkingSetSize());
+  ret.usage    = uint64_t(impl->currentAllocatedSize());
+  ret.shared   = impl->hasUnifiedMemory();
+  ret.measured = true;
+  ret.known    = ret.budget>0;
+  return ret;
+  }
+
+void MtDevice::savePipelineCache() {
+  psoCache.saveAsync();
+  mslCache.saveAsync();
   }
 
 void MtDevice::onSubmit() {
@@ -204,6 +299,90 @@ void MtDevice::handleError(NS::Error *err) {
   throw DeviceLostException();
   }
 
+MTLFX::SpatialScaler& MtDevice::spatialScaler(MTL::Texture& src, MTL::Texture& dst) {
+  std::lock_guard<std::mutex> guard(scalerSync);
+  for(auto& s:scalers) {
+    if(s->inputWidth()==src.width() && s->inputHeight()==src.height() &&
+       s->outputWidth()==dst.width() && s->outputHeight()==dst.height() &&
+       s->colorTextureFormat()==src.pixelFormat() && s->outputTextureFormat()==dst.pixelFormat())
+      return *s;
+    }
+
+  auto pool = NsPtr<NS::AutoreleasePool>::init();
+  auto desc = NsPtr<MTLFX::SpatialScalerDescriptor>::init();
+  desc->setInputWidth (src.width());
+  desc->setInputHeight(src.height());
+  desc->setOutputWidth (dst.width());
+  desc->setOutputHeight(dst.height());
+  desc->setColorTextureFormat (src.pixelFormat());
+  desc->setOutputTextureFormat(dst.pixelFormat());
+  // input is tonemapped, display-referred color
+  desc->setColorProcessingMode(MTLFX::SpatialScalerColorProcessingModePerceptual);
+
+  auto scaler = NsPtr<MTLFX::SpatialScaler>(desc->newSpatialScaler(impl.get()));
+  if(scaler==nullptr)
+    throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  if((src.usage() & scaler->colorTextureUsage())!=scaler->colorTextureUsage() ||
+     (dst.usage() & scaler->outputTextureUsage())!=scaler->outputTextureUsage())
+    throw std::system_error(Tempest::GraphicsErrc::InvalidTexture);
+
+  // Command buffers do not retain references: keep recent scalers alive while frames may still use them.
+  // A resolution change waits for the device to go idle, so dropping the oldest is safe.
+  if(scalers.size()>=4)
+    scalers.erase(scalers.begin());
+  scalers.emplace_back(std::move(scaler));
+  return *scalers.back();
+  }
+
+MTLFX::TemporalScaler& MtDevice::temporalScaler(MTL::Texture& color, MTL::Texture& depth, MTL::Texture& motion,
+                                                MTL::Texture& dst) {
+  std::lock_guard<std::mutex> guard(scalerSync);
+  // the scaler keeps the history: a new one only for new sizes or formats
+  for(auto& s:temporalScalers) {
+    if(s->inputWidth()==color.width() && s->inputHeight()==color.height() &&
+       s->outputWidth()==dst.width() && s->outputHeight()==dst.height() &&
+       s->colorTextureFormat()==color.pixelFormat() && s->depthTextureFormat()==depth.pixelFormat() &&
+       s->motionTextureFormat()==motion.pixelFormat() && s->outputTextureFormat()==dst.pixelFormat())
+      return *s;
+    }
+
+  auto pool = NsPtr<NS::AutoreleasePool>::init();
+  auto desc = NsPtr<MTLFX::TemporalScalerDescriptor>::init();
+  desc->setInputWidth  (color.width());
+  desc->setInputHeight (color.height());
+  desc->setOutputWidth (dst.width());
+  desc->setOutputHeight(dst.height());
+  desc->setColorTextureFormat (color.pixelFormat());
+  desc->setDepthTextureFormat (depth.pixelFormat());
+  desc->setMotionTextureFormat(motion.pixelFormat());
+  desc->setOutputTextureFormat(dst.pixelFormat());
+  // input is linear HDR, already multiplied by the exposure: preExposure 1, no exposure texture
+  desc->setAutoExposureEnabled(false);
+  // the final upscaler from the first frame: without it MetalFX starts with a slower one and compiles the fast one
+  // in the background, and a frame time measured then is not the scaler's
+  desc->setRequiresSynchronousInitialization(true);
+
+  // On macOS 27 the scaler is a network: its first creation compiles it for the Neural Engine, which takes a while
+  const auto started = std::chrono::steady_clock::now();
+  auto scaler = NsPtr<MTLFX::TemporalScaler>(desc->newTemporalScaler(impl.get()));
+  if(scaler==nullptr)
+    throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
+  Log::i("metalfx: temporal scaler ", color.width(), "x", color.height(), " -> ", dst.width(), "x", dst.height(),
+         " made in ", int64_t(ms), " ms");
+  if((color .usage() & scaler->colorTextureUsage()) !=scaler->colorTextureUsage()  ||
+     (depth .usage() & scaler->depthTextureUsage()) !=scaler->depthTextureUsage()  ||
+     (motion.usage() & scaler->motionTextureUsage())!=scaler->motionTextureUsage() ||
+     (dst   .usage() & scaler->outputTextureUsage())!=scaler->outputTextureUsage())
+    throw std::system_error(Tempest::GraphicsErrc::InvalidTexture);
+
+  // as with the spatial scalers: frames in flight may still use the older ones
+  if(temporalScalers.size()>=2)
+    temporalScalers.erase(temporalScalers.begin());
+  temporalScalers.emplace_back(std::move(scaler));
+  return *temporalScalers.back();
+  }
+
 void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
   int32_t majorVersion = 0, minorVersion = 0;
   if([[NSProcessInfo processInfo] respondsToSelector:@selector(operatingSystemVersion)]) {
@@ -222,13 +401,13 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
                                       TextureFormat::R16,  TextureFormat::RG16,  TextureFormat::RGBA16,
                                       TextureFormat::R32F, TextureFormat::RG32F, TextureFormat::RGBA32F,
                                       TextureFormat::R32U, TextureFormat::RG32U, TextureFormat::RGBA32U,
-                                      TextureFormat::R11G11B10UF, TextureFormat::RGBA16F,
+                                      TextureFormat::R11G11B10UF, TextureFormat::RGBA16F, TextureFormat::RG16F,
                                      };
 
   static const TextureFormat att[] = {TextureFormat::R8,   TextureFormat::RG8,   TextureFormat::RGBA8,
                                       TextureFormat::R16,  TextureFormat::RG16,  TextureFormat::RGBA16,
                                       TextureFormat::R32F, TextureFormat::RG32F, TextureFormat::RGBA32F,
-                                      TextureFormat::R11G11B10UF, TextureFormat::RGBA16F,
+                                      TextureFormat::R11G11B10UF, TextureFormat::RGBA16F, TextureFormat::RG16F,
                                      };
 
   static const TextureFormat sso[] = {TextureFormat::R8,   TextureFormat::RG8,   TextureFormat::RGBA8,
@@ -270,7 +449,6 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
     case MTL::ReadWriteTextureTierNone:
       break;
     }
-
 
   if(dev.supportsBCTextureCompression()) {
     static const TextureFormat bc[] = {TextureFormat::DXT1, TextureFormat::DXT3, TextureFormat::DXT5};
@@ -345,13 +523,8 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
   // https://developer.apple.com/documentation/metal/mtlrendercommandencoder/1515829-setvertexbuffer?language=objc
   prop.vbo.maxAttribs = 31;
 
-#ifdef __IOS__
-  prop.ubo .offsetAlign = 16;
-  prop.ssbo.offsetAlign = 16;
-#else
   prop.ubo .offsetAlign = 256; //assuming device-local memory
   prop.ssbo.offsetAlign = 16;
-#endif
 
   // in fact there is no limit, just recomendation to submit less than 4kb of data
   prop.push.maxRange = 256;
@@ -369,18 +542,11 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
   prop.anisotropy    = true;
   prop.maxAnisotropy = 16;
 
-#ifdef __IOS__
-  if(dev.supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily3_v2))
-    prop.tesselationShader = false;//true;
-#else
+  prop.spatialUpscale  = MTLFX::SpatialScalerDescriptor::supportsDevice(&dev);
+  prop.temporalUpscale = MTLFX::TemporalScalerDescriptor::supportsDevice(&dev);
+
   if(dev.supportsFeatureSet(MTL::FeatureSet_macOS_GPUFamily1_v2))
     prop.tesselationShader = false;//true;
-#endif
-
-#ifdef __IOS__
-  prop.storeAndAtomicVs = false;
-  prop.storeAndAtomicFs = false;
-#else
 
   const uint32_t mslVersion = languageVersion();
   if(mslVersion>=MTL::LanguageVersion2_2) {
@@ -389,7 +555,6 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
     prop.storeAndAtomicVs = true;
     prop.storeAndAtomicFs = true;
     }
-#endif
 
   if(dev.supportsFamily(MTL::GPUFamilyMetal3) && dev.argumentBuffersSupport()>=MTL::ArgumentBuffersTier2) {
     prop.descriptors.nonUniformIndexing = true;
@@ -408,14 +573,6 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
     prop.raytracing.rayQuery = dev.supportsRaytracingFromRender() && dev.supportsRaytracing();
 #endif
 
-#ifdef __IOS__
-  if(dev.supportsFamily(MTL::GPUFamilyMetal3)) {
-    //prop.meshlets.taskShader = true;
-    //prop.meshlets.meshShader = true;
-    prop.meshlets.maxGroups = prop.compute.maxGroups;
-    prop.meshlets.maxGroupSize = prop.compute.maxGroupSize;
-    }
-#else
   if(dev.supportsFamily(MTL::GPUFamilyMetal3) &&
      dev.supportsFamily(MTL::GPUFamilyApple7)) {
     // NOTE: need to disallow MTL::GPUFamilyMac2 - low limits make it usless
@@ -424,7 +581,6 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
     prop.meshlets.maxGroups    = prop.compute.maxGroups;
     prop.meshlets.maxGroupSize = prop.compute.maxGroupSize;
     }
-#endif
   }
 
 bool MtDevice::useNativeImageAtomic() const {

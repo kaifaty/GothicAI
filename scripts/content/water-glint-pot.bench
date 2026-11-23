@@ -1,0 +1,60 @@
+# Sun glint on the pot liquid: the camera faces the sun and looks down at the sun's elevation, so the
+# sun's reflection lands in the pot (sky.cpp: sun towards (-sin ax*0.56, pulse, cos ax*0.56), ax and pulse
+# from the time; bench C_World: the camera at hero + (cos a, 0, sin a)*dist, looking at the hero + look).
+cheat god
+clear 1000000
+overlay off
+view hide animated morph pfx
+cam lift off
+
+# tripod at 10:00: yaw 30.0, sun elevation 48.1
+set time 10 0
+cam look -500.0
+goto pos -1688 1235 -8889
+cam world 250 -221.0 30.00
+wait 34
+cam hold
+wait 6000
+set time 10 0
+wait 300
+shot glint-tripod-1000
+wait 300
+
+# harbour at 10:00: yaw 30.0, sun elevation 48.1
+set time 10 0
+cam look -548.0
+goto pos 2681 486 1205
+cam world 250 -269.0 30.00
+wait 34
+cam hold
+wait 6000
+set time 10 0
+wait 300
+shot glint-harbour-1000
+wait 300
+
+# tripod at 13:00: yaw -15.0, sun elevation 60.3
+set time 13 0
+cam look -500.0
+goto pos -1688 1235 -8889
+cam world 250 -61.5 -15.00
+wait 34
+cam hold
+wait 6000
+set time 13 0
+wait 300
+shot glint-tripod-1300
+wait 300
+
+# harbour at 13:00: yaw -15.0, sun elevation 60.3
+set time 13 0
+cam look -548.0
+goto pos 2681 486 1205
+cam world 250 -109.5 -15.00
+wait 34
+cam hold
+wait 6000
+set time 13 0
+wait 300
+shot glint-harbour-1300
+wait 300

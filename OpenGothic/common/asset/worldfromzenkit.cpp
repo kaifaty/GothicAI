@@ -186,6 +186,44 @@ template<bool ToArchive = false> struct WorldCopy {
         fail("unsupported world object");
       }
     }
+  void copy(asset::Vec2& a, zenkit::Vec2& z) {
+    field(a.x,z.x);
+    field(a.y,z.y);
+    }
+  void copy(asset::Vec3& a, zenkit::Vec3& z) {
+    field(a.x,z.x);
+    field(a.y,z.y);
+    field(a.z,z.z);
+    }
+  void copy(asset::Vec4& a, zenkit::Vec4& z) {
+    field(a.x,z.x);
+    field(a.y,z.y);
+    field(a.z,z.z);
+    field(a.w,z.w);
+    }
+  void copy(asset::Quat& a, zenkit::Quat& z) {
+    field(a.w,z.w);
+    field(a.x,z.x);
+    field(a.y,z.y);
+    field(a.z,z.z);
+    }
+  void copy(asset::Mat3& a, zenkit::Mat3& z) {
+    field(a.columns,z.columns);
+    }
+  void copy(asset::Mat4& a, zenkit::Mat4& z) {
+    field(a.columns,z.columns);
+    }
+  void copy(asset::Color& a, zenkit::Color& z) {
+    field(a.r,z.r);
+    field(a.g,z.g);
+    field(a.b,z.b);
+    field(a.a,z.a);
+    }
+  void copy(asset::Aabb& a, zenkit::AxisAlignedBoundingBox& z) {
+    field(a.min,z.min);
+    field(a.max,z.max);
+    }
+
   void copy(asset::MoverKeyframe& a, zenkit::AnimationSample& z) {
     field(a.position,z.position);
     field(a.rotation,z.rotation);
@@ -885,7 +923,7 @@ template<class A, class Z, class Compare> void importChecked(A& a, Z& z, Compare
 
 Data fromWorld(const zenkit::World& world, const WorldChunkSource& source) {
   Data d;
-  d.source=source; d.name=world.world_mesh.name; d.bbox=world.world_mesh.bbox;
+  d.source=source; d.name=world.world_mesh.name; d.bbox=asset::fromZenKit(world.world_mesh.bbox);
   // The copier reads the source only; the direction is fixed at compile time.
   auto& w=const_cast<zenkit::World&>(world);
   importChecked(d.vobs,w.world_vobs,compareVobs);
@@ -893,7 +931,7 @@ Data fromWorld(const zenkit::World& world, const WorldChunkSource& source) {
   d.bsp.mode=static_cast<asset::BspTreeType>(world.world_bsp_tree.mode);
   d.bsp.leaf_node_indices=world.world_bsp_tree.leaf_node_indices;
   for(const auto& n:world.world_bsp_tree.nodes)
-    d.bsp.nodes.push_back({n.plane,n.bbox,n.front_index,n.back_index,n.parent_index,n.lod});
+    d.bsp.nodes.push_back({asset::fromZenKit(n.plane),asset::fromZenKit(n.bbox),n.front_index,n.back_index,n.parent_index,n.lod});
   for(const auto& s:world.world_bsp_tree.sectors)
     d.bsp.sectors.push_back({s.name,s.node_indices,s.portal_polygon_indices});
   d.rooms=asset::roomVolumesFromZenKit(world.world_mesh,world.world_bsp_tree);

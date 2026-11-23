@@ -1,220 +1,23 @@
 #include "serialize.h"
 
-#include <cstring>
-#include <exception>
-
 #include "savegameheader.h"
 #include "world/world.h"
 #include "world/fplock.h"
 #include "world/waypoint.h"
+#include "world/records/npcrecord.h"
+#include "world/records/itemrecord.h"
 
-#include <Tempest/MemReader>
-#include <Tempest/MemWriter>
 #include <Tempest/Log>
-#include <Tempest/Application>
 
-size_t Serialize::writeFunc(void* pOpaque, uint64_t file_ofs, const void* pBuf, size_t n) {
-  auto& self = *reinterpret_cast<Serialize*>(pOpaque);
-  file_ofs += mz_zip_get_archive_file_start_offset(&self.impl);
-  if(file_ofs!=self.curOffset) {
-    self.impl.m_last_error = MZ_ZIP_FILE_SEEK_FAILED;
-    return 0;
-    }
-  size_t ret = self.fout->write(pBuf,n);
-  self.curOffset+=ret;
-  return ret;
-  }
+Serialize::Serialize(Tempest::ODevice& fout) : SaveArchive(fout) {}
 
-size_t Serialize::readFunc(void* pOpaque, uint64_t file_ofs, void* pBuf, size_t n) {
-  auto& self = *reinterpret_cast<Serialize*>(pOpaque);
-  file_ofs += mz_zip_get_archive_file_start_offset(&self.impl);
-  if(self.curOffset<file_ofs) {
-    size_t diff = size_t(file_ofs-self.curOffset);
-    size_t mv   = self.fin->seek(diff);
-    self.curOffset += uint64_t(mv);
-    if(diff!=mv) {
-      self.impl.m_last_error = MZ_ZIP_FILE_SEEK_FAILED;
-      return 0;
-      }
-    }
-  if(self.curOffset>file_ofs) {
-    size_t diff = size_t(self.curOffset-file_ofs);
-    size_t mv   = self.fin->unget(diff);
-    self.curOffset -= uint64_t(mv);
-    if(diff!=mv) {
-      self.impl.m_last_error = MZ_ZIP_FILE_SEEK_FAILED;
-      return 0;
-      }
-    }
-  size_t ret = self.fin->read(pBuf,n);
-  self.curOffset+=ret;
-  return ret;
-  }
+Serialize::Serialize(Tempest::IDevice& fin) : SaveArchive(fin) {}
 
-Serialize::Serialize() {}
+Serialize::~Serialize() noexcept(false) = default;
 
-//static uint64_t time0 = 0;
-
-Serialize::Serialize(Tempest::ODevice& fout) : fout(&fout) {
-  //time0 = Tempest::Application::tickCount();
-  entryBuf .reserve(1*1024*1024);
-  entryName.reserve(256);
-
-  impl.m_pWrite           = Serialize::writeFunc;
-  impl.m_pIO_opaque       = this;
-  impl.m_zip_type         = MZ_ZIP_TYPE_USER;
-  if(!mz_zip_writer_init_v2(&impl, 0, 0))
-    throw std::runtime_error("unable to create game archive");
-  }
-
-Serialize::Serialize(Tempest::IDevice& fin) : fin(&fin) {
-  entryBuf .resize(1*1024*1024);
-  entryName.reserve(256);
-
-  impl.m_pRead            = Serialize::readFunc;
-  impl.m_pIO_opaque       = this;
-  impl.m_zip_type         = MZ_ZIP_TYPE_USER;
-  if(!mz_zip_reader_init(&impl, fin.size(), 0))
-    throw std::runtime_error("unable to read game archive");
-  }
-
-Serialize::~Serialize() noexcept(false) {
-  if(fin!=nullptr)
-    mz_zip_reader_end(&impl);
-  if(fout==nullptr)
-    return;
-  try {
-    closeEntry();
-    if(!mz_zip_writer_finalize_archive(&impl) || !fout->flush())
-      throw std::runtime_error("unable to finalize game archive");
-    }
-  catch(...) {
-    mz_zip_writer_end(&impl);
-    if(std::uncaught_exceptions()==0)
-      throw;
-    return;
-    }
-  mz_zip_writer_end(&impl);
-  }
-
-std::string_view Serialize::worldName() const {
-  if(ctx!=nullptr)
-    return ctx->name();
-  return "_";
-  }
-
-void Serialize::closeEntry() {
-  if(fout==nullptr)
-    return;
-  if(entryBuf.empty())
-    return;
-
-  mz_uint level  = entryBuf.size()>256 ? MZ_BEST_SPEED : MZ_NO_COMPRESSION;
-  mz_bool status = mz_zip_writer_add_mem(&impl, entryName.c_str(), entryBuf.data(), entryBuf.size(), level);
-  entryBuf .clear();
-  entryName.clear();
-  if(!status)
-    throw std::runtime_error("unable to write entry in game archive");
-  }
-
-bool Serialize::implSetEntry(std::string_view fname) {
-  size_t prefix = 0;
-  if(fout!=nullptr) {
-    while(prefix<fname.size() && prefix<entryName.size()) {
-      if(entryName[prefix]!=fname[prefix])
-        break;
-      ++prefix;
-      }
-    }
-  closeEntry();
-  entryName = fname;
-  if(fout!=nullptr) {
-    for(size_t i=prefix; i<entryName.size(); ++i) {
-      if(entryName[i]=='/' && i+1<entryName.size()) {
-        const char prev = entryName[i+1];
-        entryName[i+1] = '\0';
-        const auto it = outFileList.insert(entryName.c_str());
-        if(it.second) {
-          mz_bool status = mz_zip_writer_add_mem(&impl, entryName.c_str(), NULL, 0, MZ_NO_COMPRESSION);
-          if(!status)
-            throw std::runtime_error("unable to allocate entry in game archive");
-          }
-        entryName[i+1] = prev;
-        }
-      }
-    return true;
-    }
-  if(fin!=nullptr) {
-    mz_uint32 id = mz_uint32(-1);
-    if(mz_zip_reader_locate_file_v2(&impl, entryName.c_str(), nullptr, 0, &id)) {
-      mz_zip_archive_file_stat stat = {};
-      mz_zip_reader_file_stat(&impl,id,&stat);
-      entryBuf.resize(size_t(stat.m_uncomp_size));
-      mz_zip_reader_extract_file_to_mem(&impl,entryName.c_str(),entryBuf.data(),entryBuf.size(),0);
-      } else {
-      entryBuf.clear();
-      }
-    readOffset = 0;
-    return !entryBuf.empty();
-    }
-  return false;
-  }
-
-uint32_t Serialize::implDirectorySize(std::string_view e) {
-  uint32_t count = 0;
-  std::vector<char> filename;
-  filename.reserve(256);
-  for(mz_uint i=0; i<mz_zip_reader_get_num_files(&impl); ++i) {
-    const auto length = mz_zip_reader_get_filename(&impl, i, nullptr, 0);
-    if(length==0)
-      throw std::runtime_error("unable to locate entry in game archive");
-    filename.resize(length);
-    if(mz_zip_reader_get_filename(&impl, i, filename.data(), length)!=length)
-      throw std::runtime_error("unable to read entry name in game archive");
-    std::string_view name(filename.data(), length-1);
-    if(name.size()<=e.size() || !name.starts_with(e))
-      continue;
-    const auto child = name.substr(e.size());
-    const auto separator = child.find('/');
-    if(separator==std::string_view::npos || separator+1==child.size())
-      ++count;
-    }
-  return count;
-  }
-
-void Serialize::writeBytes(const void* buf, size_t sz) {
-  if(sz==0)
-    return;
-  size_t at = entryBuf.size();
-  entryBuf.resize(entryBuf.size()+sz);
-  std::memcpy(&entryBuf[at],buf,sz);
-  }
-
-void Serialize::readBytes(void* buf, size_t sz) {
-  if(fin==nullptr || readOffset+sz>entryBuf.size())
-    throw std::runtime_error("unable to read save-game file");
-  std::memcpy(buf,&entryBuf[size_t(readOffset)],sz);
-  readOffset+=sz;
-  }
-
-void Serialize::implWrite(const std::string& s) {
-  uint32_t sz=uint32_t(s.size());
-  implWrite(sz);
-  writeBytes(s.data(),sz);
-  }
-
-void Serialize::implRead(std::string& s) {
-  uint32_t sz=0;
-  implRead(sz);
-  s.resize(sz);
-  if(sz>0)
-    readBytes(&s[0],sz);
-  }
-
-void Serialize::implWrite(std::string_view s) {
-  uint32_t sz=uint32_t(s.size());
-  implWrite(sz);
-  writeBytes(s.data(),sz);
+void Serialize::setContext(World* ctx) {
+  this->ctx = ctx;
+  wldName = ctx!=nullptr ? ctx->name() : "_";
   }
 
 void Serialize::implWrite(WeaponState w) {
@@ -290,26 +93,7 @@ void Serialize::implRead(SaveGameHeader& p) {
   p = SaveGameHeader(*this);
   }
 
-void Serialize::implWrite(const Tempest::Pixmap& p) {
-  implWrite(p, "png");
-  }
-
-void Serialize::implWrite(const Tempest::Pixmap& p, const char* ext) {
-  std::vector<uint8_t> tmp;
-  tmp.reserve(4*1024*1024);
-  Tempest::MemWriter w{tmp};
-  p.save(w, ext);
-  writeBytes(tmp.data(),tmp.size());
-  }
-
-void Serialize::implRead(Tempest::Pixmap& p) {
-  Tempest::MemReader r{&entryBuf[size_t(readOffset)],size_t(entryBuf.size()-readOffset)};
-  p = Tempest::Pixmap(r);
-  readOffset += r.cursorPosition();
-  }
-
-void Serialize::implWrite(const zenkit::INpc& h) {
-  write(uint32_t(h.symbol_index()));
+void Serialize::implWrite(const NpcRecord& h) {
   write(h.id,h.name,h.slot,h.effect,int32_t(h.type));
   write(int32_t(h.flags));
   write(h.attribute,h.hitchance,h.protection,h.damage);
@@ -322,28 +106,41 @@ void Serialize::implWrite(const zenkit::INpc& h) {
   write(h.wp,h.exp,h.exp_next,h.lp,h.bodystate_interruptable_override,h.no_focus);
   }
 
-void Serialize::readNpc(zenkit::DaedalusVm& vm, std::shared_ptr<zenkit::INpc>& h) {
-  uint32_t instanceSymbol=0;
-  read(instanceSymbol);
+void Serialize::readNpc(NpcRecord& h) {
+  read(h.id,h.name,h.slot,h.effect, reinterpret_cast<int32_t&>(h.type));
+  read(reinterpret_cast<int32_t&>(h.flags));
+  read(h.attribute,h.hitchance,h.protection,h.damage);
+  read(h.damage_type,h.guild,h.level);
+  read(h.mission);
+  read(h.fight_tactic,h.weapon,h.voice,h.voice_pitch,h.body_mass);
+  read(h.daily_routine,h.start_aistate);
+  read(h.spawnpoint,h.spawn_delay,h.senses,h.senses_range);
+  read(h.aivar);
+  read(h.wp,h.exp,h.exp_next,h.lp,h.bodystate_interruptable_override,h.no_focus);
+  }
 
-  auto sym = vm.find_symbol_by_index(instanceSymbol);
+void Serialize::implWrite(const ItemRecord& h) {
+  write(h.id,h.name,h.name_id,h.hp,h.hp_max,h.main_flag);
+  write(int32_t(h.flags),h.weight,h.value,h.damage_type,h.damage_total,h.damage);
+  write(h.wear,h.protection,h.nutrition,h.cond_atr,h.cond_value,h.change_atr,h.change_value,h.magic);
+  write(h.on_equip,h.on_unequip,h.on_state);
+  write(h.owner,h.owner_guild,h.disguise_guild,h.visual,h.visual_change);
+  write(h.effect,h.visual_skin,h.scheme_name,h.material);
+  write(h.munition,h.spell,h.range,h.mag_circle);
+  write(h.description,h.text,h.count);
+  write(h.inv_zbias,h.inv_rot_x,h.inv_rot_y,h.inv_rot_z,h.inv_animate);
+  }
 
-  if (sym != nullptr) {
-    vm.allocate_instance(h, sym);
-    } else {
-    Tempest::Log::e("Cannot load serialized NPC ", instanceSymbol, ": Symbol not found.");
-    }
-
-  read(h->id,h->name,h->slot,h->effect, reinterpret_cast<int32_t&>(h->type));
-  read(reinterpret_cast<int32_t&>(h->flags));
-  read(h->attribute,h->hitchance,h->protection,h->damage);
-  read(h->damage_type,h->guild,h->level);
-  read(h->mission);
-  read(h->fight_tactic,h->weapon,h->voice,h->voice_pitch,h->body_mass);
-  read(h->daily_routine,h->start_aistate);
-  read(h->spawnpoint,h->spawn_delay,h->senses,h->senses_range);
-  read(h->aivar);
-  read(h->wp,h->exp,h->exp_next,h->lp,h->bodystate_interruptable_override,h->no_focus);
+void Serialize::readItem(ItemRecord& h) {
+  read(h.id,h.name,h.name_id,h.hp,h.hp_max,h.main_flag);
+  read(reinterpret_cast<int32_t&>(h.flags),h.weight,h.value,h.damage_type,h.damage_total,h.damage);
+  read(h.wear,h.protection,h.nutrition,h.cond_atr,h.cond_value,h.change_atr,h.change_value,h.magic);
+  read(h.on_equip,h.on_unequip,h.on_state);
+  read(h.owner,h.owner_guild,h.disguise_guild,h.visual,h.visual_change);
+  read(h.effect,h.visual_skin,h.scheme_name,h.material);
+  read(h.munition,h.spell,h.range,h.mag_circle);
+  read(h.description,h.text,h.count);
+  read(h.inv_zbias,h.inv_rot_x,h.inv_rot_y,h.inv_rot_z,h.inv_animate);
   }
 
 void Serialize::implWrite(const FpLock &fp) {
@@ -352,17 +149,4 @@ void Serialize::implWrite(const FpLock &fp) {
 
 void Serialize::implRead(FpLock &fp) {
   fp.load(*this);
-  }
-
-void Serialize::implWrite(const asset::AnimationSample& i) {
-  writeBytes(&i,sizeof(i));
-  }
-
-void Serialize::implRead(asset::AnimationSample& i) {
-  if (version() < 40) {
-    read(i.position.x,i.position.y,i.position.z);
-    read(i.rotation.x,i.rotation.y,i.rotation.z,i.rotation.w);
-    } else {
-    readBytes (&i,sizeof(i));
-    }
   }

@@ -19,13 +19,6 @@
 namespace WorldData {
 namespace {
 using namespace asset;
-using zenkit::Vec2;
-using zenkit::Vec3;
-using zenkit::Quat;
-using zenkit::Color;
-using zenkit::Mat3;
-using zenkit::Mat4;
-using zenkit::AxisAlignedBoundingBox;
 using Json = rapidjson::Value;
 using gothicglb::jsonString;
 namespace fs = std::filesystem;
@@ -427,7 +420,7 @@ template<> const std::vector<std::pair<BspTreeType,const char*>>& enumNames<BspT
   }
 
 // Explicit C++ member names: the JSON schema does not depend on ZenKit archive keys.
-template<class IO> void fields(IO& io, AxisAlignedBoundingBox& v) {
+template<class IO> void fields(IO& io, Aabb& v) {
   io("min",v.min);
   io("max",v.max);
   }
@@ -1359,7 +1352,7 @@ double intersect(const Vec3& from,const Vec3& direction,const Triangle& triangle
 
 } // namespace
 
-bool isIndoor(asset::BspTreeType mode, const std::vector<Room>& rooms, const zenkit::Vec3& point) {
+bool isIndoor(asset::BspTreeType mode, const std::vector<Room>& rooms, const asset::Vec3& point) {
       if(mode==BspTreeType::INDOOR) return true;
       for(const auto& room:rooms) {
         if(point.x<room.min.x || point.x>room.max.x ||

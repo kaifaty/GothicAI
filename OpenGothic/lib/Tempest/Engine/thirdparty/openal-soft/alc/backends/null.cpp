@@ -65,7 +65,11 @@ int NullBackend::mixerProc()
 {
     const milliseconds restTime{mDevice->UpdateSize*1000/mDevice->Frequency / 2};
 
-    SetRTPriority();
+    /* GothicAI: no SetRTPriority() here. The null device feeds no hardware, so
+     * real time buys nothing, and RTKit pairs it with RLIMIT_RTTIME = 200 ms:
+     * any longer stretch inside a buffer callback (music loading) made the
+     * kernel SIGKILL test games on Linux. See docs/compute.md.
+     */
     althrd_setname(GetMixerThreadName());
 
     int64_t done{0};

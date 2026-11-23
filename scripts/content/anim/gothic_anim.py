@@ -1,0 +1,1 @@
+../../../character-tool/src/character_tool/anim/gothic_anim.py

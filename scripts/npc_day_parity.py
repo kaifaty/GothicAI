@@ -1,0 +1,949 @@
+#!/usr/bin/env python3
+"""Compare two NPC day journals (bench `npcday`, common/npcdayjournal.h).
+
+    scripts/npc_day_parity.py RUN_A RUN_B [--out report.md] [--json report.json]
+                              [--tolerances scripts/bench/npc-day-parity.tolerances.json] [--max-pos-p95 30 ...]
+
+RUN_A/RUN_B are bench output directories (or their npc-day.csv). Rows are matched by
+sample time and NPC key; the hero is left out. The report gives, per metric: the share
+of NPC-samples in the same ZS state and the same routine (TA) entry, the straight-line
+position error (p50/p95/max, metres), the offset of matched ZS starts (game minutes),
+alive/dead, HP and inventory differences, a per-hour divergence curve, the NPCs that
+diverge most, and the same metrics split by run B's simulation tier. With tolerances
+the exit code is 1 when a check fails; without them the report is informational.
+Routine activity metrics use A's nonempty TA samples, grouped by A's ZS: state,
+MOB scheme and waypoint agreement, occupancy ratio, first-MOB arrival delay and
+NPCs with no MOB sample in a reference TA segment. --activity-states limits their
+totals and checks, while the complete state table remains visible.
+Point activities additionally compare held coordinates, pose time, first arrivals,
+missed segments and double occupancy. Legal waiting at the routine waypoint is
+reported separately and excluded from the point acceptance populations.
+The activity health checks read run B's own counters of the activities by events
+(npc-day.json "activity_events", common/world/activityevents.h): watchdog restarts,
+expired reservations, reservations without a living owner, two NPCs on one place. A run
+without these counters fails an enabled health check.
+
+The completeness gates fail a pair whose runs did not both finish (`end_reason`), stop
+early or at different times, have samples present in only one run, or end with an NPC
+that the other run does not have: metrics over the shared samples alone cannot see that.
+"""
+from __future__ import annotations
+
+import argparse
+import bisect
+import csv
+import gzip
+import hashlib
+import json
+import math
+from pathlib import Path
+import sys
+
+# name -> (kind, report label); "min" checks value >= limit, "max" checks value <= limit,
+# "flag" checks that the value is true when the tolerance is true (false skips it).
+CHECKS = {
+    "require_done": ("flag", "both runs finished the journal (end_reason done)"),
+    "require_journal_identical": ("flag", "all nonhero sample fields except tier and all events identical"),
+    "require_script_inventory_evidence": ("flag", "every inventory difference has attested script provenance"),
+    "require_full_length": ("flag", "both runs reach their requested minutes and end at the same time"),
+    "max_only_samples": ("max", "NPC-samples present in only one run"),
+    "max_missing_end": ("max", "NPCs present at the end of one run and missing in the other"),
+    "min_same_zs": ("min", "same ZS state, share of NPC-samples"),
+    "min_same_ta": ("min", "same routine (TA) entry, share of NPC-samples"),
+    "max_pos_p50": ("max", "position error p50, m"),
+    "max_pos_p95": ("max", "position error p95, m"),
+    "max_pos_max": ("max", "position error max, m"),
+    "min_zs_matched": ("min", "ZS starts matched within the window, share"),
+    "min_raw_zs_matched": ("min", "all raw ZS starts matched within the window, share"),
+    "max_zs_mutual_offset_p95_s": ("max", "mutual-nearest raw ZS start offset p95, game seconds"),
+    "max_zs_offset_p95": ("max", "matched ZS start offset p95, game min"),
+    "max_alive_diff": ("max", "NPCs alive in one run and dead (or missing) in the other at the end"),
+    "max_inventory_diff_end": ("max", "NPCs whose inventory differs (or who are missing) at the end"),
+    "max_hp_diff_end": ("max", "NPCs whose HP differs (or who are missing) at the end"),
+    "min_deaths_matched": ("min", "death events matched, share"),
+    "max_stationary_pos_p95": ("max", "position error p95 when stationary in both runs, m"),
+    "min_same_inventory": ("min", "same inventory, share of NPC-samples"),
+    "min_same_hp": ("min", "same HP, share of NPC-samples"),
+    "min_activity_same_mob": ("min", "activity: same MOB scheme when A occupies a MOB, share"),
+    "max_activity_mob_mismatch": ("max", "activity: samples where A occupies a MOB and B another or none"),
+    "min_activity_same_wp": ("min", "activity: same waypoint, share"),
+    "min_activity_mob_time_ratio": ("min", "activity: B/A occupied MOB samples"),
+    "max_activity_mob_time_ratio": ("max", "activity: B/A occupied MOB samples"),
+    "max_activity_arrival_p95": ("max", "activity: arrival delay p95, game min"),
+    "max_activity_arrival_max": ("max", "activity: maximum arrival delay, game min"),
+    "max_activity_stuck": ("max", "activity: NPCs missing every MOB or point sample in a routine segment"),
+    "min_point_same_fp": ("min", "point activity: same held coordinates (legal fallback excluded), share"),
+    "min_point_pose_ratio": ("min", "point activity: B/A pose samples outside legal waiting in either run"),
+    "max_point_pose_ratio": ("max", "point activity: B/A pose samples outside legal waiting in either run"),
+    "max_point_arrival_p95": ("max", "point activity: first arrival delay p95, game min"),
+    "max_point_arrival_max": ("max", "point activity: maximum first arrival delay, game min"),
+    "max_point_missed_segments": ("max", "point activity: reference segments with no arrival in B"),
+    "max_point_double_occupancy": ("max", "point activity: B samples with two NPCs on the same coordinates"),
+    "max_activity_watchdog": ("max", "activity events in B: watchdog restarts"),
+    "max_activity_reservation_expired": ("max", "activity events in B: reservations expired without an attach"),
+    "max_activity_reservation_ownerless": ("max", "activity events in B: reservations without a living owner"),
+    "max_activity_double_occupancy": ("max", "activity events in B: two NPCs on one place"),
+}
+# Health check -> run B's counter in npc-day.json "activity_events".
+HEALTH = {"max_activity_watchdog": "watchdog", "max_activity_reservation_expired": "reservation_expired",
+          "max_activity_reservation_ownerless": "reservation_ownerless",
+          "max_activity_double_occupancy": "double_occupancy"}
+
+
+def opener(path):
+    return gzip.open(path, "rt", newline="") if str(path).endswith(".gz") else open(path, newline="")
+
+
+def find(run, name):
+    run = Path(run)
+    if run.is_file():
+        run = run.parent
+    for candidate in (run / name, run / (name + ".gz")):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def load(run):
+    samples = find(run, "npc-day.csv")
+    if samples is None:
+        raise SystemExit(f"{run}: no npc-day.csv")
+    rows = {}
+    points = {}
+    keys = {}
+    hero = {}
+    hero_keys = set()
+    times = set()
+    sample_digest, event_digest = hashlib.sha256(), hashlib.sha256()
+    with opener(samples) as stream:
+        for row in csv.DictReader(stream):
+            t = int(float(row["t_min"]))
+            times.add(t)
+            if row.get("hero") == "hero":
+                hero[t] = (float(row["x"]), float(row["y"]), float(row["z"]))
+                hero_keys.add(row["key"])
+                continue
+            sample_digest.update(json.dumps({k: v for k, v in row.items() if k != "tier"},
+                                            sort_keys=True).encode() + b"\n")
+            rows[(t, row["key"])] = (
+                row["alive"] == "1", int(row["hp"]), row["ta"], row["zs"],
+                float(row["x"]), float(row["y"]), float(row["z"]), row["inv_hash"], row["tier"], row["head"], int(row["body"]),
+                row["mob"], row["wp"])
+            if "on_fp" in row:
+                points[(t, row["key"])] = {
+                    "name": row["fp"],
+                    "position": tuple(float(row["fp_" + axis]) for axis in "xyz") if row["fp"] != "-" else None,
+                    "on": row["on_fp"] == "1", "stage": int(row["aivar_19"]),
+                    "available": int(row["fp_available"]),
+                    "on_wp": row["on_routine_wp"] == "1",
+                }
+            keys[row["key"]] = row["symbol"]
+    events = {}
+    path = find(run, "npc-day-events.csv")
+    if path is not None:
+        with opener(path) as stream:
+            for row in csv.DictReader(stream):
+                if row["key"] in hero_keys:
+                    continue  # the hero is left out of events too
+                event_digest.update(json.dumps(row, sort_keys=True).encode() + b"\n")
+                events.setdefault(row["kind"], {}).setdefault(row["key"], []).append((float(row["t_min"]), row["value"]))
+    header = {}
+    path = find(run, "npc-day.json")
+    if path is not None:
+        try:
+            header = json.loads(path.read_text())
+        except (OSError, ValueError):
+            header = {}
+    last = max(times) if times else None
+    return {"sample_digest": sample_digest.hexdigest(), "event_digest": event_digest.hexdigest(),
+            "rows": rows, "points": points, "keys": keys, "hero": hero, "events": events, "header": header, "path": str(samples.parent),
+            "last": last, "end_keys": {key for t, key in rows if t == last}}
+
+
+def percentile(values, q):
+    if not values:
+        return None
+    values = sorted(values)
+    position = (len(values) - 1) * q
+    low = math.floor(position)
+    high = math.ceil(position)
+    if low == high:
+        return values[low]
+    return values[low] + (values[high] - values[low]) * (position - low)
+
+
+def share(hits, total):
+    return hits / total if total else None
+
+
+class Tally:
+    def __init__(self):
+        self.samples = self.same_zs = self.same_ta = self.same_inventory = self.same_hp = 0
+        self.alive_mismatch = 0
+        self.errors = []
+
+    def add(self, a, b):
+        self.samples += 1
+        self.same_zs += a[3] == b[3]
+        self.same_ta += a[2] == b[2]
+        self.same_hp += a[1] == b[1]
+        self.same_inventory += a[7] == b[7]
+        self.alive_mismatch += a[0] != b[0]
+        if a[0] and b[0]:
+            self.errors.append(math.dist(a[4:7], b[4:7]) / 100)
+
+    def summary(self):
+        return {
+            "samples": self.samples,
+            "same_zs": share(self.same_zs, self.samples),
+            "same_ta": share(self.same_ta, self.samples),
+            "same_hp": share(self.same_hp, self.samples),
+            "same_inventory": share(self.same_inventory, self.samples),
+            "alive_mismatch_samples": self.alive_mismatch,
+            "pos_p50": percentile(self.errors, 0.5),
+            "pos_p95": percentile(self.errors, 0.95),
+            "pos_max": max(self.errors) if self.errors else None,
+        }
+
+
+def match_events(a, b, window):
+    """Greedy nearest matching of (time, value) events with the same value, per NPC."""
+    offsets, total, matched = [], 0, 0
+    for key in sorted(set(a) | set(b)):
+        pool = {}
+        for t, value in b.get(key, []):
+            pool.setdefault(value, []).append(t)
+        for times in pool.values():
+            times.sort()
+        total += len(a.get(key, [])) + len(b.get(key, []))
+        for t, value in a.get(key, []):
+            times = pool.get(value)
+            if not times:
+                continue
+            index = bisect.bisect_left(times, t)
+            best = None
+            for candidate in (index - 1, index):
+                if 0 <= candidate < len(times) and (best is None or abs(times[candidate] - t) < abs(times[best] - t)):
+                    best = candidate
+            if best is not None and abs(times[best] - t) <= window:
+                offsets.append(abs(times.pop(best) - t))
+                matched += 1
+    if not total:
+        # No events in either run agree completely; None stays for events that never matched.
+        return {"events": 0, "matched_pairs": 0, "matched": 1.0, "offset_p50": 0.0, "offset_p95": 0.0, "offset_max": 0.0}
+    return {"events": total, "matched_pairs": matched, "matched": share(2 * matched, total),
+            "offset_p50": percentile(offsets, 0.5), "offset_p95": percentile(offsets, 0.95),
+            "offset_max": max(offsets) if offsets else None}
+
+
+def match_events_mutual(a, b, window):
+    """Reciprocal nearest events in the original sets, grouped by NPC and value.
+
+    This diagnostic does not consume matches: missing repeated cycles cannot shift
+    the ordinal pairing of later attack/eat cycles. Its matched share is reported
+    separately; acceptance still checks the standard greedy matcher's coverage.
+    """
+    offsets, total = [], 0
+    for key in sorted(set(a) | set(b)):
+        groups = []
+        for events in (a.get(key, []), b.get(key, [])):
+            values = {}
+            for t, value in events:
+                values.setdefault(value, []).append(t)
+            groups.append({value: sorted(times) for value, times in values.items()})
+            total += len(events)
+        for value in groups[0].keys() & groups[1].keys():
+            aa, bb = groups[0][value], groups[1][value]
+
+            def nearest(times, t):
+                index = bisect.bisect_left(times, t)
+                candidates = [j for j in (index - 1, index) if 0 <= j < len(times)]
+                return min(candidates, key=lambda j: abs(times[j] - t))
+
+            for i, t in enumerate(aa):
+                j = nearest(bb, t)
+                if nearest(aa, bb[j]) == i and abs(bb[j] - t) <= window:
+                    offsets.append(abs(bb[j] - t) * 60)
+    if not total:
+        return {"events": 0, "matched_pairs": 0, "matched": 1.0,
+                "offset_p50_s": 0.0, "offset_p95_s": 0.0, "offset_max_s": 0.0}
+    return {"events": total, "matched_pairs": len(offsets), "matched": share(2 * len(offsets), total),
+            "offset_p50_s": percentile(offsets, 0.5), "offset_p95_s": percentile(offsets, 0.95),
+            "offset_max_s": max(offsets) if offsets else None}
+
+
+def near_hero(run, t, position, metres):
+    hero = run["hero"].get(t)
+    return hero is not None and math.dist(hero, position) < metres * 100
+
+
+def completeness(run):
+    """Whether one run finished its journal: its end reason, last sample and requested minutes."""
+    header = run["header"]
+    minutes, period = header.get("minutes"), header.get("period_min")
+    expected = None
+    if isinstance(minutes, (int, float)) and isinstance(period, (int, float)) and period > 0:
+        expected = int(minutes // period * period)
+    return {"end_reason": header.get("end_reason", "unfinished"), "last_t_min": run["last"],
+            "requested_min": minutes, "expected_last_t_min": expected,
+            "full_length": expected is not None and run["last"] is not None and run["last"] >= expected}
+
+
+def end_differences(a, b):
+    """Compare final presence, life, HP and inventory independently of intermediate samples."""
+    missing, alive, inventory, hp = [], [], [], []
+    for key in sorted(a["end_keys"] | b["end_keys"]):
+        ra, rb = a["rows"].get((a["last"], key)), b["rows"].get((b["last"], key))
+        if ra is None or rb is None:
+            missing.append(key)
+            alive.append(key)
+            inventory.append(key)
+            hp.append(key)
+            continue
+        if ra[0] != rb[0]:
+            alive.append(key)
+        if ra[7] != rb[7]:
+            inventory.append(key)
+        if ra[1] != rb[1]:
+            hp.append(key)
+    return missing, alive, inventory, hp
+
+
+
+def routine_segments(run):
+    """Continuous TA segments of A, including the observed day edges."""
+    key, previous_ta, samples = None, None, []
+    for (t, npc), row in sorted(run["rows"].items(), key=lambda item: (item[0][1], item[0][0])):
+        if npc != key or row[2] != previous_ta:
+            if samples:
+                yield key, samples
+            samples = []
+        key, previous_ta = npc, row[2]
+        if row[2] != "-":
+            samples.append((t, row))
+    if samples:
+        yield key, samples
+
+
+def activity_metrics(a, b, common, states, point_states):
+    """Reference-TA samples and first occupied samples within reference TA segments.
+
+    Arrival offsets are signed (B minus A). A segment belongs to the reference
+    ZS at its first occupied sample; its boundaries come only from A's TA changes.
+    """
+    by_state = {}
+
+    def tally(state):
+        return by_state.setdefault(state, {"samples": 0, "same_zs": 0, "same_wp": 0,
+                                           "mob_a": 0, "mob_b": 0, "same_mob": 0, "extra_mob": 0,
+                                           "arrivals": [], "stuck": []})
+
+    for state in point_states:
+        tally(state)
+
+    selected_samples = set(common)
+    for sample in common:
+        ra, rb = a["rows"][sample], b["rows"][sample]
+        if ra[2] == "-":
+            continue
+        item = tally(ra[3])
+        item["samples"] += 1
+        item["same_zs"] += ra[3] == rb[3]
+        item["same_wp"] += ra[12] == rb[12]
+        item["mob_a"] += ra[11] != "-"
+        item["mob_b"] += rb[11] != "-"
+        item["same_mob"] += ra[11] != "-" and ra[11] == rb[11]
+        item["extra_mob"] += ra[11] == "-" and rb[11] != "-"
+
+    def segment(key, samples):
+        occupied_a = [t for t, ra in samples if (t, key) in selected_samples and ra[11] != "-"]
+        if not occupied_a:
+            return
+        first_a = occupied_a[0]
+        state = a["rows"][(first_a, key)][3]
+        occupied_b = [t for t, _ in samples if (t, key) in selected_samples and b["rows"][(t, key)][11] != "-"]
+        first_b = occupied_b[0] if occupied_b else None
+        entry = {"key": key, "state": state, "ta": samples[0][1][2],
+                 "start_min": samples[0][0], "end_min": samples[-1][0],
+                 "arrival_a_min": first_a - samples[0][0],
+                 "arrival_b_min": first_b - samples[0][0] if first_b is not None else None,
+                 "delay_min": first_b - first_a if first_b is not None else None}
+        tally(state)["stuck" if first_b is None else "arrivals"].append(entry)
+
+    for key, samples in routine_segments(a):
+        segment(key, samples)
+
+    def summary(items):
+        counts = {name: sum(item[name] for item in items)
+                  for name in ("samples", "same_zs", "same_wp", "mob_a", "mob_b", "same_mob", "extra_mob")}
+        arrivals = [entry for item in items for entry in item["arrivals"]]
+        stuck = [entry for item in items for entry in item["stuck"]]
+        delays = [entry["delay_min"] for entry in arrivals]
+        return {"samples": counts["samples"],
+                "same_zs": share(counts["same_zs"], counts["samples"]),
+                "same_wp": share(counts["same_wp"], counts["samples"]),
+                "mob_samples_a": counts["mob_a"], "mob_samples_b": counts["mob_b"],
+                "same_mob": share(counts["same_mob"], counts["mob_a"]),
+                # A count, not a share: a share of one state set's few samples admits no mismatch at all.
+                # No reference objects: object metrics are not applicable.
+                "mob_mismatch": counts["mob_a"] - counts["same_mob"] if counts["mob_a"] else None,
+                "extra_mob": share(counts["extra_mob"], counts["samples"] - counts["mob_a"]),
+                "mob_time_ratio": share(counts["mob_b"], counts["mob_a"]),
+                "arrival_segments": len(arrivals),
+                "arrival_p50": percentile(delays, 0.5), "arrival_p95": percentile(delays, 0.95),
+                "arrival_max": max(delays) if delays else None,
+                "stuck_npcs": len({entry["key"] for entry in stuck}), "stuck": stuck}
+
+    included = [item for state, item in by_state.items() if states is None or state in states]
+    return {"states": sorted(states) if states is not None else None,
+            "period_min_a": a["header"].get("period_min"), "period_min_b": b["header"].get("period_min"),
+            "total": summary(included),
+            "by_state": {state: summary([item]) for state, item in sorted(by_state.items())},
+            "arrivals": sorted((entry for item in by_state.values() for entry in item["arrivals"]),
+                               key=lambda entry: (-entry["delay_min"], entry["key"], entry["start_min"]))}
+
+
+
+# These are the five original script forms in the E2 calibration, not a game executor.
+POINT_STATES = {"ZS_STAND_GUARDING": "STAND", "ZS_STAND_ARMSCROSSED": "STAND",
+                "ZS_SIT_CAMPFIRE": "CAMPFIRE", "ZS_PEE": "PEE", "ZS_STAND_WP": ""}
+
+
+def point_status(row, point, state, waypoint):
+    if point is None or row[2] == "-":
+        return False, False, False
+    _, _, ta_state, ta_wp = row[2].split()
+    if ta_wp != waypoint:
+        return False, False, False
+    kind = POINT_STATES[state]
+    # STAND_WP has no typed FP: two routines can share the same waypoint.
+    on = point["on"] and kind in point["name"] if kind else point["on_wp"] and ta_state == state
+    # End/Init may leave ZS empty without moving the body; a known different ZS is another pose.
+    same_pose = row[3] in (state, "-")
+    # Campfire sets BS_SIT (11); the other four forms set aivar[19]=0 on entering the pose.
+    posed = row[10] == 11 if state == "ZS_SIT_CAMPFIRE" else point["stage"] == 0 and row[10] == 0
+    fallback = bool(same_pose and kind and not on and point["available"] == 0 and point["on_wp"] and row[10] == 0)
+    # PEE checks IsOnFP again before entering its pose.
+    return bool(on), bool(same_pose and posed and (on or (fallback and state != "ZS_PEE"))), fallback
+
+
+def point_metrics(a, b, common, states):
+    by_state = {}
+    valid = bool(a["points"] and b["points"])
+    selected = set(common)
+
+    def tally(state):
+        return by_state.setdefault(state, {name: [] if name in {"arrivals", "missed", "collisions"} else 0 for name in
+            ("samples", "held_a", "comparable", "same_fp", "same_fp_raw", "on_a", "on_b", "pose_a", "pose_b",
+             "pose_comparable_a", "pose_comparable_b", "fallback_a", "fallback_b", "arrivals", "missed", "collisions")})
+
+    # Check against all B NPCs, including those outside --activity-states.
+    owners = {}
+    for sample, point in b["points"].items():
+        if point["on"] and b["rows"][sample][0] and point["position"] is not None:
+            owners.setdefault((sample[0], point["position"]), []).append(sample[1])
+    seen_collisions = set()
+    for sample in common:
+        ra, rb = a["rows"][sample], b["rows"][sample]
+        if ra[2] == "-":
+            continue
+        _, _, state, waypoint = ra[2].split()
+        if state not in POINT_STATES:
+            continue
+        item = tally(state)
+        item["samples"] += 1
+        pa, pb = a["points"].get(sample), b["points"].get(sample)
+        if pa is None or pb is None:
+            valid = False
+            continue
+        on_a, pose_a, fallback_a = point_status(ra, pa, state, waypoint)
+        on_b, pose_b, fallback_b = point_status(rb, pb, state, waypoint)
+        held = bool(POINT_STATES[state] and pa["position"] is not None and POINT_STATES[state] in pa["name"])
+        comparable = not ((fallback_a and (pose_b or fallback_b)) or (fallback_b and (pose_a or fallback_a)))
+        item["held_a"] += held
+        item["comparable"] += held and comparable
+        item["same_fp"] += held and comparable and pa["position"] == pb["position"]
+        item["same_fp_raw"] += held and pa["position"] == pb["position"]
+        item["pose_comparable_a"] += pose_a and comparable
+        item["pose_comparable_b"] += pose_b and comparable
+        for name, value in (("on_a", on_a), ("on_b", on_b), ("pose_a", pose_a), ("pose_b", pose_b),
+                            ("fallback_a", fallback_a), ("fallback_b", fallback_b)):
+            item[name] += value
+        collision = (sample[0], pb["position"])
+        occupants = owners.get(collision, [])
+        # Count once per state: a collision with another selected state appears in both state rows.
+        if sample[1] in occupants and len(occupants) > 1 and (state, collision) not in seen_collisions:
+            seen_collisions.add((state, collision))
+            item["collisions"].append({"t_min": sample[0], "point": pb["position"], "npcs": occupants})
+
+    def segment(key, samples, previous):
+        if not valid:
+            return
+        _, _, state, waypoint = samples[0][1][2].split()
+        if state not in POINT_STATES:
+            return
+        moved = (previous is not None and waypoint != previous[1][2].split()[3]
+                 and previous[0] + a["header"].get("period_min", 5) == samples[0][0])
+
+        def observations(run):
+            prior = run["points"].get((previous[0], key)) if moved else None
+            old_point = prior["position"] if prior is not None else None
+            observed = []
+            for t, _ in samples:
+                if (t, key) not in selected:
+                    continue
+                point = run["points"].get((t, key))
+                row = run["rows"][(t, key)]
+                status = point_status(row, point, state, waypoint)
+                # An old hold outside the new approach radius is not a new arrival.
+                # It may be acquired after the TA changes, near the preceding waypoint.
+                old_post = moved and row[12] == previous[1][2].split()[3]
+                if point is not None and status[0] and not point["on_wp"] and (
+                        point["position"] == old_point or old_post):
+                    old_point = point["position"]
+                    status = (False, False, False)
+                else:
+                    old_point = None
+                observed.append((t, status))
+            return observed
+
+        reference = dict(observations(a))
+        arrived_a = [t for t, status in reference.items() if status[0]]
+        reference_times = [t for t, status in reference.items() if status[0] or status[2]]
+        if not reference_times:
+            return
+        first_a = arrived_a[0] if arrived_a else reference_times[0]
+        observed = observations(b)
+        arrivals_b = [t for t, status in observed if status[0]]
+        # A whole lost activity cannot hide behind one legal wait sample.
+        # For a reference shift spent entirely waiting, any legal wait in B fulfils it.
+        lawful_wait = not arrivals_b and (all(dict(observed)[t][2] for t in reference_times) if arrived_a else
+                                         any(status[2] for _, status in observed))
+        first_b = arrivals_b[0] if arrivals_b else None
+        # Waiting while no point is available is legitimate. Report it separately, and subtract
+        # only observed legal waiting intervals from a later arrival's delay.
+        delay = None if first_b is None or not arrived_a else first_b - first_a
+        if delay is not None and delay > 0:
+            period = b["header"].get("period_min", 5)
+            delay -= sum(min(period, first_b - t) for t, status in observed if first_a <= t < first_b and status[2])
+        entry = {"key": key, "state": state, "ta": samples[0][1][2], "start_min": samples[0][0],
+                 "end_min": samples[-1][0], "arrival_a_min": first_a - samples[0][0] if arrived_a else None,
+                 "arrival_b_min": first_b - samples[0][0] if first_b is not None else None,
+                 "delay_min": delay}
+        if first_b is not None and arrived_a:
+            tally(state)["arrivals"].append(entry)
+        elif first_b is None and not lawful_wait:
+            tally(state)["missed"].append(entry)
+
+    previous = {}
+    for key, samples in routine_segments(a):
+        segment(key, samples, previous.get(key))
+        previous[key] = samples[-1]
+
+    def summary(items):
+        counts = {name: sum(item[name] for item in items) for name in
+                  ("samples", "held_a", "comparable", "same_fp", "same_fp_raw", "on_a", "on_b", "pose_a", "pose_b",
+                   "pose_comparable_a", "pose_comparable_b", "fallback_a", "fallback_b")}
+        arrivals = [entry for item in items for entry in item["arrivals"]]
+        missed = [entry for item in items for entry in item["missed"]]
+        collisions = {(entry["t_min"], tuple(entry["point"])): entry for item in items for entry in item["collisions"]}
+        delays = [entry["delay_min"] for entry in arrivals]
+        return {**counts, "available": valid and bool(counts["samples"]),
+                "same_fp": share(counts["same_fp_raw"], counts["held_a"]),
+                "same_fp_available": share(counts["same_fp"], counts["comparable"]),
+                "pose_ratio": share(counts["pose_b"], counts["pose_a"]),
+                "pose_ratio_available": share(counts["pose_comparable_b"], counts["pose_comparable_a"]),
+                "arrival_p95": percentile(delays, 0.95), "arrival_max": max(delays) if delays else None,
+                "arrivals": arrivals, "missed_segments": len(missed), "missed": missed,
+                "stuck_npcs": len({entry["key"] for entry in missed}),
+                "double_occupancy": len(collisions), "collisions": list(collisions.values())}
+
+    return {"total": summary([item for state, item in by_state.items() if states is None or state in states]),
+            "by_state": {state: summary([item]) for state, item in sorted(by_state.items())}}
+
+
+def compare(a, b, window=60.0, min_hero_distance=0.0, activity_states=None):
+    common = sorted(set(a["rows"]) & set(b["rows"]))
+    excluded = 0
+    if min_hero_distance > 0:
+        kept = [(t, key) for t, key in common
+                if not near_hero(a, t, a["rows"][(t, key)][4:7], min_hero_distance)
+                and not near_hero(b, t, b["rows"][(t, key)][4:7], min_hero_distance)]
+        excluded = len(common) - len(kept)
+        common = kept
+    if not common:
+        raise SystemExit("no common NPC-samples: different worlds or empty journals")
+    total, by_tier, by_hour, per_npc, by_movement = Tally(), {}, {}, {}, {}
+    for t, key in common:
+        ra, rb = a["rows"][(t, key)], b["rows"][(t, key)]
+        total.add(ra, rb)
+        by_tier.setdefault(rb[8], Tally()).add(ra, rb)
+        by_hour.setdefault(t // 60, Tally()).add(ra, rb)
+        # Body states 1..10 are walk/sneak/run/sprint/swim/crawl/dive/jump/climb/fall
+        # (common/game/constants.h); the journal already strips state flags.
+        movement = "moving_either" if 1 <= ra[10] <= 10 or 1 <= rb[10] <= 10 else "stationary_both"
+        by_movement.setdefault(movement, Tally()).add(ra, rb)
+        npc = per_npc.setdefault(key, {"zs_diff": 0, "pos_max": 0.0, "first_zs_diff": None, "samples": 0})
+        npc["samples"] += 1
+        if ra[3] != rb[3]:
+            npc["zs_diff"] += 1
+            if npc["first_zs_diff"] is None:
+                npc["first_zs_diff"] = t
+        if ra[0] and rb[0]:
+            npc["pos_max"] = max(npc["pos_max"], math.dist(ra[4:7], rb[4:7]) / 100)
+    last = max(t for t, _ in common)
+    missing_end, alive_diff, inventory_diff, hp_diff = end_differences(a, b)
+    # Events count only up to the last common sample: a longer run must not add unmatched ones.
+    def kind(run, name, value=None):
+        return {key: [(t, value or v) for t, v in events if t <= last]
+                for key, events in run["events"].get(name, {}).items()}
+    deaths = match_events(kind(a, "death", "death"), kind(b, "death", "death"), window)
+    zs = match_events(kind(a, "zs_start"), kind(b, "zs_start"), window)
+    raw_zs_a, raw_zs_b = a["events"].get("zs_start", {}), b["events"].get("zs_start", {})
+    diverged = [key for key, npc in per_npc.items() if npc["zs_diff"] or npc["pos_max"] > 5]
+    first = [npc["first_zs_diff"] for npc in per_npc.values() if npc["first_zs_diff"] is not None]
+    points = point_metrics(a, b, common, activity_states)
+    activity = activity_metrics(a, b, common, activity_states, points["by_state"])
+    for item, point in [(activity["total"], points["total"]),
+                        *[(activity["by_state"][state], point) for state, point in points["by_state"].items()]]:
+        if point["available"]:
+            item["stuck"] += point["missed"]
+        item["stuck_npcs"] = len({entry["key"] for entry in item["stuck"]})
+    return {
+        "a": {"path": a["path"], "header": a["header"]},
+        "b": {"path": b["path"], "header": b["header"]},
+        "common_samples": len(common),
+        "min_hero_distance_m": min_hero_distance,
+        "excluded_near_hero": excluded,
+        "only_a": len(set(a["rows"]) - set(b["rows"])),
+        "only_b": len(set(b["rows"]) - set(a["rows"])),
+        "complete_a": completeness(a),
+        "complete_b": completeness(b),
+        "missing_end": missing_end,
+        "npcs": len({key for _, key in common}),
+        "last_t_min": last,
+        "total": total.summary(),
+        "activity": activity,
+        "points": points,
+        "activity_events": b["header"].get("activity_events"),
+        "by_tier": {tier: tally.summary() for tier, tally in sorted(by_tier.items())},
+        "by_hour": {int(hour): tally.summary() for hour, tally in sorted(by_hour.items())},
+        "by_movement": {name: tally.summary() for name, tally in sorted(by_movement.items())},
+        "zs_starts": zs,
+        "raw_zs_starts": match_events(raw_zs_a, raw_zs_b, window),
+        "zs_starts_mutual": match_events_mutual(raw_zs_a, raw_zs_b, window),
+        "journal_identical": a["sample_digest"] == b["sample_digest"] and a["event_digest"] == b["event_digest"],
+        "inventory_end_hashes": {key: {"a": a["rows"].get((a["last"], key), (None,) * 8)[7],
+                                       "b": b["rows"].get((b["last"], key), (None,) * 8)[7]}
+                                 for key in inventory_diff},
+        "deaths": deaths,
+        "deaths_a": sum(len(v) for v in kind(a, "death").values()),
+        "deaths_b": sum(len(v) for v in kind(b, "death").values()),
+        "alive_diff_end": alive_diff,
+        "inventory_diff_end": inventory_diff,
+        "hp_diff_end": hp_diff,
+        "diverged_npcs": len(diverged),
+        "first_zs_divergence_min": min(first) if first else None,
+        "worst_npcs": sorted(({"key": key, **npc} for key, npc in per_npc.items() if npc["pos_max"] > 0 or npc["zs_diff"]),
+                             key=lambda item: (-item["pos_max"], -item["zs_diff"], item["key"]))[:15],
+        "zs_window_min": window,
+    }
+
+
+def check_values(result, inventory_evidence=()):
+    total = result["total"]
+    activity = result["activity"]["total"]
+    points = result["points"]["total"]
+    ca, cb = result["complete_a"], result["complete_b"]
+    attested = {(item["key"], item["reference_hash"], item["candidate_hash"]) for item in inventory_evidence
+                if item.get("cause") in {"script_random_draw", "extra_script_iterations"} and item.get("item")
+                and isinstance(item.get("delta"), int) and item["delta"] != 0}
+    return {
+        "require_journal_identical": result["journal_identical"],
+        "require_script_inventory_evidence": all((key, pair["a"], pair["b"]) in attested
+                                                 for key, pair in result["inventory_end_hashes"].items()),
+        "require_done": ca["end_reason"] == "done" and cb["end_reason"] == "done",
+        "require_full_length": ca["full_length"] and cb["full_length"] and ca["last_t_min"] == cb["last_t_min"],
+        "max_only_samples": result["only_a"] + result["only_b"],
+        "max_missing_end": len(result["missing_end"]),
+        "min_same_zs": total["same_zs"], "min_same_ta": total["same_ta"],
+        "max_pos_p50": total["pos_p50"], "max_pos_p95": total["pos_p95"], "max_pos_max": total["pos_max"],
+        "min_raw_zs_matched": result["raw_zs_starts"]["matched"],
+        "max_zs_mutual_offset_p95_s": result["zs_starts_mutual"]["offset_p95_s"],
+        "min_zs_matched": result["zs_starts"]["matched"], "max_zs_offset_p95": result["zs_starts"]["offset_p95"],
+        "max_alive_diff": len(result["alive_diff_end"]), "min_same_inventory": total["same_inventory"],
+        "max_inventory_diff_end": len(result["inventory_diff_end"]),
+        "max_hp_diff_end": len(result["hp_diff_end"]),
+        "min_deaths_matched": result["deaths"]["matched"],
+        "max_stationary_pos_p95": result["by_movement"].get("stationary_both", {}).get("pos_p95"),
+        "min_same_hp": total["same_hp"],
+        "min_activity_same_mob": activity["same_mob"],
+        "max_activity_mob_mismatch": activity["mob_mismatch"],
+        "min_activity_same_wp": activity["same_wp"],
+        "min_activity_mob_time_ratio": activity["mob_time_ratio"],
+        "max_activity_mob_time_ratio": activity["mob_time_ratio"],
+        "max_activity_arrival_p95": activity["arrival_p95"],
+        "max_activity_arrival_max": activity["arrival_max"],
+        "max_activity_stuck": activity["stuck_npcs"],
+        **{check: points[metric] if points["available"] else None for check, metric in {
+            "min_point_same_fp": "same_fp_available", "min_point_pose_ratio": "pose_ratio_available", "max_point_pose_ratio": "pose_ratio_available",
+            "max_point_arrival_p95": "arrival_p95", "max_point_arrival_max": "arrival_max",
+            "max_point_missed_segments": "missed_segments", "max_point_double_occupancy": "double_occupancy"}.items()},
+        **{name: (result["activity_events"] or {}).get(counter) for name, counter in HEALTH.items()},
+    }
+
+
+def evaluate(result, tolerances, inventory_evidence=()):
+    values = check_values(result, inventory_evidence)
+    checks = []
+    for name, limit in tolerances.items():
+        if limit is None:
+            continue
+        kind, label = CHECKS[name]
+        value = values[name]
+        if kind == "flag":
+            if not limit:
+                continue
+            passed = bool(value)
+        else:
+            passed = value is not None and (value >= limit if kind == "min" else value <= limit)
+        activity, points = result["activity"]["total"], result["points"]["total"]
+        object_checks = {"min_activity_same_mob", "max_activity_mob_mismatch", "min_activity_mob_time_ratio",
+                         "max_activity_mob_time_ratio", "max_activity_arrival_p95", "max_activity_arrival_max"}
+        applicable = not (name in object_checks and (activity["samples"] or points["samples"]) and not activity["mob_samples_a"])
+        # No held FP / arrivals is meaningful for a population entirely in legal fallback, or STAND_WP.
+        if name == "min_point_same_fp" and points["available"] and not points["comparable"]:
+            applicable = False
+        if name in {"min_point_pose_ratio", "max_point_pose_ratio"} and points["available"] and not (
+                points["pose_comparable_a"] or points["pose_comparable_b"]):
+            applicable = False
+        if name in {"max_point_arrival_p95", "max_point_arrival_max"} and points["available"] and not points["arrivals"] and not points["missed"]:
+            applicable = False
+        checks.append({"name": name, "label": label, "value": value, "limit": limit, "kind": kind,
+                       "applicable": applicable, "pass": passed if applicable else True})
+    return checks
+
+
+def fmt(value, digits=3):
+    if value is None:
+        return "—"
+    if isinstance(value, float):
+        return f"{value:.{digits}f}"
+    return str(value)
+
+
+def pct(value):
+    return "—" if value is None else f"{value * 100:.2f}%"
+
+
+def markdown(result, checks, label_a, label_b):
+    total = result["total"]
+    lines = [f"# NPC day parity: {label_a} vs {label_b}", ""]
+    for side, label in (("a", label_a), ("b", label_b)):
+        header = result[side]["header"]
+        lines.append(f"- {label}: `{result[side]['path']}` — tier `{header.get('tier_mode', '?')}`, "
+                     f"seed {header.get('seed', '?')}, isolate {header.get('isolate', '?')}, "
+                     f"{header.get('minutes', '?')} min every {header.get('period_min', '?')}, "
+                     f"wall {fmt(header.get('wall_s'), 0)} s, end `{header.get('end_reason', 'unfinished')}`")
+    lines += [f"- NPC-samples compared: {result['common_samples']} ({result['npcs']} NPCs, up to t={result['last_t_min']} min); "
+              f"only in {label_a}: {result['only_a']}, only in {label_b}: {result['only_b']}"]
+    for side, label in (("complete_a", label_a), ("complete_b", label_b)):
+        item = result[side]
+        lines.append(f"- {label} ends at t={fmt(item['last_t_min'])} of {fmt(item['requested_min'])} requested minutes, "
+                     f"`{item['end_reason']}`")
+    if result["min_hero_distance_m"]:
+        lines.append(f"- left out: {result['excluded_near_hero']} NPC-samples within {fmt(result['min_hero_distance_m'], 0)} m "
+                     "of the hero in either run (ZS-start and death events are not filtered)")
+    lines.append("")
+    lines += ["| Metric | Value |", "|---|---|",
+              f"| same ZS state | {pct(total['same_zs'])} |",
+              f"| same routine (TA) entry | {pct(total['same_ta'])} |",
+              f"| same HP | {pct(total['same_hp'])} |",
+              f"| same inventory | {pct(total['same_inventory'])} |",
+              f"| position error p50 / p95 / max, m | {fmt(total['pos_p50'], 2)} / {fmt(total['pos_p95'], 2)} / {fmt(total['pos_max'], 1)} |",
+              f"| ZS starts matched (±{fmt(result['zs_window_min'], 0)} min) | {pct(result['zs_starts']['matched'])} of {result['zs_starts']['events']} |",
+              f"| all raw ZS starts matched (including final post-sample tick) | {pct(result['raw_zs_starts']['matched'])} of {result['raw_zs_starts']['events']} |",
+              f"| mutual-nearest raw ZS starts matched | {pct(result['zs_starts_mutual']['matched'])} |",
+              f"| mutual-nearest raw ZS start offset p50 / p95 / max, game s | {fmt(result['zs_starts_mutual']['offset_p50_s'])} / {fmt(result['zs_starts_mutual']['offset_p95_s'])} / {fmt(result['zs_starts_mutual']['offset_max_s'])} |",
+              f"| matched ZS start offset p50 / p95 / max, game min | {fmt(result['zs_starts']['offset_p50'], 2)} / {fmt(result['zs_starts']['offset_p95'], 2)} / {fmt(result['zs_starts']['offset_max'], 1)} |",
+              f"| deaths {label_a} / {label_b}; matched pairs | {result['deaths_a']} / {result['deaths_b']}; {result['deaths']['matched_pairs']} |",
+              f"| NPCs missing in one run at the end | {len(result['missing_end'])} |",
+              f"| alive differs at the end (missing counts) | {len(result['alive_diff_end'])} |",
+              f"| inventory differs at the end (missing counts) | {len(result['inventory_diff_end'])} |",
+              f"| HP differs at the end (missing counts) | {len(result['hp_diff_end'])} |",
+              f"| NPCs with any ZS difference or >5 m apart | {result['diverged_npcs']} of {result['npcs']} |",
+              f"| first ZS difference, game min | {fmt(result['first_zs_divergence_min'])} |", ""]
+    if checks:
+        lines += ["## Tolerances", "", "| Check | Value | Limit | |", "|---|---|---|---|"]
+        for check in checks:
+            if check["kind"] == "flag":
+                value, limit = ("yes" if check["value"] else "no"), "required"
+            else:
+                sign = "≥" if check["kind"] == "min" else "≤"
+                value, limit = fmt(check["value"], 4), f"{sign} {fmt(check['limit'], 4)}"
+            if not check["applicable"]:
+                value = "not applicable"
+            lines.append(f"| {check['label']} | {value} | {limit} | {'pass' if check['pass'] else '**FAIL**'} |")
+        lines.append("")
+    activity = result["activity"]
+    lines += ["## Routine activities (reference TA is not `-`)", "",
+              "Samples are grouped by A's ZS. Extra MOB is the share of A's unoccupied samples where B occupies a MOB.",
+              "Arrival is the first occupied sample within each continuous A-TA segment, regardless of B's TA or MOB scheme;",
+              "the segment is grouped by A's ZS at its first occupied sample. Delay is signed B minus A.",
+              f"Arrival resolution is the journal step: A {fmt(activity['period_min_a'])}, B {fmt(activity['period_min_b'])} game minutes "
+              "(5 minutes in npc-day-parity). Segment bounds are the first/last observed samples, including day edges.",
+              "Undefined ratios or arrivals are shown as —. MOB checks are not applicable without reference objects.",
+              "Scheduled point states with no active-ZS samples have empty ratios; their point misses still count as stuck.",
+              f"Summary states: {', '.join(activity['states']) if activity['states'] is not None else 'all'}; the state table always includes all states.", "",
+              "| State | Samples | Same ZS | Same MOB | MOB mismatches | Extra MOB | Same WP | MOB samples A / B | MOB time B/A | Arrival p50 / p95 / max, min | Stuck NPCs |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for state, item in [("**Selected total**", activity["total"]), *activity["by_state"].items()]:
+        lines.append(f"| {state} | {item['samples']} | {pct(item['same_zs'])} | {pct(item['same_mob'])} | "
+                     f"{fmt(item['mob_mismatch'])} | {pct(item['extra_mob'])} | {pct(item['same_wp'])} | {item['mob_samples_a']} / {item['mob_samples_b']} | "
+                     f"{fmt(item['mob_time_ratio'], 4)} | {fmt(item['arrival_p50'])} / {fmt(item['arrival_p95'])} / "
+                     f"{fmt(item['arrival_max'])} | {item['stuck_npcs']} |")
+    lines += ["", "### Stuck routine segments (all states)", "",
+              "| NPC | Reference state | TA | Segment samples, min | First MOB or point in A, min from start |",
+              "|---|---|---|---|---|"]
+    for state, item in activity["by_state"].items():
+        for entry in item["stuck"]:
+            lines.append(f"| `{entry['key']}` | {state} | `{entry['ta']}` | {entry['start_min']}–{entry['end_min']} | "
+                         f"{entry['arrival_a_min']} |")
+    lines += ["", "### Later MOB arrivals (all states)", "",
+              "| NPC | Reference state | TA | Segment samples, min | First MOB A / B, min from start | Delay, min |",
+              "|---|---|---|---|---|---|"]
+    for entry in activity["arrivals"]:
+        if entry["delay_min"] > 0:
+            lines.append(f"| `{entry['key']}` | {entry['state']} | `{entry['ta']}` | {entry['start_min']}–{entry['end_min']} | "
+                         f"{entry['arrival_a_min']} / {entry['arrival_b_min']} | {entry['delay_min']} |")
+    lines.append("")
+    lines += ["## Point activities", "",
+              "Point samples are grouped by the scheduled TA state.",
+              "Held points are identified by coordinates; equal names alone do not match. Pose follows aivar[19],",
+              "BS_SIT for campfire. STAND_WP uses the routine waypoint (within the 500 cm approach radius).",
+              "Legal fallback requires no available FP, the routine waypoint and a standing body; it is counted separately.",
+              "Raw pose time is reported; acceptance excludes legal waiting in either run from both pose populations and held-point agreement.",
+              "When the routine waypoint changes, an old hold outside the new approach radius is not a new arrival.",
+              "Observed legal waits do not count as late arrival.",
+              "Missing point columns fail enabled point checks. Resolution is the journal step.", "",
+              "| State | Samples | Same held FP raw / excluding legal fallback | On point A / B | Pose A / B | Pose B/A raw / outside A or B waiting | Arrival p95 / max, min | Missed segments | Double occupancy B |",
+              "|---|---|---|---|---|---|---|---|---|"]
+    points = result["points"]
+    for state, item in [("**Selected total**", points["total"]), *points["by_state"].items()]:
+        lines.append(f"| {state} | {item['samples']} | {pct(item['same_fp'])} / {pct(item['same_fp_available'])} | {item['on_a']} / {item['on_b']} | "
+                     f"{item['pose_a']} / {item['pose_b']} | {fmt(item['pose_ratio'], 4)} / {fmt(item['pose_ratio_available'], 4)} | "
+                     f"{fmt(item['arrival_p95'])} / {fmt(item['arrival_max'])} | {item['missed_segments']} | {item['double_occupancy']} |")
+        lines.append(f"| {state}: legal routine-waypoint fallback | | | {item['fallback_a']} / {item['fallback_b']} | | | | | |")
+    lines += ["", "### Missed point segments / later point arrivals", "",
+              "| NPC | State | TA | Segment, min | Delay, min |", "|---|---|---|---|---|"]
+    for state, item in points["by_state"].items():
+        for entry in item["missed"] + [e for e in item["arrivals"] if e["delay_min"] > 0]:
+            lines.append(f"| `{entry['key']}` | {state} | `{entry['ta']}` | {entry['start_min']}–{entry['end_min']} | "
+                         f"{fmt(entry['delay_min']) if entry['delay_min'] is not None else 'missed'} |")
+    lines += ["", "### Point collisions in B", "", "| State | Time, min | Coordinates, cm | NPCs |", "|---|---|---|---|"]
+    for state, item in points["by_state"].items():
+        for collision in item["collisions"]:
+            lines.append(f"| {state} | {collision['t_min']} | {collision['point']} | {', '.join(collision['npcs'])} |")
+    lines.append("")
+    events = result["activity_events"]
+    lines += [f"## Activities by events in {label_b}", ""]
+    if events is None:
+        lines += ["No `activity_events` counters in the run.", ""]
+    else:
+        lines += [f"Watchdog restarts {events.get('watchdog')}, expired reservations {events.get('reservation_expired')}, "
+                  f"reservations without a living owner {events.get('reservation_ownerless')}, two NPCs on one place "
+                  f"{events.get('double_occupancy')}.", "",
+                  "| State | Place checks | Wakes |", "|---|---|---|"]
+        for state, item in events.get("states", {}).items():
+            wakes = ", ".join(f"{name} {count}" for name, count in item.get("wakes", {}).items() if count)
+            lines.append(f"| {state} | {item.get('steps', 0)} | {wakes or '—'} |")
+        lines.append("")
+    lines += [f"## By tier in {label_b}", "", "| Tier | Samples | Same ZS | Same TA | Position p50 / p95 / max, m |",
+              "|---|---|---|---|---|"]
+    for tier, item in result["by_tier"].items():
+        lines.append(f"| {tier} | {item['samples']} | {pct(item['same_zs'])} | {pct(item['same_ta'])} | "
+                     f"{fmt(item['pos_p50'], 2)} / {fmt(item['pos_p95'], 2)} / {fmt(item['pos_max'], 1)} |")
+    lines += ["", "## By movement", "", "| Samples | Count | Position p50 / p95 / max, m |",
+              "|---|---|---|"]
+    for name, item in result["by_movement"].items():
+        lines.append(f"| {name} | {item['samples']} | {fmt(item['pos_p50'], 2)} / "
+                     f"{fmt(item['pos_p95'], 2)} / {fmt(item['pos_max'], 1)} |")
+    lines += ["", "## By game hour since the start", "", "| Hour | Same ZS | Same TA | Position p95, m | Max, m |",
+              "|---|---|---|---|---|"]
+    for hour, item in result["by_hour"].items():
+        lines.append(f"| {hour} | {pct(item['same_zs'])} | {pct(item['same_ta'])} | {fmt(item['pos_p95'], 2)} | "
+                     f"{fmt(item['pos_max'], 1)} |")
+    lines += ["", "## NPCs that diverge most", "", "| NPC | Max distance, m | ZS differs, samples | First ZS difference, min |",
+              "|---|---|---|---|"]
+    for npc in result["worst_npcs"]:
+        lines.append(f"| `{npc['key']}` | {fmt(npc['pos_max'], 2)} | {npc['zs_diff']} of {npc['samples']} | "
+                     f"{fmt(npc['first_zs_diff'])} |")
+    if not result["worst_npcs"]:
+        lines.append("| none | 0 | 0 | — |")
+    for name, keys in (("Missing in one run at the end", result["missing_end"]),
+                       ("Alive differs at the end", result["alive_diff_end"]),
+                       ("Inventory differs at the end", result["inventory_diff_end"])):
+        if keys:
+            shown = ", ".join(f"`{key}`" for key in keys[:20])
+            lines += ["", f"{name}: {shown}{' …' if len(keys) > 20 else ''}"]
+    return "\n".join(lines) + "\n"
+
+
+def tolerances_from(args, data=None):
+    tolerances = {}
+    if args.tolerances:
+        if data is None:
+            data = json.loads(Path(args.tolerances).read_text())
+        data = data.get("tolerances", data)
+        unknown = set(data) - set(CHECKS)
+        if unknown:
+            raise SystemExit(f"{args.tolerances}: unknown tolerance {sorted(unknown)}")
+        tolerances.update(data)
+    for name in CHECKS:
+        value = getattr(args, name)
+        if value is not None:
+            tolerances[name] = value
+    return tolerances
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("run_a", metavar="RUN_A")
+    parser.add_argument("run_b", metavar="RUN_B")
+    parser.add_argument("--label-a", default="A")
+    parser.add_argument("--label-b", default="B")
+    parser.add_argument("--out", help="write the Markdown report here (default: stdout)")
+    parser.add_argument("--json", help="write the numbers as JSON here")
+    parser.add_argument("--window", type=float, default=60.0, help="ZS start / death matching window, game minutes")
+    parser.add_argument("--min-hero-distance", type=float, default=0.0,
+                        help="leave out NPC-samples closer to the hero than this many metres in either run")
+    parser.add_argument("--tolerances", help="JSON file of tolerances (keys as the options below, without --)")
+    parser.add_argument("--activity-states", help="comma-separated reference ZS states for activity totals and checks; table remains complete")
+    for name, (kind, label) in CHECKS.items():
+        if kind == "flag":
+            parser.add_argument("--" + name.replace("_", "-"), dest=name, type=lambda v: v.lower() in ("1", "true", "yes"),
+                                help=f"true or false: {label}")
+        else:
+            parser.add_argument("--" + name.replace("_", "-"), dest=name, type=float, help=f"{kind} {label}")
+    args = parser.parse_args(argv)
+    policy = json.loads(Path(args.tolerances).read_text()) if args.tolerances else {}
+    tolerances = tolerances_from(args, policy)
+    states = set(args.activity_states.split(",")) if args.activity_states is not None else None
+    result = compare(load(args.run_a), load(args.run_b), args.window, args.min_hero_distance, states)
+    checks = evaluate(result, tolerances, policy.get("inventory_script_evidence", ()))
+    report = markdown(result, checks, args.label_a, args.label_b)
+    if args.out:
+        Path(args.out).write_text(report)
+    else:
+        sys.stdout.write(report)
+    if args.json:
+        Path(args.json).write_text(json.dumps({"result": result, "checks": checks}, indent=1, ensure_ascii=False))
+    failed = [check["name"] for check in checks if not check["pass"]]
+    if failed:
+        print("npc_day_parity: FAIL " + ", ".join(failed), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

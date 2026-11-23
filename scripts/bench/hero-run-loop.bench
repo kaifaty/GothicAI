@@ -1,0 +1,50 @@
+# The hero's run loop (reports/content/2026-11-hero-locomotion, «Пилот»): a straight run from the side, from behind
+# and in three quarters from the front, then the legs close from the side three times slowed down - judge the feet on
+# the ground and the seam of the loop. Run it twice with the same build, the content root before and after, and judge
+# the takes side by side. A new game, noon, no armour.
+#   TIMEOUT=600 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=local WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=<root> \
+#     scripts/bench.sh scripts/bench/hero-run-loop.bench <abs out>
+seed 73013
+cheat god
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 3000
+watch player
+overlay off
+walkmode run
+cam look 100
+cam follow 400 110 90
+wait 1500
+rec run_side
+walkto NW_CITY_MERCHANT_PATH_09
+wait 5000
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+wait 2000
+cam look 150
+cam follow 340 170 180
+wait 1500
+rec run_behind
+walkto NW_CITY_MERCHANT_PATH_09
+wait 5000
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+wait 2000
+cam look 110
+cam follow 360 120 35
+wait 1500
+rec run_front_quarter
+walkto NW_CITY_MERCHANT_PATH_09
+wait 5000
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+wait 2000
+cam look 50
+cam follow 230 60 90
+wait 1500
+slowmo 3
+rec run_legs_slow
+walkto NW_CITY_MERCHANT_PATH_09
+wait 4500
+stop
+slowmo 1

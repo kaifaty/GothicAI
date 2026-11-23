@@ -1,0 +1,20 @@
+# Two fire arrows lying on the ground by the tavern at night, close (reports/content/remaster/magic-fire/weapon.md).
+seed 73013
+cheat god
+set time 22 0
+overlay off
+ui off
+goto NW_TAVERNE_TROLLAREA_03
+clear 3000
+wait 3000
+set time 22 0
+watch player
+item put ItRw_Addon_FireArrow 140 -10
+item put ItRw_Addon_FireArrow 140 10
+wait 2500
+itemfx
+cam at 41990 3440 -470 41835 3335 -505
+wait 1500
+rec ground
+wait 3000
+stop

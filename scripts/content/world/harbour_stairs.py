@@ -1,13 +1,12 @@
 """Real steps instead of the painted ramp of the harbour stairs (docs/asset-migration.md, step П2).
 
-Blender 5.2, run in the background:
+An edit of world_edit.py on the chunk NEWWORLD/1_-1 (set stairs-3):
 
-    Blender -b --factory-startup --python scripts/content/world/harbour_stairs.py -- \
-        <base world dir>/chunks/1_-1.glb <content world dir>/chunks/1_-1.glb [preview.png]
+    python3 scripts/content/world/world_edit.py build harbour-stairs-newworld-1-1
 
 The ramp NW_HARBOUR_STAIRS_01 below the upper-town path is two triangles with
 12 steps painted on them: one texture tile along the slope holds 6 steps, a
-light tread band (42 % of the period) over a dark riser (58 %). The script
+light tread band (42 % of the period) over a dark riser (58 %). The edit
 replaces the two triangles with 12 treads and risers in the original's
 proportions, each nosing with a 4 cm worn chamfer, (3.20 m rise, 4.00 m run: 26.7 cm riser, 33.3 cm going), the inner
 corners on the old ramp line so the steps run into the side walls without gaps.
@@ -17,12 +16,10 @@ engine now casts itself on the real risers. U across the stair as on the ramp. E
 The converted chunk is Gothic content (a derivative, user's decision
 2026-10-24): it stays outside git.
 """
-import math
-import sys
-
 import bmesh
-import bpy
 from mathutils import Vector
+
+from world_bpy import gothic_name, to_blender, to_gothic
 
 STEPS = 12
 TREAD_SHARE = 0.42          # light band of one period, measured on the texture
@@ -31,27 +28,12 @@ NOSING_SHARE = 0.10         # the lower end of the light band goes on the chamfe
 MATERIAL = 'NW_HARBOUR_STAIRS_01'
 # The ramp in Gothic centimetres (x, z): the bench camera NW_HARBOUR_STAIRS_01 looks at it.
 RAMP_BOX = ((8300.0, 8850.0), (-5150.0, -4550.0))
+PARAMETERS = {'material': MATERIAL, 'steps': STEPS, 'tread_share': TREAD_SHARE, 'nosing_cm': NOSING,
+              'nosing_share': NOSING_SHARE, 'ramp_box_cm': {'x': list(RAMP_BOX[0]), 'z': list(RAMP_BOX[1])}}
 
 
-def to_gothic(v):
-    # glTF stores (-x, y, z) cm; Blender's importer turns glTF (x, y, z) into (x, -z, y).
-    return Vector((-v.x, v.z, -v.y))
-
-
-def to_blender(g):
-    return Vector((-g.x, -g.z, g.y))
-
-
-def gothic_name(material):
-    record = material.get('gothic') if material else None
-    return record.get('name') if record else None
-
-
-def main(src, dst, preview):
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.import_scene.gltf(filepath=src)
-    obj = next(o for o in bpy.context.scene.objects if o.type == 'MESH')
-    me = obj.data
+def edit(ctx):
+    me = ctx.mesh
     slot = next(i for i, m in enumerate(me.materials) if gothic_name(m) == MATERIAL)
 
     uv_layer = me.uv_layers.active.name
@@ -114,6 +96,8 @@ def main(src, dst, preview):
           f'step {rise / STEPS:.2f} x {horizontal.length / STEPS:.2f} cm; u {u0:.3f}..{u1:.3f}, '
           f'v {v_top:.3f}..{v_bottom:.3f}')
 
+    # the ramp's outline opens where the walls met it: the steps meet the walls along the same line
+    ctx.allow_open(ramp, 'outline of the painted ramp')
     bmesh.ops.delete(bm, geom=ramp, context='FACES_ONLY')
     reuse = {k: c[0] for k, c in (('b0', b0), ('b1', b1), ('t0', t0), ('t1', t1)) if c[0].is_valid}
 
@@ -188,6 +172,7 @@ def main(src, dst, preview):
         face([a, b, c, d], [Vector((u0, v_edge)), Vector((u1, v_edge)), Vector((u1, v_back)), Vector((u0, v_back))],
              tread_normal)
 
+    ctx.allow_open([f for f, _ in new_faces], 'the sides of the steps run into the side walls')
     bm.to_mesh(me)
     bm.free()
     me.validate()
@@ -214,39 +199,4 @@ def main(src, dst, preview):
     me.attributes.remove(me.attributes['loop_index'])
 
     tris = sum(len(p.vertices) - 2 for p in me.polygons)
-    print(f'chunk: {len(me.polygons)} faces, {tris} triangles after the edit')
-
-    bpy.ops.object.select_all(action='DESELECT')
-    obj.select_set(True)
-    bpy.ops.export_scene.gltf(filepath=dst, export_format='GLB', use_selection=True, export_extras=True,
-                              export_attributes=True, export_vertex_color='ACTIVE', export_all_vertex_colors=True)
-
-    if preview:
-        render_preview(obj, b0[1], t1[1], preview)
-
-
-def render_preview(obj, lo, hi, path):
-    scene = bpy.context.scene
-    scene.render.engine = 'BLENDER_WORKBENCH'
-    scene.display.shading.light = 'STUDIO'
-    scene.display.shading.color_type = 'MATERIAL'
-    scene.render.resolution_x, scene.render.resolution_y = 1024, 768
-    centre = to_blender((lo + hi) * 0.5) * 0.01
-    cam = bpy.data.objects.new('cam', bpy.data.cameras.new('cam'))
-    scene.collection.objects.link(cam)
-    scene.camera = cam
-    # From the plaza at the foot of the stairs, eye height, looking up the flight.
-    direction = (to_blender(hi) - to_blender(lo)).normalized()
-    cam.location = centre - Vector((direction.x, direction.y, 0)).normalized() * 6.0 + Vector((0, 0, 1.0))
-    cam.rotation_euler = (centre - cam.location).to_track_quat('-Z', 'Y').to_euler()
-    cam.data.lens = 24
-    for m in obj.data.materials:
-        if m:
-            m.diffuse_color = (0.55, 0.52, 0.48, 1.0) if gothic_name(m) != MATERIAL else (0.85, 0.6, 0.3, 1.0)
-    scene.render.filepath = path
-    bpy.ops.render.render(write_still=True)
-
-
-if __name__ == '__main__':
-    args = sys.argv[sys.argv.index('--') + 1:]
-    main(args[0], args[1], args[2] if len(args) > 2 else None)
+    print(f'chunk: {len(me.polygons)} faces, {tris} triangles after the stairs')

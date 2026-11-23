@@ -129,6 +129,7 @@ targets = {texture_key(name) for name in expected}
 albedos = {texture_key(name): 'materials/' + entry['albedo'].replace('\\', '/').casefold()
            for name, entry in expected.items()}
 opened = {texture_key(row['name']) for row in census['files'] if row['kind'] == 'texture'}
+opened.update(texture_key(row['name']) for row in census['replacements'] if row['kind'] == 'basetexture')
 replaced = {texture_key(row['name']) for row in census['replacements'] if row['kind'] == 'texture'}
 if variant != 'before':
     require(not (targets & opened), 'original target textures opened: ' + ', '.join(sorted(targets & opened)))
@@ -251,6 +252,10 @@ if [[ "${1:-}" == --remote ]]; then
   [[ "$TASK" == "$HOME/gothic-ai/city-set-${SET#city-}" && "$RUN" =~ ^[a-zA-Z0-9_-]+$ ]] || exit 2
   CAPTURE="$TASK/inputs/$RUN"
   export CITY_CAPTURE_ROOT="$CAPTURE/runtime"
+  game_environment="$(python3 "$(dirname "$0")/ryzen_game.py")"
+  eval "$game_environment"
+  GAME_BIN="$CITY_CAPTURE_ROOT/build/opengothic/Gothic2Notr" \
+    bash "$(dirname "$0")/base-ensure.sh" "$GOTHIC_DIR"
   OUT="$TASK/runs/$RUN"
   mkdir -p "$OUT"
   VARIANTS=(before after)
@@ -293,6 +298,14 @@ fi
 [[ -n "$CONTENT" && -n "$OUT" ]] || { echo 'need --content-root and --output' >&2; exit 2; }
 [[ -d "$CONTENT" ]] || { echo 'content root does not exist' >&2; exit 2; }
 CONTENT="$(cd "$CONTENT" && pwd -P)"
+if [[ "$MAC" == 0 ]]; then
+  GAME_ENV=()
+  for name in OPENGOTHIC_BASE OPENGOTHIC_BASE_FINGERPRINT OPENGOTHIC_VIDEOS_FINGERPRINT OPENGOTHIC_BASE_CACHE OPENGOTHIC_BASE_STORE; do
+    [[ ! ${!name+x} ]] || GAME_ENV+=("$name=${!name}")
+  done
+  printf -v GAME_CHECK '%q ' env ${GAME_ENV[@]+"${GAME_ENV[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")" --check
+  ssh -T -o BatchMode=yes -o ConnectTimeout=10 "$HOST" "$GAME_CHECK"
+fi
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd -P)"
 case "$OUT" in "$ROOT"|"$ROOT"/*) echo '--output must be outside git' >&2; exit 2 ;; esac
@@ -356,7 +369,7 @@ if [[ "$SET" == city-3 && "$MAC" == 0 ]]; then
   bash "$ROOT/scripts/content/capture-city.sh" --append-census "$STAGING/tools/city.bench" \
     "$ROOT/scripts/content/city-intent.bench" "$STAGING/content/after/materials/materials.json"
 fi
-cp "$ROOT/scripts/content/capture-city.sh" "$STAGING/tools/"
+cp "$ROOT/scripts/content/capture-city.sh" "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$STAGING/tools/"
 cp "$TOOLS/analyze.py" "$TOOLS/discard-ffmpeg.sh" "$STAGING/tools/"
 
 if [[ "$MAC" == 1 ]]; then
@@ -365,6 +378,7 @@ if [[ "$MAC" == 1 ]]; then
   [[ -x "$BIN" && -d "$GOTHIC_DIR" ]] || { echo 'missing Mac binary or game directory' >&2; exit 2; }
   [[ "$(uname)" == Darwin ]] || { echo '--mac-city-fps requires macOS' >&2; exit 2; }
   cp -p "$BIN" "$STAGING/Gothic2Notr"
+  cp -p "${CONTENT_CONVERT:-$(dirname "$BIN")/content-convert}" "$STAGING/content-convert"
   export BIN="$STAGING/Gothic2Notr" SAVE="$STAGING/save_slot_1.sav"
   cp "$TOOLS/gpu-apple.py" "$STAGING/tools/"
   mkdir "$STAGING/tools/empty-textures"
@@ -392,6 +406,7 @@ PY
     (( SECONDS - wait_start < wait_limit )) || { echo "Mac occupied for ${wait_limit}s; no Mac game started" >&2; exit 75; }
     sleep 5
   done
+  GAME_BIN="$BIN" bash "$ROOT/scripts/base-ensure.sh" "$GOTHIC_DIR"
   mkdir -p "$STAGING/captures"
   for variant in before after; do
     printf '%s\t\t\n' "$variant" >"$STAGING/config.tsv"
@@ -425,12 +440,17 @@ PY
 python3 - "$TOOLS/run-ryzen.sh" "$STAGING/tools/run-ryzen.sh" <<'PY'
 from pathlib import Path
 import sys
+import re
 source, output = map(Path, sys.argv[1:])
 text = source.read_text()
 old = 'R="$HOME/gothic-ai/render-features"'
 if text.count(old) != 1:
     raise SystemExit('render-feature Ryzen runner task-root assignment changed')
-output.write_text(text.replace(old, 'R="${CITY_CAPTURE_ROOT:?}"'))
+text = text.replace(old, 'R="${CITY_CAPTURE_ROOT:?}"')
+text, count = re.subn(r'(?<= -g )"[^"]+"', '"${GOTHIC_DIR:?}"', text, count=1)
+if count != 1:
+    raise SystemExit("render-feature runner game argument changed")
+output.write_text(text)
 PY
 cp "$TOOLS/gpu-nvidia.py" "$STAGING/tools/"
 TASK_NAME="city-set-${SET#city-}"
@@ -448,12 +468,12 @@ bin="$HOME/gothic-ai/engine-cache/$digest/Gothic2Notr"
 for feature in OPENGOTHIC_CONTENT OPENGOTHIC_CENSUS; do
   grep -aq "$feature" "$bin" || { echo "cached engine lacks $feature" >&2; exit 2; }
 done
-[[ -d "$HOME/gothic-ai/game/Data" ]]
 mkdir -p "$task/inputs"
 mkdir "$task/inputs/$run"
 runtime="$task/inputs/$run/runtime"
 mkdir -p "$runtime/build/opengothic" "$runtime/tools" "$runtime/hd-textures/textures" "$task/inputs/$run/content"
 cp -p "$bin" "$runtime/build/opengothic/Gothic2Notr"
+cp -p "$(dirname "$bin")/content-convert" "$runtime/build/opengothic/content-convert"
 printf '%s\n' "$digest" >"$runtime/build/source.sha256"
 SH
 RUNTIME="$TASK/inputs/$RUN/runtime"
@@ -466,7 +486,7 @@ GQ_OWNER="$TASK_NAME" "$ROOT/scripts/gq" --host "$HOST" run \
   --class quick --threads 4 --mem 5G --gpu-mem 4G --display --display-exclusive \
   --max "${CITY_CAPTURE_MAX:-20m}" --wait-max "${RYZEN_LOCK_WAIT:-900}" \
   --name "$SET captures" -- \
-  bash "$RUNTIME/tools/capture-city.sh" --remote "$TASK" "$RUN" "$SET" 2>&1 | tee "$STAGING/capture.log"
+  env ${GAME_ENV[@]+"${GAME_ENV[@]}"} bash "$RUNTIME/tools/capture-city.sh" --remote "$TASK" "$RUN" "$SET" 2>&1 | tee "$STAGING/capture.log"
 rc="${PIPESTATUS[0]}"
 set -e
 rsync -a -- "$HOST:$TASK/runs/$RUN/" "$STAGING/captures/" || { [[ "$rc" != 0 ]] || rc=1; }

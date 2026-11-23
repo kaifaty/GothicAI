@@ -1,0 +1,40 @@
+# Muscle relief of the hero's body under a low sun (reports/content/2026-11-hero-body/naked-body.md): the hero turns
+# a quarter at a time, the camera stays on his torso, front then back, so the sun rakes across it from four sides.
+#   TIMEOUT=600 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=<root or empty> \
+#     scripts/bench.sh scripts/bench/hero-body-relief.bench <out>
+seed 73013
+cheat god
+set time 17 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 3000
+watch player
+overlay off
+cam look 128
+turn 90
+cam follow 115 135 0
+wait 3000
+shot torso_0
+cam follow 115 135 180
+wait 3000
+shot back_0
+turn 90
+cam follow 115 135 0
+wait 3000
+shot torso_90
+cam follow 115 135 180
+wait 3000
+shot back_90
+turn 90
+cam follow 115 135 0
+wait 3000
+shot torso_180
+cam follow 115 135 180
+wait 3000
+shot back_180
+turn 90
+cam follow 115 135 0
+wait 3000
+shot torso_270
+cam follow 115 135 180
+wait 3000
+shot back_270

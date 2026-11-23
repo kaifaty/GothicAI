@@ -6,10 +6,10 @@
 #include "world/collisionzone.h"
 #include "physics/dynamicworld.h"
 #include "graphics/meshobjects.h"
+#include "graphics/pfx/pfxslot.h"
 
 class World;
 class ParticleFx;
-class PfxBucket;
 class PfxObjects;
 class PfxEmitterMesh;
 
@@ -25,16 +25,20 @@ class PfxEmitter {
     PfxEmitter& operator=(PfxEmitter&& b);
     PfxEmitter(const PfxEmitter&)=delete;
 
-    bool     isEmpty() const { return bucket==nullptr && cpuDecl==nullptr; }
+    bool     isEmpty() const { return slot.isEmpty() && cpuDecl==nullptr; }
     void     setPosition (float x,float y,float z);
     void     setPosition (const Tempest::Vec3& pos);
     void     setDirection(const Tempest::Matrix4x4& pos);
     void     setObjMatrix(const Tempest::Matrix4x4& mt);
     bool     renderPosition(Tempest::Vec3& out) const;
+    // where the emitter is: its slot's place, the headless one's position; false - no emitter
+    bool     position(Tempest::Vec3& out) const;
     void     setActive(bool act);
     bool     isActive() const;
     void     setLooped(bool loop);
-    void     setMesh(const MeshObjects::Mesh* mesh, const Pose* pose);
+    // skin: the mesh's own bone matrices (a render rig's palette, graphics/mesh/renderrig), else the pose's
+    void     setMesh(const MeshObjects::Mesh* mesh, const Pose* pose,
+                     const std::vector<Tempest::Matrix4x4>* skin = nullptr);
 
     void     setTarget(const Npc* tg);
 
@@ -45,10 +49,8 @@ class PfxEmitter {
     bool     isAlive() const;
 
   private:
-    PfxEmitter(PfxBucket &b,size_t id);
-
-    PfxBucket* bucket = nullptr;
-    size_t     id     = size_t(-1);
+    // the world's time it was born: its looped pulse counts from it, as its light's keys do (graphics/effect)
+    void     setBorn(uint64_t worldTime);
 
     // The headless adapter retains the declared effect's gameplay collision zone;
     // it never constructs a PfxObjects bucket or emits rendering particles.
@@ -61,9 +63,9 @@ class PfxEmitter {
     uint64_t          cpuStopped = 0;
 
     CollisionZone      zone;
-    MeshObjects::Mesh  shpMesh;
-
-  friend class PfxBucket;
-  friend class PfxObjects;
+    // the place in the particle bucket; declared last, so it is freed first, as before
+    PfxSlot            slot;
+    // particles.d "with": the effects this one brings along, at the same place and in the same state
+    std::vector<PfxSlot> extra;
   };
 

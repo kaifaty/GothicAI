@@ -1,6 +1,8 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from gothic_ai.chronicle import Fact
 from gothic_ai.people_knowledge import SOURCES, PeopleKnowledge, rumor_subject, source_event, source_events
 
@@ -27,6 +29,33 @@ def _rumor(subject=HILDA, name="Хильда", key="T1", **extra) -> Fact:
 
 def _desk(facts: list[Fact]) -> PeopleKnowledge:
     return PeopleKnowledge(SimpleNamespace(facts=lambda: list(facts)))
+
+
+@pytest.mark.parametrize(("kind", "text"), [
+    ("no_blood", "Лобарт не терпит, когда при нём льётся кровь"),
+    ("no_reward", "Лобарт больше ценит тех, кто помогает не ради платы"),
+    ("secret_kept", "Лобарт ценит тех, кто умеет держать язык за зубами"),
+    ("mercy", "Лобарт говорит, что пощадить труднее, чем убить"),
+])
+def test_challenge_hints_keep_the_exact_words_about_the_giver(kind, text):
+    fact = {
+        "fact": "challenge_hint", "id": "CH1", "challenge": 12, "kind": kind,
+        "npc": LOBART, "name": "Лобарт", "witnesses": [HILDA],
+        "witness_names": {HILDA: "Хильда"},
+    }
+    desk = _desk([fact])
+    [entry] = desk.of(HILDA)
+    assert entry.subject == LOBART and entry.description() == text
+    assert desk.warning(HILDA, LOBART) == f"({text})"
+    rumor = {
+        "fact": "rumor", "kind": entry.kind, "subject": entry.subject,
+        "subject_name": entry.subject_name, "quest": entry.key,
+        "about": entry.about, "about_name": entry.about_name,
+        "from": HILDA, "from_name": "Хильда", "to": VINO, "hops": 1,
+    }
+    heard = _desk([fact, rumor])
+    assert heard.of(VINO)[0].description() == text
+    assert heard.warning(VINO, LOBART) == f"(ты слышал, что {text}; со слов: Хильда)"
 
 
 def test_accusation_rumor_preserves_owner_belief_without_proving_theft():
@@ -200,3 +229,28 @@ async def test_turn_extension_has_only_situation():
     assert desk.situation(LOBART) == desk.context(LOBART)
     assert desk.tools(LOBART) == [] and desk.all_tools == ()
     assert await desk.handle(None, None, None, None) is None
+
+
+def test_fame_situation_knows_witnesses_and_hearers_without_duplicates_and_rewinds():
+    fame = {
+        "fact": "feat_fame", "feat": "F1", "title": "Вернул чужое",
+        "text": "Вернул кошель без награды.", "witnesses": [LOBART], "day": 1,
+    }
+    rumor = {
+        "fact": "rumor", "kind": "fame", "feat": "F1", "quest": "F1", "to": VINO,
+        "from": LOBART, "from_name": "Лобарт", "title": fame["title"], "text": fame["text"],
+    }
+    facts = [fame, rumor, fame.copy(), rumor.copy(), {**rumor, "to": LOBART}]
+    desk = _desk(facts)
+    prefix = "Что о герое говорят люди:\n- «Вернул чужое» — Вернул кошель без награды. "
+    suffix = "\nМожешь узнать героя по этой славе и назвать его так своими словами."
+    assert desk.situation(LOBART) == prefix + "(ты видел это сам)" + suffix
+    assert desk.situation(VINO) == prefix + "(со слов: Лобарт)" + suffix
+    assert desk.situation(HILDA) is None
+    facts.extend({**fame, "feat": f"F{i}", "title": f"Дело {i}"} for i in range(2, 6))
+    context = desk.situation(LOBART)
+    assert context is not None and context.count("\n- ") == 3
+    assert context.index("Дело 5") < context.index("Дело 4") < context.index("Дело 3")
+    assert "Дело 2" not in context and "Вернул чужое" not in context
+    facts.clear()
+    assert desk.situation(LOBART) is None and desk.situation(VINO) is None

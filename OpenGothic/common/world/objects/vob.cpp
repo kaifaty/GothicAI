@@ -20,8 +20,10 @@
 #include "world/triggers/touchdamage.h"
 #include "world/triggers/cscamera.h"
 #include "world/voblight.h"
+#include "world/voblayer.h"
 #include "world/world.h"
 #include "game/serialize.h"
+#include "loadprobe.h"
 
 using namespace Tempest;
 
@@ -30,7 +32,8 @@ Vob::Vob(World& owner)
   }
 
 Vob::Vob(Vob* parent, World& owner, const asset::VirtualObject& vob, Flags flags)
-  : world(owner), vobType(vob.type), vobObjectID(vob.id), parent(parent) {
+  : world(owner), vobType(vob.type), vobObjectID(vob.id),
+    layerObject(VobLayer::isAdded(vob)), parent(parent) {
   pos   = Tempest::Matrix4x4(vob.rotation.columns[0].x, vob.rotation.columns[1].x, vob.rotation.columns[2].x, vob.position.x,
                              vob.rotation.columns[0].y, vob.rotation.columns[1].y, vob.rotation.columns[2].y, vob.position.y,
                              vob.rotation.columns[0].z, vob.rotation.columns[1].z, vob.rotation.columns[2].z, vob.position.z,
@@ -174,7 +177,59 @@ void Vob::recalculateTransform() {
   }
 
 
+static const char* probeVobType(const asset::VirtualObject& vob) {
+  using T=asset::VirtualObjectType;
+  switch(vob.type) {
+    case T::zCVob:
+    case T::zCVobStair:
+    case T::zCVobAnimate:
+      if(vob.visual!=nullptr) {
+        if(vob.visual->type==asset::VisualType::DECAL) return "decal";
+        if(vob.visual->type==asset::VisualType::PARTICLE_EFFECT) return "pfx";
+        if(vob.visual->type==asset::VisualType::MESH || vob.visual->type==asset::VisualType::MULTI_RESOLUTION_MESH ||
+           vob.visual->type==asset::VisualType::MODEL || vob.visual->type==asset::VisualType::MORPH_MESH)
+          return "static_mesh";
+        }
+      return "other";
+    case T::oCMobContainer: return "mob_container";
+    case T::oCMobDoor: return "mob_door";
+    case T::oCMobFire:
+    case T::oCMOB:
+    case T::oCMobInter:
+    case T::oCMobBed:
+    case T::oCMobSwitch:
+    case T::oCMobLadder:
+    case T::oCMobWheel: return "mob_other";
+    case T::zCMover: return "mover";
+    case T::oCItem: return "item";
+    case T::zCVobLight: return "light";
+    case T::zCVobSound:
+    case T::zCVobSoundDaytime: return "sound";
+    case T::oCZoneMusic:
+    case T::oCZoneMusicDefault:
+    case T::zCZoneZFog:
+    case T::zCZoneZFogDefault:
+    case T::zCZoneVobFarPlane:
+    case T::zCZoneVobFarPlaneDefault: return "zone";
+    case T::zCPFXController: return "pfx";
+    case T::zCCodeMaster:
+    case T::zCTriggerList:
+    case T::oCTriggerScript:
+    case T::zCTriggerWorldStart:
+    case T::oCTriggerChangeLevel:
+    case T::zCTrigger:
+    case T::zCMessageFilter:
+    case T::oCTouchDamage:
+    case T::zCTriggerUntouch:
+    case T::zCMoverController:
+    case T::zCEarthquake:
+    case T::oCCSTrigger: return "trigger";
+    default: return "other";
+    }
+  }
+
 std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const asset::VirtualObject& vob, Flags flags) {
+  LoadProbe::Vobs::TypeScope probe([&] { return probeVobType(vob); });
   switch(vob.type) {
     case asset::VirtualObjectType::UNKNOWN:
       return nullptr;
@@ -244,8 +299,9 @@ std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const asset::VirtualOb
       return std::unique_ptr<Vob>(new Vob(parent,world,vob,flags));
       }
     case asset::VirtualObjectType::oCItem: {
-      if(flags)
-        world.addItem(reinterpret_cast<const asset::VItem&>(vob));
+      // Rebuild the complete authored catalogue before loading saved items.
+      // Trigger parents clear Static, including on their Item descendants.
+      world.addItem(reinterpret_cast<const asset::VItem&>(vob));
       // FIXME
       return std::unique_ptr<Vob>(new Vob(parent,world,vob,flags));
       }
@@ -286,7 +342,9 @@ std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const asset::VirtualOb
 void Vob::saveVobTree(Serialize& fin) const {
   for(auto& i:child)
     i->saveVobTree(fin);
-  if(vobType==asset::VirtualObjectType::zCVob)
+  // Layer additions are static content, reconstructed once from the current
+  // world on every load, and never enter the base-ID save namespace.
+  if(layerObject || vobType==asset::VirtualObjectType::zCVob)
     return;
   if(vobObjectID!=uint32_t(-1))
     save(fin);
@@ -301,7 +359,7 @@ void Vob::loadVobTree(Serialize& fin) {
 
   for(auto& i:child)
     i->loadVobTree(fin);
-  if(vobObjectID!=uint32_t(-1) && vobType!=asset::VirtualObjectType::zCVob)
+  if(!layerObject && vobObjectID!=uint32_t(-1) && vobType!=asset::VirtualObjectType::zCVob)
     load(fin);
   }
 
@@ -323,4 +381,19 @@ void Vob::load(Serialize& fin) {
       throw std::logic_error("inconsistent *.sav vs world");
     }
   moveEvent();
+  }
+
+
+size_t Vob::probeBaseBytes() const {
+  // Only rootVobs/child unique_ptr allocations call this traversal. Include
+  // the derived object's inline storage, including ObjVisual's pose arrays.
+  size_t bytes=sizeof(Vob);
+#if defined(__APPLE__)
+  bytes=malloc_size(dynamic_cast<const void*>(this));
+#elif defined(__GLIBC__)
+  bytes=malloc_usable_size(const_cast<void*>(dynamic_cast<const void*>(this)));
+#endif
+  bytes+=child.capacity()*sizeof(child[0]);
+  for(const auto& vob:child) bytes+=vob->probeBaseBytes();
+  return bytes;
   }

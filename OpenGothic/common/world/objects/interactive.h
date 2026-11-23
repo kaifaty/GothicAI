@@ -4,28 +4,21 @@
 #include "asset/worldtypes.h"
 
 #include "graphics/mesh/animationsolver.h"
+#include "graphics/mesh/animationinteractive.h"
 #include "graphics/objvisual.h"
 #include "world/triggers/abstracttrigger.h"
 #include "game/inventory.h"
 #include "utils/keycodec.h"
 #include "vob.h"
+#include "animationsound.h"
 
 class Npc;
 class World;
 class Trigger;
 struct HeroDeed;
 
-class Interactive : public Vob {
+class Interactive : public Vob, public AnimationSound, public AnimationInteractive {
   public:
-    enum Anim : int8_t {
-      In        =  1,
-      Active    =  0,
-      Out       = -1,
-
-      ToStand   = 10,
-      FromStand = 11,
-      };
-
     Interactive(Vob* parent, World& world, const asset::VMovableObject& vob, Flags flags);
 
     void                load(Serialize& fin) override;
@@ -61,7 +54,7 @@ class Interactive : public Vob {
     int32_t             stateCount() const { return stateNum; }
     bool                setMobState(std::string_view scheme,int32_t st) override;
     void                emitTriggerEvent(TriggerEvent::Type type) const;
-    void                emitSoundEffect(std::string_view sound, float range, bool freeSlot);
+    void                emitSoundEffect(std::string_view sound, float range, bool freeSlot) override;
     std::string_view    schemeName() const;
     std::string_view    posSchemeName() const;
 
@@ -80,12 +73,13 @@ class Interactive : public Vob {
     std::string_view    startItems() const { return startContents; }  // "ItMi_Gold:29,ItRw_Arrow:15"
 
     Inventory&          inventory();
-    void                setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot);
+    void                setSlotItem(ItemView&& itm, std::string_view slot);
 
     uint32_t            stateMask() const;
 
     bool                canSeeNpc(const Npc &npc, bool freeLos) const;
     Tempest::Vec3       nearestPoint(const Npc& to) const;
+    std::string_view    useItem() const { return useWithItem; }  // the item one needs in hand to use it, or none
 
     bool                isAvailable() const;
     bool                isStaticState() const;
@@ -94,8 +88,9 @@ class Interactive : public Vob {
     bool                attach(Npc& npc);
     bool                detach(Npc& npc, bool quick);
     bool                isAttached(const Npc& to);
+    size_t              userCount() const;
 
-    auto                animNpc(const AnimationSolver &solver, Anim t) const -> const Animation::Sequence*;
+    auto                animNpc(const AnimationSolver &solver, Anim t) const -> const Animation::Sequence* override;
     void                marchInteractives(DbgPainter& p) const;
 
   protected:

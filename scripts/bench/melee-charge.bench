@@ -1,0 +1,134 @@
+# Charged hero attacks, with the accepted 1H content. Run unchanged with MELEE_CHARGE=1 and 0.
+# WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 MELEE_STAMINA=1 MELEE_POSTURE=1 MELEE_STAGGER=1
+# OPENGOTHIC_CONTENT=/Users/kaifat/.local/share/gothic-ai/content-staging/anim-strikes
+# Input timestamps and animation transitions are in bench.log; blade contacts carry charge_mult.
+# Charge time starts after the 200 ms input threshold: 800 ms on the key gives c=0.6, 1700 ms gives c=1.
+# The same holds with the flag off start ordinary attacks at the press.
+seed 73013
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+stats hp 100000 hpmax 100000
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+turn 180
+pin BDT_1013_BANDIT_L 125 0 0
+wait 300
+pin off
+wait 2000
+rec charge novideo
+
+# (a) Classic controls: releasing either of the two keys resolves a short tap.
+mark a-classic-forward-release-100ms
+press action
+hold forward 100
+wait 1800
+release all
+wait 4000
+mark a-classic-action-release-100ms
+press action
+press forward
+wait 100
+release action
+wait 1000
+release all
+wait 4000
+
+melee-shadow controls g2
+pin BDT_1013_BANDIT_L 125 0 0
+mark a-g2-tap-100ms
+hold attack 100
+wait 1800
+pin off
+wait 4000
+
+# (b) 600 ms since windup began: the windup reaches its loop before release; c=0.6, damage x1.6.
+pin BDT_1013_BANDIT_L 125 0 0
+mark b-charge-600ms-key-800ms
+hold attack 800
+wait 2400
+hp BDT_1013_BANDIT_L
+pin off
+wait 6000
+
+# (c) 1500 ms since windup began: c is capped at 1, damage x2.
+pin BDT_1013_BANDIT_L 125 0 0
+mark c-charge-1500ms-key-1700ms
+hold attack 1700
+wait 3300
+hp BDT_1013_BANDIT_L
+pin off
+wait 6000
+
+# (d) Four seconds on the key: automatic release at 3000 ms since windup (3200 ms since the press).
+pin BDT_1013_BANDIT_L 125 0 0
+mark d-auto-release-key-4000ms
+hold attack 4000
+wait 4800
+pin off
+wait 6000
+
+# (e) Damage at 300 ms on the key must preserve the windup and the later release.
+pin BDT_1013_BANDIT_L 125 0 0
+mark e-super-armor-input-300ms
+hold attack 1200
+wait 300
+strike player BDT_1013_BANDIT_L
+anims
+wait 2500
+pin off
+wait 6000
+
+# (f) Dodge while the charge loop is held; the key's later release must not launch a charge hit.
+pin BDT_1013_BANDIT_L 125 0 0
+mark f-dodge-cancels
+hold attack 1200
+wait 800
+tap dodge
+wait 1800
+pin off
+wait 6000
+
+# (g) The charged HeavyHit knocks down a bandit stunned specifically by posture.
+pin BDT_1013_BANDIT_L 125 0 0
+mark g-posture-knockdown
+stun BDT_1013_BANDIT_L posture
+hold attack 800
+wait 2400
+hp BDT_1013_BANDIT_L
+pin off
+wait 8000
+
+# (h) No charge for a two-hander: animation begins at the press.
+melee-shadow weapon 2h
+wait 600
+pin BDT_1013_BANDIT_L 140 0 0
+mark h-two-handed-immediate
+hold attack 100
+wait 1800
+pin off
+wait 6000
+
+# The Marvin switch changes the same setting at runtime; in the ON run this is the vanilla control.
+melee-shadow weapon 1h
+wait 600
+toggle melee_charge
+mark toggle-inverted
+hold attack 800
+wait 2400
+toggle melee_charge
+release all
+stop

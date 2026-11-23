@@ -10,15 +10,34 @@
 #include "lighting/purkinje_shift.glsl"
 
 #include "upscale/lanczos.glsl"
+#if defined(RCAS)
+#include "antialiasing/rcas.glsl"
+#endif
 
+#if defined(BLOOM)
+// the frame of a temporal upscale (graphics plan 1г) or of the TAA resolve (RCAS, its sharpening with it): the bloom
+// goes in here, as bloom_mix.frag would put it
+layout(push_constant, std140) uniform PushConstant {
+  VideoSettings settings;
+  float         bloomStrength;
+  float         bloomLevels;
+#if defined(RCAS)
+  float         sharpness;
+#endif
+  } push;
+#else
 layout(push_constant, std140) uniform PushConstant {
   VideoSettings settings;
   } push;
+#endif
 
 layout(binding  = 0, std140) uniform UboScene {
   SceneDesc scene;
   };
 layout(binding  = 1) uniform sampler2D textureD;
+#if defined(BLOOM)
+layout(binding  = 2) uniform sampler2D bloom;
+#endif
 
 layout(location = 0) in  vec2 uv;
 layout(location = 0) out vec4 outColor;
@@ -79,8 +98,14 @@ void main() {
 
 #if defined(UPSCALE)
   vec3  color      = lanczosUpscale(textureD, uv).rgb;
+#elif defined(RCAS)
+  vec3  color      = rcas(textureD, ivec2(gl_FragCoord.xy), push.sharpness);
 #else
   vec3  color      = textureLod(textureD, uv, 0).rgb;
+#endif
+#if defined(BLOOM)
+  // scene*(1-k) + bloom*k, the chain's levels averaged (bloom_mix.frag)
+  color = color*(1.0 - push.bloomStrength) + textureLod(bloom, uv, 0).rgb*(push.bloomStrength/push.bloomLevels);
 #endif
 
   {

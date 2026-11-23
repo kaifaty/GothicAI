@@ -1,0 +1,105 @@
+== base
+  cases: 40
+  errors: 0
+  warm prefill ms p50/mean: (865, 824)
+  warm tokens mean: 2106
+  warm tok/s (sum): 2555
+  fw prefill ms p50/mean: (737, 676)
+  fw prefill tokens mean: 1659
+  fw first token ms p50: 756
+  fw first sentence ms p50/p90/mean: (894, 1142, 860)
+  line decode tok/s mean: 80.5
+  line tokens mean: 45.6
+  line first sentence ms p50: 530
+  line total ms p50/mean: (864, 891)
+  draft accepted: -
+  concurrent wall ms mean: 5214
+  concurrent agg tok/s: 33
+  concurrent per-stream tok/s mean: 42.9
+  concurrent errors: 0
+  fw samples: ['[hostile] Ты смеешь так со мной обращаться? Твоя дерзость гр', '[hostile] Ты думаешь, море станет твоим убежищем от тьмы? Ко', '[neutral] Мои силы не в том, чтобы раздавать дары за каждое ', '[neutral] Честно? Я не люблю болтать лишнего. На этом остров']
+  vram: ['16001', 'MiB', '16027', 'MiB']
+== mtp3
+  cases: 40
+  errors: 0
+  warm prefill ms p50/mean: (997, 945)
+  warm tokens mean: 2124
+  warm tok/s (sum): 2248
+  fw prefill ms p50/mean: (822, 764)
+  fw prefill tokens mean: 1659
+  fw first token ms p50: 841
+  fw first sentence ms p50/p90/mean: (936, 1234, 932)
+  line decode tok/s mean: 85.5
+  line tokens mean: 46.9
+  line first sentence ms p50: 560
+  line total ms p50/mean: (904, 924)
+  draft accepted: 1574/5298 = 30%
+  concurrent wall ms mean: 5550
+  concurrent agg tok/s: 32
+  concurrent per-stream tok/s mean: 42.1
+  concurrent errors: 0
+  fw samples: ['[neutral] Отец? Твои шутки так же слабы, как и твоя решимост', '[hostile] Ты думаешь, море станет твоим убежищем? Море не ск', '[neutral] Мои силы не в том, чтобы раздавать дары за каждое ', '[friendly] Честно? Да не особо много интересного могу сказат']
+  vram: ['16633', 'MiB', '16665', 'MiB']
+== mtp2
+  cases: 40
+  errors: 0
+  warm prefill ms p50/mean: (1024, 963)
+  warm tokens mean: 2124
+  warm tok/s (sum): 2205
+  fw prefill ms p50/mean: (837, 771)
+  fw prefill tokens mean: 1659
+  fw first token ms p50: 854
+  fw first sentence ms p50/p90/mean: (955, 1236, 940)
+  line decode tok/s mean: 91.1
+  line tokens mean: 48.0
+  line first sentence ms p50: 572
+  line total ms p50/mean: (891, 910)
+  draft accepted: 1473/3819 = 39%
+  concurrent wall ms mean: 5653
+  concurrent agg tok/s: 31
+  concurrent per-stream tok/s mean: 42.0
+  concurrent errors: 0
+  fw samples: ['[neutral] Отец? Твои шутки так же слабы, как и твоя решимост', '[hostile] Ты думаешь, море станет твоим убежищем? Море не ск', '[neutral] Мои силы не в том, чтобы раздавать дары за каждое ', '[friendly] Честно? Да не особо много интересного могу сказат']
+  vram: ['16633', 'MiB', '16665', 'MiB']
+== mtp4
+  cases: 40
+  errors: 0
+  warm prefill ms p50/mean: (1026, 961)
+  warm tokens mean: 2124
+  warm tok/s (sum): 2210
+  fw prefill ms p50/mean: (845, 771)
+  fw prefill tokens mean: 1659
+  fw first token ms p50: 860
+  fw first sentence ms p50/p90/mean: (973, 1261, 940)
+  line decode tok/s mean: 80.1
+  line tokens mean: 45.6
+  line first sentence ms p50: 557
+  line total ms p50/mean: (923, 956)
+  draft accepted: 1643/6764 = 24%
+  concurrent wall ms mean: 5655
+  concurrent agg tok/s: 32
+  concurrent per-stream tok/s mean: 41.5
+  concurrent errors: 0
+  fw samples: ['[neutral] Отец? Твои шутки так же слабы, как и твоя решимост', '[hostile] Ты думаешь, море станет твоим спасением? Когда дра', '[neutral] Твоё высокомерие смешно. Моя сила — в знаниях, а н', '[friendly] Честно? Да особо и нечего. Жизнь на острове — шту']
+  vram: ['16633', 'MiB', '16665', 'MiB']
+== base2
+  cases: 40
+  errors: 0
+  warm prefill ms p50/mean: (886, 841)
+  warm tokens mean: 2106
+  warm tok/s (sum): 2503
+  fw prefill ms p50/mean: (745, 684)
+  fw prefill tokens mean: 1659
+  fw first token ms p50: 763
+  fw first sentence ms p50/p90/mean: (904, 1165, 875)
+  line decode tok/s mean: 78.7
+  line tokens mean: 45.6
+  line first sentence ms p50: 549
+  line total ms p50/mean: (885, 919)
+  draft accepted: -
+  concurrent wall ms mean: 5383
+  concurrent agg tok/s: 32
+  concurrent per-stream tok/s mean: 41.9
+  concurrent errors: 0
+  fw samples: ['[hostile] Ты смеешь так со мной обращаться? Твоя дерзость гр', '[hostile] Ты думаешь, море станет твоим убежищем от тьмы? Ко', '[neutral] Мои силы не в том, чтобы раздавать дары за каждое ', '[neutral] Честно? Я не люблю болтать лишнего. На этом остров']
+  vram: ['16001', 'MiB']

@@ -1,17 +1,21 @@
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
+import numpy as np
 import pytest
 
 from gothic_tts import cli, service
 from gothic_tts.cli import load_env_file
-from gothic_tts.providers import TtsError, Voice, inworld
+from gothic_tts.providers import TtsError, Voice, inworld, make_provider
 from gothic_tts.providers.fake import FakeProvider
 from gothic_tts.providers.inworld import CHECK_VOICE, PREVIEW_TEXTS, InworldTTS
 from gothic_tts.service import TtsService
@@ -27,6 +31,7 @@ class FakeInworld:
     def __init__(self) -> None:
         self.requests: list[tuple[str, str, dict]] = []
         self.voices: set[str] = {"Dmitry"}
+        self.library: list[dict] = []
         self.designed = 0
         self.cloned = 0
         self.sample_errors: list[str] = []
@@ -40,6 +45,8 @@ class FakeInworld:
         if req.headers.get("authorization") != "Basic test-key":
             return httpx.Response(401, json={"code": 16, "message": "Unauthenticated"})
         match req.url.path:
+            case "/voices/v1/voices":
+                return httpx.Response(200, json={"voices": self.library})
             case "/tts/v1/voices":
                 return httpx.Response(200, json={"voices": [{"voiceId": v} for v in self.voices]})
             case "/voices/v1/voices:design":
@@ -51,6 +58,10 @@ class FakeInworld:
                 voice_id = f"ws__clone-voice-{self.cloned}"
                 if not self.sample_errors:
                     self.voices.add(voice_id)
+                    self.library.append({
+                        "voiceId": voice_id, "displayName": body["displayName"],
+                        "tags": body["tags"], "languageCode": "ru-RU", "source": "IVC",
+                    })
                 checked = {
                     "warnings": [{"text": "short sample"}],
                     "errors": [{"text": e} for e in self.sample_errors],
@@ -66,6 +77,10 @@ class FakeInworld:
                 voice_id = path.removeprefix("/voices/v1/voices/").removesuffix(":publish")
                 self.voices.add(voice_id)
                 return httpx.Response(200, json={"voiceId": voice_id, "tags": body["tags"]})
+            case path if req.method == "PATCH":
+                voice = next(v for v in self.library if path.endswith(f"/{v['voiceId']}"))
+                voice["tags"] = body["tags"]
+                return httpx.Response(200, json=voice)
             case "/tts/v1/voice:stream":
                 if not self.credits:  # asked before the voice is looked up, as the real one does
                     return httpx.Response(
@@ -111,6 +126,24 @@ def _provider(api: FakeInworld, tmp_path, **opts) -> InworldTTS:
     return InworldTTS(cache=tmp_path / "voices.json", transport=httpx.MockTransport(api), **opts)
 
 
+@pytest.fixture
+def original_base(tmp_path, monkeypatch):
+    selected = tmp_path / "base"
+    selected.mkdir()
+    manifest = json.dumps({"format": "gothic-base-files", "version": 1, "files": []}).encode()
+    (selected / "base-files.json").write_bytes(manifest)
+    (selected / "base.json").write_text(json.dumps({
+        "format": "gothic-base", "version": 2, "fingerprint": "a" * 64,
+        "manifest": {
+            "path": "base-files.json", "size": len(manifest),
+            "sha256": hashlib.sha256(manifest).hexdigest(),
+        },
+    }))
+    monkeypatch.setenv("OPENGOTHIC_BASE", str(selected))
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(tmp_path / "cache"))
+    return selected
+
+
 async def _speak(p: InworldTTS, voice: Voice = XARDAS) -> tuple[bytes, float]:
     parts: list[bytes] = []
 
@@ -122,17 +155,72 @@ async def _speak(p: InworldTTS, voice: Voice = XARDAS) -> tuple[bytes, float]:
     return b"".join(parts), seconds
 
 
+@pytest.mark.parametrize("incomplete", [False, True])
+async def test_recorded_russian_word_timestamps(api, caplog, incomplete) -> None:
+    # Six paid ASYNC measurement requests on 2026-11-10; only audio and word arrays are retained.
+    recording = json.loads((Path(__file__).parent / "fixtures/inworld-word-timestamps.json").read_text())
+    if incomplete:
+        first_alignment = next(
+            msg["result"]["timestampInfo"]["wordAlignment"] for msg in recording
+            if msg["result"].get("timestampInfo", {}).get("wordAlignment", {}).get("words")
+        )
+        first_alignment["wordEndTimeSeconds"].pop()
+    bodies = []
+
+    def transport(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content="\n".join(json.dumps(msg) for msg in recording))
+
+    p = InworldTTS(voice="test-voice", transport=httpx.MockTransport(transport), keep_warm=0)
+    chunks, words, events = [], [], []
+
+    async def chunk(pcm):
+        chunks.append(pcm)
+        events.append("audio")
+
+    async def timings(items):
+        words.extend(items)
+        events.append("words")
+
+    try:
+        duration = await p.synthesize("Слушай внимательно, у нас мало времени.", XARDAS, chunk, timings)
+    finally:
+        await p.aclose()
+    assert bodies[0]["timestampType"] == "WORD" and bodies[0]["timestampTransportStrategy"] == "ASYNC"
+    expected = ["Слушай", "внимательно", "у", "нас", "мало", "времени"]
+    assert [word[0] for word in words] == (expected[1:] if incomplete else expected)
+    assert words[-1][1:] == (1.67, 2.15)
+    assert all(0 <= start <= end <= duration for _, start, end in words)
+    assert all(a[2] <= b[1] for a, b in zip(words, words[1:], strict=False))
+    assert duration == pytest.approx(2.49) and len(chunks) == 6
+    assert events[0] == "audio" and events[-1] == "words"
+    assert caplog.text.count("skipping word timestamps with mismatched array lengths") == int(incomplete)
+    disabled = make_provider("inworld:timestamps=false,keep_warm=0")
+    try:
+        assert "timestampType" not in disabled._body("Hi", "test-voice", "")
+    finally:
+        await disabled.aclose()
+
+
 async def test_voice_designed_once_then_reused(api, tmp_path) -> None:
     p = _provider(api, tmp_path)
     await p.warmup()
     pcm, seconds = await _speak(p)
     assert pcm == b"\1\0" * 100 and seconds == pytest.approx(100 / 24000)
     await _speak(p)
+    requests = len(api.requests)
+    assert await p._designed(XARDAS) == "ws__design-voice-1"
+    p.cache.unlink()
+    assert await p._designed(XARDAS) == "ws__design-voice-1"
+    assert len(api.requests) == requests  # both local cache and the process library avoid the network
     await p.aclose()
 
     assert api.designed == 1
     design = next(body for _, path, body in api.requests if path == "/voices/v1/voices:design")
     assert design["designPrompt"] == XARDAS.description and design["languageCode"] == "ru-RU"
+    published = next(body for _, path, body in api.requests if path.endswith(":publish"))
+    digest = hashlib.sha1(f"ru-RU\n{XARDAS.description}".encode()).hexdigest()[:16]
+    assert published["tags"] == ["gothic-ai", f"design-{digest}"]
     first, second = api.streams()
     assert first["voiceId"] == second["voiceId"] == "ws__design-voice-1"
     assert first["audioConfig"] == {"audioEncoding": "PCM", "sampleRateHertz": 24000}
@@ -145,6 +233,50 @@ async def test_voice_designed_once_then_reused(api, tmp_path) -> None:
     await _speak(again, Voice(XARDAS.id, "A young woman"))
     assert api.designed == 2
     await again.aclose()
+
+
+async def test_workspace_design_matches_name_description_and_language(api, tmp_path) -> None:
+    digest = hashlib.sha1(f"ru-RU\n{XARDAS.description}".encode()).hexdigest()[:16]
+    tag = f"design-{digest}"
+    changed_description = hashlib.sha1(b"ru-RU\nA different voice").hexdigest()[:16]
+    changed_language = hashlib.sha1(f"en-US\n{XARDAS.description}".encode()).hexdigest()[:16]
+    api.library = [
+        {"voiceId": "wrong-name", "displayName": "gothic-ai OTHER", "tags": ["gothic-ai", tag]},
+        {"voiceId": "wrong-description", "displayName": f"gothic-ai {XARDAS.id}",
+         "tags": ["gothic-ai", f"design-{changed_description}"]},
+        {"voiceId": "wrong-language", "displayName": f"gothic-ai {XARDAS.id}",
+         "tags": ["gothic-ai", f"design-{changed_language}"]},
+        *({"voiceId": ident, "displayName": f"gothic-ai {XARDAS.id}", "tags": ["gothic-ai", tag]}
+          for ident in ("oldest-design", "duplicate-design")),
+    ]
+    p = _provider(api, tmp_path, keep_warm=0)
+    try:
+        assert not p.cache.exists()
+        assert await p._designed(XARDAS) == "oldest-design"
+        assert json.loads(p.cache.read_text())[XARDAS.id] == {
+            "voice_id": "oldest-design", "description": XARDAS.description, "language": "ru-RU",
+        }
+        assert api.requests == [("GET", "/voices/v1/voices", {})]
+        assert await p._designed(XARDAS) == "oldest-design"
+        assert api.requests == [("GET", "/voices/v1/voices", {})]
+        assert api.designed == 0
+    finally:
+        await p.aclose()
+
+
+async def test_workspace_list_failure_designs_voice(api, tmp_path, caplog) -> None:
+    def transport(request):
+        if request.url.path == "/voices/v1/voices":
+            return httpx.Response(503, text="test list failure")
+        return api(request)
+
+    p = _provider(transport, tmp_path, keep_warm=0)
+    try:
+        assert await p._designed(XARDAS) == "ws__design-voice-1"
+        assert api.designed == 1
+        assert "workspace voice list unavailable" in caplog.text
+    finally:
+        await p.aclose()
 
 
 async def test_voice_designed_in_its_language(api, tmp_path) -> None:
@@ -174,6 +306,7 @@ async def test_voice_cloned_from_a_recording_speaks_the_providers_language(api, 
     await _speak(p, me)
     assert (api.cloned, api.designed) == (1, 0)
     clone = next(body for _, path, body in api.requests if path == "/voices/v1/voices:clone")
+    assert clone["tags"] == ["gothic-ai", f"sample-{hashlib.sha1(b'RIFF me').hexdigest()[:16]}"]
     assert base64.b64decode(clone["voiceSamples"][0]["audioData"]) == b"RIFF me"
     assert "languageCode" not in clone  # Inworld hears the recording's language itself
     first, second = api.streams()
@@ -188,7 +321,142 @@ async def test_voice_cloned_from_a_recording_speaks_the_providers_language(api, 
         await _speak(p, me)
     with pytest.raises(TtsError, match="no sample"):
         await _speak(p, Voice("x", sample=str(tmp_path / "missing.wav")))
+    api.sample_errors = []
+    sample.write_bytes(b"RIFF me again")
+    api.voices.discard("ws__clone-voice-2")
+    await _speak(p, me)
+    assert api.cloned == 4 and api.streams()[-1]["voiceId"] == "ws__clone-voice-4"
     await p.aclose()
+
+
+async def test_workspace_clone_matches_name_and_sample_across_pages(api, tmp_path):
+    sample = tmp_path / "sample.wav"
+    sample.write_bytes(b"RIFF workspace")
+    digest = hashlib.sha1(sample.read_bytes()).hexdigest()[:16]
+    voice = Voice(f"{XARDAS.id}@original", "Original Xardas", sample=str(sample))
+    pages = []
+
+    def transport(request):
+        assert request.method == "GET" and request.url.path == "/voices/v1/voices"
+        assert request.url.params["filter"] == 'owned="true" AND tags:"gothic-ai"'
+        assert request.url.params["pageSize"] == "2000"
+        assert request.url.params["orderBy"] == "created_at asc"
+        pages.append(request.url.params.get("pageToken"))
+        if pages[-1] is None:
+            return httpx.Response(200, json={"voices": [
+                {"voiceId": "wrong-name", "displayName": "gothic-ai OTHER@original",
+                 "tags": ["gothic-ai", f"sample-{digest}"]},
+                {"voiceId": "wrong-sample", "displayName": f"gothic-ai {voice.id}",
+                 "tags": ["gothic-ai", "sample-0000000000000000"]},
+            ], "nextPageToken": "second"})
+        assert pages[-1] == "second"
+        return httpx.Response(200, json={"voices": [
+            {"voiceId": ident, "displayName": f"gothic-ai {voice.id}",
+             "tags": ["gothic-ai", f"sample-{digest}"], "languageCode": "ru-RU"}
+            for ident in ("oldest-clone", "duplicate-clone")
+        ], "nextPageToken": ""})
+
+    p = _provider(transport, tmp_path, keep_warm=0)
+    try:
+        assert await p.clone_with_source(voice) == ("oldest-clone", "workspace")
+        assert p.cached_clone(voice) == "oldest-clone"
+        assert json.loads(p.cache.read_text())[voice.id] == {
+            "voice_id": "oldest-clone", "sample": digest,
+            "description": voice.description, "language": "ru-RU",
+        }
+        assert await p.workspace_clone(voice, "ffffffffffffffff") is None
+        p.cache.unlink()
+        assert await p.workspace_clone(voice, digest) == "oldest-clone"
+        assert pages == [None, "second"]  # a successful list is reused, including empty lookups
+        assert api.cloned == 0
+    finally:
+        await p.aclose()
+
+
+@pytest.mark.parametrize("failure", ["network", "status"])
+async def test_workspace_list_failure_clones_and_can_retry(api, tmp_path, caplog, failure):
+    sample = tmp_path / "sample.wav"
+    sample.write_bytes(b"RIFF retry")
+    digest = hashlib.sha1(sample.read_bytes()).hexdigest()[:16]
+    api.library.append({
+        "voiceId": "existing-second", "displayName": "gothic-ai SECOND@original",
+        "tags": ["gothic-ai", f"sample-{digest}"],
+    })
+    reads = []
+
+    def transport(request):
+        if request.url.path == "/voices/v1/voices":
+            reads.append(request)
+            if len(reads) == 1:
+                if failure == "network":
+                    raise httpx.ReadTimeout("test list timeout", request=request)
+                return httpx.Response(503, text="test list failure")
+        return api(request)
+
+    p = _provider(transport, tmp_path, keep_warm=0)
+    try:
+        assert await p.clone_with_source(Voice("FIRST@original", sample=str(sample))) == (
+            "ws__clone-voice-1", "cloned",
+        )
+        assert await p.clone_with_source(Voice("SECOND@original", sample=str(sample))) == (
+            "existing-second", "workspace",
+        )
+        assert len(reads) == 2 and api.cloned == 1
+        assert "workspace voice list unavailable" in caplog.text
+    finally:
+        await p.aclose()
+
+
+async def test_tag_cached_voices_preserves_tags_and_skips_missing_voices(api, tmp_path, caplog):
+    digest = "1234567890abcdef"
+    design_digest = hashlib.sha1(f"ru-RU\n{XARDAS.description}".encode()).hexdigest()[:16]
+    design_tag = f"design-{design_digest}"
+    api.library = [
+        {"voiceId": "needs-tag", "tags": ["gothic-ai", "keep-this"]},
+        {"voiceId": "already-tagged", "tags": ["gothic-ai", f"sample-{digest}"]},
+        {"voiceId": "design-needs-tag", "tags": ["gothic-ai", "keep-design"]},
+        {"voiceId": "design-already-tagged", "tags": ["gothic-ai", design_tag]},
+    ]
+    patches = []
+
+    def transport(request):
+        if request.method == "PATCH":
+            assert dict(request.url.params) == {"updateMask": "tags"}
+            patches.append((request.url.path, json.loads(request.content)))
+        return api(request)
+
+    p = _provider(transport, tmp_path, keep_warm=0)
+    p.cache.write_text(json.dumps({
+        "FIRST@original": {
+            "voice_id": "needs-tag", "sample": digest,
+            "description": XARDAS.description, "language": "ru-RU",
+        },
+        "SECOND@original": {"voice_id": "already-tagged", "sample": digest},
+        "MISSING@original": {"voice_id": "gone", "sample": digest},
+        "DESIGNED": {
+            "voice_id": "design-needs-tag", "description": XARDAS.description, "language": "ru-RU",
+        },
+        "DESIGNED_AGAIN": {
+            "voice_id": "design-already-tagged", "description": XARDAS.description, "language": "ru-RU",
+        },
+        "MISSING_DESIGN": {
+            "voice_id": "gone-design", "description": XARDAS.description, "language": "ru-RU",
+        },
+        "NO_DESCRIPTION": {"voice_id": "ignored", "description": "", "language": "ru-RU"},
+        "NO_LANGUAGE": {"voice_id": "ignored", "description": XARDAS.description},
+    }))
+    try:
+        assert await p.tag_cached_voices() == (2, 2, 2)
+        assert await p.tag_cached_voices() == (0, 4, 2)
+        assert patches == [
+            ("/voices/v1/voices/needs-tag", {"tags": ["gothic-ai", "keep-this", f"sample-{digest}"]}),
+            ("/voices/v1/voices/design-needs-tag", {"tags": ["gothic-ai", "keep-design", design_tag]}),
+        ]
+        assert "cached voice MISSING@original is missing from the workspace" in caplog.text
+        assert "cached voice MISSING_DESIGN is missing from the workspace" in caplog.text
+        assert sum(path == "/voices/v1/voices" for _, path, _ in api.requests) == 1
+    finally:
+        await p.aclose()
 
 
 @pytest.mark.parametrize(("headers", "detail", "delay"), [
@@ -203,6 +471,8 @@ async def test_clone_waits_then_repeats_the_same_request(api, tmp_path, monkeypa
     requests, sleeps = [], []
 
     def transport(request):
+        if request.url.path != "/voices/v1/voices:clone":
+            return api(request)
         requests.append(request.content)
         if len(requests) == 1:
             return httpx.Response(429, headers=headers, json={"code": 8, "message": detail})
@@ -229,6 +499,8 @@ async def test_clone_stops_after_six_rate_limited_attempts(api, tmp_path, monkey
     attempts, sleeps = [], []
 
     def transport(request):
+        if request.url.path != "/voices/v1/voices:clone":
+            return api(request)
         attempts.append(request.content)
         return httpx.Response(429, text="Please try again in 13 seconds.")
 
@@ -379,13 +651,14 @@ async def test_original_preparation_never_delays_a_game_line(api, tmp_path, monk
 
 
 @pytest.mark.parametrize("changed", [False, True])
-async def test_cached_originals_are_ready_before_source_export_finishes(api, tmp_path, monkeypatch, changed):
+async def test_cached_originals_are_ready_before_source_export_finishes(
+    api, tmp_path, monkeypatch, original_base, changed
+):
     import threading
 
     source = service.originals
     game, out = tmp_path / "game", tmp_path / "original"
-    (game / "Data").mkdir(parents=True)
-    (game / "Data/Speech.vdf").write_bytes(b"synthetic archive")
+    game.mkdir()
     monkeypatch.setenv("STORYGRAPH_TOOL", __file__)
     monkeypatch.setattr(source, "CHARACTERS", {XARDAS.id: source.CHARACTERS[XARDAS.id]})
     monkeypatch.setattr(source, "speech_index", lambda game: {})
@@ -405,7 +678,7 @@ async def test_cached_originals_are_ready_before_source_export_finishes(api, tmp
     def build(cid, index, texts, directory):
         built.append(cid)
         sample = directory / f"{cid}.wav"
-        sample.write_bytes(f"RIFF synthetic {len(built)}".encode())
+        sample.write_bytes(f"RIFF synthetic {texts[messages[0][0][:-4]]}".encode())
         return {"id": cid, "aliases": ["OTHER_XARDAS"], "file": str(sample)}
 
     monkeypatch.setattr(source.subprocess, "run", export)
@@ -416,6 +689,9 @@ async def test_cached_originals_are_ready_before_source_export_finishes(api, tmp
     requests = len(api.requests)
     if changed:
         messages[0][1] = "Changed synthetic text."
+    metadata = json.loads((original_base / "base.json").read_text())
+    metadata["fingerprint"] = "b" * 64
+    (original_base / "base.json").write_text(json.dumps(metadata))
     blocked = True
     synth = Synthesizer(p)
     svc = TtsService(synth, original_voices_dir=out, game_dir=game)
@@ -438,13 +714,69 @@ async def test_cached_originals_are_ready_before_source_export_finishes(api, tmp
         assert api.streams()[-1]["voiceId"] == "ws__clone-voice-1"
         release_export.set()
         await asyncio.wait_for(preparation, 2)
-        assert built == [XARDAS.id] * (2 if changed else 1)
+        assert built == [XARDAS.id] * 2
         assert api.cloned == (2 if changed else 1)
         expected = "ws__clone-voice-2" if changed else "ws__clone-voice-1"
         assert svc.original_voices["other_xardas"].preset == expected
     finally:
         release_export.set()
         await asyncio.gather(preparation, return_exceptions=True)
+        await synth.aclose()
+
+
+async def test_base_snapshot_rebuild_reuses_all_original_clones(
+    api, tmp_path, monkeypatch, original_base
+):
+    source = service.originals
+    game, out = tmp_path / "game", tmp_path / "original"
+    game.mkdir()
+    # Use every pinned character and the real build/prepare pipeline, with synthetic speech only.
+    lines = {line for selected in source.ORIGINAL_LINES.values() for line in selected}
+    index = {line: (None, line) for line in lines}
+    monkeypatch.setattr(source, "speech_index", lambda selected: index)
+    monkeypatch.setattr(source, "_texts", lambda selected, ou: dict.fromkeys(lines, "Synthetic speech."))
+    monkeypatch.setattr(source, "RATE", 100)
+    monkeypatch.setattr(source, "decode", lambda *_: np.tile(np.array([-0.125, 0.125], np.float32), 100))
+    manifest = source.prepare(game, out)
+    previous = json.loads(manifest.read_text())
+    entries = previous["characters"]
+    assert len(entries) == len(source.CHARACTERS) == 36
+    assert all("error" not in entry for entry in entries)
+    before = {entry["id"]: (out / f"{entry['id']}.wav").read_bytes() for entry in entries}
+    # Simulate the installation-era manifest and the existing Inworld clone cache.
+    previous["algorithm_version"] = 1
+    previous["source"] = {"game_dir": str(game), "speech": [{"name": "Data/Speech.vdf"}]}
+    manifest.write_text(json.dumps(previous))
+    p = _provider(api, tmp_path, keep_warm=0)
+    p.cache.write_text(json.dumps({
+        f"{cid}@original": {
+            "voice_id": f"cached-{cid}", "sample": hashlib.sha1(sample).hexdigest()[:16],
+        }
+        for cid, sample in before.items()
+    }))
+    clone = AsyncMock(side_effect=AssertionError("a matching sample must not call clone"))
+    monkeypatch.setattr(p, "clone", clone)
+    real_build, built = source.build, []
+
+    def build(cid, *args):
+        built.append(cid)
+        return real_build(cid, *args)
+
+    monkeypatch.setattr(source, "build", build)
+    synth = Synthesizer(p)
+    svc = TtsService(synth, original_voices_dir=out, game_dir=game)
+    try:
+        await svc._prepare_originals()
+        assert built == list(source.CHARACTERS)
+        assert json.loads(manifest.read_text())["source"] == {"base_fingerprint": "a" * 64}
+        for cid, sample in before.items():
+            assert (out / f"{cid}.wav").read_bytes() == sample
+            assert svc.original_voices[cid.casefold()].preset == f"cached-{cid}"
+            voice = Voice(f"{cid}@original", sample=str(out / f"{cid}.wav"))
+            assert p.cached_clone(voice) == f"cached-{cid}"
+        clone.assert_not_called()
+        assert api.requests == [] and api.cloned == 0
+    finally:
         await synth.aclose()
 
 
@@ -458,6 +790,8 @@ async def test_background_clones_survive_every_third_request_rate_limit(api, tmp
     attempts, sleeps = [], []
 
     def transport(request):
+        if request.url.path != "/voices/v1/voices:clone":
+            return api(request)
         attempts.append(request.content)
         if len(attempts) % 3 == 0:
             return httpx.Response(429, json={"message": "Please try again in 13 seconds."})
@@ -498,6 +832,8 @@ async def test_background_clones_continue_and_retry_only_next_start(
     failing = True
 
     def transport(request):
+        if request.url.path != "/voices/v1/voices:clone":
+            return api(request)
         body = json.loads(request.content)
         attempts.append(body["displayName"])
         if failing and body["displayName"] == "gothic-ai BAD@original":
@@ -669,6 +1005,8 @@ def test_clone_originals_command_reuses_sample_hash(api, tmp_path, monkeypatch, 
     attempts, sleeps = [], []
 
     def transport(request):
+        if request.url.path != "/voices/v1/voices:clone":
+            return api(request)
         attempts.append(request.content)
         if len(attempts) == 1:
             return httpx.Response(429, headers={"Retry-After": "13"})
@@ -686,12 +1024,16 @@ def test_clone_originals_command_reuses_sample_hash(api, tmp_path, monkeypatch, 
     assert first.value.code == 0 and api.cloned == 2
     assert sleeps == [14] and len(attempts) == 3 and attempts[0] == attempts[1]
     assert capsys.readouterr().out.splitlines() == [
-        "XARDAS → ws__clone-voice-1", "VATRAS → ws__clone-voice-2",
+        "XARDAS → ws__clone-voice-1 (cloned)", "VATRAS → ws__clone-voice-2 (cloned)",
     ]
     requests = len(api.requests)
     with pytest.raises(SystemExit) as repeated:
         cli.main()
-    assert repeated.value.code == 0 and len(api.requests) == requests
+    assert repeated.value.code == 0
+    assert api.requests[requests:] == [("GET", "/voices/v1/voices", {})]
+    assert capsys.readouterr().out.splitlines() == [
+        "XARDAS → ws__clone-voice-1 (cache)", "VATRAS → ws__clone-voice-2 (cache)",
+    ]
     assert api.designed == 0 and api.streams() == []
 
     (tmp_path / "XARDAS.wav").write_bytes(b"RIFF Xardas again")
@@ -702,7 +1044,68 @@ def test_clone_originals_command_reuses_sample_hash(api, tmp_path, monkeypatch, 
     with pytest.raises(SystemExit) as changed:
         cli.main()
     assert changed.value.code == 0 and api.cloned == 3
-    assert capsys.readouterr().out == "XARDAS → ws__clone-voice-3\n"
+    assert capsys.readouterr().out == "XARDAS → ws__clone-voice-3 (cloned)\n"
+
+
+def test_tag_voices_reports_counts_without_preparing_or_speaking(api, tmp_path, monkeypatch, capsys):
+    digest = "1234567890abcdef"
+    api.library = [
+        {"voiceId": "needs-tag", "tags": ["gothic-ai", "keep-this"]},
+        {"voiceId": "already-tagged", "tags": ["gothic-ai", f"sample-{digest}"]},
+    ]
+    (tmp_path / "voices.json").write_text(json.dumps({
+        "DESIGNED": {"voice_id": "needs-tag", "description": XARDAS.description, "language": "ru-RU"},
+        "CLONED": {"voice_id": "already-tagged", "sample": digest},
+        "MISSING": {"voice_id": "gone", "sample": digest},
+    }))
+    monkeypatch.setattr(cli, "InworldTTS", lambda: _provider(api, tmp_path, keep_warm=0))
+    monkeypatch.setattr(cli, "load_env_file", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["gothic-tts", "tag-voices"])
+    with pytest.raises(SystemExit) as finished:
+        cli.main()
+    assert finished.value.code == 0
+    assert capsys.readouterr().out == "Voice tags: 1 tagged, 1 already tagged, 1 not found\n"
+    assert [(method, path) for method, path, _ in api.requests] == [
+        ("GET", "/voices/v1/voices"), ("PATCH", "/voices/v1/voices/needs-tag"),
+    ]
+    assert api.designed == api.cloned == 0 and api.streams() == []
+
+
+@pytest.mark.parametrize("failed_method", ["GET", "PATCH"])
+@pytest.mark.parametrize("command", ["clone-originals", "tag-voices"])
+def test_commands_fail_when_voice_tag_migration_fails(
+    api, tmp_path, monkeypatch, capsys, failed_method, command,
+):
+    sample = b"RIFF legacy"
+    (tmp_path / "LEGACY.wav").write_bytes(sample)
+    (tmp_path / "manifest.json").write_text(json.dumps([{"id": "LEGACY", "file": "LEGACY.wav"}]))
+    (tmp_path / "voices.json").write_text(json.dumps({
+        "LEGACY@original": {
+            "voice_id": "legacy-clone", "sample": hashlib.sha1(sample).hexdigest()[:16],
+        },
+    }))
+    api.library = [{"voiceId": "legacy-clone", "tags": ["gothic-ai"]}]
+    methods = []
+
+    def transport(request):
+        methods.append(request.method)
+        if request.method == failed_method:
+            return httpx.Response(503, text="migration unavailable")
+        return api(request)
+
+    monkeypatch.setattr(cli, "InworldTTS", lambda: _provider(transport, tmp_path, keep_warm=0))
+    monkeypatch.setattr(cli, "load_env_file", lambda: None)
+    args = ["gothic-tts", command]
+    if command == "clone-originals":
+        args.extend(["--dir", str(tmp_path)])
+    monkeypatch.setattr(sys, "argv", args)
+    with pytest.raises(SystemExit) as failed:
+        cli.main()
+    assert failed.value.code == 1
+    assert "error: voice tags:" in capsys.readouterr().err
+    assert methods == (["GET"] if failed_method == "GET" else ["GET", "PATCH"])
+    assert api.library[0]["tags"] == ["gothic-ai"]
+    assert api.cloned == api.designed == 0
 
 
 @pytest.mark.parametrize("failure", ["network", "empty_voice"])
@@ -714,6 +1117,8 @@ def test_clone_originals_continues_after_failed_voice(api, tmp_path, monkeypatch
     ]))
 
     def transport(request):
+        if request.url.path != "/voices/v1/voices:clone":
+            return api(request)
         body = json.loads(request.content)
         if body["displayName"] == "gothic-ai BAD@original":
             if failure == "network":
@@ -728,9 +1133,61 @@ def test_clone_originals_continues_after_failed_voice(api, tmp_path, monkeypatch
         cli.main()
     assert failed.value.code == 1
     output = capsys.readouterr()
-    assert output.out.splitlines() == ["FIRST → ws__clone-voice-1", "LAST → ws__clone-voice-2"]
+    assert output.out.splitlines() == [
+        "FIRST → ws__clone-voice-1 (cloned)", "LAST → ws__clone-voice-2 (cloned)",
+    ]
     assert "error: BAD:" in output.err
     assert set(json.loads((tmp_path / "voices.json").read_text())) == {"FIRST@original", "LAST@original"}
+
+
+def test_clone_originals_game_dir_prepares_and_reports_sources(
+    api, tmp_path, monkeypatch, capsys, caplog,
+):
+    game = tmp_path / "game"
+    out = tmp_path / "snapshots"
+    game.mkdir()
+    prepared = []
+
+    def prepare(game_dir, directory, progress):
+        assert (game_dir, directory) == (game, out)
+        directory.mkdir()
+        entries = []
+        for cid in ("CACHED", XARDAS.id, "NEW"):
+            (directory / f"{cid}.wav").write_bytes(f"RIFF {cid}".encode())
+            entries.append({"id": cid, "file": f"{cid}.wav"})
+        (directory / "manifest.json").write_text(json.dumps(entries))
+        prepared.append(True)
+        progress(3, 3)
+
+    cached_digest = hashlib.sha1(b"RIFF CACHED").hexdigest()[:16]
+    workspace_digest = hashlib.sha1(f"RIFF {XARDAS.id}".encode()).hexdigest()[:16]
+    (tmp_path / "voices.json").write_text(json.dumps({
+        "CACHED@original": {"voice_id": "local-clone", "sample": cached_digest},
+    }))
+    api.library = [
+        {"voiceId": "local-clone", "displayName": "gothic-ai CACHED@original",
+         "tags": ["gothic-ai", "keep-this"]},
+        {"voiceId": "shared-clone", "displayName": f"gothic-ai {XARDAS.id}@original",
+         "tags": ["gothic-ai", f"sample-{workspace_digest}"]},
+    ]
+    monkeypatch.setattr(cli.originals, "prepare", prepare)
+    monkeypatch.setattr(cli, "InworldTTS", lambda: _provider(api, tmp_path, keep_warm=0))
+    monkeypatch.setattr(cli, "load_env_file", lambda: None)
+    monkeypatch.setattr(sys, "argv", [
+        "gothic-tts", "clone-originals", "--dir", str(out), "--game-dir", str(game),
+    ])
+    with pytest.raises(SystemExit) as finished:
+        cli.main()
+    assert finished.value.code == 0 and prepared == [True]
+    assert capsys.readouterr().out.splitlines() == [
+        "CACHED → local-clone (cache)", f"{XARDAS.id} → shared-clone (workspace)",
+        "NEW → ws__clone-voice-1 (cloned)",
+    ]
+    assert XARDAS.id in caplog.text and "original_samples.json" in caplog.text
+    assert api.cloned == 1 and api.designed == 0 and api.streams() == []
+    assert [(path, body) for method, path, body in api.requests if method == "PATCH"] == [
+        ("/voices/v1/voices/local-clone", {"tags": ["gothic-ai", "keep-this", f"sample-{cached_digest}"]}),
+    ]
 
 
 async def test_library_voice_steered_by_the_description(api, tmp_path) -> None:
@@ -770,10 +1227,13 @@ async def test_the_line_style_steers_any_voice(api, tmp_path) -> None:
 async def test_vanished_voice_is_designed_again(api, tmp_path) -> None:
     p = _provider(api, tmp_path)
     await _speak(p)
+    assert any(v["voiceId"] == "ws__design-voice-1" for v in p._workspace_voices)
     api.voices.discard("ws__design-voice-1")  # deleted in the portal, or another workspace's key
     pcm, _ = await _speak(p)
     await p.aclose()
     assert pcm and api.designed == 2
+    assert all(v["voiceId"] != "ws__design-voice-1" for v in p._workspace_voices)
+    assert sum(path == "/voices/v1/voices" for _, path, _ in api.requests) == 1
     assert json.loads((tmp_path / "voices.json").read_text())[XARDAS.id]["voice_id"] == "ws__design-voice-2"
 
 

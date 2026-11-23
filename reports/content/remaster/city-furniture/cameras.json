@@ -1,0 +1,354 @@
+{
+ "cameras": [
+  {
+   "name": "chair-1",
+   "eye": [
+    3980,
+    24,
+    432
+   ],
+   "target": [
+    4371,
+    -161,
+    414
+   ],
+   "note": "CHAIR_NW_NORMAL_01 vob 23181, from waypoint NW_CITY_HABOUR_HUT_07_BED_01"
+  },
+  {
+   "name": "chair-2",
+   "eye": [
+    6002,
+    480,
+    -869
+   ],
+   "target": [
+    6075,
+    295,
+    -493
+   ],
+   "note": "CHAIR_NW_NORMAL_01 vob 24062, from waypoint NW_CITY_SMITH_01_01_B"
+  },
+  {
+   "name": "bed-1",
+   "eye": [
+    3829,
+    94,
+    -5008
+   ],
+   "target": [
+    4033,
+    -68,
+    -5347
+   ],
+   "note": "BEDHIGH_NW_NORMAL_01 vob 23481, from waypoint NW_CITY_HABOUR_POOR_AREA_HUT_03_IN"
+  },
+  {
+   "name": "bed-2",
+   "eye": [
+    1463,
+    22,
+    327
+   ],
+   "target": [
+    1728,
+    -141,
+    617
+   ],
+   "note": "BEDHIGH_NW_NORMAL_01 vob 25425, from waypoint NW_CITY_HABOUR_HUT_01_IN"
+  },
+  {
+   "name": "cupboard-rich2-1",
+   "eye": [
+    10291,
+    1110,
+    -2868
+   ],
+   "target": [
+    10198,
+    959,
+    -2504
+   ],
+   "note": "NW_CITY_CUPBOARD_RICH_02 vob 22861, from waypoint NW_CITY_REICH02_SIT"
+  },
+  {
+   "name": "cupboard-rich2-2",
+   "eye": [
+    7851,
+    480,
+    -2351
+   ],
+   "target": [
+    7784,
+    419,
+    -1992
+   ],
+   "note": "NW_CITY_CUPBOARD_RICH_02 vob 25273, from waypoint NW_CITY_CHAIR_BOSPER"
+  },
+  {
+   "name": "cupboard-poor-1",
+   "eye": [
+    7772,
+    480,
+    -3373
+   ],
+   "target": [
+    7813,
+    393,
+    -3744
+   ],
+   "note": "NW_CITY_CUPBOARD_POOR_01 vob 23151, from waypoint NW_CITY_MERCHANT_SHOP01_IN_03"
+  },
+  {
+   "name": "throne-1",
+   "eye": [
+    14678,
+    1802,
+    -13418
+   ],
+   "target": [
+    14714,
+    1670,
+    -13806
+   ],
+   "note": "THRONE_NW_CITY_01 vob 19721, from waypoint NW_FARM1_INHOUSE_02"
+  },
+  {
+   "name": "throne-2",
+   "eye": [
+    14511,
+    1540,
+    -4338
+   ],
+   "target": [
+    14645,
+    1405,
+    -4684
+   ],
+   "note": "THRONE_NW_CITY_01 vob 24849, from waypoint NW_CITY_LEOMAR_BED_04"
+  },
+  {
+   "name": "cupboard-rich1-1",
+   "eye": [
+    15038,
+    1540,
+    -3884
+   ],
+   "target": [
+    15407,
+    1456,
+    -3831
+   ],
+   "note": "NW_CITY_CUPBOARD_RICH_01 vob 24851, from waypoint NW_CITY_LEOMAR_BED_01"
+  },
+  {
+   "name": "cupboard-rich1-2",
+   "eye": [
+    15040,
+    1110,
+    -3836
+   ],
+   "target": [
+    15404,
+    1025,
+    -3837
+   ],
+   "note": "NW_CITY_CUPBOARD_RICH_01 vob 21887, from waypoint NW_CITY_UPTOWN_HUT_03_02"
+  },
+  {
+   "name": "chair-rich-1",
+   "eye": [
+    16598,
+    1110,
+    -2733
+   ],
+   "target": [
+    16956,
+    929,
+    -2849
+   ],
+   "note": "CHAIR_NW_EDEL_01 vob 21600, from waypoint NW_CITY_RICHTER"
+  },
+  {
+   "name": "chair-rich-2",
+   "eye": [
+    14509,
+    1750,
+    -643
+   ],
+   "target": [
+    14201,
+    1570,
+    -510
+   ],
+   "note": "CHAIR_NW_EDEL_01 vob 25005, from waypoint NW_CITYHALL_OFFICE_03"
+  },
+  {
+   "name": "bed-rich-1",
+   "eye": [
+    8413,
+    782,
+    3407
+   ],
+   "target": [
+    8462,
+    619,
+    3795
+   ],
+   "note": "BEDHIGH_NW_EDEL_01 vob 25330, from waypoint NW_CITY_HOTEL_UPTSAIRS_03"
+  },
+  {
+   "name": "bed-rich-2",
+   "eye": [
+    14511,
+    1540,
+    -4338
+   ],
+   "target": [
+    14285,
+    1379,
+    -4088
+   ],
+   "note": "BEDHIGH_NW_EDEL_01 vob 25624, from waypoint NW_CITY_LEOMAR_BED_04"
+  },
+  {
+   "name": "bed-master-1",
+   "eye": [
+    14767,
+    1115,
+    -4076
+   ],
+   "target": [
+    15078,
+    1005,
+    -4315
+   ],
+   "note": "BEDHIGH_NW_MASTER_01 vob 21902, from waypoint NW_CITY_UPTOWN_HUT_03_04"
+  },
+  {
+   "name": "bed-master-2",
+   "eye": [
+    10448,
+    1514,
+    -2794
+   ],
+   "target": [
+    10067,
+    1406,
+    -2791
+   ],
+   "note": "BEDHIGH_NW_MASTER_01 vob 20834, from waypoint NW_CITY_REICH02_08"
+  },
+  {
+   "name": "table-rich-1",
+   "eye": [
+    10891,
+    1110,
+    1611
+   ],
+   "target": [
+    10531,
+    946,
+    1720
+   ],
+   "note": "NW_CITY_TABLE_RICH_02 vob 25035, from waypoint NW_CITY_UPTOWN_HUT_04_IN"
+  },
+  {
+   "name": "table-rich-2",
+   "eye": [
+    6119,
+    960,
+    6241
+   ],
+   "target": [
+    5766,
+    792,
+    6234
+   ],
+   "note": "NW_CITY_TABLE_RICH_02 vob 20679, from waypoint NW_CITY_KASERN_ARMORY_SHARP"
+  },
+  {
+   "name": "table-1",
+   "eye": [
+    4500,
+    960,
+    8677
+   ],
+   "target": [
+    4456,
+    793,
+    8308
+   ],
+   "note": "NW_CITY_TABLE_NORMAL_01 vob 21151, from waypoint NW_CITY_HABOUR_KASERN_BARRACK01_IN"
+  },
+  {
+   "name": "table-2",
+   "eye": [
+    7446,
+    -429,
+    4286
+   ],
+   "target": [
+    7236,
+    -594,
+    4006
+   ],
+   "note": "NW_CITY_TABLE_NORMAL_01 vob 21153, from waypoint NW_CITY_KANAL_ROOM_05_02"
+  },
+  {
+   "name": "bench-1",
+   "eye": [
+    8545,
+    338,
+    -866
+   ],
+   "target": [
+    8223,
+    148,
+    -1085
+   ],
+   "note": "BENCH_NW_CITY_02 vob 23450, from waypoint NW_CITY_MERCHANT_PATH_15"
+  },
+  {
+   "name": "bench-2",
+   "eye": [
+    10394,
+    1111,
+    -5450
+   ],
+   "target": [
+    10647,
+    926,
+    -5660
+   ],
+   "note": "BENCH_NW_CITY_02 vob 25735, from waypoint NW_CITY_UPTOWN_PATH_24"
+  },
+  {
+   "name": "bookshelf-1",
+   "eye": [
+    3552,
+    95,
+    -6785
+   ],
+   "target": [
+    3571,
+    -41,
+    -6450
+   ],
+   "note": "BOOK_NW_CITY_CUPBOARD_01 vob 21063, from waypoint NW_CITY_HABOUR_POOR_AREA_HUT_08_WORK"
+  },
+  {
+   "name": "bookshelf-2",
+   "eye": [
+    14294,
+    1540,
+    -3416
+   ],
+   "target": [
+    14146,
+    1407,
+    -3131
+   ],
+   "note": "BOOK_NW_CITY_CUPBOARD_01 vob 24821, from waypoint NW_CITY_LEOMAR_02"
+  }
+ ]
+}

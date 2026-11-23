@@ -1,0 +1,200 @@
+{
+ "cameras": [
+  {
+   "name": "quay-far",
+   "eye": [
+    -5226,
+    365,
+    -5610
+   ],
+   "target": [
+    -5634,
+    235,
+    -5329
+   ],
+   "note": "quay by the paladins' camp from 5 m: cannon, rope coil, crate piles"
+  },
+  {
+   "name": "quay-wide",
+   "eye": [
+    -5431,
+    380,
+    -6104
+   ],
+   "target": [
+    -5500,
+    220,
+    -5300
+   ],
+   "note": "the same quay from 8 m"
+  },
+  {
+   "name": "cannon-close",
+   "eye": [
+    -5684,
+    330,
+    -5563
+   ],
+   "target": [
+    -5634,
+    235,
+    -5329
+   ],
+   "note": "cannon 20740 from 2.4 m: barrel, muzzle, carriage"
+  },
+  {
+   "name": "rope-close",
+   "eye": [
+    -5687,
+    363,
+    -5635
+   ],
+   "target": [
+    -5874,
+    211,
+    -5339
+   ],
+   "note": "rope coil 20739 from 3.5 m, cannon beside"
+  },
+  {
+   "name": "pile-close",
+   "eye": [
+    -5126,
+    413,
+    -5760
+   ],
+   "target": [
+    -4985,
+    283,
+    -5439
+   ],
+   "note": "crate piles 20734 from 3.5 m"
+  },
+  {
+   "name": "hut-yard",
+   "eye": [
+    423,
+    43,
+    -745
+   ],
+   "target": [
+    770,
+    -126,
+    -788
+   ],
+   "note": "crates, rope coil and a small net heap by a hut, 3.5 m"
+  },
+  {
+   "name": "crates-path",
+   "eye": [
+    5818,
+    490,
+    -5773
+   ],
+   "target": [
+    5500,
+    340,
+    -6080
+   ],
+   "note": "single crates and ropes by the merchants' path, 4.5 m"
+  },
+  {
+   "name": "crate-close",
+   "eye": [
+    5560,
+    470,
+    -5850
+   ],
+   "target": [
+    5668,
+    340,
+    -6126
+   ],
+   "note": "single crate 20958 from 3 m"
+  },
+  {
+   "name": "fishers-mid",
+   "eye": [
+    -8560,
+    -34,
+    -5758
+   ],
+   "target": [
+    -8122,
+    -164,
+    -5542
+   ],
+   "note": "fishers' corner from 5 m: broken crate, net heap"
+  },
+  {
+   "name": "broken-close",
+   "eye": [
+    -8012,
+    78,
+    -5874
+   ],
+   "target": [
+    -8122,
+    -164,
+    -5542
+   ],
+   "note": "broken crate 26082 from 3.5 m"
+  },
+  {
+   "name": "net-close",
+   "eye": [
+    -7569,
+    66,
+    -5971
+   ],
+   "target": [
+    -7878,
+    -88,
+    -6136
+   ],
+   "note": "net heap 26086 from 3.5 m"
+  },
+  {
+   "name": "crane-yard",
+   "eye": [
+    -1839,
+    51,
+    -3588
+   ],
+   "target": [
+    -1735,
+    -79,
+    -3086
+   ],
+   "note": "yard by crane C from 5 m: net rack, bollard, crates"
+  },
+  {
+   "name": "rack-close",
+   "eye": [
+    -1740,
+    42,
+    -3498
+   ],
+   "target": [
+    -1296,
+    -161,
+    -3095
+   ],
+   "note": "net rack 23369 from 6 m: frame, panels, rolled nets"
+  },
+  {
+   "name": "bollard-close",
+   "eye": [
+    -1800,
+    60,
+    -3330
+   ],
+   "target": [
+    -1735,
+    -60,
+    -3086
+   ],
+   "note": "bollard with rope 20727 from 2.5 m"
+  }
+ ]
+}

@@ -54,6 +54,7 @@ from ..protocol import (
     NpcRoster,
     PerceptionHeld,
     RosterEntry,
+    RoutineInfo,
 )
 from .apply import Applier, Decision
 from .day import KEEP, DayMenu, DayOption, Habit, current_entry, plan_ids, plan_options
@@ -189,7 +190,7 @@ class Flight:
 class RoutineSlot:
     """An npc's routine as the game told it, and how asking for it goes."""
 
-    info: Any | None = None  # RoutineInfo
+    info: RoutineInfo | None = None
     fetching: bool = False
     fetched: float = float("-inf")
     failures: int = 0  # in a row
@@ -263,7 +264,7 @@ class NpcPlanner:
         clock: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
         agenda_of: Callable[[str], str | None] | None = None,
-        routine_of: Callable[[str], Awaitable[Any]] | None = None,
+        routine_of: Callable[[str], Awaitable[RoutineInfo]] | None = None,
         habits_of: Callable[[str], list[Habit]] | None = None,
         view_of: Callable[[str], tuple[str, ...]] | None = None,
         trace: TraceWriter | None = None,
@@ -283,14 +284,14 @@ class NpcPlanner:
         self.routines: dict[str, RoutineSlot] = {}
         # how much the moment calls for the npc's own words: (npc, level, the reaction applied or None,
         # flight); told every level, the listener decides (`escalate_level`, or more when it already spoke)
-        self.on_escalate: Callable[[str, float, Decision | None, Flight], None] | None = None
+        self.on_escalate: Callable[[str, float, Decision | None, Flight], bool | None] | None = None
         # a reason not to apply a sure choice now, or None (initiative.py: one walk-up at a time)
         self.allow: Callable[[NpcRecord, str], str | None] | None = None
         # takes approach_talk over: walks the npc up and lets it speak; without it the applier walks it
         self.on_approach: Callable[[Decision, NpcRecord], None] | None = None
         # the day desk (daylife.py): an npc's menus for the next hour from its routine (rec, routine info,
         # hour, minute, habits); without it only the old menu is asked
-        self.menu_of: Callable[[NpcRecord, Any, int, int, list[Habit]], DayMenu] | None = None
+        self.menu_of: Callable[[NpcRecord, RoutineInfo, int, int, list[Habit]], DayMenu] | None = None
         # takes a chosen trip over (chat, pray, tavern): walks the npc there; without it a trip is not done
         self.on_plan: Callable[[Decision, NpcRecord, DayOption], None] | None = None
         self.applier = applier
@@ -402,16 +403,17 @@ class NpcPlanner:
         loudness: float | None = None,
         source: str | None = None,
         context_only: bool = False,
+        context: str = "",
     ) -> None:
         rec = self.npcs.get(npc.upper())
         if rec is None or (rec.tier is Tier.OFF and rec.activity != "fight"):
             return
         if kind == "noise" and (rec.activity != "routine" or rec.talking):
             return  # the bridge only reports sounds heard by free npc's; do not retain a late one
-        other = (other or "") if kind == "noise" else (other or "PLAYER")
+        # a sound or a find says nothing of who caused it; legacy events default to the hero
+        other = (other or "") if kind in ("noise", "trace_found") else (other or "PLAYER")
         self.stats.events += 1
         kind, detail = normalize(kind, other, other_name, detail)
-        context = ""
         if kind == "monster_killed":
             # the danger from that monster is over (all of its kind share the symbol: one more nearby is
             # sensed again soon); what it was doing stays in the words; the npc itself may have killed it
@@ -761,7 +763,7 @@ class NpcPlanner:
             return True
         return now - rec.last_plan >= self.cfg.plan_period_s and not any(s.alive(now) for s in rec.stimuli)
 
-    def _in_routine(self, rec: NpcRecord, info: Any) -> bool:
+    def _in_routine(self, rec: NpcRecord, info: RoutineInfo) -> bool:
         """It does what its routine has it do now: its roster state is the current entry's (not a script's
         reaction, not an activity of ours still running). Unknown state (bridge < v7): yes."""
         assert self.game_time is not None
@@ -863,7 +865,9 @@ class NpcPlanner:
             if self.menu_of is not None:
                 menu = self.menu_of(rec, slot.info, hour, minute, habits)
             else:  # no day desk (m5c, planner_sim): the old menu alone
-                menu = DayMenu(plan=plan_options(slot.info.entries, habits, hour, minute, rec.state))
+                menu = DayMenu(plan=plan_options(
+                    slot.info.entries, habits, hour, minute, rec.state, catalog=slot.info.event_activities
+                ))
             rec.last_plan = now  # an empty menu too: not looked at again before the next period
             question, shadow = self._day_questions(menu)
             if question is None and shadow is None:
@@ -935,7 +939,7 @@ class NpcPlanner:
             None,
         )
 
-    def _routine_ready(self, rec: NpcRecord, now: float) -> Any | None:
+    def _routine_ready(self, rec: NpcRecord, now: float) -> RoutineInfo | None:
         """Its routine if known (a stale one is used while a fresh one is asked); None while it is first
         asked or after a failure. A fetch starts when there is none or it is older than routine_ttl_s, unless
         one runs or a failure's retry time is ahead. Never touches rec.next_check: the react path keeps its

@@ -83,6 +83,8 @@ void listOmni() {
       const uint id = prefix + bitCountShared(lane);
       const uint sz = pageHit;
       vsm.pageList[id] = packVsmPageInfo(i/6, i%6, ivec2(0), ivec2(sz));
+      // the allocator writes the face's page back; a face it drops reads as unshadowed, not as page 0
+      pageTblOmni[i] = 0;
       atomicAdd(pageOmni, 1);
       }
     barrier();
@@ -90,6 +92,7 @@ void listOmni() {
 
   vsm.header.pageOmniCount = pageOmni;
   vsm.header.pageCount     = pageListPrefix + pageOmni;
+  vsm.header.pageListCount = pageListPrefix + pageOmni;
   }
 
 void main() {

@@ -166,6 +166,8 @@ def indices(args, pairs):
             directory = episode_dir(args, pairs[index])
             if completed(directory) and read_json(directory / "episode.json").get("action_mode", "argmax") != getattr(args, "action_mode", "argmax"):
                 raise ValueError(f"--resume action mode differs from the completed drive: {directory}")
+            if completed(directory) and read_json(directory / "episode.json").get("forced_pace") != getattr(args, "force_pace", None):
+                raise ValueError(f"--resume forced pace differs from the completed drive: {directory}")
         selected = [i for i in selected if not completed(episode_dir(args, pairs[i]))]
     return selected
 
@@ -188,6 +190,13 @@ def collect(args):
     action_mode = getattr(args, "action_mode", "argmax")
     if action_mode not in ("argmax", "sample"):
         raise ValueError("--action-mode must be sample or argmax")
+    args.force_pace = getattr(args, "force_pace", None) or os.environ.get("OPENGOTHIC_NAV_FORCE_PACE") or None
+    if args.force_pace not in (None, "walk", "run"):
+        raise ValueError("OPENGOTHIC_NAV_FORCE_PACE must be walk or run")
+    if args.force_pace is not None:
+        if action_mode != "sample":
+            raise ValueError("Forced pace requires sampled evaluation drive")
+        os.environ["OPENGOTHIC_NAV_FORCE_PACE"] = args.force_pace
     pairs = load_pairs(args)
     selected = indices(args, pairs)
     if args.list_indices:
@@ -253,7 +262,8 @@ def collect(args):
             episode.update(pair, drive=True, weights=str(args.weights), limit_ms=args.limit_ms,
                            collector_wall_s=wall, selection_seed=args.selection_seed,
                            dagger_collection=args.dagger_collection, requested_action_mode=action_mode,
-                           requested_physics=getattr(args, "physics", "native"))
+                           requested_physics=getattr(args, "physics", "native"),
+                           forced_pace=getattr(args, "force_pace", None))
             write_json(directory / "episode.json", episode)
             print(f"{name}: success={episode['success']} elapsed_ms={episode['elapsed_ms']} "
                   f"distance_cm={episode.get('distance_cm')} wall_s={wall:.2f}", flush=True)
@@ -416,7 +426,7 @@ def episode_metrics(directory, demos):
               "success", "elapsed_ms", "decisions", "distance_cm", "failure", "teacher_elapsed_ms",
               "teacher_episode", "teacher_success", "source_cache_id", "final_position", "target_position",
               "blocked_spans", "blocked_ms", "max_blocked_ms", "teacher_beta", "mixing_seed",
-              "teacher_control_decisions", "dagger_collection")}
+              "teacher_control_decisions", "dagger_collection", "forced_pace")}
     result.update(episode=str(directory), elapsed_s=episode["elapsed_ms"] / 1000, observed_reason=reason,
                   travelled_xz_cm=travelled, last_10s_span_cm=tail_span, last_10s_path_cm=tail_path,
                   last_10s_displacement_cm=tail_displacement, stationary_spells_3s=stationary_spells,
@@ -437,6 +447,9 @@ def episode_metrics(directory, demos):
 
 
 def group_metrics(episodes):
+    paces = {ep.get("forced_pace") for ep in episodes}
+    if len(paces) != 1:
+        raise ValueError("Cannot combine episodes with different forced pace")
     success = [ep for ep in episodes if ep["success"]]
     steps = sum(ep["decisions"] for ep in episodes)
     counts = {key: sum(ep["disagreement_counts"].get(key, 0) for ep in episodes) for key in (*HEADS, "any")}
@@ -447,7 +460,7 @@ def group_metrics(episodes):
     action_changes = {key: sum(ep["action_changes"][key] for ep in episodes) for key in (*HEADS, "any")}
     transitions = sum(max(0, ep["decisions"] - 1) for ep in episodes)
     teacher_control = sum(ep.get("teacher_control_decisions") or 0 for ep in episodes)
-    return dict(n=len(episodes), arrived=len(success), arrival_fraction=len(success) / len(episodes),
+    return dict(forced_pace=paces.pop(), n=len(episodes), arrived=len(success), arrival_fraction=len(success) / len(episodes),
                 teacher_beta_values=sorted({ep["teacher_beta"] for ep in episodes if ep.get("teacher_beta") is not None}),
                 teacher_control_decisions=teacher_control, teacher_control_fraction=teacher_control / steps,
                 dagger_collection=any(ep.get("dagger_collection") for ep in episodes),

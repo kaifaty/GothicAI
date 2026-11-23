@@ -2,6 +2,10 @@
 
 Статус: **этап 2 готов**, 13 октября 2026 года. Полная серверная серия `stage2-v3` прошла; [отчёт с критериями, ресурсами и provenance](../reports/npc-body/2026-10-13-headless/headless-report.md), [компактный JSON](../reports/npc-body/2026-10-13-headless/headless-report.json). Этот документ описывает runtime и протокол. Контекст — [план](npc-body-control-plan.md), [боевой контракт](npc-body-combat-contract.md) и [сохранённый reference этапа 1](../reports/npc-body/2026-10-13-melee-reference/run-notes.md).
 
+## Как работает сейчас
+
+Происхождение проб и оценок тел (`body_headless_suite`, `body_observe_suite` и их приёмники) фиксирует SHA-256 всех наших `.a` из дерева сборки: обязательны `libOpenGothic.a` и `libengine-platform.a`, также учитываются архивы моста, шейдеров, VM и runtime. Сторонние `lib/`, `_deps/` и `libminiz.a` исключены. `--engine-library` принимает каталог набора; `engine_libraries` хранит хеши по именам, а прежнее поле `engine_library_sha256` — SHA-256 канонического JSON этой карты (имена отсортированы, без пробелов). `--expected-library-sha256` сверяет сводную сумму; старый хеш одного архива не подходит, отсутствие обязательного архива даёт ошибку с его именем. Launcher’ы очереди сохраняют весь набор в `reference/engine-libraries/`; повторные BC-фазы используют первый снимок. Проверка — `scripts/tests/test_body_headless_suite.py`, без запуска движка.
+
 ## Исполнение настоящего движка
 
 Linux target `gothic-body-runner` запускает `Gothic`, `GameSession`, Daedalus VM, настоящий мир и native NPC AI. Entry point — [bodyrunner.cpp](../OpenGothic/game/bodyrunner.cpp). Он загружает контрольный save через `Serialize` и синхронно создаёт `GameSession`. Физика, waypoint graph, очереди AI, perceptions, урон, CPU pose и animation tags остаются в движке.
@@ -37,10 +41,24 @@ CPU adapters сохраняют скелеты, последовательнос
 4. `Gothic::updateAnimation(dt)` обновляет CPU poses, attachments и необходимые animation passes.
 5. Камера: UI callback обычной игры либо `SimulationStep::observerCamera(dt)` в runner.
 6. `TestBench::tick(dt, player)` выполняет сценарные команды и проверяет terminal. В обычной игре после этого идут capture/render; в runner их нет.
+7. Как окно после кадра, runner вызывает `World::updateLandscape(camera)`: резидентность кусков следует за героем и камерой (уровни NPC в `auto`), видов без `WorldView` нет. С `--game-parity` затем отдаёт миру позицию камеры для радиуса эффектов.
 
 Один вызов `GameSession::tick()` не заменяет этот цикл: без animation update последующие tags и боевые окна перестают соответствовать native игре. Bench-команды исполняются после шага, поэтому созданные ими бойцы начинают обычный tick на следующем substep.
 
 Первое `finishStep(0, player)` после загрузки повторяет rendered load-finalize phase и инициализирует bench без продвижения игрового времени. После старта bench `TestBench::frameDt()` даёт фиксированные 30 Hz substeps, чередуя 33/34 мс. `timeMul` установлен в 1; ускорение lockstep достигается отсутствием ожидания wall clock.
+
+## Бенчи без окна: `--world` и `--game-parity`
+
+`--world <ZEN>` вместо `--save` начинает новую игру в этом мире, как `-w` в игре; после загрузки runner, как `Gothic::finishLoading`, зовёт `Gothic::onWorldLoaded`. `--game-parity` считает мир так же, как окно: создаёт `AiBridge`, как `game/main.cpp` (без сервера мост всё равно считает важные разговоры вокруг героя при `-nointro` сказанными, перехватывает восприятие зверей и запускает диалоги как программы графа; `GOTHIC_AI=0` выключает); после каждого шага отдаёт `World::setHeadlessViewer` позицию камеры, и `World::isInPfxRange` даёт те же 40 м, что рендер (события анимаций с эффектами и foot IK — только рядом с камерой, а не у всех NPC мира); ставит `OPENGOTHIC_BODY_TRACE=0`, если вызывающий не задал своё. С ним час `npc-day-parity` без окна побайтно равен оконному прогону той же сборки и окружения и идёт 66 с вместо 98 ([замер](../reports/compute/2026-11-02-headless-bench/README.md)). Без флага runner ведёт себя как раньше: сбор данных тел и навигации не меняется.
+
+```sh
+gothic-body-runner -g "$GOTHIC_DIR" -devmode -nointro --world NEWWORLD.ZEN --game-parity \
+  --scenario scripts/bench/npc-day-parity.bench --output /absolute/out --mode lockstep
+```
+
+## Выгрузка мира: `--society-export`
+
+`--world <ZEN> --society-export <путь>` загружает новую игру в этом мире и сразу после стартовых скриптов (день 0, 08:00) пишет мир стенда общества. Шагов мира, сценария и `AiBridge` при этом нет. Потом раннер выходит. Формат, запуск и контракт описаны в [`society-sim.md`](society-sim.md#формат-v2).
 
 ## Игрок-наблюдатель и AI LOD
 
@@ -52,7 +70,7 @@ CPU adapters сохраняют скелеты, последовательнос
 
 `--stdio` включает построчный протокол через stdin/stdout. Каждая команда — JSON object с `cmd`; необязательный `id` возвращается без изменения. Ответы имеют `schema_version: 1`, `ok` и status fields. Engine/library logs отправляются в stderr, чтобы stdout оставался JSONL.
 
-CLI требует `--save` и `--scenario`; `--output` по умолчанию `.body-runner`, `--mode` по умолчанию `lockstep`. `-g <assets>` и `-g2` выбирают игровые данные и Gothic II. Без `--stdio` runner сам загружает save, исполняет сценарий до завершения, записывает summary и выходит.
+CLI требует `--save` и `--scenario`; `--output` по умолчанию `.body-runner`, `--mode` по умолчанию `lockstep`. `-g <assets>` выбирает игровые данные Gothic II NotR. Без `--stdio` runner сам загружает save, исполняет сценарий до завершения, записывает summary и выходит.
 
 | Команда | Семантика |
 | --- | --- |
@@ -152,3 +170,7 @@ python3 scripts/body_headless_report.py data/npc-body/headless/stage2-v3 \
 Основной parity gate относится к native human melee-v1. CPU morph rendering, все виды PFX/spell interactions, полноценный dialogue UI, другие camera paths, archery и навигационные задачи этим набором не подтверждаются. Некоторые adapters сохраняют необходимые CPU callbacks/geometry, но это не равнозначно parity всех игровых систем.
 
 ASR/TTS latency и latency `body-service` не измеряются этим suite. Проверяются присутствие прежних сервисов и shared host resource evidence; причинное влияние на latency требует отдельного замера. Этап 4 реализовал [боевой API, ownership и masks](npc-body-api.md), этап 5 — [headless арену и runner эпизодов](npc-body-arena.md). Контракт parity этапа 2 сохраняется; GRU, inference, обучающие trajectories, BC/PPO и parallel arena pool остаются следующими этапами плана.
+
+## План и журнал
+
+2026-11-15: происхождение проб и оценок учитывает весь набор наших статических библиотек, включая выделенную платформу (#1331). Снимки очереди сохраняют все архивы; сверка старого одиночного хеша отклоняется.

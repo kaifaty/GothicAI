@@ -7,7 +7,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusScript;
   }
 
@@ -28,7 +28,7 @@ struct Helper final {
 // them all at once; the bridge lifts each one the first time a dialog menu needs it.
 class Predicates final {
   public:
-    Predicates(const zenkit::DaedalusScript& script, const Lifter& lifter);
+    Predicates(const daedalus::DaedalusScript& script, const Lifter& lifter);
 
     // a condition function as one boolean expression
     const ExprP&  condition(uint32_t fnSymbol);
@@ -40,7 +40,7 @@ class Predicates final {
     const std::map<std::string,Helper>& helpers() const { return lifted; }
 
   private:
-    const zenkit::DaedalusScript&        script;
+    const daedalus::DaedalusScript&        script;
     const Lifter&                        lifter;
     std::unordered_map<uint32_t,ExprP>   conditions;
     std::map<std::string,Helper>         lifted;

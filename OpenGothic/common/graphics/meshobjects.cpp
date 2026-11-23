@@ -2,12 +2,17 @@
 
 #include <Tempest/Log>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/attachbinder.h"
 #include "graphics/mesh/protomesh.h"
 
 #include "visualobjects.h"
+#include "worldchunksruntime.h"
 
 MeshObjects::MeshObjects(VisualObjects& parent)
   :parent(&parent) {
@@ -76,6 +81,10 @@ void MeshObjects::Mesh::setFatness(float f) {
   }
 
 void MeshObjects::Mesh::setWind(asset::AnimationType m, float intensity) {
+  // a tree's material moves it in the vertex shader (graphics/foliagetree.h): the object is not shifted as a whole too
+  for(size_t i=0;i<subCount;++i)
+    if(!sub[i].isEmpty() && FoliageTree::isTree(sub[i].material().foliage))
+      intensity = 0;
   for(size_t i=0;i<subCount;++i)
     sub[i].setWind(m,intensity);
   }
@@ -88,6 +97,18 @@ void MeshObjects::Mesh::setVisible(bool visible) {
 void MeshObjects::Mesh::setDeformation(const std::vector<Tempest::Vec4>& vertices) {
   for(size_t i=0;i<subCount;++i)
     sub[i].setDeformation(vertices);
+  }
+
+void MeshObjects::Mesh::setPartDeformation(const std::vector<Tempest::Vec4>& vertices, uint32_t changedFirst,
+                                           uint32_t changedEnd) {
+  const auto count = uint32_t(vertices.size()/2);
+  for(size_t i=0;i<subCount;++i) {
+    auto [first,end] = sub[i].vertexRange();
+    end = std::min(end,count);
+    if(first>=end)
+      sub[i].setDeformation(nullptr,0,0,0,0); else
+      sub[i].setDeformation(vertices.data()+size_t(first)*2,end-first,first,changedFirst,changedEnd);
+    }
   }
 
 void MeshObjects::Mesh::startMMAnim(std::string_view anim, float intensity, uint64_t timeUntil, bool freeOnly) {
@@ -274,11 +295,45 @@ MeshObjects::Mesh &MeshObjects::Mesh::operator =(MeshObjects::Mesh &&other) {
   std::swap(binder,   other.binder);
   std::swap(cpuOnly,  other.cpuOnly);
   std::swap(cpuSub,   other.cpuSub);
+  std::swap(textureOwnerKnown, other.textureOwnerKnown);
+  std::swap(textureOwnerSpatial, other.textureOwnerSpatial);
+  std::swap(textureOwnerAnchor, other.textureOwnerAnchor);
+  std::swap(textureOwnerReach, other.textureOwnerReach);
   return *this;
   }
 
 void MeshObjects::Mesh::setObjMatrix(const Tempest::Matrix4x4 &mt) {
   implSetObjMatrix(mt,skeleton==nullptr ? nullptr : skeleton->tr.data());
+  }
+
+void MeshObjects::Mesh::setTextureCategory(Resources::TextureCategory category) {
+  textureOwnerKnown=false;
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setTextureCategory(category);
+  }
+
+float MeshObjects::Mesh::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
+  if(textureOwnerKnown && textureOwnerSpatial==spatial) {
+    if(!spatial)
+      return std::numeric_limits<float>::infinity();
+    const auto d=position-textureOwnerAnchor;
+    const float moved=d.x*d.x+d.y*d.y+d.z*d.z;
+    if(moved<=textureOwnerReach*textureOwnerReach)
+      return textureOwnerReach-std::sqrt(moved);
+    }
+  float reach=std::numeric_limits<float>::infinity();
+  for(size_t i=0;i<subCount;++i)
+    reach=std::min(reach,sub[i].setTextureOwner(position,spatial));
+  textureOwnerKnown=true;
+  textureOwnerSpatial=spatial;
+  textureOwnerAnchor=position;
+  textureOwnerReach=reach;
+  return reach;
+  }
+
+void MeshObjects::Mesh::setTexturePosition(const Tempest::Vec3& position) {
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setTexturePosition(position);
   }
 
 void MeshObjects::Mesh::implSetObjMatrix(const Tempest::Matrix4x4& mt, const Tempest::Matrix4x4* tr) {
@@ -290,12 +345,14 @@ void MeshObjects::Mesh::implSetObjMatrix(const Tempest::Matrix4x4& mt, const Tem
       }
     return;
     }
+  // Static attachments belong to the vob's cell, including animated nodes.
+  const Tempest::Vec3 texturePosition(mt[3][0],mt[3][1],mt[3][2]);
   for(size_t i=0; i<binds; ++i) {
     auto id = binder->bind[i];
-    sub[i].setObjMatrix(tr[id]);
+    sub[i].setObjMatrix(tr[id],texturePosition);
     }
   for(size_t i=binds; i<subCount; ++i)
-    sub[i].setObjMatrix(mt);
+    sub[i].setObjMatrix(mt,texturePosition);
   }
 
 const Bounds& MeshObjects::Node::bounds() const {
@@ -315,5 +372,11 @@ const StaticMesh* MeshObjects::Node::mesh() const {
   }
 
 std::pair<uint32_t, uint32_t> MeshObjects::Node::meshSlice() const {
-  return cpu!=nullptr ? std::make_pair(cpu->offset,cpu->length) : it->meshSlice();
+  if(cpu==nullptr)
+    return it->meshSlice();
+  if(cpu->mesh!=nullptr && !cpu->mesh->clusterLevels.empty()) {
+    const auto [offset,length] = cpu->mesh->rtSlice(cpu->offset,cpu->length);
+    return {uint32_t(offset),uint32_t(length)};
+    }
+  return {cpu->offset,cpu->length};
   }

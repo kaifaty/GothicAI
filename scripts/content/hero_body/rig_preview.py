@@ -1,0 +1,1 @@
+../../../character-tool/src/character_tool/body/rig_preview.py

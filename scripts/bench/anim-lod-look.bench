@@ -1,0 +1,36 @@
+# Animation LOD look check (docs/world-streaming.md, LOD анимации NPC): a fast camera turn towards the
+# market crowd from the smith's yard, ~41 m away, so most of the crowd is beyond the hero's 30 m ring and
+# was deferred while behind the camera. Record it twice and compare frame by frame:
+#   OPENGOTHIC_ANIM_LOD=0 NO_BUILD=1 BENCH_HOST=local TEMPEST_WINDOW_SIZE=1280x720 \
+#     scripts/bench.sh anim-lod-look /absolute/out/off
+#   NO_BUILD=1 BENCH_HOST=local TEMPEST_WINDOW_SIZE=1280x720 scripts/bench.sh anim-lod-look /absolute/out/on
+# `turn`: the game camera swings after the hero (the player's fast turn); `cut`: the bench camera rides
+# behind the hero, who turns at once, so the view jumps to the market in one frame: the worst case for the
+# catch-up after the camera.
+seed 73030
+cheat god
+world-check NEWWORLD.ZEN
+set time 12 0
+overlay off
+ui off
+cam lift off
+goto NW_CITY_SMITH_COOL
+face wp NW_CITY_MERCHANT_TRADE_04
+turn 180
+cam game
+wait 5000
+streaming wait
+rec turn
+wait 1500
+turn 180
+wait 3000
+stop
+turn 180
+cam follow 350 170 180
+wait 3000
+streaming wait
+rec cut
+wait 1000
+turn 180
+wait 2500
+stop

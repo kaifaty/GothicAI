@@ -15,6 +15,7 @@ is in `functions`), `["cases", guard, value, ...]` (the first true guard picks t
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -23,9 +24,12 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gothic_ai.gamedata import base
+
 log = logging.getLogger(__name__)
 
 VERSION = 1
+ALGORITHM_VERSION = 1
 # the converter, built in the repository (docs/story-graph.md, stage 1)
 REPO = Path(__file__).resolve().parents[4]
 TOOL = REPO / "OpenGothic" / "ai_bridge" / "storygraph" / "build" / "storygraph"
@@ -190,24 +194,51 @@ def load(path: Path) -> StoryGraph:
 
 
 def ensure(game_dir: Path, cache: Path, tool: Path | None = None) -> Path | None:
-    """Rebuild from the selected native program and OU, publishing the graph atomically."""
+    """Cache the graph by ready-base identity and converter, without probing installation files."""
+    with base.resolve(game_dir) as selected:
+        return _ensure(selected, cache, tool)
+
+
+def _ensure(selected: base.Base, cache: Path, tool: Path | None) -> Path | None:
     tool = tool or Path(os.environ.get("STORYGRAPH_TOOL", TOOL))
+    stamp = cache.with_suffix(".base.json")
+    source = {"base_fingerprint": selected.fingerprint, "algorithm_version": ALGORITHM_VERSION}
+    try:
+        previous = json.loads(stamp.read_text())
+    except (OSError, ValueError):
+        previous = {}
     if not tool.exists():
-        if cache.exists():
-            log.warning("story graph: converter unavailable; existing cache freshness is unverified")
-        return cache if cache.exists() else None
+        if (
+            cache.is_file()
+            and isinstance(previous, dict)
+            and all(previous.get(key) == value for key, value in source.items())
+        ):
+            log.warning("story graph: converter unavailable, converter freshness unverified: %s", tool)
+            return cache
+        log.warning("story graph: converter unavailable: %s", tool)
+        return None
+    source["converter_sha256"] = hashlib.sha256(tool.read_bytes()).hexdigest()
+    if cache.is_file() and previous == source:
+        return cache
     cache.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache.with_suffix(".tmp")
     try:
-        cmd = [str(tool), str(game_dir), "--json", str(tmp)]
-        subprocess.run(cmd, check=True, capture_output=True, timeout=1800)
+        cmd = [str(tool), str(selected.path), "--json", str(tmp)]
+        subprocess.run(
+            cmd,
+            env={**os.environ, "OPENGOTHIC_BASE": str(selected.path)},
+            check=True,
+            capture_output=True,
+            timeout=1800,
+        )
     except (OSError, subprocess.SubprocessError) as err:
         log.warning("story graph: %s failed: %s", tool, err)
-        if cache.exists():
-            log.warning("story graph: existing cache freshness is unverified")
-        return cache if cache.exists() else None
+        return None
     tmp.replace(cache)
-    log.info("story graph: %s from %s", cache, game_dir)
+    temporary = stamp.with_suffix(".tmp")
+    temporary.write_text(json.dumps(source), encoding="utf-8")
+    temporary.replace(stamp)
+    log.info("story graph: %s from base %s", cache, selected.fingerprint)
     return cache
 
 

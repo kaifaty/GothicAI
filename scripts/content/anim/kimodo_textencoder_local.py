@@ -1,0 +1,1 @@
+../../../character-tool/src/character_tool/anim/kimodo_textencoder_local.py

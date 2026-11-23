@@ -1,0 +1,7202 @@
+[
+{
+"around": 50,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -3.0,
+"ARMOR_MIL_M": -3.5,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.2,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 15.1,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 3.7,
+"longsword": -0.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 48.3,
+"ok": false,
+"leg_worst": -3.9
+},
+{
+"around": 70,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -3.9,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.3,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.3,
+"ARMOR_MIL_M": 2.8,
+"ARMOR_BDT_H": 8.5,
+"ARMOR_PAL_H": -2.9,
+"ARMOR_KDF_H": -3.7
+},
+"bow": -3.2,
+"longsword": 7.7,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.8,
+"ok": false,
+"leg_worst": -4.0
+},
+{
+"around": 55,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.0,
+"ARMOR_MIL_M": -3.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -3.7,
+"ARMOR_BDT_H": 8.8,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.8
+},
+"bow": 2.2,
+"longsword": 1.7,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -4.1
+},
+{
+"around": 55,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 12.4,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.5
+},
+"bow": 2.4,
+"longsword": 1.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -4.1
+},
+{
+"around": 60,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.0,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 1.9,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.6
+},
+"bow": -2.4,
+"longsword": 1.9,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 25.4,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.6
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.2
+},
+{
+"around": 70,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 6.0,
+"ARMOR_MIL_M": 3.7,
+"ARMOR_BDT_H": 0.4,
+"ARMOR_PAL_H": -0.6,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -3.9,
+"longsword": 1.3,
+"out": {
+"ARMOR_LEATHER_L": 18.2,
+"ARMOR_MIL_M": 25.1,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 22.8,
+"ARMOR_KDF_H": 25.1
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -4.2
+},
+{
+"around": 70,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.8,
+"ARMOR_MIL_M": 3.7,
+"ARMOR_BDT_H": 1.9,
+"ARMOR_PAL_H": -0.6,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -3.9,
+"longsword": 3.4,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 25.1,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 22.8,
+"ARMOR_KDF_H": 25.1
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -4.2
+},
+{
+"around": 50,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -3.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.1
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -2.9,
+"ARMOR_BDT_H": 11.1,
+"ARMOR_PAL_H": -5.4,
+"ARMOR_KDF_H": -4.1
+},
+"bow": 1.3,
+"longsword": 1.6,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -4.3
+},
+{
+"around": 50,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -3.7,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.2,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.4,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 11.8,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -5.3
+},
+"bow": 3.8,
+"longsword": -0.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 48.3,
+"ok": false,
+"leg_worst": -4.3
+},
+{
+"around": 55,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.0,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.4,
+"ARMOR_MIL_M": 0.2,
+"ARMOR_BDT_H": 5.7,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -0.5,
+"longsword": 3.3,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 48.0,
+"ok": false,
+"leg_worst": -4.3
+},
+{
+"around": 70,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -3.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.7,
+"ARMOR_MIL_M": 4.0,
+"ARMOR_BDT_H": 11.6,
+"ARMOR_PAL_H": -1.4,
+"ARMOR_KDF_H": -4.3
+},
+"bow": -4.6,
+"longsword": 6.9,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.2
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -4.3
+},
+{
+"around": 70,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -3.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.5,
+"ARMOR_MIL_M": 3.1,
+"ARMOR_BDT_H": 8.7,
+"ARMOR_PAL_H": -2.7,
+"ARMOR_KDF_H": -3.8
+},
+"bow": -3.2,
+"longsword": 7.3,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.8,
+"ok": false,
+"leg_worst": -4.3
+},
+{
+"around": 50,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -2.7,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 13.1,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -5.2
+},
+"bow": 2.2,
+"longsword": 0.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.4
+},
+{
+"around": 50,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -3.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.3,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 0.5,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -4.6
+},
+"bow": 3.6,
+"longsword": -0.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 48.3,
+"ok": false,
+"leg_worst": -4.4
+},
+{
+"around": 50,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -3.9,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.4,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.4,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 11.8,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -5.1
+},
+"bow": 3.6,
+"longsword": -0.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 48.3,
+"ok": false,
+"leg_worst": -4.4
+},
+{
+"around": 55,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -2.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.1,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 0.9,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.7
+},
+"bow": -0.5,
+"longsword": 1.8,
+"out": {
+"ARMOR_LEATHER_L": 19.0,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 20.2,
+"ARMOR_KDF_H": 22.3
+},
+"reach": 47.6,
+"ok": false,
+"leg_worst": -4.4
+},
+{
+"around": 55,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -2.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.1,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 2.7,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -4.7
+},
+"bow": -0.5,
+"longsword": 4.0,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 22.3
+},
+"reach": 47.7,
+"ok": false,
+"leg_worst": -4.4
+},
+{
+"around": 55,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -3.0
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.1,
+"ARMOR_MIL_M": -1.2,
+"ARMOR_BDT_H": 6.3,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.3
+},
+"bow": -0.5,
+"longsword": 4.5,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.3,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 21.7
+},
+"reach": 47.7,
+"ok": false,
+"leg_worst": -4.4
+},
+{
+"around": 55,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.3,
+"ARMOR_MIL_M": -2.5,
+"ARMOR_BDT_H": 10.3,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.2
+},
+"bow": 0.7,
+"longsword": 2.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 48.4,
+"ok": false,
+"leg_worst": -4.4
+},
+{
+"around": 60,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.1,
+"ARMOR_MIL_M": 0.4,
+"ARMOR_BDT_H": 0.2,
+"ARMOR_PAL_H": -3.2,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -1.0,
+"longsword": 2.6,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 25.3,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 22.9,
+"ARMOR_KDF_H": 24.1
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.4
+},
+{
+"around": 70,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -3.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 5.4,
+"ARMOR_MIL_M": 3.6,
+"ARMOR_BDT_H": 3.5,
+"ARMOR_PAL_H": -0.6,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -4.3,
+"longsword": 2.7,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 21.8,
+"ARMOR_KDF_H": 24.6
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -4.4
+},
+{
+"around": 50,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.7,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": -1.9,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.5,
+"longsword": 0.9,
+"out": {
+"ARMOR_LEATHER_L": 21.1,
+"ARMOR_MIL_M": 26.9,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 21.5
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -4.5
+},
+{
+"around": 50,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.1,
+"ARMOR_MIL_M": -3.2,
+"ARMOR_BDT_H": -3.6,
+"ARMOR_PAL_H": -5.3,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.5,
+"longsword": 1.0,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 26.7,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -4.5
+},
+{
+"around": 50,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 2.4,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -4.4
+},
+"bow": 2.2,
+"longsword": 0.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 26.9,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.5
+},
+{
+"around": 55,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -3.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.5,
+"ARMOR_MIL_M": -1.2,
+"ARMOR_BDT_H": 4.3,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.3
+},
+"bow": -0.5,
+"longsword": 3.3,
+"out": {
+"ARMOR_LEATHER_L": 18.4,
+"ARMOR_MIL_M": 23.3,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 19.1,
+"ARMOR_KDF_H": 21.7
+},
+"reach": 47.6,
+"ok": false,
+"leg_worst": -4.5
+},
+{
+"around": 55,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.7,
+"ARMOR_KDF_H": -2.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.0,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 4.7,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.2
+},
+"bow": -0.5,
+"longsword": 3.3,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 48.0,
+"ok": false,
+"leg_worst": -4.5
+},
+{
+"around": 55,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.3,
+"ARMOR_MIL_M": -1.7,
+"ARMOR_BDT_H": 6.7,
+"ARMOR_PAL_H": -5.3,
+"ARMOR_KDF_H": -4.4
+},
+"bow": 0.5,
+"longsword": 2.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 48.4,
+"ok": false,
+"leg_worst": -4.5
+},
+{
+"around": 60,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.7,
+"ARMOR_MIL_M": 0.6,
+"ARMOR_BDT_H": 9.2,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -2.5,
+"longsword": 4.7,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 22.3,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 23.1,
+"ARMOR_KDF_H": 22.8
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.5
+},
+{
+"around": 60,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.5,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -2.9
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.4,
+"ARMOR_MIL_M": -0.1,
+"ARMOR_BDT_H": 3.7,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -4.8
+},
+"bow": -0.5,
+"longsword": 4.3,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 49.2,
+"ok": false,
+"leg_worst": -4.5
+},
+{
+"around": 70,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -3.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.2
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.2,
+"ARMOR_MIL_M": 4.2,
+"ARMOR_BDT_H": 8.3,
+"ARMOR_PAL_H": -0.7,
+"ARMOR_KDF_H": -4.2
+},
+"bow": -4.3,
+"longsword": 6.8,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 24.2,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.6
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -4.5
+},
+{
+"around": 70,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -3.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -2.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.2,
+"ARMOR_MIL_M": 1.8,
+"ARMOR_BDT_H": 5.8,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -3.7
+},
+"bow": -0.3,
+"longsword": 7.9,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 51.6,
+"ok": false,
+"leg_worst": -4.5
+},
+{
+"around": 50,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -3.8,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.1,
+"ARMOR_MIL_M": -3.2,
+"ARMOR_BDT_H": -4.5,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -4.2
+},
+"bow": 1.5,
+"longsword": -2.1,
+"out": {
+"ARMOR_LEATHER_L": 21.7,
+"ARMOR_MIL_M": 26.7,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 20.1,
+"ARMOR_KDF_H": 22.0
+},
+"reach": 47.3,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 50,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.0,
+"ARMOR_MIL_M": -2.6,
+"ARMOR_BDT_H": 7.8,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -3.5
+},
+"bow": 1.5,
+"longsword": 1.6,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 50,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 8.7,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -5.5
+},
+"bow": 3.8,
+"longsword": -0.8,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 48.3,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 50,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.2
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.1,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 8.3,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -5.2
+},
+"bow": 3.7,
+"longsword": -0.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 48.3,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 55,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.9,
+"ARMOR_MIL_M": 0.2,
+"ARMOR_BDT_H": 1.8,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -4.7
+},
+"bow": -0.5,
+"longsword": 1.8,
+"out": {
+"ARMOR_LEATHER_L": 18.7,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 20.6,
+"ARMOR_KDF_H": 22.6
+},
+"reach": 47.7,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 55,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.0,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": -0.3,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.8
+},
+"bow": -0.5,
+"longsword": 2.5,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 21.4,
+"ARMOR_KDF_H": 22.9
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 55,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.8,
+"ARMOR_MIL_M": -1.2,
+"ARMOR_BDT_H": 8.3,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -0.5,
+"longsword": 3.3,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.3,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 48.0,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 55,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.2
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.4,
+"ARMOR_MIL_M": -2.8,
+"ARMOR_BDT_H": 5.1,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.8
+},
+"bow": 2.0,
+"longsword": 1.7,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 55,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -2.9,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 15.6,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -4.4
+},
+"bow": 2.4,
+"longsword": 1.7,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 60,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.3,
+"ARMOR_MIL_M": 0.0,
+"ARMOR_BDT_H": -2.1,
+"ARMOR_PAL_H": -3.3,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -1.1,
+"longsword": 0.4,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 25.4,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.0
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 60,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.6,
+"ARMOR_MIL_M": 0.0,
+"ARMOR_BDT_H": -0.1,
+"ARMOR_PAL_H": -3.3,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -1.1,
+"longsword": 2.7,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 25.4,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.0
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 60,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.4,
+"ARMOR_MIL_M": 0.6,
+"ARMOR_BDT_H": 7.3,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -5.4
+},
+"bow": -2.5,
+"longsword": 5.4,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 22.9,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 23.1,
+"ARMOR_KDF_H": 23.1
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 60,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.0,
+"ARMOR_MIL_M": 0.5,
+"ARMOR_BDT_H": 9.2,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -5.4
+},
+"bow": -2.5,
+"longsword": 5.1,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.1,
+"ARMOR_KDF_H": 23.1
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 60,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -3.9,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -4.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.1,
+"ARMOR_MIL_M": -1.4,
+"ARMOR_BDT_H": 14.6,
+"ARMOR_PAL_H": -5.3,
+"ARMOR_KDF_H": -4.2
+},
+"bow": -0.5,
+"longsword": 4.3,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 49.2,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 70,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.7,
+"ARMOR_MIL_M": 3.7,
+"ARMOR_BDT_H": 10.9,
+"ARMOR_PAL_H": 0.1,
+"ARMOR_KDF_H": -4.8
+},
+"bow": -4.9,
+"longsword": 5.5,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 22.7,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 19.7,
+"ARMOR_KDF_H": 23.8
+},
+"reach": 49.5,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 70,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.0,
+"ARMOR_MIL_M": 3.6,
+"ARMOR_BDT_H": 5.3,
+"ARMOR_PAL_H": -0.6,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -4.3,
+"longsword": 4.8,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 21.8,
+"ARMOR_KDF_H": 24.6
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 70,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.6,
+"ARMOR_MIL_M": 3.7,
+"ARMOR_BDT_H": 9.1,
+"ARMOR_PAL_H": -0.2,
+"ARMOR_KDF_H": -4.0
+},
+"bow": -4.6,
+"longsword": 6.1,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.8,
+"ARMOR_KDF_H": 24.2
+},
+"reach": 49.7,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 70,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.3,
+"ARMOR_MIL_M": 3.7,
+"ARMOR_BDT_H": 12.7,
+"ARMOR_PAL_H": -0.3,
+"ARMOR_KDF_H": -4.8
+},
+"bow": -4.9,
+"longsword": 7.0,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 22.7,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 23.8
+},
+"reach": 49.6,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 70,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.9,
+"ARMOR_MIL_M": 3.9,
+"ARMOR_BDT_H": 7.6,
+"ARMOR_PAL_H": -0.8,
+"ARMOR_KDF_H": -4.0
+},
+"bow": -4.3,
+"longsword": 6.9,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.6
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 70,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.2,
+"ARMOR_MIL_M": 3.8,
+"ARMOR_BDT_H": 5.4,
+"ARMOR_PAL_H": -2.0,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -3.6,
+"longsword": 7.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.8,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 70,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.4,
+"ARMOR_MIL_M": 2.0,
+"ARMOR_BDT_H": 16.3,
+"ARMOR_PAL_H": -3.2,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -2.3,
+"longsword": 7.3,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.8,
+"ok": false,
+"leg_worst": -4.6
+},
+{
+"around": 50,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -3.2
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.5,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": 2.6,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 1.1,
+"longsword": 3.0,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 21.7,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 21.3
+},
+"reach": 47.1,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 50,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.5,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.0,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 0.1,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -5.2
+},
+"bow": 1.5,
+"longsword": 1.7,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 50,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.7,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.6,
+"ARMOR_MIL_M": -1.1,
+"ARMOR_BDT_H": 4.4,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -4.4
+},
+"bow": 1.4,
+"longsword": 1.7,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 50,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.3,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.3,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 6.5,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -4.7
+},
+"bow": 2.3,
+"longsword": 0.1,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 50,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -3.7,
+"ARMOR_BDT_H": 6.2,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 2.2,
+"longsword": 0.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 50,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.5,
+"ARMOR_MIL_M": -4.5,
+"ARMOR_BDT_H": 4.6,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 3.6,
+"longsword": -0.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 48.3,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 55,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.2,
+"ARMOR_MIL_M": -1.1,
+"ARMOR_BDT_H": 0.5,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -5.1
+},
+"bow": -0.4,
+"longsword": 1.9,
+"out": {
+"ARMOR_LEATHER_L": 19.2,
+"ARMOR_MIL_M": 23.3,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 19.5,
+"ARMOR_KDF_H": 21.9
+},
+"reach": 47.6,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 55,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.6
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.3,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 5.2,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -0.5,
+"longsword": 3.2,
+"out": {
+"ARMOR_LEATHER_L": 18.1,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 19.6,
+"ARMOR_KDF_H": 22.0
+},
+"reach": 47.6,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 55,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -3.9,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.6,
+"ARMOR_MIL_M": -1.1,
+"ARMOR_BDT_H": 2.7,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -5.1
+},
+"bow": -0.4,
+"longsword": 3.8,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.3,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 21.9
+},
+"reach": 47.7,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 55,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.4,
+"ARMOR_MIL_M": -1.3,
+"ARMOR_BDT_H": 9.9,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -4.9
+},
+"bow": -0.5,
+"longsword": 4.6,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.3,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 21.5
+},
+"reach": 47.7,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 55,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.6,
+"ARMOR_MIL_M": -1.1,
+"ARMOR_BDT_H": 4.8,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.2
+},
+"bow": -0.4,
+"longsword": 3.3,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.3,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 48.0,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 55,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.1,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 8.7,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -5.1
+},
+"bow": -0.5,
+"longsword": 3.3,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 48.0,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 55,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -2.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.9,
+"ARMOR_MIL_M": -1.2,
+"ARMOR_BDT_H": 3.1,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -4.0
+},
+"bow": 0.3,
+"longsword": 2.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 48.4,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 60,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.2,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 4.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.6
+},
+"bow": -2.4,
+"longsword": 4.1,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 25.4,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.6
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 60,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.4,
+"ARMOR_MIL_M": 0.4,
+"ARMOR_BDT_H": 2.3,
+"ARMOR_PAL_H": -3.3,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -1.0,
+"longsword": 4.9,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 25.3,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.1
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 60,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.5,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": 12.8,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -2.5,
+"longsword": 5.1,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.1,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 60,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.5,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -2.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.9,
+"ARMOR_MIL_M": 0.8,
+"ARMOR_BDT_H": 0.2,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.3
+},
+"bow": -0.5,
+"longsword": 4.3,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 49.2,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 60,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.5,
+"ARMOR_MIL_M": -0.8,
+"ARMOR_BDT_H": 11.7,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.9
+},
+"bow": -0.5,
+"longsword": 4.3,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 49.2,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 65,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.6,
+"ARMOR_MIL_M": 1.5,
+"ARMOR_BDT_H": 1.0,
+"ARMOR_PAL_H": -3.3,
+"ARMOR_KDF_H": -5.1
+},
+"bow": -2.3,
+"longsword": 5.9,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 26.6,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.0,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 70,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 6.3,
+"ARMOR_MIL_M": 4.1,
+"ARMOR_BDT_H": 1.8,
+"ARMOR_PAL_H": -0.2,
+"ARMOR_KDF_H": -4.0
+},
+"bow": -3.9,
+"longsword": 1.5,
+"out": {
+"ARMOR_LEATHER_L": 18.4,
+"ARMOR_MIL_M": 25.1,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 22.8,
+"ARMOR_KDF_H": 25.1
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 70,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -3.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": 5.8,
+"ARMOR_MIL_M": 3.9,
+"ARMOR_BDT_H": 4.2,
+"ARMOR_PAL_H": -0.2,
+"ARMOR_KDF_H": -4.0
+},
+"bow": -4.3,
+"longsword": 2.8,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 21.8,
+"ARMOR_KDF_H": 24.6
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 70,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 5.2,
+"ARMOR_MIL_M": 4.1,
+"ARMOR_BDT_H": 3.0,
+"ARMOR_PAL_H": -0.2,
+"ARMOR_KDF_H": -4.0
+},
+"bow": -3.9,
+"longsword": 3.5,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 25.1,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 22.8,
+"ARMOR_KDF_H": 25.1
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 70,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -3.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.4,
+"ARMOR_MIL_M": 3.9,
+"ARMOR_BDT_H": 5.9,
+"ARMOR_PAL_H": -0.2,
+"ARMOR_KDF_H": -4.0
+},
+"bow": -4.3,
+"longsword": 4.9,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 21.8,
+"ARMOR_KDF_H": 24.6
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 70,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.5,
+"ARMOR_MIL_M": 1.2,
+"ARMOR_BDT_H": 15.0,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -3.8
+},
+"bow": 0.4,
+"longsword": 7.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 51.6,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 70,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.0,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.1,
+"ARMOR_MIL_M": 0.7,
+"ARMOR_BDT_H": 18.1,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -4.2
+},
+"bow": 0.5,
+"longsword": 7.8,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 51.6,
+"ok": false,
+"leg_worst": -4.7
+},
+{
+"around": 50,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.8,
+"ARMOR_MIL_M": 0.3,
+"ARMOR_BDT_H": -3.2,
+"ARMOR_PAL_H": -3.2,
+"ARMOR_KDF_H": -4.7
+},
+"bow": 1.3,
+"longsword": -0.2,
+"out": {
+"ARMOR_LEATHER_L": 21.0,
+"ARMOR_MIL_M": 21.9,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 20.0,
+"ARMOR_KDF_H": 21.7
+},
+"reach": 47.1,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 50,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -3.8,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.1,
+"ARMOR_MIL_M": -3.2,
+"ARMOR_BDT_H": -4.2,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.2
+},
+"bow": 1.5,
+"longsword": -0.4,
+"out": {
+"ARMOR_LEATHER_L": 21.7,
+"ARMOR_MIL_M": 26.7,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 22.0
+},
+"reach": 47.3,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 50,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.8,
+"ARMOR_MIL_M": 0.3,
+"ARMOR_BDT_H": -1.9,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -4.7
+},
+"bow": 1.3,
+"longsword": 1.6,
+"out": {
+"ARMOR_LEATHER_L": 21.0,
+"ARMOR_MIL_M": 21.9,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 21.7
+},
+"reach": 47.1,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 50,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.9,
+"ARMOR_MIL_M": -1.6,
+"ARMOR_BDT_H": 4.1,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.3
+},
+"bow": 1.5,
+"longsword": 1.7,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 50,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.3,
+"ARMOR_MIL_M": -3.2,
+"ARMOR_BDT_H": -1.7,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.3
+},
+"bow": 2.2,
+"longsword": 0.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 26.7,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 50,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.0,
+"ARMOR_MIL_M": -2.7,
+"ARMOR_BDT_H": 2.3,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -4.5
+},
+"bow": 2.2,
+"longsword": 0.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 50,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9.8,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -5.1
+},
+"bow": 2.2,
+"longsword": 0.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 50,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.1
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -3.0,
+"ARMOR_BDT_H": 6.4,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -5.1
+},
+"bow": 2.2,
+"longsword": 0.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 50,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -3.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.0
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -3.6,
+"ARMOR_BDT_H": 9.8,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -5.5
+},
+"bow": 2.2,
+"longsword": 0.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 55,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.6,
+"ARMOR_MIL_M": -0.2,
+"ARMOR_BDT_H": -3.4,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -5.0
+},
+"bow": -0.5,
+"longsword": 0.3,
+"out": {
+"ARMOR_LEATHER_L": 19.9,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 20.7,
+"ARMOR_KDF_H": 22.5
+},
+"reach": 47.7,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 55,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.3,
+"ARMOR_MIL_M": -0.2,
+"ARMOR_BDT_H": -1.5,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -5.0
+},
+"bow": -0.5,
+"longsword": 2.3,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.7,
+"ARMOR_KDF_H": 22.5
+},
+"reach": 47.7,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 55,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.6,
+"ARMOR_MIL_M": -0.2,
+"ARMOR_BDT_H": 0.7,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -5.4
+},
+"bow": -0.4,
+"longsword": 3.3,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 48.0,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 55,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.1,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": 1.2,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.9
+},
+"bow": -0.5,
+"longsword": 3.3,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 48.0,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 55,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.7,
+"ARMOR_MIL_M": -1.1,
+"ARMOR_BDT_H": -1.2,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -4.6
+},
+"bow": 0.4,
+"longsword": 2.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 48.4,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 55,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.5,
+"ARMOR_MIL_M": -1.8,
+"ARMOR_BDT_H": 2.9,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.4
+},
+"bow": 0.6,
+"longsword": 2.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 48.4,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 55,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -2.5,
+"ARMOR_BDT_H": 1.1,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -4.8
+},
+"bow": 2.0,
+"longsword": 1.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 60,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.7,
+"ARMOR_MIL_M": 1.0,
+"ARMOR_BDT_H": -3.7,
+"ARMOR_PAL_H": -2.9,
+"ARMOR_KDF_H": -4.9
+},
+"bow": -0.9,
+"longsword": -1.2,
+"out": {
+"ARMOR_LEATHER_L": 18.7,
+"ARMOR_MIL_M": 25.3,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 23.1,
+"ARMOR_KDF_H": 24.5
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 60,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.0,
+"ARMOR_MIL_M": 0.4,
+"ARMOR_BDT_H": -1.7,
+"ARMOR_PAL_H": -3.2,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -1.0,
+"longsword": 0.4,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 25.3,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 22.9,
+"ARMOR_KDF_H": 24.1
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 60,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.6,
+"ARMOR_MIL_M": 1.0,
+"ARMOR_BDT_H": -4.1,
+"ARMOR_PAL_H": -2.9,
+"ARMOR_KDF_H": -4.9
+},
+"bow": -0.9,
+"longsword": 1.1,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 25.3,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 23.1,
+"ARMOR_KDF_H": 24.5
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 60,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.7,
+"ARMOR_MIL_M": 1.0,
+"ARMOR_BDT_H": -1.8,
+"ARMOR_PAL_H": -2.9,
+"ARMOR_KDF_H": -4.9
+},
+"bow": -0.9,
+"longsword": 3.4,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 25.3,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.1,
+"ARMOR_KDF_H": 24.5
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 60,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.2,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 5.9,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.6
+},
+"bow": -2.4,
+"longsword": 5.1,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 25.4,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.6
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 60,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.1,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 7.7,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.9
+},
+"bow": -0.5,
+"longsword": 4.3,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 49.2,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 60,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -2.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.7,
+"ARMOR_MIL_M": -0.1,
+"ARMOR_BDT_H": 8.3,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -0.5,
+"longsword": 4.4,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 49.2,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 60,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -2.6,
+"ARMOR_BDT_H": 9.5,
+"ARMOR_PAL_H": -5.4,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.3,
+"longsword": 4.0,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 60,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.2,
+"ARMOR_MIL_M": -1.6,
+"ARMOR_BDT_H": 5.8,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.1,
+"longsword": 4.1,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 60,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -2.5,
+"ARMOR_BDT_H": 13.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -5.2
+},
+"bow": 1.4,
+"longsword": 4.1,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 65,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.4,
+"ARMOR_MIL_M": 1.6,
+"ARMOR_BDT_H": 4.5,
+"ARMOR_PAL_H": -2.3,
+"ARMOR_KDF_H": -3.6
+},
+"bow": -2.9,
+"longsword": 4.4,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 24.2,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 21.6,
+"ARMOR_KDF_H": 24.3
+},
+"reach": 49.1,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 65,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.4,
+"ARMOR_MIL_M": 1.1,
+"ARMOR_BDT_H": 12.5,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.6
+},
+"bow": -2.3,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.0,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 65,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.8,
+"ARMOR_MIL_M": -0.6,
+"ARMOR_BDT_H": 10.1,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -4.8
+},
+"bow": 0.4,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 50.7,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 65,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.5,
+"ARMOR_MIL_M": -1.0,
+"ARMOR_BDT_H": 14.1,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -5.3
+},
+"bow": 0.5,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 50.7,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 70,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 6.4,
+"ARMOR_MIL_M": 3.0,
+"ARMOR_BDT_H": -2.3,
+"ARMOR_PAL_H": -2.1,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -3.5,
+"longsword": -0.2,
+"out": {
+"ARMOR_LEATHER_L": 18.7,
+"ARMOR_MIL_M": 27.2,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 26.3,
+"ARMOR_KDF_H": 25.6
+},
+"reach": 51.0,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 70,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 5.4,
+"ARMOR_MIL_M": 3.0,
+"ARMOR_BDT_H": -0.4,
+"ARMOR_PAL_H": -2.1,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -3.5,
+"longsword": 1.9,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 27.2,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 26.3,
+"ARMOR_KDF_H": 25.6
+},
+"reach": 51.0,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 70,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -3.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.0,
+"ARMOR_MIL_M": 4.0,
+"ARMOR_BDT_H": 9.8,
+"ARMOR_PAL_H": 0.2,
+"ARMOR_KDF_H": -4.3
+},
+"bow": -4.6,
+"longsword": 6.2,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.7,
+"ARMOR_KDF_H": 24.2
+},
+"reach": 49.6,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 70,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.9,
+"ARMOR_MIL_M": 3.0,
+"ARMOR_BDT_H": 0.6,
+"ARMOR_PAL_H": -2.1,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -3.6,
+"longsword": 4.1,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 27.2,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 26.3,
+"ARMOR_KDF_H": 25.6
+},
+"reach": 51.0,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 70,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -3.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.5,
+"ARMOR_MIL_M": 4.1,
+"ARMOR_BDT_H": 4.6,
+"ARMOR_PAL_H": -0.3,
+"ARMOR_KDF_H": -4.0
+},
+"bow": -3.9,
+"longsword": 5.7,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 25.1,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 25.1
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 70,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -3.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.4,
+"ARMOR_MIL_M": 3.7,
+"ARMOR_BDT_H": 11.0,
+"ARMOR_PAL_H": -1.6,
+"ARMOR_KDF_H": -4.0
+},
+"bow": -4.6,
+"longsword": 7.3,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.2
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 70,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.4,
+"ARMOR_MIL_M": 3.0,
+"ARMOR_BDT_H": 2.3,
+"ARMOR_PAL_H": -2.1,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -3.5,
+"longsword": 6.4,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 27.2,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 26.3,
+"ARMOR_KDF_H": 25.6
+},
+"reach": 51.0,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 70,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.2,
+"ARMOR_MIL_M": 1.5,
+"ARMOR_BDT_H": 10.2,
+"ARMOR_PAL_H": -3.7,
+"ARMOR_KDF_H": -4.1
+},
+"bow": 0.1,
+"longsword": 7.8,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 51.6,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 70,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.7,
+"ARMOR_KDF_H": -3.2
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.8,
+"ARMOR_MIL_M": 1.0,
+"ARMOR_BDT_H": 14.5,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -4.2
+},
+"bow": 0.5,
+"longsword": 7.9,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 51.6,
+"ok": false,
+"leg_worst": -4.8
+},
+{
+"around": 50,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -3.2
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.3,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": 1.2,
+"ARMOR_PAL_H": -3.7,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 1.1,
+"longsword": 1.6,
+"out": {
+"ARMOR_LEATHER_L": 20.2,
+"ARMOR_MIL_M": 21.7,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 19.6,
+"ARMOR_KDF_H": 21.3
+},
+"reach": 47.1,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 55,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.5,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": -2.5,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.8
+},
+"bow": -0.5,
+"longsword": 0.2,
+"out": {
+"ARMOR_LEATHER_L": 19.6,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 21.4,
+"ARMOR_KDF_H": 22.9
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 55,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.5,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 6.9,
+"ARMOR_PAL_H": -3.7,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -0.5,
+"longsword": 4.6,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 22.0
+},
+"reach": 47.7,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 55,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -3.9,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.5,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": -3.3,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.1
+},
+"bow": -0.4,
+"longsword": 2.6,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 24.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.1
+},
+"reach": 48.0,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 55,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.6,
+"ARMOR_MIL_M": -1.3,
+"ARMOR_BDT_H": 7.4,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -5.1
+},
+"bow": 0.3,
+"longsword": 2.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 48.4,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 55,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9.2,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.5
+},
+"bow": 2.4,
+"longsword": 1.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 55,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.0,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.9
+},
+"arm": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 12.5,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.8
+},
+"bow": 2.2,
+"longsword": 1.8,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 60,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.6,
+"ARMOR_MIL_M": -0.8,
+"ARMOR_BDT_H": 5.9,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.7
+},
+"bow": -2.5,
+"longsword": 3.4,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.3
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 60,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.7,
+"ARMOR_MIL_M": -0.8,
+"ARMOR_BDT_H": 9.8,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.7
+},
+"bow": -2.5,
+"longsword": 5.1,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.3
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 60,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.7,
+"ARMOR_MIL_M": -1.3,
+"ARMOR_BDT_H": 2.0,
+"ARMOR_PAL_H": -5.3,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 1.0,
+"longsword": 4.0,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 60,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -4.5,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.9,
+"ARMOR_MIL_M": -2.1,
+"ARMOR_BDT_H": 9.7,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -5.2
+},
+"bow": 1.2,
+"longsword": 4.1,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 60,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -3.8,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.4,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.6,
+"ARMOR_MIL_M": -2.0,
+"ARMOR_BDT_H": 13.5,
+"ARMOR_PAL_H": -5.3,
+"ARMOR_KDF_H": -5.4
+},
+"bow": 1.3,
+"longsword": 4.2,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 60,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -4.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.5,
+"ARMOR_MIL_M": -2.5,
+"ARMOR_BDT_H": 16.4,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -5.5
+},
+"bow": 1.5,
+"longsword": 4.2,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 65,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.7,
+"ARMOR_MIL_M": 1.6,
+"ARMOR_BDT_H": 2.4,
+"ARMOR_PAL_H": -2.3,
+"ARMOR_KDF_H": -3.6
+},
+"bow": -2.9,
+"longsword": 2.3,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 24.2,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 21.6,
+"ARMOR_KDF_H": 24.3
+},
+"reach": 49.1,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 65,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -2.1
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.3,
+"ARMOR_MIL_M": 2.0,
+"ARMOR_BDT_H": 2.8,
+"ARMOR_PAL_H": -3.1,
+"ARMOR_KDF_H": -3.5
+},
+"bow": -2.9,
+"longsword": 2.3,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 25.2,
+"ARMOR_KDF_H": 24.4
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 65,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.7,
+"ARMOR_MIL_M": 2.4,
+"ARMOR_BDT_H": 4.0,
+"ARMOR_PAL_H": -3.2,
+"ARMOR_KDF_H": -3.2
+},
+"bow": -2.9,
+"longsword": 2.6,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 25.1,
+"ARMOR_KDF_H": 24.4
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 65,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -2.1
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.9,
+"ARMOR_MIL_M": 2.0,
+"ARMOR_BDT_H": 4.7,
+"ARMOR_PAL_H": -3.1,
+"ARMOR_KDF_H": -3.5
+},
+"bow": -2.9,
+"longsword": 4.4,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 25.2,
+"ARMOR_KDF_H": 24.4
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 65,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.3,
+"ARMOR_MIL_M": 2.4,
+"ARMOR_BDT_H": 5.7,
+"ARMOR_PAL_H": -3.2,
+"ARMOR_KDF_H": -3.2
+},
+"bow": -2.9,
+"longsword": 4.6,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 25.1,
+"ARMOR_KDF_H": 24.4
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 65,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.8,
+"ARMOR_MIL_M": 1.6,
+"ARMOR_BDT_H": 6.6,
+"ARMOR_PAL_H": -3.1,
+"ARMOR_KDF_H": -3.6
+},
+"bow": -2.9,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 24.2,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.3
+},
+"reach": 49.4,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 65,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -2.1
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.2,
+"ARMOR_MIL_M": 2.0,
+"ARMOR_BDT_H": 6.7,
+"ARMOR_PAL_H": -3.1,
+"ARMOR_KDF_H": -3.5
+},
+"bow": -2.9,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 25.2,
+"ARMOR_KDF_H": 24.4
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 65,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.8,
+"ARMOR_MIL_M": 0.9,
+"ARMOR_BDT_H": 8.5,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -3.4
+},
+"bow": -2.3,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.0,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 65,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.9,
+"ARMOR_MIL_M": 0.9,
+"ARMOR_BDT_H": 12.1,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.7
+},
+"bow": -2.3,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.0,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 65,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.2
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.0,
+"ARMOR_MIL_M": 0.7,
+"ARMOR_BDT_H": 3.2,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -4.2
+},
+"bow": 0.3,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 50.7,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 70,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -3.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.5,
+"ARMOR_MIL_M": 3.6,
+"ARMOR_BDT_H": 7.3,
+"ARMOR_PAL_H": -1.0,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -4.3,
+"longsword": 6.9,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.6
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 70,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -2.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.7,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.7,
+"ARMOR_MIL_M": 3.3,
+"ARMOR_BDT_H": 9.6,
+"ARMOR_PAL_H": -2.4,
+"ARMOR_KDF_H": -4.2
+},
+"bow": -3.2,
+"longsword": 6.9,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.8,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 70,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -3.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.9,
+"ARMOR_MIL_M": 2.4,
+"ARMOR_BDT_H": 3.4,
+"ARMOR_PAL_H": -3.4,
+"ARMOR_KDF_H": -3.0
+},
+"bow": -0.3,
+"longsword": 7.7,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 51.6,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 70,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -3.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.4,
+"ARMOR_MIL_M": 2.0,
+"ARMOR_BDT_H": 6.3,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -4.2
+},
+"bow": -0.3,
+"longsword": 7.5,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 51.6,
+"ok": false,
+"leg_worst": -4.9
+},
+{
+"around": 50,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -3.8,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.7,
+"ARMOR_KDF_H": -5.0
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.4,
+"ARMOR_MIL_M": -2.0,
+"ARMOR_BDT_H": 4.4,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.8
+},
+"bow": 1.6,
+"longsword": 1.6,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 50,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -3.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.6,
+"ARMOR_MIL_M": -2.0,
+"ARMOR_BDT_H": 7.8,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.3,
+"longsword": 1.7,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 50,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -3.8,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -5.0
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -5.3,
+"ARMOR_BDT_H": 4.7,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -5.1
+},
+"bow": 3.7,
+"longsword": -0.9,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 48.3,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 55,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.3,
+"ARMOR_MIL_M": -1.3,
+"ARMOR_BDT_H": 8.2,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -4.9
+},
+"bow": -0.5,
+"longsword": 4.2,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 23.3,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 18.5,
+"ARMOR_KDF_H": 21.5
+},
+"reach": 47.5,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 55,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -5.0
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.5,
+"ARMOR_MIL_M": -1.3,
+"ARMOR_BDT_H": 11.8,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -0.5,
+"longsword": 3.3,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.3,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 48.0,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 55,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -3.9,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.2
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.0,
+"ARMOR_MIL_M": -2.4,
+"ARMOR_BDT_H": 7.0,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -4.2
+},
+"bow": 0.8,
+"longsword": 2.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 48.4,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 55,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.8,
+"ARMOR_MIL_M": -2.9,
+"ARMOR_BDT_H": 5.2,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.5
+},
+"bow": 2.2,
+"longsword": 1.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 55,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -3.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -3.5,
+"ARMOR_BDT_H": 9.3,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -5.2
+},
+"bow": 2.0,
+"longsword": 1.8,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 60,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -2.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.4,
+"ARMOR_MIL_M": -1.0,
+"ARMOR_BDT_H": 1.5,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -2.4,
+"longsword": 2.0,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.4
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 60,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.0,
+"ARMOR_MIL_M": 0.6,
+"ARMOR_BDT_H": 5.5,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -5.4
+},
+"bow": -2.5,
+"longsword": 3.4,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 22.9,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 23.1,
+"ARMOR_KDF_H": 23.1
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 60,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.1,
+"ARMOR_MIL_M": -0.8,
+"ARMOR_BDT_H": 7.9,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.7
+},
+"bow": -2.5,
+"longsword": 5.4,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.3
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 60,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -3.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.3,
+"ARMOR_MIL_M": 0.6,
+"ARMOR_BDT_H": 11.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -2.5,
+"longsword": 6.2,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 22.3,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 23.1,
+"ARMOR_KDF_H": 22.8
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 60,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -2.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.8,
+"ARMOR_MIL_M": -1.0,
+"ARMOR_BDT_H": 5.4,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -2.4,
+"longsword": 5.1,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.4
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 60,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.4,
+"ARMOR_MIL_M": -1.0,
+"ARMOR_BDT_H": 7.4,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.7
+},
+"bow": -0.5,
+"longsword": 4.3,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 49.2,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 60,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -4.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.2,
+"ARMOR_MIL_M": 0.3,
+"ARMOR_BDT_H": 4.5,
+"ARMOR_PAL_H": -5.4,
+"ARMOR_KDF_H": -5.1
+},
+"bow": -0.5,
+"longsword": 4.3,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 49.2,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 60,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.0,
+"ARMOR_MIL_M": -1.3,
+"ARMOR_BDT_H": 11.1,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -5.3
+},
+"bow": -0.5,
+"longsword": 4.3,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 49.2,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 60,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.6,
+"ARMOR_MIL_M": -2.0,
+"ARMOR_BDT_H": 5.3,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.8
+},
+"bow": 1.1,
+"longsword": 4.0,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.7,
+"ARMOR_MIL_M": 1.8,
+"ARMOR_BDT_H": -1.4,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -2.7,
+"longsword": 0.8,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 25.0,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 25.1,
+"ARMOR_KDF_H": 24.8
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 5.1,
+"ARMOR_MIL_M": 1.2,
+"ARMOR_BDT_H": -0.0,
+"ARMOR_PAL_H": -3.0,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -2.7,
+"longsword": 0.9,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 26.7,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 25.0,
+"ARMOR_KDF_H": 24.9
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.1,
+"ARMOR_MIL_M": 1.8,
+"ARMOR_BDT_H": 0.6,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -2.7,
+"longsword": 2.9,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 25.0,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 25.1,
+"ARMOR_KDF_H": 24.8
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.7,
+"ARMOR_MIL_M": 1.8,
+"ARMOR_BDT_H": 2.7,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -2.7,
+"longsword": 5.1,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 25.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 25.1,
+"ARMOR_KDF_H": 24.8
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.5,
+"ARMOR_MIL_M": 2.4,
+"ARMOR_BDT_H": 7.5,
+"ARMOR_PAL_H": -3.2,
+"ARMOR_KDF_H": -3.2
+},
+"bow": -2.9,
+"longsword": 6.7,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 24.3,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 25.1,
+"ARMOR_KDF_H": 24.4
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.1,
+"ARMOR_MIL_M": 1.5,
+"ARMOR_BDT_H": 4.9,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -2.3,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.0,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.2,
+"ARMOR_MIL_M": 1.2,
+"ARMOR_BDT_H": 5.1,
+"ARMOR_PAL_H": -3.1,
+"ARMOR_KDF_H": -4.0
+},
+"bow": -2.3,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 26.7,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.0,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -2.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.4,
+"ARMOR_MIL_M": 1.3,
+"ARMOR_BDT_H": 8.2,
+"ARMOR_PAL_H": -3.4,
+"ARMOR_KDF_H": -2.9
+},
+"bow": -2.3,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.0,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -2.9
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.1,
+"ARMOR_MIL_M": 0.3,
+"ARMOR_BDT_H": 15.5,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -1.7,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.0,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -3.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.6,
+"ARMOR_MIL_M": -0.3,
+"ARMOR_BDT_H": 9.7,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.7
+},
+"bow": 0.4,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 50.7,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 65,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.5,
+"ARMOR_MIL_M": -0.1,
+"ARMOR_BDT_H": 10.2,
+"ARMOR_PAL_H": -5.3,
+"ARMOR_KDF_H": -4.6
+},
+"bow": 0.4,
+"longsword": 6.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 50.7,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 70,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -3.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 5.1,
+"ARMOR_MIL_M": 3.7,
+"ARMOR_BDT_H": 7.3,
+"ARMOR_PAL_H": -0.2,
+"ARMOR_KDF_H": -4.0
+},
+"bow": -4.6,
+"longsword": 4.1,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 20.8,
+"ARMOR_KDF_H": 24.2
+},
+"reach": 49.7,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 70,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.2,
+"ARMOR_MIL_M": 3.7,
+"ARMOR_BDT_H": 3.8,
+"ARMOR_PAL_H": -0.6,
+"ARMOR_KDF_H": -3.9
+},
+"bow": -3.9,
+"longsword": 5.5,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 25.1,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 25.1
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 70,
+"push": 25.5,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.9,
+"ARMOR_MIL_M": 3.5,
+"ARMOR_BDT_H": 5.1,
+"ARMOR_PAL_H": -2.2,
+"ARMOR_KDF_H": -3.8
+},
+"bow": -3.6,
+"longsword": 7.6,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.8,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 70,
+"push": 25.5,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -3.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.8,
+"ARMOR_MIL_M": 2.4,
+"ARMOR_BDT_H": 12.7,
+"ARMOR_PAL_H": -3.2,
+"ARMOR_KDF_H": -4.3
+},
+"bow": -2.4,
+"longsword": 7.5,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.8,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 70,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.5,
+"ARMOR_MIL_M": 1.2,
+"ARMOR_BDT_H": 10.1,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -4.4
+},
+"bow": 0.1,
+"longsword": 8.0,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 51.6,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 70,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -3.5,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -3.1
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.0,
+"ARMOR_MIL_M": 1.7,
+"ARMOR_BDT_H": 11.1,
+"ARMOR_PAL_H": -3.4,
+"ARMOR_KDF_H": -4.3
+},
+"bow": 0.1,
+"longsword": 7.4,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 51.6,
+"ok": false,
+"leg_worst": -5.0
+},
+{
+"around": 55,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.1,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": -4.2,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.1
+},
+"bow": -0.4,
+"longsword": -1.5,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 24.0,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 21.9,
+"ARMOR_KDF_H": 23.1
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 55,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -4.4
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.1,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": -3.5,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.1
+},
+"bow": -0.4,
+"longsword": 0.7,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 24.0,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 21.9,
+"ARMOR_KDF_H": 23.1
+},
+"reach": 47.8,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 55,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -5.1,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.4,
+"ARMOR_MIL_M": 0.2,
+"ARMOR_BDT_H": 3.8,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -4.7
+},
+"bow": -0.5,
+"longsword": 3.9,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.2,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.6,
+"ARMOR_KDF_H": 22.6
+},
+"reach": 47.7,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 60,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.5,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -2.6
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.5,
+"ARMOR_MIL_M": -0.0,
+"ARMOR_BDT_H": 2.8,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.3
+},
+"bow": -2.4,
+"longsword": 2.1,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 25.4,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.8
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 60,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.1,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -2.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.6,
+"ARMOR_MIL_M": -1.0,
+"ARMOR_BDT_H": 3.4,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -2.4,
+"longsword": 4.2,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.4
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 60,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.5,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -2.6
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.8,
+"ARMOR_MIL_M": -0.0,
+"ARMOR_BDT_H": 4.6,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.3
+},
+"bow": -2.4,
+"longsword": 4.2,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 25.4,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.8
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 60,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -5.1,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.1,
+"ARMOR_MIL_M": 0.0,
+"ARMOR_BDT_H": 1.7,
+"ARMOR_PAL_H": -3.4,
+"ARMOR_KDF_H": -4.4
+},
+"bow": -1.1,
+"longsword": 4.9,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 25.4,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.0
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 60,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.5,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -2.6
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.3,
+"ARMOR_MIL_M": -0.0,
+"ARMOR_BDT_H": 6.5,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -4.3
+},
+"bow": -2.4,
+"longsword": 5.1,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 25.4,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.8
+},
+"reach": 48.7,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 60,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -5.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.3,
+"ARMOR_MIL_M": -1.6,
+"ARMOR_BDT_H": 9.8,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -5.4
+},
+"bow": 1.1,
+"longsword": 4.2,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 65,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 5.5,
+"ARMOR_MIL_M": 1.5,
+"ARMOR_BDT_H": -2.3,
+"ARMOR_PAL_H": -3.1,
+"ARMOR_KDF_H": -5.0
+},
+"bow": -2.4,
+"longsword": -0.8,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 26.6,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 25.0,
+"ARMOR_KDF_H": 25.3
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 65,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.9,
+"ARMOR_MIL_M": 1.5,
+"ARMOR_BDT_H": -2.7,
+"ARMOR_PAL_H": -3.1,
+"ARMOR_KDF_H": -5.0
+},
+"bow": -2.4,
+"longsword": 1.4,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 26.6,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 25.0,
+"ARMOR_KDF_H": 25.3
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 65,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -4.7,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.4,
+"ARMOR_MIL_M": 1.5,
+"ARMOR_BDT_H": -1.1,
+"ARMOR_PAL_H": -3.1,
+"ARMOR_KDF_H": -5.0
+},
+"bow": -2.4,
+"longsword": 3.7,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 26.6,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 25.0,
+"ARMOR_KDF_H": 25.3
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 65,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -3.9,
+"ARMOR_MIL_M": -5.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -4.1
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.0,
+"ARMOR_MIL_M": 1.7,
+"ARMOR_BDT_H": 8.7,
+"ARMOR_PAL_H": -3.5,
+"ARMOR_KDF_H": -2.6
+},
+"bow": -2.3,
+"longsword": 6.6,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.0,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 65,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -5.1,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -2.6
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.3,
+"ARMOR_MIL_M": -0.8,
+"ARMOR_BDT_H": 14.3,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 0.4,
+"longsword": 6.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 50.7,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 65,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.1,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -3.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.0,
+"ARMOR_MIL_M": -1.4,
+"ARMOR_BDT_H": 17.4,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -5.2
+},
+"bow": 0.6,
+"longsword": 6.6,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 50.7,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 70,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -5.1,
+"ARMOR_MIL_M": -3.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 5.5,
+"ARMOR_MIL_M": 4.0,
+"ARMOR_BDT_H": 8.1,
+"ARMOR_PAL_H": 0.2,
+"ARMOR_KDF_H": -4.3
+},
+"bow": -4.6,
+"longsword": 4.3,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 20.7,
+"ARMOR_KDF_H": 24.2
+},
+"reach": 49.6,
+"ok": false,
+"leg_worst": -5.1
+},
+{
+"around": 50,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.4,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": 1.9,
+"ARMOR_PAL_H": -4.5,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.2,
+"longsword": 2.8,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 20.9,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 21.2
+},
+"reach": 47.1,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 50,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.5,
+"ARMOR_MIL_M": -0.2,
+"ARMOR_BDT_H": 5.8,
+"ARMOR_PAL_H": -5.3,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.2,
+"longsword": 3.0,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 20.7,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 20.9
+},
+"reach": 47.1,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 50,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.6,
+"ARMOR_MIL_M": -1.1,
+"ARMOR_BDT_H": 9.2,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.2,
+"longsword": 2.9,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 20.5,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 20.7
+},
+"reach": 47.1,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 50,
+"push": 23,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -5.2
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.9,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 0.2,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 1.5,
+"longsword": 1.7,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 26.9,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.0
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 55,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -5.2
+},
+"arm": {
+"ARMOR_LEATHER_L": -3.4,
+"ARMOR_MIL_M": -2.2,
+"ARMOR_BDT_H": 10.6,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.4
+},
+"bow": 0.4,
+"longsword": 2.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 48.4,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 55,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.1,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.9,
+"ARMOR_KDF_H": -5.2
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -3.1,
+"ARMOR_BDT_H": 13.7,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -4.7
+},
+"bow": 0.6,
+"longsword": 2.2,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 48.4,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 65,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.0,
+"ARMOR_MIL_M": 2.2,
+"ARMOR_BDT_H": 6.9,
+"ARMOR_PAL_H": -1.7,
+"ARMOR_KDF_H": -2.4
+},
+"bow": -3.1,
+"longsword": 3.8,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 23.6,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 20.7,
+"ARMOR_KDF_H": 24.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 65,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.1,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -1.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.3,
+"ARMOR_MIL_M": 2.0,
+"ARMOR_BDT_H": 9.9,
+"ARMOR_PAL_H": -1.7,
+"ARMOR_KDF_H": -3.1
+},
+"bow": -3.2,
+"longsword": 5.0,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 22.8,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 19.7,
+"ARMOR_KDF_H": 23.6
+},
+"reach": 48.8,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 65,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.0,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.1,
+"ARMOR_MIL_M": 1.8,
+"ARMOR_BDT_H": 8.2,
+"ARMOR_PAL_H": -2.0,
+"ARMOR_KDF_H": -2.9
+},
+"bow": -3.1,
+"longsword": 5.7,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.7,
+"ARMOR_KDF_H": 23.9
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 65,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -5.2,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.5,
+"ARMOR_MIL_M": 2.2,
+"ARMOR_BDT_H": 8.7,
+"ARMOR_PAL_H": -1.7,
+"ARMOR_KDF_H": -2.4
+},
+"bow": -3.1,
+"longsword": 5.8,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 23.6,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.7,
+"ARMOR_KDF_H": 24.0
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 65,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.6,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -1.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.6,
+"ARMOR_MIL_M": 2.0,
+"ARMOR_BDT_H": 11.7,
+"ARMOR_PAL_H": -2.1,
+"ARMOR_KDF_H": -3.1
+},
+"bow": -3.2,
+"longsword": 6.8,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 22.8,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 23.6
+},
+"reach": 48.9,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 65,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.4,
+"ARMOR_MIL_M": 1.8,
+"ARMOR_BDT_H": 10.1,
+"ARMOR_PAL_H": -3.0,
+"ARMOR_KDF_H": -2.9
+},
+"bow": -3.1,
+"longsword": 7.0,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.9
+},
+"reach": 49.4,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 65,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -3.8,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -4.0
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.8,
+"ARMOR_MIL_M": 2.2,
+"ARMOR_BDT_H": 10.6,
+"ARMOR_PAL_H": -2.6,
+"ARMOR_KDF_H": -2.4
+},
+"bow": -3.1,
+"longsword": 7.0,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.6,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 24.0
+},
+"reach": 49.4,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 65,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -1.9
+},
+"arm": {
+"ARMOR_LEATHER_L": 0.2,
+"ARMOR_MIL_M": 1.9,
+"ARMOR_BDT_H": 13.6,
+"ARMOR_PAL_H": -3.0,
+"ARMOR_KDF_H": -3.1
+},
+"bow": -3.2,
+"longsword": 6.8,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.6
+},
+"reach": 49.4,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 65,
+"push": 28,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -3.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.5,
+"ARMOR_MIL_M": 0.2,
+"ARMOR_BDT_H": 5.8,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -4.5
+},
+"bow": 0.4,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 50.7,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 65,
+"push": 28,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.1,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.2,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.1,
+"ARMOR_MIL_M": 0.5,
+"ARMOR_BDT_H": 5.7,
+"ARMOR_PAL_H": -4.7,
+"ARMOR_KDF_H": -4.4
+},
+"bow": 0.4,
+"longsword": 6.5,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 50.7,
+"ok": false,
+"leg_worst": -5.2
+},
+{
+"around": 50,
+"push": 20.5,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.2,
+"ARMOR_MIL_M": -5.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.2,
+"ARMOR_KDF_H": -5.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.3,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 2.2,
+"ARMOR_PAL_H": -5.1,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 1.4,
+"longsword": 2.4,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 20.5,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 21.0
+},
+"reach": 47.1,
+"ok": false,
+"leg_worst": -5.3
+},
+{
+"around": 50,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.9,
+"ARMOR_MIL_M": -5.3,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -4.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.0,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 5.8,
+"ARMOR_PAL_H": -5.0,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 1.2,
+"longsword": 2.8,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 20.5,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 20.5,
+"ARMOR_KDF_H": 20.7
+},
+"reach": 47.1,
+"ok": false,
+"leg_worst": -5.3
+},
+{
+"around": 65,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.3,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.3,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.5,
+"ARMOR_MIL_M": 1.8,
+"ARMOR_BDT_H": 6.2,
+"ARMOR_PAL_H": -2.0,
+"ARMOR_KDF_H": -2.9
+},
+"bow": -3.1,
+"longsword": 3.7,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 23.5,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 20.7,
+"ARMOR_KDF_H": 23.9
+},
+"reach": 49.0,
+"ok": false,
+"leg_worst": -5.3
+},
+{
+"around": 65,
+"push": 20.5,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -5.3,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 3.5,
+"ARMOR_MIL_M": 1.2,
+"ARMOR_BDT_H": 1.4,
+"ARMOR_PAL_H": -3.0,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -2.7,
+"longsword": 3.1,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 26.7,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 25.0,
+"ARMOR_KDF_H": 24.9
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -5.3
+},
+{
+"around": 65,
+"push": 23,
+"tilt_back": 20,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -5.3,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.0,
+"ARMOR_KDF_H": -4.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.0,
+"ARMOR_MIL_M": 1.2,
+"ARMOR_BDT_H": 3.2,
+"ARMOR_PAL_H": -3.0,
+"ARMOR_KDF_H": -4.5
+},
+"bow": -2.7,
+"longsword": 5.2,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 26.7,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 25.0,
+"ARMOR_KDF_H": 24.9
+},
+"reach": 49.9,
+"ok": false,
+"leg_worst": -5.3
+},
+{
+"around": 70,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -3.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.3,
+"ARMOR_KDF_H": -4.2
+},
+"arm": {
+"ARMOR_LEATHER_L": 6.2,
+"ARMOR_MIL_M": 4.2,
+"ARMOR_BDT_H": 5.5,
+"ARMOR_PAL_H": 0.2,
+"ARMOR_KDF_H": -4.2
+},
+"bow": -4.3,
+"longsword": 3.1,
+"out": {
+"ARMOR_LEATHER_L": 18.0,
+"ARMOR_MIL_M": 24.2,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 21.7,
+"ARMOR_KDF_H": 24.6
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -5.3
+},
+{
+"around": 70,
+"push": 20.5,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -4.7,
+"ARMOR_MIL_M": -3.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.3,
+"ARMOR_KDF_H": -4.2
+},
+"arm": {
+"ARMOR_LEATHER_L": 4.7,
+"ARMOR_MIL_M": 4.2,
+"ARMOR_BDT_H": 7.0,
+"ARMOR_PAL_H": 0.2,
+"ARMOR_KDF_H": -4.2
+},
+"bow": -4.3,
+"longsword": 5.1,
+"out": {
+"ARMOR_LEATHER_L": 20.5,
+"ARMOR_MIL_M": 24.2,
+"ARMOR_BDT_H": 20.5,
+"ARMOR_PAL_H": 21.7,
+"ARMOR_KDF_H": 24.6
+},
+"reach": 49.8,
+"ok": false,
+"leg_worst": -5.3
+},
+{
+"around": 70,
+"push": 23,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -5.3,
+"ARMOR_MIL_M": -4.6,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.6,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": 2.0,
+"ARMOR_MIL_M": 3.5,
+"ARMOR_BDT_H": 14.4,
+"ARMOR_PAL_H": -2.0,
+"ARMOR_KDF_H": -4.8
+},
+"bow": -4.9,
+"longsword": 7.0,
+"out": {
+"ARMOR_LEATHER_L": 23.0,
+"ARMOR_MIL_M": 23.0,
+"ARMOR_BDT_H": 23.0,
+"ARMOR_PAL_H": 23.0,
+"ARMOR_KDF_H": 23.8
+},
+"reach": 50.1,
+"ok": false,
+"leg_worst": -5.3
+},
+{
+"around": 70,
+"push": 25.5,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -5.3,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -3.3
+},
+"arm": {
+"ARMOR_LEATHER_L": 1.0,
+"ARMOR_MIL_M": 2.6,
+"ARMOR_BDT_H": 13.2,
+"ARMOR_PAL_H": -2.9,
+"ARMOR_KDF_H": -4.8
+},
+"bow": -2.4,
+"longsword": 7.1,
+"out": {
+"ARMOR_LEATHER_L": 25.5,
+"ARMOR_MIL_M": 25.5,
+"ARMOR_BDT_H": 25.5,
+"ARMOR_PAL_H": 25.5,
+"ARMOR_KDF_H": 25.5
+},
+"reach": 50.8,
+"ok": false,
+"leg_worst": -5.3
+},
+{
+"around": 50,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.4,
+"ARMOR_KDF_H": -5.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -2.2,
+"ARMOR_MIL_M": -0.1,
+"ARMOR_BDT_H": 0.1,
+"ARMOR_PAL_H": -3.9,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 1.4,
+"longsword": 0.8,
+"out": {
+"ARMOR_LEATHER_L": 20.4,
+"ARMOR_MIL_M": 19.9,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 18.0,
+"ARMOR_KDF_H": 21.0
+},
+"reach": 47.0,
+"ok": false,
+"leg_worst": -5.4
+},
+{
+"around": 50,
+"push": 28,
+"tilt_back": 25,
+"tilt_out": 8,
+"leg": {
+"ARMOR_LEATHER_L": -5.4,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -4.1,
+"ARMOR_KDF_H": -3.1
+},
+"arm": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -3.8,
+"ARMOR_BDT_H": 8.4,
+"ARMOR_PAL_H": -4.8,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 3.6,
+"longsword": -0.2,
+"out": {
+"ARMOR_LEATHER_L": 28.0,
+"ARMOR_MIL_M": 28.0,
+"ARMOR_BDT_H": 28.0,
+"ARMOR_PAL_H": 28.0,
+"ARMOR_KDF_H": 28.0
+},
+"reach": 48.3,
+"ok": false,
+"leg_worst": -5.4
+},
+{
+"around": 50,
+"push": 18,
+"tilt_back": 15,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.4,
+"ARMOR_MIL_M": -4.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.5,
+"ARMOR_KDF_H": -4.3
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.7,
+"ARMOR_MIL_M": -4.4,
+"ARMOR_BDT_H": -3.8,
+"ARMOR_PAL_H": -3.8,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.5,
+"longsword": -0.7,
+"out": {
+"ARMOR_LEATHER_L": 21.1,
+"ARMOR_MIL_M": 26.9,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 18.9,
+"ARMOR_KDF_H": 21.5
+},
+"reach": 47.4,
+"ok": false,
+"leg_worst": -5.5
+},
+{
+"around": 50,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.5,
+"ARMOR_KDF_H": -4.5
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.3,
+"ARMOR_MIL_M": 0.1,
+"ARMOR_BDT_H": -0.2,
+"ARMOR_PAL_H": -3.2,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.2,
+"longsword": 1.3,
+"out": {
+"ARMOR_LEATHER_L": 20.4,
+"ARMOR_MIL_M": 20.9,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 18.7,
+"ARMOR_KDF_H": 21.2
+},
+"reach": 47.0,
+"ok": false,
+"leg_worst": -5.5
+},
+{
+"around": 50,
+"push": 18,
+"tilt_back": 20,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.3,
+"ARMOR_MIL_M": -5.0,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.5,
+"ARMOR_KDF_H": -4.8
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.7,
+"ARMOR_MIL_M": -0.0,
+"ARMOR_BDT_H": 3.7,
+"ARMOR_PAL_H": -3.6,
+"ARMOR_KDF_H": -4.9
+},
+"bow": 1.2,
+"longsword": 2.6,
+"out": {
+"ARMOR_LEATHER_L": 19.8,
+"ARMOR_MIL_M": 19.9,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 18.0,
+"ARMOR_KDF_H": 20.7
+},
+"reach": 47.0,
+"ok": false,
+"leg_worst": -5.5
+},
+{
+"around": 50,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 18,
+"leg": {
+"ARMOR_LEATHER_L": -4.8,
+"ARMOR_MIL_M": -4.9,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.5,
+"ARMOR_KDF_H": -3.7
+},
+"arm": {
+"ARMOR_LEATHER_L": -1.4,
+"ARMOR_MIL_M": -0.5,
+"ARMOR_BDT_H": 7.3,
+"ARMOR_PAL_H": -4.4,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.2,
+"longsword": 2.7,
+"out": {
+"ARMOR_LEATHER_L": 19.1,
+"ARMOR_MIL_M": 19.8,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 18.0,
+"ARMOR_KDF_H": 20.7
+},
+"reach": 47.0,
+"ok": false,
+"leg_worst": -5.5
+},
+{
+"around": 50,
+"push": 18,
+"tilt_back": 25,
+"tilt_out": 13,
+"leg": {
+"ARMOR_LEATHER_L": -4.5,
+"ARMOR_MIL_M": -5.2,
+"ARMOR_BDT_H": 9000000000.0,
+"ARMOR_PAL_H": -5.6,
+"ARMOR_KDF_H": -3.4
+},
+"arm": {
+"ARMOR_LEATHER_L": -0.7,
+"ARMOR_MIL_M": -0.2,
+"ARMOR_BDT_H": 4.0,
+"ARMOR_PAL_H": -3.7,
+"ARMOR_KDF_H": -5.0
+},
+"bow": 1.2,
+"longsword": 2.7,
+"out": {
+"ARMOR_LEATHER_L": 19.6,
+"ARMOR_MIL_M": 20.7,
+"ARMOR_BDT_H": 18.0,
+"ARMOR_PAL_H": 18.4,
+"ARMOR_KDF_H": 20.9
+},
+"reach": 47.0,
+"ok": false,
+"leg_worst": -5.6
+}
+]

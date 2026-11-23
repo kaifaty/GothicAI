@@ -1,0 +1,145 @@
+{
+ "glb": "city-hearth/build/cauldron/model.glb",
+ "maps_dir": "city-hearth/tiles",
+ "scales": {
+  "OWN_HEARTH_IRON": 1.0,
+  "OWN_HEARTH_RIVET": 5.0,
+  "OWN_HEARTH_LIQUID": 1.0,
+  "OWN_HEARTH_RUST": 1.0,
+  "OWN_HEARTH_SCALE": 1.0,
+  "OWN_HEARTH_BITS": 1.0
+ },
+ "targets": {
+  "OWN_HEARTH_IRON": [
+   0.03,
+   0.033,
+   0.026
+  ],
+  "OWN_HEARTH_RIVET": [
+   0.042,
+   0.042,
+   0.038
+  ],
+  "OWN_HEARTH_LIQUID": [
+   0.09,
+   0.08,
+   0.035
+  ],
+  "OWN_HEARTH_RUST": [
+   0.055,
+   0.03,
+   0.016
+  ],
+  "OWN_HEARTH_SCALE": [
+   0.13,
+   0.115,
+   0.09
+  ],
+  "OWN_HEARTH_BITS": [
+   0.18,
+   0.17,
+   0.07
+  ]
+ },
+ "slots": {
+  "OWN_HEARTH_IRON": [
+   "OWN_HEARTH_CAULDRON",
+   "METAL"
+  ],
+  "OWN_HEARTH_RIVET": [
+   "OWN_HEARTH_CAULDRON",
+   "METAL"
+  ],
+  "OWN_HEARTH_LIQUID": [
+   "OWN_HEARTH_CAULDRON_LIQUID",
+   "WATER"
+  ],
+  "OWN_HEARTH_RUST": [
+   "OWN_HEARTH_CAULDRON",
+   "METAL"
+  ],
+  "OWN_HEARTH_SCALE": [
+   "OWN_HEARTH_CAULDRON",
+   "METAL"
+  ],
+  "OWN_HEARTH_BITS": [
+   "OWN_HEARTH_CAULDRON",
+   "METAL"
+  ]
+ },
+ "metal": [
+  "OWN_HEARTH_IRON",
+  "OWN_HEARTH_RIVET"
+ ],
+ "edge_wear": {
+  "OWN_HEARTH_IRON": 0.3,
+  "OWN_HEARTH_RIVET": 0.5,
+  "OWN_HEARTH_LIQUID": 0.0,
+  "OWN_HEARTH_RUST": 0.0,
+  "OWN_HEARTH_SCALE": 0.0,
+  "OWN_HEARTH_BITS": 0.0
+ },
+ "size": 1024,
+ "seed": 1,
+ "angle_limit": 66,
+ "margin": 0.004,
+ "metal_scale": 0.0,
+ "wet_height": 0.0,
+ "algae": 0.0,
+ "bleach": 0.0,
+ "tone_spread": 0.1,
+ "crevice": {
+  "distance": 0.02,
+  "dirt": 0.5,
+  "colour": [
+   0.006,
+   0.005,
+   0.004
+  ]
+ },
+ "tile_normal": {
+  "OWN_HEARTH_IRON": 0.5,
+  "OWN_HEARTH_RIVET": 0.4
+ },
+ "measure_ao": {
+  "OWN_HEARTH_IRON": 0.5
+ },
+ "contrast": {
+  "OWN_HEARTH_IRON": 1.0,
+  "OWN_HEARTH_RIVET": 1.1,
+  "OWN_HEARTH_LIQUID": 1.0,
+  "OWN_HEARTH_RUST": 1.2,
+  "OWN_HEARTH_SCALE": 1.2,
+  "OWN_HEARTH_BITS": 1.1
+ },
+ "streaks": {
+  "length": 0.25,
+  "rust": 0.4,
+  "dirt": 0.5,
+  "rust_colour": [
+   0.045,
+   0.024,
+   0.011
+  ],
+  "column": 0.01
+ },
+ "soot_under": {
+  "zones": [
+   "OWN_HEARTH_IRON",
+   "OWN_HEARTH_RIVET"
+  ],
+  "dark": 0.85,
+  "from": -0.2,
+  "colour": [
+   0.005,
+   0.0045,
+   0.004
+  ]
+ },
+ "turbidity": {
+  "OWN_HEARTH_LIQUID": 0.97
+ },
+ "turbidity_depth": {
+  "OWN_HEARTH_LIQUID": 4.0
+ }
+}

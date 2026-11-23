@@ -1,5 +1,9 @@
+import hashlib
+import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,7 +19,6 @@ from gothic_ai.persona import (
     PersonaProvider,
 )
 from gothic_ai.tts import TtsClient
-from tests.test_dialogue_text import _binsafe_line
 from tests.test_tts import fake_tts
 
 LOBART, HILDA, MALETH, VINO, ANDRE = (
@@ -50,14 +53,10 @@ def _lines(key: str, voice: str, n: int) -> list[tuple[str, str]]:
 
 @pytest.fixture
 def game_dir(tmp_path: Path, monkeypatch) -> Path:
-    """OU.BIN with Babera's lines (and one of the hero's in her dialog), Edda's, Matteo's and Hilda's."""
+    """Native OU messages with Babera's, Edda's, Matteo's and Hilda's lines, without installation files."""
     lines = _lines("BABERA", "16", 6) + [("DIA_BABERA_TALK0_15_01", "Что нового?")]
     lines += _lines("EDDA", "17", 6) + _lines("MATTEO", "09", 6) + _lines("HILDA", "17", 6)
-    cutscene = tmp_path / "game" / "_work" / "Data" / "Scripts" / "CONTENT" / "CUTSCENE"
-    cutscene.mkdir(parents=True)
-    data = b"ZenGin Archive\nEND\n" + b"".join(_binsafe_line(name, text) for name, text in lines)
-    (cutscene / "OU.BIN").write_bytes(data)
-    # This pseudo archive tests persona behavior; strict native import is exercised on real archives.
+    (tmp_path / "game").mkdir()
     messages = [(f"{name}.WAV".encode("ascii"), text.encode("cp1251")) for name, text in lines]
     monkeypatch.setattr(ou, "native_messages", lambda game: messages)
     return tmp_path / "game"
@@ -115,6 +114,138 @@ def test_the_game_lines_are_read_once(game_dir, monkeypatch):
     personas.get(BABERA, "Бабера-другая")  # another name: another persona, the same lines
     personas.get(EDDA, "Эдда")  # another npc: the same reading of the game
     assert calls == [game_dir]
+
+
+def test_get_waits_for_the_first_warm_read(game_dir, monkeypatch):
+    loading, resume, requesting, warmed = (threading.Event() for _ in range(4))
+    load = persona_module.game_lines
+
+    def blocked(path):
+        loading.set()
+        if not resume.wait(2.0):
+            raise TimeoutError("first OU read was not released")
+        return load(path)
+
+    monkeypatch.setattr(persona_module, "game_lines", blocked)
+    personas = PersonaProvider(game_dir, {})
+    result = []
+
+    def warm():
+        personas.warm()
+        warmed.set()
+
+    def get():
+        requesting.set()
+        result.append(personas.get(BABERA, "Babera"))
+
+    warmer = threading.Thread(target=warm, daemon=True)
+    reader = threading.Thread(target=get, daemon=True)
+    warmer.start()
+    try:
+        assert loading.wait(1.0)
+        reader.start()
+        assert requesting.wait(1.0)
+        reader.join(0.1)
+        assert reader.is_alive(), "get returned before the first OU read finished"
+    finally:
+        resume.set()
+        warmer.join(2.0)
+        if reader.ident is not None:
+            reader.join(2.0)
+    assert warmed.is_set() and not warmer.is_alive() and not reader.is_alive()
+    assert len(result) == 1
+    assert "Реплика babera номер" in result[0].instructions
+    assert result[0].voice == FEMALE_VOICE
+
+
+def test_missing_base_retries_without_breaking_cached_personas(tmp_path, monkeypatch, caplog):
+    game, selected, cache = tmp_path / "game", tmp_path / "base", tmp_path / "cache"
+    game.mkdir()
+    monkeypatch.setenv("OPENGOTHIC_BASE", "")
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(cache))
+    monkeypatch.setenv("STORYGRAPH_TOOL", __file__)
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(persona_module.time, "monotonic", lambda: clock.now)
+    load, attempts, exports = persona_module.game_lines, [], []
+    thread_class, workers = threading.Thread, []
+    exporting, resume = threading.Event(), threading.Event()
+
+    def worker(**kwargs):
+        thread = thread_class(**kwargs)
+        workers.append(thread)
+        return thread
+
+    def counted(path):
+        attempts.append(clock.now)
+        return load(path)
+
+    text = "A recovered original speech line for the character."
+
+    def export(*args, **kwargs):
+        exports.append(args)
+        exporting.set()
+        assert resume.wait(2.0), "get/brief waited for the background OU export"
+        return SimpleNamespace(stdout=json.dumps({
+            "format": "gothic-ou-messages", "version": 1,
+            "source": {"path": "original-ou", "sha256": "b" * 64},
+            "native_sha256": "c" * 64,
+            "messages": [["DIA_BABERA_TEST_16_00.WAV", text]],
+        }).encode(), stderr=b"")
+
+    monkeypatch.setattr(persona_module, "game_lines", counted)
+    monkeypatch.setattr(persona_module.threading, "Thread", worker)
+    monkeypatch.setattr(ou.subprocess, "run", export)
+    personas = PersonaProvider(game, {})
+    personas.warm()
+    first = personas.get(BABERA, "Babera")
+    assert personas._original(BABERA) == ((), None)
+    assert text not in first.instructions and text not in personas.brief(BABERA, "Babera")
+    clock.now = 129.9
+    assert personas.get(BABERA, "Babera") is first
+    clock.now = 130.0
+    assert text not in personas.brief(BABERA, "Babera")
+    workers[-1].join(2.0)
+    assert not workers[-1].is_alive()
+    assert attempts == [100.0, 130.0] and exports == []
+    assert len(caplog.records) == 1
+    assert "no ready base" in caplog.text and "run the game once with the installation" in caplog.text
+
+    selected.mkdir()
+    manifest = json.dumps({"format": "gothic-base-files", "version": 1, "files": []}).encode()
+    (selected / "base-files.json").write_bytes(manifest)
+    (selected / "base.json").write_text(json.dumps({
+        "format": "gothic-base", "version": 2, "fingerprint": "a" * 64,
+        "manifest": {
+            "path": "base-files.json", "size": len(manifest),
+            "sha256": hashlib.sha256(manifest).hexdigest(),
+        },
+    }))
+    pointer = cache / "current" / f"{hashlib.sha256(str(game.resolve()).encode()).hexdigest()}.json"
+    pointer.parent.mkdir(parents=True)
+    pointer.write_text(json.dumps({
+        "version": 1, "gothic": str(game.resolve()),
+        "base": {"path": str(selected), "fingerprint": "a" * 64},
+    }))
+    clock.now = 159.9
+    assert personas.get(BABERA, "Babera") is first
+    assert attempts == [100.0, 130.0]
+    clock.now = 160.0
+    try:
+        assert personas.get(BABERA, "Babera") is first
+        assert exporting.wait(1.0)
+        assert text not in personas.brief(BABERA, "Babera")
+        assert personas.get(BABERA, "Babera") is first
+    finally:
+        resume.set()
+        workers[-1].join(2.0)
+    assert not workers[-1].is_alive()
+    recovered = personas.get(BABERA, "Babera")
+    assert text in recovered.instructions and recovered.voice == FEMALE_VOICE
+    assert text in personas.brief(BABERA, "Babera")
+    clock.now = 200.0
+    assert personas.get(BABERA, "Babera") is recovered
+    assert attempts == [100.0, 130.0, 160.0] and len(exports) == 1
+    assert len(caplog.records) == 1
 
 
 def test_brief_labels_the_card_as_its_own(game_dir):

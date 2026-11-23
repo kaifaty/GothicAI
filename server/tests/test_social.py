@@ -18,6 +18,7 @@ from gothic_ai.game import GameError
 from gothic_ai.gamedata.storygraph import StoryGraph, load
 from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.memory import MemoryStore
+from gothic_ai.people_knowledge import PeopleKnowledge
 from gothic_ai.perception import PerceptionDesk
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import Look
@@ -153,6 +154,59 @@ def test_a_rumor_goes_round_the_meetings_in_order(graph, monkeypatch):
     assert second["about_name"] == "Лобарт" and second["day"] == 1
     # the city has no meeting with the farm
     assert VATRAS not in rumor.known and ANDRE not in rumor.known
+
+
+@pytest.mark.parametrize("kind", ["no_blood", "no_reward", "secret_kept", "mercy"])
+def test_challenge_hint_source_knows_and_passes_news_to_an_acquaintance(graph, monkeypatch, kind):
+    monkeypatch.setattr(social, "P_MEET", 1.0)
+    monkeypatch.setattr(social, "P_DEAL", 0.0)
+    r, _, facts = _rumors(Social(PEOPLE, graph))
+    r.rumors.clear()
+    fact = {
+        "fact": "challenge_hint", "id": "CH1", "challenge": 12, "kind": kind,
+        "npc": ANDRE, "name": "Андре", "witnesses": [LOBART],
+        "witness_names": {LOBART: "Лобарт"}, "day": 1,
+    }
+    facts.append(fact)
+    r._on_fact(fact)
+    [rumor] = r.rumors.values()
+    assert rumor.known == {LOBART: 0} and not rumor.is_player
+    desk = PeopleKnowledge(r.chronicle)
+    [direct] = desk.of(LOBART)
+    assert direct.direct and direct.subject == ANDRE
+    assert r.spread(DAY + _h(9), DAY + _h(10)) == 1
+    assert rumor.known == {LOBART: 0, HILDA: 1}
+    [heard] = desk.of(HILDA)
+    assert not heard.direct and heard.source == LOBART and heard.subject == ANDRE
+    assert heard.description() == direct.description() == rumor.description()
+    assert facts[-1]["subject"] == ANDRE and facts[-1]["to"] == HILDA
+
+
+def test_feat_fame_starts_with_witnesses_spreads_and_rewinds(graph, monkeypatch):
+    monkeypatch.setattr(social, "P_MEET", 1.0)
+    monkeypatch.setattr(social, "P_DEAL", 0.0)
+    r, _, facts = _rumors(Social(PEOPLE, graph))
+    r.rumors.clear()
+    fame = {
+        "fact": "feat_fame", "feat": "F1", "title": "Вернул чужое",
+        "text": "Вернул кошель без награды.", "witnesses": [LOBART], "day": 1,
+    }
+    facts.extend([fame, fame.copy()])
+    r._load()
+    [rumor] = r.rumors.values()
+    assert rumor.is_player and rumor.known == {LOBART: 0} and rumor.hops == 3
+    assert rumor.description() == "о герое говорят: «Вернул чужое» — Вернул кошель без награды."
+    assert r.spread(DAY + _h(9), DAY + _h(23)) == 2
+    assert rumor.known == {LOBART: 0, HILDA: 1, VINO: 2}
+    first, second = [f for f in facts if f["fact"] == "rumor"]
+    assert (first["to"], second["to"], second["from_name"]) == (HILDA, VINO, "Хильда")
+    assert all(f["kind"] == "fame" and f["feat"] == "F1" and f["text"] == fame["text"]
+               and f["title"] == fame["title"] and f["subject"] == "PLAYER" for f in [first, second])
+    r._load()
+    assert len(r.rumors) == 1 and next(iter(r.rumors.values())).known == rumor.known
+    facts.clear()
+    r._load()
+    assert r.rumors == {}
 
 
 def test_dealings_bring_it_to_the_city_once_a_day(graph, monkeypatch):

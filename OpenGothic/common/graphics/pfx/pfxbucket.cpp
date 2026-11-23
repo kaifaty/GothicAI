@@ -1,14 +1,40 @@
 #include "pfxbucket.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cmath>
 
+#include "frameprofile.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/shaders.h"
+#include "graphics/visualobjects.h"
+#include "graphics/drawcommands.h"
+#include "graphics/worldview.h"
 #include "pfxobjects.h"
 #include "particlefx.h"
-#include "world/objects/npc.h"
+#include "particletarget.h"
+#include "world/chunkresidency.h"
+
+#include <Tempest/Log>
 
 using namespace Tempest;
+
+// particles.d "lean": a longer way in a frame is a teleport, a longer frame is a pause; the spring's substep and
+// damping; how much longer the card is at its largest lean
+static constexpr float LeanJumpCm      = 300.f;
+static constexpr float MeshBornBiasCm  = 10.f;  // a mesh-born sprite of an own effect is drawn this much nearer
+static constexpr uint64_t LeanLongFrameMs = 250;
+static constexpr float LeanSubstepMs   = 8.f;
+static constexpr float LeanDamping     = 0.6f;
+static constexpr float LeanStretch     = 0.2f;
+// particles.d "wind": the shelter is asked again a metre on, not more often than this, and fades in over this
+static constexpr float    WindAskCm  = 100.f;
+static constexpr uint64_t WindAskMs  = 300;
+static constexpr float    WindFadeMs = 500.f;
+// particles.d "plume": the air's spring as a flame's default (lean.response), the largest lean as a flame's cap
+static constexpr float PlumeResponseMs = 120.f;
+static constexpr float PlumeMaxTan     = 2.747f;  // 70 degrees
+
 
 static uint64_t ppsDiff(const ParticleFx& decl, bool loop, uint64_t time0, uint64_t time1) {
   if(time1<=time0)
@@ -36,11 +62,14 @@ bool PfxBucket::Draw::isEmpty() const {
   }
 
 PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlobals& scene, VisualObjects& visual)
-  :decl(decl), parent(parent), visual(visual)  {
+  :decl(decl), parent(parent),
+   push{decl.hazeShift>0 ? Push{0.f, decl.hazeShift, 1.f/decl.hazeCell, 0.f}
+                         : Push{decl.taaReactive(), decl.hdrFrom, decl.hdrTo>decl.hdrFrom ? 1.f/(decl.hdrTo-decl.hdrFrom) : 0.f, decl.hdrEdge}},
+   visual(visual)  {
   uint64_t lt      = decl.maxLifetime();
   uint64_t pps     = uint64_t(std::ceil(decl.maxPps()));
   uint64_t reserve = (lt*pps+1000-1)/1000;
-  blockSize        = size_t(reserve);
+  blockSize        = decl.flipSteady ? size_t(std::ceil(decl.ppsValue)) : size_t(reserve);
   if(blockSize==0)
     blockSize=1;
 
@@ -68,9 +97,61 @@ PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlob
       item.pShadow = Shaders::inst().materialPipeline(mat, DrawCommands::Pfx, Shaders::T_Shadow, false);
       }
     }
+  if(decl.isDecal() && (textureResidency=visual.textureResidencyManager())!=nullptr) {
+    textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State next) {
+      FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+      std::lock_guard<std::recursive_mutex> guard(this->parent.sync);
+      const auto found=textureChunks.find({chunk.x,chunk.z});
+      if(found==textureChunks.end())
+        return;
+      for(auto id:found->second)
+        setTextureDemand(impl[id],next!=ChunkResidency::State::Outside);
+      });
+    }
   }
 
 PfxBucket::~PfxBucket() {
+  std::lock_guard<std::recursive_mutex> guard(parent.sync);
+  if(textureResidency)
+    textureResidency->unsubscribe(textureSubscription);
+  for(auto& emitter:impl)
+    setTextureDemand(emitter,false);
+  }
+
+void PfxBucket::setTextureDemand(ImplEmitter& emitter, bool active) {
+  std::lock_guard<std::recursive_mutex> guard(parent.sync);
+  if(emitter.textureDemand==active)
+    return;
+  const auto category=decl.isDecal() ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic;
+  Resources::textureDemand(decl.visMaterial,category,active);
+  if(decl.hasTrails()) {
+    Material trail;
+    trail.tex=decl.trlTexture;
+    Resources::textureDemand(trail,category,active);
+    }
+  emitter.textureDemand=active;
+  }
+
+void PfxBucket::updateTextureDemand(size_t id) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(parent.sync);
+  auto& emitter=impl[id];
+  if(decl.isDecal()) {
+    const auto chunk=ChunkId::fromPosition(emitter.pos.x,emitter.pos.z);
+    const std::pair key{chunk.x,chunk.z};
+    if(emitter.st==S_Free || key!=emitter.textureChunk) {
+      if(auto found=textureChunks.find(emitter.textureChunk);found!=textureChunks.end()) {
+        found->second.erase(id);
+        if(found->second.empty())
+          textureChunks.erase(found);
+        }
+      }
+    emitter.textureChunk=key;
+    if(emitter.st!=S_Free)
+      textureChunks[key].insert(id);
+    }
+  const bool active=emitter.st!=S_Free && (!decl.isDecal() || visual.textureChunkActive(emitter.pos));
+  setTextureDemand(emitter,active);
   }
 
 bool PfxBucket::isEmpty() const {
@@ -98,6 +179,7 @@ size_t PfxBucket::allocBlock() {
     if(!block[i].allocated) {
       block[i].allocated = true;
       block[i].timeTotal = 0;
+      block[i].flicker   = 1.f;
       return i;
       }
     }
@@ -134,11 +216,14 @@ PfxBucket::Block& PfxBucket::getBlock(ImplEmitter &e) {
     e.block = allocBlock();
     auto& p = block[e.block];
     p.pos   = e.pos;
+    // a new flame: upright, and small if it grows (particles.d "lean.grow")
+    p.lean  = Vec3(0,1,0);
+    p.grow  = decl.leanGrowMs>0 ? decl.leanGrowFrom : 1.f;
     }
   return block[e.block];
   }
 
-PfxBucket::Block& PfxBucket::getBlock(PfxEmitter& e) {
+PfxBucket::Block& PfxBucket::getBlock(PfxSlot& e) {
   return getBlock(impl[e.id]);
   }
 
@@ -146,7 +231,16 @@ size_t PfxBucket::allocEmitter() {
   for(size_t i=0; i<impl.size(); ++i) {
     auto& b = impl[i];
     if(b.st==S_Free) {
-      b.st = S_Inactive;
+      b.st      = S_Inactive;
+      b.flicker = {};
+      // a new flame in an old slot: it has not moved yet and has no air of the last one
+      b.carried = false;
+      b.air     = {};
+      b.airRate = {};
+      b.grownMs = 0;
+      b.spent   = false;
+      b.born    = parent.now;
+      updateTextureDemand(i);
       return i;
       }
     }
@@ -154,6 +248,8 @@ size_t PfxBucket::allocEmitter() {
   auto& e = impl.back();
   e.block = size_t(-1); // no backup memory
   e.st    = S_Inactive;
+  e.born  = parent.now;
+  updateTextureDemand(impl.size()-1);
   for(size_t i=0; i<Resources::MaxFramesInFlight; ++i)
     forceUpdate[i] = true;
 
@@ -172,7 +268,9 @@ void PfxBucket::freeEmitter(size_t& id) {
     }
   for(size_t i=0; i<Resources::MaxFramesInFlight; ++i)
     forceUpdate[i] = true;
+  updateTextureDemand(id);
   v.next.reset();
+  v.skin = nullptr;  // its owner's palette may go: a free or fading emitter emits no more
   id = size_t(-1);
   shrink();
   }
@@ -208,11 +306,15 @@ float PfxBucket::randf(float base, float var) {
 
 void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t particle) {
   auto& p   = particles[particle];
+  p.landed  = false;
 
   if(decl.ppsValue<0) {
     // decal
     p.life    = uint16_t(-1)/2;
     p.maxLife = uint16_t(-1);
+    } else if(decl.flipSteady) {
+    p.life    = uint16_t(-1);
+    p.maxLife = p.life;
     } else {
     p.life    = uint16_t(randf(decl.lspPartAvg,decl.lspPartVar));
     p.maxLife = p.life;
@@ -269,12 +371,22 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
       p.pos = Vec3();
       auto mesh = (emitter.mesh!=nullptr) ? emitter.mesh : decl.shpMesh;
       auto pose = (emitter.mesh!=nullptr) ? emitter.pose : nullptr;
+      auto skin = (emitter.mesh!=nullptr) ? emitter.skin : nullptr;
       if(mesh!=nullptr) {
-        auto pos = mesh->randCoord(randf(),pose);
+        auto pos = skin!=nullptr ? mesh->randCoord(randf(),pose,skin->data(),skin->size()) : mesh->randCoord(randf(),pose);
+        if(emitter.mesh!=nullptr && pose==nullptr && skin==nullptr) {
+          // a static mesh given to the emitter (an item's, graphics/itemview): the point is the mesh's own, the
+          // emitter's matrix is the mesh's and places it
+          p.pos = emitter.direction[0]*pos.x +
+                  emitter.direction[1]*pos.y +
+                  emitter.direction[2]*pos.z;
+          break;
+          }
         pos -= emitter.pos;
-        p.pos = emitter.direction[0]*pos.x +
-                emitter.direction[1]*pos.y +
-                emitter.direction[2]*pos.z;
+        // an own effect's emitter may sit on a bone (the fire on a body): the point of the mesh is the world's
+        p.pos = decl.own ? pos : emitter.direction[0]*pos.x +
+                                 emitter.direction[1]*pos.y +
+                                 emitter.direction[2]*pos.z;
         }
       break;
       }
@@ -291,9 +403,7 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
   switch(decl.shpFOR) {
     case ParticleFx::Frame::Object:
     case ParticleFx::Frame::Node: {
-      p.pos += emitter.direction[0]*decl.shpOffsetVec.x +
-               emitter.direction[1]*decl.shpOffsetVec.y +
-               emitter.direction[2]*decl.shpOffsetVec.z;
+      p.pos += ParticleFx::inAxes(emitter.direction,decl.shpOffsetVec);
       break;
       }
     case ParticleFx::Frame::World: {
@@ -376,6 +486,25 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
     float velocity = randf(decl.velAvg,decl.velVar);
     p.dir = p.dir*velocity/l;
     }
+
+  if(emitter.trail.quadLength()>0 && !decl.useEmittersFOR)
+    p.pos -= emitter.trail*randf();
+
+  if(decl.plumeCm>0 && !decl.useEmittersFOR) {
+    // born on the leaning flame (particles.d "plume"): plumeCm along it instead of straight over the fire, and
+    // with the wind the flame's gas has taken
+    // the flame feels its own share of the wind, not this effect's
+    const Vec3  wind = emitter.wind*decl.plumeWind;
+    const Vec3  air  = emitter.air-emitter.wind+wind;
+    const Vec3  flat = Vec3(air.x,0,air.z);
+    const float len  = flat.length();
+    const float t    = std::min(len/decl.plumeRise, PlumeMaxTan);
+    if(t>1e-4f) {
+      const float cs = 1.f/std::sqrt(1.f+t*t);
+      p.pos += flat*(decl.plumeCm*t*cs/len) - Vec3(0,decl.plumeCm*(1.f-cs),0);
+      }
+    p.dir += wind;
+    }
   }
 
 void PfxBucket::finalize(size_t particle) {
@@ -386,6 +515,9 @@ void PfxBucket::finalize(size_t particle) {
 void PfxBucket::tick(Block& sys, ImplEmitter& emitter, size_t particle, uint64_t dt) {
   ParState& ps = particles[particle+sys.offset];
   if(ps.life==0)
+    return;
+
+  if(decl.flipSteady)
     return;
 
   if(ps.life<=dt){
@@ -399,8 +531,41 @@ void PfxBucket::tick(Block& sys, ImplEmitter& emitter, size_t particle, uint64_t
 
   // eval particle
   ps.life  = uint16_t(ps.life-dt);
-  ps.pos  += ps.dir*dtF;
-  ps.dir  += decl.flyGravity*dtF;
+  if(ps.landed) {
+    // it lies where it landed while its trail draws in (tickTrail: the head stays, the rest ages out)
+    if(maxTrlTime!=0)
+      tickTrail(ps,emitter,dt);
+    return;
+    }
+  const Vec3 was = ps.pos;
+  if(decl.motion.active()) {
+    // own curl and drag (particles.d): substeps, drag integrated exactly, the field in world space
+    const Vec3  origin = decl.useEmittersFOR ? emitter.pos : Vec3();
+    const float t0     = float((parent.now>=dt ? parent.now-dt : 0)%3600000u);
+    PfxMotion::step(decl.motion, decl.flyGravity, ps.pos, ps.dir, origin, t0, dtF,
+                    decl.useEmittersFOR ? Vec3() : emitter.wind);
+    } else {
+    ps.pos  += ps.dir*dtF;
+    ps.dir  += decl.flyGravity*dtF;
+    }
+
+  if(decl.land!=nullptr && parent.ground && !decl.useEmittersFOR) {
+    // particles.d "land": the way of this tick against the world's static geometry; at the ground the particle
+    // asks for its landing effect and stops there; it lives on only for its trail to draw in
+    Vec3 hit;
+    if(parent.ground(was,ps.pos,hit)) {
+      ps.pos    = hit;
+      ps.dir    = Vec3();
+      ps.landed = true;
+      ps.life   = uint16_t(std::min<uint64_t>(ps.life,maxTrlTime));
+      parent.landAsked.emplace_back(decl.land,hit);
+      if(ps.life==0) {
+        sys.count--;
+        finalize(particle+sys.offset);
+        return;
+        }
+      }
+    }
 
   if(maxTrlTime!=0)
     tickTrail(ps,emitter,dt);
@@ -445,9 +610,9 @@ void PfxBucket::tickTrail(ParState& ps, ImplEmitter& emitter, uint64_t dt) {
 void PfxBucket::tick(uint64_t dt, const Vec3& viewPos) {
   if(decl.isDecal()) {
     implTickDecals(dt,viewPos);
-    return;
+    } else {
+    implTickCommon(dt,viewPos);
     }
-  implTickCommon(dt,viewPos);
   }
 
 void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
@@ -460,7 +625,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
     const bool nearby = (dp.quadLength()<PfxObjects::viewRage*PfxObjects::viewRage);
 
     if(emitter.next==nullptr && decl.ppsCreateEm!=nullptr && emitter.waitforNext<dt && emitter.st==S_Active) {
-      emitter.next.reset(new PfxEmitter(parent,decl.ppsCreateEm));
+      emitter.next.reset(new PfxSlot(parent,decl.ppsCreateEm));
       auto& e = *emitter.next;
       e.setPosition(emitter.pos.x,emitter.pos.y,emitter.pos.z);
       e.setActive(true);
@@ -470,6 +635,106 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
     if(emitter.waitforNext>=dt)
       emitter.waitforNext-=dt;
 
+    if(emitter.flicker.active() && emitter.block!=size_t(-1)) {
+      auto& p = getBlock(emitter);
+      p.flicker = PfxMotion::flicker(emitter.flicker, parent.now);
+      if(PfxMotion::logEnabled())
+        Log::i("flicker pfx seed=", emitter.flicker.seed, " t=", parent.now, " s=", p.flicker);
+      }
+
+    // (an emitter out of its loop keeps its steady flame for as long as its emission keys last: the fire on a body)
+    const bool spent = emitter.spent && emitter.block!=size_t(-1) &&
+                       (decl.prefferedTime==0 || getBlock(emitter).timeTotal>=decl.prefferedTime);
+    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby || spent)) {
+      // steady particles never die on their own: they go with their emitter or when it is out of view range
+      auto& p = getBlock(emitter);
+      for(size_t i=0;i<blockSize;++i)
+        if(particles[p.offset+i].life!=0)
+          finalize(p.offset+i);
+      p.count = 0;
+      if(emitter.st==S_Fade || !nearby) {
+        freeBlock(emitter.block);
+        if(emitter.st==S_Fade) {
+          emitter.st = S_Free;
+          updateTextureDemand(size_t(&emitter-impl.data()));
+          }
+        doShrink = true;
+        continue;
+        }
+      }
+
+    if(decl.wind>0 && nearby && emitter.st==S_Active) {
+      const bool moved = (emitter.pos-emitter.openAt).quadLength()>WindAskCm*WindAskCm;
+      if(!emitter.openAsked || (moved && parent.now-emitter.openTime>=WindAskMs)) {
+        emitter.openTo   = parent.shelter ? std::clamp(parent.shelter(emitter.pos,parent.wind),0.f,1.f) : 1.f;
+        if(!emitter.openAsked)
+          emitter.open = emitter.openTo;
+        emitter.openAsked = true;
+        emitter.openAt    = emitter.pos;
+        emitter.openTime  = parent.now;
+        }
+      // a carried flame comes out of a door: the wind rises over about half a second
+      emitter.open += (emitter.openTo-emitter.open)*std::min(1.f,float(dt)/WindFadeMs);
+      emitter.wind  = parent.wind*(decl.wind*emitter.open);
+      }
+
+    if(decl.flipSteady || decl.inherit>0 || decl.plumeCm>0) {
+      // a steady particle is its emitter's flame: it goes where the emitter goes (a torch in a hand); a living one
+      // takes the share "inherit" of the way, so the tail behind a carried flame stays short
+      // tongues born on a body's mesh go with the body, not with the bone their emitter sits on (a swinging hand)
+      Vec3 at = emitter.pos;
+      if(decl.own && decl.shpType==ParticleFx::EmitterType::Mesh && emitter.mesh!=nullptr &&
+         emitter.skin!=nullptr && !emitter.skin->empty()) {
+        const auto& m = (*emitter.skin)[0];
+        at = Vec3(m.at(3,0),m.at(3,1),m.at(3,2));
+        }
+      const auto  moved = at-emitter.steadyAt;
+      const float share = decl.flipSteady ? 1.f : decl.inherit;
+      if(emitter.block!=size_t(-1) && moved.quadLength()>0 && !(decl.useEmittersFOR && !decl.flipSteady)) {
+        auto& p = getBlock(emitter);
+        for(size_t i=0;i<blockSize;++i)
+          if(particles[p.offset+i].life!=0)
+            particles[p.offset+i].pos += moved*share;
+        }
+      if((decl.leanRise>0 || decl.plumeCm>0) && dt>0) {
+        // the air past the wick is minus the emitter's motion; a jump (a teleport, the first frame) is no motion
+        const bool jump   = !emitter.carried || moved.quadLength()>LeanJumpCm*LeanJumpCm || dt>LeanLongFrameMs;
+        const Vec3 target = emitter.wind - (jump ? Vec3() : moved*(1.f/float(dt)));
+        if(dt>LeanLongFrameMs) {
+          emitter.air     = target;
+          emitter.airRate = Vec3();
+          } else {
+          // a damped spring: the flame answers in about leanResponseMs and swings a little past
+          const float w = 2.f/(decl.leanRise>0 ? decl.leanResponseMs : PlumeResponseMs);
+          const int   n = std::max(1, int(std::ceil(float(dt)/LeanSubstepMs)));
+          const float h = float(dt)/float(n);
+          for(int i=0; i<n; ++i) {
+            emitter.airRate += ((target-emitter.air)*(w*w) - emitter.airRate*(2.f*LeanDamping*w))*h;
+            emitter.air     += emitter.airRate*h;
+            }
+          }
+        emitter.grownMs += float(dt);
+        if(emitter.block!=size_t(-1) && decl.leanRise>0 && decl.leanGrowMs>0) {
+          // a launched flame grows out of the small one it was lit from (a bolt out of the flame on the palm)
+          const float k = std::min(emitter.grownMs/decl.leanGrowMs, 1.f);
+          getBlock(emitter).grow = decl.leanGrowFrom + (1.f-decl.leanGrowFrom)*k*k*(3.f-2.f*k);
+          }
+        if(emitter.block!=size_t(-1) && decl.leanRise>0) {
+          const Vec3  flat = Vec3(emitter.air.x,0,emitter.air.z);
+          const float t    = std::min(flat.length()/decl.leanRise, decl.leanMaxTan);
+          const float len  = 1.f + LeanStretch*(decl.leanMaxTan>0 ? t/decl.leanMaxTan : 0.f);
+          const float cs   = 1.f/std::sqrt(1.f+t*t);
+          const Vec3  side = t>1e-4f ? flat*(t*cs/flat.length()) : Vec3();
+          getBlock(emitter).lean = Vec3(side.x,cs,side.z)*len;
+          }
+        }
+      // a fast emitter (a flying bolt) drops its tail along the way of the tick, not in a clump per frame
+      emitter.trail    = (emitter.carried && decl.inherit>0 && decl.inherit<1 &&
+                          moved.quadLength()<=LeanJumpCm*LeanJumpCm) ? moved : Vec3();
+      emitter.steadyAt = at;
+      emitter.carried  = true;
+      }
+
     if(emitter.block!=size_t(-1)) {
       auto& p = getBlock(emitter);
       if(p.count>0) {
@@ -478,8 +743,10 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         if(p.count==0 && (emitter.st==S_Fade || !nearby)) {
           // free mem
           freeBlock(emitter.block);
-          if(emitter.st==S_Fade)
+          if(emitter.st==S_Fade) {
             emitter.st = S_Free;
+            updateTextureDemand(size_t(&emitter-impl.data()));
+            }
           doShrink = true;
           continue;
           }
@@ -488,7 +755,14 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
 
     if(emitter.st==S_Active && nearby) {
       auto& p = getBlock(emitter);
-      auto dE = ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
+      uint64_t dE = 0;
+      if(decl.flipSteady) {
+        dE = p.count==0 && !emitter.spent ? uint64_t(blockSize) : 0;
+        } else {
+        // a looped pulse counts from the emitter's birth, not from its block (ParticleFx::keySpan)
+        const auto keys = decl.keySpan(emitter.isLoop,emitter.born,parent.now,dt,p.timeTotal);
+        dE = ppsDiff(decl,emitter.isLoop,keys.first,keys.second);
+        }
       tickEmit(p,emitter,dE);
       }
 
@@ -518,6 +792,7 @@ void PfxBucket::implTickDecals(uint64_t, const Vec3&) {
       p.count = 0;
       freeBlock(emitter.block);
       emitter.st = S_Free;
+      updateTextureDemand(size_t(&emitter-impl.data()));
       }
     }
   }
@@ -542,8 +817,44 @@ void PfxBucket::tickEmit(Block& p, ImplEmitter& emitter, uint64_t emited) {
     }
   }
 
+// RGB9E5: a non-negative HDR colour in 32 bits (unpackRgb9e5 in pfx.vert)
+static uint32_t packRgb9e5(const Vec3& c) {
+  const float maxV = 65408.f;
+  const float r = std::clamp(c.x, 0.f, maxV), g = std::clamp(c.y, 0.f, maxV), b = std::clamp(c.z, 0.f, maxV);
+  const float m = std::max({r, g, b});
+  if(m<=1e-6f)
+    return 0;
+  int   e     = std::max(-16, int(std::floor(std::log2(m)))) + 1 + 15;
+  float denom = std::exp2(float(e - 15 - 9));
+  if(int(std::floor(m/denom + 0.5f))==512) {
+    denom *= 2.f;
+    ++e;
+    }
+  const auto q = [&](float v) { return uint32_t(std::min(511.f, std::floor(v/denom + 0.5f))); };
+  return q(r) | (q(g) << 9) | (q(b) << 18) | (uint32_t(e) << 27);
+  }
+
+// Irradiance of point lights at a particle, as light.frag lights a surface facing them, a quarter of it (a thin
+// puff scatters to all sides and lets most light through), without the shadow; held at 1/0.02 next to the
+// source, where the inverse square would light a puff over a fire like a lamp.
+static Vec3 pointLightAt(const std::vector<LightGroup::Near>& lights, const Vec3& at) {
+  Vec3 sum;
+  for(auto& l:lights) {
+    const float factor = (l.pos-at).quadLength()/(l.range*l.range);
+    if(factor>=1.f)
+      continue;
+    const float smooth = 1.f - factor*factor;
+    sum += l.color * (0.25f/std::max(factor, 0.02f) * smooth*smooth);
+    }
+  return sum;
+  }
+
 void PfxBucket::buildSsbo() {
   buildSsboTrails();
+
+  // smoke and steam (blended, lit in the forward pass) take the light of the fires next to them
+  const bool lit = decl.visMaterial.alpha==Material::AlphaFunc::Transparent;
+  std::vector<LightGroup::Near> lights;
 
   auto  colorS          = decl.visTexColorStart;
   auto  colorE          = decl.visTexColorEnd;
@@ -556,25 +867,28 @@ void PfxBucket::buildSsbo() {
   for(auto& p:block) {
     if(p.count==0)
       continue;
+    if(lit)
+      parent.world.lights().nearLights(p.pos, 300.f, lights);
 
     for(size_t pId=0; pId<blockSize; ++pId) {
       ParState& ps = particles[pId+p.offset];
       auto&     px = pfxCpu   [pId+p.offset];
 
-      if(ps.life==0) {
+      if(ps.life==0 || ps.landed) {
         px.size = Vec3();
         continue;
         }
 
-      const float a     = ps.lifeTime();
+      const float a     = decl.flipSteady ? 0.f : ps.lifeTime();
       const Vec3  cl    = colorS*(1.f-a)        + colorE*a;
       //const float clA   = visAlphaStart*(1.f-a) + visAlphaEnd*a;
       //NOTE: particles even with harsh transition, appear to have some fade in/out anyway in bvanilla game
-      const float clA   = (std::min(a, 0.1f)/0.1f)*visAlphaStart*(1.f-a) + (std::min(1.f-a, 0.1f)/0.1f)*visAlphaEnd*a;
+      const float clA   = decl.flipSteady ? visAlphaStart
+                        : (std::min(a, 0.1f)/0.1f)*visAlphaStart*(1.f-a) + (std::min(1.f-a, 0.1f)/0.1f)*visAlphaEnd*a;
 
       const float scale = 1.f*(1.f-a) + a*visSizeEndScale;
-      const float szX   = visSizeStart.x*scale;
-      const float szY   = visSizeStart.y*scale;
+      const float szX   = visSizeStart.x*scale*p.grow;
+      const float szY   = visSizeStart.y*scale*p.grow;
       const float szZ   = 0.1f*((szX+szY)*0.5f);
 
       struct Color {
@@ -595,9 +909,34 @@ void PfxBucket::buildSsbo() {
         color.b = uint8_t(cl.z);
         color.a = uint8_t(clA*255);
         }
+      if(p.flicker!=1.f) {
+        // the flame's signal (vobs.d "flicker"): the brightness, up to white
+        const float k = p.flicker * (visAlphaFunc==Material::AlphaFunc::AdditiveLight ? clA : 1.f);
+        color.r = uint8_t(std::min(255.f, cl.x*k));
+        color.g = uint8_t(std::min(255.f, cl.y*k));
+        color.b = uint8_t(std::min(255.f, cl.z*k));
+        }
       uint32_t colorU32;
       std::memcpy(&colorU32,&color,4);
       buildBilboard(px,p,ps, colorU32, szX,szY,szZ);
+      px.colorB = (lit && !lights.empty()) ? packRgb9e5(pointLightAt(lights, px.pos)) : 0;
+      if(decl.flipFrames>0) {
+        // the atlas frame by the particle's age (a steady one: by its emitter's clock) from its own start frame
+        // (a hash of its slot and birth time)
+        const uint32_t seed   = uint32_t(pId+p.offset)*2654435761u ^ uint32_t(ps.maxLife)*40503u;
+        const float    frames = float(decl.flipFrames);
+        const float    age    = decl.flipSteady ? float(p.timeTotal%3600000u) : float(ps.maxLife-ps.life);
+        // once: the whole atlas over the particle's life, from the first frame, the last one held
+        const float    t      = decl.flipOnce ? std::min(age/float(std::max<uint16_t>(ps.maxLife,1))*frames, frames-1.f)
+                                              : age*decl.flipFps/1000.f + float(seed%997u)/997.f*frames;
+        const float    f      = std::fmod(t, frames);
+        const uint32_t f0     = uint32_t(f)%decl.flipFrames;
+        const uint32_t f1     = decl.flipOnce ? std::min<uint32_t>(f0+1,decl.flipFrames-1u) : (f0+1)%decl.flipFrames;
+        const uint32_t blend  = uint32_t((f-std::floor(f))*127.f+0.5f);
+        px.bits0 |= 1u << 6;
+        px.bits0 |= uint32_t(decl.flipCols-1) << 7 | uint32_t(decl.flipRows-1) << 10;
+        px.bits0 |= f0 << 13 | f1 << 19 | blend << 25;
+        }
       }
     }
   }
@@ -639,6 +978,30 @@ void PfxBucket::buildBilboard(PfxState& v, const Block& p, const ParState& ps, c
   v.bits0 |= uint32_t(0) << 3; // TODO: trails
   v.bits0 |= uint32_t(decl.visOrientation) << 4;
   v.dir   = ps.dir;
+  if(decl.own && decl.shpType==ParticleFx::EmitterType::Mesh && !decl.visZBias) {
+    // a tongue born on a body's surface stands half inside the body: without the step to the camera only those
+    // past the silhouette were seen, a rim of fire around a dark body (pfx.vert: visZBias, size.z in cm)
+    v.bits0 |= 1;
+    v.size.z = MeshBornBiasCm;
+    }
+  if(decl.leanRise>0) {
+    // a leaning flame card (particles.d "lean", pfx.vert): orientation 3 with a flipbook, dir the way from the
+    // card's lower edge to its upper in card heights
+    v.bits0 |= uint32_t(3) << 4;
+    v.dir    = p.lean;
+    v.size.z = decl.leanAlong; // pfx.vert: the least length of the card seen along the flame, in card heights
+    // a growing card keeps its lower edge where the full one has it
+    v.pos.y -= 0.5f*szY*(1.f/p.grow - 1.f);
+    }
+  else if(decl.stretchMs>0 && decl.visOrientation!=ParticleFx::Orientation::None) {
+    // own streak (particles.d "stretch", pfx.vert): orientation 3, size.z the path of stretchMs at the velocity in cm
+    v.bits0 |= uint32_t(3) << 4;
+    v.size.z = ps.dir.length()*decl.stretchMs;
+    }
+  if(decl.minPixels>0) {
+    // own least size on screen (particles.d "minPixels", pfx.vert), 1/16 px in bits 7..14: no flipbook here
+    v.bits0 |= uint32_t(std::clamp(decl.minPixels*16.f+0.5f, 1.f, 255.f)) << 7;
+    }
   }
 
 void PfxBucket::buildTrailSegment(PfxState& v, const Trail& a, const Trail& b, float maxT) {
@@ -672,7 +1035,7 @@ uint32_t PfxBucket::mkTrailColor(float clA) const {
     color.b = uint8_t(255*clA);
     color.a = uint8_t(255);
     }
-  else if(decl.visMaterial.alpha==Material::AlphaFunc::Transparent) {
+  else if(decl.visMaterial.alpha==Material::AlphaFunc::Transparent || decl.hazeShift>0) {
     color.r = 255;
     color.g = 255;
     color.b = 255;
@@ -694,7 +1057,10 @@ void PfxBucket::preFrameUpdate(const SceneGlobals& scene, uint8_t fId) {
       ssbo = device.ssbo(heap,pfxCpu);
       } else {
       if(!decl.isDecal() || forceUpdate[fId]) {
-        ssbo.update(pfxCpu);
+        // A decal buffer lives in device memory: a plain update there waits for the GPU to finish the
+        // frame in flight (Metal). The copy is queued ahead of this frame's commands, nobody reads this
+        // frame's buffer before it, so the wait buys nothing.
+        ssbo.updateAsync(pfxCpu.data(), 0, pfxCpu.size()*sizeof(pfxCpu[0]));
         forceUpdate[fId] = false;
         }
       }
@@ -710,10 +1076,11 @@ void PfxBucket::preFrameUpdate(const SceneGlobals& scene, uint8_t fId) {
     }
   }
 
-void PfxBucket::drawGBuffer(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+void PfxBucket::drawGBuffer(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene,
+                            uint8_t fId, bool historyOwner) {
   for(auto i:{Material::Solid, Material::AlphaTest}) {
-    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false);
-    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true);
+    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false, historyOwner);
+    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true,  historyOwner);
     }
   }
 
@@ -725,15 +1092,33 @@ void PfxBucket::drawShadow(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
     }
   }
 
-void PfxBucket::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
-  for(auto i:{/*Material::Water, */Material::Multiply, Material::Multiply2, Material::Transparent, Material::AdditiveLight, Material::Ghost}) {
+void PfxBucket::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+  for(auto i:{Material::Multiply, Material::Multiply2}) {
     drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false);
     drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true);
     }
   }
 
+void PfxBucket::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+  if(decl.hazeShift>0)
+    return; // drawHaze
+  for(auto i:{/*Material::Water, */Material::Transparent, Material::AdditiveLight, Material::Ghost}) {
+    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false);
+    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true);
+    }
+  }
+
+bool PfxBucket::hasHaze(uint8_t fId) const {
+  return decl.hazeShift>0 && item[fId].pMain!=nullptr && !item[fId].pfxGpu.isEmpty();
+  }
+
+void PfxBucket::drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+  if(decl.hazeShift>0)
+    drawCommon(cmd, scene, item[fId], SceneGlobals::V_Main, Material::Ghost, false);
+  }
+
 void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, const Draw& itm,
-                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl) {
+                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl, bool historyOwner) {
   if(itm.pfxGpu.isEmpty())
     return;
 
@@ -749,6 +1134,8 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
       break;
     case SceneGlobals::V_Main:
       pso = itm.pMain;
+      if(historyOwner && pso!=nullptr)
+        pso = Shaders::inst().materialPipeline(decl.visMaterial, DrawCommands::Pfx, Shaders::T_HistoryGBuffer, false);
       break;
     case SceneGlobals::V_HiZ:
     case SceneGlobals::V_Count:
@@ -777,15 +1164,32 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   if(view==SceneGlobals::V_Main && mat.isShadowmapRequired()) {
     cmd.setBinding(L_Shadow0,  *scene.shadowMap[0],Resources::shadowSampler());
     cmd.setBinding(L_Shadow1,  *scene.shadowMap[1],Resources::shadowSampler());
+    DrawCommands::bindSunVsm(cmd, scene, L_VsmPageTbl, L_VsmPageAtlas);
     }
 
   if(view==SceneGlobals::V_Main && mat.isSceneInfoRequired()) {
-    cmd.setBinding(L_SceneClr, *scene.sceneColor, Sampler::bilinear(ClampMode::MirroredRepeat));
+    // a haze shifts the finished frame (the copy made before its pass), a ghost the opaque scene
+    cmd.setBinding(L_SceneClr, decl.hazeShift>0 ? *scene.sceneHaze : *scene.sceneColor, Sampler::bilinear(ClampMode::MirroredRepeat));
     cmd.setBinding(L_GDepth,   *scene.sceneDepth, Sampler::nearest (ClampMode::MirroredRepeat));
+    }
+
+  if(view==SceneGlobals::V_Main && (mat.alpha==Material::Transparent || mat.alpha==Material::AdditiveLight)) {
+    // soft particles (main_pfx_f/_e): the opaque depth, to fade where a sprite meets the scene
+    cmd.setBinding(L_GDepth, *scene.sceneDepth, Sampler::nearest(ClampMode::ClampToEdge));
+    }
+
+  if(view==SceneGlobals::V_Main && mat.isFogRequired()) {
+    cmd.setBinding(L_FogLut,   *scene.fogLut,   Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setBinding(L_FogLutMs, *scene.fogLutMs, Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setBinding(L_FogOcc,   *scene.fogOcclusion);
     }
 
   cmd.setBinding(L_Scene, scene.uboGlobal[view]);
   cmd.setBinding(L_Pfx,   itm.pfxGpu);
+  if(view==SceneGlobals::V_Main && (mat.alpha==Material::Transparent || mat.alpha==Material::AdditiveLight || mat.alpha==Material::Ghost)) {
+    // the weight of the TAA reactive mask (graphics plan 1v), the "hdr" of an additive effect (main.frag PushPfx)
+    cmd.setPushData(push);
+    }
   cmd.setPipeline(*pso);
   cmd.draw(nullptr, 0, 6, 0, itm.pfxGpu.byteSize()/sizeof(PfxState));
   }

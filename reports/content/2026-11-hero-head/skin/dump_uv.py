@@ -1,0 +1,1 @@
+../../../../character-tool/src/character_tool/head/skin/dump_uv.py

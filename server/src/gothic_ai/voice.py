@@ -1,9 +1,10 @@
 """Push-to-talk: while the player holds the key (anywhere, protocol v7), the server records the Mac
 microphone and streams it to the ASR service (asr-service/) as it is spoken. Partial text goes to the
 game right away; on release only the recognizer's short tail is left, and the final text is the hero's
-phrase: talk.py decides whom it is said to (the hero's focus at the key is one of the hints).
+phrase: talk.py decides whom it is said to (the hero's focus at the key is one of the hints). Laughter
+alone is said as `(смеётся)`; words spoken with laughter are prefixed with `(смеясь)`.
 
-The game only reports the key (`ptt_start` / `ptt_stop` / `ptt_cancel`); no audio passes through it.
+The game reports the key; while it is held, PCM also feeds the hero's silent face track.
 """
 
 from __future__ import annotations
@@ -11,12 +12,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import wave
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
@@ -33,6 +34,11 @@ from .protocol import (
     PttStop,
     TranscriptCmd,
 )
+from .voice_audio import AudioSource as AudioSource
+from .voice_audio import Microphone as Microphone
+from .voice_audio import PlayerAudio
+from .voice_audio import VoiceError as VoiceError
+from .voice_audio import WavSource as WavSource
 
 log = logging.getLogger(__name__)
 
@@ -43,87 +49,21 @@ MIC_DENIED = (
     "микрофон молчит: разрешите доступ к микрофону приложению, в котором запущен сервер "
     "(Системные настройки → Конфиденциальность и безопасность → Микрофон)"
 )
+LAUGH = "(смеётся)"
+LAUGHING_THRESHOLD = 0.9
+_LAUGH_WORD = re.compile(r"[ао]?(?:х[аеиоыэ])+х?|(?:гы)+")
+_VOWEL = re.compile(r"[аеиоыэ]")
 
 
-class VoiceError(RuntimeError):
-    pass
-
-
-ChunkCallback = Callable[[bytes], None]  # 16-bit mono PCM; may be called from an audio thread
-
-
-class AudioSource(Protocol):
-    rate: int
-
-    def start(self, on_chunk: ChunkCallback) -> None: ...
-
-    def stop(self) -> None: ...
-
-
-class Microphone:
-    """The default input device (or `device`) via PortAudio, in 50 ms chunks."""
-
-    def __init__(self, device: str | int | None = None, rate: int = 16000) -> None:
-        self.device = device
-        self.rate = rate
-        self._stream: Any = None
-
-    def start(self, on_chunk: ChunkCallback) -> None:
-        try:
-            import sounddevice as sd
-        except (ImportError, OSError) as err:
-            raise VoiceError(f"нет доступа к аудио: {err}") from err
-        try:
-            self._stream = sd.RawInputStream(
-                samplerate=self.rate,
-                channels=1,
-                dtype="int16",
-                blocksize=self.rate // 20,
-                device=self.device,
-                callback=lambda data, _frames, _time, _status: on_chunk(bytes(data)),
-            )
-            self._stream.start()
-        except Exception as err:  # PortAudioError and friends
-            self._stream = None
-            raise VoiceError(f"микрофон не открылся: {err}") from err
-
-    def stop(self) -> None:
-        stream, self._stream = self._stream, None
-        if stream is not None:
-            stream.stop()
-            stream.close()
-
-
-class WavSource:
-    """A recording "spoken" into the microphone at real-time pace (tests, end-to-end checks).
-    Stopping early drops the rest, like releasing the key mid-sentence."""
-
-    def __init__(self, path: str | Path, chunk_s: float = 0.1) -> None:
-        with wave.open(str(path), "rb") as w:
-            if w.getsampwidth() != 2 or w.getnchannels() != 1:
-                raise ValueError(f"{path}: need 16-bit mono wav")
-            self.rate = w.getframerate()
-            self.pcm = w.readframes(w.getnframes())
-        self.chunk_s = chunk_s
-        self._task: asyncio.Task[None] | None = None
-
-    @property
-    def duration(self) -> float:
-        return len(self.pcm) / 2 / self.rate
-
-    def start(self, on_chunk: ChunkCallback) -> None:
-        self._task = asyncio.get_running_loop().create_task(self._play(on_chunk))
-
-    async def _play(self, on_chunk: ChunkCallback) -> None:
-        step = int(self.chunk_s * self.rate) * 2
-        for i in range(0, len(self.pcm), step):
-            on_chunk(self.pcm[i : i + step])
-            await asyncio.sleep(self.chunk_s)
-
-    def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            self._task = None
+def laughter(text: str) -> bool:
+    """Only laughter, at least two syllables of it: «Ха-ха-ха», «Ахаха», «Хи-хи», «Гы-гы». ASR writes
+    laughter so; «Ах», «Ха» or laughter with words («Ха-ха, ну ты лошара») are the hero's words."""
+    words = re.findall(r"[^\W\d_]+", text.lower().replace("ё", "е"))
+    return (
+        bool(words)
+        and all(_LAUGH_WORD.fullmatch(word) for word in words)
+        and sum(len(_VOWEL.findall(word)) for word in words) >= 2
+    )
 
 
 @dataclass(frozen=True)
@@ -131,6 +71,7 @@ class Recognized:
     text: str
     provider: str
     latency_s: float  # from the end of the recording
+    laughing: float | None = None
 
 
 PartialCallback = Callable[[str], None]
@@ -232,6 +173,7 @@ class AsrSession:
                                 str(msg.get("text", "")).strip(),
                                 str(msg.get("provider", "")),
                                 time.monotonic() - self._ended_at,
+                                msg.get("laughing"),
                             ),
                         )
                         return
@@ -325,6 +267,7 @@ class _Utterance:
     recognize: bool = False
     finished: bool = False  # the final transcript was sent: drop late partials
     task: asyncio.Task[None] | None = None
+    audio: PlayerAudio | None = None
 
 
 # the hero's recognized phrase: (text, focus, details for the journal)
@@ -336,7 +279,7 @@ class VoiceInput:
 
     `hints`: ASR vocabulary for the hero's focus, snapshotted once when the key is pressed.
     `files`: a `ptt_start` may name a recording (`audio`) the hero says instead of the microphone; the test
-    bench speaks for the hero this way (scripts/shorts/). Off by default: the game is not to make the server
+    bench speaks for the hero this way (gothic-shorts). Off by default: the game is not to make the server
     read files."""
 
     def __init__(
@@ -349,6 +292,7 @@ class VoiceInput:
         lang: str = "ru",
         journal: Journal | None = None,
         files: bool = False,
+        player_face: bool = True,
         hints: Callable[[str | None], list[str]] | None = None,
     ) -> None:
         self.link = link
@@ -358,6 +302,7 @@ class VoiceInput:
         self.asr = asr
         self.lang = lang
         self.files = files
+        self.player_face = player_face
         self.hints = hints
         self.active: _Utterance | None = None  # while the key is held
         self._watchdog: asyncio.TimerHandle | None = None
@@ -378,13 +323,25 @@ class VoiceInput:
         if self.active is not None:
             self.stop(recognize=False)
         loop = asyncio.get_running_loop()
+        player_audio: PlayerAudio | None = None
         try:
             source = self._source(audio)
             utt = _Utterance(focus.upper() if focus else None, source)
             if self.hints is not None:
                 utt.hints = list(self.hints(utt.focus))
-            source.start(lambda data: loop.call_soon_threadsafe(utt.queue.put_nowait, data))
+            if self.player_face:
+                player_audio = utt.audio = PlayerAudio(self.link, source.rate)
+
+            def capture(data: bytes) -> None:
+                received_at_us = time.time_ns() // 1000
+                loop.call_soon_threadsafe(utt.queue.put_nowait, data)
+                if utt.audio is not None:
+                    utt.audio.feed(data, received_at_us)
+
+            source.start(capture)
         except VoiceError as err:
+            if player_audio is not None:
+                player_audio.stop()
             log.error("voice: %s", err)
             self.journal.add("voice_error", detail=str(err))
             self._spawn(self._status("error", str(err)))
@@ -414,6 +371,8 @@ class VoiceInput:
             self._watchdog.cancel()
             self._watchdog = None
         utt.source.stop()
+        if utt.audio is not None:
+            utt.audio.stop()
         if focus:
             utt.focus = focus.upper()
         utt.recognize = recognize
@@ -461,14 +420,23 @@ class VoiceInput:
             result.latency_s,
             utt.focus or "-",
         )
-        if not result.text:
+        text = result.text
+        laughs = result.laughing is not None and result.laughing >= LAUGHING_THRESHOLD
+        if laughter(text) or (not text and laughs):
+            text = LAUGH
+        elif laughs:
+            text = f"(смеясь) {text}"
+        if not text:
             await self._status("notice", "Не расслышал. Удерживайте T, пока говорите")
             return
-        self.heard(
-            result.text,
-            utt.focus,
-            {"via": "voice", "asr": result.provider, "latency_s": round(result.latency_s, 2)},
-        )
+        details: dict[str, Any] = {
+            "via": "voice", "asr": result.provider, "latency_s": round(result.latency_s, 2)
+        }
+        if result.laughing is not None:
+            details["laughing"] = round(result.laughing, 2)
+        if text != result.text:
+            details["heard"] = result.text
+        self.heard(text, utt.focus, details)
 
     async def _partial(self, utt: _Utterance, text: str) -> None:
         if not utt.finished:

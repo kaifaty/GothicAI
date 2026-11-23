@@ -35,7 +35,7 @@ class PhysicVbo final {
     uint32_t                resolveRayTriangle(uint32_t triangle, JPH::Vec3Arg from, JPH::Vec3Arg to,
                                               bool backfaces=false) const;
     bool                    isEmpty() const;
-    JPH::ShapeRefC          shape() const;
+    JPH::ShapeRefC          shape(bool splitLargeTriangles = false) const;
     // Exact source geometry, before Jolt's triangle BVH quantization.
     void                    appendVertices(std::vector<JPH::Vec3>& points, const Tempest::Matrix4x4& transform) const;
     size_t                  vertexCount() const { return vert.size(); }
@@ -43,20 +43,27 @@ class PhysicVbo final {
 
     std::string_view        validateSectorName(std::string_view name) const;
 
-  private:
-    friend struct BaseContentContract;
-    friend struct AssetDigest;
-    PhysicVbo(const std::vector<Vertex>& v);
-
-    void addSegment(size_t indexSize,size_t offset, asset::MaterialGroup material, const char* sector);
-    void prepareTriangleData() const;
-
     struct Segment {
       size_t                off;
       size_t                size;
       asset::MaterialGroup mat;
       const char*           sector=nullptr;
       };
+
+  private:
+    friend class DynamicWorld;
+    friend class CollisionCache;
+    friend class StaticCollision;
+    friend struct BaseContentContract;
+    friend struct AssetDigest;
+    PhysicVbo(const std::vector<Vertex>& v);
+
+    void addSegment(size_t indexSize,size_t offset, asset::MaterialGroup material, const char* sector);
+    void prepareTriangleData() const;
+    // The collision cache's data (collisioncache.h): the index list and segments as addIndex left them and the ray
+    // duplicate groups prepareTriangleData found; the rest of the triangle data follows from them.
+    void adopt(std::vector<uint32_t>&& indices, std::vector<Segment>&& segments,
+               std::vector<std::vector<uint32_t>>&& duplicates);
 
     std::vector<JPH::Vec3>        vStorage;
     const std::vector<JPH::Vec3>&  vert;
@@ -67,4 +74,5 @@ class PhysicVbo final {
     mutable std::unordered_map<uint32_t,uint32_t> duplicateGroup;
     mutable std::vector<std::vector<uint32_t>> rayDuplicates;
     mutable JPH::ShapeRefC        meshShape;
+    mutable JPH::ShapeRefC        splitMeshShape;
   };

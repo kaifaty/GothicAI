@@ -1,33 +1,10 @@
 #pragma once
 
-#include <filesystem>
-#include <functional>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
-#include <zenkit/Logger.hh>
+#include "baseidentity.h"
 
-namespace zenkit { class Vfs; }
+namespace zenkit { class Vfs; enum class LogLevel : std::uint8_t; }
 
 namespace BaseImport {
-using Files = std::vector<std::pair<std::string,uintmax_t>>;
-using Progress = std::function<void(std::string_view)>;
-
-struct Identity {
-  std::string fingerprint;
-  std::string json;
-  };
-
-// One file of Resources::loadVdfs's scan of Data, in its mount order.
-struct RuntimeArchive {
-  std::filesystem::path path;
-  std::string           name; // upper case file name, as the engine reports mounted archives
-  uintmax_t             size = 0;
-  int64_t               timestamp = -1; // VDF header value Resources::vdfTimestamp sorts by
-  bool                  mod = false;
-  };
-
 // Forward the application's ZenKit log callback here. Only active import reads
 // consume errors; normal archive loading keeps its existing behavior.
 void onZenkitLog(zenkit::LogLevel level, const char* component, const char* message);
@@ -46,6 +23,17 @@ int convertFonts(const std::filesystem::path& gothic, const std::filesystem::pat
 // .DAT of the runtime VFS, below the nine _compiled directories and the server's GOTHIC.DAT.
 // An installation without programs gives an empty index.
 int convertPrograms(const std::filesystem::path& gothic, const std::filesystem::path& out, bool verifyOnly);
+// D2: definitions/<program SHA>/items.json, verified against fresh constructor executions.
+int convertItemDefinitions(const std::filesystem::path& base);
+// D3a: definitions/<program SHA>/routines.json, verified against fresh function executions.
+int convertRoutineDefinitions(const std::filesystem::path& base);
+// D3b: definitions/<program SHA>/npcs.json, verified against fresh constructor executions.
+int convertNpcDefinitions(const std::filesystem::path& base);
+int convertPlacementDefinitions(const std::filesystem::path& base);
+// D4.1: definitions/<program SHA>/activities.json, routine states recognised as an activity template.
+int convertActivityDefinitions(const std::filesystem::path& base);
+// D4.h: deferred NPC helpers recognised and verified as native templates.
+int convertNpcHelperDefinitions(const std::filesystem::path& base);
 // P14: outputunits/outputunits.json and one record per distinct cutscene library (common/outputunits.h)
 // for every .BIN/.DAT of the runtime VFS, the engine's host and language candidates and the server's
 // and storygraph's choices. Fails when the server's native message view differs from its original
@@ -65,23 +53,10 @@ int convertMusic(const std::filesystem::path& gothic, const std::filesystem::pat
 // (FNT, audio, BIK, SGT/STY/DLS, the eight DATs, OU, server readers) with origin and SHA-256.
 int convertSources(const std::filesystem::path& gothic, const std::filesystem::path& out, bool verifyOnly);
 
-std::string sha256(std::string_view bytes);
-std::string sha256File(const std::filesystem::path& file);
-// Every nonempty file under Data (Resources::detectVdf) in the engine's mount order,
-// .mod files included and flagged; the caller applies the profile's filter.
-std::vector<RuntimeArchive> runtimeArchives(const std::filesystem::path& gothic);
 // Resources::loadVdfs without a mod ini, then Resources::mountWork: the engine's VFS of the
 // supported Gothic II installation. Returns the mounted archives in mount order and sets
 // `work` to the game's _work path (mounted with NONE only when it is a directory).
 std::vector<RuntimeArchive> mountRuntime(zenkit::Vfs& vfs, const std::filesystem::path& gothic,
                                          std::filesystem::path& work);
-// The identity binds the format, the content and mount order of the mounted archives
-// and the content of every loose _work input. `mounted` is the engine's list.
-Identity identify(const std::filesystem::path& gothic);
-Identity identify(const std::filesystem::path& gothic, Files mounted);
-// base.json: the identity bound to dir/sources/sources.json by size and SHA-256.
-// Written last; a base without a matching manifest never matches.
-void writeBaseMetadata(const std::filesystem::path& dir, const Identity& identity);
-bool matches(const std::filesystem::path& dir, const Identity& identity);
 void build(const std::filesystem::path& gothic, const std::filesystem::path& out, const Progress& progress = {});
 }

@@ -1,0 +1,209 @@
+#ifndef GRASS_COMMON_GLSL
+#define GRASS_COMMON_GLSL
+
+#include "grass/grass_blade_limits.glsl"
+
+// The grass system (reports/engine/2026-11-14-grass-system): what the blades (grass.vert, grass.frag) and the
+// ground under them (grass_ground.glsl) share. The patches and the spots of bare earth are the processor's
+// (common/graphics/grass/grasspatch.cpp): the same whole numbers, so the ground knows where the grass stands
+// without being told. Keep the two in step.
+
+// SceneDesc::grassRing: x full density to here, cm; y the blades go into the ground from here; z to here;
+// w 1 with blades, 0.5 the ground's mark alone (OPENGOTHIC_GRASS=ground), 0 off
+
+// Bucket::foliage of a ground under BK_GRASS (Grass::pack)
+float grassPackedDensity(uint bits) { return float( bits        & 0x3Fu)*(2.0/63.0); }
+float grassPackedHeight (uint bits) { return float((bits >> 6)  & 0x3Fu); }
+float grassPackedSlope  (uint bits) { return float((bits >> 12) & 0x3Fu); }
+float grassPackedWind   (uint bits) { return float((bits >> 18) & 0x3Fu)*(4.0/63.0); }
+float grassPackedThrough(uint bits) { return float( bits >> 24)/255.0; }
+
+// Parts of the look a bench switches off to weigh them, and the paint that measures the cover (Grass::Part of
+// common/graphics/grass/grassdiag.h; `grass parts <mask>` of the bench): grassRing.w = 1 + 2*mask
+const uint GrassPartGroundShade = 1u;
+const uint GrassPartFar         = 2u;
+const uint GrassPartTip         = 4u;
+const uint GrassPartRoot        = 8u;
+const uint GrassPartRootAo      = 16u;
+const uint GrassPartNormal      = 32u;
+const uint GrassPartPaint       = 64u;
+const uint GrassPartHide        = 128u;
+const uint GrassPartCover       = 256u; // the paint of the meadow's own ground (grass_layers.glsl): sward green, earth red
+const uint GrassPartBands       = 512u; // the ground of the grass painted by the bands of its distance (grassPaintFarBand)
+const uint GrassPartLayers      = 4096u; // a ground with its own layers as a painted ground: no layers, its blades as there
+const uint GrassPartCells       = 8192u;
+const uint GrassPartTrack       = 16384u; // a road with `track` as with its `verge` alone
+const uint GrassPartOffscreen   = 32768u; // the blades' whole vertex stage, then off the screen (grass.vert)
+
+// Ground breakdown. These bits use SceneDesc::viewFlags; tone uses the second word.
+const uint GrassPartGroundPaint     = 1u << 25;
+const uint GrassPartGroundBorder    = 1u << 26;
+const uint GrassPartGroundBare      = 1u << 27;
+const uint GrassPartGroundBetween   = 1u << 28;
+const uint GrassPartGroundFarSward  = 1u << 29;
+const uint GrassPartGroundMaps      = 1u << 30;
+const uint GrassPartGroundDetail    = 1u << 31;
+const uint GrassPartGroundTone      = 1u;
+
+uint grassPartsOff(float ringW) { return uint(max(ringW - 1.0, 0.0)*0.5 + 0.25); }
+
+// The paint of the ground: bands of the distance from the camera along the ground, 2, 3.5, 5 and 10 m, each an
+// eighth of it wide to either side; black between them
+vec3 grassPaintBand(float d) {
+  if(abs(d- 200.0)< 25.0) return vec3(0,0,1);
+  if(abs(d- 350.0)< 44.0) return vec3(0,1,1);
+  if(abs(d- 500.0)< 62.0) return vec3(0,1,0);
+  if(abs(d-1000.0)<125.0) return vec3(1,1,0);
+  return vec3(0);
+  }
+
+// The paint of the whole ground of the grass by the bands of its distance from the camera, the blades' own
+// (grass.vert): to 10, 24, 48, 64 and 100 m and beyond in magenta, red, blue, green, cyan and yellow, colours a
+// lit scene hardly has. reports/engine/2026-11-18-grass-volume counts the pixels a layer over the far ground takes
+vec3 grassPaintFarBand(float d) {
+  if(d<1000.0) return vec3(1,0,1);
+  if(d<2400.0) return vec3(1,0,0);
+  if(d<4800.0) return vec3(0,0,1);
+  if(d<6400.0) return vec3(0,1,0);
+  if(d<10000.0) return vec3(0,1,1);
+  return vec3(1,1,0);
+  }
+
+// The paint of the squares: red by the squares of 0.5 m, green by those of 5 m, as a chessboard each; blue the
+// ground's mark. scripts/grass_look.py `variety` reads the spread of the meadow's tone between them
+vec3 grassPaintCells(vec2 xz) {
+  const ivec2 a = ivec2(floor(xz/50.0)), b = ivec2(floor(xz/500.0));
+  return vec3(float((a.x+a.y) & 1)*0.5, float((b.x+b.y) & 1)*0.5, 0.5);
+  }
+
+// The look. A blade takes the colour of the ground under its root (a coarse level of its texture) and is darker
+// at the root and lighter at the tip: the tone grows as the root of the height along it, so the shade sits low
+// in the grass and what the eye meets from the side is the lit upper half
+const float GrassRoughness   = 0.92;
+const float GrassRootShade   = 0.55;                     // of the ground's colour at the root
+const vec3  GrassTipGreen    = vec3(1.10, 1.40, 0.90);   // of it at the tip, by the tuft's dryness
+const vec3  GrassTipStraw    = vec3(1.46, 1.38, 0.96);
+const float GrassRootAo      = 0.35;
+const float GrassWidth       = 1.3;                      // cm at the root, and per step of the blade's four bits
+const float GrassWidthStep   = 0.11;
+const float GrassTaper       = 0.7;                      // of the width is gone at the tip
+// A stalk with an ear (grass_ear.glsl; the record's "kind": "ear"): of the ground's colour too, the stalk as straw,
+// the ear as gold, paler by the tuft's dryness
+const vec3  GrassEarStalk      = vec3(0.95);
+const vec3  GrassEarGold       = vec3(1.22, 1.06, 0.62);
+const vec3  GrassEarPale       = vec3(1.36, 1.24, 0.84);
+const float GrassEarDepth      = 1.6;                    // the power of the height the tone rises by: the stand is deep
+const float GrassEarDroopMin   = 1.0;                    // the ear hangs over by 45 to 65 degrees, by the stalk: tangents
+const float GrassEarDroopMax   = 2.1445;
+// The ground. Seen from above it lies between the blades in their shade. Seen along the meadow it stands for the
+// blades the eye would meet behind the ones that are drawn, and from afar for all of them: it takes what the
+// grass looks like together. The share of that look: by the eye's direction against the ground, from GrassGrazeTo
+// (none) to GrassGrazeFrom (whole), and by the distance: the shade between the blades is a thing of the close view,
+// gone from where the blades start to thin to half of the distance where they start to go (grass_ground.glsl)
+const float GrassGroundShade = 0.72;
+const vec3  GrassFarTint     = vec3(1.00, 1.10, 0.74);
+// of a ground with its own layers (grass_layers.glsl): the shade between the blades is in part baked into its
+// sward, and its fine blades cover less of it than broad ones. At 0.74 the nearest ground came out at 0.83 to 0.88
+// of the meadow with broad blades (reports/engine/2026-11-14-meadow-ground, "Вторая попытка")
+const float GrassOwnGroundShade = 0.82;
+// and its sward differs from place to place by the patches' noise (grassPatch): drier and a little lighter where
+// the short sward is, greener and deeper towards the clumps. Patches of 2 to 10 m: the tile of the sward's map has
+// none. A turn of the tone, not a coat: the green and the straw of the map are both seen in a dry place
+const vec3  GrassSwardDry    = vec3(1.13, 1.07, 0.92);
+const vec3  GrassSwardLush   = vec3(0.87, 0.985, 0.97);
+const float GrassSwardDryAt  = 14000.0;                  // of the patches' noise
+const float GrassSwardLushAt = 46000.0;
+// the earth of a bare spot in such a sward (grass_layers.glsl): the layer's earth is of the road's tone; in the
+// meadow it lies dry under the sun, a warm brown a little under the sward's lightness (0.072 against 0.078 on
+// `bare-low`), so a spot is a dry place, no dark blotch and no pale pad. By the layer's height: the clods and the stones are pale, what lies between them is deeper and in their
+// shade; a slow noise makes one part of a spot paler than another, and the earth's normal is steeper than on a road
+const vec3  GrassSpotEarthHigh = vec3(1.34, 1.33, 1.30);
+const vec3  GrassSpotEarthLow  = vec3(0.81, 0.78, 0.72);
+const float GrassSpotEarthAo   = 0.62;                   // of the layer's, in the low parts
+const float GrassSpotEarthSlow = 0.12;                   // the slow noise, to either side
+const float GrassSpotEarthBump = 1.7;                    // of the normal map's slope
+const float GrassFarAo       = 0.95;
+const float GrassGrazeFrom   = 0.25;
+const float GrassGrazeTo     = 0.70;
+const vec3  GrassEarthTint   = vec3(0.92, 0.70, 0.80);   // the ground of a bare spot: earth, not painted grass
+
+float grassTone(float t) { return sqrt(clamp(t, 0.0, 1.0)); }
+
+// The wind on an upright blade (change A of the note): it bends as a rod, by its length. Radians at pressure 1:
+// 7.5 degrees at 12 cm, 16 at 20, 33 at 45
+const float GrassLeanTop     = 0.6283;   // 36 degrees
+const float GrassLeanLength  = 27.0;     // cm
+const float GrassLeanPower   = 1.8;
+const float GrassLeanMaxTan  = 1.678;    // twice tan(40 degrees): the lean and the swing together, at the tip
+const float GrassSwingK      = 1.5;      // of the leaf's swing share
+const float GrassNormalLean  = 0.6;      // of the lean's tangent tilts the normal against the wind
+const float GrassLeanSheen   = 0.16;     // the grass that lies over shows more of its blades' faces: lighter
+const float GrassStillFrom   = 2500.0;   // cm: the blade's own swing and the flutter fade from here
+const float GrassStillTo     = 3000.0;
+
+float grassLeanAngle(float heightCm) {
+  return GrassLeanTop*(1.0 - exp(-pow(max(heightCm,0.0)/GrassLeanLength, GrassLeanPower)));
+  }
+
+uint grassHash(int ix, int iz, uint salt) {
+  uint h = uint(ix)*0x9E3779B1u ^ uint(iz)*0x85EBCA77u ^ salt;
+  h ^= h >> 15;
+  h *= 0x2C1B3C6Du;
+  h ^= h >> 12;
+  h *= 0x297A2D39u;
+  h ^= h >> 15;
+  return h;
+  }
+
+int grassFloorDiv(int a, int b) {
+  const int q = a/b;
+  return (a%b!=0 && ((a<0)!=(b<0))) ? q-1 : q;
+  }
+
+int grassValueNoise(ivec2 p, int step, uint salt) {
+  const int ix = grassFloorDiv(p.x,step), iz = grassFloorDiv(p.y,step);
+  const int tx = ((p.x-ix*step)*256)/step, tz = ((p.y-iz*step)*256)/step;
+  const int sx = (tx*tx*(768-2*tx)) >> 16, sz = (tz*tz*(768-2*tz)) >> 16;
+  const int a = int((grassHash(ix,  iz,  salt) >> 8) & 0xFFu), b = int((grassHash(ix+1,iz,  salt) >> 8) & 0xFFu);
+  const int c = int((grassHash(ix,  iz+1,salt) >> 8) & 0xFFu), d = int((grassHash(ix+1,iz+1,salt) >> 8) & 0xFFu);
+  const int top = a*(256-sx) + b*sx;
+  const int bot = c*(256-sx) + d*sx;
+  return (top*(256-sz) + bot*sz) >> 8;
+  }
+
+// Grass::patchNoise at a place in 1/16 cm; under GrassPatchMain0 the short sward, over GrassPatchMain1 the main
+// grass (common/graphics/grass/grasspatch.cpp)
+const float GrassPatchMain0 = 26192.0;
+const float GrassPatchMain1 = 28857.0;
+
+int grassPatch(ivec2 p) {
+  return (3*grassValueNoise(p,9600,0x51u) + grassValueNoise(p+ivec2(1777,911),3520,0xA7u)) >> 2;
+  }
+
+// Grass::patchBare: a spot of bare earth in the short sward, 0..1
+float grassBare(ivec2 p) {
+  const int step = 6400, radius = 880, soft = 480, rim = 320;
+  const int cx = grassFloorDiv(p.x-step/2,step), cz = grassFloorDiv(p.y-step/2,step);
+  float bare = 0.0;
+  for(int j=cz; j<=cz+1; ++j)
+    for(int i=cx; i<=cx+1; ++i) {
+      const uint h = grassHash(i,j,0xB3u);
+      if((h & 0xFFu)>=140u)
+        continue;
+      const ivec2 c = ivec2(i,j)*step + ivec2((((h >> 8) & 0xFFFu)*uint(step)) >> 12, (((h >> 20) & 0xFFFu)*uint(step)) >> 12);
+      const int   r = radius + int(((grassHash(i,j,0xB4u) & 0xFFu)*uint(radius)) >> 8);
+      const vec2  d = vec2(p-c);
+      if(dot(d,d)>=float(r+rim)*float(r+rim) || grassPatch(c)>=int(GrassPatchMain0))
+        continue;
+      const float l = length(d) + float(grassValueNoise(p,960,0xB5u)-32640)*(float(rim)/32640.0);
+      bare = max(bare, clamp((float(r)-l)/float(soft), 0.0, 1.0));
+      }
+  return bare;
+  }
+
+// How much grass stands at a place of the patches, of the main grass: the short sward is as dense to the eye
+float grassStand(int noise) {
+  return mix(0.85, 1.0, clamp((float(noise)-GrassPatchMain0)/(GrassPatchMain1-GrassPatchMain0), 0.0, 1.0));
+  }
+
+#endif

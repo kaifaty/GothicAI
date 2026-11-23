@@ -1,4 +1,5 @@
 #include "triggerlist.h"
+#include "game/gamescript.h"
 
 #include <Tempest/Log>
 

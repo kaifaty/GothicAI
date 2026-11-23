@@ -85,6 +85,15 @@ void AbstractGraphicsApi::CommandBuffer::setDebugMarker(std::string_view tag) {
   (void)tag;
   }
 
+void AbstractGraphicsApi::CommandBuffer::upscale(Texture& /*src*/, Texture& /*dst*/) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
+void AbstractGraphicsApi::CommandBuffer::upscaleTemporal(Texture& /*color*/, Texture& /*depth*/, Texture& /*motion*/,
+                                                         Texture& /*dst*/, const TemporalUpscaleDesc& /*desc*/) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
 void AbstractGraphicsApi::CommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
   throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
   }
@@ -98,6 +107,23 @@ AbstractGraphicsApi::PRtAs AbstractGraphicsApi::createBottomAccelerationStruct(D
   }
 
 AbstractGraphicsApi::PRtAs AbstractGraphicsApi::createTopAccelerationStruct(Device* d, const RtInstance* geom, AccelerationStructure*const* as, size_t geomSize) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
+AbstractGraphicsApi::PRtAs AbstractGraphicsApi::createTopAccelerationStruct(Device* d, size_t capacity) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
+size_t AbstractGraphicsApi::rtInstanceSize() const {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
+void AbstractGraphicsApi::packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                                         AccelerationStructure* as, void* slot) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
+void AbstractGraphicsApi::CommandBuffer::buildTlas(AccelerationStructure& /*tlas*/, const Buffer* /*instances*/, size_t /*count*/) {
   throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
   }
 
@@ -130,4 +156,12 @@ std::shared_ptr<AbstractGraphicsApi::Fence> AbstractGraphicsApi::submit(Device* 
 
 NonUniqResId AbstractGraphicsApi::Swapchain::syncId() const {
   return NonUniqResId(0x1);
+  }
+
+void AbstractGraphicsApi::DescArray::setTexture(size_t, Texture*) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension,"descriptor array updates");
+  }
+
+AbstractGraphicsApi::PTexture AbstractGraphicsApi::createTextureAsync(Device* d, const Pixmap& p, TextureFormat frm, uint32_t mips) {
+  return createTexture(d,p,frm,mips);
   }

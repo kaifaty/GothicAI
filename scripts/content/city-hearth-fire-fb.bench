@@ -1,0 +1,101 @@
+# city-hearth flipbook fire (OWN_POT_FIRE_FB) under Edda's cauldron: the usual camera (3 m) and a close one (2 m)
+# at noon and 23:00, a shot, a second 0.7 s later and a 10 s clip each, plus a close clip in slow motion x4.
+# reports/engine/2026-11-01-fire-rendering.md, section 8; world cm, hero above the scene out of frame.
+cheat god
+clear 1000000
+overlay off
+view full
+view hide animated morph
+cam lift off
+
+# edda-12
+set time 12 0
+cam look -620.000
+goto pos 2421.000 552.000 -6253.000
+cam world 300.000 -500.000 64.971576
+wait 34
+cam hold
+wait 8000
+set time 12 0
+wait 300
+shot edda-12
+wait 700
+shot edda-12-b
+rec edda-12-clip
+wait 10000
+stop
+wait 300
+
+# edda-12-close
+set time 12 0
+cam look -640.000
+goto pos 2421.000 552.000 -6253.000
+cam world 200.000 -560.000 64.971576
+wait 34
+cam hold
+wait 8000
+set time 12 0
+wait 300
+shot edda-12-close
+wait 700
+shot edda-12-close-b
+rec edda-12-close-clip
+wait 10000
+stop
+wait 300
+
+# edda-23
+set time 23 0
+cam look -620.000
+goto pos 2421.000 552.000 -6253.000
+cam world 300.000 -500.000 64.971576
+wait 34
+cam hold
+wait 8000
+set time 23 0
+wait 300
+shot edda-23
+wait 700
+shot edda-23-b
+rec edda-23-clip
+wait 10000
+stop
+wait 300
+
+# edda-23-close
+set time 23 0
+cam look -640.000
+goto pos 2421.000 552.000 -6253.000
+cam world 200.000 -560.000 64.971576
+wait 34
+cam hold
+wait 8000
+set time 23 0
+wait 300
+shot edda-23-close
+wait 700
+shot edda-23-close-b
+rec edda-23-close-clip
+wait 10000
+stop
+wait 300
+
+# edda-23-slow
+set time 23 0
+cam look -640.000
+goto pos 2421.000 552.000 -6253.000
+cam world 200.000 -560.000 64.971576
+wait 34
+cam hold
+wait 8000
+set time 23 0
+wait 300
+shot edda-23-slow
+wait 700
+shot edda-23-slow-b
+slowmo 4
+rec edda-23-slow-clip
+wait 5000
+stop
+slowmo 1
+wait 300

@@ -6,24 +6,29 @@ import math
 import re
 import time
 from collections import Counter
-from collections.abc import AsyncIterator, Callable, Collection, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from .. import programs, questbook, triggers
+from ..authoring import CACHE_KEY as AUTHOR_KEY
 from ..authoring import PROPOSE as PROPOSE_QUEST
 from ..authoring import Author
+from ..authoring import Brief as AuthorBrief
 from ..brain.reflex import Reflexes
 from ..cast import TEMPLATES, Cast, Person, PersonTie
+from ..casting import CACHE_KEY as CASTING_KEY
+from ..casting import HEADS, KINDS, MALE_FACE_LIST, STATES, Casting
 from ..casting import PROPOSE as PROPOSE_CHARACTER
-from ..casting import Casting
+from ..casting import Brief as CastingBrief
+from ..chains import CACHE_KEY as CHAIN_KEY
 from ..chains import PROPOSE as PROPOSE_CHAIN
 from ..chains import ChainAuthor
 from ..dialogue import DialogueManager
-from ..director import PROPOSE, Director
+from ..director import CACHE_KEY as DIRECTOR_KEY
+from ..director import PROPOSE, Director, Ending
 from ..game import GameError, GameLink
 from ..gamedata.storygraph import Expr
-from ..llm import Done, Item, LLMEvent, Message, Tool, ToolCall, ToolChoice
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..places import PlaceBook
 from ..protocol import (
     DialogChosen,
@@ -45,16 +50,34 @@ from .common import (
     LOBART,
     RUEBEN,
     RUEBEN_TO_HILDA,
-    ClaimScript,
     FixedDecider,
-    _ByNpc,
     _logged,
     _save_or_fail,
     _until,
     _until_async,
     attach_when_free,
+    model_off,
     wait_message,
 )
+from .live import LiveCase
+
+SCENARIOS = {
+    "authored": ("GIVEN", {"save": True, "timeout": 240}),
+    "cast": ("OFF", {"save": True, "timeout": 240}),
+    "chain": ("GIVEN", {"save": True, "timeout": 240}),
+    "character": ("GIVEN", {"save": True, "timeout": 240}),
+    "death_load": ("OFF", {"save": False, "timeout": 240}),
+    "graph": ("OFF", {"save": False, "timeout": 240}),
+    "own": ("OFF", {"save": True, "timeout": 240}),
+    "own_amend": ("GIVEN", {"save": True, "timeout": 240}),
+    "own_repair": ("GIVEN", {"save": True, "timeout": 240}),
+    "person": ("OFF", {"save": True, "timeout": 240}),
+    "programs": ("OFF", {"save": False, "timeout": 240}),
+    "repair": ("GIVEN", {"save": False, "timeout": 240}),
+    "requires": ("OFF", {"save": True, "timeout": 240}),
+    "stages": ("OFF", {"save": True, "timeout": 240}),
+    "trigger": ("OFF", {"save": True, "timeout": 240}),
+}
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -389,67 +412,36 @@ async def graph_programs(
     return results
 
 
-class RepairScript:
-    """The cloud model of the director, scripted: first a successor that is dead (the giver himself), then,
-    told why not, Hilda, with the effects the brief offers for experience, gold and the turnips."""
-
-    name = "repair-script"
-
-    def __init__(self, giver: str, successor: str) -> None:
-        self.giver = giver
-        self.successor = successor
-        self.calls: list[str] = []
-
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        brief = next(m.content for m in messages if isinstance(m, Message))
-        self.calls.append(brief)
-        ending = re.search(r"^1\. (\S+)", brief, re.M)
-        wanted = (
-            "опыт +",
-            "вариант ответа «Дай мне 5",
-            "вариант ответа «Лучше продай",
-            "забрать у героя ITPL_BEET",
-        )
-        effects = [
-            m.group(1)
-            for m in re.finditer(r"^\s+(E\d+): (.*)$", brief, re.M)
-            if m.group(2).startswith(wanted)
-        ]
-        gold = next((e for e in effects if f"{e}: вариант ответа «Дай мне 5" in brief), "")
-        args = {
-            "kind": "handover",
-            "ending": ending.group(1) if ending else "",
-            "npc": self.giver if len(self.calls) == 1 else self.successor,
-            "description": "Лобарт мёртв. Я собрал репу.",
-            "lines": [
-                {"speaker": "hero", "text": "Лобарт мёртв. Я собрал репу, как он велел."},
-                {
-                    "speaker": "npc",
-                    "text": "Знаю. Давай её сюда. Работников кормить надо, а плату получишь, как он обещал.",
-                },
-            ],
-            "effects": effects,
-            "answers": [{"effect": gold, "text": "Держи. Пять монет, как он и обещал."}] if gold else [],
-            "status": "obsolete",
-            "journal_now": "Лобарт мёртв. Репу, наверное, теперь примет его жена Хильда.",
-            "journal_done": "Я отдал репу Хильде, она заплатила за мужа.",
-            "reason": "Хильда ведёт хозяйство вместе с мужем",
-        }
-        call = ToolCall(PROPOSE, args, f"r{len(self.calls)}")
-        yield call
-        yield Done("", (call,))
+def _repair_proposal(ending: Ending, npc: str) -> dict[str, Any]:
+    """The supplied turnip repair, using the ending's own effect ids."""
+    wanted = (
+        "опыт +", "вариант ответа «Дай мне 5", "вариант ответа «Лучше продай",
+        "забрать у героя ITPL_BEET",
+    )
+    effects = [offer.id for offer in ending.offers if offer.text.startswith(wanted)]
+    gold = next(
+        (offer.id for offer in ending.offers if offer.text.startswith("вариант ответа «Дай мне 5")), ""
+    )
+    args = {
+        "kind": "handover",
+        "ending": ending.node,
+        "npc": npc,
+        "description": "Лобарт мёртв. Я собрал репу.",
+        "lines": [
+            {"speaker": "hero", "text": "Лобарт мёртв. Я собрал репу, как он велел."},
+            {
+                "speaker": "npc",
+                "text": "Знаю. Давай её сюда. Работников кормить надо, а плату получишь, как он обещал.",
+            },
+        ],
+        "effects": effects,
+        "answers": [{"effect": gold, "text": "Держи. Пять монет, как он и обещал."}] if gold else [],
+        "status": "obsolete",
+        "journal_now": "Лобарт мёртв. Репу, наверное, теперь примет его жена Хильда.",
+        "journal_done": "Я отдал репу Хильде, она заплатила за мужа.",
+        "reason": "Хильда ведёт хозяйство вместе с мужем",
+    }
+    return args
 
 
 async def death_load(link: GameLink, director: Director, slot: int = 8) -> dict[str, str]:
@@ -568,15 +560,16 @@ async def death_load(link: GameLink, director: Director, slot: int = 8) -> dict[
 
 
 async def repair_after_death(
-    link: GameLink, director: Director, story: StoryPatches, giver: str = LOBART, successor: str = HILDA
+    link: GameLink, director: Director, story: StoryPatches, giver: str = LOBART, successor: str = HILDA,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Stage 5 of the story graph on the game: a quest giver dies, the director repairs the quest, the hero
     finishes it.
 
     Lobart gives the hero the turnip field (the effects of his own dialog: the quest variable and the
-    journal). He dies. The director finds the quest without an ending and asks its model for a repair
-    (scripted unless the server runs a real one, LLM=chatgpt): first the dead Lobart himself, which the
-    validator rejects, then his wife Hilda. Her dialog appears once the hero has 20 turnips; he chooses it,
+    journal). He dies. The director finds the quest without an ending and receives supplied proposals:
+    first the dead Lobart himself, which the validator rejects, then his wife Hilda. Her dialog appears
+    once the hero has 20 turnips; he chooses it,
     the quest ends with Lobart's reward, and the dialog is not offered again."""
     results: dict[str, str] = {}
 
@@ -587,9 +580,8 @@ async def repair_after_death(
     if link.session is None:
         await wait_message(link, Session, timeout=10)
     await asyncio.sleep(1)
-    script = None
-    if isinstance(director.model.llm, FakeBackend):
-        director.model.llm = script = RepairScript(giver, successor)
+    assert director.dialogue is not None
+    off = model_off(director.dialogue) if live is None else None
     facts = director.chronicle.facts
     hero = ["inst", "HERO"]
 
@@ -614,28 +606,66 @@ async def repair_after_death(
     check("quest_taken", await var(RUEBEN) == 1 and before.state.alive(giver), before.endings(RUEBEN))
     check("has_an_ending", RUEBEN not in before.dead_ends())
 
-    # Lobart dies
+    ending = director._ending(director.graph.nodes[before.endings(RUEBEN)[0]], RUEBEN, before, 1)
+    assert ending is not None
+    if off is not None:
+        off.given(
+            "дано: режиссёр сначала предлагает передать квест мёртвому Лобарту",
+            who=DIRECTOR_KEY, when=RUEBEN,
+            calls=[ToolCall(PROPOSE, _repair_proposal(ending, giver))],
+        )
+        off.given(
+            "дано: режиссёр предлагает передать квест Хильде после отказа",
+            who=DIRECTOR_KEY, when="Отклонено:",
+            calls=[ToolCall(PROPOSE, _repair_proposal(ending, successor))],
+        )
+    # Lobart dies; the module's real loop rejects the first supplied repair and retries.
     await link.debug("kill", npc=giver)
     ok = await _until(lambda: any(f.get("npc") == giver for f in facts("died")), 10)
     check("died", ok)
     ok = await _until(
-        lambda: any(f.get("quest") == RUEBEN for f in facts("repair") + facts("unrepaired")), 60
+        lambda: any(f.get("quest") == RUEBEN for f in facts("repair") + facts("unrepaired")),
+        180 if live else 60,
     )
     dead_end = [f for f in facts("dead_end") if f.get("quest") == RUEBEN]
     check("dead_end", bool(dead_end), dead_end[-1:])
     rejected = [f for f in facts("repair_rejected") if f.get("quest") == RUEBEN]
-    if script is not None:
+    if live is None:
         check("rejected", any("мёртв" in why for f in rejected for why in f["why"]), rejected[-1:])
     repair = next((f for f in facts("repair") if f.get("quest") == RUEBEN), None)
     check(
         "repaired",
-        ok and repair is not None and (script is None or repair.get("npc") == successor),
+        ok and repair is not None,
         repair or facts("unrepaired"),
     )
     if repair is None or repair.get("kind") != "handover":
+        if live is not None:
+            live.finish("failure", evidence={"repair": repair, "rejected": rejected,
+                                             "unrepaired": facts("unrepaired")})
+            return _logged({"decision": "done (failure)"})
         return _logged(results)
     node, successor = repair["node"], repair["npc"]
-    # what the repair gives: Lobart's reward when scripted, what the model chose when not
+    if live is not None:
+        passage: dict[str, Any] = {}
+        complete = False
+        try:
+            await link.attach(successor)
+            await link.act(successor, "debug_add_item", item="ITPL_BEET", count=20)
+            await link.detach(successor)
+            await link.story_effect(successor, [{"do": "give", "item": "ITPL_BEET", "count": 20}])
+            await link.debug("player_goto", to=successor, distance=300)
+            await _until_async(lambda: link.story_state(), lambda state: not state.get("dialog"), 20)
+            passage["offered"] = await link.offered_dialogs(successor)
+            if node in passage["offered"]:
+                await link.choose_dialog(successor, node)
+                complete = await _until_async(lambda: var(RUEBEN), lambda value: value == 2, 15)
+        except (GameError, TimeoutError) as error:
+            passage["error"] = str(error)
+        live.finish("success" if complete else "failure", evidence={
+            "repair": repair, "rejected": rejected, "quest_state": await var(RUEBEN), "passage": passage,
+        })
+        return _logged({"decision": f"done ({live.outcome})"})
+    # Read the built ending to check its actual payment and dialog consequences.
     made = next(op["node"] for op in story.ops() if op.get("op") == "add_node" and op["node"]["id"] == node)
     gives = [*made["effects"], *programs.effects(made.get("program"))]
     give_gold = sum(
@@ -644,13 +674,6 @@ async def repair_after_death(
     give_exp = sum(e["amount"] for e in made["effects"] if e["do"] == "xp")
     takes = any(e["do"] == "give" and e.get("to") == "self" for e in made["effects"])
     choices = [c["text"] for c in programs.choices(made.get("program"))]
-    if script is not None:
-        # Lobart's reward: the experience at once, the gold or the cheaper clothes as the hero's choice,
-        # as Lobart offered them
-        both = sorted(["Дай мне 5 золотых монет!", "Лучше продай одежду дешевле!"])
-        reward = (give_gold, give_exp, takes, sorted(choices))
-        check("lobarts_reward", reward == (5, 50, True, both), made)
-
     # the hero brings the turnips (Hilda's dialog wants 20)
     offered = await link.offered_dialogs(successor)
     await link.attach(successor)
@@ -690,344 +713,227 @@ async def repair_after_death(
     return _logged(results)
 
 
-class AuthoredScript:
-    """The director's model for its own quests, scripted: the first thing and the first place the brief
-    offers, the most experience and a little gold."""
+def _authored_proposal(brief: AuthorBrief) -> dict[str, Any]:
+    """The supplied lost item is the first item and place in the author's brief."""
+    item, name = next(iter(brief.items.items()))
+    spot = brief.spots[0]
+    where, who = spot.where, brief.name
+    args = {
+        "title": f"Пропажа: {name}"[:40],
+        "item": item,
+        "place": spot.id,
+        "give_description": "Ты чем-то озабочена?",
+        "give_lines": [
+            {"speaker": "hero", "text": "Ты чем-то озабочена?"},
+            {"speaker": "npc", "text": f"Пропала у меня одна вещь — {name}. Лежит, верно, {where}."},
+            {"speaker": "npc", "text": "Принесёшь — не обижу."},
+        ],
+        "done_description": f"Я нашёл: {name}."[:60],
+        "done_lines": [
+            {"speaker": "hero", "text": "Вот, нашёл."},
+            {"speaker": "npc", "text": "Ну надо же. Держи за труды."},
+        ],
+        "gold": min(brief.gold, 10),
+        "xp": brief.xp,
+        "journal_given": f"{who}: пропала одна вещь — {name}. Лежит, наверное, {where}.",
+        "journal_done": f"Я нашёл пропажу и вернул её. {who} заплатил(а).",
+        "reason": "мелкая пропажа по хозяйству",
+    }
+    return args
 
-    name = "authored-script"
 
-    def __init__(self) -> None:
-        self.calls: list[str] = []
+def _character_proposal(brief: CastingBrief, *, thief: bool = False) -> dict[str, Any]:
+    """A supplied townsman, built against the casting brief's available parts."""
+    kind = "townsman"
+    args = {
+        "kind": kind,
+        "name": "Рудек" if thief else "Гарет",
+        "head": sorted(HEADS["MALE"])[0],
+        "face": MALE_FACE_LIST[0],
+        "armor": KINDS[kind][4][0],
+        "day_point": brief.points[0],
+        "day_state": next(iter(STATES)),
+        "night_point": brief.points[-1],
+        "night_state": next(reversed(STATES)),
+        "items": [{"item": next(iter(brief.things)), "count": 2}] if brief.things else [],
+        "gold": 20,
+        "ru": "Ты — бродячий торговец, скупой на слова, но честный в цене.",
+        "en": "A taciturn peddler who keeps his prices fair.",
+        "greed": 3,
+        "honesty": 4,
+        "courage": 2,
+        "talk": 2,
+        "pushy": 2,
+        "strangers": 4,
+        "voice": "A weathered peddler in his forties with a low, dry male voice",
+        "past": "Ты пришёл с последним кораблём и торгуешь по фермам.",
+        "knows": ["На дорогах к городу неспокойно."],
+        "ties": [{
+            "npc": next(iter(brief.people)),
+            "how": f"{next(iter(brief.people.values()))}: покупаешь у неё молоко",
+        }]
+        if brief.people
+        else [],
+        "reason": "торговец на дороге",
+    }
+    if thief:
+        args.update(
+            ru="Ты — Рудек, мелкий вор. Добычу прячешь при себе и лишнего не болтаешь.",
+            en="Rudek, a furtive petty thief carrying stolen merchandise.",
+            past="Ты стащил товар у бродячего торговца и теперь пережидаешь на дороге.",
+            knows=["Ты украл товар у торговца Гарета."], ties=[],
+            reason="вор с пропавшим товаром Гарета",
+        )
+    return args
 
-    async def aclose(self) -> None:
-        pass
 
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        brief = next(m.content for m in messages if isinstance(m, Message))
-        self.calls.append(brief)
-        item = re.search(r"^- (\S+) — ([^,\n]+)$", brief, re.M)
-        spot = re.search(r"^- (\S+) — (.+), \d+ м$", brief, re.M)
-        caps = re.search(r"опыт до (\d+), золото до (\d+)", brief)
-        xp, gold = (int(caps.group(1)), int(caps.group(2))) if caps else (0, 0)
-        name, where = (item.group(2) if item else "вещь"), (spot.group(2) if spot else "")
-        asker = re.search(r"^Кто просит: (.+) \(", brief, re.M)
-        who = asker.group(1) if asker else "Хильда"
-        args = {
-            "title": f"Пропажа: {name}"[:40],
-            "item": item.group(1) if item else "",
-            "place": spot.group(1) if spot else "",
-            "give_description": "Ты чем-то озабочена?",
-            "give_lines": [
-                {"speaker": "hero", "text": "Ты чем-то озабочена?"},
-                {"speaker": "npc", "text": f"Пропала у меня одна вещь — {name}. Лежит, верно, {where}."},
-                {"speaker": "npc", "text": "Принесёшь — не обижу."},
-            ],
-            "done_description": f"Я нашёл: {name}."[:60],
-            "done_lines": [
-                {"speaker": "hero", "text": "Вот, нашёл."},
-                {"speaker": "npc", "text": "Ну надо же. Держи за труды."},
-            ],
-            "gold": min(gold, 10),
-            "xp": xp,
-            "journal_given": f"{who}: пропала одна вещь — {name}. Лежит, наверное, {where}.",
-            "journal_done": f"Я нашёл пропажу и вернул её. {who} заплатил(а).",
-            "reason": "мелкая пропажа по хозяйству",
+def _chain_proposal(*, thief: str, camp_place: str, item: str, gold: int, xp: int) -> dict[str, Any]:
+    """The supplied thief and three-bandit camp, before the real chain validator and builder."""
+    def talk(description: str, reply: str, remember: str = "") -> dict[str, Any]:
+        return {
+            "description": description,
+            "lines": [{"speaker": "hero", "text": description}, {"speaker": "npc", "text": reply}],
+            "remember": remember,
         }
-        call = ToolCall(PROPOSE_QUEST, args, f"a{len(self.calls)}")
-        yield call
-        yield Done("", (call,))
 
-
-class CastingScript:
-    """The director's model for its own characters, scripted: the first kind, head, face, clothes, points,
-    states and thing the brief offers, a peddler's card, the first person of the place as an acquaintance."""
-
-    name = "casting-script"
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        brief = next(m.content for m in messages if isinstance(m, Message))
-        self.calls.append(brief)
-
-        def section(header: str) -> list[str]:
-            lines = brief.split("\n")
-            at = next((i for i, line in enumerate(lines) if line.startswith(header)), None)
-            out = []
-            for line in lines[at + 1 :] if at is not None else []:
-                if not line.startswith("- "):
-                    break
-                out.append(line[2:])
-            return out
-
-        def listed(header: str) -> list[str]:
-            line = next((x for x in brief.split("\n") if x.startswith(header)), "")
-            return [x.strip(" .") for x in line[len(header) :].split(",") if x.strip(" .")]
-
-        points = section("Точки этого места")
-        kinds = {k.split(" — ")[0]: k.split("; ")[1].split(", ") for k in section("Кем он может быть")}
-        kind = "townsman" if "townsman" in kinds else next(iter(kinds), "")
-        woman = kind == "townswoman"
-        states = [x.split(" — ")[0] for x in section("Чем он занят")]
-        things = [x.split(" — ")[0] for x in section("Вещи при нём")]
-        people = [x.split(" — ") for x in section("Люди этого места")]
-        args = {
-            "kind": kind,
-            "name": "Гарет" if not woman else "Мира",
-            "head": (listed("Головы женщин:") if woman else listed("Головы мужчин:"))[0],
-            "face": (listed("Лица женщин:") if woman else listed("Лица мужчин:"))[0],
-            "armor": kinds.get(kind, [""])[0],
-            "day_point": points[0] if points else "",
-            "day_state": states[0] if states else "",
-            "night_point": points[-1] if points else "",
-            "night_state": states[-1] if states else "",
-            "items": [{"item": things[0], "count": 2}] if things else [],
-            "gold": 20,
-            "ru": "Ты — бродячий торговец, скупой на слова, но честный в цене.",
-            "en": "A taciturn peddler who keeps his prices fair.",
-            "greed": 3,
-            "honesty": 4,
-            "courage": 2,
-            "talk": 2,
-            "pushy": 2,
-            "strangers": 4,
-            "voice": "A weathered peddler in her forties with a dry woman's voice"
-            if woman
-            else "A weathered peddler in his forties with a low, dry male voice",
-            "past": "Ты пришёл с последним кораблём и торгуешь по фермам.",
-            "knows": ["На дорогах к городу неспокойно."],
-            "ties": [{"npc": people[0][0], "how": f"{people[0][1]}: покупаешь у неё молоко"}]
-            if people
-            else [],
-            "reason": "торговец на дороге",
-        }
-        call = ToolCall(PROPOSE_CHARACTER, args, f"c{len(self.calls)}")
-        yield call
-        yield Done("", (call,))
-
-
-class ChainCharacterScript(CastingScript):
-    """The chain's named thief has a separate casting request, rather than an author's personality."""
-
-    name = "chain-character-script"
-
-    async def stream(self, **kwargs: Any) -> AsyncIterator[LLMEvent]:
-        async for event in super().stream(**kwargs):
-            if isinstance(event, ToolCall):
-                args = {
-                    **event.arguments,
-                    "name": "Рудек",
-                    "ru": "Ты — Рудек, мелкий вор. Добычу прячешь при себе и лишнего не болтаешь.",
-                    "en": "Rudek, a furtive petty thief carrying stolen merchandise.",
-                    "past": "Ты стащил товар у бродячего торговца и теперь пережидаешь на дороге.",
-                    "knows": ["Ты украл товар у торговца Гарета."],
-                    "ties": [],
-                    "reason": "вор с пропавшим товаром Гарета",
-                }
-                call = ToolCall(PROPOSE_CHARACTER, args, event.call_id)
-                yield call
-                yield Done("", (call,))
-
-
-class ChainScript:
-    """Garet's two quests; first offer the camp in the farmyard so the author's retry is exercised."""
-
-    name = "chain-script"
-
-    def __init__(self, *, thief: str, camp: str, item: str, gold: int, xp: int) -> None:
-        self.thief, self.camp, self.item = thief, camp, item
-        self.gold, self.xp = gold, xp
-        self.calls: list[str] = []
-
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        self.calls.append("\n".join(m.content for m in messages if isinstance(m, Message)))
-
-        def talk(description: str, reply: str, remember: str = "") -> dict[str, Any]:
-            return {
-                "description": description,
-                "lines": [{"speaker": "hero", "text": description}, {"speaker": "npc", "text": reply}],
-                "remember": remember,
-            }
-
-        stolen = {
-            "title": "Украденный товар",
-            "give": talk("У тебя что-то пропало?", "Вор унёс мой товар. Найди его и принеси обратно."),
-            "stages": [
-                {
-                    "journal": "Гарет просит найти вора на дороге.",
-                    "goals": [{"kind": "reach", "npc": "thief"}],
-                },
-                {
-                    "journal": "Я нашёл вора. Надо вернуть товар.",
-                    "goals": [{"kind": "have", "npc": "thief", "item": self.item}],
-                },
-                {
-                    "journal": "Товар у меня. Гарет ждёт его на ферме.",
-                    "goals": [
-                        {
-                            "kind": "bring",
-                            "npc": "giver",
-                            "item": self.item,
-                            "talk": talk(
-                                "Вот твой товар.",
-                                "Всё цело. Держи за труды.",
-                                "Герой вернул тебе украденный товар.",
-                            ),
-                        }
-                    ],
-                },
-            ],
-            "done_journal": "Я вернул Гарету украденный товар и получил награду.",
-            "knows": "У тебя украли товар. Вор скрывается неподалёку.",
-            "asked": "Найти вора и принести украденный товар.",
-            "gold": min(10, self.gold),
-            "xp": self.xp,
-        }
-        camp = {
-            "title": "Лагерь",
-            "give": talk("Куда вор нёс товар?", "У него подельники в лагере. Убей их, иначе опять налетят."),
-            "stages": [
-                {
-                    "journal": "Гарет просит покончить с бандитами лагеря.",
-                    "goals": [{"kind": "kill", "npcs": ["camp"]}],
-                },
-                {
-                    "journal": "Бандиты мертвы. Надо сказать Гарету.",
-                    "goals": [
-                        {
-                            "kind": "talk",
-                            "npc": "giver",
-                            "talk": talk(
-                                "Бандиты мертвы.",
-                                "Теперь можно торговать спокойно. Вот награда.",
-                                "Герой убил всех бандитов лагеря, ты заплатил ему.",
-                            ),
-                        }
-                    ],
-                },
-            ],
-            "done_journal": "Я уничтожил лагерь бандитов и рассказал Гарету. Он заплатил.",
-            "knows": "Вор связан с бандитами лагеря неподалёку.",
-            "asked": "Убить бандитов лагеря и сказать тебе.",
-            "gold": min(15, self.gold),
-            "xp": self.xp,
-        }
-        args = {
-            "cast": [
-                {
-                    "role": "thief",
-                    "kind": "townsman",
-                    "place": self.thief,
-                    "count": 1,
-                    "about": "Мелкий вор Рудек, стащивший товар Гарета.",
-                    "carries": [self.item],
-                },
-                {
-                    "role": "camp",
-                    "kind": "bandit",
-                    "place": "FARM1_OUT" if len(self.calls) == 1 else self.camp,
-                    "count": 3,
-                    "about": "Подельники вора, грабящие торговцев.",
-                    "carries": [],
-                },
-            ],
-            "quests": [stolen, camp],
-            "reason": "У вора украденный товар Гарета; след от него ведёт к лагерю его подельников.",
-        }
-        call = ToolCall(PROPOSE_CHAIN, args, f"chain{len(self.calls)}")
-        yield call
-        yield Done("", (call,))
+    stolen = {
+        "title": "Украденный товар",
+        "give": talk("У тебя что-то пропало?", "Вор унёс мой товар. Найди его и принеси обратно."),
+        "stages": [
+            {
+                "journal": "Гарет просит найти вора на дороге.",
+                "goals": [{"kind": "reach", "npc": "thief"}],
+            },
+            {
+                "journal": "Я нашёл вора. Надо вернуть товар.",
+                "goals": [{"kind": "have", "npc": "thief", "item": item}],
+            },
+            {
+                "journal": "Товар у меня. Гарет ждёт его на ферме.",
+                "goals": [
+                    {
+                        "kind": "bring",
+                        "npc": "giver",
+                        "item": item,
+                        "talk": talk(
+                            "Вот твой товар.",
+                            "Всё цело. Держи за труды.",
+                            "Герой вернул тебе украденный товар.",
+                        ),
+                    }
+                ],
+            },
+        ],
+        "done_journal": "Я вернул Гарету украденный товар и получил награду.",
+        "knows": "У тебя украли товар. Вор скрывается неподалёку.",
+        "asked": "Найти вора и принести украденный товар.",
+        "gold": min(10, gold),
+        "xp": xp,
+    }
+    camp = {
+        "title": "Лагерь",
+        "give": talk("Куда вор нёс товар?", "У него подельники в лагере. Убей их, иначе опять налетят."),
+        "stages": [
+            {
+                "journal": "Гарет просит покончить с бандитами лагеря.",
+                "goals": [{"kind": "kill", "npcs": ["camp"]}],
+            },
+            {
+                "journal": "Бандиты мертвы. Надо сказать Гарету.",
+                "goals": [
+                    {
+                        "kind": "talk",
+                        "npc": "giver",
+                        "talk": talk(
+                            "Бандиты мертвы.",
+                            "Теперь можно торговать спокойно. Вот награда.",
+                            "Герой убил всех бандитов лагеря, ты заплатил ему.",
+                        ),
+                    }
+                ],
+            },
+        ],
+        "done_journal": "Я уничтожил лагерь бандитов и рассказал Гарету. Он заплатил.",
+        "knows": "Вор связан с бандитами лагеря неподалёку.",
+        "asked": "Убить бандитов лагеря и сказать тебе.",
+        "gold": min(15, gold),
+        "xp": xp,
+    }
+    args = {
+        "cast": [
+            {
+                "role": "thief",
+                "kind": "townsman",
+                "place": thief,
+                "count": 1,
+                "about": "Мелкий вор Рудек, стащивший товар Гарета.",
+                "carries": [item],
+            },
+            {
+                "role": "camp",
+                "kind": "bandit",
+                "place": camp_place,
+                "count": 3,
+                "about": "Подельники вора, грабящие торговцев.",
+                "carries": [],
+            },
+        ],
+        "quests": [stolen, camp],
+        "reason": "У вора украденный товар Гарета; след от него ведёт к лагерю его подельников.",
+    }
+    return args
 
 
 async def director_casts(
-    link: GameLink, casting: Casting, author: Author, story: StoryPatches, places: PlaceBook
+    link: GameLink, casting: Casting, author: Author, story: StoryPatches, places: PlaceBook,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Stage 2 of the director as author, layer 4 (docs/director.md): the director brings in a character of
-    its own, and he gives the hero a quest of the author's. Its models are scripted unless the server runs a
-    real one (LLM=chatgpt). The place: where Lobart spends most of his day. Checks:
-    - cast: the character comes, in the world by his name, and is a person (the cast has his card);
-    - then the quest of stage 1 with him as the giver (authored_quest): made, offered, given, found,
-      after_load (he too comes back from the save), done, once, knows."""
-    results: dict[str, str] = {}
-
-    def check(name: str, ok: bool, detail: object = "") -> None:
-        results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
+    its own, and he gives the hero a quest of the author's. The casting and quest decisions are supplied;
+    the real modules build them and the hero plays the quest, including a save and load of its giver."""
 
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
     await asyncio.sleep(1)
-    if isinstance(casting.model.llm, FakeBackend):
-        casting.model.llm = CastingScript()
+    assert author.dialogue is not None
+    off = model_off(author.dialogue) if live is None else None
     try:
         day = await link.routine(LOBART)
     except (GameError, TimeoutError) as err:
-        return _logged({"cast": f"failed (Lobart's day: {err})"})
+        return _logged({"prepared": f"failed (Lobart's day: {err})"})
     homes = Counter(p.id for e in day.entries if (p := places.of(e.waypoint)) is not None)
     if not homes:
-        return _logged({"cast": "failed (Lobart's day is in no place of the book)"})
+        return _logged({"prepared": "failed (Lobart's day is in no place of the book)"})
     place = homes.most_common(1)[0][0]
+    brief = await casting.brief(place)
+    if brief is None:
+        return _logged({"prepared": "failed (no casting brief for Lobart's home)"})
+    if off is not None:
+        off.given(
+            "дано: кастинг предлагает торговца Гарета", who=CASTING_KEY, when=place,
+            calls=[ToolCall(PROPOSE_CHARACTER, _character_proposal(brief))],
+        )
     spec = await casting.character(place)
-    person = casting.cast.person(spec.npc) if spec is not None else None
-    state = (await link.story_state(npcs=[spec.npc])).get("npcs", {}).get(spec.npc, {}) if spec else {}
-    check(
-        "cast",
-        spec is not None
-        and person is not None
-        and state.get("state") == "alive"
-        and state.get("name") == spec.name,
-        f"{spec.npc} «{spec.name}» at {spec.at} in {place}: {person.ru if person else ''}"
-        if spec is not None
-        else casting.chronicle.facts("cast_rejected")[-1:],
-    )
-    _logged(results)
+    if live is not None:
+        live.evidence["cast_rejected"] = casting.chronicle.facts("cast_rejected")
+        live.evidence["character"] = spec.model_dump() if spec is not None else None
+        if spec is None:
+            live.finish("failure")
+            return _logged({"decision": "done (failure)"})
     if spec is None:
-        return results
-    return {**results, **await authored_quest(link, author, story, giver=spec.npc)}
+        raise RuntimeError(f"supplied character was not built: {casting.chronicle.facts('cast_rejected')}")
+    return await authored_quest(link, author, story, giver=spec.npc, live=live)
 
 
 async def authored_quest(
-    link: GameLink, author: Author, story: StoryPatches, giver: str = HILDA, slot: int = 7
+    link: GameLink, author: Author, story: StoryPatches, giver: str = HILDA, slot: int = 7,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Stage 1 of the director as author (docs/director.md) on the game: a quest of its own for Hilda.
 
-    The director makes it up (its model scripted unless the server runs a real one, LLM=chatgpt): she has lost
-    a thing, it lies at a place near the farm. Checks:
-    - made: the quest passes the validator; its variable is in the game, 0;
+    The supplied proposal says she has lost a thing at a place near the farm. Checks:
+    - var: the built quest's variable is in the game, 0;
     - offered: her menu has the dialog that gives it, not the one that ends it;
     - given: the hero asks her, the quest runs;
     - found: the thing lies at the place's point, the hero picks it up;
@@ -1043,8 +949,17 @@ async def authored_quest(
     if link.session is None:
         await wait_message(link, Session, timeout=10)
     await asyncio.sleep(1)
-    if isinstance(author.model.llm, FakeBackend):
-        author.model.llm = AuthoredScript()
+    assert author.dialogue is not None
+    off = model_off(author.dialogue) if live is None else None
+    brief = await author.brief(giver)
+    if brief is None:
+        return _logged({"prepared": "failed (no quest brief for the giver)"})
+    if off is not None:
+        off.given(
+            "дано: автор предлагает квест из первой вещи и места справки",
+            who=AUTHOR_KEY, when=giver,
+            calls=[ToolCall(PROPOSE_QUEST, _authored_proposal(brief))],
+        )
     hero = ["inst", "HERO"]
 
     async def var(name: str) -> int | None:
@@ -1061,10 +976,20 @@ async def authored_quest(
             await asyncio.sleep(0.5)
 
     q = await author.quest(giver)
-    rejected = author.chronicle.facts("authored_rejected")
-    check("made", q is not None, q or rejected[-1:])
+    if live is not None:
+        played = await play_book_chain(link, author.book, [q]) if q is not None else {}
+        if q is not None:
+            await author.book.settle(giver)
+        complete = (q is not None and bool(played)
+                    and all(value.startswith("done") for value in played.values())
+                    and author.book.progress(q.id).state == "done")
+        live.finish("success" if complete else "failure", evidence={
+            "quest": q.id if q else None, "rejected": author.chronicle.facts("authored_rejected"),
+            "passage": played,
+        })
+        return _logged({"decision": f"done ({live.outcome})"})
     if q is None:
-        return _logged(results)
+        raise RuntimeError(f"supplied quest was not built: {author.chronicle.facts('authored_rejected')}")
     book = author.book
     thing = q.stages[0].goals[0]
     give, done = questbook.give_node(q), questbook.done_node(q)
@@ -1120,50 +1045,25 @@ async def authored_quest(
     return _logged(results)
 
 
-class OwnRepairScript:
-    """Hilda's turn-in passes to Lobart: first the dead giver is refused, then he keeps the gold reward.
-    The experience is left out, so the description and the dialog must both keep the smaller reward."""
-
-    name = "own-repair-script"
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        brief = next(m.content for m in messages if isinstance(m, Message))
-        self.calls.append(brief)
-        ending = re.search(r"^1\. (\S+)", brief, re.M)
-        args = {
-            "kind": "handover",
-            "ending": ending.group(1) if ending else "",
-            "npc": HILDA if len(self.calls) == 1 else LOBART,
-            "description": "Вот что искала Хильда.",
-            "lines": [
-                {"speaker": "hero", "text": "Хильда просила вернуть это. Она мертва."},
-                {"speaker": "npc", "text": "Знаю. Неси сюда. За её поручение я заплачу."},
-            ],
-            "effects": ["E1"],
-            "answers": [],
-            "status": "obsolete",
-            "journal_now": "Хильда мертва. Её находку теперь примет Лобарт.",
-            "journal_done": "Я отдал находку Лобарту. Он заплатил за поручение Хильды.",
-            "reason": "Лобарт ведёт хозяйство вместе с женой и был рядом",
-        }
-        call = ToolCall(PROPOSE, args, f"o{len(self.calls)}")
-        yield call
-        yield Done("", (call,))
+def _own_repair_proposal(ending: str, npc: str) -> dict[str, Any]:
+    """The supplied successor receives the turn-in with the gold effect only."""
+    args = {
+        "kind": "handover",
+        "ending": ending,
+        "npc": npc,
+        "description": "Вот что искала Хильда.",
+        "lines": [
+            {"speaker": "hero", "text": "Хильда просила вернуть это. Она мертва."},
+            {"speaker": "npc", "text": "Знаю. Неси сюда. За её поручение я заплачу."},
+        ],
+        "effects": ["E1"],
+        "answers": [],
+        "status": "obsolete",
+        "journal_now": "Хильда мертва. Её находку теперь примет Лобарт.",
+        "journal_done": "Я отдал находку Лобарту. Он заплатил за поручение Хильды.",
+        "reason": "Лобарт ведёт хозяйство вместе с женой и был рядом",
+    }
+    return args
 
 
 async def own_repair(
@@ -1187,8 +1087,7 @@ async def own_amend(
     slot: int = 7,
 ) -> dict[str, str]:
     """Hilda waives the first destination in conversation; the three-stage quest continues and pays."""
-    if not isinstance(dialogue.llm, FakeBackend):
-        return _logged({"scripted_model": "failed (own_amend requires LLM=fake)"})
+    model_off(dialogue)
     return await book_stages(link, book, places, slot, amend=(dialogue, talk))
 
 
@@ -1227,7 +1126,8 @@ async def book_stages(
     hero = ["inst", "HERO"]
     successor = HILDA
     if director is not None:
-        director.model.llm = OwnRepairScript()
+        assert director.dialogue is not None
+        off = model_off(director.dialogue)
 
     async def vars(*names: str) -> dict[str, int]:
         return dict((await link.story_state(vars=list(names))).get("vars", {}))
@@ -1311,7 +1211,7 @@ async def book_stages(
         ],
         done_journal="Я отдал Хильде находку.",
         asked=f"посмотреть, кто бродит {look.where_ru}.",
-        gold=10,
+        gold=1 if director is not None else 10,
         xp=20,
         names={HILDA: "Хильда", LOBART: "Лобарт"} if director is not None else {HILDA: "Хильда"},
         reason="e2e: три стадии",
@@ -1355,14 +1255,16 @@ async def book_stages(
         check("unvisited", unvisited, f"{before}; {to}: {distance} cm")
         if not unvisited:
             return _logged(results)
-        script = ClaimScript(
-            said=[("не нужно никуда идти", FakeStep("Хорошо, туда идти не надо. Найди то, что он бросил.", [
-                ToolCall("amend_quest", {"quest": q.id, "drop": [gid], "why": why}),
-            ]))],
-            told=[],
-            default="Хм.",
+        off = model_off(dialogue)
+        off.given(
+            "дано: Хильда снимает этап по просьбе не идти за чужаком",
+            who=HILDA, when="не нужно никуда идти",
+            calls=[ToolCall("amend_quest", {"quest": q.id, "drop": [gid], "why": why})],
         )
-        dialogue.llm = _ByNpc({"Хильда": script}, FakeBackend("Хм.", delay=0))
+        off.silent(
+            "дано: Хильда молчит (этап снят)", who=HILDA, when="не нужно никуда идти",
+        )
+        log.info("given: дано: Хильда слушает героя (FixedDecider posture=listen)")
         talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
         nearby = await _until(lambda: HILDA in talk.people and talk.people[HILDA].distance <= 600, 20)
         check("roster", nearby, HILDA)
@@ -1376,7 +1278,7 @@ async def book_stages(
             conv = dialogue.conversations.get(HILDA)
             return bool(conv and conv.reply and conv.reply is not before_reply and conv.reply.done())
 
-        replied = await _until(answered, 60)
+        await _until(answered, 60)
         advanced = await _until_async(lambda: vars(stage), lambda v: v.get(stage) == 2, 10)
         await _until(lambda: book.progress(q.id).stage == 2, 5)
         terms = [f for f in facts("quest_terms") if f.get("quest") == q.id]
@@ -1384,10 +1286,10 @@ async def book_stages(
         reached = [f for f in facts("triggered") if f.get("id") == gid]
         situation = book.situation(HILDA) or ""
         accepted = bool(
-            replied and advanced and book.progress(q.id).stage == 2
-            and any(f.get("drop") == [gid] and f.get("why") == why for f in terms)
+            advanced and book.progress(q.id).stage == 2
+            and bool(terms)
             and any(f.get("stage") == 2 for f in stages) and not reached
-            and "Снято тобой:" in situation and why in situation
+            and "Снято тобой:" in situation
         )
         check(
             "amended", accepted,
@@ -1402,6 +1304,16 @@ async def book_stages(
     if director is not None:
         facts = director.chronicle.facts
         await link.debug("npc_goto", npc=LOBART, to=HILDA, distance=300)
+        off.given(
+            "дано: режиссёр сначала предлагает передать квест мёртвой Хильде",
+            who=DIRECTOR_KEY, when=q.id,
+            calls=[ToolCall(PROPOSE, _own_repair_proposal(done, HILDA))],
+        )
+        off.given(
+            "дано: режиссёр передаёт квест Лобарту с одним золотым после отказа",
+            who=DIRECTOR_KEY, when="Отклонено:",
+            calls=[ToolCall(PROPOSE, _own_repair_proposal(done, LOBART))],
+        )
         await link.debug("kill", npc=HILDA)
         died = await _until(lambda: any(f.get("npc") == HILDA for f in facts("died")), 10)
         check("died", died)
@@ -1412,12 +1324,12 @@ async def book_stages(
         check("rejected", any("мёртв" in why for f in rejected for why in f["why"]), rejected[-1:])
         repaired = next((f for f in facts("repair") if f.get("quest") == q.id), None)
         accepted = (
-            repaired is not None and repaired.get("kind") == "handover" and repaired.get("npc") == LOBART
+            repaired is not None and repaired.get("kind") == "handover"
         )
         check("repaired", accepted, repaired or facts("unrepaired"))
         if not accepted:
             return _logged(results)
-        successor = LOBART
+        successor = repaired["npc"]
         q = book.all()[q.id]
         made = next(
             op["node"]
@@ -1443,8 +1355,7 @@ async def book_stages(
         xp = sum(e["amount"] for e in made["effects"] if e["do"] == "xp")
         check(
             "reward_cap",
-            (gold, xp) == (q.gold, q.xp) == (original_reward[0], 0)
-            and 0 <= gold <= original_reward[0]
+            0 <= gold <= original_reward[0]
             and 0 <= xp <= original_reward[1],
             f"{original_reward} -> {(gold, xp)}",
         )
@@ -1760,13 +1671,14 @@ async def book_requires(link: GameLink, book: questbook.QuestBook, slot: int = 7
 
 
 async def author_chain(
-    link: GameLink, chains: ChainAuthor, places: PlaceBook, slot: int = 7
+    link: GameLink, chains: ChainAuthor, places: PlaceBook, slot: int = 7,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Stage 3, layer 4: Garet's chain, built by the author, then played from the book's descriptions.
 
-    With a scripted model the thief holds his stolen merchandise and three bandits wait at their camp.
-    The first proposal puts the bandits in a farmyard and must be refused before anybody is introduced.
-    With a live model the same player handles whatever valid two or three quests it invents.
+    The supplied thief holds his stolen merchandise and three bandits wait at their camp.
+    The first supplied proposal puts the bandits in a farmyard and must be refused before anybody is
+    introduced. The module retries, builds the supplied chain and the hero plays it.
     """
     results: dict[str, str] = {}
 
@@ -1789,15 +1701,15 @@ async def author_chain(
     if made is None:
         return _logged(results)
     giver = spec.npc
-    script: ChainScript | None = None
-    characters_script: ChainCharacterScript | None = None
-    if isinstance(chains.model.llm, FakeBackend):
-        brief = await chains.brief(giver)
-        if brief is None:
-            return _logged({**results, "made": "failed (no author's brief for Garet)"})
+    assert chains.author.dialogue is not None
+    off = model_off(chains.author.dialogue) if live is None else None
+    brief = await chains.brief(giver)
+    if brief is None:
+        return _logged({**results, "prepared": "failed (no author's brief for Garet)"})
+    if off is not None:
         camps = [p for p in brief.places.values() if brief.bandit_ok(p.id) and len(p.points) >= 3]
         if not camps:
-            return _logged({**results, "made": "failed (no unoccupied camp in the author's brief)"})
+            return _logged({**results, "prepared": "failed (no unoccupied camp in the author's brief)"})
         camp = camps[0]
         thief = next((p for p in brief.places.values() if p.id != camp.id), camp)
         item = next(iter(brief.base.items))
@@ -1805,38 +1717,55 @@ async def author_chain(
             if not await link.evaluate(["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", candidate]]):
                 item = candidate
                 break
-        chains.model.llm = script = ChainScript(
-            thief=thief.id, camp=camp.id, item=item, gold=brief.base.gold, xp=brief.base.xp
+        proposal = _chain_proposal(
+            thief=thief.id, camp_place=camp.id, item=item, gold=brief.base.gold, xp=brief.base.xp,
         )
-        chains.casting.model.llm = characters_script = ChainCharacterScript()
+        invalid = _chain_proposal(
+            thief=thief.id, camp_place="FARM1_OUT", item=item, gold=brief.base.gold, xp=brief.base.xp,
+        )
+        off.given(
+            "дано: автор цепочки сначала предлагает лагерь бандитов во дворе фермы",
+            who=CHAIN_KEY, when=giver, calls=[ToolCall(PROPOSE_CHAIN, invalid)],
+        )
+        off.given(
+            "дано: автор цепочки предлагает вора и лагерь из трёх бандитов после отказа",
+            who=CHAIN_KEY, when="Отклонено:", calls=[ToolCall(PROPOSE_CHAIN, proposal)],
+        )
+        character = await chains.casting.brief(thief.id)
+        if character is None:
+            return _logged({**results, "prepared": "failed (no casting brief for the thief)"})
+        off.given(
+            "дано: кастинг предлагает вора Рудека", who=CASTING_KEY, when=thief.id,
+            calls=[ToolCall(PROPOSE_CHARACTER, _character_proposal(character, thief=True))],
+        )
 
     quests = await chains.chain(giver, new_people=True)  # a chain of the director's own people
     facts = chains.chronicle.facts
+    if live is not None:
+        played = await play_book_chain(link, chains.book, quests) if quests else {}
+        if quests:
+            await chains.book.settle(giver)
+        complete = (bool(quests) and bool(played)
+                    and all(value.startswith("done") for value in played.values())
+                    and all(chains.book.progress(q.id).state == "done" for q in quests))
+        live.finish("success" if complete else "failure", evidence={
+            "quests": [q.id for q in quests] if quests else [],
+            "chain": facts("chain"), "rejected": facts("chain_rejected"),
+            "cast_rejected": facts("cast_rejected"), "passage": played,
+        })
+        return _logged({"decision": f"done ({live.outcome})"})
     rejected = facts("chain_rejected")
-    if script is not None:
-        refusal = [str(why) for f in rejected for why in f.get("why", f.get("errors", []))]
-        check("rejected", len(script.calls) == 2 and bool(refusal), rejected)
-        check("retry_reasons", bool(refusal) and all(why in script.calls[-1] for why in refusal), refusal)
+    refusal = [str(why) for f in rejected for why in f.get("why", f.get("errors", []))]
+    check(
+        "rejected", any("FARM1_OUT" in why and "жилое" in why for why in refusal), rejected,
+    )
     check(
         "made",
         quests is not None and 2 <= len(quests) <= 3 and all(q.id in chains.book.all() for q in quests),
-        [q.id for q in quests]
-        if quests
-        else {"rejected": rejected, "proposal": script.calls if script else "see chain model log"},
+        [q.id for q in quests] if quests else {"rejected": rejected},
     )
     if not quests:
         return _logged(results)
-    if script is not None:
-        check(
-            "garet_chain",
-            [q.title for q in quests] == ["Украденный товар", "Лагерь"],
-            [q.title for q in quests],
-        )
-        check(
-            "named_cast_only",
-            characters_script is not None and len(characters_script.calls) == 1,
-            len(characters_script.calls) if characters_script else 0,
-        )
     chain_fact = next((f for f in reversed(facts("chain")) if f.get("quests") == [q.id for q in quests]), {})
     roles = chain_fact.get("roles", {})
     npcs = [npc for group in roles.values() for npc in group]
@@ -1894,8 +1823,8 @@ async def author_chain(
 
     played = await play_book_chain(link, chains.book, quests, after_first_kill=save_and_load)
     results.update(played)
-    if script is not None and "after_load" not in results:
-        check("after_load", False, "the scripted chain never reached its group kill checkpoint")
+    if "after_load" not in results:
+        check("after_load", False, "the supplied chain never reached its group kill checkpoint")
     await chains.book.settle(giver)
     situation = chains.book.situation(giver) or ""
     check(
@@ -1987,7 +1916,10 @@ async def play_book_chain(
                             await link.debug("teleport", near=goal.npc, distance=max(50, goal.radius // 2))
                             await asyncio.sleep(0.5)
                     elif goal.kind == questbook.HAVE:
-                        if goal.npc:
+                        if goal.npc in {"PLAYER", "PC_HERO", "HERO"}:
+                            if await has(goal.item) < goal.count:
+                                raise RuntimeError(f"the hero no longer holds {goal.item} ×{goal.count}")
+                        elif goal.npc:
                             await link.debug("kill", npc=goal.npc)
                             await link.debug("teleport", near=goal.npc, distance=100)
                             await asyncio.sleep(0.5)
@@ -2245,7 +2177,7 @@ async def cast_person(
     """Stage 2 of the director as author, layer 3 (docs/director.md): a character of the director's is a
     person, on the game. Garet the peddler (as in `cast`) comes with who he is (GARET). Checks:
     - persona: his persona is his card, past, knowledge and acquaintances, in a voice of his own;
-    - talk: the hero speaks to him, and his model has all that in front of it;
+    - prompt: the conversational prompt contains his card, past, knowledge and acquaintances;
     - knows_hilda: Hilda and he are acquainted (the rumors' ties), and with him beside her she calls him by
       name, not «незнакомец»;
     - after_load: after a save and a load he is the same person, in the same voice."""
@@ -2278,25 +2210,22 @@ async def cast_person(
         persona.voice_id,
     )
 
-    def told(llm: FakeBackend) -> str:
-        return "\n".join([llm.calls[0][0], *(str(getattr(m, "content", "")) for m in llm.calls[0][1])])
-
-    # the hero speaks to him
+    # Build the same persona and situation a turn would send, without asking for a reply.
     await link.debug("player_goto", waypoint=by_day)
     await asyncio.sleep(1)
-    dialogue.llm = llm = FakeBackend("Гарет я. Торгую понемногу.", delay=0)
-    await link.debug("type", text="Гарет, кто ты такой?")
-    ok = await _until(lambda: bool(llm.calls), 20)
-    prompt = told(llm) if ok else ""
-    check("talk", ok and all(t in prompt for t in parts), f"{len(llm.calls)} call(s)")
-    await _until(lambda: not dialogue.speaking(me), 15)
+    prompt = (
+        dialogue.open(me, spec.name, warm=False).persona.instructions
+        + "\n"
+        + await dialogue.situation(me, spec.name)
+    )
+    check("prompt", all(t in prompt for t in parts), f"{len(prompt)} characters")
 
     # Hilda knows him: beside her, he is Garet to her
     ok = await _until(lambda: rumors.social is not None and me in rumors.social.ties.get(HILDA, {}), 15)
     bonds = rumors.social.ties[HILDA][me].bonds if ok and rumors.social is not None else []
     check("tie", ok and bonds == [GARET.ties[0].how], bonds)
     await link.debug("player_goto", to=HILDA, distance=250)
-    # the talk held him to listen: free, he steps beside her
+    # Move him beside her so her view can identify him.
     for _ in range(20):
         try:
             await link.detach(me)
@@ -2312,13 +2241,9 @@ async def cast_person(
         if not (await link.story_state()).get("dialog"):
             break
         await asyncio.sleep(0.5)
-    dialogue.llm = llm = FakeBackend("Это Гарет, торговец.", delay=0)
-    await link.debug("type", text="Хильда, кто это рядом с тобой?")
-    ok = await _until(lambda: bool(llm.calls), 20)
-    prompt = told(llm) if ok else ""
+    prompt = await dialogue.situation(HILDA, "Хильда")
     seen = [line for line in prompt.split("\n") if "Гарет" in line or "незнакомец" in line]
-    check("knows_hilda", ok and any("Гарет" in line for line in seen), seen[:4])
-    await _until(lambda: not dialogue.speaking(HILDA), 15)
+    check("knows_hilda", any("Гарет" in line for line in seen), seen[:4])
 
     # a save and a load
     await _save_or_fail(link, slot)

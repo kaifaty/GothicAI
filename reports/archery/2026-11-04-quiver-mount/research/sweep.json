@@ -1,0 +1,1352 @@
+[
+{
+"around": 60,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 2.1,
+"leg": -1.2,
+"bow": 0.3,
+"worst": -1.2
+},
+{
+"around": 65,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 4.5,
+"leg": -0.5,
+"bow": -1.2,
+"worst": -1.2
+},
+{
+"around": 65,
+"push": 20.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": 3.1,
+"leg": -1.5,
+"bow": -1.1,
+"worst": -1.5
+},
+{
+"around": 60,
+"push": 17.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": 3.2,
+"leg": -1.7,
+"bow": 1.3,
+"worst": -1.7
+},
+{
+"around": 60,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 3.2,
+"leg": -1.8,
+"bow": 0.4,
+"worst": -1.8
+},
+{
+"around": 65,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 3.6,
+"leg": -1.8,
+"bow": -1.2,
+"worst": -1.8
+},
+{
+"around": 60,
+"push": 17.2,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 4.2,
+"leg": -2.2,
+"bow": 1.4,
+"worst": -2.2
+},
+{
+"around": 65,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 2.7,
+"leg": -2.2,
+"bow": -1.6,
+"worst": -2.2
+},
+{
+"around": 60,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": 1.2,
+"leg": -2.3,
+"bow": 0.2,
+"worst": -2.3
+},
+{
+"around": 55,
+"push": 18.7,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": 0.9,
+"leg": -2.4,
+"bow": 2.2,
+"worst": -2.4
+},
+{
+"around": 60,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": -0.4,
+"leg": -2.4,
+"bow": 0.4,
+"worst": -2.4
+},
+{
+"around": 65,
+"push": 17.0,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 5.5,
+"leg": -2.4,
+"bow": 0.1,
+"worst": -2.4
+},
+{
+"around": 65,
+"push": 17.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": 4.5,
+"leg": -2.4,
+"bow": -0.1,
+"worst": -2.4
+},
+{
+"around": 65,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 2.2,
+"leg": -2.6,
+"bow": -1.6,
+"worst": -2.6
+},
+{
+"around": 60,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 1.0,
+"leg": -2.7,
+"bow": 0.4,
+"worst": -2.7
+},
+{
+"around": 65,
+"push": 17.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": 5.1,
+"leg": -2.7,
+"bow": 0.5,
+"worst": -2.7
+},
+{
+"around": 55,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": -1.4,
+"leg": -2.8,
+"bow": 1.8,
+"worst": -2.8
+},
+{
+"around": 65,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": 0.8,
+"leg": -2.8,
+"bow": -1.6,
+"worst": -2.8
+},
+{
+"around": 55,
+"push": 20.1,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 1.9,
+"leg": -3.0,
+"bow": 1.7,
+"worst": -3.0
+},
+{
+"around": 55,
+"push": 20.1,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 1.9,
+"leg": -3.0,
+"bow": 1.7,
+"worst": -3.0
+},
+{
+"around": 65,
+"push": 23.0,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": 1.7,
+"leg": -3.0,
+"bow": -1.5,
+"worst": -3.0
+},
+{
+"around": 60,
+"push": 18.2,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": 2.9,
+"leg": -3.1,
+"bow": 1.1,
+"worst": -3.1
+},
+{
+"around": 60,
+"push": 18.0,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 4.6,
+"leg": -3.1,
+"bow": 1.1,
+"worst": -3.1
+},
+{
+"around": 60,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": -0.5,
+"leg": -3.1,
+"bow": 0.4,
+"worst": -3.1
+},
+{
+"around": 65,
+"push": 17.1,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 6.4,
+"leg": -3.1,
+"bow": 0.3,
+"worst": -3.1
+},
+{
+"around": 65,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": 1.5,
+"leg": -3.1,
+"bow": -1.6,
+"worst": -3.1
+},
+{
+"around": 55,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": -0.3,
+"leg": -3.3,
+"bow": 1.7,
+"worst": -3.3
+},
+{
+"around": 60,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 0.6,
+"leg": -3.3,
+"bow": 0.4,
+"worst": -3.3
+},
+{
+"around": 60,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 0.2,
+"leg": -3.3,
+"bow": 0.4,
+"worst": -3.3
+},
+{
+"around": 55,
+"push": 20.8,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 0.7,
+"leg": -3.4,
+"bow": 1.7,
+"worst": -3.4
+},
+{
+"around": 55,
+"push": 20.8,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 0.7,
+"leg": -3.4,
+"bow": 1.7,
+"worst": -3.4
+},
+{
+"around": 55,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": -0.2,
+"leg": -3.4,
+"bow": 1.7,
+"worst": -3.4
+},
+{
+"around": 60,
+"push": 23.0,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": 0.0,
+"leg": -3.4,
+"bow": 0.5,
+"worst": -3.4
+},
+{
+"around": 65,
+"push": 22.6,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": 3.3,
+"leg": -3.4,
+"bow": -1.6,
+"worst": -3.4
+},
+{
+"around": 65,
+"push": 22.6,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": 3.3,
+"leg": -3.4,
+"bow": -1.6,
+"worst": -3.4
+},
+{
+"around": 45,
+"push": 20.8,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": -3.5,
+"leg": -3.4,
+"bow": 5.0,
+"worst": -3.5
+},
+{
+"around": 45,
+"push": 20.8,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": -3.5,
+"leg": -3.4,
+"bow": 5.0,
+"worst": -3.5
+},
+{
+"around": 55,
+"push": 19.4,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 1.5,
+"leg": -3.5,
+"bow": 1.9,
+"worst": -3.5
+},
+{
+"around": 55,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 1.1,
+"leg": -3.5,
+"bow": 1.7,
+"worst": -3.5
+},
+{
+"around": 65,
+"push": 20.0,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 4.1,
+"leg": -3.5,
+"bow": -1.1,
+"worst": -3.5
+},
+{
+"around": 75,
+"push": 20.0,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": 7.0,
+"leg": -1.5,
+"bow": -3.5,
+"worst": -3.5
+},
+{
+"around": 75,
+"push": 20.0,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": 7.0,
+"leg": -1.5,
+"bow": -3.5,
+"worst": -3.5
+},
+{
+"around": 75,
+"push": 19.5,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": 6.8,
+"leg": 0.4,
+"bow": -3.6,
+"worst": -3.6
+},
+{
+"around": 75,
+"push": 20.1,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 7.3,
+"leg": 0.2,
+"bow": -3.7,
+"worst": -3.7
+},
+{
+"around": 75,
+"push": 19.4,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 7.0,
+"leg": 0.8,
+"bow": -3.7,
+"worst": -3.7
+},
+{
+"around": 75,
+"push": 18.9,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": 6.5,
+"leg": -0.4,
+"bow": -3.7,
+"worst": -3.7
+},
+{
+"around": 75,
+"push": 20.1,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 7.3,
+"leg": 0.2,
+"bow": -3.7,
+"worst": -3.7
+},
+{
+"around": 65,
+"push": 17.0,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 6.0,
+"leg": -3.8,
+"bow": 0.7,
+"worst": -3.8
+},
+{
+"around": 65,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": 3.0,
+"leg": -3.8,
+"bow": -1.6,
+"worst": -3.8
+},
+{
+"around": 75,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 7.5,
+"leg": 0.7,
+"bow": -3.8,
+"worst": -3.8
+},
+{
+"around": 75,
+"push": 20.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": 6.5,
+"leg": 0.2,
+"bow": -3.8,
+"worst": -3.8
+},
+{
+"around": 75,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 7.5,
+"leg": 0.7,
+"bow": -3.8,
+"worst": -3.8
+},
+{
+"around": 55,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": -0.6,
+"leg": -3.9,
+"bow": 2.1,
+"worst": -3.9
+},
+{
+"around": 55,
+"push": 20.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": 0.2,
+"leg": -4.0,
+"bow": 1.7,
+"worst": -4.0
+},
+{
+"around": 55,
+"push": 20.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": 0.2,
+"leg": -4.0,
+"bow": 1.7,
+"worst": -4.0
+},
+{
+"around": 75,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 6.7,
+"leg": 0.5,
+"bow": -4.0,
+"worst": -4.0
+},
+{
+"around": 45,
+"push": 23.7,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": -3.4,
+"leg": -4.1,
+"bow": 5.4,
+"worst": -4.1
+},
+{
+"around": 45,
+"push": 23.7,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": -3.4,
+"leg": -4.1,
+"bow": 5.4,
+"worst": -4.1
+},
+{
+"around": 45,
+"push": 23.0,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": -4.1,
+"leg": -4.1,
+"bow": 5.5,
+"worst": -4.1
+},
+{
+"around": 45,
+"push": 23.7,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": -3.4,
+"leg": -4.1,
+"bow": 5.4,
+"worst": -4.1
+},
+{
+"around": 55,
+"push": 23.9,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": -0.3,
+"leg": -4.1,
+"bow": 2.3,
+"worst": -4.1
+},
+{
+"around": 55,
+"push": 23.9,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": -0.3,
+"leg": -4.1,
+"bow": 2.3,
+"worst": -4.1
+},
+{
+"around": 55,
+"push": 23.9,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": -0.3,
+"leg": -4.1,
+"bow": 2.3,
+"worst": -4.1
+},
+{
+"around": 75,
+"push": 21.2,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": 7.1,
+"leg": -2.3,
+"bow": -4.1,
+"worst": -4.1
+},
+{
+"around": 75,
+"push": 21.2,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": 7.1,
+"leg": -2.3,
+"bow": -4.1,
+"worst": -4.1
+},
+{
+"around": 75,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": 5.9,
+"leg": -0.5,
+"bow": -4.1,
+"worst": -4.1
+},
+{
+"around": 45,
+"push": 21.7,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": -3.2,
+"leg": -4.2,
+"bow": 5.1,
+"worst": -4.2
+},
+{
+"around": 45,
+"push": 21.7,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": -3.2,
+"leg": -4.2,
+"bow": 5.1,
+"worst": -4.2
+},
+{
+"around": 55,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": -2.4,
+"leg": -4.2,
+"bow": 1.8,
+"worst": -4.2
+},
+{
+"around": 60,
+"push": 20.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": 1.7,
+"leg": -4.2,
+"bow": 0.5,
+"worst": -4.2
+},
+{
+"around": 75,
+"push": 21.2,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": 7.4,
+"leg": -1.1,
+"bow": -4.2,
+"worst": -4.2
+},
+{
+"around": 75,
+"push": 21.2,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": 7.4,
+"leg": -1.1,
+"bow": -4.2,
+"worst": -4.2
+},
+{
+"around": 45,
+"push": 21.5,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": -2.8,
+"leg": -4.3,
+"bow": 5.0,
+"worst": -4.3
+},
+{
+"around": 45,
+"push": 21.5,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": -2.8,
+"leg": -4.3,
+"bow": 5.0,
+"worst": -4.3
+},
+{
+"around": 60,
+"push": 20.0,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": 2.0,
+"leg": -4.3,
+"bow": 0.6,
+"worst": -4.3
+},
+{
+"around": 45,
+"push": 24.2,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": -2.9,
+"leg": -4.4,
+"bow": 5.7,
+"worst": -4.4
+},
+{
+"around": 45,
+"push": 24.2,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": -2.9,
+"leg": -4.4,
+"bow": 5.7,
+"worst": -4.4
+},
+{
+"around": 45,
+"push": 24.2,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": -2.9,
+"leg": -4.4,
+"bow": 5.7,
+"worst": -4.4
+},
+{
+"around": 45,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": -4.4,
+"leg": -3.1,
+"bow": 5.3,
+"worst": -4.4
+},
+{
+"around": 45,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": -4.0,
+"leg": -4.4,
+"bow": 5.2,
+"worst": -4.4
+},
+{
+"around": 65,
+"push": 20.0,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": 3.7,
+"leg": -4.4,
+"bow": -1.0,
+"worst": -4.4
+},
+{
+"around": 45,
+"push": 22.4,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": -3.8,
+"leg": -4.5,
+"bow": 5.3,
+"worst": -4.5
+},
+{
+"around": 45,
+"push": 23.8,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": -3.7,
+"leg": -4.5,
+"bow": 5.5,
+"worst": -4.5
+},
+{
+"around": 45,
+"push": 22.4,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": -3.8,
+"leg": -4.5,
+"bow": 5.3,
+"worst": -4.5
+},
+{
+"around": 45,
+"push": 23.8,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": -3.7,
+"leg": -4.5,
+"bow": 5.5,
+"worst": -4.5
+},
+{
+"around": 45,
+"push": 23.8,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": -3.7,
+"leg": -4.5,
+"bow": 5.5,
+"worst": -4.5
+},
+{
+"around": 45,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": -4.5,
+"leg": -4.1,
+"bow": 5.2,
+"worst": -4.5
+},
+{
+"around": 55,
+"push": 23.9,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": -1.1,
+"leg": -4.5,
+"bow": 2.6,
+"worst": -4.5
+},
+{
+"around": 55,
+"push": 23.9,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": -1.1,
+"leg": -4.5,
+"bow": 2.6,
+"worst": -4.5
+},
+{
+"around": 55,
+"push": 23.9,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": -1.1,
+"leg": -4.5,
+"bow": 2.6,
+"worst": -4.5
+},
+{
+"around": 55,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": -1.8,
+"leg": -4.5,
+"bow": 2.1,
+"worst": -4.5
+},
+{
+"around": 60,
+"push": 23.4,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": 0.9,
+"leg": -4.5,
+"bow": 0.5,
+"worst": -4.5
+},
+{
+"around": 60,
+"push": 23.4,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": 0.9,
+"leg": -4.5,
+"bow": 0.5,
+"worst": -4.5
+},
+{
+"around": 60,
+"push": 20.0,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 2.8,
+"leg": -4.5,
+"bow": 0.6,
+"worst": -4.5
+},
+{
+"around": 60,
+"push": 23.4,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": 0.9,
+"leg": -4.5,
+"bow": 0.5,
+"worst": -4.5
+},
+{
+"around": 65,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 1.7,
+"leg": -4.5,
+"bow": -1.6,
+"worst": -4.5
+},
+{
+"around": 45,
+"push": 23.7,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": -3.5,
+"leg": -4.6,
+"bow": 5.6,
+"worst": -4.6
+},
+{
+"around": 45,
+"push": 23.7,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": -3.5,
+"leg": -4.6,
+"bow": 5.6,
+"worst": -4.6
+},
+{
+"around": 45,
+"push": 23.7,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": -3.5,
+"leg": -4.6,
+"bow": 5.6,
+"worst": -4.6
+},
+{
+"around": 60,
+"push": 23.3,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": 1.9,
+"leg": -4.6,
+"bow": 0.5,
+"worst": -4.6
+},
+{
+"around": 60,
+"push": 19.6,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": 2.2,
+"leg": -4.6,
+"bow": 0.8,
+"worst": -4.6
+},
+{
+"around": 60,
+"push": 23.3,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": 1.9,
+"leg": -4.6,
+"bow": 0.5,
+"worst": -4.6
+},
+{
+"around": 60,
+"push": 23.3,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": 1.9,
+"leg": -4.6,
+"bow": 0.5,
+"worst": -4.6
+},
+{
+"around": 60,
+"push": 19.0,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 3.3,
+"leg": -4.7,
+"bow": 0.9,
+"worst": -4.7
+},
+{
+"around": 65,
+"push": 22.5,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": 2.9,
+"leg": -4.7,
+"bow": -1.6,
+"worst": -4.7
+},
+{
+"around": 65,
+"push": 17.1,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": 5.3,
+"leg": -4.7,
+"bow": 0.7,
+"worst": -4.7
+},
+{
+"around": 65,
+"push": 22.5,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": 2.9,
+"leg": -4.7,
+"bow": -1.6,
+"worst": -4.7
+},
+{
+"around": 45,
+"push": 23.6,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": -2.2,
+"leg": -4.8,
+"bow": 5.4,
+"worst": -4.8
+},
+{
+"around": 45,
+"push": 23.6,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": -2.2,
+"leg": -4.8,
+"bow": 5.4,
+"worst": -4.8
+},
+{
+"around": 45,
+"push": 23.6,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": -2.2,
+"leg": -4.8,
+"bow": 5.4,
+"worst": -4.8
+},
+{
+"around": 60,
+"push": 23.5,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": 1.3,
+"leg": -4.8,
+"bow": 0.5,
+"worst": -4.8
+},
+{
+"around": 60,
+"push": 23.5,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": 1.3,
+"leg": -4.8,
+"bow": 0.5,
+"worst": -4.8
+},
+{
+"around": 60,
+"push": 23.5,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": 1.3,
+"leg": -4.8,
+"bow": 0.5,
+"worst": -4.8
+},
+{
+"around": 65,
+"push": 22.4,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": 4.1,
+"leg": -4.8,
+"bow": -1.6,
+"worst": -4.8
+},
+{
+"around": 65,
+"push": 22.4,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": 4.1,
+"leg": -4.8,
+"bow": -1.6,
+"worst": -4.8
+},
+{
+"around": 65,
+"push": 20.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": 2.9,
+"leg": -4.8,
+"bow": -1.3,
+"worst": -4.8
+},
+{
+"around": 65,
+"push": 23.0,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": 3.6,
+"leg": -4.8,
+"bow": -1.5,
+"worst": -4.8
+},
+{
+"around": 65,
+"push": 23.0,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": 2.6,
+"leg": -4.8,
+"bow": -1.5,
+"worst": -4.8
+},
+{
+"around": 75,
+"push": 21.3,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": 7.7,
+"leg": -4.8,
+"bow": -4.1,
+"worst": -4.8
+},
+{
+"around": 75,
+"push": 21.3,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": 7.7,
+"leg": -4.8,
+"bow": -4.1,
+"worst": -4.8
+},
+{
+"around": 55,
+"push": 23.8,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": -0.0,
+"leg": -4.9,
+"bow": 2.5,
+"worst": -4.9
+},
+{
+"around": 55,
+"push": 21.1,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": -0.3,
+"leg": -4.9,
+"bow": 2.0,
+"worst": -4.9
+},
+{
+"around": 55,
+"push": 23.8,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": -0.0,
+"leg": -4.9,
+"bow": 2.5,
+"worst": -4.9
+},
+{
+"around": 55,
+"push": 21.1,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": -0.3,
+"leg": -4.9,
+"bow": 2.0,
+"worst": -4.9
+},
+{
+"around": 55,
+"push": 23.8,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": -0.0,
+"leg": -4.9,
+"bow": 2.5,
+"worst": -4.9
+},
+{
+"around": 55,
+"push": 23.0,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": -1.5,
+"leg": -4.9,
+"bow": 2.4,
+"worst": -4.9
+},
+{
+"around": 75,
+"push": 23.0,
+"tilt_back": 5,
+"tilt_out": 4,
+"hand": 6.9,
+"leg": -4.2,
+"bow": -5.5,
+"worst": -5.5
+},
+{
+"around": 75,
+"push": 23.0,
+"tilt_back": 5,
+"tilt_out": 10,
+"hand": 6.1,
+"leg": -1.4,
+"bow": -5.5,
+"worst": -5.5
+},
+{
+"around": 75,
+"push": 23.0,
+"tilt_back": 5,
+"tilt_out": 16,
+"hand": 5.3,
+"leg": -3.1,
+"bow": -5.5,
+"worst": -5.5
+},
+{
+"around": 75,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 4,
+"hand": 6.3,
+"leg": 0.0,
+"bow": -5.5,
+"worst": -5.5
+},
+{
+"around": 75,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 10,
+"hand": 5.6,
+"leg": -1.1,
+"bow": -5.5,
+"worst": -5.5
+},
+{
+"around": 75,
+"push": 23.0,
+"tilt_back": 12,
+"tilt_out": 16,
+"hand": 5.0,
+"leg": -1.5,
+"bow": -5.5,
+"worst": -5.5
+},
+{
+"around": 75,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 4,
+"hand": 5.8,
+"leg": 0.7,
+"bow": -5.5,
+"worst": -5.5
+},
+{
+"around": 75,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 10,
+"hand": 5.2,
+"leg": -0.5,
+"bow": -5.5,
+"worst": -5.5
+},
+{
+"around": 75,
+"push": 23.0,
+"tilt_back": 20,
+"tilt_out": 16,
+"hand": 4.4,
+"leg": -1.5,
+"bow": -5.5,
+"worst": -5.5
+}
+]

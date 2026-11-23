@@ -1,22 +1,23 @@
 #include "simulationstep.h"
-
 #include "playercontrol.h"
 #include "bodyobservations.h"
 #include "bodycontroller.h"
 #include "bodytrajectory.h"
 #include "bodyreplay.h"
 #include "frameprofile.h"
-#include "gothic.h"
+#include "gameservices.h"
+#include "game/gamehost.h"
 #include "camera.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "world/objects/npc.h"
+#include "world/world.h"
 
 void SimulationStep::worldPlayerStep(uint64_t dt, PlayerControl& player,
                                       const std::function<void()>& afterFocus) {
   BodyController::pumpWatchdogs();
   BodyObservations::beginStep(BodyObservations::currentStep()+1);
-  TestBench::beforeWorldTick(dt);
-  Gothic::inst().tick(dt);
+  Bench::beforeWorldTick(dt);
+  GameHost::inst().tick(dt);
   player.tickFocus();
   if(afterFocus)
     afterFocus();
@@ -25,7 +26,7 @@ void SimulationStep::worldPlayerStep(uint64_t dt, PlayerControl& player,
 
 bool SimulationStep::finishStep(uint64_t dt, PlayerControl& player,
                                  const std::function<void()>& updateCamera) {
-  Gothic::inst().updateAnimation(dt);
+  GameHost::inst().updateAnimation(dt);
   if(updateCamera)
     updateCamera();
   else
@@ -33,22 +34,26 @@ bool SimulationStep::finishStep(uint64_t dt, PlayerControl& player,
   BodyController::postStep();
   BodyTrajectory::postStep();
   { FrameProfile::Scope timing(FrameProfile::Zone::Observations); BodyObservations::sampleAll(); }
-  const bool capture = TestBench::tick(dt,player);
+  const bool capture = Bench::tick(dt,player);
   if(dt>0)
     BodyReplay::postStep();
+  // Animation LOD: the game and bench cameras have moved for this frame; NPCs they
+  // now see get their pose before anything is drawn or captured.
+  if(auto* world = GameServices::inst().world())
+    world->catchUpAnimation();
   return capture;
   }
 
 void SimulationStep::observerCamera(uint64_t dt) {
-  auto camera = Gothic::inst().camera();
-  auto player = Gothic::inst().player();
+  auto camera = GameServices::inst().camera();
+  auto player = GameServices::inst().player();
   if(camera==nullptr)
     return;
 
   if(player!=nullptr && !camera->isCutscene() && !camera->isFree()) {
     camera->setAimAnchor(player->position());
     auto spin = camera->spin();
-    if(player->interactive()==nullptr && !player->isDown())
+    if(player->interactive()==nullptr && !player->isDown() && !player->isMeleeKnockedDown())
       spin.y = player->rotation();
     if(player->isDive() && !camera->isMarvin())
       spin.x = -player->rotationY();
@@ -68,6 +73,8 @@ void SimulationStep::observerCamera(uint64_t dt) {
           mode = Camera::Mobsi;
         else if(player->isDead())
           mode = Camera::Death;
+        else if(player->isMeleeKnockedDown())
+          mode = Camera::Normal;
         else if(player->isDive())
           mode = Camera::Dive;
         else if(player->isSwim())
@@ -81,7 +88,7 @@ void SimulationStep::observerCamera(uint64_t dt) {
             case WeaponState::W2H: mode = Camera::Melee; break;
             case WeaponState::Bow:
             case WeaponState::CBow:
-              mode = Gothic::inst().version().game==2 ? Camera::Ranged : Camera::Normal;
+              mode = Camera::Ranged;
               break;
             case WeaponState::Mage: mode = Camera::Melee; break;
             case WeaponState::NoWeapon: break;

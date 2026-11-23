@@ -82,7 +82,8 @@ for ((first = 0; first < ${#indices[@]}; first += batch_size)); do
     df -h "$HOME"
     gq_job --class "$job_class" --threads "$((active_workers + 1))" --mem "${memory_gib}G" \
       --max "${max_seconds}s" --name "nav demos $mode indices=$joined" -- \
-      python3 -I "$ROOT/scripts/collect_nav_demos.py" "$mode" "${collector_args[@]}" --indices "$joined"
+      python3 -I "$ROOT/scripts/nav_job.py" --max-seconds "$max_seconds" -- \
+      python3 -X faulthandler -I "$ROOT/scripts/collect_nav_demos.py" "$mode" "${collector_args[@]}" --indices "$joined"
   else
     # A subshell releases fd9 even if collection fails.
     (

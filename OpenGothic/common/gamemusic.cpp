@@ -1,11 +1,14 @@
 #include "gamemusic.h"
 #include "gothic.h"
+#include "settings.h"
+#include "world/benchhooks.h"
 
 #include <Tempest/Sound>
 #include <Tempest/Log>
 
 #include "game/definitions/musicdefinitions.h"
 #include "dmusic/mixer.h"
+#include "dmusic/dxmusicsource.h"
 #include "resources.h"
 #include "dmusic.h"
 
@@ -82,6 +85,12 @@ struct GameMusic::MusicProvider : Tempest::SoundProducer {
         loader.join();
       }
 
+    // Called with pendingSync held after the mixer accepts a benchmark theme.
+    void noteBenchmarkTheme(std::string& name) {
+      benchmarkTheme.swap(name);
+      pendingChanged.notify_one();
+      }
+
     virtual void prepareTheme(const ThemeRequest& request) = 0;
 
     static Def::MusicTransitionEffect computeTransitionEffect(Tags nextTags, Tags currTags, Def::MusicTransitionEffect transtype) {
@@ -118,7 +127,16 @@ struct GameMusic::MusicProvider : Tempest::SoundProducer {
     void loaderMain() {
       for(;;) {
         std::unique_lock<std::mutex> guard(pendingSync);
-        pendingChanged.wait(guard, [this] { return quitting || (hasPending && enable.load()); });
+        pendingChanged.wait(guard, [this] {
+          return quitting || !benchmarkTheme.empty() || (hasPending && enable.load());
+          });
+        if(!benchmarkTheme.empty()) {
+          std::string name;
+          name.swap(benchmarkTheme);
+          guard.unlock();
+          Log::i("Dx8 music: ", name);
+          continue;
+          }
         if(quitting)
           return;
 
@@ -157,6 +175,7 @@ struct GameMusic::MusicProvider : Tempest::SoundProducer {
     bool                 hasPending  = false;
     Tags                 pendingTags = Tags::Day;
     std::optional<Def::MusicTheme> pendingMusic;
+    std::string          benchmarkTheme;
 
   protected:
     std::mutex           pendingSync;
@@ -182,6 +201,8 @@ struct GameMusic::OpenGothicMusicProvider : GameMusic::MusicProvider {
     if(guard && ready && ready->version == requestVersion && ready->version != appliedVersion && isEnabled()) {
       mix.setMusic(ready->music, ready->embellishment);
       mix.setMusicVolume(ready->volume);
+      if(Bench::isActive())
+        noteBenchmarkTheme(ready->name);
       currentTags = ready->tags;
       appliedVersion = ready->version;
       themeStopped.store(false);
@@ -196,7 +217,8 @@ struct GameMusic::OpenGothicMusicProvider : GameMusic::MusicProvider {
 
   void prepareTheme(const ThemeRequest& request) override {
     auto next = std::make_unique<PreparedTheme>();
-    next->music.addPattern(Resources::loadDxMusic(request.theme.file));
+    next->music.addPattern(loadDxMusic(request.theme.file));
+    next->name = request.theme.file;
     const auto effect = computeTransitionEffect(request.tags, request.previousTags, request.theme.transtype);
     next->embellishment = computeEmbellishment(effect);
     next->volume = request.theme.vol;
@@ -238,6 +260,7 @@ struct GameMusic::OpenGothicMusicProvider : GameMusic::MusicProvider {
       float                   volume = 1.f;
       Tags                    tags = Tags::Day;
       uint64_t                version = 0;
+      std::string             name;
       };
 
     std::unique_ptr<PreparedTheme> ready;
@@ -430,14 +453,14 @@ GameMusic::GameMusic() {
   if(!Resources::isHeadless())
     device = std::make_unique<Tempest::SoundDevice>();
 
-  Gothic::inst().onSettingsChanged.bind(this, &GameMusic::setupSettings);
+  Settings::inst().onSettingsChanged.bind(this, &GameMusic::setupSettings);
   setupSettings();
   }
 
 GameMusic::~GameMusic() {
   sound = SoundEffect();
   instance = nullptr;
-  Gothic::inst().onSettingsChanged.ubind(this, &GameMusic::setupSettings);
+  Settings::inst().onSettingsChanged.ubind(this, &GameMusic::setupSettings);
   }
 
 GameMusic &GameMusic::inst() {
@@ -481,13 +504,13 @@ void GameMusic::stopMusic() {
   }
 
 void GameMusic::setupSettings() {
-  const int   musicEnabled  = Gothic::settingsGetI("SOUND",    "musicEnabled");
+  const int   musicEnabled  = Settings::getI("SOUND",    "musicEnabled");
   if(!device) {
     setEnabled(musicEnabled!=0);
     return;
     }
-  const float musicVolume   = Gothic::settingsGetF("SOUND",    "musicVolume");
-  const int   providerIndex = Gothic::settingsGetI("INTERNAL", "soundProviderIndex");
+  const float musicVolume   = Settings::getF("SOUND",    "musicVolume");
+  const int   providerIndex = Settings::getI("INTERNAL", "soundProviderIndex");
 
   if(providerIndex != provider || musicEnabled!=isEnabled()) {
     Log::i("Switching music provider to ", providerIndex == PROVIDER_OPENGOTHIC ? "'OpenGothic'" : "'GothicKit'");

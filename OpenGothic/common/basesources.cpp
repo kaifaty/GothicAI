@@ -6,6 +6,7 @@
 #include "gothicglb.h"
 #include "audiodata.h"
 #include "musicdata.h"
+#include "dmusic/musicrecord.h"
 #include "musicnative.h"
 #include "outputunits.h"
 #include "programdata.h"
@@ -117,63 +118,6 @@ std::string str16(const std::u16string& s) {
 const std::array<const char16_t*,8> scriptLanguages = {u"Scripts_EN",u"Scripts_DE",u"Scripts_PL",u"Scripts_RU",
                                                        u"Scripts_FR",u"Scripts_ES",u"Scripts_IT",u"Scripts_CZ"};
 const std::array<const char*,8> languageNames = {"EN","DE","PL","RU","FR","ES","IT","CZ"};
-
-struct Scanned {
-  std::u16string name;
-  int64_t        time = 0;
-  uint16_t       ord = 0;
-  bool           isMod = false;
-  };
-
-// Resources::vdfTimestamp, unchanged.
-int64_t vdfTimestamp(const std::u16string& name) {
-  enum {
-    VDF_COMMENT_LENGTH   = 256,
-    VDF_SIGNATURE_LENGTH = 16,
-    };
-  uint32_t count=0, timestamp=0;
-  char sign[VDF_SIGNATURE_LENGTH]={};
-
-  try {
-    Tempest::RFile fin(name);
-    fin.seek(VDF_COMMENT_LENGTH);
-    fin.read(sign,VDF_SIGNATURE_LENGTH);
-    fin.read(&count,sizeof(count));
-    fin.seek(4);
-    fin.read(&timestamp,sizeof(timestamp));
-
-    return int64_t(timestamp);
-    }
-  catch(...) {
-    return -1;
-    }
-  }
-
-// Resources::detectVdf, unchanged apart from its result type.
-void detectVdf(std::vector<Scanned>& ret, const std::u16string& root) {
-  Dir::scan(root,[&root,&ret](const std::u16string& vdf, Dir::FileType t){
-    if(t==Dir::FT_File) {
-      Scanned ar;
-      ar.name  = root+vdf;
-      ar.time  = vdfTimestamp(ar.name);
-      ar.ord   = uint16_t(ret.size());
-      ar.isMod = vdf.rfind(u".mod")==vdf.size()-4;
-
-      if(std::filesystem::file_size(ar.name)>0)
-        ret.emplace_back(std::move(ar));
-      return;
-      }
-
-    // switch uses NX extension for language dependant stuff
-    if(vdf.find(u".NX.")!=std::string::npos)
-      return;
-
-    if(t==Dir::FT_Dir && vdf!=u".." && vdf!=u".") {
-      auto dir = root + vdf + u"/";
-      detectVdf(ret,dir);
-      }
-    });
-  }
 
 // Full virtual paths without a leading slash, as the game census writes them.
 void collectPaths(const zenkit::VfsNode& node, const std::string& prefix,
@@ -1082,7 +1026,8 @@ void ProgramImport::convert(Entry& e, const std::vector<uint8_t>& bytes) {
     e.skipped = "not a daedalus program";
     return;
     }
-  zenkit::DaedalusProgramRecord program;
+  zenkit::DaedalusProgramRecord sourceProgram;
+  asset::ProgramRecord program;
   size_t end = 0;
   try {
     auto read = zenkit::Read::from(reinterpret_cast<const std::byte*>(bytes.data()),bytes.size());
@@ -1090,7 +1035,8 @@ void ProgramImport::convert(Entry& e, const std::vector<uint8_t>& bytes) {
     script.load(read.get());
     end = read->tell();
     // Exported right after parsing: no class registration, no VM, no runtime symbol.
-    program = script.export_program();
+    sourceProgram = script.export_program();
+    program = asset::fromZenKit(sourceProgram);
     }
   catch(const std::exception& ex) {
     e.skipped = std::string("parse failed: ")+ex.what();
@@ -1121,7 +1067,7 @@ void ProgramImport::convert(Entry& e, const std::vector<uint8_t>& bytes) {
     require(sha==enc.sha256,"program record identity differs after reading: "+file.string());
     auto diff = ProgramData::compare(program,back);
     require(diff.empty(),"program record differs after reading: "+diff);
-    diff = ProgramData::compare(program,zenkit::DaedalusScript::from_program(back).export_program());
+    diff = ProgramData::compare(program,asset::fromZenKit(zenkit::DaedalusScript::from_program(std::move(sourceProgram)).export_program()));
     require(diff.empty(),"program differs after the native factory: "+diff);
     programs[enc.name] = enc.sha256;
     }
@@ -2341,31 +2287,6 @@ std::string MusicImport::json() const {
   return s;
   }
 }
-
-std::vector<RuntimeArchive> runtimeArchives(const fs::path& gothic) {
-  std::vector<Scanned> archives;
-  detectVdf(archives,FileUtil::nestedPath(installation(gothic),{u"Data"},Dir::FT_Dir));
-
-  // Resources::loadVdfs: addon archives first!
-  std::stable_sort(archives.begin(),archives.end(),[](const Scanned& a,const Scanned& b){
-    int aIsMod = a.isMod ? 1 : -1;
-    int bIsMod = b.isMod ? 1 : -1;
-    return std::make_tuple(aIsMod,a.time,int(a.ord)) >
-           std::make_tuple(bIsMod,b.time,int(b.ord));
-    });
-
-  std::vector<RuntimeArchive> out;
-  for(auto& a:archives) {
-    RuntimeArchive r;
-    r.path      = fs::path(a.name);
-    r.name      = upper(r.path.filename().string());
-    r.size      = fs::file_size(r.path);
-    r.timestamp = a.time;
-    r.mod       = a.isMod;
-    out.push_back(std::move(r));
-    }
-  return out;
-  }
 
 std::vector<RuntimeArchive> mountRuntime(zenkit::Vfs& vfs, const fs::path& gothic, fs::path& work) {
   // Resources::loadVdfs without a mod ini: every .mod is filtered out.

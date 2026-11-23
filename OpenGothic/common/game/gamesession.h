@@ -17,7 +17,6 @@ class SoundFx;
 class ParticleFx;
 class VisualFx;
 class WorldStateStorage;
-class VersionInfo;
 class GthFont;
 
 class GameSession final {
@@ -36,8 +35,6 @@ class GameSession final {
 
     void         changeWorld(std::string_view world, std::string_view wayPoint);
     void         exitSession();
-
-    auto         version() const -> const VersionInfo&;
 
     const World* world() const { return wrld.get(); }
     World*       world()       { return wrld.get(); }
@@ -61,6 +58,8 @@ class GameSession final {
     uint64_t     tickCount() const { return ticks; }
 
     void         setTimeMultiplyer(float t);
+    // Game seconds per second of world time at time multiplier 1 (14.5): the society export's clock.
+    static double clockRate() { return double(multTime)/double(divTime); }
 
     void         updateAnimation(uint64_t dt);
 

@@ -1,0 +1,34 @@
+# The glow of an own mesh under the GI probes (step 0 of the night-and-interiors note): the head of the wall torch
+# at the "Red Lantern" (flame at 406 131 -3086, the wall behind it at +x) at midnight, particles hidden so that the
+# embers in the folds of the tow are seen and the frames repeat. Four held views, a shot of each.
+# Run with OPENGOTHIC_CONTENT=<the working content> OPENGOTHIC_LIGHT_FREEZE=1, once with the default (probes on an
+# RTX card) and once with OPENGOTHIC_RT=0; compare with emissive_probes_compare.py.
+# @timeout 240
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+view hide animated morph pfx
+cam lift off
+
+set time 0 0
+goto pos 400 -129 -2985
+wait 3000
+set time 0 0
+cam at 405 138 -3040 405 124 -3086
+wait 2500
+shot side-close
+wait 500
+cam at 350 138 -3086 406 124 -3086
+wait 2500
+shot front-close
+wait 500
+cam at 405 150 -2985 405 140 -3085
+wait 2500
+shot side-1m
+wait 500
+cam at 305 145 -3085 405 140 -3085
+wait 2500
+shot front-1m
+wait 500

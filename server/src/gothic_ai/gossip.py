@@ -715,6 +715,8 @@ class GossipDesk:
             how = "сама раскрыла это" if she else "сам раскрыл это"
         elif r.known.get(a, 0) == 0 and r.kind == "broken":
             how = "сама не дождалась от него долга" if she else "сам не дождался от него долга"
+        elif r.known.get(a, 0) == 0 and r.kind == "fame":
+            how = "сама видела это" if she else "сам видел это"
         elif r.known.get(a, 0) == 0:
             how = "сама уличила героя" if she else "сам уличил героя"
         else:

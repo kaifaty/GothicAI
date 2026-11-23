@@ -15,6 +15,8 @@ class Marvin {
     bool autoComplete(std::string& v);
     bool exec(std::string_view v);
 
+    static bool chunksVisible() { return showChunks; }
+
   private:
     enum CmdType {
       C_None,
@@ -28,9 +30,11 @@ class Marvin {
 
       // rendering
       C_ToggleFrame,
+      C_ToggleChunks,
       C_ToggleShowRay,
       C_ToggleVobBox,
       C_ToggleMeleeBladeDraw,
+      C_ToggleMeleeBladeLabels,
 
       // game
       C_ToggleDesktop,
@@ -68,7 +72,6 @@ class Marvin {
       C_PlayVideo,
       C_ToggleGI,
       C_ToggleVsm,
-      C_ToggleRtsm,
       C_TogglePathtrace,
       C_ToggleFootIk,
       C_ToggleGaze,
@@ -78,7 +81,7 @@ class Marvin {
       C_ToggleAim,
       C_ToggleGestures,
       C_ToggleBlink,
-      C_ToggleManualAim,
+      C_ToggleBowStrength,
       C_ToggleNpcManualAim,
       C_ToggleFlinch,
       C_ToggleRagdoll,
@@ -87,16 +90,47 @@ class Marvin {
       C_ToggleArrowPhysics,
       C_ToggleArrowSticking,
       C_ToggleSpellPhysics,
+      C_ToggleBodyImpactDamage,
+      C_ToggleBodyTraces,
+      C_ToggleBlood,
+      C_Blood,
       C_ToggleMovableVobs,
+      C_ToggleItemHulls,
+      C_ToggleItemDeepestContact,
+      C_ToggleRagdollBirthGuard,
+      C_ToggleRagdollBrace,
+      C_ToggleBumpReactions,
+      C_ToggleWallReach,
+      C_ToggleWallStop,
+      C_ToggleFurnitureParts,
       C_TogglePhysicsNoise,
       C_ToggleDestruction,
       C_ToggleBuoyancy,
       C_ToggleCloth,
+      C_ToggleItemWake,
+      C_TogglePlacedItems,
       C_ToggleCharacterVirtual,
       C_ToggleNpcCharacterVirtual,
       C_ToggleMonsterCharacterVirtual,
       C_ToggleMeleeBladeShadow,
       C_ToggleMeleePhysicsHits,
+      C_ToggleMeleeReactions,
+      C_ToggleMeleePosture,
+      C_ToggleMeleeStagger,
+      C_ToggleMeleeBeastPoise,
+      C_ToggleMeleeBackstab,
+      C_ToggleMeleeDodge,
+      C_ToggleMeleeCharge,
+      C_ToggleMeleeHealInterrupt,
+      C_ToggleMeleeUseInHand,
+      C_ToggleFoodOverTime,
+      C_ToggleMeleeAiDodge,
+      C_ToggleMeleeAiCharge,
+      C_ToggleMeleeDownTactics,
+      C_ToggleMeleeHitStop,
+      C_ToggleMeleeStamina,
+      C_ToggleMeleeParry,
+      C_ToggleMeleeParryAi,
       };
 
     struct Cmd {
@@ -126,6 +160,7 @@ class Marvin {
     bool   setTime                 (World& world, std::string_view hh, std::string_view mm);
     bool   goToVob                 (World& world, Npc& player, Camera& c, std::string_view name, size_t n);
 
+    static bool showChunks;
     std::vector<Cmd> cmd;
   };
 

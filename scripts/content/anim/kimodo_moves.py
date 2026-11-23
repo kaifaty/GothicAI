@@ -1,0 +1,1 @@
+../../../character-tool/src/character_tool/anim/kimodo_moves.py

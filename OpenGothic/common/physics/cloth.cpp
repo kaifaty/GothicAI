@@ -1,6 +1,7 @@
 #include "cloth.h"
 #include "collisionworld.h"
 #include "dynamicworld.h"
+#include "frameprofile.h"
 
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/BodyLock.h>
@@ -316,6 +317,8 @@ std::shared_ptr<Cloth::Instance> Cloth::add(const std::vector<Tempest::Vec3>& so
   return ret;
   }
 void Cloth::setEnabled(bool value) {
+  // World::tick applies the setting every tick: only a real toggle refreshes every view.
+  if(impl->enabled==value) return;
   impl->enabled=value;
   impl->each([](Instance::Impl& body) { body.dirty=true; });
   // The static world-cloth fallback switches in this same call stack. Update
@@ -341,6 +344,7 @@ size_t Cloth::bodyCount() const {
   }
 
 void Cloth::prepareFrame(uint64_t dt) {
+  FrameProfile::Scope timing(FrameProfile::Zone::Cloth);
   const float seconds=std::min(float(dt)*.001f,.1f);
   impl->frameSeconds=std::min(double(dt)*.001,.1);
   impl->currentWindScale+=(impl->windScale-impl->currentWindScale)*(1.f-std::exp(-seconds*1.5f));
@@ -501,6 +505,7 @@ void Cloth::finishStep() {
     });
   }
 void Cloth::finishFrame() {
+  FrameProfile::Scope timing(FrameProfile::Zone::Cloth);
   constexpr double step=1.0/30.0;
   impl->each([&](Instance::Impl& body) {
     // Hidden time is not accumulated. Keep both native state and the render

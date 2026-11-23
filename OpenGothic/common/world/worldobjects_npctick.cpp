@@ -1,0 +1,85 @@
+#include "worldobjects.h"
+
+#include "world/npcsimtick.h"
+#include "world/objects/npc.h"
+#include "frameprofile.h"
+
+#include <chrono>
+#include <optional>
+
+// The NPC loop of WorldObjects::tick: Npc::tick of every NPC in the order of npcArr, the far ones at the rate of
+// world/npcsimtick.h. Scripts in a tick may add and remove NPCs; the loop keeps indices, never iterators.
+void WorldObjects::tickNpcs(uint64_t dt, uint64_t dtPlayer, const Npc* pl, bool freeCam, bool frozen) {
+  const auto& cfg      = NpcSimTick::config();
+  const bool  profiled = FrameProfile::enabled();
+  uint64_t simTicked = 0, simDeferred = 0, simNative = 0;
+  simTickClock += dt;
+  // One clock read per run of consecutive NPCs of the same tier keeps the cost
+  // proportional to tier changes along the array, not to the NPC count.
+  using Clock = std::chrono::steady_clock;
+  std::optional<FrameProfile::Scope> tierZone;
+  NpcSimTier        runTier  = NpcSimTier::Full;
+  bool              runOpen  = false;
+  Clock::time_point runStart;
+  double            tierMs[2] = {};
+  uint64_t          tierTicks[2] = {};
+  for(size_t i=0; i<npcArr.size(); ++i) {
+    auto& npc = *npcArr[i];
+    uint64_t d = (pl==&npc ? dtPlayer : dt);
+    if(freeCam && pl==&npc)
+      continue;
+    // The frozen world of body training: the same NPCs the animation pass passes over.
+    if(animationPassSkips(npc,pl,false,frozen))
+      continue;
+    const auto tier = npc.simTier();
+    if(!runOpen || tier!=runTier) {
+      const auto now = Clock::now();
+      if(runOpen)
+        tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(now-runStart).count();
+      tierZone.reset();
+      tierZone.emplace(tier==NpcSimTier::Full ? FrameProfile::Zone::NpcFullTick : FrameProfile::Zone::NpcSimplifiedTick);
+      runTier  = tier;
+      runStart = now;
+      runOpen  = true;
+      }
+    ++tierTicks[size_t(tier)];
+    const bool nativeCombat=tier==NpcSimTier::Simplified && npc.nativeCombatMovement();
+    const bool nativeMobsi=tier==NpcSimTier::Simplified && npc.nativeMobsiApproach();
+    const bool graphFallback=npc.graphMovementFallback();
+    const bool simplified=tier==NpcSimTier::Simplified;
+    if(simplified && profiled && !npc.usesSimplifiedMovement())
+      ++simNative;
+    // Whether this NPC may wait is read from its own state now; one that stops qualifying ticks in this frame.
+    auto&          state = npc.simTick();
+    const uint64_t owed  = state.pending+d;
+    if(simplified && &npc!=pl &&
+       !NpcSimTick::due(simTickClock,dt,owed,NpcSimTick::phase(npc,cfg.periodMs),cfg.periodMs) &&
+       NpcSimTick::qualifies(npc,cfg.scope)) {
+      state.pending = owed;
+      ++simDeferred;
+      } else {
+      state.pending = 0;
+      simTicked += simplified ? 1 : 0;
+      npc.tick(owed);
+      }
+    if(tier==NpcSimTier::Simplified && (nativeCombat || npc.nativeCombatMovement()))
+      ++simTiers.nativeCombatNpcTicks;
+    if(tier==NpcSimTier::Simplified && (nativeMobsi || npc.nativeMobsiApproach()))
+      ++simTiers.nativeMobsiApproachNpcTicks;
+    if(graphFallback || npc.graphMovementFallback())
+      ++simTiers.graphFallbackNpcTicks;
+    }
+  if(runOpen)
+    tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(Clock::now()-runStart).count();
+  tierZone.reset();
+  simTiers.fullTickMs             = tierMs[size_t(NpcSimTier::Full)];
+  simTiers.simplifiedTickMs       = tierMs[size_t(NpcSimTier::Simplified)];
+  simTiers.fullTickMsTotal       += simTiers.fullTickMs;
+  simTiers.simplifiedTickMsTotal += simTiers.simplifiedTickMs;
+  simTiers.fullNpcTicks         += tierTicks[size_t(NpcSimTier::Full)];
+  simTiers.simplifiedNpcTicks   += tierTicks[size_t(NpcSimTier::Simplified)];
+  ++simTiers.ticks;
+  FrameProfile::add(FrameProfile::Amount::NpcSimplifiedTicked,simTicked);
+  FrameProfile::add(FrameProfile::Amount::NpcSimplifiedDeferred,simDeferred);
+  FrameProfile::add(FrameProfile::Amount::NpcSimplifiedNative,simNative);
+  }

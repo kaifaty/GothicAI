@@ -1,13 +1,13 @@
 #include "ragdoll.h"
 
 #include "collisionworld.h"
+#include "ragdoll_brace_rig.h"
 #include "dynamicworld.h"
-#include "game/constants.h"
+#include "physicshost.h"
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/skeleton.h"
-#include "utils/versioninfo.h"
-#include "world/objects/npc.h"
-#include "world/world.h"
+#include "benchprobe.h"
+#include "utils/jsonescape.h"
 
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/BodyLock.h>
@@ -777,7 +777,7 @@ struct Ragdoll::Impl final {
     return part;
     }
 
-  size_t startReaction(size_t hitPart, JPH::Vec3Arg point, float strength, JPH::PhysicsSystem& system) {
+  size_t startReaction(size_t hitPart, JPH::Vec3Arg point, float strength, float stiffness, JPH::PhysicsSystem& system) {
     auto& interface=system.GetBodyInterface();
     if(hitPart==0) {
       // The gameplay root is never dynamic. A living pelvis transfers its hit
@@ -816,6 +816,8 @@ struct Ragdoll::Impl final {
       native->GetConstraint(index)->SetEnabled(activeParts[i]);
       }
     native->ResetWarmStart();
+    // a fresh reaction takes the new hit's stiffness; one still running keeps the stiffer
+    reactionStiffness=reactionWeight>0.f ? std::max(reactionStiffness,stiffness) : stiffness;
     reactionAge=0.f;
     reactionStrength=std::max(reactionWeight,strength);
     reactionWeight=reactionStrength;
@@ -835,8 +837,8 @@ struct Ragdoll::Impl final {
       auto* joint=static_cast<JPH::SwingTwistConstraint*>(native->GetConstraint(index));
       const float partMass=motorSource->mParts[i].mMassPropertiesOverride.mMass;
       for(auto* motor:{&joint->GetSwingMotorSettings(),&joint->GetTwistMotorSettings()}) {
-        motor->mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,4.f+2.f*recovery,1.f);
-        motor->SetTorqueLimit(partMass*8.f*torqueScale);
+        motor->mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,(4.f+2.f*recovery)*reactionStiffness,1.f);
+        motor->SetTorqueLimit(partMass*8.f*torqueScale*reactionStiffness*reactionStiffness);
         }
       joint->SetSwingMotorState(JPH::EMotorState::Position);
       joint->SetTwistMotorState(JPH::EMotorState::Position);
@@ -868,16 +870,27 @@ struct Ragdoll::Impl final {
       }
     reactionBones.clear();
     reactionStrength=reactionWeight=reactionAge=0.f;
+    reactionStiffness=1.f;
     }
 
   // A body that dies keeps its living shape for a moment and loses it part by
   // part: the legs give first, then the arms, the trunk and the neck last.
   // The motors hold the joint angles of the moment of death, never a new pose.
-  static void fadeTiming(std::string_view name, float& hold, float& fade) {
-    if(named(name,"THIGH") || named(name,"CALF") || named(name,"FOOT") || named(name,"TOE") || named(name,"LEG")) { hold=0.f; fade=.15f; }
-    else if(named(name,"SPINE")) { hold=.1f; fade=.6f; }
+  // Knocked off the feet, the legs keep their stance while the trunk tips over them
+  // and give on the way down, and the trunk stays whole longer: a fall, not a faint.
+  static void fadeTiming(std::string_view name, bool knockedOff, float& hold, float& fade) {
+    if(named(name,"THIGH") || named(name,"CALF") || named(name,"FOOT") || named(name,"TOE") || named(name,"LEG")) {
+      hold=knockedOff ? .12f : 0.f; fade=knockedOff ? .5f : .15f;
+      }
+    else if(named(name,"SPINE")) { hold=knockedOff ? .25f : .1f; fade=knockedOff ? .8f : .6f; }
     else if(named(name,"NECK") || named(name,"HEAD")) { hold=.15f; fade=.7f; }
     else { hold=.05f; fade=.45f; }
+    }
+
+  static float fadeStrength(std::string_view name) {
+    if(named(name,"THIGH") || named(name,"CALF") || named(name,"FOOT") || named(name,"TOE") || named(name,"LEG")) return 4.f;
+    if(named(name,"SPINE")) return 2.f;
+    return 1.f;
     }
 
   void startFade(JPH::PhysicsSystem& system) {
@@ -900,27 +913,32 @@ struct Ragdoll::Impl final {
       if(index<0 || parent<0) continue;
       auto* joint=static_cast<JPH::SwingTwistConstraint*>(native->GetConstraint(index));
       float hold=0,fade=1;
-      fadeTiming(rig->parts[i].name,hold,fade);
+      fadeTiming(rig->parts[i].name,knockedOff,hold,fade);
+      // a living stance carries the body: thrown, the legs bear it while the trunk tips
+      const float strength=knockedOff ? fadeStrength(rig->parts[i].name) : 1.f;
       const float t=std::clamp((fadeAge-hold)/fade,0.f,1.f);
       const float weight=1.f-t*t*(3.f-2.f*t);
-      if(weight<=0.f) {
+      // The living reaction's strength: enough to keep a limb's shape for an
+      // instant, too weak to carry the body, so the knees buckle under it.
+      const float partMass=settings->mParts[i].mMassPropertiesOverride.mMass;
+      float torque=partMass*8.f*weight*strength, hz=6.f;
+      auto target=fadeTargets[size_t(parent)].Conjugated()*fadeTargets[i];
+      if(brace) brace->drive(i,partMass,target,torque,hz); // a protective fall leads to its pose
+      joint->SetTargetOrientationBS(target);
+      if(torque<=0.f) {
         joint->SetSwingMotorState(JPH::EMotorState::Off);
         joint->SetTwistMotorState(JPH::EMotorState::Off);
         continue;
         }
       active=true;
-      // The living reaction's strength: enough to keep a limb's shape for an
-      // instant, too weak to carry the body, so the knees buckle under it.
-      const float partMass=settings->mParts[i].mMassPropertiesOverride.mMass;
       for(auto* motor:{&joint->GetSwingMotorSettings(),&joint->GetTwistMotorSettings()}) {
-        motor->mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,6.f,1.f);
-        motor->SetTorqueLimit(partMass*8.f*weight);
+        motor->mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,hz,1.f);
+        motor->SetTorqueLimit(torque);
         }
       joint->SetSwingMotorState(JPH::EMotorState::Position);
       joint->SetTwistMotorState(JPH::EMotorState::Position);
-      joint->SetTargetOrientationBS(fadeTargets[size_t(parent)].Conjugated()*fadeTargets[i]);
       }
-    if(!active) {
+    if(!active && !brace) {
       fadeAge=-1.f;
       fadeTargets.clear();
       }
@@ -942,11 +960,13 @@ struct Ragdoll::Impl final {
   std::vector<BuoyancyPart> waterParts;
   bool legacyAncestors=false;
   uint32_t group=0;
-  std::weak_ptr<zenkit::INpc> npc,culprit;
+  PhysicsHost* host = nullptr;
+  std::weak_ptr<void> npc,culprit,impactCulprit;
+  float impactSpeed=0;
   uint64_t culpritUntilStep=0;
   uint64_t nextNoiseStep=0;
   bool kinematic=false;
-  struct Hit { size_t part; Tempest::Vec3 pointCm,impulseNs; float strength; };
+  struct Hit { size_t part; Tempest::Vec3 pointCm,impulseNs; float strength,stiffness; };
   std::vector<Hit> hits;
   JPH::Ref<JPH::RagdollSettings> motorSource;
   bool motorReady=false;
@@ -955,9 +975,20 @@ struct Ragdoll::Impl final {
   JPH::Vec3 benchHandOrigin=JPH::Vec3::sZero();
   std::vector<bool> activeParts;
   std::vector<size_t> reactionBones;
-  float reactionStrength=0.f,reactionWeight=0.f,reactionAge=0.f,stepSeconds=0.f;
+  float reactionStrength=0.f,reactionWeight=0.f,reactionAge=0.f,reactionStiffness=1.f,stepSeconds=0.f;
   float fadeAge=-1.f;
+  bool  knockedOff=false;
+  struct BirthBench {
+    double ageMs=0;
+    Tempest::Vec3 root;
+    float distance=-1.f;
+    std::array<float,3> peaks={};
+    std::array<std::string,3> contacts;
+    std::vector<std::pair<uint32_t,double>> guards;
+  };
+  std::unique_ptr<BirthBench> birthBench;
   std::vector<JPH::Quat> fadeTargets;
+  std::unique_ptr<RagdollBrace::Rig> brace;
   std::vector<JPH::Mat44> targets, scratch;
   std::vector<bool> dirty;
   std::vector<size_t> changed, moving;
@@ -1128,6 +1159,7 @@ Ragdoll::Ragdoll(CollisionWorld& world, const Skeleton& skeleton, const HitZones
     }
   impl->group=world.registerRagdoll(*this);
   impl->world=&world;
+  impl->host=world.physicsHost();
   try {
     impl->native=settings->CreateRagdoll(impl->group,0,&world.physicsSystem());
     }
@@ -1149,6 +1181,7 @@ Ragdoll::Ragdoll(CollisionWorld& world, const Skeleton& skeleton, const HitZones
 Ragdoll::~Ragdoll() { detach(); }
 
 void Ragdoll::detach() {
+  endBrace();
   impl->waterParts.clear();
   if(impl->benchHand!=nullptr) {
     impl->world->physicsSystem().RemoveConstraint(impl->benchHand.GetPtr());
@@ -1166,20 +1199,84 @@ bool Ragdoll::valid() const { return impl->world!=nullptr && impl->native!=nullp
 bool Ragdoll::isKinematic() const { return impl->kinematic && impl->reactionBones.empty(); }
 
 bool Ragdoll::queueHit(size_t bone, const Tempest::Vec3& pointCm,
-                       const Tempest::Vec3& impulseNs, float strength, Npc* culprit) {
+                       const Tempest::Vec3& impulseNs, float strength, Npc* culprit, float stiffness) {
   if(!valid() || !finite(pointCm) || !finite(impulseNs) || !std::isfinite(strength) || strength<=0.f || strength>1.f ||
      std::abs(pointCm.x)>1.e8f || std::abs(pointCm.y)>1.e8f || std::abs(pointCm.z)>1.e8f ||
      impulseNs.quadLength()<=0.f || impulseNs.quadLength()>1.e8f) return false;
   const auto found=std::find(impl->rig->boneIndices.begin(),impl->rig->boneIndices.end(),bone);
   if(found==impl->rig->boneIndices.end()) return false;
-  impl->hits.push_back({size_t(found-impl->rig->boneIndices.begin()),pointCm,impulseNs,strength});
+  if(!std::isfinite(stiffness)) return false;
+  impl->hits.push_back({size_t(found-impl->rig->boneIndices.begin()),pointCm,impulseNs,strength,std::clamp(stiffness,1.f,4.f)});
   setNoiseCulprit(culprit);
   return true;
   }
 
 void Ragdoll::setNpc(Npc* npc) {
-  impl->npc=npc!=nullptr ? npc->handlePtr() : std::weak_ptr<zenkit::INpc>();
+  impl->npc=npc!=nullptr ? impl->host->npcHandle(*npc) : std::weak_ptr<void>();
   updateBuoyancyFractions();
+  auto* probe=BenchProbe::get();
+  if(npc!=nullptr && !impl->kinematic && probe!=nullptr && probe->active()) {
+    impl->birthBench=std::make_unique<Impl::BirthBench>();
+    impl->birthBench->root=impl->host->npcPosition(*npc);
+    }
+  }
+
+void Ragdoll::sampleBirth(float deltaSeconds) {
+  auto* probe=BenchProbe::get();
+  if(!impl->birthBench || probe==nullptr || !probe->active()) return;
+  auto& sample=*impl->birthBench;
+  auto& system=impl->world->physicsSystem();
+  const auto groups=impl->world->ragdollBirthGuardGroups(*this);
+  if(sample.ageMs==0)
+    for(auto group:groups) sample.guards.emplace_back(group,-1.);
+  sample.ageMs+=double(deltaSeconds)*1000.;
+  for(auto& guard:sample.guards)
+    if(guard.second<0 && std::find(groups.begin(),groups.end(),guard.first)==groups.end()) guard.second=sample.ageMs;
+  for(size_t i=0;i<partCount();++i) {
+    const auto& name=impl->rig->parts[i].name;
+    const size_t region=named(name,"PELVIS") ? 0 : named(name,"SPINE") ? 1 : named(name,"HEAD") ? 2 : 3;
+    if(region==3) continue;
+    const auto id=impl->native->GetBodyID(int(i));
+    const float speed=system.GetBodyInterface().GetLinearVelocity(id).Length();
+    if(speed<=sample.peaks[region]) continue;
+    sample.peaks[region]=speed;
+    auto& contacts=sample.contacts[region];
+    contacts.clear();
+    // Retain the actual touching live parts at a fast peak, without worker
+    // callbacks or per-manifold tracing. This also identifies late, unguarded rigs.
+    if(speed>8.f) for(const auto* other:impl->world->ragdolls) {
+      if(!other->impl->kinematic || !other->valid()) continue;
+      for(size_t j=0;j<other->partCount();++j) {
+        if(!system.WereBodiesInContact(id,other->impl->native->GetBodyID(int(j)))) continue;
+        if(!contacts.empty()) contacts+=',';
+        contacts+="{\"part\":"+jsonEscape(name)+",\"rig\":"+jsonEscape(other->impl->host->npcSymbolName(other->noiseNpc()))+
+          ",\"rig_part\":"+jsonEscape(other->impl->rig->parts[j].name)+",\"group\":"+std::to_string(other->impl->group)+
+          ",\"protected\":"+(std::find(groups.begin(),groups.end(),other->impl->group)!=groups.end() ? "true" : "false")+"}";
+        }
+      }
+    }
+  if(sample.ageMs<300.-1.e-3) return;
+  if(const auto* npc=noiseNpc()) {
+    std::string guards="[";
+    double released=0;
+    bool remaining=false;
+    for(const auto& guard:sample.guards) {
+      if(guards.size()>1) guards+=',';
+      guards+="{\"group\":"+std::to_string(guard.first)+",\"removed_ms\":"+(guard.second<0 ? "null" : std::to_string(guard.second))+"}";
+      remaining=remaining || guard.second<0;
+      released=std::max(released,guard.second);
+      }
+    std::string contacts;
+    for(const auto& region:sample.contacts) if(!region.empty()) { if(!contacts.empty()) contacts+=',';contacts+=region; }
+    probe->ragdollBirthPeak(*npc,impactCulprit(),"\"group\":"+std::to_string(impl->group)+
+      ",\"birth_distance_cm\":"+(sample.distance<0 ? "null" : std::to_string(sample.distance))+
+      ",\"sampled_ms\":"+std::to_string(sample.ageMs)+",\"sampling\":\"after_each_positive_Update\""+
+      ",\"pelvis_m_s\":"+std::to_string(sample.peaks[0])+",\"spine_m_s\":"+std::to_string(sample.peaks[1])+
+      ",\"head_m_s\":"+std::to_string(sample.peaks[2])+",\"protected_rigs\":"+std::to_string(sample.guards.size())+
+      ",\"guard_release_ms\":"+(remaining || sample.guards.empty() ? "null" : std::to_string(released))+
+      ",\"guards\":"+guards+"],\"fast_contacts\":["+contacts+"]");
+    }
+  impl->birthBench.reset();
   }
 
 std::vector<Ragdoll::BuoyancyPart>& Ragdoll::buoyancyParts() { return impl->waterParts; }
@@ -1207,16 +1304,8 @@ void Ragdoll::updateBuoyancyFractions() {
   for(char& c:name) c=char(std::toupper(static_cast<unsigned char>(c)));
   bool sinks=named(name,"SKELETON") || named(name,"GOLEM") || named(name,"STONEGUARDIAN");
   if(const auto* npc=noiseNpc()) {
-    const auto guild=npc->trueGuild();
-    if(npc->world().version().game==2) {
-      sinks=sinks || guild==GIL_GOBBO_SKELETON || guild==GIL_SUMMONED_GOBBO_SKELETON ||
-            guild==GIL_SKELETON || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON_MAGE ||
-            guild==GIL_SHADOWBEAST_SKELETON || guild==GIL_STONEGOLEM || guild==GIL_SUMMONED_GOLEM ||
-            guild==GIL_Stoneguardian || guild==GIL_SummonedGuardian;
-      }
-    else {
-      sinks=sinks || guild==GIL_G1_SKELETON || guild==GIL_G1_GOLEM;
-      }
+    const auto sinksByGuild=impl->host->npcBodySinks(*npc);
+    sinks=sinks || sinksByGuild;
     }
   // A fraction above one leaves weight even when fully immersed. Stone and
   // bones still receive water drag and entry splashes, but settle on the bed.
@@ -1224,20 +1313,43 @@ void Ragdoll::updateBuoyancyFractions() {
     impl->waterParts[i].fraction=sinks ? 1.5f : partBuoyancyFraction(impl->rig->parts[i].name);
   }
 
+Npc* Ragdoll::impactCulprit() const {
+  const auto culprit=impl->impactCulprit.lock();
+  return culprit!=nullptr ? impl->host->resolveNpc(culprit) : nullptr;
+  }
+
+bool Ragdoll::impactBone(size_t bone) const {
+  for(const auto& part:impl->rig->parts)
+    if(part.bone==bone)
+      return named(part.name,"PELVIS") || named(part.name,"SPINE") || named(part.name,"HEAD");
+  return false;
+  }
+
+void Ragdoll::recordImpactSpeed(float speed) { impl->impactSpeed=std::max(impl->impactSpeed,speed); }
+float Ragdoll::takeImpactSpeed() {
+  const float result=impl->impactSpeed;
+  impl->impactSpeed=0;
+  return result;
+  }
+
 void Ragdoll::setNoiseCulprit(Npc* culprit) {
-  impl->culprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
+  impl->culprit=culprit!=nullptr ? impl->host->npcHandle(*culprit) : std::weak_ptr<void>();
   impl->culpritUntilStep=impl->world!=nullptr ? impl->world->simulationStep()+300 : 0;
+  if(culprit!=nullptr && impl->birthBench && impl->birthBench->ageMs==0) {
+    const auto delta=impl->birthBench->root-impl->host->npcPosition(*culprit);
+    impl->birthBench->distance=std::hypot(delta.x,delta.z);
+    }
   }
 
 Npc* Ragdoll::noiseNpc() const {
   const auto npc=impl->npc.lock();
-  return npc!=nullptr ? static_cast<Npc*>(npc->user_ptr) : nullptr;
+  return npc!=nullptr ? impl->host->resolveNpc(npc) : nullptr;
   }
 
 Npc* Ragdoll::noiseCulprit() const {
   if(impl->world==nullptr || impl->world->simulationStep()>impl->culpritUntilStep) return nullptr;
   const auto npc=impl->culprit.lock();
-  return npc!=nullptr ? static_cast<Npc*>(npc->user_ptr) : nullptr;
+  return npc!=nullptr ? impl->host->resolveNpc(npc) : nullptr;
   }
 
 bool Ragdoll::acceptNoise(uint64_t step) {
@@ -1435,7 +1547,7 @@ void Ragdoll::prepareKinematicStep(float deltaSeconds, float targetFraction) {
     if(ready) {
       for(const auto& hit:impl->hits) {
         const auto point=CollisionWorld::toMeters(hit.pointCm);
-        const size_t part=impl->kinematic ? impl->startReaction(hit.part,point,hit.strength,system) : hit.part;
+        const size_t part=impl->kinematic ? impl->startReaction(hit.part,point,hit.strength,hit.stiffness,system) : hit.part;
         if(part!=noBone)
           interface.AddImpulse(impl->native->GetBodyID(int(part)),JPH::Vec3(hit.impulseNs.x,hit.impulseNs.y,hit.impulseNs.z),point);
         }
@@ -1443,6 +1555,7 @@ void Ragdoll::prepareKinematicStep(float deltaSeconds, float targetFraction) {
     impl->hits.clear();
     }
   if(!impl->kinematic) {
+    if(impl->brace) impl->brace->advance(deltaSeconds);
     impl->stepFade(deltaSeconds);
     return;
     }
@@ -1474,6 +1587,7 @@ void Ragdoll::prepareKinematicStep(float deltaSeconds, float targetFraction) {
   }
 
 void Ragdoll::finishKinematicStep() {
+  if(valid() && impl->brace) impl->brace->afterStep(*impl->native,impl->world->physicsSystem().GetBodyInterface());
   if(!valid() || !impl->kinematic) return;
   auto& interface=impl->world->physicsSystem().GetBodyInterface();
   // MoveKinematic sets velocities rather than a persistent destination. Stop
@@ -1586,12 +1700,86 @@ void Ragdoll::setAllowSleeping(bool allow) {
 void Ragdoll::addImpulse(const Tempest::Vec3& impulse, Npc* culprit) {
   if(!valid() || impl->kinematic || !finite(impulse)) return;
   setNoiseCulprit(culprit);
+  impl->impactCulprit=culprit!=nullptr ? impl->host->npcHandle(*culprit) : std::weak_ptr<void>();
   auto& interface=impl->world->physicsSystem().GetBodyInterface();
   for(size_t i=0;i<partCount();++i) {
     const auto* settings=impl->native->GetRagdollSettings();
     const float ratio=settings->mParts[i].mMassPropertiesOverride.mMass/mass();
     interface.AddImpulse(impl->native->GetBodyID(int(i)),JPH::Vec3(impulse.x,impulse.y,impulse.z)*ratio);
     }
+  }
+
+void Ragdoll::knockOff(const Tempest::Vec3& direction, float impulseNs, Npc* culprit) {
+  if(!valid() || impl->kinematic || !finite(direction) || !std::isfinite(impulseNs)) return;
+  Tempest::Vec3 d(direction.x,0.f,direction.z);
+  if(d.length()<1e-3f) return;
+  d=Tempest::Vec3::normalize(d);
+  setNoiseCulprit(culprit);
+  impl->impactCulprit=culprit!=nullptr ? impl->host->npcHandle(*culprit) : std::weak_ptr<void>();
+  impl->knockedOff=true;
+  // The blow alone moves 75 kg by under a metre a second; a man thrown down moves
+  // his trunk at about two. The heavier the blow, the harder he goes down.
+  const float speed=std::clamp(1.4f+1.2f*impulseNs/60.f,1.4f,2.6f);
+  auto& interface=impl->world->physicsSystem().GetBodyInterface();
+  const auto* settings=impl->native->GetRagdollSettings();
+  for(size_t i=0;i<partCount();++i) {
+    const auto& name=impl->rig->parts[i].name;
+    float share=1.f;
+    if(named(name,"THIGH") || named(name,"CALF") || named(name,"FOOT") || named(name,"TOE") || named(name,"LEG"))
+      share=0.f; else
+    if(named(name,"PELVIS"))
+      share=.4f;
+    if(share<=0.f) continue;
+    const float partMass=settings->mParts[i].mMassPropertiesOverride.mMass;
+    interface.AddImpulse(impl->native->GetBodyID(int(i)),JPH::Vec3(d.x,0.f,d.z)*(speed*share*partMass));
+    }
+  }
+
+RagdollBrace::Kind Ragdoll::braceKind(const Tempest::Vec3& d) const {
+  const auto axes=valid() && !impl->kinematic ? Impl::bodyAxes(*impl->rig) : Impl::BodyAxes();
+  if(!axes.valid) return RagdollBrace::Kind::None;
+  const auto forward=impl->object.rigid.Multiply3x3(axes.forward), left=impl->object.rigid.Multiply3x3(axes.left);
+  return RagdollBrace::select(d.x*forward.GetX()+d.z*forward.GetZ(),d.x*left.GetX()+d.z*left.GetZ());
+  }
+
+bool Ragdoll::brace(RagdollBrace::Kind kind, const Tempest::Matrix4x4* modelPose, size_t numBones,
+                    const RagdollBrace::Profile& profile, const Tempest::Matrix4x4* landPose) {
+  if(!valid() || impl->kinematic || impl->fadeAge<0.f || impl->brace || !Impl::bodyAxes(*impl->rig).valid) return false;
+  std::vector<JPH::Quat> pose, land;
+  if(kind!=RagdollBrace::Kind::None) {
+    if(modelPose==nullptr || numBones!=boneCount()) return false;
+    for(size_t bone:impl->rig->boneIndices) {
+      JPH::Mat44 frame; // the same decomposition as the birth pose and the living targets
+      if(!posedFrame(impl->initialObject*modelPose[bone],impl->object,frame)) return false;
+      pose.push_back(frame.GetQuaternion());
+      if(landPose!=nullptr) {
+        if(!posedFrame(impl->initialObject*landPose[bone],impl->object,frame)) return false;
+        land.push_back(frame.GetQuaternion());
+        }
+      }
+    }
+  std::vector<RagdollBrace::Rig::Joint> joints;
+  for(const auto& part:impl->rig->parts) joints.push_back({part.name,part.parent});
+  impl->brace=RagdollBrace::Rig::create(kind,profile,*impl->native,joints,pose,impl->fadeAge,land);
+  if(!impl->brace) return false;
+  impl->world->trackBraceContacts(impl->group,&impl->brace->contacts());
+  if(kind!=RagdollBrace::Kind::None) impl->stepFade(0.f);
+  return true;
+  }
+
+bool Ragdoll::braceReport(RagdollBrace::Report& report) const {
+  if(impl->brace) report=impl->brace->report();
+  return bool(impl->brace);
+  }
+
+void Ragdoll::endBrace() {
+  if(impl->brace && impl->world!=nullptr) impl->world->trackBraceContacts(impl->group,nullptr);
+  impl->brace.reset();
+  }
+
+std::vector<RagdollBrace::MotorProbe> Ragdoll::motorProbes() const {
+  if(!valid() || impl->kinematic) return {};
+  return RagdollBrace::probes(*impl->native,impl->rig->boneIndices,impl->brace.get());
   }
 
 Ragdoll::State Ragdoll::state() const {
@@ -1727,6 +1915,7 @@ bool Ragdoll::restore(const State& state) {
   // A restored body carries no muscles: the saved state is all there is.
   impl->fadeAge=-1.f;
   impl->fadeTargets.clear();
+  endBrace();
   auto& interface=impl->world->physicsSystem().GetBodyInterface();
   for(size_t i=0;i<state.parts.size();++i) {
     const auto& p=state.parts[i];
@@ -1853,6 +2042,13 @@ float Ragdoll::speciesMass(std::string_view name) {
   for(char& c:normalized) c=char(std::toupper(static_cast<unsigned char>(c)));
   name=normalized;
   if(named(name,"TROLL")) return 600.f;
+  if(named(name,"GOLEM") || named(name,"STONEGUARDIAN")) return 500.f;
+  if(named(name,"SHADOW")) return 250.f;
+  if(named(name,"DRAGONSNAPPER")) return 120.f;
+  if(named(name,"DRAGON")) return 2000.f;
+  if(named(name,"DEMON")) return 200.f;
+  if(named(name,"DRACONIAN")) return 100.f;
+  if(named(name,"ORCBITER")) return 45.f;
   if(named(name,"ORC")) return 150.f;
   if(named(name,"WARG")) return 60.f;
   if(named(name,"WOLF")) return 40.f;
@@ -1862,6 +2058,23 @@ float Ragdoll::speciesMass(std::string_view name) {
   if(named(name,"SKELETON")) return 45.f;
   if(named(name,"SNAPPER")) return 90.f;
   if(named(name,"LURKER")) return 80.f;
-  if(named(name,"SHADOWBEAST")) return 250.f;
+  if(named(name,"RAZOR")) return 75.f;
+  if(named(name,"ALLIGATOR")) return 250.f;
+  if(named(name,"BLATTCRAWLER")) return 80.f;
+  if(named(name,"CRAWLER")) return 120.f;
+  if(named(name,"BLOODFLY")) return 5.f;
+  if(named(name,"GIANT_BUG")) return 5.f;
+  if(named(name,"GIANT_RAT")) return 10.f;
+  if(named(name,"HARPIE")) return 40.f;
+  if(named(name,"IRRLICHT") || named(name,"SWARM")) return 1.f;
+  if(named(name,"KEILER")) return 100.f;
+  if(named(name,"MEATBUG")) return .5f;
+  if(named(name,"SHEEP")) return 50.f;
+  if(named(name,"STONEPUMA")) return 80.f;
+  if(named(name,"SWAMPDRONE")) return 10.f;
+  if(named(name,"SWAMPRAT")) return 15.f;
+  if(named(name,"SWAMPSHARK")) return 300.f;
+  if(named(name,"WARAN")) return 80.f;
+  if(named(name,"ZOMBIE") || named(name,"ZOM")) return 75.f;
   return 75.f;
   }

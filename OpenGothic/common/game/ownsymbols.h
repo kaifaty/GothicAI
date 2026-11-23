@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 
 #include <cstdint>
 #include <string>
@@ -33,17 +33,17 @@ class OwnSymbols final {
     static constexpr std::string_view SaveEntry = "game/symbols";
     static constexpr std::string_view Prefix    = "DIR_";  // every name of ours
 
-    explicit OwnSymbols(zenkit::DaedalusVm& vm);
+    explicit OwnSymbols(daedalus::DaedalusVm& vm);
 
     // a story variable, its value 0; nullptr and why not
-    zenkit::DaedalusSymbol* addInt(std::string_view name, std::string& why);
+    daedalus::DaedalusSymbol* addInt(std::string_view name, std::string& why);
     // an npc instance made like the script's npc `like`, to be put in the world by its index; nullptr and why not
-    zenkit::DaedalusSymbol* addNpc(std::string_view name, std::string_view like, std::string& why);
+    daedalus::DaedalusSymbol* addNpc(std::string_view name, std::string_view like, std::string& why);
 
     const std::vector<Entry>& entries() const { return list; }
     const Entry*              find(std::string_view name) const;
     // the script's instance an npc of ours is made like; nullptr for any other symbol
-    zenkit::DaedalusSymbol*   likeOf(uint32_t index);
+    daedalus::DaedalusSymbol*   likeOf(uint32_t index);
 
     void save(Serialize& fout) const;
     // makes them again in the order of the save: false if one did not get the index it had (the scripts are
@@ -52,8 +52,8 @@ class OwnSymbols final {
 
   private:
     std::string             whyNot(const std::string& name) const;
-    zenkit::DaedalusSymbol* add(const Entry& e, std::string& why);
+    daedalus::DaedalusSymbol* add(const Entry& e, std::string& why);
 
-    zenkit::DaedalusVm& vm;
+    daedalus::DaedalusVm& vm;
     std::vector<Entry>  list;
   };

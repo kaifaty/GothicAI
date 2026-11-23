@@ -1,0 +1,801 @@
+{
+ "status": "passed",
+ "acceptance_2": {
+  "passed": true,
+  "threshold": 0.999,
+  "gate_kinds": [
+   "world",
+   "static_vob",
+   "water"
+  ],
+  "gate": {
+   "world": 0.999958393741658,
+   "static_vob": 0.9996913823915712,
+   "water": 1.0
+  },
+  "schedule_gate": {
+   "far_updated_equal": true,
+   "complete_differs_only_with_hit": true,
+   "far_casts_follow_rays": true,
+   "cache_slot_for_slot_after_agreed_cast": true
+  },
+  "static_rays": 4345494,
+  "static_all_fraction": 0.9999498330914736,
+  "all_rays": 5712000,
+  "all_fraction": 0.9971747198879551,
+  "by_engine_kind": {
+   "none": {
+    "rays": 1307033,
+    "all_fraction": 1.0,
+    "hit_equal_fraction": 1.0,
+    "distance_lt_1cm_fraction": 1.0,
+    "kind_equal_fraction": 1.0,
+    "normal_y_lt_0_01_fraction": 1.0,
+    "mismatches": 0
+   },
+   "world": {
+    "rays": 4206098,
+    "all_fraction": 0.999958393741658,
+    "hit_equal_fraction": 0.9999961959992373,
+    "distance_lt_1cm_fraction": 0.9999923919984746,
+    "kind_equal_fraction": 0.9999961959992373,
+    "normal_y_lt_0_01_fraction": 0.9999607712421347,
+    "mismatches": 175
+   },
+   "static_vob": {
+    "rays": 139331,
+    "all_fraction": 0.9996913823915712,
+    "hit_equal_fraction": 0.9999928228463156,
+    "distance_lt_1cm_fraction": 0.9999282284631561,
+    "kind_equal_fraction": 0.9999425827705248,
+    "normal_y_lt_0_01_fraction": 0.9997200910063088,
+    "mismatches": 43
+   },
+   "movable_vob": {
+    "rays": 59473,
+    "all_fraction": 0.7323155045146537,
+    "hit_equal_fraction": 0.9384762833554723,
+    "distance_lt_1cm_fraction": 0.7436483782556791,
+    "kind_equal_fraction": 0.732601348511089,
+    "normal_y_lt_0_01_fraction": 0.7401341785347973,
+    "mismatches": 15920
+   },
+   "npc": {
+    "rays": 0,
+    "all_fraction": null,
+    "hit_equal_fraction": null,
+    "distance_lt_1cm_fraction": null,
+    "kind_equal_fraction": null,
+    "normal_y_lt_0_01_fraction": null,
+    "mismatches": 0
+   },
+   "water": {
+    "rays": 65,
+    "all_fraction": 1.0,
+    "hit_equal_fraction": 1.0,
+    "distance_lt_1cm_fraction": 1.0,
+    "kind_equal_fraction": 1.0,
+    "normal_y_lt_0_01_fraction": 1.0,
+    "mismatches": 0
+   }
+  },
+  "schedule_and_cache": {
+   "updates": 24000,
+   "far_updated_equal_fraction": 1.0,
+   "updated_all": true,
+   "near_casts": 5712000,
+   "far_casts": 286034,
+   "engine_far_casts_inferred": 285105,
+   "near_boundary_hits": 243,
+   "complete_equal_fraction": 0.9994397759103641,
+   "complete_mismatches": 3200,
+   "cache_slots_compared": 5699310,
+   "cache_slots_excluded_boundary": 12690,
+   "cache_schedule_equal_fraction": 0.9979620340006071,
+   "cache_schedule_mismatches": 11615,
+   "cache_valid_slots": 2546690,
+   "cache_content_equal_fraction": 0.9929810852518367,
+   "complete_mismatches_with_equal_hit": 0,
+   "complete_mismatches_by_engine_kind": {
+    "none": 0,
+    "world": 12,
+    "static_vob": 1,
+    "movable_vob": 3187,
+    "npc": 0,
+    "water": 0
+   },
+   "cache_slots_after_agreed_cast": 5677250,
+   "cache_schedule_equal_fraction_after_agreed_cast": 1.0,
+   "cache_content_equal_fraction_after_agreed_cast": 1.0,
+   "cache_casts_unexplained": 0,
+   "cache_slots_after_ray_difference": 22060,
+   "cache_slots_after_ray_difference_by_engine_kind": {
+    "none": 0,
+    "world": 155,
+    "static_vob": 5,
+    "movable_vob": 21900,
+    "npc": 0,
+    "water": 0
+   },
+   "definition": "Engine cache from rays.bin: per episode and ray, the last far-updated record whose near segment missed (no hit, or hit beyond the near end). Hits within 1 cm of the near end cannot be attributed and their cache slots are excluded until the ray's next far cast. Schedule = same timestamp and validity; content = the four ray criteria. A slot is 'after an agreed cast' when at the ray's latest far update where either side cast, both cast and the fresh ray met all four criteria; otherwise it inherits that ray's difference (by_engine_kind: the engine's kind for the ray at that update)."
+  },
+  "replay": {
+   "agents": 48,
+   "threads": 8,
+   "build_s": 1.2401388679863885,
+   "direction_max_abs": 0.0,
+   "direction_equal_fraction": 1.0
+  }
+ },
+ "cost": {
+  "agents": [
+   2048
+  ],
+  "steps_per_repeat": [
+   50
+  ],
+  "warmup_steps": [
+   10
+  ],
+  "bvh_build_s": [
+   0.9662071099737659,
+   1.0451222260016948
+  ],
+  "reference_us_per_update": {
+   "raybench_embree_single_thread_median": 43,
+   "engine_replay_median": 9048.547
+  },
+  "definition": "One update of all agents' eyes on the pool (near every 100 ms, far every 500 ms, far phases staggered over five steps). thread_us_per_update = wall x threads / updates; wall_us_per_update = wall / updates. eye_update_and_slot_write also writes all 476 slots of every agent in the gpumem layout.",
+  "eye_update": {
+   "1": {
+    "thread_us_per_update": 65.07987557256456,
+    "wall_us_per_update": 65.07987557256456,
+    "updates_per_second": 15365.733127209076,
+    "step_ms_median": 132.45917402673513,
+    "casts_per_update": 249.8329296875,
+    "repeats": 3,
+    "load_average_per_repeat": [
+     [
+      11.9501953125,
+      12.65869140625,
+      11.36865234375
+     ],
+     [
+      11.599609375,
+      12.53173828125,
+      11.3466796875
+     ],
+     [
+      12.75390625,
+      12.76171875,
+      11.4423828125
+     ]
+    ]
+   },
+   "8": {
+    "thread_us_per_update": 68.63203948341834,
+    "wall_us_per_update": 8.579004935427292,
+    "updates_per_second": 116563.63500508852,
+    "step_ms_median": 17.202482442371547,
+    "casts_per_update": 249.8329296875,
+    "repeats": 3,
+    "load_average_per_repeat": [
+     [
+      13.98095703125,
+      13.0380859375,
+      11.56201171875
+     ],
+     [
+      13.98095703125,
+      13.0380859375,
+      11.56201171875
+     ],
+     [
+      15.18408203125,
+      13.30322265625,
+      11.65576171875
+     ]
+    ]
+   },
+   "28": {
+    "thread_us_per_update": 225.55829796601756,
+    "wall_us_per_update": 8.055653498786342,
+    "updates_per_second": 124136.42172551976,
+    "step_ms_median": 16.5383875137195,
+    "casts_per_update": 249.8329296875,
+    "repeats": 3,
+    "load_average_per_repeat": [
+     [
+      26.5224609375,
+      18.84375,
+      14.14306640625
+     ],
+     [
+      26.5224609375,
+      18.84375,
+      14.14306640625
+     ],
+     [
+      26.16015625,
+      18.896484375,
+      14.185546875
+     ]
+    ]
+   }
+  },
+  "eye_update_and_slot_write": {
+   "1": {
+    "thread_us_per_update": 68.99257741906695,
+    "wall_us_per_update": 68.99257741906695,
+    "updates_per_second": 14494.31282913106,
+    "step_ms_median": 140.51446499070153,
+    "casts_per_update": 249.8329296875,
+    "repeats": 3,
+    "load_average_per_repeat": [
+     [
+      11.4736328125,
+      12.5478515625,
+      11.33935546875
+     ],
+     [
+      13.0732421875,
+      12.82177734375,
+      11.447265625
+     ],
+     [
+      13.314453125,
+      12.884765625,
+      11.4970703125
+     ]
+    ]
+   },
+   "8": {
+    "thread_us_per_update": 80.67461266364262,
+    "wall_us_per_update": 10.084326582955327,
+    "updates_per_second": 99163.78568006854,
+    "step_ms_median": 20.43767843861133,
+    "casts_per_update": 249.8329296875,
+    "repeats": 3,
+    "load_average_per_repeat": [
+     [
+      13.98095703125,
+      13.0380859375,
+      11.56201171875
+     ],
+     [
+      13.98095703125,
+      13.0380859375,
+      11.56201171875
+     ],
+     [
+      15.18408203125,
+      13.30322265625,
+      11.65576171875
+     ]
+    ]
+   },
+   "28": {
+    "thread_us_per_update": 279.5888008813563,
+    "wall_us_per_update": 9.985314317191296,
+    "updates_per_second": 100147.07281455748,
+    "step_ms_median": 20.38371202070266,
+    "casts_per_update": 249.8329296875,
+    "repeats": 3,
+    "load_average_per_repeat": [
+     [
+      26.5224609375,
+      18.84375,
+      14.14306640625
+     ],
+     [
+      26.5224609375,
+      18.84375,
+      14.14306640625
+     ],
+     [
+      26.16015625,
+      18.896484375,
+      14.185546875
+     ]
+    ]
+   }
+  }
+ },
+ "mismatch_examples": [
+  {
+   "engine_kind": "world",
+   "update": 59,
+   "ray": 149,
+   "origin_cm": [
+    1105.7235107421875,
+    -25.118656158447266,
+    -4415.34130859375
+   ],
+   "direction": [
+    0.6965194344520569,
+    -0.0961415246129036,
+    0.7110678553581238
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 530.4331665039062,
+    "kind": "world",
+    "normal_y": 0.07846150547266006
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 604.87744140625,
+    "kind": "world",
+    "normal_y": 0.04168987274169922
+   }
+  },
+  {
+   "engine_kind": "world",
+   "update": 6306,
+   "ray": 4,
+   "origin_cm": [
+    6810.380859375,
+    276.8877868652344,
+    -990.2523803710938
+   ],
+   "direction": [
+    0.12081167846918106,
+    -0.3772304952144623,
+    -0.9182056784629822
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 145.36614990234375,
+    "kind": "world",
+    "normal_y": 0.0
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 379.007568359375,
+    "kind": "world",
+    "normal_y": 0.9933233261108398
+   }
+  },
+  {
+   "engine_kind": "world",
+   "update": 11674,
+   "ray": 93,
+   "origin_cm": [
+    9649.8154296875,
+    751.1060180664062,
+    -4513.94189453125
+   ],
+   "direction": [
+    -0.9953054189682007,
+    -0.096141517162323,
+    0.01113089919090271
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 949.2542114257812,
+    "kind": "world",
+    "normal_y": -0.02000362053513527
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 949.2875366210938,
+    "kind": "world",
+    "normal_y": 1.0
+   }
+  },
+  {
+   "engine_kind": "world",
+   "update": 18998,
+   "ray": 89,
+   "origin_cm": [
+    8756.5771484375,
+    779.9279174804688,
+    -10149.580078125
+   ],
+   "direction": [
+    0.5961042642593384,
+    -0.7056258916854858,
+    -0.3830821216106415
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 189.29202270507812,
+    "kind": "world",
+    "normal_y": 0.9597886204719543
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 189.29649353027344,
+    "kind": "world",
+    "normal_y": 0.9770176410675049
+   }
+  },
+  {
+   "engine_kind": "world",
+   "update": 23608,
+   "ray": 149,
+   "origin_cm": [
+    9543.51171875,
+    751.1060180664062,
+    -4545.59375
+   ],
+   "direction": [
+    -0.7300516963005066,
+    -0.096141517162323,
+    -0.6765953898429871
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 948.9066772460938,
+    "kind": "world",
+    "normal_y": -2.3020087610348128e-05
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 948.913330078125,
+    "kind": "world",
+    "normal_y": 0.9999999403953552
+   }
+  },
+  {
+   "engine_kind": "static_vob",
+   "update": 12,
+   "ray": 228,
+   "origin_cm": [
+    693.5374755859375,
+    -25.118656158447266,
+    -4619.57177734375
+   ],
+   "direction": [
+    -0.7062757611274719,
+    -0.3772304952144623,
+    0.5990590453147888
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 392.85888671875,
+    "kind": "static_vob",
+    "normal_y": 0.10336369276046753
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 435.28948974609375,
+    "kind": "world",
+    "normal_y": 0.999267041683197
+   }
+  },
+  {
+   "engine_kind": "static_vob",
+   "update": 9163,
+   "ray": 189,
+   "origin_cm": [
+    2619.642333984375,
+    -10.467395782470703,
+    -2592.28466796875
+   ],
+   "direction": [
+    -0.7551777362823486,
+    -0.2918194830417633,
+    0.5869820713996887
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 365.5368957519531,
+    "kind": "static_vob",
+    "normal_y": 1.0
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 374.5950012207031,
+    "kind": "static_vob",
+    "normal_y": 1.8312281691024168e-09
+   }
+  },
+  {
+   "engine_kind": "static_vob",
+   "update": 12906,
+   "ray": 99,
+   "origin_cm": [
+    15141.384765625,
+    2354.76904296875,
+    -9978.779296875
+   ],
+   "direction": [
+    0.08544360846281052,
+    -0.9951809644699097,
+    -0.04810646176338196
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 158.56980895996094,
+    "kind": "static_vob",
+    "normal_y": 0.9282308220863342
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 158.5769805908203,
+    "kind": "static_vob",
+    "normal_y": 0.9520255923271179
+   }
+  },
+  {
+   "engine_kind": "static_vob",
+   "update": 16562,
+   "ray": 19,
+   "origin_cm": [
+    70534.28125,
+    3195.210693359375,
+    -10628.8828125
+   ],
+   "direction": [
+    -0.8573444485664368,
+    -0.3788225054740906,
+    -0.348502516746521
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 328.97662353515625,
+    "kind": "static_vob",
+    "normal_y": 0.9883376955986023
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 328.9774169921875,
+    "kind": "static_vob",
+    "normal_y": 0.9429715871810913
+   }
+  },
+  {
+   "engine_kind": "static_vob",
+   "update": 23778,
+   "ray": 216,
+   "origin_cm": [
+    8435.0869140625,
+    431.330810546875,
+    -4163.0556640625
+   ],
+   "direction": [
+    -0.7072697281837463,
+    -0.2323586344718933,
+    0.6676667928695679
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 390.5150146484375,
+    "kind": "static_vob",
+    "normal_y": -0.08157796412706375
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 390.5182189941406,
+    "kind": "static_vob",
+    "normal_y": -0.733872652053833
+   }
+  },
+  {
+   "engine_kind": "movable_vob",
+   "update": 500,
+   "ray": 133,
+   "origin_cm": [
+    10832.6796875,
+    1403.6143798828125,
+    -13325.76953125
+   ],
+   "direction": [
+    -0.274755597114563,
+    0.0,
+    -0.9615141153335571
+   ],
+   "far_updated": true,
+   "engine": {
+    "hit": true,
+    "distance_cm": 1712.4329833984375,
+    "kind": "movable_vob",
+    "normal_y": 0.11858822405338287
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 1713.0484619140625,
+    "kind": "static_vob",
+    "normal_y": 0.0013870085822418332
+   }
+  },
+  {
+   "engine_kind": "movable_vob",
+   "update": 6798,
+   "ray": 164,
+   "origin_cm": [
+    12131.193359375,
+    1613.2015380859375,
+    -16461.4609375
+   ],
+   "direction": [
+    0.2653287351131439,
+    0.10501039773225784,
+    -0.9584224224090576
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 906.953369140625,
+    "kind": "movable_vob",
+    "normal_y": 0.1388189196586609
+   },
+   "stand": {
+    "hit": false,
+    "distance_cm": 1000.0,
+    "kind": "none",
+    "normal_y": 0.0
+   }
+  },
+  {
+   "engine_kind": "movable_vob",
+   "update": 12546,
+   "ray": 5,
+   "origin_cm": [
+    13459.7568359375,
+    1604.442626953125,
+    -10892.3115234375
+   ],
+   "direction": [
+    -0.7239105701446533,
+    -0.23066185414791107,
+    -0.6501912474632263
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 565.5811157226562,
+    "kind": "movable_vob",
+    "normal_y": 0.05136340484023094
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 567.9725952148438,
+    "kind": "static_vob",
+    "normal_y": 0.0015975970309227705
+   }
+  },
+  {
+   "engine_kind": "movable_vob",
+   "update": 15940,
+   "ray": 218,
+   "origin_cm": [
+    8962.603515625,
+    1295.67236328125,
+    -16769.28515625
+   ],
+   "direction": [
+    -0.07383518666028976,
+    0.07708470523357391,
+    0.994286835193634
+   ],
+   "far_updated": true,
+   "engine": {
+    "hit": true,
+    "distance_cm": 153.2643585205078,
+    "kind": "movable_vob",
+    "normal_y": 0.41066867113113403
+   },
+   "stand": {
+    "hit": false,
+    "distance_cm": 3000.0,
+    "kind": "none",
+    "normal_y": 0.0
+   }
+  },
+  {
+   "engine_kind": "movable_vob",
+   "update": 23499,
+   "ray": 230,
+   "origin_cm": [
+    6070.0556640625,
+    431.3039245605469,
+    -3299.767333984375
+   ],
+   "direction": [
+    -0.37524834275245667,
+    -0.07708472013473511,
+    0.9237135648727417
+   ],
+   "far_updated": false,
+   "engine": {
+    "hit": true,
+    "distance_cm": 459.00567626953125,
+    "kind": "movable_vob",
+    "normal_y": 0.26781871914863586
+   },
+   "stand": {
+    "hit": true,
+    "distance_cm": 498.26483154296875,
+    "kind": "static_vob",
+    "normal_y": 0.07004503160715103
+   }
+  }
+ ],
+ "semantics": {
+  "poses": "poses.txt position and yaw, head origin from rays.bin; neutral head frame from body yaw; game time 1e9 + elapsed_ms; one agent per episode (= replay's eye reset)",
+  "categories": "NAVSTAT1 1 World, 2 StaticVob, 3 Water, 4 MovableVob (kinematic C_Object, dump pose)",
+  "not_in_dump": "NPCs and loose items (C_Item, C_MovableVob) are absent; doors and mobsi stay in their dump pose, so movable_vob rays are reported apart from the gate",
+  "criteria": "same hit, |distance| < 1 cm, same kind, |normalY| < 0.01, against rays.bin"
+ },
+ "raw_root": "/mnt/shared/gothic-ai/nav-sim-research/stand/eye",
+ "files": {
+  "cost-1_8.json": {
+   "bytes": 6212,
+   "sha256": "543adcaf94ec9ea900a31a9933807a9664b5ff94ffe73b26d7a90e56a1a12c6a"
+  },
+  "cost-1_8.log": {
+   "bytes": 5094,
+   "sha256": "fc37a9d87b58e1ecfac398b9c6c4d4c5d4faff0deb030b133a9a0b7f2bf7ccd0"
+  },
+  "cost-28.json": {
+   "bytes": 3225,
+   "sha256": "c45d9ab875dfb1a23bad19ed1cffd9b73d3230d8163c6fefbe753940afcbccbf"
+  },
+  "cost-28.log": {
+   "bytes": 2521,
+   "sha256": "686a17c79cce355e517c7a0440a7fd28c24b594bf358c6d0b0c9d669c5c27ce0"
+  },
+  "meta-cost-28.json": {
+   "bytes": 2330,
+   "sha256": "f35bd629595d6596461a2cccd5ddb998837ba73cece27dc901e572fc36e347f8"
+  },
+  "meta-run-1_8.json": {
+   "bytes": 2480,
+   "sha256": "b597950e8bb9e0a856fa1f7727d9e96c816d428b327c436f4cc82af646abd5e9"
+  },
+  "parity.json": {
+   "bytes": 12174,
+   "sha256": "9aba5c3c0a2b883ab63abe3ed50100b6f8e7062563762e9d2da4319513c951ee"
+  },
+  "stand-cache.npy": {
+   "bytes": 79968192,
+   "sha256": "3d8113c68cacec07ccc941696a916dbbb7ac4e729aa24ae444404192fc48f51c"
+  },
+  "stand-fresh.npy": {
+   "bytes": 62832192,
+   "sha256": "313c8254721601eca2a04a27c9b7f0b49f55439256eb03d5b22df92f945fd10c"
+  },
+  "stand-schedule.npy": {
+   "bytes": 144192,
+   "sha256": "128de81a234bde98319d2cf83c867e7ef222651813617fcc6ae3197a6a48ae9e"
+  }
+ },
+ "measurements": {
+  "meta-cost-28": {
+   "class": "quick",
+   "started_utc": "2026-11-04T21:18:11Z",
+   "gq_status": "ID           \u0412\u041b\u0410\u0414\u0415\u041b\u0415\u0426         \u041a\u041b\u0410\u0421\u0421  \u0421\u041e\u0421\u0422\u041e\u042f\u041d\u0418\u0415  \u0420\u0415\u0421\u0423\u0420\u0421\u042b                         \u0421\u0422\u0410\u0420\u0422    \u041f\u041e\u0422\u041e\u041b\u041e\u041a \u041e\u0426\u0415\u041d\u041a\u0410\n8ed403661a0b nav-teacher-stal quick  running    6t 6G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      00:13:01 3600s \u2264790s median=790s\nb6c166860b07 ryzen-play-autou quick  queued     12t 12G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        1800s \u22643601s median=1s\n6691533f0b73 census-noid      quick  queued     12t 12G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        1800s \u22645593s median=193s\ne488fb9652e4 nav-roads-memory batch  queued     16t 11G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        7200s \u22647200s\n8a0f473f985b nav-roads-memory quick  running    12t 5G gpu=4G \u043e\u043a\u043d\u043e=1 \u0441\u043b\u043e\u0442=1     00:14:30 3540s \u226414400s\ne408e79b4830 nav-roads-memory batch  queued     16t 11G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        7200s \u226417940s\ncc1ba8bf3d64 nav-roads-memory batch  queued     12t 8G gpu=4G \u043e\u043a\u043d\u043e=1 \u0441\u043b\u043e\u0442=\u2014     \u2014        7200s \u226425140s\n880f8f4cad18 claude-navsim-s3 quick  queued     26t 6G gpu=8G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014     \u2014        2400s \u226432627s median=287s\n272a2b1116cf nav-sim-stand    quick  running    28t 6G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014     00:18:04 3600s \u226434740s\nDisk /home/kaifaty/gothic-ai: free 127.1G; minimum 20G\nDisk /: free 127.1G; minimum 20G\n",
+   "loadavg_at_start": "26.39 17.95 13.70 16/4570 2828724",
+   "cpu": "AMD Ryzen 9 3950X 16-Core Processor",
+   "compiler": "c++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+   "flags": "-O3 -DNDEBUG -march=x86-64-v3 -ffp-contract=off",
+   "embree": "4.4.0 release archive, sha256 cb3d4402...3c57",
+   "eye_core": "OpenGothic/common/game/navigationeye.cpp compiled into the library as is",
+   "other_running_job_threads": 18
+  },
+  "meta-run-1_8": {
+   "class": "quick",
+   "started_utc": "2026-11-04T21:13:06Z",
+   "gq_status": "ID           \u0412\u041b\u0410\u0414\u0415\u041b\u0415\u0426         \u041a\u041b\u0410\u0421\u0421  \u0421\u041e\u0421\u0422\u041e\u042f\u041d\u0418\u0415  \u0420\u0415\u0421\u0423\u0420\u0421\u042b                         \u0421\u0422\u0410\u0420\u0422    \u041f\u041e\u0422\u041e\u041b\u041e\u041a \u041e\u0426\u0415\u041d\u041a\u0410\n57e754a4880b nav-teacher-stal quick  running    6t 6G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      00:00:59 3600s \u22640s\n8ed403661a0b nav-teacher-stal quick  running    6t 6G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      00:13:01 3600s \u22643600s\n157b5be07c14 nav-sim-stand    quick  running    8t 6G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      00:13:01 3600s \u22647200s\nb6c166860b07 ryzen-play-autou quick  queued     12t 12G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        1800s \u226410801s median=1s\n0832b900ddc4 claude-census-bo quick  queued     4t 5G gpu=2G \u043e\u043a\u043d\u043e=1 \u0441\u043b\u043e\u0442=\u2014      \u2014        1800s \u226412650s median=50s\n6691533f0b73 census-noid      quick  queued     12t 12G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        1800s \u226414593s median=193s\ne488fb9652e4 nav-roads-memory batch  queued     16t 11G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        7200s \u226416200s\n8a0f473f985b nav-roads-memory quick  queued     12t 5G gpu=4G \u043e\u043a\u043d\u043e=1 \u0441\u043b\u043e\u0442=\u2014     \u2014        3540s \u226423400s\ne408e79b4830 nav-roads-memory batch  queued     16t 11G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        7200s \u226426940s\ncc1ba8bf3d64 nav-roads-memory batch  queued     12t 8G gpu=4G \u043e\u043a\u043d\u043e=1 \u0441\u043b\u043e\u0442=\u2014     \u2014        7200s \u226434140s\nDisk /home/kaifaty/gothic-ai: free 128.2G; minimum 20G\nDisk /: free 128.2G; minimum 20G\n",
+   "loadavg_at_start": "12.20 12.75 11.36 15/4069 2808357",
+   "cpu": "AMD Ryzen 9 3950X 16-Core Processor",
+   "compiler": "c++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+   "flags": "-O3 -DNDEBUG -march=x86-64-v3 -ffp-contract=off",
+   "embree": "4.4.0 release archive, sha256 cb3d4402...3c57",
+   "eye_core": "OpenGothic/common/game/navigationeye.cpp compiled into the library as is",
+   "other_running_job_threads": 12
+  }
+ }
+}

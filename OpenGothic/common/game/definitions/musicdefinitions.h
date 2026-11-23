@@ -1,7 +1,7 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
-#include "game/definitions/definitiontypes.h"
+#include "daedalus/vm.h"
+#include "records/definitions.h"
 
 #include <memory>
 
@@ -13,6 +13,6 @@ class MusicDefinitions final {
     const Def::MusicTheme* operator[](std::string_view name) const;
 
   private:
-    std::unique_ptr<zenkit::DaedalusVm>  vm;
-    std::vector<std::shared_ptr<Def::MusicTheme>> themes;
+    std::unique_ptr<daedalus::DaedalusVm>  vm;
+    std::vector<std::pair<uint32_t,Def::MusicTheme>> themes;
   };

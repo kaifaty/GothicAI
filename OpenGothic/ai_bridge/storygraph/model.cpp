@@ -8,8 +8,8 @@
 #include "textcodec.h"
 #include "vocab.h"
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
 #include <rapidjson/prettywriter.h>
 #include <rapidjson/stringbuffer.h>
@@ -19,7 +19,7 @@
 #include <functional>
 
 using namespace storygraph;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 const std::string* Effect::text(const std::string& name) const {
   for(auto& [k,v] : texts)
@@ -51,7 +51,7 @@ struct Footprint final {
 
 class Builder final {
   public:
-    Builder(zenkit::DaedalusVm& vm, const Bytecode& code, const Lifter& lifter, const LineTexts& lines)
+    Builder(daedalus::DaedalusVm& vm, const Bytecode& code, const Lifter& lifter, const LineTexts& lines)
       :vm(vm), dat(vm), code(code), lifter(lifter), lines(lines), predicates(vm, lifter) {}
 
     Model build();
@@ -64,8 +64,8 @@ class Builder final {
     void                addQuests(Model& m);
     void                addVars(Model& m, const std::set<std::string>& dialogFns);
 
-    zenkit::DaedalusVm&             vm;
-    const zenkit::DaedalusScript&   dat;
+    daedalus::DaedalusVm&             vm;
+    const daedalus::DaedalusScript&   dat;
     const Bytecode&                 code;
     const Lifter&                   lifter;
     const LineTexts&                lines;
@@ -74,7 +74,7 @@ class Builder final {
     std::set<std::string>           busy;
   };
 
-std::string name(const zenkit::DaedalusSymbol* s) {
+std::string name(const daedalus::DaedalusSymbol* s) {
   return s==nullptr ? std::string("?") : s->name();
   }
 
@@ -374,9 +374,9 @@ Model Builder::build() {
   Model m;
   std::set<std::string> dialogFns;
 
-  std::vector<std::shared_ptr<zenkit::IInfo>> infos;
-  vm.enumerate_instances_by_class_name("C_INFO", [&](zenkit::DaedalusSymbol& sym){
-    infos.push_back(vm.init_instance<zenkit::IInfo>(&sym));
+  std::vector<std::shared_ptr<daedalus::IInfo>> infos;
+  vm.enumerate_instances_by_class_name("C_INFO", [&](daedalus::DaedalusSymbol& sym){
+    infos.push_back(vm.init_instance<daedalus::IInfo>(&sym));
     });
 
   std::deque<std::pair<std::string,std::string>> choices;  // function, offered by
@@ -467,7 +467,7 @@ Model Builder::build() {
   return m;
   }
 
-Model storygraph::buildModel(zenkit::DaedalusVm& vm, const Bytecode& code, const Lifter& lifter, const LineTexts& lines) {
+Model storygraph::buildModel(daedalus::DaedalusVm& vm, const Bytecode& code, const Lifter& lifter, const LineTexts& lines) {
   return Builder(vm, code, lifter, lines).build();
   }
 

@@ -1,0 +1,1 @@
+../../../character-tool/src/character_tool/anim/trans_clip.py

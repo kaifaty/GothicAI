@@ -9,6 +9,7 @@
 #include "world/waypoint.h"
 #include "world/world.h"
 #include "gothic.h"
+#include "settings.h"
 
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -285,7 +286,7 @@ std::string frame(World& world,Npc& npc,const std::string& label) {
       << ",\"walk\":" << ((npc.walkMode()&WalkBit::WM_Walk)!=WalkBit::WM_Run?"true":"false")
       << ",\"air\":" << (npc.isInAir()?"true":"false") << ",\"falling\":" << (npc.isFalling()?"true":"false")
       << ",\"jumping\":" << ((npc.isJump() || npc.isJumpUp())?"true":"false")
-      << ",\"npc_cv_flag\":" << (Gothic::settingsGetI("GAME","npc_character_virtual")?"true":"false")
+      << ",\"npc_cv_flag\":" << (Settings::getI("GAME","npc_character_virtual")?"true":"false")
       << ",\"cv_active\":" << (npc.characterVirtualActive()?"true":"false")
       << ",\"keys_enabled\":" << (status.enabled?"true":"false") << ",\"has_command\":" << (status.hasCommand?"true":"false")
       << ",\"remaining_ms\":" << status.remainingMs << ",\"forward\":" << status.keys.forward

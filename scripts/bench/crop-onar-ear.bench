@@ -1,0 +1,44 @@
+# The rye's stalk and ear seen close (reports/content/2026-11-19-crop-fields/ear.md): the bend of the straw and the
+# ear's card with its grains and awns, and how the card passes into the plain strip with the distance. The second
+# strip of rye of Onar's north field of the set built with seed 7 (59060 2150 -9300, the strip runs along 0.05 0 -1).
+#   TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh crop-onar-ear <out>
+# @timeout 600
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+goto pos 57094 1850 -11100
+# beside the strip's east edge, 1.3 m off it, a man's eyes on the ears along the wall
+cam at 59440 2300 -9150 59290 2262 -9500
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot close-1
+wait 300
+# 3 m off the edge: the card going into the strip along the wall
+cam at 59610 2310 -9050 59290 2250 -9700
+wait 5000
+shot close-3
+wait 300
+# 6 m off: past the card's range
+cam at 59910 2330 -9000 59290 2240 -9900
+wait 5000
+shot close-6
+wait 300
+# from 2 m over the ears, down at 45 degrees
+cam at 59060 2480 -9100 59060 2270 -9300
+wait 5000
+shot over-2
+wait 300
+# clip: a gust through the wall from 3 m
+cam at 59610 2310 -9050 59290 2250 -9700
+foliage wait-gust 4000 -9300
+rec gust-close
+wait 10000
+stop
+wait 500

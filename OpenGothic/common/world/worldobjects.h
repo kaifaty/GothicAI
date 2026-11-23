@@ -7,10 +7,14 @@
 
 #include "bullet.h"
 #include "spaceindex.h"
+#include "physics/dynamicworld.h"
 #include "game/gametime.h"
 #include "game/perceptionmsg.h"
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 #include "objects/vob.h"
+#include "npcsimtier.h"
+#include "animationlod.h"
+#include "mobreservations.h"
 
 class Npc;
 class Item;
@@ -28,6 +32,8 @@ struct PhysicsNoise;
 
 class WorldObjects final {
   public:
+    size_t probeVobBytes() const;
+
     WorldObjects(World &owner);
     ~WorldObjects();
 
@@ -54,8 +60,49 @@ class WorldObjects final {
     void           load(Serialize& fout);
     void           save(Serialize& fout);
     void           tick(uint64_t dt, uint64_t dtPlayer);
+    // Assigns every NPC its simulation tier (npcsimtier.h); tick() calls it
+    // first, loading calls it once the hero, camera and residency are ready.
+    void           updateSimTiers();
+    const NpcSimTiers::Stats& simTierStats() const { return simTiers; }
+    void noteGraphFpLoadResolution() { ++simTiers.fpLoadResolutions; }
+    void noteNpcGraphFallback(bool ground) {
+      if(ground) ++simTiers.graphFallbackGround; else ++simTiers.graphFallbackSegment;
+      }
     void           prepareRagdolls();
     void           syncRagdolls();
+
+    struct PlacedItem {
+      uint32_t zenId = uint32_t(-1);
+      size_t instance = size_t(-1);
+      std::string visual;
+      Tempest::Matrix4x4 origin;
+      Item* item = nullptr;
+      DynamicWorld::PlacedItemCensusEntry validation;
+      };
+    void           finalizePlacedItems();
+    // Creates the temporary census bodies only when the live census runs
+    // (cache miss, disabled cache or check mode); reports that in `bodies`.
+    std::vector<DynamicWorld::PlacedItemCensusEntry> placedCensusVerdicts(
+        const std::vector<DynamicWorld::PlacedItemCandidate>& candidates, bool& bodies);
+    const std::vector<PlacedItem>& placedItemCensus() const { return placedItems; }
+    double         placedItemValidationMilliseconds() const { return placedValidationMs; }
+    struct PlacedCensusLoad {
+      std::string status = "off"; // off, cache, or the miss reason (absent, version, inputs, corrupt)
+      size_t items = 0;
+      bool checked = false;
+      double keyMs = 0, readMs = 0, censusMs = 0, writeMs = 0, checkMs = 0;
+      };
+    const PlacedCensusLoad& placedCensusLoad() const { return placedCensus; }
+    // Body-level equivalence of the census cache paths: every native body,
+    // the owners of movable vob bodies, and every world Item with a body
+    // (index, instance, ZEN-ID, body ID, sleep, matrix).
+    struct PhysicsDigest {
+      DynamicWorld::BodyDigest native;
+      size_t itemBodies = 0;
+      std::string items;
+      };
+    PhysicsDigest  physicsDigest() const;
+    size_t         placedItemsCreatedThisFrame() const { return placedCreatedThisFrame; }
 
     Npc*           addNpc(size_t itemInstance, std::string_view     at);
     Npc*           addNpc(size_t itemInstance, const Tempest::Vec3& at);
@@ -64,6 +111,12 @@ class WorldObjects final {
     void           removeNpc(Npc& npc);
 
     void           updateAnimation(uint64_t dt);
+    // The animation pass and the shadow loop after it pass this NPC over (frozen world, OPENGOTHIC_ANIM_SKIP_FAR).
+    static bool    animationPassSkips(const Npc& npc, const Npc* player, bool skipFar, bool frozen);
+    // Animation LOD: deferred NPCs the camera now sees get their pose (after the
+    // camera tick, before drawing); before a save every deferred NPC does.
+    void           catchUpAnimation();
+    void           syncDeferredAnimation();
 
     bool           isTargeted(Npc& npc);
     Npc*           findHero();
@@ -75,6 +128,9 @@ class WorldObjects final {
 
     uint32_t       npcId(const Npc *ptr) const;
     size_t         npcCount()    const { return npcArr.size(); }
+    // Active and retired (npcInvalid) NPCs: both are kept in a save.
+    template<class F>
+    void           forEachStoredNpc(F&& f) { for(auto& i:npcArr) f(*i); for(auto& i:npcInvalid) f(*i); }
     const Npc&     npc(size_t i) const { return *npcArr[i];    }
     Npc&           npc(size_t i)       { return *npcArr[i];    }
 
@@ -138,6 +194,7 @@ class WorldObjects final {
     void           drawMeleeShadow  (DbgPainter& p) const;
 
     Interactive*   availableMob(const Npc& pl, std::string_view name);
+    MobReservations& mobReservations() { return reservations; }
     void           setMobRoutine(gtime time, std::string_view scheme, int32_t state);
 
     void           sendPassivePerc  (Npc& self, Npc& other, Npc* victim, Item* itm, int32_t perc, std::shared_ptr<HeroDeed> deed = {});
@@ -148,9 +205,24 @@ class WorldObjects final {
     void           resetPositionToTA();
 
   private:
+    friend class World;
+    bool           makeAnimationLodView(AnimationLod::View& view) const;
+    void           pinAnimationLodTargets();
+    bool           mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const;
+    // worldobjects_animtail.cpp: the main-thread steps after the animation pass (world/animationtail.h)
+    static bool    animationTailKeepsShadow();
+    void           updateAnimationTail(uint64_t dt, const Npc* player, bool skipFar, bool frozen);
+    uint32_t       animationLodFrame = 0;
+    uint64_t       animationLodDeferred = 0;
+    std::vector<uint8_t> tailPlan; // per npcArr slot, AnimationTail::Step bits
+    std::vector<Tempest::Vec3> fighters;
     friend struct WorldDataContract;
     void           saveItemPhysics(Serialize& fout) const;
     void           loadItemPhysics(Serialize& fin);
+    void           savePlacedItems(Serialize& fout) const;
+    void           loadPlacedItems(Serialize& fin);
+    void           tickPlacedItems();
+    void           linkPlacedItem(PlacedItem& source, Item& item);
 
     struct MobRoutine {
       gtime   time;
@@ -172,6 +244,8 @@ class WorldObjects final {
       };
 
     World&                             owner;
+    // First: NPCs give their reservations up when they are destroyed.
+    MobReservations                    reservations{owner};
 
     std::vector<CollisionZone*>        collisionZn;
     std::vector<std::unique_ptr<Vob>>  rootVobs;
@@ -181,6 +255,10 @@ class WorldObjects final {
 
     std::vector<StaticObj*>            objStatic;
     std::vector<std::unique_ptr<Item>> itemArr;
+    std::vector<PlacedItem>            placedItems;
+    double                            placedValidationMs = 0;
+    PlacedCensusLoad                  placedCensus;
+    size_t                            placedCreatedThisFrame = 0;
     std::list<MobStates>               routines;
 
     std::list<Bullet>                  bullets;
@@ -190,6 +268,15 @@ class WorldObjects final {
     std::vector<std::unique_ptr<Npc>>  npcInvalid; // dead or invalid TA
     std::vector<std::unique_ptr<Npc>>  npcRemoved; // removed, but may have a dangling references in game
     std::vector<Npc*>                  npcNear;
+    NpcSimTiers::Stats                 simTiers;
+    bool                               campfireBodiesSuspended = false;
+    static bool                       keepsFullSimulation(const Npc& npc);
+    static bool                       keepsNearPolicy(const Npc& npc);
+    void                              updateSimTiers(bool beforeTick);
+    // worldobjects_npctick.cpp: the Npc::tick loop; far NPCs at the rate of world/npcsimtick.h
+    void                              tickNpcs(uint64_t dt, uint64_t dtPlayer, const Npc* pl, bool freeCam, bool frozen);
+    uint64_t                          simTickClock = 0; // the sum of the dt the loop handed out (not dtPlayer)
+    void                              updateNpcPolicies(const Npc* player, const Tempest::Vec3& position);
 
     std::vector<AbstractTrigger*>      triggers;
     std::vector<AbstractTrigger*>      triggersTk;

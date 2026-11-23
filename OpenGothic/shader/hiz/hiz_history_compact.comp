@@ -1,0 +1,143 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+
+#include "common.glsl"
+#include "scene.glsl"
+
+layout(local_size_x = 128) in;
+
+layout(binding = 0, std430) readonly buffer SourcePayload { uvec4 source[]; };
+layout(binding = 1, std430) readonly buffer SourceIndirect { IndirectCmd sourceCmd[]; };
+layout(binding = 2, std430) readonly buffer Status { uint status[]; };
+layout(binding = 3, std430) writeonly buffer TargetPayload { uvec4 target[]; };
+layout(binding = 4, std430) writeonly buffer TargetIndirect { IndirectCmd targetCmd[]; };
+layout(binding = 5, std430) readonly buffer Commands { uvec4 commands[]; }; // first block, block count, flags
+layout(binding = 6, std430) readonly buffer Blocks { uvec2 blocks[]; }; // command, relative start
+layout(binding = 7, std430) buffer Scratch { uint scratch[]; }; // four 32-bit selection masks and destination offset
+
+layout(push_constant, std430) uniform Push {
+  uint phase;
+  uint blockCount;
+  uint commandCount;
+  uint selectEarly;
+  } push;
+
+const uint Early = 2u;
+const uint Rejected = 8u;
+const uint Stride = 5u;
+shared uint masks[4];
+shared uint prefix[128];
+
+void selectBlock(uint blockId, uint lane) {
+  const uvec2 block = blocks[blockId];
+  const IndirectCmd command = sourceCmd[block.x];
+  const uint word = lane / 32u;
+  if(block.y >= command.instanceCount) {
+    if(lane < 4u)
+      scratch[blockId * Stride + lane] = 0u;
+    return;
+    }
+
+  if(lane < 4u)
+    masks[lane] = 0u;
+  barrier();
+
+  if(block.y + lane < command.instanceCount) {
+    const uint id = source[command.writeOffset + block.y + lane].w & 0xffffffu;
+    const uint flags = id != 0u ? status[id - 1u] : 0u;
+    const bool keep = push.selectEarly != 0u ? (flags & Early) != 0u : (flags & Rejected) == 0u;
+    if(keep)
+      atomicOr(masks[word], 1u << (lane % 32u));
+    }
+  barrier();
+  if(lane < 4u)
+    scratch[blockId * Stride + lane] = masks[lane];
+  }
+
+void scanCommand(uint id, uint lane) {
+  IndirectCmd command = sourceCmd[id];
+  const uvec4 meta = commands[id];
+  const uint blockCount = min(meta.y, (command.instanceCount + 127u) / 128u);
+  if(blockCount == 0u) {
+    if(lane == 0u) {
+      if((meta.z & 1u) != 0u)
+        command.instanceCount = 0u;
+      targetCmd[id] = command;
+      }
+    return;
+    }
+
+  // Each lane lays out a consecutive span; a workgroup scan adds its base
+  // without a single invocation serializing the largest bindless command.
+  const uint blocksPerLane = (blockCount + 127u) / 128u;
+  const uint begin = lane * blocksPerLane;
+  const uint end = min(begin + blocksPerLane, blockCount);
+  uint count = 0u;
+  for(uint i = begin; i < end; ++i) {
+    const uint at = (meta.x + i) * Stride;
+    scratch[at + 4u] = count;
+    count += uint(bitCount(scratch[at + 0u]) + bitCount(scratch[at + 1u]) +
+                  bitCount(scratch[at + 2u]) + bitCount(scratch[at + 3u]));
+    }
+  prefix[lane] = count;
+  barrier();
+
+  for(uint step = 1u; step < 128u; step <<= 1u) {
+    const uint at = (lane + 1u) * step * 2u - 1u;
+    if(at < 128u)
+      prefix[at] += prefix[at - step];
+    barrier();
+    }
+  if(lane == 0u) {
+    command.instanceCount = prefix[127u];
+    targetCmd[id] = command;
+    prefix[127u] = 0u;
+    }
+  barrier();
+  for(uint step = 64u; step > 0u; step >>= 1u) {
+    const uint at = (lane + 1u) * step * 2u - 1u;
+    if(at < 128u) {
+      const uint left = prefix[at - step];
+      prefix[at - step] = prefix[at];
+      prefix[at] += left;
+      }
+    barrier();
+    }
+
+  const uint base = command.writeOffset + prefix[lane];
+  for(uint i = begin; i < end; ++i)
+    scratch[(meta.x + i) * Stride + 4u] += base;
+  }
+
+void scatterBlock(uint blockId, uint lane) {
+  const uint at = blockId * Stride;
+  const uint word = lane / 32u;
+  const uint flag = 1u << (lane % 32u);
+  const uint mask = scratch[at + word];
+  if((mask & flag) == 0u)
+    return;
+
+  uint offset = scratch[at + 4u] + uint(bitCount(mask & (flag - 1u)));
+  for(uint i = 0u; i < word; ++i)
+    offset += uint(bitCount(scratch[at + i]));
+  const uvec2 block = blocks[blockId];
+  target[offset] = source[sourceCmd[block.x].writeOffset + block.y + lane];
+  }
+
+void main() {
+  if(push.phase == 1u) {
+    const uint commandId = gl_WorkGroupID.x;
+    if(commandId < push.commandCount)
+      scanCommand(commandId, gl_LocalInvocationID.x);
+    return;
+    }
+
+  const uint blockId = gl_WorkGroupID.x;
+  if(blockId >= push.blockCount)
+    return;
+  if(push.phase == 0u)
+    selectBlock(blockId, gl_LocalInvocationID.x);
+  else
+    scatterBlock(blockId, gl_LocalInvocationID.x);
+  }

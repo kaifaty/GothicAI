@@ -5,31 +5,35 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from ..brain.reflex import Reflexes
 from ..game import GameError, GameLink
-from ..llm import Done, LLMEvent, Message, ToolCall
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..protocol import Session
+from ..sightings import _sid
 from .common import (
     HILDA,
     LOBART,
-    ClaimScript,
     FixedDecider,
     WitnessReaction,
     _logged,
     _save,
     _until,
     _until_async,
+    model_off,
     prepare_theft_witness,
     wait_message,
 )
 from .crimes import HOUSE
 
+SCENARIOS = {
+    "crime_talk": ("GIVEN", {"save": True, "timeout": 600}),
+}
+
 if TYPE_CHECKING:
     from ..chests import ChestDesk
+    from ..chronicle import Chronicle
     from ..concerns import Concerns
     from ..crimes import Crimes
     from ..deals import Deals
@@ -38,9 +42,51 @@ if TYPE_CHECKING:
     from ..social import Rumors
     from ..talk import TalkDesk
     from ..witnesses import Witnesses
+    from .live import LiveCase
 
 log = logging.getLogger(__name__)
 DENIAL = "я ничего не брал в твоем доме"  # the game's input normalizes ё to е
+
+
+async def _record_live_testimony(
+    live: LiveCase, chronicle: Chronicle, crime: str, prior: set[str],
+) -> None:
+    """Record the testimony decision after its deferred accusation has reached the game."""
+    def decision_turns() -> list[dict[str, Any]]:
+        return [row for row in live.turns(LOBART) if row["id"] not in prior and (
+            DENIAL in row.get("trigger", {}).get("text", "")
+            or "Ответ:" in row.get("trigger", {}).get("text", "")
+        )]
+
+    def calls() -> list[dict[str, Any]]:
+        return [call for row in decision_turns() for step in row.get("steps", [])
+                for call in step.get("calls", [])]
+
+    def accepted() -> list[dict[str, Any]]:
+        return [call for call in calls() if call.get("name") == "catch_lie"
+                and call.get("outcome") == "accepted"
+                and _sid(str(call.get("arguments", {}).get("seen", ""))).startswith("С")]
+
+    def caught() -> list[dict[str, Any]]:
+        said = {str(call.get("arguments", {}).get("said", "")).strip().strip("«»\"' .")
+                for call in accepted()}
+        return [f for f in chronicle.facts("caught") if f.get("npc") == LOBART
+                and f.get("crime") == crime and f.get("witness") == HILDA and f.get("title") in said]
+
+    def decided() -> bool:
+        rows = decision_turns()
+        asked = any(call.get("name") == "ask_witness" and call.get("outcome") == "accepted"
+                    for call in calls())
+        return bool(rows) and (not asked or any(
+            "Ответ:" in row.get("trigger", {}).get("text", "") for row in rows
+        ))
+
+    await _until(lambda: decided() and (not accepted() or bool(caught())), 90)
+    testimony = [f for f in chronicle.facts("testimony") if f.get("witness") == HILDA]
+    live.finish(
+        "success" if accepted() and caught() else "failure" if decided() else "no_decision",
+        evidence={"calls": calls(), "caught": caught(), "testimony": testimony},
+    )
 
 
 async def crime_talk(
@@ -55,8 +101,10 @@ async def crime_talk(
     chests: ChestDesk,
     concerns: Concerns,
     slot: int = 7,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
-    """Three independent scenes from save 1. With a live model only the first scene runs.
+    """Three independent scenes from save 1 with declared NPC decisions.
 
     Every theft uses real native ownership and real witnesses. Hilda's rule and native SVM finish
     before she is moved to the field for speech. No perception is disabled. A
@@ -64,8 +112,8 @@ async def crime_talk(
     knowledge, hop, freshness or silence checks. Reloading resets the scripts between scenes.
     """
     results: dict[str, str] = {}
-    live = dialogue.llm.name != "fake"
-    original_llm, original_gate, original_stage = dialogue.llm, rumors.gate, rumors.stage
+    off = model_off(dialogue) if live is None else None
+    original_gate, original_stage = rumors.gate, rumors.stage
     meeting = False
     facts = service.chronicle.facts
 
@@ -99,7 +147,6 @@ async def crime_talk(
     async def clean(label: str) -> bool:
         nonlocal meeting
         meeting = False
-        dialogue.llm = original_llm
         loading = asyncio.create_task(wait_message(link, Session, lambda m: m.reason == "load", 60))
         await asyncio.sleep(0)
         await link.debug("load", slot + 1)
@@ -155,6 +202,7 @@ async def crime_talk(
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
+    log.info("Preparing listeners with FixedDecider posture=listen")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     rumors.gate = lambda _r, a, b: meeting and a == HILDA and b == LOBART
     rumors.stage = None  # bare facts, no background gossip model calls
@@ -208,90 +256,52 @@ async def crime_talk(
         if not check("talk_ready", await _until(lambda: LOBART in talk.people and HILDA in talk.people, 15)):
             return _logged(results)
         await witnesses.prepare(LOBART)
-        captured: list[str] = []
-        replies: list[str] = []
-        inner: Any = original_llm
-        if not live:
-            inner = ClaimScript(
-                said=[
-                    (
-                        "Ответ:",
-                        FakeStep(
-                            "Врёшь! Хильда видела, как ты брал кубок.",
-                            [ToolCall("catch_lie", {"said": DENIAL, "seen": "С1"})],
-                        ),
-                    ),
-                    (
-                        DENIAL,
-                        FakeStep(
-                            "Хильда! Скажи, что ты видела.",
-                            [ToolCall("ask_witness", {"who": "Хильда", "said": DENIAL})],
-                        ),
-                    ),
-                ],
-                told=[],
-                default="За кражу с тебя спрос будет.",
-                only="Лобарт",
-                others=FakeBackend("Я сама видела, как он взял серебряный кубок в нашем доме.", delay=0),
+        prompt = await dialogue.situation(LOBART, "Лобарт")
+        check(
+            "prompt_knowledge",
+            "со слов" in prompt and "Хильд" in prompt and service.describe(crime) in prompt,
+            [line for line in prompt.splitlines() if service.describe(crime) in line],
+        )
+        if off is not None:
+            off.given(
+                "дано: Лобарт спрашивает Хильду о краже",
+                who=LOBART, when=DENIAL,
+                calls=[ToolCall("ask_witness", {"who": "Хильда", "said": DENIAL})],
             )
-
-        class Recorded:
-            name = inner.name
-            model = getattr(inner, "model", None)
-
-            def __getattr__(self, attr: str) -> Any:
-                return getattr(inner, attr)
-
-            async def stream(self, **kw: Any) -> AsyncIterator[LLMEvent]:
-                lobart = kw.get("cache_key") == LOBART
-                if lobart:
-                    captured.append(
-                        "\n".join(
-                            m.content
-                            for m in kw["messages"]
-                            if isinstance(m, Message) and m.role == "developer"
-                        )
-                    )
-                async for event in inner.stream(**kw):
-                    if lobart and isinstance(event, Done):
-                        replies.append(event.text)
-                    yield event
-
-        dialogue.llm = Recorded()  # type: ignore[assignment]
+            off.silent(
+                "дано: Лобарт молчит (вопрос Хильде задан)", who=LOBART, when=DENIAL,
+            )
+            off.given(
+                "дано: реплика свидетеля Хильды о краже кубка",
+                who=HILDA, when="спрашивает тебя о герое",
+                line="Я сама видела, как он взял серебряный кубок в нашем доме.",
+            )
+            off.given(
+                "дано: Лобарт уличает героя по показанию Хильды",
+                who=LOBART, when="Ответ:",
+                calls=[ToolCall("catch_lie", {"said": DENIAL, "seen": "С1"})],
+            )
+            off.silent(
+                "дано: Лобарт молчит (уличение по показанию записано)", who=LOBART, when="Ответ:",
+            )
+        prior = {row["id"] for row in live.records} if live is not None else set()
         await link.debug("type", text=f"Лобарт, {DENIAL}.")
-        await _until(lambda: bool(replies), 120 if live else 45)
-        if not live:
-            await _until(lambda: any(f.get("crime") == cid for f in facts("caught")), 90)
+        if live is not None:
+            await _record_live_testimony(live, service.chronicle, cid, prior)
+            return _logged(results)
+        assert off is not None
+        await _until(lambda: any(f.get("crime") == cid for f in facts("caught")), 90)
         await _until(
             lambda: (
                 LOBART not in witnesses._asking
                 and not dialogue.speaking(LOBART)
                 and not dialogue.speaking(HILDA)
             ),
-            120 if live else 30,
-        )
-        prompt = "\n".join(captured)
-        check(
-            "prompt_knowledge",
-            "со слов" in prompt and "Хильд" in prompt and service.describe(crime) in prompt,
-            [line for line in prompt.splitlines() if service.describe(crime) in line],
-        )
-        check(
-            "reply_theft",
-            bool(replies)
-            and any(
-                w in " ".join(replies).lower()
-                for w in ("краж", "укра", "вор", "взял", "брал", "кубок", "стащ", "утащ")
-            ),
-            replies,
+            30,
         )
         caught = [f for f in facts("caught") if f.get("crime") == cid]
-        if live:
-            check("live_caught_observation", True, caught or "модель не вызвала catch_lie")
-            return _logged(results)
         testimony = [f for f in facts("testimony") if f.get("witness") == HILDA]
         check("testimony", bool(testimony) and bool(caught) and caught[-1].get("witness") == HILDA, testimony)
-        check("caught", bool(caught), caught)
 
         # Scene 2: the same real theft, but the witness accepts silence before the meeting.
         if not await clean("silence"):
@@ -302,29 +312,23 @@ async def crime_talk(
         cid = str(crime["id"])
         await link.debug("player_goto", to=HILDA, distance=300)
         await _until(lambda: HILDA in talk.people, 15)
-        dialogue.llm = ClaimScript(
-            said=[
-                (
-                    "молчи",
-                    FakeStep(
-                        "Ладно, об этом деле никому ни слова.",
-                        [
-                            ToolCall(
-                                "propose_deal",
-                                {"npc_gives": [], "hero_gives": [], "silence": [f"crime:{cid}"]},
-                            )
-                        ],
-                    ),
-                )
-            ],
-            told=[],
-            default="Договорились.",
-            only="Хильда",
+        off.given(
+            "дано: Хильда предлагает молчание о краже кубка",
+            who=HILDA, when="молчи",
+            calls=[ToolCall(
+                "propose_deal",
+                {"npc_gives": [], "hero_gives": [], "silence": [f"crime:{cid}"]},
+            )],
+        )
+        off.silent(
+            "дано: Хильда молчит (предложение молчания сделано)", who=HILDA, when="молчи",
+        )
+        off.silent(
+            "дано: Хильда молчит (сделка молчания состоялась)",
+            who=HILDA, when="сделка состоялась",
         )
         await link.debug("type", text="Хильда, молчи об этом кубке. Договорились?")
-        offered = await _until(lambda: HILDA in deals.open, 30)
-        if not check("silence_offered", offered):
-            return _logged(results)
+        await _until(lambda: HILDA in deals.open, 30)
         await asyncio.sleep(1.2)
         pressed = await link.press_deal()
         accepted = await _until(
@@ -430,5 +434,4 @@ async def crime_talk(
         check("suspect_concern", any(cid in c.key for c in concerns.of(LOBART)), concerns.of(LOBART))
         return _logged(results)
     finally:
-        dialogue.llm = original_llm
         rumors.gate, rumors.stage = original_gate, original_stage

@@ -1,0 +1,31 @@
+# Native routine recovery: default physics, fresh NEWWORLD, noon per case.
+# Positions are grounded before KO; distances use all waypoints, not freepoints.
+seed 73013
+cheat god
+set time 12 0
+# NW_CITY_CITYHALL_08; nearest-point blocker: landscape
+routine-return case city_garden VLK_411_GAERTNER 18280.6562 913.695129 -2927.90552 garden
+# NW_CITY_CITYHALL_09; nearest-point blocker: landscape
+routine-return case city_wall VLK_4005_ARBEITER 17446.0234 1034.33643 -4775.66455 slope
+# NW_CITY_WAY_TO_SHIP_FISCHER_06; nearest-point blocker: none
+routine-return case harbour_shore VLK_4301_ADDON_FARIM -10464.127 -635.595398 -6971.15723 shore
+# NW_CITY_HABOUR_12; nearest-point blocker: landscape
+routine-return case harbour_wall VLK_443_ARBEITER -1385.10803 -176.951096 4372.43359 slope
+# Xardas tower interior, below NW_XARDAS_START
+routine-return case tower_room NONE_100_XARDAS 29741 4389 -16715 house
+# NW_FARM1_FIELD_04; nearest-point blocker: none
+routine-return case farm_field BAU_952_VINO 9044.66602 1095.50256 -12661.0635 field
+# NW_FARM1_FIELD_09; supported hillside near the farm stable
+routine-return case farm_stable BAU_951_HILDA 14900 2746.37256 -19100 slope
+# NW_FARM1_CITYWALL_01; nearest-point blocker: NW_NATURE_BIGTREE_356P.MRM
+routine-return case forest_tree MIL_310_STADTWACHE 6516.90967 511.533173 -9258.83691 forest
+# NW_SHRINE_MONSTER; nearest-point blocker: NW_NATURE_HOHETANNE_91P.MRM
+routine-return case forest_pine VLK_4303_ADDON_EROL 35946.6875 3958.80737 1981.57922 forest
+# NW_FARM2_TO_TAVERN_09_MONSTER3; nearest-point blocker: NW_NATURE_FENCE_01.3DS
+routine-return case fenced_field BDT_10304_ADDON_RANGERBANDIT_M 31971.8516 4298.0498 -7999.24463 fenced
+# NW_FARM2_OUT_02; nearest-point blocker: landscape
+routine-return case below_cliff BAU_940_AKIL 28985.0254 2488.54932 11537.8174 slope
+# NW_FARM1_CONNECT_XARDAS; nearest-point blocker: none
+routine-return case farm_edge BAU_950_LOBART 13440.7832 1584.53284 -21502.2363 field
+# Repeat each failed case once with the same fixture and untouched native AI.
+routine-return retry-failures

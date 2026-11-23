@@ -1,0 +1,77 @@
+# Fog shafts with -vsm 1: the harbour at 17:00 in eight yaws, the market at 9:00 in four.
+# Run as the `shot` place of scripts/perf.sh (views 1-4 carry the perf samples it checks).
+seed 73013
+cheat god
+set time 17 0
+cadence normal
+overlay off
+ui off
+view full
+goto pos 5391 320 -5822
+watch player
+cam look 300
+cam world 850 300 0
+wait 10000
+cam hold
+shot h000
+perf sample perf-shot/view-1
+wait 8000
+perf stop
+cam world 850 300 90
+wait 500
+cam hold
+shot h090
+perf sample perf-shot/view-2
+wait 8000
+perf stop
+cam world 850 300 180
+wait 500
+cam hold
+shot h180
+perf sample perf-shot/view-3
+wait 8000
+perf stop
+cam world 850 300 270
+wait 500
+cam hold
+shot h270
+perf sample perf-shot/view-4
+wait 8000
+perf stop
+cam world 850 300 45
+wait 500
+cam hold
+shot h045
+cam world 850 300 135
+wait 500
+cam hold
+shot h135
+cam world 850 300 225
+wait 500
+cam hold
+shot h225
+cam world 850 300 315
+wait 500
+cam hold
+shot h315
+set time 9 0
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+cam look 200
+cam world 700 280 0
+wait 10000
+cam hold
+shot m000
+cam world 700 280 90
+wait 500
+cam hold
+shot m090
+cam world 700 280 180
+wait 500
+cam hold
+shot m180
+cam world 700 280 270
+wait 500
+cam hold
+shot m270
+wait 1000

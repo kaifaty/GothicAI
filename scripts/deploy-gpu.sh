@@ -6,17 +6,22 @@
 #                                              settings changed are restarted
 #   scripts/deploy-gpu.sh voxtral|voxcpm       sync the settings, copy deploy/<name> and run its install.sh
 #   scripts/deploy-gpu.sh decider              the same for the npc decision service (all of decider-service/)
+#   scripts/deploy-gpu.sh embed                the same for NPC memory embeddings (all of embed-service/)
+#   scripts/deploy-gpu.sh laughter             the same for laughter detection (all of laughter-service/)
+#   scripts/deploy-gpu.sh a2f                  the same for the face track from speech (all of a2f-service/)
 #   scripts/deploy-gpu.sh gemma                the same for the quick model of fights (server/deploy/gemma)
 #   scripts/deploy-gpu.sh aligner              copy asr-service/deploy/aligner and run its install.sh: the
 #                                              forced aligner, a command per job (no service, no restart)
-#   scripts/deploy-gpu.sh dub                  copy shorts/deploy/dub and run its install.sh: voice cloning
-#                                              for gothic-shorts dub through gothic-voxcpm
+# Dub deployment moved to scripts/deploy-dub.sh in the private kaifaty/gothic-shorts repository.
 #
 # Settings come from the nearest .env at or above the repository (real environment variables win):
 #   GOTHIC_GPU_SSH       ssh destination of the GPU server (required)
 #   GOTHIC_VOXTRAL_URL   -> VOXTRAL_HOST, VOXTRAL_PORT: the server listens where the ASR service connects
 #   GOTHIC_VOXCPM_URL    -> VOXCPM_HOST, VOXCPM_PORT: the same for the TTS service
 #   GOTHIC_DECIDER_URL   -> DECIDER_HOST, DECIDER_PORT: the same for the AI server's npc planner
+#   GOTHIC_EMBED_URL     -> EMBED_HOST, EMBED_PORT: the same for NPC memory embeddings
+#   GOTHIC_LAUGHTER_URL  -> LAUGHTER_HOST, LAUGHTER_PORT: the same for laughter detection
+#   GOTHIC_A2F_URL       -> A2F_HOST, A2F_PORT: the same for the face track from speech
 #   GOTHIC_QUICK_LLM_URL -> GEMMA_HOST, GEMMA_PORT: the same for the AI server's quick model of fights
 #   GPU_<NAME>=value     -> <NAME>=value, for anything else the server needs (e.g. GPU_HF_TOKEN)
 # Nothing else is sent: API keys of the services on this machine stay here.
@@ -60,6 +65,9 @@ render_env() {
   listen_lines VOXTRAL GOTHIC_VOXTRAL_URL
   listen_lines VOXCPM GOTHIC_VOXCPM_URL
   listen_lines DECIDER GOTHIC_DECIDER_URL
+  listen_lines EMBED GOTHIC_EMBED_URL
+  listen_lines LAUGHTER GOTHIC_LAUGHTER_URL
+  listen_lines A2F GOTHIC_A2F_URL
   listen_lines GEMMA GOTHIC_QUICK_LLM_URL
   local name value
   { env; [ -z "$ENV_FILE" ] || sed -E 's/^[[:space:]]*export[[:space:]]+//' "$ENV_FILE"; } \
@@ -79,9 +87,9 @@ case "${1:-}" in
     render_env
     exit 0
     ;;
-  env | voxtral | voxcpm | decider | gemma | aligner | dub) ;;
+  env | voxtral | voxcpm | decider | embed | laughter | a2f | gemma | aligner) ;;
   *)
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac
@@ -113,7 +121,7 @@ sync_env() {
 needs_restart() {
   local prefix="$1" changed="$2"
   printf '%s\n' "$changed" | grep -q -E "^$prefix" && return 0
-  printf '%s\n' "$changed" | grep -v -E '^(VOXTRAL|VOXCPM|DECIDER|GEMMA)_' | grep -q .
+  printf '%s\n' "$changed" | grep -v -E '^(VOXTRAL|VOXCPM|DECIDER|EMBED|LAUGHTER|A2F|GEMMA)_' | grep -q .
 }
 
 case "${1:-}" in
@@ -124,7 +132,7 @@ case "${1:-}" in
       echo "not restarting; running services pick the settings up on their next restart" >&2
       exit 0
     fi
-    for svc in voxtral voxcpm decider gemma; do
+    for svc in voxtral voxcpm decider embed laughter a2f gemma; do
       prefix="$(echo "$svc" | tr '[:lower:]' '[:upper:]')_"
       if needs_restart "$prefix" "$changed" && remote "systemctl --user is-active --quiet gothic-$svc"; then
         echo "restarting gothic-$svc" >&2
@@ -150,12 +158,6 @@ case "${1:-}" in
     # its own audio.cpp build next to the scripts; nothing runs until gothic-shorts align calls align.sh
     remote "~/$REMOTE_DIR/aligner/install.sh"
     ;;
-  dub)
-    remote "mkdir -p ~/$REMOTE_DIR/dub"
-    # the scripts only; the server's own .venv stays
-    rsync -a --exclude .venv --exclude __pycache__ "$ROOT/shorts/deploy/dub/" "$SSH_DEST:$REMOTE_DIR/dub/"
-    remote "~/$REMOTE_DIR/dub/install.sh"
-    ;;
   decider)
     sync_env >/dev/null
     remote "mkdir -p ~/$REMOTE_DIR/decider"
@@ -163,5 +165,30 @@ case "${1:-}" in
     rsync -a --delete --exclude .venv --exclude __pycache__ --exclude .pytest_cache --exclude .ruff_cache \
       "$ROOT/decider-service/" "$SSH_DEST:$REMOTE_DIR/decider/"
     remote "set -a; . ~/$REMOTE_ENV; set +a; ~/$REMOTE_DIR/decider/deploy/install.sh"
+    ;;
+  embed)
+    sync_env >/dev/null
+    remote "mkdir -p ~/$REMOTE_DIR/embed"
+    # the whole package; the server's own .venv stays
+    rsync -a --delete --exclude .venv --exclude __pycache__ --exclude .pytest_cache --exclude .ruff_cache \
+      "$ROOT/embed-service/" "$SSH_DEST:$REMOTE_DIR/embed/"
+    remote "set -a; . ~/$REMOTE_ENV; set +a; ~/$REMOTE_DIR/embed/deploy/install.sh"
+    ;;
+  laughter)
+    sync_env >/dev/null
+    remote "mkdir -p ~/$REMOTE_DIR/laughter"
+    # the whole package; the server's own .venv stays
+    rsync -a --delete --exclude .venv --exclude __pycache__ --exclude .pytest_cache --exclude .ruff_cache \
+      "$ROOT/laughter-service/" "$SSH_DEST:$REMOTE_DIR/laughter/"
+    remote "set -a; . ~/$REMOTE_ENV; set +a; ~/$REMOTE_DIR/laughter/deploy/install.sh"
+    ;;
+  a2f)
+    sync_env >/dev/null
+    remote "mkdir -p ~/$REMOTE_DIR/a2f-service"
+    # the whole package; the server's own .venv and native build stay. The SDK, TensorRT and the
+    # model stay in ~/gothic-ai/a2f (a2f-service/README.md)
+    rsync -a --delete --exclude .venv --exclude /native/build --exclude __pycache__ --exclude .pytest_cache \
+      --exclude .ruff_cache "$ROOT/a2f-service/" "$SSH_DEST:$REMOTE_DIR/a2f-service/"
+    remote "set -a; . ~/$REMOTE_ENV; set +a; ~/$REMOTE_DIR/a2f-service/deploy/install.sh"
     ;;
 esac

@@ -1,0 +1,938 @@
+"""Small CSV fixtures for frame cadence, dynamic zones and repeat comparisons."""
+import csv
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+
+import pytest
+
+
+SPEC = importlib.util.spec_from_file_location("perf_report", Path(__file__).parents[1] / "perf_report.py")
+report = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(report)
+sys.path.insert(0, str(Path(__file__).parents[1]))
+import perf_content as content
+
+
+def test_perf_checkout_paths_are_stable_and_isolated(tmp_path):
+    script = Path(__file__).parents[1] / "perf.sh"
+    roots = [tmp_path / name / "worktrees/task/gothic" for name in ("a", "b")]
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"; perf_checkout "$2"; perf_checkout "$2"; perf_checkout "$3"',
+         "bash", str(script), *map(str, roots)], check=True, capture_output=True, text=True)
+    first, again, second = result.stdout.splitlines()
+    assert first == again
+    assert re.fullmatch(r"task-[0-9a-f]{12}", first)
+    assert first != second
+    assert len({f"perf-stand/{name}/source/OpenGothic/build-perf" for name in (first, second)}) == 2
+
+
+def test_perf_source_fingerprint_hashes_content_without_builds(tmp_path):
+    script = Path(__file__).parents[1] / "perf.sh"
+    engine = tmp_path / "OpenGothic"
+    engine.mkdir()
+    source = engine / "main.cpp"
+    source.write_text("original")
+
+    def fingerprint():
+        return subprocess.check_output(
+            ["bash", "-c", 'source "$1"; ROOT="$2"; source_fingerprint',
+             "bash", str(script), str(tmp_path)], text=True).strip()
+
+    original = fingerprint()
+    for name in ("build-perf", "lib/ZenKit/build", "cmake-build-debug", ".git"):
+        directory = engine / name
+        directory.mkdir(parents=True)
+        (directory / "output").write_text("ignored")
+    os.utime(source, (1, 1))
+    assert fingerprint() == original
+    source.write_text("changed")
+    assert fingerprint() != original
+    source.write_text("original")
+    added = engine / "new.cpp"
+    added.write_text("new")
+    assert fingerprint() != original
+    added.unlink()
+    assert fingerprint() == original
+
+
+@pytest.mark.parametrize("built", ("missing", "foreign", "stale", "match", "explicit_mismatch", "explicit_match"))
+def test_perf_no_build_rejects_mismatched_run_before_launch(tmp_path, built):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    shutil.copyfile(Path(__file__).parents[1] / "perf.sh", scripts / "perf.sh")
+    build = tmp_path / "OpenGothic/build-perf"
+    build.mkdir(parents=True)
+    source = tmp_path / "OpenGothic/main.cpp"
+    source.write_text("before")
+    fingerprint = subprocess.check_output(
+        ["bash", "-c", 'source "$1"; ROOT="$2"; source_fingerprint',
+         "bash", str(scripts / "perf.sh"), str(tmp_path)], text=True).strip()
+    if built != "missing":
+        (build / "source_fingerprint").write_text(("b" * 64 if built == "foreign" else fingerprint) + "\n")
+    if built in ("stale", "explicit_match"):
+        source.write_text("after")
+    environment = dict(os.environ, NO_BUILD="1", GAME_BIN=str(build / "missing-game"))
+    environment.pop("PERF_SOURCE_FINGERPRINT", None)
+    if built == "explicit_mismatch":
+        environment["PERF_SOURCE_FINGERPRINT"] = "b" * 64
+    elif built == "explicit_match":
+        environment["PERF_SOURCE_FINGERPRINT"] = fingerprint
+    result = subprocess.run(
+        ["bash", str(scripts / "perf.sh"), "__run", str(tmp_path / "run"), "interior"],
+        env=environment,
+        capture_output=True, text=True, timeout=5)
+    assert result.returncode == 2
+    if built in ("match", "explicit_match"):
+        assert "does not match run" not in result.stderr
+        assert "missing game executable" in result.stderr
+    else:
+        assert "does not match run" in result.stderr
+        assert "rerun without NO_BUILD=1" in result.stderr
+    assert not (tmp_path / "run/metadata.json").exists()
+
+
+def test_perf_remote_build_rejects_changed_tree_before_cmake(tmp_path):
+    script = Path(__file__).parents[1] / "perf.sh"
+    (tmp_path / "OpenGothic/build-perf").mkdir(parents=True)
+    (tmp_path / "OpenGothic/main.cpp").write_text("before")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/ryzen-build.sh").write_text("RYZEN_CMAKE_FLAGS=(-DTEST=ON)\n")
+    sdk = tmp_path / "gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
+    for name in ("include/vulkan/vulkan.h", "lib/libvulkan.so"):
+        path = sdk / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    result = subprocess.run(
+        ["bash", "-c", r'''
+source "$1"
+ROOT="$2" BUILD="$2/OpenGothic/build-perf" PERF_REMOTE=1
+PERF_SOURCE_FINGERPRINT="$(source_fingerprint)"
+printf '%s\n' "$PERF_SOURCE_FINGERPRINT" >"$BUILD/source_fingerprint"
+printf changed >"$ROOT/OpenGothic/main.cpp"
+cmake() { touch "$ROOT/cmake-called"; return 1; }
+build_game "$ROOT/logs"
+''', "bash", str(script), str(tmp_path)],
+        env=dict(os.environ, HOME=str(tmp_path)), capture_output=True, text=True, timeout=5)
+    assert not (tmp_path / "cmake-called").exists(), result.stderr
+    assert result.returncode == 2
+    assert "uploaded source_fingerprint" in result.stderr
+    assert "does not match run" in result.stderr
+    assert not (tmp_path / "OpenGothic/build-perf/source_fingerprint").exists()
+
+
+@pytest.mark.parametrize("cache", (None, "/custom/base-cache"))
+def test_remote_perf_uses_setup_cache_unless_caller_overrides(monkeypatch, cache):
+    source = (Path(__file__).parents[1] / "perf.sh").read_text()
+    collect = "GAME_ENV=()" + source.split("    GAME_ENV=()", 1)[1].split("    remote env", 1)[0]
+    remote = "REMOTE_ENV=(" + source.split("    REMOTE_ENV=(", 1)[1].split("\n    if [[", 1)[0]
+    monkeypatch.delenv("OPENGOTHIC_BASE_CACHE", raising=False)
+    if cache is not None:
+        monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", cache)
+    harness = r'''
+set -euo pipefail
+for name in PERF_VID_RES PERF_INI PERF_WINDOW PERF_REPEAT PERF_WAIT PERF_WARMUP PERF_WARMUP_MAX PERF_ARGS PERF_ENV PERF_COMMIT PERF_DIRTY PERF_SOURCE_FINGERPRINT; do
+  printf -v "$name" '%s' fixture
+done
+TASK=/remote/task
+''' + collect + remote + '\nprintf "%s\\0" "${REMOTE_ENV[@]}"\n'
+    result = subprocess.run(["bash", "-c", harness], check=True, capture_output=True)
+    environment = dict(value.decode().split("=", 1) for value in result.stdout.split(b"\0") if value)
+    assert environment.get("OPENGOTHIC_BASE_CACHE") == cache
+
+
+@pytest.mark.parametrize("stalled_games", (0, 1, 2))
+def test_perf_stall_guard(tmp_path, stalled_games):
+    # The first `stalled_games` games make 20 frames in 10 s (2 FPS), the next one 21.
+    source = (Path(__file__).parents[1] / "perf.sh").read_text()
+    run_game = source[source.index("\nrun_game() {"):source.index("\n# The GPU clock journal runs")]
+    scripts = tmp_path / "scripts"
+    scenario = scripts / "bench/perf-market.bench"
+    scenario.parent.mkdir(parents=True)
+    (scripts / "base-ensure.sh").touch()
+    metadata = tmp_path / "metadata.json"
+    metadata.write_text(json.dumps({"requested_window": "2560x1440", "game_args": [], "game_env": {}}))
+    game = tmp_path / "game"
+    game.write_text(f"#!{sys.executable}\n" + r'''
+import json, os, time
+from pathlib import Path
+
+leaf = Path(os.environ["OPENGOTHIC_BENCH_OUT"])
+games = Path(os.environ["FAKE_GAMES"])
+started = int(games.read_text()) if games.exists() else 0
+games.write_text(str(started + 1))
+step = 20 if started < int(os.environ["FAKE_STALLED_GAMES"]) else 21
+for interval in range(3):
+    temp = leaf / "heartbeat.tmp"
+    temp.write_text(json.dumps({"elapsed_seconds": 10 * interval, "frame": step * interval}))
+    temp.replace(leaf / "heartbeat.json")
+    time.sleep(1)
+''')
+    game.chmod(0o755)
+    leaf = tmp_path / "repeat-1"
+    games = tmp_path / "games"
+    environment = dict(os.environ, GAME_BIN=str(game), GOTHIC_DIR=str(tmp_path),
+                       PERF_GPU_STAMP=str(tmp_path / "stamp"), FAKE_STALLED_GAMES=str(stalled_games),
+                       FAKE_GAMES=str(games), PERF_VID_RES="0", PERF_INI="")
+    environment.pop("PERF_REMOTE", None)
+    result = subprocess.run(
+        ["bash", "-c", run_game + '\nOUT="$1"\nrun_game measure "$2" "$3" market 1',
+         "bash", str(tmp_path), str(scenario), str(leaf)],
+        env=environment, capture_output=True, text=True, timeout=20)
+
+    failure = "market stayed at or below 2 FPS for two heartbeat intervals"
+    # One restart at most: the stalled game's files move aside, the last game's stay in the run folder.
+    assert int(games.read_text()) == min(stalled_games, 1) + 1
+    assert json.loads((leaf / "heartbeat.json").read_text())["elapsed_seconds"] == 20
+    assert (leaf / "stalled-1/game.log").exists() == (stalled_games > 0)
+    assert (leaf / "stalled-1/run/Gothic.ini").exists() == (stalled_games > 0)
+    assert not (leaf / "stalled-2").exists()
+    assert (f"perf: stand stall: {failure}; restarting the game once" in result.stderr) == (stalled_games > 0)
+    if stalled_games == 2:
+        assert result.returncode == 1
+        assert f"stand failure: {failure}" in result.stderr
+        assert not (leaf / "metadata.json").exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        assert json.loads((leaf / "metadata.json").read_text())["stall_restarts"] == stalled_games
+
+
+@pytest.mark.parametrize("converter", (True, False))
+def test_remote_perf_picks_base_of_stand_engine_format(tmp_path, converter):
+    # game-base.json names a base of another importer format; the stand's converter decides.
+    scripts = Path(__file__).parents[1]
+    source = (scripts / "perf.sh").read_text()
+    select = "  CONTENT_CONVERT=" + source.split("  CONTENT_CONVERT=", 1)[1].split("  export XDG_RUNTIME_DIR", 1)[0]
+    pointed, compatible, old, new = "a" * 64, "b" * 64, "1" * 64, "2" * 64
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (tmp_path / "gothic-ai/game-settings/system").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "gothic-ai/game-settings/system" / name).write_text("")
+    (tmp_path / "gothic-ai/game-base.json").write_text(json.dumps({"base": pointed, "videos": ""}))
+    # The foreign installation's base sorts first: only the installation check skips it.
+    foreign = "0" * 64
+    for fingerprint, format_sha256 in ((pointed, old), (compatible, new), (foreign, new)):
+        directory = tmp_path / ".cache/gothic-ai/base" / fingerprint
+        directory.mkdir(parents=True)
+        archives = ["other"] if fingerprint == foreign else ["Data/Worlds.vdf"]
+        (directory / "base.json").write_text(json.dumps(
+            {"format_sha256": format_sha256, "archives": archives, "loose_files": []}))
+    game = tmp_path / "build/opengothic/Gothic2Notr"
+    game.parent.mkdir(parents=True)
+    if converter:
+        tool = game.parent / "content-convert"
+        tool.write_text(f"#!/bin/sh\necho '{json.dumps({'base': new, 'videos': '0' * 64})}'\n")
+        tool.chmod(0o755)
+    harness = ('set -euo pipefail\nfail() { echo "perf: $*" >&2; exit 2; }\n'
+               f'ROOT={shlex.quote(str(scripts.parent))}\nGAME_BIN={shlex.quote(str(game))}\n' + select + 'echo "selected=$OPENGOTHIC_BASE_FINGERPRINT"\n')
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("OPENGOTHIC_", "GOTHIC_"))}
+    environment.update(HOME=str(tmp_path), OPENGOTHIC_BASE_STORE="")
+    result = subprocess.run(["bash", "-c", harness], env=environment, capture_output=True, text=True)
+    if converter:
+        assert result.returncode == 0, result.stderr
+        assert f"selected={compatible}" in result.stdout
+    else:
+        assert result.returncode == 2
+        assert "missing" in result.stderr and "content-convert" in result.stderr
+
+
+def profile(directory, rows, gpu=False, extra_zone=False, geometry=False):
+    directory.mkdir(parents=True, exist_ok=True)
+    fields = ["attempt", "segment", "begin_ns", "end_ns", "observer_ns", "outcome", "overflow",
+              "encode_ns", "encode_calls", "encode_first_ns", "encode_last_ns", "palette_bytes"]
+    if gpu:
+        fields += ["gpu_ns", "gpu_done", "gpu_buffers"]
+    if extra_zone:
+        fields += ["p30_ns", "p30_calls", "p30_first_ns", "p30_last_ns"]
+    if geometry:
+        fields += ["triangles", "draw_calls", "geometry_done"]
+    with (directory / "frameprofile.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fields)
+        writer.writeheader()
+        for index, row in enumerate(rows):
+            values = dict.fromkeys(fields, 0)
+            values.update(attempt=index, segment="perf-market/view-1", outcome=1,
+                          begin_ns=index * 10_000_000, encode_ns=1_000_000,
+                          encode_calls=1, palette_bytes=1024)
+            if geometry:
+                values.update(triangles=12000, draw_calls=40, geometry_done=1)
+            values.update(row)
+            values["end_ns"] = values["begin_ns"] + 2_000_000
+            writer.writerow(values)
+    (directory / "metadata.json").write_text(json.dumps({"git_commit": "abc123", "drawable": [1728, 1117],
+                                                       "drawable_width": 1728, "drawable_height": 1117}))
+    return directory
+
+
+def cadence_rows(step_ms, zone_ms=1):
+    return [{"begin_ns": index * step_ms * 1_000_000, "encode_ns": int(zone_ms * 1_000_000)}
+            for index in range(5)]
+
+
+def test_perf_content_arguments_and_abba(monkeypatch, tmp_path):
+    args = content.parse_args(["none", "working-8"])
+    assert args.places == ["harbour", "market"]
+    assert (args.noise_pct, args.threshold_pct) == (2, 5)
+    args = content.parse_args(["none", "working-8", "--noise-pct", "1", "--threshold-pct", "3"])
+    assert (args.noise_pct, args.threshold_pct) == (1, 3)
+    for invalid in (["../working-8", "none"], ["none", "working-8", "unknown"]):
+        with pytest.raises(SystemExit):
+            content.parse_args(invalid)
+    calls = []
+    monkeypatch.setattr(content.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs["env"])))
+    reports = []
+    monkeypatch.setattr(content, "write_report", lambda *values: reports.append(values))
+    monkeypatch.setenv("PERF_ENV", "OPENGOTHIC_CONTENT=/wrong OPENGOTHIC_FOOTIK=0")
+    content.run_attempts(tmp_path, tmp_path / "content", args)
+    assert [command[-1] for command, _ in calls] == ["harbour"] * 4 + ["market"] * 4
+    assert [env["OPENGOTHIC_CONTENT"] for _, env in calls] == ["", str(tmp_path / "content/working-8"),
+                                                               str(tmp_path / "content/working-8"), ""] * 2
+    assert all(env["PERF_REPEAT"] == "1" and env["NO_BUILD"] == "1" and "/wrong" not in env["PERF_ENV"]
+               for _, env in calls)
+    assert reports == [(tmp_path, 1, 3)]
+    calls.clear()
+    monkeypatch.setenv("PERF_ENV_A", "OPENGOTHIC_ITEM_EFFECTS=0")
+    content.run_attempts(tmp_path, tmp_path / "content", content.parse_args(["working-8", "working-8", "itemfx"]))
+    assert ["OPENGOTHIC_ITEM_EFFECTS=0" in env["PERF_ENV"].split() for _, env in calls] == [True, False, False, True]
+    assert all(env["PERF_ENV"].split()[-1] == "OPENGOTHIC_CONTENT=" + str(tmp_path / "content/working-8")
+               for _, env in calls)
+    for invalid in ("OPENGOTHIC_CONTENT=/other", "rm -rf"):
+        monkeypatch.setenv("PERF_ENV_B", invalid)
+        with pytest.raises(ValueError, match="PERF_ENV_B"):
+            content.run_attempts(tmp_path, tmp_path / "content", args)
+    assert content.sides_label({"a": "s", "b": "s", "settings": {"PERF_ENV_A": "X=0", "PERF_ENV_B": ""}}) == \
+        "A: `s` + `X=0`; B: `s`"
+
+
+def test_perf_content_base_follows_stand_engine_format(monkeypatch, tmp_path):
+    # game-base.json names a base of another importer format; the built stand's converter decides.
+    pointed, compatible, old, new = "a" * 64, "b" * 64, "1" * 64, "2" * 64
+    home, shared = tmp_path / "home", tmp_path / "shared"
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (home / "gothic-ai/game-settings/system").mkdir(parents=True, exist_ok=True)
+        (home / "gothic-ai/game-settings/system" / name).write_text("")
+    (home / "gothic-ai/game-base.json").write_text(json.dumps({"base": pointed, "videos": ""}))
+    # The base of the engine's format is only in the shared store.
+    for root, fingerprint, format_sha256 in ((home / ".cache/gothic-ai/base", pointed, old),
+                                             (shared / "base", compatible, new)):
+        (root / fingerprint).mkdir(parents=True)
+        (root / fingerprint / "base.json").write_text(json.dumps(
+            {"format_sha256": format_sha256, "archives": ["Data/Worlds.vdf"], "loose_files": []}))
+        (root / fingerprint / "world.bin").write_text(fingerprint)
+    tool = tmp_path / "content-convert"
+    tool.write_text(f"#!/bin/sh\necho '{json.dumps({'base': new, 'videos': '0' * 64})}'\n")
+    tool.chmod(0o755)
+    for key in [key for key in os.environ if key.startswith(("OPENGOTHIC_", "GOTHIC_"))]:
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(content, "SHARED", shared)
+
+    def tree(root):
+        return sorted((path.relative_to(root).as_posix(), path.stat().st_mtime_ns) for path in root.rglob("*"))
+    before = tree(home / ".cache"), tree(shared)
+    task = tmp_path / "task"
+    assert content.prepare_base(task, tool) == compatible
+    assert (task / "base-cache" / compatible / "world.bin").read_text() == compatible
+    assert [path.name for path in (task / "base-cache").iterdir()] == [compatible]
+    assert (tree(home / ".cache"), tree(shared)) == before
+    # A caller's fingerprint wins over the pick.
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", pointed)
+    assert content.prepare_base(task, tool) == pointed
+    assert (task / "base-cache" / pointed / "world.bin").read_text() == pointed
+    monkeypatch.delenv("OPENGOTHIC_BASE_FINGERPRINT")
+    with pytest.raises(ValueError, match="content-convert"):
+        content.prepare_base(task, tmp_path / "missing/content-convert")
+    shutil.rmtree(shared / "base" / compatible)
+    with pytest.raises(ValueError, match="no ready base"):
+        content.prepare_base(tmp_path / "other-task", tool)
+
+
+def test_perf_content_runs_on_base_picked_after_build(monkeypatch, tmp_path):
+    base = "c" * 64
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        script = command[-1] if command[0] == "ssh" else ""
+        stdout = "/remote" if "$HOME" in script else base + "\n" if "__base" in script else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout)
+    monkeypatch.setattr(content.subprocess, "run", run)
+    monkeypatch.setattr(content.subprocess, "check_output", lambda command, **kwargs: "")
+    monkeypatch.setattr(content, "ROOT", tmp_path / "repo")
+    for key in ("BENCH_HOST", "OPENGOTHIC_BASE_FINGERPRINT"):
+        monkeypatch.delenv(key, raising=False)
+    assert content.launch(content.parse_args(["none", "none", "harbour"])) == 0
+    build, pick, measure = (next(index for index, command in enumerate(calls) if marker(command))
+                            for marker in (lambda command: "__build" in command,
+                                           lambda command: command[0] == "ssh" and "__base" in command[-1],
+                                           lambda command: "__run" in command))
+    assert build < pick < measure
+    assert f"OPENGOTHIC_BASE_FINGERPRINT={base}" in calls[measure]
+    assert not any(value.startswith("OPENGOTHIC_BASE_FINGERPRINT=") for value in calls[build])
+    metadata, = (tmp_path / "repo/.bench").glob("*/metadata.json")
+    assert json.loads(metadata.read_text())["base"] == base
+
+
+@pytest.mark.parametrize("b_ms,verdict", [(10.1, "в шуме"), (10.5, "в пороге"),
+                                         (10.6, "сверх порога"), (9, "в пороге")])
+def test_perf_content_recorded_delta_threshold_and_counters(tmp_path, b_ms, verdict):
+    (tmp_path / "metadata.json").write_text(json.dumps({"places": ["market"]}))
+    for side, steps in (("A", (9, 11)), ("B", (b_ms, b_ms))):
+        for repeat, step in enumerate(steps, 1):
+            rows = [{"segment": f"perf-market/view-{view}",
+                     "begin_ns": int((view * 1000 + frame * step) * 1e6)}
+                    for view in range(1, 5) for frame in range(5)]
+            # Incomplete geometry must not become a zero in the mean.
+            rows[-1].update(geometry_done=0, triangles=0, draw_calls=0)
+            profile(tmp_path / side / f"attempt-{repeat}", rows, geometry=True)
+    data = content.comparison(tmp_path)["places"]["market"]
+    assert data["p50"]["a"] == 10
+    assert data["p50"]["b"] == pytest.approx(b_ms)
+    assert data["p50"]["delta_pct"] == pytest.approx((b_ms / 10 - 1) * 100)
+    # Pooled A p95 is 11 ms, so these B values all satisfy the p95 gate.
+    assert data["within_threshold"] is True
+    assert "within_noise" not in data["p50"]
+    assert data["p50"]["spread_a_ms"] == 2
+    assert data["counters"]["A"] == {"triangles": 12000, "draw_calls": 40,
+                                       "completed_frames": 38, "submitted_frames": 40}
+    # Constant recorded A isolates the exact +5% p95 boundary.
+    for path in (tmp_path / "A").rglob("frameprofile.csv"):
+        rows = [{"segment": f"perf-market/view-{view}", "begin_ns": (view * 1000 + frame * 10) * 1_000_000}
+                for view in range(1, 5) for frame in range(5)]
+        profile(path.parent, rows, geometry=True)
+    result = content.comparison(tmp_path)
+    assert result["noise_p95_pct"] == 2
+    assert result["threshold_p95_pct"] == 5
+    assert result["places"]["market"]["p95_verdict"] == verdict
+    assert verdict in content.table(result)
+    custom = content.comparison(tmp_path, noise_pct=6, threshold_pct=10)
+    assert custom["places"]["market"]["p95_verdict"] == ("в пороге" if b_ms == 9 else "в шуме")
+    assert (custom["noise_p95_pct"], custom["threshold_p95_pct"]) == (6, 10)
+    assert [content.p95_verdict(value, 2, 5) for value in (-2, 2, -2.01, 2.01, 5, 5.01)] == [
+        "в шуме", "в шуме", "в пороге", "в пороге", "в пороге", "сверх порога"]
+
+
+def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
+    directory = profile(tmp_path / "market" / "repeat-1", [
+        {"segment": "warmup", "begin_ns": 0},
+        {"begin_ns": 100_000_000, "p30_ns": 3_000_000},
+        {"begin_ns": 110_000_000, "p30_ns": 3_000_000},
+        {"begin_ns": 130_000_000, "p30_ns": 3_000_000},
+        {"begin_ns": 160_000_000},
+        {"segment": "perf-market/view-2", "begin_ns": 200_000_000},
+        {"segment": "perf-market/view-2", "begin_ns": 240_000_000},
+        {"segment": "warmup", "begin_ns": 900_000_000},
+    ], extra_zone=True)
+    result = report.build_report(tmp_path)
+    market = result["places"]["market"]
+    first = market["views"]["view-1"]
+    assert first["frames"] == 3
+    assert first["fps"] == pytest.approx(50)
+    assert first["frame_ms"] == {"mean": 20, "p50": 20, "p95": 29, "p99": pytest.approx(29.8), "max": 30}
+    assert market["views"]["view-2"]["frames"] == 1
+    assert first["gpu"] is None
+    assert [zone["name"] for zone in first["zones"]] == ["p30", "encode"]
+    assert first["zones"][0]["frame_pct"] == 15
+    assert first["amounts"] == {"palette_bytes": {"total": 3072, "per_frame": 1024}}
+    assert result["sources"][0]["metadata"]["drawable"] == [1728, 1117]
+    assert report.percentile([1], .99) == 1
+    assert report.percentile([], .95) is None
+    assert report.main(["run", str(directory)]) == 0
+    assert (directory / "report.md").exists()
+    assert json.loads((directory / "report.json").read_text())["places"]["market"]["summary"]["frames"] == 4
+
+
+    streaming = profile(tmp_path / "streaming", [
+        {"segment": f"streaming-flythrough/{name}", "begin_ns": (offset + frame * step) * 1_000_000}
+        for name, offset, step in (("run", 0, 10), ("fly", 100, 20)) for frame in range(3)])
+    completed = [{"kind": "route_end", "speed_cm_s": speed, "pass": True} for speed in (500, 2000)]
+    (streaming / "events.jsonl").write_text("\n".join(json.dumps(event) for event in completed))
+    frames_only = report.build_report(streaming)["places"]["streaming-flythrough"]
+    assert frames_only["views"]["run"]["frame_ms"]["p50"] == 10
+    assert frames_only["views"]["fly"]["frame_ms"]["p99"] == 20
+    assert "streaming" not in frames_only["summary"]
+    assert report.main(["run", str(streaming)]) == 0
+    (streaming / "events.jsonl").write_text("\n".join(json.dumps(event) for event in [
+        {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True}, *completed]))
+    with pytest.raises(ValueError, match="residency manager was enabled but samples are missing"):
+        report.build_report(streaming)
+    with (streaming / "streaming.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, ["segment", "frame", "update_ms", "work_ms", "near", "far", "outside",
+                                         "near_transitions", "far_transitions", "publication_ms", "published", "released",
+                                         "page_used_bytes", "page_free_bytes", "page_retired_bytes", "page_count",
+                                         "tex_live_bytes", "tex_retired_bytes", "tex_peak_bytes", "tex_live_n", "tex_evicted", "tex_reloaded",
+                                         "tex_landscape_bytes", "tex_landscape_n", "tex_static_bytes", "tex_static_n",
+                                         "tex_dynamic_bytes", "tex_dynamic_n", "tex_other_bytes", "tex_other_n",
+                                         "tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_demoted",
+                                         "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds",
+                                         *(f"tex_level{level}_bytes" for level in range(6)),
+                                         "tex_shortfall_n", "tex_shortfall_seconds",
+                                         "tex_device_budget_bytes", "tex_device_usage_bytes", "tex_device_shared",
+                                         "tex_device_measured", "tex_target_bytes", "tex_target_source", "tex_budget_bytes",
+                                         "tex_stage", "tex_stage_deepest", "tex_stage_bytes0", "tex_stage_bytes",
+                                         *(f"tex_stage{stage}_seconds" for stage in range(26)),
+                                         "tex_shortfall_wait_n", "tex_visible_shortfall_n", "tex_loads", "tex_load_bytes",
+                                         "vob_near", "vob_far", "vob_outside", "vob_created", "vob_released", "vob_pending",
+                                         "vob_publication_ms", "vob_near_missing", "vob_near_missing_seconds"])
+        writer.writeheader()
+        writer.writerows({"segment": f"streaming-flythrough/{name}", "frame": frame,
+                          "update_ms": .001 * (frame + 1), "work_ms": .0001,
+                          "near": 20 + frame, "far": 300, "outside": 3,
+                          "near_transitions": frame, "far_transitions": frame + 1,
+                          "publication_ms": ("", ".25;.5", ".75")[frame] if name == "run" else "",
+                          "published": (0, 2, 1)[frame] if name == "run" else 0, "released": int(frame == 2),
+                          "page_used_bytes": (8-frame)*1048576, "page_free_bytes": (2+frame)*1048576,
+                          "page_retired_bytes": frame*1048576, "page_count": 2,
+                          "tex_live_bytes": (20-frame)*1048576, "tex_retired_bytes": frame*1048576,
+                          "tex_peak_bytes": 24*1048576, "tex_live_n": 9-frame,
+                          "tex_evicted": 3+frame, "tex_reloaded": 1+frame,
+                          "tex_landscape_bytes": (10-frame)*1048576, "tex_landscape_n": 3-frame,
+                          "tex_static_bytes": 5*1048576, "tex_static_n": 2,
+                          "tex_dynamic_bytes": 3*1048576, "tex_dynamic_n": 2,
+                          "tex_other_bytes": 2*1048576, "tex_other_n": 2,
+                          "tex_full_bytes": 12*1048576, "tex_tail_bytes": (8-frame)*1048576,
+                          "tex_promoted": 10+frame, "tex_demoted": 5+frame,
+                          "tex_promotion_queue": 2-frame, "tex_near_tail_n": frame,
+                          "tex_near_tail_seconds": 40+frame*.125,
+                          **{f"tex_level{level}_bytes": (level+1)*1048576 for level in range(6)},
+                          "tex_shortfall_n": 3-frame, "tex_shortfall_seconds": 7+frame,
+                          "tex_device_budget_bytes": 9000*1048576, "tex_device_usage_bytes": 900*1048576,
+                          "tex_device_shared": 0, "tex_device_measured": 1, "tex_target_bytes": 2250*1048576,
+                          "tex_target_source": 1, "tex_budget_bytes": 2250*1048576,
+                          "tex_stage": (0, 2, 1)[frame], "tex_stage_deepest": 2, "tex_stage_bytes0": 300*1048576,
+                          "tex_stage_bytes": 200*1048576,
+                          **{f"tex_stage{stage}_seconds": 10+frame*(stage == 1)+2*frame*(stage == 13) for stage in range(26)},
+                          "tex_shortfall_wait_n": (1, 4, 2)[frame], "tex_visible_shortfall_n": frame,
+                          "tex_loads": (2, 6, 3)[frame], "tex_load_bytes": (frame+1)*1048576,
+                          "vob_near": 100+frame, "vob_far": 700-frame, "vob_outside": 200,
+                          "vob_created": frame, "vob_released": int(frame==2), "vob_pending": 2-frame,
+                          "vob_publication_ms": frame*.25, "vob_near_missing": frame,
+                          "vob_near_missing_seconds": frame*.125}
+                         for name in ("run", "fly") for frame in range(3))
+    (streaming / "events.jsonl").write_text("\n".join(
+        json.dumps(event) for event in [
+            {"kind": "streaming_ready", "far_publication_ms": [9], "far_max_per_frame": 1, "queue_max_ms": 10},
+            {"kind": "streaming_ready", "far_publication_ms": [.3, .6], "far_max_per_frame": 1, "queue_max_ms": .8},
+            {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True},
+            {"kind": "route_end", "speed_cm_s": 500, "pass": True},
+            {"kind": "streaming_end", "segment": "streaming-flythrough/run", "gpu_mb": 320.5,
+             "tex_promoted": 3, "tex_demoted": 2, "tex_near_tail_seconds": .25, "tex_shortfall_seconds": .5,
+             "tex_shortfall_wait_seconds": .25, "tex_shortfall_read_seconds": .125, "tex_shortfall_upload_seconds": .0625,
+             "tex_shortfall_publish_seconds": .0625, "tex_shortfall_stale_seconds": 0, "tex_visible_shortfall_seconds": .125,
+             "tex_loads_started": 40, "tex_short_entries": 30, "tex_latency_n": 28, "tex_latency_p50_ms": 90.5,
+             "tex_latency_p90_ms": 304.4, "tex_latency_max_ms": 812.0, "tex_wait_n": 29, "tex_wait_p50_ms": 11.3,
+             "tex_wait_p90_ms": 107.6, "tex_wait_max_ms": 300.0, "tex_bursts": 6, "tex_burst_p50": 3, "tex_burst_p90": 9,
+             "tex_burst_max": 12, "tex_publications": 25, "tex_publish_ms": .1, "tex_publish_max_ms": .02,
+             "tex_ahead_seconds": .5, "tex_lookahead_ms": 22.0},
+            {"kind": "streaming_ready", "far_publication_ms": [], "far_max_per_frame": 0, "queue_max_ms": .001},
+            {"kind": "perf_segment", "segment": "streaming-flythrough/fly", "residency_manager": True},
+            {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
+            {"kind": "streaming_end", "segment": "streaming-flythrough/fly", "gpu_mb": 330.5,
+             "tex_promoted": 5, "tex_demoted": 4, "tex_near_tail_seconds": .75, "tex_latency_n": 0,
+             "tex_latency_p50_ms": -1.0, "tex_latency_p90_ms": -1.0, "tex_latency_max_ms": -1.0}]))
+    data = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]
+    assert data["run"]["frame_ms"]["p50"] == 10
+    assert data["fly"]["frame_ms"]["p99"] == data["fly"]["frame_ms"]["max"] == 20
+    assert data["run"]["streaming"]["near_transitions"] == 3
+    assert data["run"]["streaming"]["far_transitions"] == 6
+    assert data["run"]["streaming"]["peak_near"] == 22
+    assert data["run"]["streaming"]["update_ms"]["p99"] == pytest.approx(.00298)
+    assert data["run"]["streaming"]["work_ms"]["max"] == .0001
+    assert data["run"]["streaming"]["publication_ms"]["p99"] == pytest.approx(.745)
+    assert data["run"]["streaming"]["publication_ms"]["max"] == .75
+    assert data["run"]["streaming"]["published"] == 3
+    assert data["run"]["streaming"]["released"] == 1
+    assert data["fly"]["streaming"]["gpu_end_mb"] == 330.5
+    assert data["fly"]["streaming"]["publication_ms"] is None
+    assert data["fly"]["streaming"]["published"] == 0
+    assert data["run"]["streaming"]["page_used_end_bytes"] == 6*1048576
+    assert data["run"]["streaming"]["page_free_end_bytes"] == 4*1048576
+    assert data["run"]["streaming"]["page_retired_end_bytes"] == 2*1048576
+    assert data["run"]["streaming"]["page_count_end"] == 2
+    assert data["run"]["streaming"]["page_capacity_peak_bytes"] == 12*1048576
+    textures = data["run"]["streaming"]["textures"]
+    assert (textures["live_end_bytes"], textures["retired_end_bytes"], textures["peak_bytes"], textures["count_end"],
+            textures["evicted"], textures["reloaded"]) == (18*1048576, 2*1048576, 24*1048576, 7, 5, 3)
+    assert textures["categories"]["landscape"] == {"bytes": 8*1048576, "count": 1}
+    assert sum(category["bytes"] for category in textures["categories"].values()) == textures["live_end_bytes"]
+    assert textures["full_end_bytes"] == 12*1048576
+    assert textures["tail_end_bytes"] == 6*1048576
+    assert (textures["promoted"], textures["demoted"], textures["promotion_queue_peak"],
+            textures["near_tail_peak"], textures["near_tail_seconds"]) == (3, 2, 2, 2, .25)
+    assert (textures["level_end_bytes"], textures["shortfall_peak"], textures["shortfall_seconds"]) == (
+        [(level+1)*1048576 for level in range(6)], 3, .5)
+    assert "| run | 1.00 / 2.00 / 3.00 / 4.00 / 5.00 / 6.00 | 3 | 0.500000000 |" in report.report_markdown(report.build_report(streaming))
+    budget = textures["budget"]
+    assert (budget["target_end_bytes"], budget["target_source"], budget["stage_end"], budget["stage_deepest"],
+            budget["stage_seconds"][:2], budget["stage_seconds"][13], sum(budget["stage_seconds"]),
+            budget["d0_end_bytes"]) == (2250*1048576, "rule", 1, 2, [0, 2], 4, 6, 300*1048576)
+    assert ("| run | 9000 / 900 | 2250 (rule) | 1 / 2 | 1: 2.0, 13: 4.0 | 300.0 / 200.0 |"
+            in report.report_markdown(report.build_report(streaming)))
+    flow = textures["flow"]
+    assert (flow["state_seconds"], flow["visible_seconds"], flow["loads_started"], flow["short_entries"]) == (
+        {"wait": .25, "read": .125, "upload": .0625, "publish": .0625, "stale": 0}, .125, 40, 30)
+    assert (flow["latency"], flow["wait"]["p90_ms"], flow["bursts"]) == (
+        {"n": 28, "p50_ms": 90.5, "p90_ms": 304.4, "max_ms": 812.0}, 107.6, {"n": 6, "p50": 3, "p90": 9, "max": 12})
+    assert (flow["waiting_peak"], flow["visible_peak"], flow["loads_peak"], flow["load_bytes_peak"]) == (4, 2, 6, 3*1048576)
+    fly_flow = data["fly"]["streaming"]["textures"]["flow"]
+    assert fly_flow["latency"] == {"n": 0, "p50_ms": None, "p90_ms": None, "max_ms": None}
+    assert flow["publish"] == {"n": 25, "mean_us": pytest.approx(4.0), "max_us": pytest.approx(20.0)}
+    assert ("| run | 0.25 / 0.12 / 0.06 / 0.06 / 0.00 | 0.12 | 40 | 6 / 3.0 | 4 | 90 / 304 / 812 | 11 / 108 | 3 / 9 / 12 | "
+            "4.0 / 20.0 | 0.50 / 22 |"
+            in report.report_markdown(report.build_report(streaming)))
+    combined_budget = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]["budget"]
+    assert (combined_budget["stage_seconds"][1], combined_budget["stage_seconds"][13]) == (4, 8)
+    combined = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]
+    assert (combined["promoted"], combined["demoted"], combined["near_tail_seconds"]) == (8, 6, 1)
+    vobs = data["run"]["streaming"]["vobs"]
+    assert (vobs["near_end"], vobs["far_end"], vobs["outside_end"], vobs["created"], vobs["released"],
+            vobs["pending_peak"], vobs["near_missing_peak"], vobs["near_missing_seconds"]) == (102, 698, 200, 3, 1, 2, 2, .25)
+    assert vobs["publication_ms"]["max"] == .5
+    assert report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["vobs"]["near_missing_seconds"] == .5
+    warmup = data["run"]["streaming"]
+    assert warmup["warmup_far_count"] == 2
+    assert warmup["warmup_far_publication_ms"]["p99"] == pytest.approx(.597)
+    assert warmup["warmup_far_publication_ms"]["max"] == .6
+    assert warmup["warmup_far_max_per_frame"] == 1
+    assert warmup["warmup_queue_max_ms"] == .8
+    assert data["fly"]["streaming"]["warmup_far_count"] == 0
+    assert data["fly"]["streaming"]["warmup_far_publication_ms"] is None
+    assert report.main(["run", str(streaming)]) == 0
+    assert "| 2 | 6.00 / 4.00 / 2.00 | 12.00 |" in (streaming / "report.md").read_text()
+    assert "| run | 7 | 18.00 / 2.00 | 24.00 | 5 / 3 |" in (streaming / "report.md").read_text()
+    with (streaming / "streaming.csv").open(newline="") as stream:
+        legacy_rows = [{key: value for key, value in row.items() if not key.startswith(("page_", "tex_", "vob_"))}
+                       for row in csv.DictReader(stream)]
+    with (streaming / "streaming.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, legacy_rows[0])
+        writer.writeheader()
+        writer.writerows(legacy_rows)
+    legacy = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]["run"]["streaming"]
+    assert legacy["page_used_end_bytes"] is None and legacy["page_capacity_peak_bytes"] is None
+    assert legacy["textures"] is None
+    assert legacy["vobs"] is None
+    assert report.main(["run", str(streaming)]) == 0
+
+
+def test_fence_attempts_cost_time_but_do_not_inflate_rendered_fps(tmp_path):
+    profile(tmp_path, [
+        {"begin_ns": 0},
+        {"begin_ns": 10_000_000, "outcome": 2, "encode_ns": 0, "encode_calls": 0},
+        {"begin_ns": 30_000_000},
+        {"begin_ns": 50_000_000},
+    ])
+    stats = report.build_report(tmp_path)["places"]["market"]["summary"]
+    assert stats["frames"] == 2
+    assert stats["attempts"] == 3
+    assert stats["fps"] == 40
+    assert stats["frame_ms"]["p95"] == pytest.approx(29.5)
+    assert stats["cpu_ms"]["mean"] == 3
+    assert stats["zones"][0]["mean_ms"] == 1
+    assert stats["amounts"]["palette_bytes"]["per_frame"] == 1536
+    assert "texture_activity" not in stats
+
+    directory = profile(tmp_path / "texture", [
+        {"begin_ns": 0},
+        {"begin_ns": 10_000_000, "outcome": 2},
+        {"begin_ns": 30_000_000},
+        {"begin_ns": 50_000_000},
+        {"begin_ns": 90_000_000},
+        {"begin_ns": 100_000_000},
+    ])
+    with (directory / "frameprofile.csv.texture.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, ["event", "kind", "begin_ns", "end_ns", "complete", "overflow"])
+        writer.writeheader()
+        for index, (kind, begin, end) in enumerate((
+            ("read", 12, 15), ("upload", 15, 65), ("complete", 65, 65),
+            ("ready", 90, 90), ("publish", 30, 30), ("publish", 100, 100),
+        )):
+            writer.writerow({"event": index, "kind": kind, "begin_ns": begin*1_000_000,
+                             "end_ns": end*1_000_000, "complete": 1, "overflow": 0})
+    # Both sidecars are separate from the exact frameprofile.csv input glob.
+    (directory / "frameprofile.csv.gpu.csv").write_text("not a frame profile\n")
+    frames = report.samples_from_profile(directory / "frameprofile.csv")[0][("market", "view-1")]
+    assert frames[0]["attempts"] == 2
+    assert [row["texture_activity"] for row in frames] == [
+        dict(worker_active=True, read=True, upload=True, complete=False, ready=False, publish=False),
+        dict(worker_active=True, read=False, upload=True, complete=False, ready=False, publish=True),
+        dict(worker_active=True, read=False, upload=True, complete=True, ready=False, publish=False),
+        dict(worker_active=False, read=False, upload=False, complete=False, ready=True, publish=False),
+    ]
+    result = report.build_report(directory)
+    activity = result["places"]["market"]["summary"]["texture_activity"]
+    assert activity["worker_active"]["with"] == {"frames": 3, "p99_ms": pytest.approx(39.8)}
+    assert activity["worker_active"]["without"] == {"frames": 1, "p99_ms": 10}
+    assert activity["read"]["with"] == {"frames": 1, "p99_ms": 30}
+    assert activity["upload"] == activity["worker_active"]
+    assert activity["complete"]["with"] == {"frames": 1, "p99_ms": 40}
+    assert activity["ready"]["with"] == {"frames": 1, "p99_ms": 10}
+    assert activity["publish"]["with"] == {"frames": 1, "p99_ms": 20}
+    assert "| worker_active | 3 | 39.800 | 1 | 10.000 |" in report.report_markdown(result)
+
+
+def test_gpu_completion_and_matching_cpu_duration(tmp_path):
+    profile(tmp_path, [
+        {"gpu_ns": 4_000_000, "gpu_done": 1, "gpu_buffers": 2},
+        {"gpu_ns": 50_000_000, "gpu_done": 0, "gpu_buffers": 1},
+        {"gpu_ns": 1_000_000, "gpu_done": 1, "gpu_buffers": 1},
+        {"gpu_ns": 100_000_000, "gpu_done": 1, "gpu_buffers": 1},
+    ], gpu=True)
+    gpu = report.build_report(tmp_path)["places"]["market"]["summary"]["gpu"]
+    assert gpu["completed_frames"] == 2
+    assert gpu["completion_fraction"] == pytest.approx(2 / 3)
+    assert gpu["mean_ms"] == 2.5
+    assert gpu["p50_ms"] == 2.5
+    assert gpu["p95_ms"] == pytest.approx(3.85)
+    assert gpu["longer_than_cpu_fraction"] == .5
+    assert gpu["buffers_per_completed_frame"] == 1.5
+    summary = report.build_report(tmp_path)["places"]["market"]["summary"]
+    assert "gpu_passes" not in summary
+    assert "GPU pass" not in report.report_markdown(report.build_report(tmp_path))
+    # Without OPENGOTHIC_GPU_PASSES the profiler still writes the sidecar header.
+    (tmp_path / "frameprofile.csv.gpu.csv").write_text(
+        "attempt,cmd_id,segment,frame,encoder,type,labels,gpu_ns,vertex_ns,fragment_ns,draw_calls,dispatch_calls,valid\n")
+    result = report.build_report(tmp_path)
+    assert "gpu_passes" not in result["places"]["market"]["summary"]
+    assert "| GPU pass |" not in report.report_markdown(result)
+
+    # One row per marker region; a frame sums its label's valid rows, invalid rows are skipped.
+    with (tmp_path / "frameprofile.csv.gpu.csv").open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["attempt", "cmd_id", "segment", "frame", "encoder", "type", "labels", "gpu_ns",
+                         "vertex_ns", "fragment_ns", "draw_calls", "dispatch_calls", "valid"])
+        for attempt, label, gpu_ns, valid in ((0, "GI-Trace", 2_000_000, 1), (0, "Sky", 250_000, 1),
+                                              (0, "Sky", 250_000, 1), (1, "GI-Trace", 4_000_000, 1),
+                                              (1, "Sky", 9_000_000, 0), (2, "GI-Trace", 6_000_000, 1)):
+            writer.writerow([attempt, 0, "perf-market/view-1", 0, 0, "compute", label, gpu_ns, 0, 0, 0, 1, valid])
+    result = report.build_report(tmp_path)
+    passes = result["places"]["market"]["summary"]["gpu_passes"]
+    assert list(passes) == ["GI-Trace", "Sky"]
+    assert passes["GI-Trace"] == {"frames": 3, "mean_ms": 4, "p95_ms": pytest.approx(5.8)}
+    assert passes["Sky"] == {"frames": 1, "mean_ms": .5, "p95_ms": .5}
+    assert "| GI-Trace | 3 | 4.000 | 5.800 |" in report.report_markdown(result)
+
+
+def test_compare_repeat_noise_sorted_regressions_and_leaf_inputs(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    for root, values in [(a, [(10, 2), (12, 4)]), (b, [(14, 3.5), (16, 4.5)])]:
+        for repeat, (step, cost) in enumerate(values, 1):
+            profile(root / "market" / f"repeat-{repeat}", [
+                {**row, "p30_ns": 1_000_000 if root == a else 6_000_000}
+                for row in cadence_rows(step, cost)], extra_zone=True)
+    comparison = report.compare_reports(report.build_report(a), report.build_report(b))
+    market = comparison["places"]["market"]
+    assert market["fps"]["delta"] < 0
+    assert market["p95_ms"]["delta"] == 4
+    assert market["p95_ms"]["within_noise"] is False
+    assert [zone["name"] for zone in market["zones"]] == ["p30", "encode"]
+    assert market["zones"][0]["delta"] == 5
+    assert market["zones"][0]["delta_pct"] == 500
+    assert market["zones"][1]["delta"] == 1
+    assert market["zones"][1]["within_noise"] is True
+    assert "в пределах шума" in report.compare_markdown(comparison)
+    assert market["gpu_p50_ms"] is None  # no graphics-card times in these frames
+    left, right = a / "market/repeat-1", a / "market/repeat-2"
+    assert report.main(["compare", str(left), str(right)]) == 0
+    leaf = json.loads((right / "compare.json").read_text())
+    assert leaf["places"]["market"]["zones"][0]["within_noise"] is None
+    assert (right / "compare.md").exists()
+
+
+def test_compare_warns_about_binary_identity_and_legacy_runs(tmp_path, capsys):
+    a = profile(tmp_path / "a", cadence_rows(10))
+    b = profile(tmp_path / "b", cadence_rows(10))
+
+    def metadata(directory, **values):
+        (directory / "metadata.json").write_text(json.dumps(values))
+
+    metadata(a, binary_sha256="a" * 64, source_fingerprint="c" * 64)
+    metadata(b, binary_sha256="b" * 64, source_fingerprint="c" * 64)
+    assert report.main(["compare", str(a), str(b)]) == 0
+    assert "**Warning:** A and B have different binary_sha256 with the same source_fingerprint" in capsys.readouterr().out
+    assert "**Warning:**" in (b / "compare.md").read_text()
+    metadata(b, binary_sha256="b" * 64, source_fingerprint="d" * 64)
+    assert report.compare_reports(report.build_report(a), report.build_report(b))["warnings"] == []
+    metadata(b)
+    assert report.main(["compare", str(a), str(b)]) == 0
+    assert "missing binary_sha256, source_fingerprint (old run)" in capsys.readouterr().out
+    assert len(json.loads((b / "compare.json").read_text())["warnings"]) == 1
+
+
+def test_compare_graphics_card_time_where_the_frame_waits_on_the_processor(tmp_path):
+    # The same frame cadence on both sides: only the graphics card's own time moves.
+    a, b = tmp_path / "a", tmp_path / "b"
+    for root, gpu_ms in ((a, (2.0, 2.2)), (b, (2.6, 2.8))):
+        for repeat, cost in enumerate(gpu_ms, 1):
+            profile(root / "market" / f"repeat-{repeat}", [
+                {"begin_ns": index * 10_000_000, "gpu_ns": int(cost * 1_000_000), "gpu_done": 1, "gpu_buffers": 1}
+                for index in range(5)], gpu=True)
+    market = report.compare_reports(report.build_report(a), report.build_report(b))["places"]["market"]
+    gpu = market["gpu_p50_ms"]
+    assert (gpu["a"], gpu["b"]) == (2.1, 2.7)
+    assert gpu["delta"] == pytest.approx(0.6)
+    assert gpu["noise"] == pytest.approx(0.2)
+    assert gpu["within_noise"] is False
+    assert market["fps"]["delta"] == 0
+    assert "| market | 2.100 → 2.700 | +0.600 |" in report.compare_markdown(
+        report.compare_reports(report.build_report(a), report.build_report(b)))
+
+
+@pytest.mark.parametrize("spread,failed_pass", [(2.0, None), (.3, "run"), (.3, "fly")])
+def test_series_p99_medians_off_noise_and_exit_code(tmp_path, capsys, spread, failed_pass):
+    directories = {side: [tmp_path / f"{side}-{index}" for index in (1, 2)] for side in ("off", "on")}
+    for side, roots in directories.items():
+        for index, root in enumerate(roots):
+            rows = []
+            for name, offset, base in (("run", 0, 10), ("fly", 1000, 20)):
+                change = 1.4 if failed_pass is None or name == failed_pass else .5
+                step = base + ((index - .5) * spread if side == "off" else change)
+                rows.extend({"segment": f"streaming-flythrough/{name}", "begin_ns": round(value * 1e6)}
+                            for value in (offset, offset + step, offset + 2 * step + 1))
+            profile(root, rows)
+            (root / "events.jsonl").write_text("\n".join(json.dumps(
+                {"kind": "route_end", "speed_cm_s": speed, "pass": True}) for speed in (500, 2000)))
+    args = ["series", "--off", *map(str, directories["off"]), "--on", *map(str, directories["on"])]
+    output = directories["on"][-1]
+    if failed_pass is None:
+        output = tmp_path / "result"
+        args += ["--out", str(output)]
+    assert report.main(args) == (1 if failed_pass else 0)
+    data = json.loads((output / "series.json").read_text())
+    markdown = (output / "series.md").read_text()
+    assert capsys.readouterr().out.strip() == markdown.strip()
+    assert data["minimum_tolerance_ms"] == 1.0
+    for name, base in (("run", 10), ("fly", 20)):
+        stats = data["passes"][name]
+        for side, roots in directories.items():
+            assert [run["directory"] for run in stats[side]] == [str(root.resolve()) for root in roots]
+            expected = [report.build_report(root)["places"]["streaming-flythrough"]["views"][name]
+                        ["frame_ms"]["p99"] for root in roots]
+            assert [run["p99_ms"] for run in stats[side]] == pytest.approx(expected)
+            assert all(f"{value:.3f}" in markdown for value in expected)
+        change = 1.4 if failed_pass is None or name == failed_pass else .5
+        assert stats["off_median_p99_ms"] == pytest.approx(base + .99)
+        assert stats["on_median_p99_ms"] == pytest.approx(base + .99 + change)
+        assert stats["delta_ms"] == pytest.approx(change)
+        assert stats["off_spread_ms"] == pytest.approx(spread)
+        assert stats["tolerance_ms"] == pytest.approx(max(1.0, spread))
+        assert stats["verdict"] == ("fail" if name == failed_pass else "pass")
+        assert f"| {name} |" in markdown
+    if failed_pass == "run":
+        assert report.main([*args, "--tolerance-ms", "1.5"]) == 0
+        adjusted = json.loads((output / "series.json").read_text())
+        assert adjusted["passes"]["run"]["tolerance_ms"] == 1.5
+
+
+@pytest.mark.parametrize("short_side", ["off", "on"])
+def test_series_requires_at_least_two_runs_per_side(tmp_path, capsys, short_side):
+    args = ["series"]
+    for side in ("off", "on"):
+        args += [f"--{side}", str(tmp_path / f"{side}-1")]
+        if side != short_side:
+            args.append(str(tmp_path / f"{side}-2"))
+    with pytest.raises(SystemExit) as error:
+        report.main(args)
+    assert error.value.code == 2
+    assert "at least two" in capsys.readouterr().err
+
+
+def test_segment_takes_a_fifth_view_and_a_view_measured_again():
+    assert report.segment_parts("perf-meadow/view-4") == ("meadow", "view-4")
+    assert report.segment_parts("perf-meadow/view-5") == ("meadow", "view-5")
+    assert report.segment_parts("perf-meadow/view-5-noroad") == ("meadow", "view-5-noroad")
+    assert report.segment_parts("perf-meadow/view-0") is None
+    assert report.segment_parts("perf-meadow/view-5-") is None
+    assert report.segment_parts("perf-meadow/view-5-No Road") is None
+    assert report.segment_parts("meadow/view-5") is None
+
+
+def gpu_journal(directory, samples):
+    lines = ["mono_ns,temp_c,sm_mhz,mem_mhz,power_w,pstate,fan_pct,util_pct,reasons"]
+    lines += [f"{stamp},{temp},{sm},9501,{power},P2,50,99,0x0" for stamp, temp, sm, power in samples]
+    (directory / "gpu.csv").write_text("\n".join(lines) + "\n")
+
+
+def two_views(directory, offset):
+    """view-1 frames at offset+0..40 ms, view-2 at offset+100..140 ms."""
+    return profile(directory, [{"begin_ns": offset + index * 10_000_000} for index in range(5)]
+                   + [{"begin_ns": offset + 100_000_000 + index * 10_000_000, "segment": "perf-market/view-2"}
+                      for index in range(5)])
+
+
+def test_gpu_clocks_by_view_skip_warmup_and_compare_warns(tmp_path, capsys):
+    a = tmp_path / "a"
+    for repeat in (1, 2):
+        two_views(a / "market" / f"repeat-{repeat}", (repeat - 1) * 1_000_000_000)
+    # Rows inside view-1 and view-2 of each repeat; [N/A] is skipped; the last row is outside every view.
+    # 35 ms lies between view-1's last two frames (30 and 40 ms).
+    gpu_journal(a, [(35_000_000, 60, 1900, 300), (120_000_000, 62, 1800, 280),
+                    (1_000_000_000, 70, 1920, "[N/A]"), (1_030_000_000, "[N/A]", 1940, 310),
+                    (1_120_000_000, 72, 1700, 260), (5_000_000_000, 99, 999, 999)])
+    # The warm-up games are not measurements, even with a profile.
+    for run in (1, 2):
+        profile(a / f"warmup/run-{run}", cadence_rows(1))
+    (a / "warmup.json").write_text(json.dumps({"mode": "auto", "reason": "stable", "seconds": 121.4, "runs": 2,
+                                               "temp_start_c": 55, "temp_end_c": 70, "sm_start_mhz": 1995,
+                                               "sm_end_mhz": 1905, "last_game_age_s": None}))
+    assert report.main(["run", str(a)]) == 0
+    result = json.loads((a / "report.json").read_text())
+    assert result["schema_version"] == 1 and not any("журнал GPU" in warning for warning in result["warnings"])
+    assert [source["directory"] for source in result["sources"]] == ["market/repeat-1", "market/repeat-2"]
+    first, second = (repeat["views"] for repeat in result["places"]["market"]["repeats"])
+    assert first["view-1"]["gpu_clock"] == {"sm_mhz": 1900, "mem_mhz": 9501, "temp_c": 60, "power_w": 300, "samples": 1}
+    assert first["view-2"]["gpu_clock"] == {"sm_mhz": 1800, "mem_mhz": 9501, "temp_c": 62, "power_w": 280, "samples": 1}
+    assert second["view-1"]["gpu_clock"] == {"sm_mhz": 1930, "mem_mhz": 9501, "temp_c": 70, "power_w": 310, "samples": 2}
+    assert second["view-2"]["gpu_clock"]["sm_mhz"] == 1700
+    views = result["places"]["market"]["views"]
+    assert (views["view-1"]["gpu_clock"]["sm_mhz"], views["view-2"]["gpu_clock"]["sm_mhz"]) == (
+        pytest.approx(1920), pytest.approx(1750))
+    # The place's mean is over all its rows, not its first view's.
+    assert result["places"]["market"]["summary"]["gpu_clock"]["sm_mhz"] == pytest.approx(1852)
+    assert result["places"]["market"]["summary"]["gpu_clock"]["samples"] == 5
+    markdown = (a / "report.md").read_text()
+    assert "| market/view-1 | 1920 | 9501 | 65.0 | 305.0 |" in markdown
+    assert "Прогрев GPU (auto): stable за 121 с, запусков 2; 55 → 70 °C, SM 1995 → 1905 МГц." in markdown
+
+    # The 1 % threshold, both ways: 0.9 % and 1.0 % are quiet, 1.1 % below or above warns.
+    flat = report.build_report(a)
+    for sm, warned in ((1982, None), (2018, None), (1980, None), (2022, "1.1"), (1978, "1.1")):
+        b = tmp_path / f"b-{sm}"
+        for repeat in (1, 2):
+            two_views(b / "market" / f"repeat-{repeat}", (repeat - 1) * 1_000_000_000)
+        # view-1 (20 ms, 1020 ms) runs 40 MHz below the place's mean, view-2 (120 ms, 1120 ms) 40 MHz above.
+        for root, mean in ((a, 2000), (b, sm)):
+            gpu_journal(root, [(stamp, 60, mean + shift, 300) for stamp, shift in
+                               ((20_000_000, -40), (120_000_000, 40), (1_020_000_000, -40), (1_120_000_000, 40))])
+        comparison = report.compare_reports(report.build_report(a), report.build_report(b))
+        assert comparison["schema_version"] == 1
+        assert (comparison["places"]["market"]["gpu_sm_mhz"]["a"], comparison["places"]["market"]["gpu_sm_mhz"]["b"]) == (2000, sm)
+        warnings = [warning for warning in comparison["warnings"] if "частоты SM" in warning]
+        assert warnings == ([f"market: частоты SM расходятся на {warned} %: в разнице времени есть разница частоты GPU"]
+                            if warned else [])
+    assert report.main(["compare", str(a), str(b)]) == 0
+    printed = capsys.readouterr().out
+    assert "| market | 2000 → 1978 | -1.1 |" in printed
+    assert "частоты SM расходятся на 1.1 %: в разнице времени есть разница частоты GPU" in printed
+    # Compared leaves find the journal of their run two folders up.
+    leaves = report.compare_reports(report.build_report(a / "market/repeat-1"), report.build_report(b / "market/repeat-2"))
+    assert (leaves["places"]["market"]["gpu_sm_mhz"]["a"], leaves["places"]["market"]["gpu_sm_mhz"]["b"]) == (2000, 1978)
+    # A journal that covers view-1 but not view-2 of the same repeats warns about view-2 alone.
+    gpu_journal(a, [(20_000_000, 60, 2000, 300), (1_020_000_000, 60, 2000, 300)])
+    assert [warning for warning in report.build_report(a)["warnings"] if "журнал GPU" in warning] == [
+        "журнал GPU не покрывает market/view-2"]
+    # Without journals the report is as before, warm-up line included; a gpu.csv beside the run is not its journal.
+    for root in (a, b):
+        (root / "gpu.csv").unlink()
+    gpu_journal(tmp_path, [(35_000_000, 60, 1900, 300)])
+    comparison = report.compare_reports(report.build_report(a), report.build_report(b))
+    assert "gpu_sm_mhz" not in comparison["places"]["market"]
+    assert not any("частоты SM" in warning for warning in comparison["warnings"])
+    plain = report.build_report(a)
+    assert "gpu_clock" not in plain["places"]["market"]["summary"] and "warmup" not in plain
+    assert flat["warmup"]["reason"] == "stable"

@@ -7,11 +7,11 @@
 #include <cstdlib>
 
 #include "game/archery.h"
-#include "game/damagecalculator.h"
+#include "game/gamerules.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "gothic.h"
-#include "testbench.h"
+#include "settings.h"
+#include "world/benchhooks.h"
 
 using namespace Tempest;
 
@@ -22,7 +22,7 @@ constexpr float    ChestRaise  = 15.f;    // cm over the body's middle (a man 16
                                           // where head and limb hits even out (x2, x0.6)
 constexpr float    HeadHeight  = 160.f;
 constexpr float    HumanHeight = 180.f;   // a man as big as the spread below is for
-constexpr float    MinHold     = 0.2f;    // seconds held at full draw at least (it can be seen: drawn, held)...
+constexpr float    MinHold     = 0.2f;    // seconds held at its draw limit at least (drawn, held)...
 constexpr float    Settled     = 0.25f;   // ...then let go once the aim has settled (Archer's disturb)...
 constexpr float    ReleaseTrack= 0.5f;    // ...and the arrow is on the point, degrees...
 constexpr float    ReleaseWait = 1.f;     // ...or after that long anyway
@@ -93,9 +93,9 @@ bool ArcherAi::isEnabled() {
     const char* v = std::getenv("OPENGOTHIC_NPCAIM");
     if(v!=nullptr && v[0]!='\0')
       enabled = v[0]!='0' ? 1 : 0; else
-      enabled = Gothic::settingsGetI("GAME","npcManualAim")!=0 ? 1 : 0;
+      enabled = Settings::getI("GAME","npcManualAim")!=0 ? 1 : 0;
     }
-  return enabled!=0 && Gothic::inst().version().game==2;
+  return enabled!=0;
   }
 
 void ArcherAi::setEnabled(bool e) {
@@ -106,7 +106,7 @@ void ArcherAi::setEnabled(bool e) {
 bool ArcherAi::isDriving(Npc& npc) const {
   if(!isEnabled() || npc.isPlayer() || !npc.canAimByHand())
     return false;
-  return !(diceOnly && weapon==npc.currentRangedWeapon());
+  return !(diceOnly && weapon==npc.currentRangedWeapon() && (!diceWeak || Archery::isBowStrengthEnabled()));
   }
 
 float ArcherAi::gauss() {
@@ -189,11 +189,13 @@ void ArcherAi::spread(Npc& npc, const Npc& tg) {
   const auto     st     = Archery::stats(npc,npc.currentRangedWeapon());
   const int32_t  talent = npc.hitChance(st.crossbow ? TALENT_CROSSBOW : TALENT_BOW);
   const float    d      = std::max((tg.position()-npc.position()).length(),100.f);
-  pv = float(DamageCalculator::vanillaChance(npc.world().script(),talent,d))/100.f;
+  pv = float(npc.world().rules().vanillaChance(talent,d))/100.f;
   // its cadence as it shoots (the fight AI's waits, the steadying, the draw), till it has one: the reload,
   // the draw, the hold
   const float reload = npc.animTime(Archery::reloadAnim(st.crossbow));
-  const float tNpc   = cycle>0.f ? cycle : reload/std::max(st.reload,0.1f) + Resteady + (st.drawTime+MinHold)*1000.f;
+  const float drawTime = st.bowStrength && st.steadyDraw<Archery::MinDraw ?
+                         Archery::drawTime(st.strength,st.burstDraw,st.drawSpeed) : st.drawTime;
+  const float tNpc   = cycle>0.f ? cycle : reload/std::max(st.reload,0.1f) + Resteady + (drawTime+MinHold)*1000.f;
   const float tDice  = reload + 67.f;
   rho = std::clamp(tNpc/std::max(tDice,1.f),1.f,RhoMax);
   ps  = mode==PerArrow ? pv : std::max(pv,std::min(PMax,pv*rho));
@@ -240,16 +242,18 @@ void ArcherAi::tick(Npc& npc, uint64_t dt) {
   const float dtS = float(dt)/1000.f;
   auto&       ar  = npc.archer();
   const auto  st  = Archery::stats(npc,npc.currentRangedWeapon());
-  if(ar.stage()==Archer::Raising && now-raiseAt>RaiseStuck) {
-    // never steady (an animation Aim cannot hold): the dice for this weapon
+  const bool tooWeak = st.bowStrength && st.burstDraw<Archery::MinDraw;
+  if(tooWeak || (ar.stage()==Archer::Raising && now-raiseAt>RaiseStuck)) {
+    // Cannot shoot by hand (too weak, or an animation Aim cannot hold): the dice for this weapon.
     diceOnly = true;
+    diceWeak = tooWeak;
     weapon   = npc.currentRangedWeapon();
     end(npc);
-    if(TestBench::isActive()) {
-      const auto by = TestBench::who(&npc);
+    if(Bench::isActive()) {
+      const auto by = Bench::who(&npc);
       char buf[160];
-      std::snprintf(buf,sizeof(buf),"archer %.*s: dice from now (raise stuck)",int(by.size()),by.data());
-      TestBench::note(buf);
+      std::snprintf(buf,sizeof(buf),"archer %.*s: dice from now (%s)",int(by.size()),by.data(),tooWeak ? "draw below minimum" : "raise stuck");
+      Bench::note(buf);
       }
     return;
     }
@@ -288,7 +292,9 @@ void ArcherAi::tick(Npc& npc, uint64_t dt) {
   Vec3 head;
   if(tg->hitZoneCenter(HitZones::Head,head) && head.y>c.y)
     c.y += ChestRaise*std::clamp((head.y-tp.y)/HeadHeight,0.5f,2.f);
-  const float speed = Archery::speedAt(st,1.f);
+  const bool burst = st.bowStrength && st.steadyDraw<Archery::MinDraw;
+  const float releaseDraw = st.bowStrength ? (burst ? st.burstDraw : st.steadyDraw) : 1.f;
+  const float speed = Archery::speedAt(st,ar.stage()==Archer::Held ? ar.draw() : releaseDraw);
   lead = 0;
   if(leadOn && speed>0.f) {
     Vec3 ahead = c;
@@ -321,21 +327,22 @@ void ArcherAi::tick(Npc& npc, uint64_t dt) {
     const float track   = npc.aimTrackError();
     const bool  settled = ar.disturbance()<=Settled && track>=0.f && track<ReleaseTrack;
     letGo = held>=MinHold && (settled || held>=ReleaseWait);
-    if(letGo && TestBench::isActive()) {
-      const auto  by = TestBench::who(&npc);
+    if(letGo && Bench::isActive()) {
+      const auto  by = Bench::who(&npc);
       const Vec2  e  = errFrom + (err-errFrom)*smooth(easeT);
       char buf[320];
       std::snprintf(buf,sizeof(buf),"arrow aim: at %.1f %.1f %.1f, true %.1f %.1f %.1f, err %.3f %.3f deg, sigma %.3f, pv %.0f p %.0f rho %.2f, lead %.0f, hold %.2f, disturb %.2f, %s, by %.*s",
                     at.x,at.y,at.z,c.x,c.y,c.z,double(e.x*sigma/Deg),double(e.y*sigma/Deg),double(sigma/Deg),double(pv*100.f),
                     double(ps*100.f),double(rho),double(lead),double(held),double(ar.disturbance()),settled ? "settled" : "waited",
                     int(by.size()),by.data());
-      TestBench::note(buf);
+      Bench::note(buf);
       }
     } else {
     heldAt = 0;
     }
   Archer::Input in;
   in.draw = ar.stage()==Archer::Drawing || (want && (ar.stage()==Archer::Nocked || ar.stage()==Archer::Held) && !letGo);
+  in.burst = burst;
   in.dt   = dt;
   if(npc.tickManualAim(at,in,st)) {
     if(shotAt>0 && now-shotAt<CycleGap)

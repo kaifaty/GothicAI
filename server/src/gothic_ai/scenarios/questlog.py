@@ -9,6 +9,10 @@ from ..game import GameLink
 from ..protocol import Session
 from .common import LOBART, RUEBEN, _logged, _save, _until, _until_async, wait_message
 
+SCENARIOS = {
+    "questlog": ("OFF", {"save": True, "timeout": 300}),
+}
+
 if TYPE_CHECKING:
     from ..occasions import Occasions
     from ..questlog import QuestLog

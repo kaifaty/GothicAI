@@ -1,0 +1,1 @@
+../../../../character-tool/src/character_tool/anim/blender/soma_view.py

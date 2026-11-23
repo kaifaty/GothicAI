@@ -6,6 +6,10 @@
 #include "graphics/dynamic/frustrum.h"
 #include "rtscene.h"
 #include "resources.h"
+#include "graphics/crownlight.h"
+#include "graphics/treewindfade.h"
+#include "graphics/foliagewind.h"
+#include "graphics/houselights.h"
 
 class Sky;
 class WorldView;
@@ -25,6 +29,23 @@ class SceneGlobals final {
       V_Count
       };
 
+    // UboGlobal::viewFlags, as VF_* in scene.glsl
+    enum ViewFlag : uint32_t {
+      VF_HIZ = 0x1,
+      VF_TAA = 0x2,
+      VF_HAIR_DEBUG = 0x4,
+      VF_SHADOW = 0x8,
+      VF_LAMP_CONTACT = 0x10,
+      VF_CONTACT_AO = 0x20,
+      VF_GRASS_CONTACT = 0x40,
+      VF_CROWN_MASK = 0x80,
+      VF_HIZ_NO_CANOPY = 0x100,
+      VF_TREE_OCCLUSION_PROBE = 0x200,
+      VF_HIZ_PRECISE = 0x400,
+      VF_HIZ_VERIFY  = 0x800,
+      VF_HIZ_HISTORY_REFERENCE = 0x1000,
+      };
+
     static bool isShadowView(VisCamera v);
 
     void setViewProject(const Tempest::Matrix4x4& view, const Tempest::Matrix4x4& proj,
@@ -32,17 +53,43 @@ class SceneGlobals final {
                         const Tempest::Matrix4x4 *sh);
     void setViewLwc(const Tempest::Matrix4x4& view, const Tempest::Matrix4x4& proj, const Tempest::Matrix4x4 *sh);
     void setViewVsm(const Tempest::Matrix4x4& view, const Tempest::Matrix4x4& viewLwc);
+    // TAA: the sub-pixel shift J of the main projection (J*proj), taken by the next setViewProject/setViewLwc;
+    // nullptr leaves the projection as it is
+    void setJitter(const Tempest::Matrix4x4* jitter);
     void setSky(const Sky& s);
     void setWorld(const WorldView& wview);
     void setUnderWater(bool w);
+    // TAA: the bias of the material textures' mip level in the main view; shadows keep 0
+    void setMipBias(float bias);
+    void setTaaFrame(bool taa, bool lampTaa, uint32_t frame);
+    void setLandscapeMask(bool enabled) { landscapeMask = enabled; }
+    bool isLandscapeMask() const { return landscapeMask; }
+    void setTreeOcclusionProbe(bool verify) { uboGlobalCpu.viewFlags |= VF_TREE_OCCLUSION_PROBE | (verify ? VF_HIZ_VERIFY : 0u); }
+    bool isTreeOcclusionProbe() const { return (uboGlobalCpu.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0; }
+    // motion vectors of objects: on/off and the camera's part (identity and this frame's camera on a cut)
+    void setMotion(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
+    // the TAA reactive mask (graphics plan 1v): the added light on screen that makes an additive pixel fully reactive
+    void setTaaReactiveLref(float lref);
+    // VSM lamps: an object nearer than this to a light (cm, along its cube face's axis) is no blocker of it
+    void setVsmLampNear(float cm);
+    void setLampNearKnee(float knee);
+    // the houses whose windows fade with their lamps (graphics/houselights.h), once a world
+    void setHouses(const std::vector<HouseLights::House>& houses);
+    // VSM lamps: the sides of a surface a cube face keeps: 1 the far one, 2 both for the world mesh, 3 for objects too
+    void setVsmLampSides(uint32_t sides);
+    // bench `vsm study <bits>`: the shadow test on a mesh's facets, VSM_STUDY_* of scene.glsl (0: the game's)
+    void setVsmStudy(uint32_t bits);
 
     void setTime(uint64_t time);
     void commitUbo(uint8_t fId);
     void prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer> &cmd, uint8_t frameId);
+    Tempest::StorageBuffer treeHistoryReferenceUbo() const;
 
     void setResolution(uint32_t w, uint32_t h);
     void setHiZ(const Tempest::Texture2d& hiZ);
     void setShadowMap(const Tempest::Texture2d* tex[]);
+    void setFog(const Tempest::StorageImage* lut, const Tempest::StorageImage* lutMs);
+    void setFogOcclusion(const Tempest::StorageImage* occlusion);
 
     void setVirtualShadowMap(bool enabled,
                              const Tempest::ZBuffer&       vsmPageData,
@@ -54,6 +101,17 @@ class SceneGlobals final {
     const Tempest::Matrix4x4& viewProjectInv() const;
     const Tempest::Matrix4x4& viewShadow(uint8_t view) const;
     const Tempest::Vec3       clipInfo() const;
+    // the eye of the main view and the size of the frame it is drawn into (the levels of strands, VisualObjects)
+    Tempest::Vec3             camPos()    const { return uboGlobalCpu.camPos;    }
+    float                     verticalProjection() const { return uboGlobalCpu.project[1][1]; }
+    // SceneDesc::foliageFade.x of the frame (commitUbo): the scale of the tree's wind fade, 0 without it
+    float                     foliageFade() const { return uboGlobalCpu.foliageFade.x; }
+    // SceneDesc::grassRing: the field of grass says where its blades end (GrassField); zero without it
+    void                      setGrassRing(const Tempest::Vec4& ring) { uboGlobalCpu.grassRing = ring; }
+    // the last frame drew blades: the sun's screen ray over them runs in the next (graphics/grasscontact.h)
+    void                      setGrassDrawn(bool drawn) { grassDrawn = drawn; }
+    bool                      grassContactActive() const { return (uboGlobalCpu.viewFlags & VF_GRASS_CONTACT)!=0; }
+    Tempest::Point            screenRes() const { return uboGlobalCpu.screenRes; }
 
     const Tempest::Matrix4x4  viewProjectLwc() const;
     const Tempest::Matrix4x4  viewProjectLwcInv() const;
@@ -68,6 +126,7 @@ class SceneGlobals final {
 
     const Tempest::Texture2d*         sceneColor   = &Resources::fallbackBlack();
     const Tempest::Texture2d*         sceneDepth   = &Resources::fallbackBlack();
+    const Tempest::Texture2d*         sceneHaze    = &Resources::fallbackBlack(); // the frame before the haze pass
     const Tempest::Texture2d*         zbuffer      = &Resources::fallbackBlack();
 
     const Tempest::Texture2d*         gbufDiffuse  = &Resources::fallbackBlack();
@@ -75,7 +134,16 @@ class SceneGlobals final {
 
     const Tempest::Texture2d*         hiZ          = &Resources::fallbackTexture();
 
+    const Tempest::StorageImage*      fogLut       = &Resources::fallbackImage3d();
+    const Tempest::StorageImage*      fogLutMs     = &Resources::fallbackImage3d();
+    // the sun's bits along the ray of the volumetric fog (R32UI, fog3d.comp), read by the fog of translucent under GI
+    const Tempest::StorageImage*      fogOcclusion = &Resources::fallbackImage();
+
     const Tempest::StorageBuffer*     lights        = nullptr;
+    // the meadows' borders with a verge (GrassField, shader/grass/grass_border.glsl); without a field the buffer
+    // that says there is none
+    const Tempest::StorageBuffer*     grassBorder   = nullptr;
+    Tempest::StorageBuffer            grassBorderNone;
 
     const Tempest::Texture2d*         vsmPageData   = nullptr;
     const Tempest::StorageImage*      vsmPageTbl    = nullptr;
@@ -119,7 +187,41 @@ class SceneGlobals final {
       Tempest::Point                  screenRes = {};
       Tempest::Vec2                   cloudsDir[2] = {};
 
-      float                           probeGridBias = 3;
+      float                           probeLodScale = 0.002f; // 1/cm: probeGridLod in probe_common.glsl
+      uint32_t                        fogQuality = 0;
+      float                           mipBias      = 0; // TAA: the main view only (commitUbo), 0 in shadows
+      float                           mipGradScale = 1; // exp2(mipBias)
+      uint32_t                        taaFrame     = 0; // TAA: the frame number (Renderer::prepareTaa), 0 without TAA
+      uint32_t                        taaActive    = 0; // the lamp taps turn by taaFrame (light.frag)
+      // motion vectors of objects (graphics plan 1b): the main view only (commitUbo), 0 in the other views.
+      // Both matrices carry this frame's jitter, so the residual has none (Taa::motionResidual)
+      uint32_t                        motionVectors = 0;
+      float                           reactiveLrefInv = 4.f; // TAA reactive mask: 1/Lref of added light (main.frag)
+      Tempest::Matrix4x4              reprojectClip   = Tempest::Matrix4x4::mkIdentity(); // Taa::reprojection
+      Tempest::Matrix4x4              viewProjectPrev = Tempest::Matrix4x4::mkIdentity(); // Taa::viewProjectPrev
+      float                           vsmLampNear     = 30.f; // cm: VSM lamps, the fixture plane (main.vert)
+      uint32_t                        vsmLampSides    = 3;    // VSM lamps: the sides a cube face keeps (main.vert)
+      uint32_t                        vsmStudy        = 0;    // bench `vsm study`: VSM_STUDY_* of scene.glsl
+      uint32_t                        viewFlags       = 0; // VF_* of scene.glsl: VF_HIZ in V_HiZ only (commitUbo), VF_TAA
+      float                           fogSkyVis       = 1; // the sky seen from the camera under GI (fog_sky_vis.comp)
+      float                           lampNearKnee    = 0; // lamps: the limit of the light near a lamp (light.frag), 0 off
+      float                           dayHour         = 12; // 0..24 of the game's day: the windows' evening (windowglow.h)
+      uint32_t                        houseCount      = 0; // the houses of `house` below (graphics/houselights.h)
+      // living foliage (graphics/foliagewind.h): the world's wind of this frame and of the previous one (setTime)
+      Tempest::Vec4                   foliageWind;
+      Tempest::Vec4                   foliagePhase;
+      Tempest::Vec4                   foliageWindPrev;
+      Tempest::Vec4                   foliagePhasePrev;
+      Tempest::Vec4                   foliageSwing;
+      Tempest::Vec4                   foliageSwingPrev;
+      // the travelling front of the gust (graphics/foliagefront.h) and the grass ring (graphics/grass/grassparams.h)
+      Tempest::Vec4                   foliageFront;
+      Tempest::Vec4                   foliageFrontK;
+      Tempest::Vec4                   foliageFade; // x: FoliageTree::fadeScale of the main view (commitUbo), 0 off
+      Tempest::Vec4                   grassRing;
+      // the houses whose windows fade with their lamps (HouseLights::pack): three vectors a house
+      Tempest::Vec4                   house[3*HouseLights::MaxHouses];
+      alignas(16) uint32_t            grassGroundParts = 0;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];
@@ -128,13 +230,21 @@ class SceneGlobals final {
     Frustrum                          frustrum[V_Count];
 
     bool                              zWindEnabled = false;
+    bool                              grassDrawn   = false; // setGrassDrawn
+    bool                              landscapeMask = false;
     bool                              legacyWind = true;
     float                             windScale = 1.f;
     uint64_t                          windPeriod = 6000;
+    uint64_t                          foliageTick = uint64_t(-1); // the tick of the last setTime (the previous frame's wind)
 
     RtScene                           rtScene;
 
   private:
     UboGlobal                         uboGlobalCpu;
+    Tempest::Matrix4x4                jitter;
+    bool                              jitterEnabled = false;
+
+    UboGlobal                         makeViewUbo(VisCamera v) const;
+    Tempest::Matrix4x4                jittered(const Tempest::Matrix4x4& proj) const;
   };
 

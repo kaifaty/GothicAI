@@ -1,0 +1,49 @@
+# The crops of Onar's north field by time (reports/content/2026-11-19-crop-fields, «Поле Онара»): two plots of
+# 3 thousand m² each, 11.9 thousand objects of a set built by scripts/content/crop_field_set.py with
+# --field '…;578.1,-75.3;639.3,-76.4'. Four held views at noon. Compare with the content the set was copied from:
+#   PERF_ENV='OPENGOTHIC_GPU_PASSES=1' scripts/perf-content.sh <content today> <crop set> crops-onar
+# Frames for the eye: crop-onar.bench (perf commands need the perf build).
+# @timeout 600
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+goto pos 57094 1850 -11100
+# view 1: from the south end of the west plot, the eye's height, along the strips
+cam at 57094 1955 -10950 58100 2000 -7600
+clear 3000
+wait 20000
+perf sample perf-crops-onar/view-1
+wait 8000
+perf stop
+shot view-1
+wait 300
+# view 2: from 15 m over the west edge, across both plots
+cam at 55400 3050 -7700 61500 2100 -7600
+wait 8000
+perf sample perf-crops-onar/view-2
+wait 8000
+perf stop
+shot view-2
+wait 300
+# view 3: inside the rye in the middle of the west plot
+cam at 58108 2220 -7682 58150 2200 -6400
+wait 8000
+perf sample perf-crops-onar/view-3
+wait 8000
+perf stop
+shot view-3
+wait 300
+# view 4: from the upper east edge down over both plots: every object of the field is in the frame
+cam at 66600 2650 -9000 58000 1967 -7700
+wait 8000
+perf sample perf-crops-onar/view-4
+wait 8000
+perf stop
+shot view-4
+wait 300

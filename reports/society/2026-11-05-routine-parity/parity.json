@@ -1,0 +1,5474 @@
+{
+ "world": "world.json",
+ "core": "core",
+ "engine": "ref/day-headless-full",
+ "engine_header": {
+  "world": "NEWWORLD.ZEN",
+  "tier_mode": "full",
+  "seed": 73106,
+  "minutes": 1440,
+  "period_min": 5,
+  "start_day": 0,
+  "start_hour": 8,
+  "start_minute": 0,
+  "end_reason": "done"
+ },
+ "people": 370,
+ "people_missing": 0,
+ "missing_marks": 0,
+ "marks": 289,
+ "place_m": 10.0,
+ "thresholds": {
+  "missing_marks": 0,
+  "state_outside": 0.95,
+  "place_outside": 0.9,
+  "travel_median_abs_min": 2.0
+ },
+ "self_moving_states": {
+  "ZS_PICK_FP": "picks from free point to free point (AI_GotoNextFP)",
+  "ZS_RAKE_FP": "rakes from free point to free point (AI_GotoNextFP)",
+  "ZS_SWEEP_FP": "sweeps from free point to free point (AI_GotoNextFP)",
+  "ZS_PRAY_INNOS_FP": "goes between prayer free points (AI_GotoNextFP)",
+  "ZS_MM_RTN_ROAM": "roams between FP_ROAM points"
+ },
+ "outside": {
+  "marks": 104178,
+  "same_state": 0.9976098600472268,
+  "place_marks": 94706,
+  "near": 0.9977192574916056,
+  "near_with_self_moving": 0.9979266255831366
+ },
+ "windows": {
+  "marks": 2752,
+  "open_marks": 1248,
+  "same_state": 0.923328488372093,
+  "place_marks": 2752,
+  "near": 0.8942587209302325,
+  "open_same_state": 0.8934294871794872,
+  "open_near": 0.8541666666666666
+ },
+ "self_moving": {
+  "ZS_MM_RTN_ROAM": {
+   "marks": 5202,
+   "same_state": 1.0,
+   "near": 1.0,
+   "why": "roams between FP_ROAM points"
+  },
+  "ZS_PICK_FP": {
+   "marks": 2015,
+   "same_state": 1.0,
+   "near": 1.0,
+   "why": "picks from free point to free point (AI_GotoNextFP)"
+  },
+  "ZS_PRAY_INNOS_FP": {
+   "marks": 565,
+   "same_state": 1.0,
+   "near": 1.0,
+   "why": "goes between prayer free points (AI_GotoNextFP)"
+  },
+  "ZS_RAKE_FP": {
+   "marks": 1500,
+   "same_state": 0.9993333333333333,
+   "near": 1.0,
+   "why": "rakes from free point to free point (AI_GotoNextFP)"
+  },
+  "ZS_SWEEP_FP": {
+   "marks": 190,
+   "same_state": 1.0,
+   "near": 1.0,
+   "why": "sweeps from free point to free point (AI_GotoNextFP)"
+  }
+ },
+ "travel": {
+  "transitions": 531,
+  "core_missing": 0,
+  "median_abs_min": 0.370000000000001,
+  "p90_abs_min": 2.17,
+  "median_signed_min": -0.25,
+  "engine_median_min": 7.05
+ },
+ "open_windows": {
+  "VLK_475_BUERGER#0": {
+   "ZS_STAND_ARMSCROSSED": 95,
+   "ZS_SMALLTALK": 99,
+   "ZS_STAND_DRINKING": 24
+  },
+  "PAL_226_SCHIFFSWACHE#0": {
+   "ZS_STAND_GUARDING": 179
+  },
+  "PAL_227_SCHIFFSWACHE#0": {
+   "ZS_STAND_GUARDING": 149
+  },
+  "VLK_482_BUERGERIN#0": {
+   "ZS_SMALLTALK": 96,
+   "ZS_STOMP_HERB": 48
+  },
+  "PAL_228_SCHIFFSWACHE#0": {
+   "ZS_STAND_GUARDING": 139
+  },
+  "VLK_458_RUPERT#0": {
+   "ZS_STAND_SWEEPING": 24,
+   "ZS_SIT_CHAIR": 48,
+   "ZS_GOTOBED": 60
+  },
+  "PC_PSIONIC#0": {
+   "ZS_SIT_CAMPFIRE": 109
+  },
+  "VLK_430_BUERGERIN#0": {
+   "ZS_SMALLTALK": 95
+  },
+  "SLD_816_FESTER#0": {
+   "ZS_PRACTICE_SWORD": 13
+  },
+  "BAU_911_ELENA#0": {
+   "ZS_STAND_ARMSCROSSED": 7
+  },
+  "SLD_819_SOELDNER#0": {
+   "ZS_STAND_DRINKING": 4
+  },
+  "BAU_921_BAUER#0": {
+   "ZS_SMALLTALK": 2
+  },
+  "MIL_314_MORTIS#0": {
+   "ZS_SMITH_FIRE": 2
+  },
+  "SLD_804_ROD#0": {
+   "ZS_SMALLTALK": 2
+  },
+  "VLK_461_CARL#0": {
+   "ZS_SMITH_FIRE": 2
+  },
+  "BAU_901_BAUER#0": {
+   "ZS_STAND_EATING": 1
+  },
+  "BAU_910_MARIA#0": {
+   "ZS_SIT_THRONE": 1
+  },
+  "BAU_933_REGA#0": {
+   "ZS_PICK_FP": 1
+  },
+  "BAU_934_BABERA#0": {
+   "ZS_PICK_FP": 1
+  },
+  "BAU_935_BRONKO#0": {
+   "ZS_STAND_GUARDING": 1
+  },
+  "BAU_937_BAUER#0": {
+   "ZS_RAKE_FP": 1
+  },
+  "BAU_938_BAUER#0": {
+   "ZS_PICK_FP": 1
+  },
+  "BAU_952_VINO#0": {
+   "ZS_RAKE_FP": 1
+  },
+  "BAU_954_MALETH#0": {
+   "ZS_STAND_GUARDING": 1
+  },
+  "BAU_962_BAUER#0": {
+   "ZS_SMALLTALK": 1
+  },
+  "BAU_964_BAUER#0": {
+   "ZS_SAW": 1
+  },
+  "BAU_965_BAUER#0": {
+   "ZS_SMALLTALK": 1
+  },
+  "BAU_966_BAUER#0": {
+   "ZS_RAKE_FP": 1
+  },
+  "BAU_967_BAUER#0": {
+   "ZS_PICK_FP": 1
+  },
+  "BAU_968_BAUER#0": {
+   "ZS_RAKE_FP": 1
+  },
+  "BAU_969_BAUER#0": {
+   "ZS_PICK_FP": 1
+  },
+  "KDF_505_MARDUK#0": {
+   "ZS_STAND_GUARDING": 1
+  },
+  "KDF_508_GORAX#0": {
+   "ZS_STAND_GUARDING": 1
+  },
+  "MIL_307_TUERWACHE#0": {
+   "ZS_STAND_ARMSCROSSED": 1
+  },
+  "MIL_316_WAMBO#0": {
+   "ZS_STAND_ARMSCROSSED": 1
+  },
+  "MIL_326_MILIZ#0": {
+   "ZS_STAND_ARMSCROSSED": 1
+  },
+  "NOV_601_IGARAZ#0": {
+   "ZS_PRAY_INNOS_FP": 1
+  },
+  "NOV_603_AGON#0": {
+   "ZS_RAKE_FP": 1
+  },
+  "NOV_604_DYRIAN#0": {
+   "ZS_STAND_WP": 1
+  },
+  "NOV_606_NOVIZE#0": {
+   "ZS_STOMP_HERB": 1
+  },
+  "NOV_609_NOVIZE#0": {
+   "ZS_PRAY_INNOS_FP": 1
+  },
+  "NOV_610_NOVIZE#0": {
+   "ZS_PICK_FP": 1
+  },
+  "NOV_611_NOVIZE#0": {
+   "ZS_PRAY_INNOS_FP": 1
+  },
+  "NOV_615_NOVIZE#0": {
+   "ZS_STAND_SWEEPING": 1
+  },
+  "PAL_208_PALADIN#0": {
+   "ZS_SMALLTALK": 1
+  },
+  "PAL_232_RITTER#0": {
+   "ZS_PRACTICE_SWORD": 1
+  },
+  "PAL_237_RITTER#0": {
+   "ZS_PRACTICE_SWORD": 1
+  },
+  "PAL_238_RITTER#0": {
+   "ZS_SMALLTALK": 1
+  },
+  "PAL_239_RITTER#0": {
+   "ZS_SMALLTALK": 1
+  },
+  "PAL_240_RITTER#0": {
+   "ZS_STAND_GUARDING": 1
+  },
+  "PAL_241_RITTER#0": {
+   "ZS_STAND_GUARDING": 1
+  },
+  "SLD_800_LEE#0": {
+   "ZS_STAND_GUARDING": 1
+  },
+  "SLD_809_BENNET#0": {
+   "ZS_SMITH_FIRE": 1
+  },
+  "SLD_811_WOLF#0": {
+   "ZS_SIT_BENCH": 1
+  },
+  "VLK_4000_BUERGER#0": {
+   "ZS_SMALLTALK": 1
+  },
+  "VLK_4001_BUERGERIN#0": {
+   "ZS_COOK_STOVE": 1
+  },
+  "VLK_4004_ARBEITER#0": {
+   "ZS_STAND_SWEEPING": 1
+  },
+  "VLK_4005_ARBEITER#0": {
+   "ZS_STAND_SWEEPING": 1
+  },
+  "VLK_400_LARIUS#0": {
+   "ZS_SIT_THRONE": 1
+  },
+  "VLK_403_GERBRANDT#0": {
+   "ZS_SMALLTALK": 1
+  },
+  "VLK_404_LUTERO#0": {
+   "ZS_SMALLTALK": 1
+  },
+  "VLK_405_FERNANDO#0": {
+   "ZS_SMALLTALK": 1
+  },
+  "VLK_416_MATTEO#0": {
+   "ZS_STAND_ARMSCROSSED": 1
+  },
+  "VLK_424_ALWIN#0": {
+   "ZS_SIT_BENCH": 1
+  },
+  "VLK_495_BUERGERIN#0": {
+   "ZS_STAND_EATING": 1
+  },
+  "VLK_499_BUERGER#0": {
+   "ZS_STAND_DRINKING": 1
+  }
+ },
+ "state_pairs": [
+  [
+   "ZS_TALK",
+   "ZS_SIT_CAMPFIRE",
+   150
+  ],
+  [
+   "-",
+   "ZS_STAND_GUARDING",
+   14
+  ],
+  [
+   "-",
+   "ZS_SMITH_ANVIL",
+   13
+  ],
+  [
+   "ZS_GOTOBED",
+   "ZS_SLEEP",
+   10
+  ],
+  [
+   "-",
+   "ZS_STAND_ARMSCROSSED",
+   9
+  ],
+  [
+   "-",
+   "ZS_GUARD_PASSAGE",
+   9
+  ],
+  [
+   "-",
+   "ZS_SMITH_FIRE",
+   7
+  ],
+  [
+   "ZS_SLEEP",
+   "ZS_GOTOBED",
+   5
+  ],
+  [
+   "ZS_ATTACK",
+   "ZS_SIT_CAMPFIRE",
+   5
+  ],
+  [
+   "-",
+   "ZS_SIT_BENCH",
+   4
+  ],
+  [
+   "-",
+   "ZS_SMALLTALK",
+   4
+  ],
+  [
+   "-",
+   "ZS_SIT_CHAIR",
+   3
+  ],
+  [
+   "-",
+   "ZS_SIT_CAMPFIRE",
+   2
+  ],
+  [
+   "-",
+   "ZS_SMITH_COOL",
+   2
+  ],
+  [
+   "-",
+   "ZS_SLEEP",
+   2
+  ]
+ ],
+ "not_people": {
+  "marks": 194625,
+  "same_state": 0.9993731535003211
+ },
+ "worst_npcs": [
+  {
+   "key": "PC_PSIONIC#0",
+   "marks": 180,
+   "state_diff": 155,
+   "far": 155,
+   "pairs": [
+    [
+     "ZS_TALK",
+     "ZS_SIT_CAMPFIRE",
+     150
+    ],
+    [
+     "ZS_ATTACK",
+     "ZS_SIT_CAMPFIRE",
+     5
+    ]
+   ],
+   "far_median_m": 19.92695774572728
+  },
+  {
+   "key": "VLK_487_BUERGERIN#0",
+   "marks": 288,
+   "state_diff": 0,
+   "far": 30,
+   "pairs": [],
+   "far_median_m": 10.63088152506649
+  },
+  {
+   "key": "PAL_228_SCHIFFSWACHE#0",
+   "marks": 131,
+   "state_diff": 2,
+   "far": 24,
+   "pairs": [
+    [
+     "-",
+     "ZS_STAND_GUARDING",
+     2
+    ]
+   ],
+   "far_median_m": 15.31008293425713
+  },
+  {
+   "key": "MIL_314_MORTIS#0",
+   "marks": 284,
+   "state_diff": 8,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SMITH_ANVIL",
+     3
+    ],
+    [
+     "-",
+     "ZS_SMITH_FIRE",
+     3
+    ],
+    [
+     "-",
+     "ZS_SMITH_COOL",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "VLK_461_CARL#0",
+   "marks": 284,
+   "state_diff": 7,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SMITH_ANVIL",
+     4
+    ],
+    [
+     "-",
+     "ZS_SMITH_FIRE",
+     2
+    ],
+    [
+     "-",
+     "ZS_SMITH_COOL",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "BAU_900_ONAR#0",
+   "marks": 289,
+   "state_diff": 2,
+   "far": 4,
+   "pairs": [
+    [
+     "ZS_GOTOBED",
+     "ZS_SLEEP",
+     2
+    ]
+   ],
+   "far_median_m": 16.321856989733014
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "marks": 117,
+   "state_diff": 5,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_STAND_GUARDING",
+     5
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "VLK_412_HARAD#0",
+   "marks": 288,
+   "state_diff": 5,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SMITH_ANVIL",
+     5
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "PAL_207_GIRION#0",
+   "marks": 285,
+   "state_diff": 3,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_STAND_ARMSCROSSED",
+     2
+    ],
+    [
+     "ZS_GOTOBED",
+     "ZS_SLEEP",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "SLD_809_BENNET#0",
+   "marks": 286,
+   "state_diff": 3,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SMITH_FIRE",
+     2
+    ],
+    [
+     "-",
+     "ZS_SMITH_ANVIL",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "SLD_823_KHALED#0",
+   "marks": 289,
+   "state_diff": 2,
+   "far": 1,
+   "pairs": [
+    [
+     "ZS_GOTOBED",
+     "ZS_SLEEP",
+     2
+    ]
+   ],
+   "far_median_m": 15.677947123268407
+  },
+  {
+   "key": "BAU_983_DRAGOMIR#0",
+   "marks": 289,
+   "state_diff": 2,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SIT_BENCH",
+     2
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "MIL_312_WULFGAR#0",
+   "marks": 287,
+   "state_diff": 2,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_STAND_ARMSCROSSED",
+     2
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "PAL_230_RITTER#0",
+   "marks": 289,
+   "state_diff": 2,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SMALLTALK",
+     2
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "VLK_4003_BUERGERIN#0",
+   "marks": 286,
+   "state_diff": 1,
+   "far": 1,
+   "pairs": [
+    [
+     "ZS_SLEEP",
+     "ZS_GOTOBED",
+     1
+    ]
+   ],
+   "far_median_m": 11.948918946917331
+  },
+  {
+   "key": "VLK_402_RICHTER#0",
+   "marks": 278,
+   "state_diff": 1,
+   "far": 1,
+   "pairs": [
+    [
+     "ZS_SLEEP",
+     "ZS_GOTOBED",
+     1
+    ]
+   ],
+   "far_median_m": 10.077026744035166
+  },
+  {
+   "key": "VLK_422_SALANDRIL#0",
+   "marks": 289,
+   "state_diff": 2,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_STAND_ARMSCROSSED",
+     1
+    ],
+    [
+     "-",
+     "ZS_SLEEP",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "VLK_466_GERNOD#0",
+   "marks": 287,
+   "state_diff": 2,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SIT_BENCH",
+     1
+    ],
+    [
+     "ZS_GOTOBED",
+     "ZS_SLEEP",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "VLK_497_BUERGERIN#0",
+   "marks": 269,
+   "state_diff": 2,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SMALLTALK",
+     1
+    ],
+    [
+     "-",
+     "ZS_STAND_EATING",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "BAU_902_GUNNAR#0",
+   "marks": 287,
+   "state_diff": 1,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SIT_CHAIR",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "BAU_913_THEKLA#0",
+   "marks": 289,
+   "state_diff": 1,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_STAND_GUARDING",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "BAU_941_KATI#0",
+   "marks": 289,
+   "state_diff": 1,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_STAND_ARMSCROSSED",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "BDT_10301_ADDON_RANGERBANDIT_M#0",
+   "marks": 289,
+   "state_diff": 1,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_STAND_ARMSCROSSED",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "BDT_1045_BANDIT_L#0",
+   "marks": 289,
+   "state_diff": 1,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SIT_BENCH",
+     1
+    ]
+   ],
+   "far_median_m": null
+  },
+  {
+   "key": "BDT_1047_BANDIT_L#0",
+   "marks": 289,
+   "state_diff": 1,
+   "far": 0,
+   "pairs": [
+    [
+     "-",
+     "ZS_SIT_CAMPFIRE",
+     1
+    ]
+   ],
+   "far_median_m": null
+  }
+ ],
+ "states": [
+  {
+   "state": "ZS_SIT_CAMPFIRE",
+   "marks": 4763,
+   "state_diff": 157,
+   "place_marks": 4763,
+   "far": 155
+  },
+  {
+   "state": "ZS_STAND_GUARDING",
+   "marks": 14277,
+   "state_diff": 12,
+   "place_marks": 14277,
+   "far": 24
+  },
+  {
+   "state": "ZS_COOK_STOVE",
+   "marks": 1388,
+   "state_diff": 1,
+   "place_marks": 1388,
+   "far": 30
+  },
+  {
+   "state": "ZS_GOTOBED",
+   "marks": 9991,
+   "state_diff": 17,
+   "place_marks": 9991,
+   "far": 5
+  },
+  {
+   "state": "ZS_STAND_ARMSCROSSED",
+   "marks": 9021,
+   "state_diff": 9,
+   "place_marks": 9021,
+   "far": 0
+  },
+  {
+   "state": "ZS_GUARD_PASSAGE",
+   "marks": 3179,
+   "state_diff": 9,
+   "place_marks": 3179,
+   "far": 0
+  },
+  {
+   "state": "ZS_SMITH_ANVIL",
+   "marks": 342,
+   "state_diff": 9,
+   "place_marks": 342,
+   "far": 0
+  },
+  {
+   "state": "ZS_SMALLTALK",
+   "marks": 13857,
+   "state_diff": 7,
+   "place_marks": 13857,
+   "far": 0
+  },
+  {
+   "state": "ZS_SMITH_FIRE",
+   "marks": 227,
+   "state_diff": 7,
+   "place_marks": 227,
+   "far": 0
+  },
+  {
+   "state": "ZS_SMITH_COOL",
+   "marks": 114,
+   "state_diff": 6,
+   "place_marks": 114,
+   "far": 0
+  },
+  {
+   "state": "ZS_SIT_THRONE",
+   "marks": 3184,
+   "state_diff": 1,
+   "place_marks": 3184,
+   "far": 2
+  },
+  {
+   "state": "ZS_SIT_BENCH",
+   "marks": 3896,
+   "state_diff": 3,
+   "place_marks": 3896,
+   "far": 0
+  },
+  {
+   "state": "ZS_STAND_DRINKING",
+   "marks": 2576,
+   "state_diff": 2,
+   "place_marks": 2576,
+   "far": 0
+  },
+  {
+   "state": "ZS_REPAIR_HUT",
+   "marks": 890,
+   "state_diff": 2,
+   "place_marks": 890,
+   "far": 0
+  },
+  {
+   "state": "ZS_STAND_EATING",
+   "marks": 2318,
+   "state_diff": 1,
+   "place_marks": 2318,
+   "far": 0
+  },
+  {
+   "state": "ZS_SIT_CHAIR",
+   "marks": 2867,
+   "state_diff": 1,
+   "place_marks": 2867,
+   "far": 0
+  },
+  {
+   "state": "ZS_RAKE_FP",
+   "marks": 1500,
+   "state_diff": 1,
+   "place_marks": 0,
+   "far": 0
+  },
+  {
+   "state": "ZS_STAND_WP",
+   "marks": 2016,
+   "state_diff": 1,
+   "place_marks": 2016,
+   "far": 0
+  },
+  {
+   "state": "ZS_POTION_ALCHEMY",
+   "marks": 747,
+   "state_diff": 1,
+   "place_marks": 747,
+   "far": 0
+  },
+  {
+   "state": "ZS_STAND_SWEEPING",
+   "marks": 963,
+   "state_diff": 1,
+   "place_marks": 963,
+   "far": 0
+  },
+  {
+   "state": "ZS_DANCE",
+   "marks": 138,
+   "state_diff": 1,
+   "place_marks": 138,
+   "far": 0
+  },
+  {
+   "state": "ZS_SAW",
+   "marks": 1409,
+   "state_diff": 0,
+   "place_marks": 1409,
+   "far": 0
+  },
+  {
+   "state": "ZS_PICK_FP",
+   "marks": 2015,
+   "state_diff": 0,
+   "place_marks": 0,
+   "far": 0
+  },
+  {
+   "state": "ZS_SMITH_SHARP",
+   "marks": 555,
+   "state_diff": 0,
+   "place_marks": 555,
+   "far": 0
+  },
+  {
+   "state": "ZS_PLAY_LUTE",
+   "marks": 289,
+   "state_diff": 0,
+   "place_marks": 289,
+   "far": 0
+  },
+  {
+   "state": "ZS_BANDIT",
+   "marks": 6358,
+   "state_diff": 0,
+   "place_marks": 6358,
+   "far": 0
+  },
+  {
+   "state": "ZS_READ_BOOKSTAND",
+   "marks": 1845,
+   "state_diff": 0,
+   "place_marks": 1845,
+   "far": 0
+  },
+  {
+   "state": "ZS_PRAY_INNOS_FP",
+   "marks": 565,
+   "state_diff": 0,
+   "place_marks": 0,
+   "far": 0
+  },
+  {
+   "state": "ZS_STUDY_WP",
+   "marks": 1156,
+   "state_diff": 0,
+   "place_marks": 1156,
+   "far": 0
+  },
+  {
+   "state": "ZS_PRACTICE_SWORD",
+   "marks": 1981,
+   "state_diff": 0,
+   "place_marks": 1981,
+   "far": 0
+  },
+  {
+   "state": "ZS_STOMP_HERB",
+   "marks": 641,
+   "state_diff": 0,
+   "place_marks": 641,
+   "far": 0
+  },
+  {
+   "state": "ZS_GUARD_HAMMER",
+   "marks": 289,
+   "state_diff": 0,
+   "place_marks": 289,
+   "far": 0
+  },
+  {
+   "state": "ZS_MM_RTN_ROAM",
+   "marks": 5202,
+   "state_diff": 0,
+   "place_marks": 0,
+   "far": 0
+  },
+  {
+   "state": "ZS_MM_RTN_ORCSIT",
+   "marks": 867,
+   "state_diff": 0,
+   "place_marks": 867,
+   "far": 0
+  },
+  {
+   "state": "ZS_MM_RTN_REST",
+   "marks": 578,
+   "state_diff": 0,
+   "place_marks": 578,
+   "far": 0
+  },
+  {
+   "state": "ZS_PRAY_INNOS",
+   "marks": 289,
+   "state_diff": 0,
+   "place_marks": 289,
+   "far": 0
+  },
+  {
+   "state": "ZS_SMOKE_JOINT",
+   "marks": 678,
+   "state_diff": 0,
+   "place_marks": 678,
+   "far": 0
+  },
+  {
+   "state": "ZS_SWEEP_FP",
+   "marks": 190,
+   "state_diff": 0,
+   "place_marks": 0,
+   "far": 0
+  },
+  {
+   "state": "ZS_ANNOUNCE_HEROLD",
+   "marks": 289,
+   "state_diff": 0,
+   "place_marks": 289,
+   "far": 0
+  },
+  {
+   "state": "ZS_SMOKE_WATERPIPE",
+   "marks": 107,
+   "state_diff": 0,
+   "place_marks": 107,
+   "far": 0
+  },
+  {
+   "state": "ZS_PEE",
+   "marks": 16,
+   "state_diff": 0,
+   "place_marks": 16,
+   "far": 0
+  },
+  {
+   "state": "ZS_PREACH_VATRAS",
+   "marks": 182,
+   "state_diff": 0,
+   "place_marks": 182,
+   "far": 0
+  },
+  {
+   "state": "ZS_COOK_CAULDRON",
+   "marks": 423,
+   "state_diff": 0,
+   "place_marks": 423,
+   "far": 0
+  }
+ ],
+ "worst_travel": [
+  {
+   "key": "VLK_4001_BUERGERIN#0",
+   "begin": 359.99,
+   "state": "ZS_SWEEP_FP",
+   "point": "NW_CITY_UPTOWN_HUT_02_IN",
+   "engine_min": 52.18,
+   "core_min": 17.03
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 419.99,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 22.93,
+   "core_min": 7.8
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 540.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 22.73,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 660.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 22.5,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 1380.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 21.91,
+   "core_min": 7.79
+  },
+  {
+   "key": "PAL_216_CEDRIC#0",
+   "begin": 660.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_LEOMAR_BED_03",
+   "engine_min": 22.21,
+   "core_min": 8.56
+  },
+  {
+   "key": "MIL_330_MILIZ#0",
+   "begin": 780.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_KASERN_BARRACK02_02",
+   "engine_min": 16.41,
+   "core_min": 2.81
+  },
+  {
+   "key": "PAL_209_PALADIN#0",
+   "begin": 662.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_HUT_03_01_B",
+   "engine_min": 18.17,
+   "core_min": 6.13
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 120.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_02",
+   "engine_min": 19.71,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 240.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_02",
+   "engine_min": 19.55,
+   "core_min": 7.79
+  },
+  {
+   "key": "MIL_331_MILIZ#0",
+   "begin": 781.99,
+   "state": "ZS_READ_BOOKSTAND",
+   "point": "NW_CITY_KASERN_BARRACK02_04",
+   "engine_min": 15.95,
+   "core_min": 4.32
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 359.99,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_02",
+   "engine_min": 19.39,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 720.0,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_BIGFARM_VORPOSTEN1_01",
+   "engine_min": 21.58,
+   "core_min": 10.04
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 480.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_02",
+   "engine_min": 19.21,
+   "core_min": 7.79
+  },
+  {
+   "key": "PAL_232_RITTER#0",
+   "begin": 900.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_PALCAMP_10",
+   "engine_min": 13.06,
+   "core_min": 1.73
+  }
+ ],
+ "travel_records": [
+  {
+   "key": "BAU_901_BAUER#0",
+   "begin": 720.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_BIGFARM_STABLE_SLEEP_01",
+   "engine_min": 17.86,
+   "core_min": 18.01
+  },
+  {
+   "key": "BAU_902_GUNNAR#0",
+   "begin": 719.0,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_BIGFARM_STABLE_06",
+   "engine_min": 0.0,
+   "core_min": 0.0
+  },
+  {
+   "key": "BAU_903_BODO#0",
+   "begin": 824.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_BIGFARM_PATH_03",
+   "engine_min": 2.22,
+   "core_min": 2.0
+  },
+  {
+   "key": "BAU_903_BODO#0",
+   "begin": 1425.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_BIGFARM_HOUSE_OUT_04",
+   "engine_min": 4.16,
+   "core_min": 1.99
+  },
+  {
+   "key": "BAU_904_BAUER#0",
+   "begin": 60.0,
+   "state": "ZS_SAW",
+   "point": "NW_BIGFARM_KITCHEN_OUT_01",
+   "engine_min": 4.7,
+   "core_min": 3.68
+  },
+  {
+   "key": "BAU_904_BAUER#0",
+   "begin": 900.0,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_BIGFARM_KITCHEN_09",
+   "engine_min": 9.56,
+   "core_min": 9.38
+  },
+  {
+   "key": "BAU_905_BAUER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_BIGFARM_STABLE_06",
+   "engine_min": 31.01,
+   "core_min": 26.9
+  },
+  {
+   "key": "BAU_905_BAUER#0",
+   "begin": 1380.0,
+   "state": "ZS_PICK_FP",
+   "point": "NW_BIGFARM_FIELD_01",
+   "engine_min": 29.72,
+   "core_min": 29.24
+  },
+  {
+   "key": "BAU_908_HODGES#0",
+   "begin": 660.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_BIGFARM_STABLE_SLEEP_02",
+   "engine_min": 8.88,
+   "core_min": 8.83
+  },
+  {
+   "key": "BAU_908_HODGES#0",
+   "begin": 1380.0,
+   "state": "ZS_SMITH_SHARP",
+   "point": "NW_BIGFARM_SMITH_SHARP",
+   "engine_min": 8.46,
+   "core_min": 8.22
+  },
+  {
+   "key": "BAU_911_ELENA#0",
+   "begin": 750.0,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_BIGFARM_HOUSE_UP1_SESSEL",
+   "engine_min": 12.4,
+   "core_min": 10.21
+  },
+  {
+   "key": "BAU_914_BAEUERIN#0",
+   "begin": 720.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_BIGFARM_STABLE_05",
+   "engine_min": 18.64,
+   "core_min": 18.68
+  },
+  {
+   "key": "BAU_914_BAEUERIN#0",
+   "begin": 1380.0,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_BIGFARM_HOUSE_UP1_COOK",
+   "engine_min": 18.38,
+   "core_min": 18.87
+  },
+  {
+   "key": "BAU_915_BAEUERIN#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_BIGFARM_STABLE_SLEEP_03",
+   "engine_min": 23.72,
+   "core_min": 22.68
+  },
+  {
+   "key": "BAU_915_BAEUERIN#0",
+   "begin": 1320.0,
+   "state": "ZS_PICK_FP",
+   "point": "NW_BIGFARM_FIELD_01",
+   "engine_min": 24.04,
+   "core_min": 23.48
+  },
+  {
+   "key": "BAU_920_BAUER#0",
+   "begin": 830.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_BIGFARM_STABLE_01",
+   "engine_min": 6.82,
+   "core_min": 6.95
+  },
+  {
+   "key": "BAU_920_BAUER#0",
+   "begin": 1430.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_BIGFARM_HOUSE_OUT_04",
+   "engine_min": 4.59,
+   "core_min": 4.53
+  },
+  {
+   "key": "BAU_921_BAUER#0",
+   "begin": 715.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_BIGFARM_PATH_04_1",
+   "engine_min": 4.44,
+   "core_min": 5.0
+  },
+  {
+   "key": "BAU_921_BAUER#0",
+   "begin": 835.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_BIGFARM_STABLE_01",
+   "engine_min": 3.74,
+   "core_min": 3.75
+  },
+  {
+   "key": "BAU_933_REGA#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM4_REST_02",
+   "engine_min": 26.72,
+   "core_min": 21.27
+  },
+  {
+   "key": "BAU_934_BABERA#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM4_REST_02",
+   "engine_min": 18.68,
+   "core_min": 16.82
+  },
+  {
+   "key": "BAU_935_BRONKO#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM4_REST_02",
+   "engine_min": 7.62,
+   "core_min": 7.26
+  },
+  {
+   "key": "BAU_937_BAUER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM4_REST_01",
+   "engine_min": 17.59,
+   "core_min": 18.69
+  },
+  {
+   "key": "BAU_938_BAUER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM4_REST_01",
+   "engine_min": 28.93,
+   "core_min": 23.89
+  },
+  {
+   "key": "BAU_943_BAUER#0",
+   "begin": 772.0,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM2_OUT_09",
+   "engine_min": 19.73,
+   "core_min": 19.92
+  },
+  {
+   "key": "BAU_943_BAUER#0",
+   "begin": 1259.99,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_FARM2_FIELD_05",
+   "engine_min": 19.3,
+   "core_min": 20.61
+  },
+  {
+   "key": "BAU_944_EHNIM#0",
+   "begin": 359.99,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_FARM2_FIELD_03",
+   "engine_min": 0.38,
+   "core_min": 0.0
+  },
+  {
+   "key": "BAU_944_EHNIM#0",
+   "begin": 780.0,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM2_OUT_03",
+   "engine_min": 5.88,
+   "core_min": 6.08
+  },
+  {
+   "key": "BAU_944_EHNIM#0",
+   "begin": 1259.99,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_FARM2_FIELD_03",
+   "engine_min": 6.98,
+   "core_min": 6.13
+  },
+  {
+   "key": "BAU_945_EGILL#0",
+   "begin": 780.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_FARM2_OUT_10",
+   "engine_min": 11.58,
+   "core_min": 9.35
+  },
+  {
+   "key": "BAU_945_EGILL#0",
+   "begin": 1259.99,
+   "state": "ZS_PICK_FP",
+   "point": "NW_FARM2_FIELD_02",
+   "engine_min": 11.95,
+   "core_min": 12.13
+  },
+  {
+   "key": "BAU_950_LOBART#0",
+   "begin": 900.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_FARM1_INHOUSE_BED_01",
+   "engine_min": 3.52,
+   "core_min": 3.2
+  },
+  {
+   "key": "BAU_950_LOBART#0",
+   "begin": 1410.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_FARM1_LOBART",
+   "engine_min": 7.48,
+   "core_min": 6.72
+  },
+  {
+   "key": "BAU_952_VINO#0",
+   "begin": 240.0,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_FARM1_FIELD_05",
+   "engine_min": 5.92,
+   "core_min": 5.73
+  },
+  {
+   "key": "BAU_952_VINO#0",
+   "begin": 419.99,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_FARM1_FIELD_04",
+   "engine_min": 5.44,
+   "core_min": 5.81
+  },
+  {
+   "key": "BAU_952_VINO#0",
+   "begin": 599.99,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_FARM1_FIELD_05",
+   "engine_min": 5.94,
+   "core_min": 5.73
+  },
+  {
+   "key": "BAU_952_VINO#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_FARM1_INSTABLE_BED",
+   "engine_min": 13.9,
+   "core_min": 13.87
+  },
+  {
+   "key": "BAU_953_BAUER#0",
+   "begin": 4.99,
+   "state": "ZS_PICK_FP",
+   "point": "NW_FARM1_FIELD_03",
+   "engine_min": 24.21,
+   "core_min": 24.11
+  },
+  {
+   "key": "BAU_953_BAUER#0",
+   "begin": 244.99,
+   "state": "ZS_PICK_FP",
+   "point": "NW_FARM1_FIELD_06",
+   "engine_min": 8.35,
+   "core_min": 6.82
+  },
+  {
+   "key": "BAU_953_BAUER#0",
+   "begin": 425.0,
+   "state": "ZS_PICK_FP",
+   "point": "NW_FARM1_FIELD_03",
+   "engine_min": 7.56,
+   "core_min": 6.89
+  },
+  {
+   "key": "BAU_953_BAUER#0",
+   "begin": 605.0,
+   "state": "ZS_PICK_FP",
+   "point": "NW_FARM1_FIELD_06",
+   "engine_min": 8.32,
+   "core_min": 6.82
+  },
+  {
+   "key": "BAU_953_BAUER#0",
+   "begin": 845.0,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM1_MILL_05",
+   "engine_min": 24.22,
+   "core_min": 23.57
+  },
+  {
+   "key": "BAU_954_MALETH#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_FARM1_INSTABLE_BED",
+   "engine_min": 18.36,
+   "core_min": 17.58
+  },
+  {
+   "key": "BAU_955_BAUER#0",
+   "begin": 10.0,
+   "state": "ZS_PICK_FP",
+   "point": "NW_FARM1_FIELD_07",
+   "engine_min": 25.58,
+   "core_min": 25.89
+  },
+  {
+   "key": "BAU_955_BAUER#0",
+   "begin": 250.0,
+   "state": "ZS_PICK_FP",
+   "point": "NW_FARM1_FIELD_02",
+   "engine_min": 6.74,
+   "core_min": 5.51
+  },
+  {
+   "key": "BAU_955_BAUER#0",
+   "begin": 430.0,
+   "state": "ZS_PICK_FP",
+   "point": "NW_FARM1_FIELD_07",
+   "engine_min": 6.94,
+   "core_min": 5.76
+  },
+  {
+   "key": "BAU_955_BAUER#0",
+   "begin": 610.0,
+   "state": "ZS_PICK_FP",
+   "point": "NW_FARM1_FIELD_02",
+   "engine_min": 7.05,
+   "core_min": 5.5
+  },
+  {
+   "key": "BAU_955_BAUER#0",
+   "begin": 850.0,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM1_MILL_05",
+   "engine_min": 21.77,
+   "core_min": 21.64
+  },
+  {
+   "key": "BAU_962_BAUER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM3_STABLE_REST_02",
+   "engine_min": 3.12,
+   "core_min": 3.2
+  },
+  {
+   "key": "BAU_964_BAUER#0",
+   "begin": 780.0,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM3_STABLE_REST_02",
+   "engine_min": 1.74,
+   "core_min": 2.61
+  },
+  {
+   "key": "BAU_965_BAUER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM3_HOUSE_REST_01",
+   "engine_min": 2.48,
+   "core_min": 2.3
+  },
+  {
+   "key": "BAU_966_BAUER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM3_HOUSE_REST_01",
+   "engine_min": 9.26,
+   "core_min": 9.28
+  },
+  {
+   "key": "BAU_967_BAUER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM3_STABLE_REST_01",
+   "engine_min": 14.64,
+   "core_min": 12.63
+  },
+  {
+   "key": "BAU_968_BAUER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM3_STABLE_REST_01",
+   "engine_min": 14.46,
+   "core_min": 12.71
+  },
+  {
+   "key": "BAU_969_BAUER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_FARM3_STABLE_REST_02",
+   "engine_min": 17.25,
+   "core_min": 13.6
+  },
+  {
+   "key": "BAU_973_RUKHAR#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_TAVERNE_OUT_01",
+   "engine_min": 1.02,
+   "core_min": 0.53
+  },
+  {
+   "key": "KDF_505_MARDUK#0",
+   "begin": 900.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_MONASTERY_MAGE01_BED_01",
+   "engine_min": 4.06,
+   "core_min": 3.81
+  },
+  {
+   "key": "KDF_508_GORAX#0",
+   "begin": 900.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_MONASTERY_MAGE02_BED_01",
+   "engine_min": 6.93,
+   "core_min": 6.46
+  },
+  {
+   "key": "KDF_511_DARON#0",
+   "begin": 305.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_PATH_30",
+   "engine_min": 1.5,
+   "core_min": 1.42
+  },
+  {
+   "key": "KDF_511_DARON#0",
+   "begin": 605.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_MERCHANT_PATH_28_D",
+   "engine_min": 0.99,
+   "core_min": 0.28
+  },
+  {
+   "key": "KDF_511_DARON#0",
+   "begin": 664.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_29_B",
+   "engine_min": 0.78,
+   "core_min": 0.29
+  },
+  {
+   "key": "KDF_511_DARON#0",
+   "begin": 724.99,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_CITY_BED_ZURIS",
+   "engine_min": 4.35,
+   "core_min": 3.41
+  },
+  {
+   "key": "KDF_511_DARON#0",
+   "begin": 1415.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_29_B",
+   "engine_min": 3.74,
+   "core_min": 3.01
+  },
+  {
+   "key": "MIL_307_TUERWACHE#0",
+   "begin": 120.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 3.11,
+   "core_min": 2.86
+  },
+  {
+   "key": "MIL_307_TUERWACHE#0",
+   "begin": 240.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_13",
+   "engine_min": 6.14,
+   "core_min": 5.25
+  },
+  {
+   "key": "MIL_307_TUERWACHE#0",
+   "begin": 359.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_UPTOWN_PATH_05",
+   "engine_min": 9.46,
+   "core_min": 9.55
+  },
+  {
+   "key": "MIL_307_TUERWACHE#0",
+   "begin": 480.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 3.04,
+   "core_min": 2.74
+  },
+  {
+   "key": "MIL_307_TUERWACHE#0",
+   "begin": 599.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_13",
+   "engine_min": 6.6,
+   "core_min": 5.25
+  },
+  {
+   "key": "MIL_307_TUERWACHE#0",
+   "begin": 720.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_UPTOWN_PATH_05",
+   "engine_min": 9.8,
+   "core_min": 9.55
+  },
+  {
+   "key": "MIL_307_TUERWACHE#0",
+   "begin": 839.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 2.94,
+   "core_min": 2.75
+  },
+  {
+   "key": "MIL_307_TUERWACHE#0",
+   "begin": 930.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_14",
+   "engine_min": 7.9,
+   "core_min": 7.29
+  },
+  {
+   "key": "MIL_307_TUERWACHE#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 7.66,
+   "core_min": 7.51
+  },
+  {
+   "key": "MIL_307_TUERWACHE#0",
+   "begin": 1110.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_13",
+   "engine_min": 6.34,
+   "core_min": 5.25
+  },
+  {
+   "key": "MIL_312_WULFGAR#0",
+   "begin": 780.0,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_CITY_KASERN_BARRACK02_02",
+   "engine_min": 2.09,
+   "core_min": 1.87
+  },
+  {
+   "key": "MIL_312_WULFGAR#0",
+   "begin": 1259.99,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_CITY_HABOUR_KASERN_CENTRE_01",
+   "engine_min": 2.39,
+   "core_min": 1.87
+  },
+  {
+   "key": "MIL_314_MORTIS#0",
+   "begin": 780.0,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_KASERN_BARRACK02_COOK",
+   "engine_min": 6.15,
+   "core_min": 5.0
+  },
+  {
+   "key": "MIL_314_MORTIS#0",
+   "begin": 960.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BARRACK02_BED_BOLTAN",
+   "engine_min": 1.23,
+   "core_min": 1.25
+  },
+  {
+   "key": "MIL_315_KASERNENWACHE#0",
+   "begin": 779.0,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_CITY_BARRACK02_SMALLTALK_01",
+   "engine_min": 8.3,
+   "core_min": 7.93
+  },
+  {
+   "key": "MIL_315_KASERNENWACHE#0",
+   "begin": 962.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BARRACK01_BED_RUGA",
+   "engine_min": 1.69,
+   "core_min": 1.12
+  },
+  {
+   "key": "MIL_315_KASERNENWACHE#0",
+   "begin": 1385.0,
+   "state": "ZS_SMITH_SHARP",
+   "point": "NW_CITY_KASERN_ARMORY_SHARP",
+   "engine_min": 5.25,
+   "core_min": 5.58
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 120.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_13",
+   "engine_min": 6.22,
+   "core_min": 5.25
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 240.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_05",
+   "engine_min": 9.88,
+   "core_min": 9.55
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 359.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 3.02,
+   "core_min": 2.75
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 480.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_13",
+   "engine_min": 6.0,
+   "core_min": 5.25
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 599.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_05",
+   "engine_min": 9.85,
+   "core_min": 9.55
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 720.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 2.93,
+   "core_min": 2.74
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 839.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_13",
+   "engine_min": 5.96,
+   "core_min": 5.26
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 930.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_05",
+   "engine_min": 9.42,
+   "core_min": 9.55
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_UPTOWN_PATH_13",
+   "engine_min": 9.66,
+   "core_min": 9.5
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 1200.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 7.71,
+   "core_min": 7.51
+  },
+  {
+   "key": "MIL_316_WAMBO#0",
+   "begin": 1289.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_05",
+   "engine_min": 2.83,
+   "core_min": 2.75
+  },
+  {
+   "key": "MIL_318_MILIZ#0",
+   "begin": 959.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BARRACK02_BED_WULFGAR",
+   "engine_min": 3.11,
+   "core_min": 2.96
+  },
+  {
+   "key": "MIL_318_MILIZ#0",
+   "begin": 1365.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_OFFICE",
+   "engine_min": 6.86,
+   "core_min": 5.56
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 60.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.93,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 179.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 6.05,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 300.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.76,
+   "core_min": 7.16
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 419.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.91,
+   "core_min": 6.6
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 540.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 5.99,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 660.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.74,
+   "core_min": 7.16
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 780.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.88,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 900.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 5.9,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.8,
+   "core_min": 7.16
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 1140.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 7.13,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 5.74,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_319_PABLO#0",
+   "begin": 1380.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 8.01,
+   "core_min": 7.16
+  },
+  {
+   "key": "MIL_320_MILIZ#0",
+   "begin": 735.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_36",
+   "engine_min": 2.81,
+   "core_min": 2.26
+  },
+  {
+   "key": "MIL_320_MILIZ#0",
+   "begin": 854.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_27",
+   "engine_min": 2.83,
+   "core_min": 2.26
+  },
+  {
+   "key": "MIL_320_MILIZ#0",
+   "begin": 975.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_36",
+   "engine_min": 2.8,
+   "core_min": 2.26
+  },
+  {
+   "key": "MIL_320_MILIZ#0",
+   "begin": 1095.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_27",
+   "engine_min": 2.83,
+   "core_min": 2.25
+  },
+  {
+   "key": "MIL_320_MILIZ#0",
+   "begin": 1215.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_36",
+   "engine_min": 2.81,
+   "core_min": 2.26
+  },
+  {
+   "key": "MIL_320_MILIZ#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_27",
+   "engine_min": 2.83,
+   "core_min": 2.26
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 60.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 6.13,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 179.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.8,
+   "core_min": 7.17
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 300.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.95,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 419.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 6.2,
+   "core_min": 6.31
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 540.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.72,
+   "core_min": 7.16
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 660.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.95,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 780.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 5.95,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 900.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.85,
+   "core_min": 7.16
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.9,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 1140.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 5.81,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.85,
+   "core_min": 7.17
+  },
+  {
+   "key": "MIL_322_MILIZ#0",
+   "begin": 1380.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.95,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 60.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.72,
+   "core_min": 7.16
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 179.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.87,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 300.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 5.95,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 419.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.75,
+   "core_min": 7.17
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 540.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.87,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 660.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 6.2,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 780.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.74,
+   "core_min": 7.16
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 900.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.94,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 6.17,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 1140.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MAINSTREET_07",
+   "engine_min": 7.72,
+   "core_min": 7.16
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_TEMPLE_PLACE_01",
+   "engine_min": 6.94,
+   "core_min": 6.59
+  },
+  {
+   "key": "MIL_323_MILIZ#0",
+   "begin": 1380.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_MERCHANT_PATH_22",
+   "engine_min": 5.82,
+   "core_min": 6.3
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 120.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_05",
+   "engine_min": 12.02,
+   "core_min": 9.55
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 240.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 2.91,
+   "core_min": 2.74
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 359.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_UPTOWN_PATH_13",
+   "engine_min": 5.66,
+   "core_min": 5.25
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 480.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_05",
+   "engine_min": 9.31,
+   "core_min": 9.55
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 599.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 3.03,
+   "core_min": 2.75
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 720.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_UPTOWN_PATH_13",
+   "engine_min": 5.95,
+   "core_min": 5.25
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 930.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 7.81,
+   "core_min": 7.5
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_UPTOWN_PATH_14",
+   "engine_min": 7.83,
+   "core_min": 7.3
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 1110.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 7.67,
+   "core_min": 7.5
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 1200.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_13",
+   "engine_min": 6.09,
+   "core_min": 5.25
+  },
+  {
+   "key": "MIL_326_MILIZ#0",
+   "begin": 1289.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_UPTOWN_PATH_09",
+   "engine_min": 5.7,
+   "core_min": 5.49
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 30.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_10",
+   "engine_min": 3.09,
+   "core_min": 2.94
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 90.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_08",
+   "engine_min": 2.74,
+   "core_min": 2.65
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 149.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_14",
+   "engine_min": 11.96,
+   "core_min": 11.81
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 209.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_12",
+   "engine_min": 3.38,
+   "core_min": 3.34
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 270.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_10",
+   "engine_min": 3.01,
+   "core_min": 2.94
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 330.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_08",
+   "engine_min": 2.74,
+   "core_min": 2.65
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 389.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_14",
+   "engine_min": 12.11,
+   "core_min": 11.81
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 450.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_12",
+   "engine_min": 3.39,
+   "core_min": 3.33
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 510.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_10",
+   "engine_min": 3.01,
+   "core_min": 2.95
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 570.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_08",
+   "engine_min": 2.74,
+   "core_min": 2.65
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 629.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_14",
+   "engine_min": 11.85,
+   "core_min": 11.81
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 690.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_12",
+   "engine_min": 3.38,
+   "core_min": 3.34
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 780.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_BARRACK02_SMALLTALK_01",
+   "engine_min": 6.74,
+   "core_min": 6.58
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 959.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BARRACK01_BED_02",
+   "engine_min": 3.99,
+   "core_min": 3.74
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 1350.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_14",
+   "engine_min": 8.92,
+   "core_min": 8.05
+  },
+  {
+   "key": "MIL_327_MILIZ#0",
+   "begin": 1410.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_HABOUR_KASERN_12",
+   "engine_min": 3.43,
+   "core_min": 3.34
+  },
+  {
+   "key": "MIL_329_MILIZ#0",
+   "begin": 778.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_KASERN_BARRACK02_03",
+   "engine_min": 11.12,
+   "core_min": 3.59
+  },
+  {
+   "key": "MIL_329_MILIZ#0",
+   "begin": 960.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BARRACK01_BED_07",
+   "engine_min": 4.16,
+   "core_min": 4.45
+  },
+  {
+   "key": "MIL_329_MILIZ#0",
+   "begin": 1380.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_CITY_HABOUR_KASERN_CENTRE_02",
+   "engine_min": 4.28,
+   "core_min": 3.51
+  },
+  {
+   "key": "MIL_330_MILIZ#0",
+   "begin": 780.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_KASERN_BARRACK02_02",
+   "engine_min": 16.41,
+   "core_min": 2.81
+  },
+  {
+   "key": "MIL_330_MILIZ#0",
+   "begin": 960.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BARRACK01_BED_06",
+   "engine_min": 3.52,
+   "core_min": 3.61
+  },
+  {
+   "key": "MIL_330_MILIZ#0",
+   "begin": 1380.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_CITY_HABOUR_KASERN_CENTRE_03",
+   "engine_min": 3.23,
+   "core_min": 3.12
+  },
+  {
+   "key": "MIL_331_MILIZ#0",
+   "begin": 781.99,
+   "state": "ZS_READ_BOOKSTAND",
+   "point": "NW_CITY_KASERN_BARRACK02_04",
+   "engine_min": 15.95,
+   "core_min": 4.32
+  },
+  {
+   "key": "MIL_331_MILIZ#0",
+   "begin": 961.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BARRACK01_BED_01",
+   "engine_min": 6.01,
+   "core_min": 5.77
+  },
+  {
+   "key": "MIL_331_MILIZ#0",
+   "begin": 1381.99,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_CITY_HABOUR_KASERN_CENTRE_04",
+   "engine_min": 5.58,
+   "core_min": 5.22
+  },
+  {
+   "key": "NOV_601_IGARAZ#0",
+   "begin": 60.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_MONASTERY_GRASS_01",
+   "engine_min": 3.15,
+   "core_min": 2.12
+  },
+  {
+   "key": "NOV_601_IGARAZ#0",
+   "begin": 844.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_MONASTERY_NOVICE02_05",
+   "engine_min": 1.97,
+   "core_min": 1.99
+  },
+  {
+   "key": "NOV_603_AGON#0",
+   "begin": 60.0,
+   "state": "ZS_PRAY_INNOS_FP",
+   "point": "NW_MONASTERY_CHURCH_03",
+   "engine_min": 4.86,
+   "core_min": 4.17
+  },
+  {
+   "key": "NOV_603_AGON#0",
+   "begin": 120.0,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_MONASTERY_HERB_05",
+   "engine_min": 6.09,
+   "core_min": 4.02
+  },
+  {
+   "key": "NOV_604_DYRIAN#0",
+   "begin": 120.0,
+   "state": "ZS_PRAY_INNOS_FP",
+   "point": "NW_MONASTERY_CHURCH_03",
+   "engine_min": 2.26,
+   "core_min": 2.19
+  },
+  {
+   "key": "NOV_604_DYRIAN#0",
+   "begin": 179.99,
+   "state": "ZS_STAND_WP",
+   "point": "NW_MONASTERY_GRASS_04",
+   "engine_min": 3.6,
+   "core_min": 2.2
+  },
+  {
+   "key": "NOV_604_DYRIAN#0",
+   "begin": 930.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_MONASTERY_NOVICE01_04",
+   "engine_min": 4.86,
+   "core_min": 4.87
+  },
+  {
+   "key": "NOV_606_NOVIZE#0",
+   "begin": 179.99,
+   "state": "ZS_PRAY_INNOS_FP",
+   "point": "NW_MONASTERY_CHURCH_03",
+   "engine_min": 7.86,
+   "core_min": 7.46
+  },
+  {
+   "key": "NOV_606_NOVIZE#0",
+   "begin": 240.0,
+   "state": "ZS_STOMP_HERB",
+   "point": "NW_MONASTERY_WINEMAKER_04",
+   "engine_min": 8.78,
+   "core_min": 7.62
+  },
+  {
+   "key": "NOV_606_NOVIZE#0",
+   "begin": 869.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_MONASTERY_NOVICE03_04",
+   "engine_min": 1.61,
+   "core_min": 1.79
+  },
+  {
+   "key": "NOV_607_NOVIZE#0",
+   "begin": 240.0,
+   "state": "ZS_PRAY_INNOS_FP",
+   "point": "NW_MONASTERY_CHURCH_03",
+   "engine_min": 8.46,
+   "core_min": 7.97
+  },
+  {
+   "key": "NOV_607_NOVIZE#0",
+   "begin": 300.0,
+   "state": "ZS_STOMP_HERB",
+   "point": "NW_MONASTERY_WINEMAKER_05",
+   "engine_min": 9.7,
+   "core_min": 7.91
+  },
+  {
+   "key": "NOV_609_NOVIZE#0",
+   "begin": 900.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_MONASTERY_NOVICE02_06",
+   "engine_min": 7.13,
+   "core_min": 5.55
+  },
+  {
+   "key": "NOV_610_NOVIZE#0",
+   "begin": 300.0,
+   "state": "ZS_PRAY_INNOS_FP",
+   "point": "NW_MONASTERY_CHURCH_03",
+   "engine_min": 4.79,
+   "core_min": 4.84
+  },
+  {
+   "key": "NOV_610_NOVIZE#0",
+   "begin": 359.99,
+   "state": "ZS_PICK_FP",
+   "point": "NW_MONASTERY_HERB_03",
+   "engine_min": 6.72,
+   "core_min": 4.6
+  },
+  {
+   "key": "NOV_610_NOVIZE#0",
+   "begin": 889.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_MONASTERY_NOVICE04_06",
+   "engine_min": 2.79,
+   "core_min": 2.4
+  },
+  {
+   "key": "NOV_611_NOVIZE#0",
+   "begin": 60.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_MONASTERY_GRASS_01",
+   "engine_min": 2.98,
+   "core_min": 2.53
+  },
+  {
+   "key": "NOV_611_NOVIZE#0",
+   "begin": 904.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_MONASTERY_NOVICE02_04",
+   "engine_min": 2.72,
+   "core_min": 2.85
+  },
+  {
+   "key": "NOV_612_BABO#0",
+   "begin": 359.99,
+   "state": "ZS_PRAY_INNOS_FP",
+   "point": "NW_MONASTERY_CHURCH_03",
+   "engine_min": 6.74,
+   "core_min": 6.42
+  },
+  {
+   "key": "NOV_612_BABO#0",
+   "begin": 419.99,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_MONASTERY_CORRIDOR_10",
+   "engine_min": 7.0,
+   "core_min": 4.35
+  },
+  {
+   "key": "NOV_615_NOVIZE#0",
+   "begin": 419.99,
+   "state": "ZS_PRAY_INNOS_FP",
+   "point": "NW_MONASTERY_CHURCH_03",
+   "engine_min": 9.52,
+   "core_min": 10.72
+  },
+  {
+   "key": "NOV_615_NOVIZE#0",
+   "begin": 480.0,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_MONASTERY_CELLAR_08",
+   "engine_min": 10.66,
+   "core_min": 5.78
+  },
+  {
+   "key": "NOV_615_NOVIZE#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_MONASTERY_NOVICE04_04",
+   "engine_min": 6.07,
+   "core_min": 5.86
+  },
+  {
+   "key": "PAL_206_RITTER#0",
+   "begin": 660.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_HUT_03_05",
+   "engine_min": 4.9,
+   "core_min": 5.42
+  },
+  {
+   "key": "PAL_206_RITTER#0",
+   "begin": 1394.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_UPTOWN_PATH_06_B",
+   "engine_min": 5.05,
+   "core_min": 4.44
+  },
+  {
+   "key": "PAL_207_GIRION#0",
+   "begin": 660.0,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_CITY_UPTOWN_HUT_03_SIT",
+   "engine_min": 9.36,
+   "core_min": 9.04
+  },
+  {
+   "key": "PAL_207_GIRION#0",
+   "begin": 1320.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_CITY_GIRION",
+   "engine_min": 8.42,
+   "core_min": 7.62
+  },
+  {
+   "key": "PAL_208_PALADIN#0",
+   "begin": 662.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_HUT_03_04",
+   "engine_min": 3.55,
+   "core_min": 3.08
+  },
+  {
+   "key": "PAL_209_PALADIN#0",
+   "begin": 662.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_HUT_03_01_B",
+   "engine_min": 18.17,
+   "core_min": 6.13
+  },
+  {
+   "key": "PAL_209_PALADIN#0",
+   "begin": 905.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_LEOMAR_BED_04",
+   "engine_min": 6.16,
+   "core_min": 5.98
+  },
+  {
+   "key": "PAL_209_PALADIN#0",
+   "begin": 1389.99,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_CITY_TRAIN_02",
+   "engine_min": 9.32,
+   "core_min": 8.78
+  },
+  {
+   "key": "PAL_214_RITTER#0",
+   "begin": 664.99,
+   "state": "ZS_READ_BOOKSTAND",
+   "point": "NW_CITY_UPTOWN_HUT_03_03",
+   "engine_min": 2.03,
+   "core_min": 1.86
+  },
+  {
+   "key": "PAL_214_RITTER#0",
+   "begin": 1385.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_PATH_05",
+   "engine_min": 3.34,
+   "core_min": 2.69
+  },
+  {
+   "key": "PAL_215_RITTER#0",
+   "begin": 661.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_HUT_03_01",
+   "engine_min": 15.93,
+   "core_min": 5.62
+  },
+  {
+   "key": "PAL_215_RITTER#0",
+   "begin": 907.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_LEOMAR_BED_03",
+   "engine_min": 5.42,
+   "core_min": 5.45
+  },
+  {
+   "key": "PAL_215_RITTER#0",
+   "begin": 1388.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_CITY_TRAIN_01",
+   "engine_min": 8.55,
+   "core_min": 8.71
+  },
+  {
+   "key": "PAL_216_CEDRIC#0",
+   "begin": 660.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_LEOMAR_BED_03",
+   "engine_min": 22.21,
+   "core_min": 8.56
+  },
+  {
+   "key": "PAL_216_CEDRIC#0",
+   "begin": 1380.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_CITY_TRAIN_01",
+   "engine_min": 8.1,
+   "core_min": 7.74
+  },
+  {
+   "key": "PAL_226_SCHIFFSWACHE#0",
+   "begin": 839.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_15",
+   "engine_min": 6.91,
+   "core_min": 6.92
+  },
+  {
+   "key": "PAL_226_SCHIFFSWACHE#0",
+   "begin": 900.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_29",
+   "engine_min": 2.68,
+   "core_min": 2.6
+  },
+  {
+   "key": "PAL_226_SCHIFFSWACHE#0",
+   "begin": 960.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_32",
+   "engine_min": 8.06,
+   "core_min": 8.43
+  },
+  {
+   "key": "PAL_226_SCHIFFSWACHE#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_29",
+   "engine_min": 6.13,
+   "core_min": 6.66
+  },
+  {
+   "key": "PAL_226_SCHIFFSWACHE#0",
+   "begin": 1079.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_32",
+   "engine_min": 8.06,
+   "core_min": 8.44
+  },
+  {
+   "key": "PAL_226_SCHIFFSWACHE#0",
+   "begin": 1140.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_29",
+   "engine_min": 6.51,
+   "core_min": 6.65
+  },
+  {
+   "key": "PAL_226_SCHIFFSWACHE#0",
+   "begin": 1200.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_32",
+   "engine_min": 8.12,
+   "core_min": 8.43
+  },
+  {
+   "key": "PAL_226_SCHIFFSWACHE#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_29",
+   "engine_min": 6.27,
+   "core_min": 6.66
+  },
+  {
+   "key": "PAL_226_SCHIFFSWACHE#0",
+   "begin": 1320.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_32",
+   "engine_min": 8.29,
+   "core_min": 8.43
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "begin": 160.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_20",
+   "engine_min": 4.37,
+   "core_min": 5.22
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "begin": 839.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_25",
+   "engine_min": 12.05,
+   "core_min": 12.28
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "begin": 900.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_29",
+   "engine_min": 11.91,
+   "core_min": 12.26
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "begin": 960.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_25",
+   "engine_min": 11.34,
+   "core_min": 12.28
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_20",
+   "engine_min": 4.27,
+   "core_min": 4.66
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "begin": 1079.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_29",
+   "engine_min": 8.0,
+   "core_min": 8.08
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "begin": 1140.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_20",
+   "engine_min": 7.73,
+   "core_min": 7.64
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "begin": 1200.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_29",
+   "engine_min": 8.0,
+   "core_min": 8.07
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_25",
+   "engine_min": 11.63,
+   "core_min": 12.28
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "begin": 1320.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_29",
+   "engine_min": 11.63,
+   "core_min": 12.26
+  },
+  {
+   "key": "PAL_228_SCHIFFSWACHE#0",
+   "begin": 839.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_38",
+   "engine_min": 9.64,
+   "core_min": 13.93
+  },
+  {
+   "key": "PAL_228_SCHIFFSWACHE#0",
+   "begin": 900.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_03",
+   "engine_min": 9.83,
+   "core_min": 10.33
+  },
+  {
+   "key": "PAL_228_SCHIFFSWACHE#0",
+   "begin": 960.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_38",
+   "engine_min": 9.71,
+   "core_min": 9.81
+  },
+  {
+   "key": "PAL_228_SCHIFFSWACHE#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_30",
+   "engine_min": 14.5,
+   "core_min": 14.58
+  },
+  {
+   "key": "PAL_228_SCHIFFSWACHE#0",
+   "begin": 1079.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_03",
+   "engine_min": 6.49,
+   "core_min": 6.81
+  },
+  {
+   "key": "PAL_228_SCHIFFSWACHE#0",
+   "begin": 1140.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_30",
+   "engine_min": 6.4,
+   "core_min": 6.53
+  },
+  {
+   "key": "PAL_228_SCHIFFSWACHE#0",
+   "begin": 1200.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_03",
+   "engine_min": 6.67,
+   "core_min": 6.81
+  },
+  {
+   "key": "PAL_228_SCHIFFSWACHE#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_38",
+   "engine_min": 9.71,
+   "core_min": 9.81
+  },
+  {
+   "key": "PAL_228_SCHIFFSWACHE#0",
+   "begin": 1320.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "SHIP_DECK_03",
+   "engine_min": 9.8,
+   "core_min": 10.33
+  },
+  {
+   "key": "PAL_232_RITTER#0",
+   "begin": 900.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_PALCAMP_10",
+   "engine_min": 13.06,
+   "core_min": 1.73
+  },
+  {
+   "key": "PAL_237_RITTER#0",
+   "begin": 900.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_PALCAMP_10",
+   "engine_min": 9.99,
+   "core_min": 2.39
+  },
+  {
+   "key": "PAL_238_RITTER#0",
+   "begin": 900.0,
+   "state": "ZS_STAND_WP",
+   "point": "NW_CITY_PALCAMP_10",
+   "engine_min": 3.42,
+   "core_min": 3.73
+  },
+  {
+   "key": "PAL_239_RITTER#0",
+   "begin": 900.0,
+   "state": "ZS_STAND_WP",
+   "point": "NW_CITY_PALCAMP_10",
+   "engine_min": 3.54,
+   "core_min": 3.87
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 60.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.19,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 120.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.29,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 179.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.24,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 240.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.33,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 300.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.21,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 359.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.35,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 419.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.19,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 480.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.29,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 540.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.13,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 599.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.34,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 660.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.17,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 720.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.26,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 780.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.2,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 839.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.35,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 900.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.22,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 960.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.26,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.14,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 1079.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.35,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 1140.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.18,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 1200.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.33,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.16,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 1320.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.35,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_240_RITTER#0",
+   "begin": 1380.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.19,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 60.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.34,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 120.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.23,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 179.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.32,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 240.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.14,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 300.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.34,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 359.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.23,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 419.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.26,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 480.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.19,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 540.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.28,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 599.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.17,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 660.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.38,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 720.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.22,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 780.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.3,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 839.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.14,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 900.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.33,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 960.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.46,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 1019.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.29,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 1079.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.23,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 1140.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.31,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 1200.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.19,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.35,
+   "core_min": 48.1
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 1320.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_23",
+   "engine_min": 48.16,
+   "core_min": 48.09
+  },
+  {
+   "key": "PAL_241_RITTER#0",
+   "begin": 1380.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PALCAMP_08",
+   "engine_min": 48.36,
+   "core_min": 48.09
+  },
+  {
+   "key": "SLD_800_LEE#0",
+   "begin": 660.0,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_BIGFARM_HOUSE_UP2_05",
+   "engine_min": 8.86,
+   "core_min": 8.78
+  },
+  {
+   "key": "SLD_803_CIPHER#0",
+   "begin": 934.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_BIGFARM_HOUSE_SLD_SLEEP",
+   "engine_min": 11.74,
+   "core_min": 11.77
+  },
+  {
+   "key": "SLD_803_CIPHER#0",
+   "begin": 1415.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_BIGFARM_PATH_04_1",
+   "engine_min": 12.7,
+   "core_min": 11.97
+  },
+  {
+   "key": "SLD_804_ROD#0",
+   "begin": 895.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_BIGFARM_HOUSE_SLD_SLEEP",
+   "engine_min": 17.13,
+   "core_min": 16.6
+  },
+  {
+   "key": "SLD_805_CORD#0",
+   "begin": 880.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_BIGFARM_HOUSE_08",
+   "engine_min": 22.12,
+   "core_min": 11.94
+  },
+  {
+   "key": "SLD_805_CORD#0",
+   "begin": 1419.99,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_CORD",
+   "engine_min": 12.98,
+   "core_min": 12.33
+  },
+  {
+   "key": "SLD_808_JARVIS#0",
+   "begin": 965.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_BIGFARM_HOUSE_08",
+   "engine_min": 12.52,
+   "core_min": 11.64
+  },
+  {
+   "key": "SLD_808_JARVIS#0",
+   "begin": 1385.0,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_BIGFARM_KITCHEN_07",
+   "engine_min": 12.88,
+   "core_min": 11.63
+  },
+  {
+   "key": "SLD_809_BENNET#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_BIGFARM_STABLE_SLEEP_04",
+   "engine_min": 7.18,
+   "core_min": 7.42
+  },
+  {
+   "key": "SLD_811_WOLF#0",
+   "begin": 839.99,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_BIGFARM_KITCHEN_03",
+   "engine_min": 8.67,
+   "core_min": 5.19
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 60.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 16.14,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 120.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_02",
+   "engine_min": 19.71,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 179.99,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 15.93,
+   "core_min": 7.8
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 240.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_02",
+   "engine_min": 19.55,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 300.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 15.73,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 359.99,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_02",
+   "engine_min": 19.39,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 419.99,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 22.93,
+   "core_min": 7.8
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 480.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_02",
+   "engine_min": 19.21,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 540.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 22.73,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 599.99,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_02",
+   "engine_min": 19.0,
+   "core_min": 7.8
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 660.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 22.5,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 720.0,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_BIGFARM_VORPOSTEN1_01",
+   "engine_min": 21.58,
+   "core_min": 10.04
+  },
+  {
+   "key": "SLD_816_FESTER#0",
+   "begin": 1380.0,
+   "state": "ZS_PRACTICE_SWORD",
+   "point": "NW_BIGFARM_ALLEE_04",
+   "engine_min": 21.91,
+   "core_min": 7.79
+  },
+  {
+   "key": "SLD_818_SOELDNER#0",
+   "begin": 889.99,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_BIGFARM_KITCHEN_09",
+   "engine_min": 6.81,
+   "core_min": 7.56
+  },
+  {
+   "key": "SLD_818_SOELDNER#0",
+   "begin": 1430.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_BIGFARM_PATH_02",
+   "engine_min": 5.48,
+   "core_min": 5.4
+  },
+  {
+   "key": "SLD_819_SOELDNER#0",
+   "begin": 945.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_BIGFARM_HOUSE_SLD_SLEEP",
+   "engine_min": 21.78,
+   "core_min": 21.25
+  },
+  {
+   "key": "SLD_821_SOELDNER#0",
+   "begin": 930.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_BIGFARM_HOUSE_08",
+   "engine_min": 11.07,
+   "core_min": 10.98
+  },
+  {
+   "key": "SLD_821_SOELDNER#0",
+   "begin": 1410.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_BIGFARM_PATH_04_1",
+   "engine_min": 10.62,
+   "core_min": 10.9
+  },
+  {
+   "key": "VLK_4000_BUERGER#0",
+   "begin": 240.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_GUARD_01",
+   "engine_min": 1.32,
+   "core_min": 1.75
+  },
+  {
+   "key": "VLK_4000_BUERGER#0",
+   "begin": 419.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_HUT_04_ENTRY",
+   "engine_min": 4.96,
+   "core_min": 2.33
+  },
+  {
+   "key": "VLK_4000_BUERGER#0",
+   "begin": 599.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_GUARD_01",
+   "engine_min": 1.7,
+   "core_min": 1.75
+  },
+  {
+   "key": "VLK_4000_BUERGER#0",
+   "begin": 720.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_27",
+   "engine_min": 1.15,
+   "core_min": 0.54
+  },
+  {
+   "key": "VLK_4000_BUERGER#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_UPTOWN_HUT_05_BED_01",
+   "engine_min": 7.21,
+   "core_min": 6.4
+  },
+  {
+   "key": "VLK_4001_BUERGERIN#0",
+   "begin": 120.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_PATH_15_B",
+   "engine_min": 18.62,
+   "core_min": 18.58
+  },
+  {
+   "key": "VLK_4001_BUERGERIN#0",
+   "begin": 359.99,
+   "state": "ZS_SWEEP_FP",
+   "point": "NW_CITY_UPTOWN_HUT_02_IN",
+   "engine_min": 52.18,
+   "core_min": 17.03
+  },
+  {
+   "key": "VLK_4001_BUERGERIN#0",
+   "begin": 540.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_PATH_15_B",
+   "engine_min": 18.89,
+   "core_min": 17.46
+  },
+  {
+   "key": "VLK_4001_BUERGERIN#0",
+   "begin": 824.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_REICH03_BED_02",
+   "engine_min": 18.68,
+   "core_min": 18.6
+  },
+  {
+   "key": "VLK_4001_BUERGERIN#0",
+   "begin": 1350.0,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_UPTOWN_HUT_02_ENTRY",
+   "engine_min": 5.25,
+   "core_min": 1.0
+  },
+  {
+   "key": "VLK_4002_BUERGERIN#0",
+   "begin": 120.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_PATH_15",
+   "engine_min": 23.03,
+   "core_min": 23.37
+  },
+  {
+   "key": "VLK_4002_BUERGERIN#0",
+   "begin": 359.99,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_RICHTER_COOK",
+   "engine_min": 22.55,
+   "core_min": 22.68
+  },
+  {
+   "key": "VLK_4003_BUERGERIN#0",
+   "begin": 660.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_SMALLTALK_02",
+   "engine_min": 1.89,
+   "core_min": 1.47
+  },
+  {
+   "key": "VLK_4003_BUERGERIN#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_REICH02_BED_02",
+   "engine_min": 5.95,
+   "core_min": 5.91
+  },
+  {
+   "key": "VLK_4004_ARBEITER#0",
+   "begin": 120.0,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_SMALLTALK_04",
+   "engine_min": 1.65,
+   "core_min": 1.56
+  },
+  {
+   "key": "VLK_4004_ARBEITER#0",
+   "begin": 240.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_24",
+   "engine_min": 16.88,
+   "core_min": 16.92
+  },
+  {
+   "key": "VLK_4004_ARBEITER#0",
+   "begin": 419.99,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_UPTOWN_PATH_11",
+   "engine_min": 12.75,
+   "core_min": 11.76
+  },
+  {
+   "key": "VLK_4004_ARBEITER#0",
+   "begin": 540.0,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_UPTOWN_PATH_12",
+   "engine_min": 1.64,
+   "core_min": 1.14
+  },
+  {
+   "key": "VLK_4004_ARBEITER#0",
+   "begin": 660.0,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_SMALLTALK_04",
+   "engine_min": 1.65,
+   "core_min": 1.56
+  },
+  {
+   "key": "VLK_4004_ARBEITER#0",
+   "begin": 780.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_24",
+   "engine_min": 16.79,
+   "core_min": 16.93
+  },
+  {
+   "key": "VLK_4004_ARBEITER#0",
+   "begin": 965.0,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_CITY_UPTOWN_PATH_20_B",
+   "engine_min": 14.79,
+   "core_min": 12.49
+  },
+  {
+   "key": "VLK_4004_ARBEITER#0",
+   "begin": 1354.99,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_UPTOWN_PATH_11",
+   "engine_min": 12.39,
+   "core_min": 11.77
+  },
+  {
+   "key": "VLK_4005_ARBEITER#0",
+   "begin": 120.0,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_UPTOWN_PATH_03_B",
+   "engine_min": 8.13,
+   "core_min": 7.82
+  },
+  {
+   "key": "VLK_4005_ARBEITER#0",
+   "begin": 240.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_24_B",
+   "engine_min": 2.74,
+   "core_min": 2.52
+  },
+  {
+   "key": "VLK_4005_ARBEITER#0",
+   "begin": 419.99,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_UPTOWN_PATH_07",
+   "engine_min": 7.68,
+   "core_min": 7.49
+  },
+  {
+   "key": "VLK_4005_ARBEITER#0",
+   "begin": 540.0,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_UPTOWN_PATH_18",
+   "engine_min": 4.0,
+   "core_min": 4.02
+  },
+  {
+   "key": "VLK_4005_ARBEITER#0",
+   "begin": 660.0,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_UPTOWN_PATH_03_B",
+   "engine_min": 8.12,
+   "core_min": 7.81
+  },
+  {
+   "key": "VLK_4005_ARBEITER#0",
+   "begin": 780.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_24_B",
+   "engine_min": 2.77,
+   "core_min": 2.52
+  },
+  {
+   "key": "VLK_4005_ARBEITER#0",
+   "begin": 963.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_CITY_SMALLTALK_05",
+   "engine_min": 13.49,
+   "core_min": 11.32
+  },
+  {
+   "key": "VLK_4005_ARBEITER#0",
+   "begin": 1352.99,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_UPTOWN_PATH_07",
+   "engine_min": 5.71,
+   "core_min": 5.0
+  },
+  {
+   "key": "VLK_400_LARIUS#0",
+   "begin": 660.0,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_CITYHALL_PRIVATE_THRONE",
+   "engine_min": 3.55,
+   "core_min": 3.1
+  },
+  {
+   "key": "VLK_402_RICHTER#0",
+   "begin": 644.99,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_CITYHALL_PRIVATE_THRONE",
+   "engine_min": 27.44,
+   "core_min": 27.76
+  },
+  {
+   "key": "VLK_402_RICHTER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_CITY_RICHTER",
+   "engine_min": 22.08,
+   "core_min": 22.08
+  },
+  {
+   "key": "VLK_403_GERBRANDT#0",
+   "begin": 179.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_23_B",
+   "engine_min": 1.43,
+   "core_min": 1.12
+  },
+  {
+   "key": "VLK_403_GERBRANDT#0",
+   "begin": 419.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_SMALLTALK_02",
+   "engine_min": 2.62,
+   "core_min": 1.13
+  },
+  {
+   "key": "VLK_403_GERBRANDT#0",
+   "begin": 599.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_23_B",
+   "engine_min": 1.38,
+   "core_min": 1.12
+  },
+  {
+   "key": "VLK_404_LUTERO#0",
+   "begin": 240.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_27",
+   "engine_min": 1.42,
+   "core_min": 0.63
+  },
+  {
+   "key": "VLK_404_LUTERO#0",
+   "begin": 419.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_LUTERO",
+   "engine_min": 1.31,
+   "core_min": 0.63
+  },
+  {
+   "key": "VLK_404_LUTERO#0",
+   "begin": 599.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_27",
+   "engine_min": 1.43,
+   "core_min": 0.63
+  },
+  {
+   "key": "VLK_404_LUTERO#0",
+   "begin": 720.0,
+   "state": "ZS_READ_BOOKSTAND",
+   "point": "NW_CITY_LUTERO_READ",
+   "engine_min": 4.62,
+   "core_min": 3.62
+  },
+  {
+   "key": "VLK_405_FERNANDO#0",
+   "begin": 179.99,
+   "state": "ZS_STAND_WP",
+   "point": "NW_CITY_UPTOWN_PATH_04",
+   "engine_min": 0.14,
+   "core_min": 0.35
+  },
+  {
+   "key": "VLK_405_FERNANDO#0",
+   "begin": 418.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_PATH_08",
+   "engine_min": 0.35,
+   "core_min": 0.25
+  },
+  {
+   "key": "VLK_405_FERNANDO#0",
+   "begin": 599.99,
+   "state": "ZS_READ_BOOKSTAND",
+   "point": "NW_CITY_REICH02_READ",
+   "engine_min": 1.26,
+   "core_min": 0.74
+  },
+  {
+   "key": "VLK_407_HAKON#0",
+   "begin": 709.99,
+   "state": "ZS_SMOKE_WATERPIPE",
+   "point": "NW_CITY_RAUCH_02",
+   "engine_min": 14.7,
+   "core_min": 15.47
+  },
+  {
+   "key": "VLK_407_HAKON#0",
+   "begin": 969.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HOTEL_BED_04",
+   "engine_min": 9.77,
+   "core_min": 9.65
+  },
+  {
+   "key": "VLK_407_HAKON#0",
+   "begin": 1270.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_HAKON",
+   "engine_min": 22.28,
+   "core_min": 22.12
+  },
+  {
+   "key": "VLK_408_JORA#0",
+   "begin": 723.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_BEER_06",
+   "engine_min": 14.8,
+   "core_min": 13.97
+  },
+  {
+   "key": "VLK_408_JORA#0",
+   "begin": 966.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HOTEL_BED_03",
+   "engine_min": 6.53,
+   "core_min": 6.65
+  },
+  {
+   "key": "VLK_408_JORA#0",
+   "begin": 1274.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_MERCHANT_PATH_38",
+   "engine_min": 19.63,
+   "core_min": 19.6
+  },
+  {
+   "key": "VLK_409_ZURIS#0",
+   "begin": 720.0,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_CITY_CHAIR_ZURIS",
+   "engine_min": 1.62,
+   "core_min": 1.12
+  },
+  {
+   "key": "VLK_409_ZURIS#0",
+   "begin": 1289.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_BALTRAM",
+   "engine_min": 0.51,
+   "core_min": 1.13
+  },
+  {
+   "key": "VLK_410_BALTRAM#0",
+   "begin": 724.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_BEER_05",
+   "engine_min": 7.3,
+   "core_min": 7.39
+  },
+  {
+   "key": "VLK_410_BALTRAM#0",
+   "begin": 965.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HOTEL_BED_02",
+   "engine_min": 3.64,
+   "core_min": 3.66
+  },
+  {
+   "key": "VLK_410_BALTRAM#0",
+   "begin": 1265.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_ZURIS",
+   "engine_min": 13.71,
+   "core_min": 13.09
+  },
+  {
+   "key": "VLK_411_GAERTNER#0",
+   "begin": 30.0,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_CITY_CITYHALL_10",
+   "engine_min": 9.76,
+   "core_min": 9.37
+  },
+  {
+   "key": "VLK_411_GAERTNER#0",
+   "begin": 629.99,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_CITY_CITYHALL_07",
+   "engine_min": 0.06,
+   "core_min": 0.0
+  },
+  {
+   "key": "VLK_411_GAERTNER#0",
+   "begin": 750.0,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_CITY_CITYHALL_04",
+   "engine_min": 5.77,
+   "core_min": 5.93
+  },
+  {
+   "key": "VLK_411_GAERTNER#0",
+   "begin": 839.99,
+   "state": "ZS_SIT_CAMPFIRE",
+   "point": "NW_CITY_CITYHALL_04_B",
+   "engine_min": 1.84,
+   "core_min": 2.15
+  },
+  {
+   "key": "VLK_411_GAERTNER#0",
+   "begin": 1350.0,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_CITY_CITYHALL_04",
+   "engine_min": 2.74,
+   "core_min": 2.15
+  },
+  {
+   "key": "VLK_412_HARAD#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BED_HARAD",
+   "engine_min": 0.99,
+   "core_min": 1.98
+  },
+  {
+   "key": "VLK_415_MELDOR#0",
+   "begin": 954.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HABOUR_HUT_04_BED_02",
+   "engine_min": 6.76,
+   "core_min": 4.56
+  },
+  {
+   "key": "VLK_415_MELDOR#0",
+   "begin": 1265.0,
+   "state": "ZS_SMOKE_JOINT",
+   "point": "NW_CITY_HABOUR_POOR_AREA_PATH_20",
+   "engine_min": 4.73,
+   "core_min": 4.61
+  },
+  {
+   "key": "VLK_416_MATTEO#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BED_MATTEO",
+   "engine_min": 0.93,
+   "core_min": 0.29
+  },
+  {
+   "key": "VLK_419_BUERGER#0",
+   "begin": 179.99,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_UPTOWN_HUT_02_ENTRY",
+   "engine_min": 1.77,
+   "core_min": 1.87
+  },
+  {
+   "key": "VLK_419_BUERGER#0",
+   "begin": 270.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_UPTOWN_PATH_17",
+   "engine_min": 2.48,
+   "core_min": 2.3
+  },
+  {
+   "key": "VLK_419_BUERGER#0",
+   "begin": 419.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_23",
+   "engine_min": 7.02,
+   "core_min": 6.18
+  },
+  {
+   "key": "VLK_419_BUERGER#0",
+   "begin": 599.99,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_UPTOWN_PATH_17",
+   "engine_min": 10.04,
+   "core_min": 6.73
+  },
+  {
+   "key": "VLK_419_BUERGER#0",
+   "begin": 720.0,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_CITY_UPTOWN_HUT_03_IN",
+   "engine_min": 0.83,
+   "core_min": 0.67
+  },
+  {
+   "key": "VLK_419_BUERGER#0",
+   "begin": 900.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_UPTOWN_HUT_03_BED",
+   "engine_min": 1.76,
+   "core_min": 1.56
+  },
+  {
+   "key": "VLK_419_BUERGER#0",
+   "begin": 1380.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_23",
+   "engine_min": 9.41,
+   "core_min": 8.67
+  },
+  {
+   "key": "VLK_421_VALENTINO#0",
+   "begin": 120.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_MERCHANT_PATH_16",
+   "engine_min": 32.04,
+   "core_min": 31.97
+  },
+  {
+   "key": "VLK_421_VALENTINO#0",
+   "begin": 720.0,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_CITY_MERCHANT_TAVERN01_BACKROOM",
+   "engine_min": 3.97,
+   "core_min": 4.7
+  },
+  {
+   "key": "VLK_421_VALENTINO#0",
+   "begin": 1200.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_REICH03_BED_01",
+   "engine_min": 33.65,
+   "core_min": 31.89
+  },
+  {
+   "key": "VLK_425_REGIS#0",
+   "begin": 750.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_PATH_14_A",
+   "engine_min": 11.95,
+   "core_min": 11.24
+  },
+  {
+   "key": "VLK_425_REGIS#0",
+   "begin": 990.0,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_CITY_TAVERN_IN_04",
+   "engine_min": 0.95,
+   "core_min": 1.72
+  },
+  {
+   "key": "VLK_425_REGIS#0",
+   "begin": 1289.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_REGIS",
+   "engine_min": 18.32,
+   "core_min": 16.17
+  },
+  {
+   "key": "VLK_426_BUERGERIN#0",
+   "begin": 724.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_TAVERN01_01",
+   "engine_min": 2.2,
+   "core_min": 1.98
+  },
+  {
+   "key": "VLK_426_BUERGERIN#0",
+   "begin": 1194.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_TAVERN_IN_05",
+   "engine_min": 1.03,
+   "core_min": 0.53
+  },
+  {
+   "key": "VLK_426_BUERGERIN#0",
+   "begin": 1265.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_MERCHANT_PATH_15",
+   "engine_min": 2.97,
+   "core_min": 3.39
+  },
+  {
+   "key": "VLK_427_BUERGERIN#0",
+   "begin": 365.0,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_MERCHANT_SHOP01_IN_03_B",
+   "engine_min": 1.26,
+   "core_min": 0.47
+  },
+  {
+   "key": "VLK_427_BUERGERIN#0",
+   "begin": 605.0,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_MERCHANT_SHOP01_IN_03_B",
+   "engine_min": 1.26,
+   "core_min": 0.47
+  },
+  {
+   "key": "VLK_428_BUERGERIN#0",
+   "begin": 736.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_PATH_32",
+   "engine_min": 10.91,
+   "core_min": 10.36
+  },
+  {
+   "key": "VLK_428_BUERGERIN#0",
+   "begin": 1270.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_MERCHANT_PATH_14_C",
+   "engine_min": 10.51,
+   "core_min": 10.5
+  },
+  {
+   "key": "VLK_429_BUERGERIN#0",
+   "begin": 965.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HABOUR_HUT_03_BED_01",
+   "engine_min": 1.34,
+   "core_min": 0.82
+  },
+  {
+   "key": "VLK_429_BUERGERIN#0",
+   "begin": 1265.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_POOR_AREA_PATH_06",
+   "engine_min": 2.3,
+   "core_min": 1.85
+  },
+  {
+   "key": "VLK_4301_ADDON_FARIM#0",
+   "begin": 240.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_FISCHER_06",
+   "engine_min": 0.96,
+   "core_min": 0.8
+  },
+  {
+   "key": "VLK_4301_ADDON_FARIM#0",
+   "begin": 480.0,
+   "state": "ZS_REPAIR_HUT",
+   "point": "NW_CITY_WAY_TO_SHIP_FISCHER_05",
+   "engine_min": 0.98,
+   "core_min": 0.8
+  },
+  {
+   "key": "VLK_4301_ADDON_FARIM#0",
+   "begin": 720.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_WAY_TO_SHIP_FISCHER_06",
+   "engine_min": 0.96,
+   "core_min": 0.8
+  },
+  {
+   "key": "VLK_4301_ADDON_FARIM#0",
+   "begin": 1049.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_WAY_TO_SHIP_FISCHER_04",
+   "engine_min": 2.77,
+   "core_min": 2.76
+  },
+  {
+   "key": "VLK_430_BUERGERIN#0",
+   "begin": 247.0,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_HABOUR_POOR_AREA_HUT_04_BED_01",
+   "engine_min": 2.18,
+   "core_min": 1.96
+  },
+  {
+   "key": "VLK_438_ALRIK#0",
+   "begin": 675.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_HABOUR_TAVERN01_01",
+   "engine_min": 22.28,
+   "core_min": 21.89
+  },
+  {
+   "key": "VLK_438_ALRIK#0",
+   "begin": 1170.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_PATH_HABOUR_16_01",
+   "engine_min": 24.79,
+   "core_min": 23.91
+  },
+  {
+   "key": "VLK_440_BARTOK#0",
+   "begin": 75.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_PATH_30",
+   "engine_min": 7.17,
+   "core_min": 4.25
+  },
+  {
+   "key": "VLK_440_BARTOK#0",
+   "begin": 164.99,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_MERCHANT_PATH_33",
+   "engine_min": 5.12,
+   "core_min": 4.25
+  },
+  {
+   "key": "VLK_440_BARTOK#0",
+   "begin": 434.99,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_PATH_30",
+   "engine_min": 6.91,
+   "core_min": 4.26
+  },
+  {
+   "key": "VLK_440_BARTOK#0",
+   "begin": 525.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_MERCHANT_PATH_33",
+   "engine_min": 6.43,
+   "core_min": 4.25
+  },
+  {
+   "key": "VLK_440_BARTOK#0",
+   "begin": 765.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_MERCHANT_TAVERN01_FRONT",
+   "engine_min": 4.06,
+   "core_min": 3.26
+  },
+  {
+   "key": "VLK_440_BARTOK#0",
+   "begin": 1005.0,
+   "state": "ZS_SIT_CHAIR",
+   "point": "TAVERN02_B",
+   "engine_min": 1.51,
+   "core_min": 0.96
+  },
+  {
+   "key": "VLK_440_BARTOK#0",
+   "begin": 1244.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_MERCHANT_TAVERN01_FRONT",
+   "engine_min": 1.28,
+   "core_min": 0.96
+  },
+  {
+   "key": "VLK_440_BARTOK#0",
+   "begin": 1380.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_MERCHANT_PATH_33",
+   "engine_min": 5.48,
+   "core_min": 4.94
+  },
+  {
+   "key": "VLK_441_GARVELL#0",
+   "begin": 671.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_TAVERN01_SMALLTALK_01",
+   "engine_min": 6.72,
+   "core_min": 4.28
+  },
+  {
+   "key": "VLK_441_GARVELL#0",
+   "begin": 1250.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_HABOUR_07",
+   "engine_min": 8.36,
+   "core_min": 7.45
+  },
+  {
+   "key": "VLK_442_ARBEITER#0",
+   "begin": 660.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_PATH_HABOUR_01",
+   "engine_min": 5.79,
+   "core_min": 4.88
+  },
+  {
+   "key": "VLK_442_ARBEITER#0",
+   "begin": 1259.99,
+   "state": "ZS_REPAIR_HUT",
+   "point": "NW_CITY_HABOUR_WERFT_ENTRY",
+   "engine_min": 4.26,
+   "core_min": 4.56
+  },
+  {
+   "key": "VLK_443_ARBEITER#0",
+   "begin": 664.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_02",
+   "engine_min": 4.64,
+   "core_min": 4.41
+  },
+  {
+   "key": "VLK_443_ARBEITER#0",
+   "begin": 1255.0,
+   "state": "ZS_SAW",
+   "point": "NW_CITY_HABOUR_08",
+   "engine_min": 4.74,
+   "core_min": 4.41
+  },
+  {
+   "key": "VLK_444_JACK#0",
+   "begin": 705.0,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_CITY_PUFF_THRONE",
+   "engine_min": 9.72,
+   "core_min": 8.28
+  },
+  {
+   "key": "VLK_444_JACK#0",
+   "begin": 1244.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_HABOUR_06_C",
+   "engine_min": 9.57,
+   "core_min": 7.93
+  },
+  {
+   "key": "VLK_445_RAMIREZ#0",
+   "begin": 900.0,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_CITY_KANAL_ROOM_05_02",
+   "engine_min": 7.06,
+   "core_min": 6.48
+  },
+  {
+   "key": "VLK_445_RAMIREZ#0",
+   "begin": 1380.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_KANAL_ROOM_04_01",
+   "engine_min": 6.77,
+   "core_min": 6.53
+  },
+  {
+   "key": "VLK_450_BUERGER#0",
+   "begin": 720.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_STAND_01",
+   "engine_min": 2.06,
+   "core_min": 1.94
+  },
+  {
+   "key": "VLK_450_BUERGER#0",
+   "begin": 1190.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_TAVERN_IN_06",
+   "engine_min": 1.9,
+   "core_min": 1.51
+  },
+  {
+   "key": "VLK_450_BUERGER#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_MERCHANT_PATH_15",
+   "engine_min": 1.91,
+   "core_min": 2.01
+  },
+  {
+   "key": "VLK_451_BUERGER#0",
+   "begin": 300.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MAINSTREET_05",
+   "engine_min": 2.56,
+   "core_min": 2.4
+  },
+  {
+   "key": "VLK_451_BUERGER#0",
+   "begin": 361.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_SHOP01_FRONT_03",
+   "engine_min": 2.26,
+   "core_min": 2.11
+  },
+  {
+   "key": "VLK_451_BUERGER#0",
+   "begin": 540.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MAINSTREET_05",
+   "engine_min": 2.56,
+   "core_min": 2.4
+  },
+  {
+   "key": "VLK_451_BUERGER#0",
+   "begin": 602.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_SHOP01_FRONT_03",
+   "engine_min": 2.25,
+   "core_min": 2.11
+  },
+  {
+   "key": "VLK_451_BUERGER#0",
+   "begin": 729.99,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_CITY_TAVERN_IN_05",
+   "engine_min": 10.2,
+   "core_min": 10.72
+  },
+  {
+   "key": "VLK_451_BUERGER#0",
+   "begin": 1330.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_SHOP01_FRONT_03",
+   "engine_min": 12.86,
+   "core_min": 12.52
+  },
+  {
+   "key": "VLK_452_BUERGER#0",
+   "begin": 735.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_LEOMAR_BED_07",
+   "engine_min": 15.5,
+   "core_min": 15.68
+  },
+  {
+   "key": "VLK_452_BUERGER#0",
+   "begin": 1324.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_SHOP01_FRONT_03_C",
+   "engine_min": 18.43,
+   "core_min": 17.91
+  },
+  {
+   "key": "VLK_453_BUERGER#0",
+   "begin": 724.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_POOR_AREA_PATH_07",
+   "engine_min": 3.69,
+   "core_min": 2.96
+  },
+  {
+   "key": "VLK_453_BUERGER#0",
+   "begin": 1014.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HABOUR_POOR_AREA_HUT_04_BED_02",
+   "engine_min": 2.81,
+   "core_min": 2.76
+  },
+  {
+   "key": "VLK_453_BUERGER#0",
+   "begin": 1270.0,
+   "state": "ZS_SAW",
+   "point": "NW_CITY_POOR_SAW",
+   "engine_min": 3.85,
+   "core_min": 2.96
+  },
+  {
+   "key": "VLK_454_BUERGER#0",
+   "begin": 735.0,
+   "state": "ZS_SMOKE_WATERPIPE",
+   "point": "NW_CITY_RAUCH_03",
+   "engine_min": 7.78,
+   "core_min": 8.5
+  },
+  {
+   "key": "VLK_454_BUERGER#0",
+   "begin": 1034.99,
+   "state": "ZS_SIT_CHAIR",
+   "point": "NW_CITY_TAVERN_IN_01",
+   "engine_min": 5.66,
+   "core_min": 5.82
+  },
+  {
+   "key": "VLK_454_BUERGER#0",
+   "begin": 1274.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_MERCHANT_PATH_14_C",
+   "engine_min": 4.9,
+   "core_min": 1.72
+  },
+  {
+   "key": "VLK_455_BUERGER#0",
+   "begin": 740.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_SHOP03_FRONT_03",
+   "engine_min": 8.0,
+   "core_min": 8.83
+  },
+  {
+   "key": "VLK_455_BUERGER#0",
+   "begin": 1280.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_MERCHANT_PATH_14_C",
+   "engine_min": 7.89,
+   "core_min": 7.83
+  },
+  {
+   "key": "VLK_456_ABUYIN#0",
+   "begin": 1040.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HOTEL_BED_05",
+   "engine_min": 11.35,
+   "core_min": 11.15
+  },
+  {
+   "key": "VLK_456_ABUYIN#0",
+   "begin": 1400.0,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_MERCHANT_BENCH_02",
+   "engine_min": 4.19,
+   "core_min": 10.32
+  },
+  {
+   "key": "VLK_457_BRIAN#0",
+   "begin": 755.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_PATH_14",
+   "engine_min": 7.19,
+   "core_min": 6.89
+  },
+  {
+   "key": "VLK_457_BRIAN#0",
+   "begin": 984.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BED_BRIAN",
+   "engine_min": 8.39,
+   "core_min": 8.28
+  },
+  {
+   "key": "VLK_457_BRIAN#0",
+   "begin": 1385.0,
+   "state": "ZS_SMITH_SHARP",
+   "point": "NW_CITY_SMITH_SHARP",
+   "engine_min": 2.68,
+   "core_min": 1.87
+  },
+  {
+   "key": "VLK_459_BUERGER#0",
+   "begin": 214.99,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_HABOUR_TAVERN01_01",
+   "engine_min": 3.81,
+   "core_min": 4.06
+  },
+  {
+   "key": "VLK_459_BUERGER#0",
+   "begin": 330.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_04",
+   "engine_min": 1.35,
+   "core_min": 0.66
+  },
+  {
+   "key": "VLK_459_BUERGER#0",
+   "begin": 575.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_HABOUR_TAVERN01_01",
+   "engine_min": 0.17,
+   "core_min": 0.66
+  },
+  {
+   "key": "VLK_459_BUERGER#0",
+   "begin": 1079.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HABOUR_POOR_AREA_HUT_07_BED_02",
+   "engine_min": 12.69,
+   "core_min": 9.89
+  },
+  {
+   "key": "VLK_459_BUERGER#0",
+   "begin": 1289.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_06",
+   "engine_min": 17.61,
+   "core_min": 16.27
+  },
+  {
+   "key": "VLK_460_BUERGER#0",
+   "begin": 209.99,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_HABOUR_03",
+   "engine_min": 0.33,
+   "core_min": 0.0
+  },
+  {
+   "key": "VLK_460_BUERGER#0",
+   "begin": 570.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_HABOUR_TAVERN01_01",
+   "engine_min": 0.32,
+   "core_min": 0.76
+  },
+  {
+   "key": "VLK_460_BUERGER#0",
+   "begin": 930.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HABOUR_POOR_AREA_HUT_01_BED_02",
+   "engine_min": 16.54,
+   "core_min": 13.37
+  },
+  {
+   "key": "VLK_460_BUERGER#0",
+   "begin": 1294.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_05",
+   "engine_min": 13.96,
+   "core_min": 13.49
+  },
+  {
+   "key": "VLK_461_CARL#0",
+   "begin": 720.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_POOR_AREA_PATH_06",
+   "engine_min": 4.88,
+   "core_min": 5.76
+  },
+  {
+   "key": "VLK_461_CARL#0",
+   "begin": 1019.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HABOUR_HUT_03_BED_02",
+   "engine_min": 1.69,
+   "core_min": 1.95
+  },
+  {
+   "key": "VLK_461_CARL#0",
+   "begin": 1259.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_HABOUR_POOR_AREA_HUT_03_B",
+   "engine_min": 2.14,
+   "core_min": 1.61
+  },
+  {
+   "key": "VLK_466_GERNOD#0",
+   "begin": 1030.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HABOUR_POOR_AREA_HUT_05_BED_01",
+   "engine_min": 1.99,
+   "core_min": 1.87
+  },
+  {
+   "key": "VLK_466_GERNOD#0",
+   "begin": 1324.99,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_HABOUR_POOR_AREA_HUT_03_B",
+   "engine_min": 3.03,
+   "core_min": 1.87
+  },
+  {
+   "key": "VLK_467_BUERGER#0",
+   "begin": 179.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_WATCH_FIGHT_02",
+   "engine_min": 20.77,
+   "core_min": 21.26
+  },
+  {
+   "key": "VLK_467_BUERGER#0",
+   "begin": 660.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_03",
+   "engine_min": 13.16,
+   "core_min": 12.95
+  },
+  {
+   "key": "VLK_467_BUERGER#0",
+   "begin": 1140.0,
+   "state": "ZS_SIT_THRONE",
+   "point": "NW_CITY_PUFF_THRONE",
+   "engine_min": 4.6,
+   "core_min": 4.17
+  },
+  {
+   "key": "VLK_467_BUERGER#0",
+   "begin": 1259.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_WAY_TO_SHIP_01",
+   "engine_min": 2.42,
+   "core_min": 2.59
+  },
+  {
+   "key": "VLK_469_HALVOR#0",
+   "begin": 720.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_HABOUR_PUFF_IN_07",
+   "engine_min": 4.99,
+   "core_min": 4.68
+  },
+  {
+   "key": "VLK_469_HALVOR#0",
+   "begin": 1019.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BED_HALVOR",
+   "engine_min": 8.03,
+   "core_min": 7.21
+  },
+  {
+   "key": "VLK_469_HALVOR#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_HABOUR_POOR_AREA_PATH_01",
+   "engine_min": 0.23,
+   "core_min": 0.0
+  },
+  {
+   "key": "VLK_470_SARAH#0",
+   "begin": 735.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HOTEL_BED_08",
+   "engine_min": 8.51,
+   "core_min": 8.18
+  },
+  {
+   "key": "VLK_470_SARAH#0",
+   "begin": 1274.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_SARAH",
+   "engine_min": 12.57,
+   "core_min": 12.13
+  },
+  {
+   "key": "VLK_472_BUERGERIN#0",
+   "begin": 274.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_POOR_AREA_01",
+   "engine_min": 3.51,
+   "core_min": 4.08
+  },
+  {
+   "key": "VLK_472_BUERGERIN#0",
+   "begin": 599.99,
+   "state": "ZS_SWEEP_FP",
+   "point": "NW_CITY_HABOUR_POOR_AREA_HUT_07_01",
+   "engine_min": 6.03,
+   "core_min": 6.17
+  },
+  {
+   "key": "VLK_472_BUERGERIN#0",
+   "begin": 1259.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_JACK",
+   "engine_min": 16.53,
+   "core_min": 16.01
+  },
+  {
+   "key": "VLK_473_BUERGERIN#0",
+   "begin": 270.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_WAY_TO_SHIP_01",
+   "engine_min": 4.13,
+   "core_min": 3.68
+  },
+  {
+   "key": "VLK_473_BUERGERIN#0",
+   "begin": 605.0,
+   "state": "ZS_STAND_SWEEPING",
+   "point": "NW_CITY_HABOUR_POOR_AREA_HUT_01_IN",
+   "engine_min": 3.75,
+   "core_min": 3.56
+  },
+  {
+   "key": "VLK_473_BUERGERIN#0",
+   "begin": 1265.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_HABOUR_PUFF_02",
+   "engine_min": 10.95,
+   "core_min": 9.97
+  },
+  {
+   "key": "VLK_476_FENIA#0",
+   "begin": 724.99,
+   "state": "ZS_STOMP_HERB",
+   "point": "NW_CITY_HABOUR_POOR_AREA_PATH_01",
+   "engine_min": 12.38,
+   "core_min": 11.48
+  },
+  {
+   "key": "VLK_476_FENIA#0",
+   "begin": 845.0,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_BED_HALVOR_WEIB",
+   "engine_min": 1.16,
+   "core_min": 0.04
+  },
+  {
+   "key": "VLK_476_FENIA#0",
+   "begin": 1255.0,
+   "state": "ZS_STAND_GUARDING",
+   "point": "NW_CITY_PATH_HABOUR_03_01",
+   "engine_min": 14.06,
+   "core_min": 13.66
+  },
+  {
+   "key": "VLK_477_BUERGERIN#0",
+   "begin": 235.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_WAY_TO_SHIP_01",
+   "engine_min": 8.81,
+   "core_min": 8.11
+  },
+  {
+   "key": "VLK_477_BUERGERIN#0",
+   "begin": 365.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_PATH_HABOUR_03",
+   "engine_min": 9.6,
+   "core_min": 8.02
+  },
+  {
+   "key": "VLK_477_BUERGERIN#0",
+   "begin": 475.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_WAY_TO_SHIP_01",
+   "engine_min": 8.24,
+   "core_min": 8.12
+  },
+  {
+   "key": "VLK_477_BUERGERIN#0",
+   "begin": 664.99,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_BED_BRAHIM",
+   "engine_min": 15.86,
+   "core_min": 13.7
+  },
+  {
+   "key": "VLK_477_BUERGERIN#0",
+   "begin": 1265.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_PATH_HABOUR_03",
+   "engine_min": 10.69,
+   "core_min": 9.49
+  },
+  {
+   "key": "VLK_478_BUERGERIN#0",
+   "begin": 540.0,
+   "state": "ZS_STOMP_HERB",
+   "point": "NW_CITY_HABOUR_STOMPER_02",
+   "engine_min": 8.96,
+   "core_min": 8.1
+  },
+  {
+   "key": "VLK_478_BUERGERIN#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HABOUR_HUT_05_BED_02",
+   "engine_min": 3.16,
+   "core_min": 2.35
+  },
+  {
+   "key": "VLK_479_LUCY#0",
+   "begin": 660.0,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_HABOUR_HUT_07_IN",
+   "engine_min": 0.18,
+   "core_min": 0.83
+  },
+  {
+   "key": "VLK_479_LUCY#0",
+   "begin": 1259.99,
+   "state": "ZS_RAKE_FP",
+   "point": "NW_CITY_PICK_02",
+   "engine_min": 5.48,
+   "core_min": 0.54
+  },
+  {
+   "key": "VLK_480_FELLAN#0",
+   "begin": 1049.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HABOUR_HUT_05_BED_01",
+   "engine_min": 0.72,
+   "core_min": 0.0
+  },
+  {
+   "key": "VLK_480_FELLAN#0",
+   "begin": 1229.99,
+   "state": "ZS_REPAIR_HUT",
+   "point": "NW_CITY_PATH_HABOUR_09",
+   "engine_min": 1.19,
+   "core_min": 0.47
+  },
+  {
+   "key": "VLK_481_BUERGER#0",
+   "begin": 954.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_HABOUR_HUT_06_BED_02",
+   "engine_min": 1.19,
+   "core_min": 1.68
+  },
+  {
+   "key": "VLK_481_BUERGER#0",
+   "begin": 1265.0,
+   "state": "ZS_COOK_CAULDRON",
+   "point": "NW_CITY_PATH_HABOUR_13_C",
+   "engine_min": 0.43,
+   "core_min": 0.0
+  },
+  {
+   "key": "VLK_486_BUERGERIN#0",
+   "begin": 570.0,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_ZURIS_FRAU_COOK",
+   "engine_min": 3.95,
+   "core_min": 3.34
+  },
+  {
+   "key": "VLK_486_BUERGERIN#0",
+   "begin": 1289.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_MERCHANT_PATH_36_B",
+   "engine_min": 6.06,
+   "core_min": 3.56
+  },
+  {
+   "key": "VLK_487_BUERGERIN#0",
+   "begin": 1259.99,
+   "state": "ZS_STOMP_HERB",
+   "point": "NW_CITY_PATH_HABOUR_04_STOMPER",
+   "engine_min": 0.12,
+   "core_min": 0.0
+  },
+  {
+   "key": "VLK_488_BUERGERIN#0",
+   "begin": 240.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_PATH_HABOUR_03",
+   "engine_min": 0.26,
+   "core_min": 0.0
+  },
+  {
+   "key": "VLK_488_BUERGERIN#0",
+   "begin": 359.99,
+   "state": "ZS_SWEEP_FP",
+   "point": "NW_CITY_HABOUR_HUT_08_IN_B",
+   "engine_min": 1.93,
+   "core_min": 1.97
+  },
+  {
+   "key": "VLK_488_BUERGERIN#0",
+   "begin": 480.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_PATH_HABOUR_03",
+   "engine_min": 2.18,
+   "core_min": 1.96
+  },
+  {
+   "key": "VLK_488_BUERGERIN#0",
+   "begin": 599.99,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_HABOUR_HUT_08_IN_B",
+   "engine_min": 2.66,
+   "core_min": 1.97
+  },
+  {
+   "key": "VLK_489_BUERGER#0",
+   "begin": 200.0,
+   "state": "ZS_SMOKE_JOINT",
+   "point": "NW_CITY_WATCH_FIGHT_02",
+   "engine_min": 16.42,
+   "core_min": 13.48
+  },
+  {
+   "key": "VLK_489_BUERGER#0",
+   "begin": 675.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_HABOUR_03",
+   "engine_min": 13.43,
+   "core_min": 12.33
+  },
+  {
+   "key": "VLK_489_BUERGER#0",
+   "begin": 1110.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_HABOUR_PUFF_IN_07",
+   "engine_min": 4.87,
+   "core_min": 3.69
+  },
+  {
+   "key": "VLK_489_BUERGER#0",
+   "begin": 1280.0,
+   "state": "ZS_SMOKE_JOINT",
+   "point": "NW_CITY_PATH_HABOUR_01",
+   "engine_min": 0.99,
+   "core_min": 0.82
+  },
+  {
+   "key": "VLK_492_RENGARU#0",
+   "begin": 735.0,
+   "state": "ZS_STAND_DRINKING",
+   "point": "NW_CITY_MERCHANT_PATH_33_B",
+   "engine_min": 8.43,
+   "core_min": 7.46
+  },
+  {
+   "key": "VLK_492_RENGARU#0",
+   "begin": 1274.99,
+   "state": "ZS_STAND_ARMSCROSSED",
+   "point": "NW_CITY_MERCHANT_PATH_36",
+   "engine_min": 9.25,
+   "core_min": 7.9
+  },
+  {
+   "key": "VLK_495_BUERGERIN#0",
+   "begin": 60.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_PATH_28_B",
+   "engine_min": 0.07,
+   "core_min": 0.53
+  },
+  {
+   "key": "VLK_495_BUERGERIN#0",
+   "begin": 179.99,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_PATH_30",
+   "engine_min": 0.9,
+   "core_min": 0.54
+  },
+  {
+   "key": "VLK_495_BUERGERIN#0",
+   "begin": 240.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_PATH_28_B",
+   "engine_min": 0.12,
+   "core_min": 0.53
+  },
+  {
+   "key": "VLK_495_BUERGERIN#0",
+   "begin": 359.99,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_PATH_30",
+   "engine_min": 0.89,
+   "core_min": 0.54
+  },
+  {
+   "key": "VLK_495_BUERGERIN#0",
+   "begin": 419.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_PATH_28_B",
+   "engine_min": 0.13,
+   "core_min": 0.54
+  },
+  {
+   "key": "VLK_495_BUERGERIN#0",
+   "begin": 540.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_PATH_30",
+   "engine_min": 0.89,
+   "core_min": 0.53
+  },
+  {
+   "key": "VLK_495_BUERGERIN#0",
+   "begin": 599.99,
+   "state": "ZS_COOK_STOVE",
+   "point": "TAVERN02",
+   "engine_min": 19.07,
+   "core_min": 17.22
+  },
+  {
+   "key": "VLK_495_BUERGERIN#0",
+   "begin": 1320.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_PATH_28_B",
+   "engine_min": 15.65,
+   "core_min": 15.41
+  },
+  {
+   "key": "VLK_496_BUERGERIN#0",
+   "begin": 480.0,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_UPTOWN_HUT_04_COOK",
+   "engine_min": 50.0,
+   "core_min": 50.21
+  },
+  {
+   "key": "VLK_496_BUERGERIN#0",
+   "begin": 540.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_PATH_15",
+   "engine_min": 4.33,
+   "core_min": 3.9
+  },
+  {
+   "key": "VLK_496_BUERGERIN#0",
+   "begin": 824.99,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_UPTOWN_HUT_04_COOK",
+   "engine_min": 3.58,
+   "core_min": 3.73
+  },
+  {
+   "key": "VLK_496_BUERGERIN#0",
+   "begin": 1320.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_MERCHANT_PATH_28_D",
+   "engine_min": 51.97,
+   "core_min": 52.94
+  },
+  {
+   "key": "VLK_497_BUERGERIN#0",
+   "begin": 540.0,
+   "state": "ZS_COOK_STOVE",
+   "point": "NW_CITY_UPTOWN_HUT_01_COOK",
+   "engine_min": 36.52,
+   "core_min": 36.33
+  },
+  {
+   "key": "VLK_497_BUERGERIN#0",
+   "begin": 660.0,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_UPTOWN_PATH_08",
+   "engine_min": 3.71,
+   "core_min": 3.1
+  },
+  {
+   "key": "VLK_497_BUERGERIN#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_GERBRANDT_BED_02",
+   "engine_min": 7.06,
+   "core_min": 4.61
+  },
+  {
+   "key": "VLK_497_BUERGERIN#0",
+   "begin": 1259.99,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_PATH_28_E",
+   "engine_min": 42.99,
+   "core_min": 43.01
+  },
+  {
+   "key": "VLK_499_BUERGER#0",
+   "begin": 120.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_TRADE_04",
+   "engine_min": 21.24,
+   "core_min": 19.39
+  },
+  {
+   "key": "VLK_499_BUERGER#0",
+   "begin": 240.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_UPTOWN_PATH_03_C",
+   "engine_min": 8.74,
+   "core_min": 5.7
+  },
+  {
+   "key": "VLK_499_BUERGER#0",
+   "begin": 359.99,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_TRADE_04",
+   "engine_min": 10.04,
+   "core_min": 8.91
+  },
+  {
+   "key": "VLK_499_BUERGER#0",
+   "begin": 480.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_GUARD_01",
+   "engine_min": 17.92,
+   "core_min": 17.7
+  },
+  {
+   "key": "VLK_499_BUERGER#0",
+   "begin": 599.99,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_TRADE_04",
+   "engine_min": 18.89,
+   "core_min": 17.81
+  },
+  {
+   "key": "VLK_499_BUERGER#0",
+   "begin": 715.0,
+   "state": "ZS_SIT_BENCH",
+   "point": "NW_CITY_GUARD_01",
+   "engine_min": 17.86,
+   "core_min": 17.7
+  },
+  {
+   "key": "VLK_499_BUERGER#0",
+   "begin": 839.99,
+   "state": "ZS_GOTOBED",
+   "point": "NW_CITY_UPTOWN_HUT_BED_02",
+   "engine_min": 8.18,
+   "core_min": 7.64
+  },
+  {
+   "key": "VLK_499_BUERGER#0",
+   "begin": 1320.0,
+   "state": "ZS_STAND_EATING",
+   "point": "NW_CITY_MERCHANT_TRADE_04",
+   "engine_min": 26.34,
+   "core_min": 25.7
+  }
+ ],
+ "checks": {
+  "missing_marks": {
+   "value": 0,
+   "limit": 0,
+   "op": "<=",
+   "pass": true
+  },
+  "state_outside": {
+   "value": 0.9976098600472268,
+   "limit": 0.95,
+   "op": ">=",
+   "pass": true
+  },
+  "place_outside": {
+   "value": 0.9977192574916056,
+   "limit": 0.9,
+   "op": ">=",
+   "pass": true
+  },
+  "travel_median_abs_min": {
+   "value": 0.370000000000001,
+   "limit": 2.0,
+   "op": "<=",
+   "pass": true
+  }
+ },
+ "pass": true
+}

@@ -6,6 +6,7 @@ import asyncio
 import itertools
 import json
 import logging
+import re
 import secrets
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
@@ -91,6 +92,12 @@ from .protocol import (
 )
 
 log = logging.getLogger(__name__)
+LOCAL_ORIGINS = [None, re.compile(r"ws://(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]+)?")]
+
+# the game's answer to a story effect on an npc whose body P30 owns (aibridge.cpp, story_effect): it lets go
+# at the next safe boundary, the effect is sent again
+BODY_RELEASING = "body control is releasing"
+STORY_EFFECT_RETRY = 0.05
 
 # requests answered with `result`
 _Request = (
@@ -519,6 +526,7 @@ class GameLink:
         mode: BodyMode = "realtime", timeout_ms: int = 500, timeout: float = 5.0,
         await_boundary_ms: int = 0, cancel_event: asyncio.Event | None = None,
         retain_on_timeout: bool = False,
+        policy: Literal["engine"] | None = None,
     ) -> BodyLease:
         """Claim a watched actor using its real process/world/target IDs, without changing native state."""
         if mode != "realtime":
@@ -530,6 +538,7 @@ class GameLink:
             target_entity_id=observation.target.entity_id,
             await_boundary_ms=await_boundary_ms,
             acquire_request_id=(secrets.randbits(63) or 1) if await_boundary_ms else 0,
+            policy=policy,
         )
         if (
             observation.entity_id in self._body_acquisitions
@@ -898,8 +907,20 @@ class GameLink:
 
             await play_gate_effects(self, npc.upper(), effects)
             return
-        cmd = StoryEffectCmd(req=self._next_id("s"), npc=npc.upper(), effects=effects, check=check or None)
-        await self._request(cmd, timeout)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            cmd = StoryEffectCmd(
+                req=self._next_id("s"), npc=npc.upper(), effects=effects, check=check or None,
+            )
+            try:
+                await self._request(cmd, max(deadline - loop.time(), 0.1))
+                break
+            except GameError as err:
+                # P30 owns the npc's body: the game asked it to let go and ran none of the effects
+                if not str(err).startswith(BODY_RELEASING) or loop.time() + STORY_EFFECT_RETRY >= deadline:
+                    raise
+            await asyncio.sleep(STORY_EFFECT_RETRY)
         for e in effects:
             if e.get("do") == "party":
                 self.party[npc.upper()] = (next(self._party_writes), 1 if e.get("value") else 0)
@@ -1177,7 +1198,9 @@ class GameServer:
         return resp
 
     async def serve_forever(self) -> None:
-        async with serve(self._handler, self.host, self.port, process_request=self._health) as server:
+        async with serve(
+            self._handler, self.host, self.port, process_request=self._health, origins=LOCAL_ORIGINS
+        ) as server:
             self.port = server.sockets[0].getsockname()[1]  # actual port when 0 was requested
             self.started.set()
             log.info("waiting for the game on ws://%s:%d", self.host, self.port)

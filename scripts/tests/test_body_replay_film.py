@@ -122,8 +122,12 @@ def test_render_native_macos_with_game_audio_and_linux_xvfb(tmp_path, monkeypatc
                            size="1920x1080", threads=4, textures="", timeout_s=1800)
     calls = []
 
-    def run(argv, *, cwd, env, stdout, stderr, timeout):
+    def run(argv, *, env, cwd=None, stdout=None, stderr=None, timeout=None, check=False):
         calls.append((argv, env))
+        if argv[0] == "bash":
+            assert argv == ["bash", str(SCRIPT.with_name("base-ensure.sh")), str(args.assets)]
+            assert env["GAME_BIN"] == str(args.game) and check is True
+            return SimpleNamespace(returncode=0)
         assert cwd == folder/"run" and (cwd/"save_slot_1.sav").read_bytes() == b"arena save"
         assert env["TEMPEST_WINDOW_SIZE"] == ("960x540" if scale == 2 else "1920x1080")
         assert env["OPENGOTHIC_BENCH_REALTIME"] == "1"
@@ -154,7 +158,7 @@ def test_render_native_macos_with_game_audio_and_linux_xvfb(tmp_path, monkeypatc
 
     monkeypatch.setattr(film.subprocess, "run", run)
     assert film.render(args) == expected
-    assert len(calls) == 1
+    assert len(calls) == 2
 
 
 def write_label_files(folder):

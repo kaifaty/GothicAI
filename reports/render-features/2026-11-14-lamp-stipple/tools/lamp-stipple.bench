@@ -1,0 +1,39 @@
+# The net of dots of a lamp's shadow on the hero's nape (../README.md): Xardas' tower, the hero in profile from 120 cm
+# and from behind the ear from 60 cm, then the same two views with the lamps' shadow answer as colours (vsm study 4).
+# A switch waits after the shot before it: the frame of a shot is taken a few frames later.
+#   TEMPEST_WINDOW_SIZE=3840x2160 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content root of the head> [switch=value] \
+#     scripts/bench.sh reports/render-features/2026-11-14-lamp-stipple/tools/lamp-stipple.bench .bench/clean-<variant>
+# @timeout 300
+seed 73013
+cheat god
+set time 12 0
+blink off
+overlay off
+view clean 30
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam cut
+cam face 120 90 1
+wait 2500
+shot p120
+wait 400
+cam cut
+cam face 60 140 1
+wait 2000
+shot b60
+wait 400
+vsm study 4
+wait 1500
+shot b60_class
+wait 400
+cam cut
+cam face 120 90 1
+wait 2000
+shot p120_class
+wait 400
+vsm study 0
+wait 300

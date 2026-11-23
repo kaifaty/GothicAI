@@ -1,0 +1,78 @@
+{
+ "id": "life-bucket",
+ "goal": {
+  "id": "life-bucket",
+  "budget_tris": 2500,
+  "bbox_min": [
+   -0.19,
+   0.0,
+   -0.19
+  ],
+  "bbox_max": [
+   0.19,
+   0.41,
+   0.19
+  ],
+  "zones": [
+   {
+    "key": "OWN_PROP_WOOD_STAVE",
+    "group": "WOOD",
+    "role": "staves, bottom"
+   },
+   {
+    "key": "OWN_PROP_WITHY",
+    "group": "WOOD",
+    "role": "willow withy bands"
+   },
+   {
+    "key": "OWN_PROP_ROPE",
+    "group": "UNDEF",
+    "role": "rope handle"
+   },
+   {
+    "key": "OWN_PROP_WATER",
+    "group": "UNDEF",
+    "role": "dark water"
+   }
+  ]
+ },
+ "seed": 4,
+ "bottom_r": 0.17,
+ "top_r": 0.145,
+ "height": 0.32,
+ "thick": 0.015,
+ "staves": [
+  7,
+  5.5,
+  8,
+  6,
+  9,
+  6.5,
+  5,
+  8.5,
+  7,
+  6,
+  7.5
+ ],
+ "ears": [
+  1,
+  7
+ ],
+ "ear_rise": 0.09,
+ "short": [
+  4,
+  0.015
+ ],
+ "bands": [
+  [
+   0.065,
+   0.022
+  ],
+  [
+   0.245,
+   0.022
+  ]
+ ],
+ "water": 0.55,
+ "sag": 0.17
+}

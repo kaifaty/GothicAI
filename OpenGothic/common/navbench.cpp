@@ -1,11 +1,13 @@
 #include "navbench.h"
+#include "game/navigationeyeworld.h"
+#include "game/gamescript.h"
 #include "navtransitions.h"
 #include "physics/navmesh.h"
 #include "world/world.h"
 #include "world/objects/npc.h"
 #include "world/aiqueue.h"
 #include "testbench.h"
-#include "gothic.h"
+#include "settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -156,7 +158,7 @@ void finish(World& w) {
      <<",\"initial_path_length_cm\":"<<trial.initialLength<<",\"native_estimate_cm\":"<<trial.nativeEstimate
      <<",\"start_snap_m\":"<<trial.path.startSnapDistance<<",\"end_snap_m\":"<<trial.path.endSnapDistance
      <<",\"frames\":"<<trial.frames<<",\"cv_frames\":"<<trial.cvFrames<<",\"normal_ai_frames\":"<<trial.normalFrames;
-  const auto hit=w.physic()->navigationRay(n.centerPosition(),destination()+Vec3(0,100,0),&n);
+  const auto hit=navigationRay(*w.physic(),n.centerPosition(),destination()+Vec3(0,100,0),&n);
   out<<",\"blocker_category\":"<<int(hit.kind)<<",\"blocker_position\":";vec(out,hit.point);
   // Sweep a sphere along the standing capsule's axis at the requested goal,
   // independently of the route from the actor. This is diagnostic only.
@@ -170,7 +172,7 @@ void finish(World& w) {
   const float span=std::max(0.f,capsule.y*.5f-capsule.x);
   for(float y:{bodyCenter-span,bodyCenter,bodyCenter+span}) {
     const auto from=n.position()+Vec3(0,y,0);
-    const auto probe=w.physic()->navigationRay(from,from+forward,&n);
+    const auto probe=navigationRay(*w.physic(),from,from+forward,&n);
     const float distance=(probe.point-from).length();
     if(probe.hasCol && distance<nearest) {nearHit=probe;nearest=distance;}
   }
@@ -195,7 +197,7 @@ bool NavBench::running() { return trial.active || NavTransitions::running(); }
 void NavBench::command(const std::vector<std::string>& a,World& w,Npc& pl,const std::string& output) {
   if(a.size()<2) throw std::runtime_error("navmesh: expected build|coverage|pairs|start|follow|finish");
   if(a[1]=="build" && (a.size()==3 || a.size()==4)) {
-    if(Gothic::physicsFlags().movableVobs) throw std::runtime_error("navmesh measurement requires movable_vobs=0 before world load");
+    if(Settings::physicsFlags().movableVobs) throw std::runtime_error("navmesh measurement requires movable_vobs=0 before world load");
     if(!std::filesystem::path(a[2]).is_absolute()) throw std::runtime_error("navmesh cache must be absolute");
     const auto before=std::chrono::steady_clock::now();
     auto geometry=w.physic()->navigationGeometry();

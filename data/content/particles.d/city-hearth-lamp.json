@@ -1,0 +1,7 @@
+{
+ "format": 1,
+ "effects": [
+  {"name": "OWN_LAMP_CANDLE", "base": "FIRE_HOT", "flipbook": {"cols": 8, "rows": 4, "frames": 32, "fps": 16, "yaw": true, "steady": true}, "set": {"ppsValue": 1.0, "ppsScaleKeys_S": "", "ppsIsLooping": 0, "ppsIsSmooth": 0, "ppsFPS": 0.0, "shpType_S": "POINT", "shpIsVolume": 0, "shpDim_S": "0 0 0", "shpOffsetVec_S": "0 2.6 0", "dirMode_S": "NONE", "velAvg": 0.0, "velVar": 0.0, "flyGravity_S": "0 0 0", "lspPartAvg": 1000.0, "lspPartVar": 0.0, "visName_S": "OWN_CANDLE_FLAME.TGA", "visOrientation_S": "NONE", "visTexIsQuadPoly": 1, "visTexAniFPS": 0.0, "visTexAniIsLooping": 0, "visTexColorStart_S": "210 210 210", "visTexColorEnd_S": "210 210 210", "visSizeStart_S": "4 8", "visSizeEndScale": 1.0, "visAlphaFunc_S": "ADD", "visAlphaStart": 255.0, "visAlphaEnd": 255.0}},
+  {"name": "OWN_LAMP_GLOW", "base": "OWN_LAMP_CANDLE", "flipbook": {"cols": 1, "rows": 1, "frames": 1, "fps": 1, "yaw": false, "steady": true}, "set": {"visName_S": "OWN_LAMP_GLOW.TGA", "visSizeStart_S": "22 22", "shpOffsetVec_S": "0 0 0", "visTexColorStart_S": "95 95 95", "visTexColorEnd_S": "95 95 95"}}
+ ]
+}

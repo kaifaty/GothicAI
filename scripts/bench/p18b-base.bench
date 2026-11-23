@@ -1,0 +1,25 @@
+# P18b: run WORLD=NEWWORLD.ZEN with MUSIC=1 and the task base cache/store.
+seed 73028
+cheat god
+set time 12 0
+rec p18b-base novideo
+world-check NEWWORLD.ZEN
+wait 1000
+world ADDONWORLD.ZEN
+world-check ADDONWORLD.ZEN
+world OLDWORLD.ZEN
+world-check OLDWORLD.ZEN
+wait 1000
+world DRAGONISLAND.ZEN
+world-check DRAGONISLAND.ZEN
+wait 1000
+world NEWWORLD.ZEN
+world-check NEWWORLD.ZEN
+wait 1000
+# The first explicit request starts the independent video selection lazily.
+playvideo LOGO2
+wait 2000
+playvideo LOGO2
+wait 1000
+census
+stop

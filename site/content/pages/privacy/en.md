@@ -4,14 +4,14 @@ summary = "What this site and the project's YouTube uploader do with data."
 +++
 ## This site
 
-The site has no accounts, no cookies and no analytics. Its fonts come from Google Fonts. A short on a page
+The site has no accounts, no cookies and no analytics. Its fonts are served by the site itself: it asks no font service. A short on a page
 loads from youtube-nocookie.com only when you click it; from then on
 [Google's privacy policy](https://policies.google.com/privacy) applies.
 
 ## GothicAI Shorts, the YouTube uploader
 
 GothicAI Shorts is the project's command-line tool that uploads the project's own shorts to its YouTube
-channel ([source](https://github.com/kaifaty/GothicAI/tree/main/shorts)). Only the project's author uses
+channel. The tool lives in the private `kaifaty/gothic-shorts` repository. Only the project's author uses
 it, on the author's own computer; it is not offered as a service to anyone.
 
 - It uses YouTube API Services. Using it means agreeing to the

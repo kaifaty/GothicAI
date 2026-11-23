@@ -6,10 +6,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from gothic_ai.chronicle import Chronicle
 from gothic_ai.combat_barks import HINT, CombatBarks
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.game import GameLink
 from gothic_ai.llm.fake import FakeBackend
+from gothic_ai.memory import MemoryStore
+from gothic_ai.mercy import Mercy
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import CombatHit, NpcRoster, NpcViews, SvmLine
 
@@ -81,6 +84,35 @@ async def test_reasons_speaker_prompt_and_overlay(rig, fields, npc, reason, even
     [say] = [m for c in rig.conn.send.await_args_list
              if (m := json.loads(c.args[0]))["type"] == "say"]
     assert (say["npc"], say["overlay"], say["text"]) == (npc, True, "Ай, больно!")
+
+
+@pytest.mark.parametrize(("beaten", "now", "expected"), [
+    ("V", 1920, True), ("A", 1920, False), ("V", 2880, False),
+])
+async def test_bark_prompt_remembers_only_its_own_defeat_today(rig, beaten, now, expected):
+    memory = MemoryStore(":memory:")
+    chronicle = Chronicle(rig.link, memory)
+    chronicle.branch = "test"
+    memory.ensure_branch("test")
+    orders = SimpleNamespace(talk=SimpleNamespace(people={}), companion=lambda npc: False)
+    mercy = Mercy(rig.dialogue, chronicle, orders, None, barks=rig.barks)
+    mercy._minute = now
+    try:
+        chronicle.record({
+            "fact": "defeated", "npc": beaten, "name": "Раненый", "by": "PLAYER",
+            "day": 1, "time": 1920, "until": 4320, "count": 3, "t": 0,
+            "place": "FARM", "place_name": "ферма", "witnesses": [],
+        })
+        hit(rig)
+        await finish(rig)
+        prompt = rig.quick.calls[0][1][0].content
+        hint = "[Герой сегодня три раза сбил тебя с ног — ты знаешь, что он сильнее.]"
+        assert (hint in prompt) is expected
+        assert rig.rows[-1]["outcome"] == "said"
+    finally:
+        if chronicle._background:
+            await asyncio.gather(*chronicle._background)
+        memory.close()
 
 
 async def test_ally_down_chooses_nearest_living_same_guild_person(rig):

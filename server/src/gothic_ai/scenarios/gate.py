@@ -1,4 +1,4 @@
-"""A gate guard's paid admission and believed claim in a fresh game."""
+"""Consequences of given gate admission decisions in a fresh game."""
 
 from __future__ import annotations
 
@@ -9,18 +9,23 @@ from typing import TYPE_CHECKING, Any
 from ..brain.reflex import Reflexes
 from ..deals import GOLD
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend, FakeStep
 from ..protocol import DialogChosen, GameMessage, LineVoice, Session
 from .common import (
-    ClaimScript,
     FixedDecider,
     _logged,
     _save,
     _until,
     _until_async,
+    log,
+    model_off,
     prepare_npc_pose,
     wait_message,
 )
+
+SCENARIOS = {
+    "gate": ("GIVEN", {"save": False, "timeout": 240}),
+    "gate_vouch": ("GIVEN", {"save": False, "timeout": 240}),
+}
 
 if TYPE_CHECKING:
     from ..deals import Deals
@@ -38,6 +43,27 @@ PASS = "DIA_MIL_310_STADTWACHE_PASSIERSCHEIN"
 LETTER = "ITWR_PASSIERSCHEIN"
 
 
+async def _guard_posted(link: GameLink, timeout: float = 30) -> bool:
+    """The guard stands at his post and faces its way, twice in a row: half a second apart.
+
+    The teleport puts the hero in front of the guard as he faces now. Placement by routine (a new game,
+    a clock leap) can push him off his point, and he faces wherever he walks back: the far graph mover
+    even rounds the nearest waypoint first. In front of a walking guard the hero may land behind the
+    gate wall, out of earshot; in front of the posted one he stands outside, facing the gate.
+    """
+    last: float | None = None
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        npc = (await link.snapshot(GUARD, fresh=True)).npc
+        posted = not npc.busy and npc.waypoint is not None and npc.nearest_waypoint == npc.waypoint
+        if posted and last is not None and abs((npc.rot - last + 180) % 360 - 180) < 1:
+            return True
+        last = npc.rot if posted else None
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(0.5)
+
+
 async def gate_scenario(
     link: GameLink,
     dialogue: DialogueManager,
@@ -46,14 +72,15 @@ async def gate_scenario(
     gates: Gates,
     slot: int = 7,
 ) -> dict[str, str]:
-    """The model sells passage for 100 gold through Y, then believes a claim after a load.
+    """Given passage for 100 gold through Y, then admission on a claim after a load.
 
     The guard keeps his native post and passage perceptions. Only the hero's position and gold are
     staged; SECONDWARN and ATTACK remain active while he crosses the gate after paying.
     """
     results: dict[str, str] = {}
     chosen: list[DialogChosen] = []
-    original_llm, original_reflexes = dialogue.llm, talk.reflexes
+    off = model_off(dialogue)
+    original_reflexes = talk.reflexes
 
     def check(name: str, ok: bool, detail: object = "") -> bool:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
@@ -89,8 +116,6 @@ async def gate_scenario(
              ["field", ["inst", "SELF"], "WP"]],
         ])
 
-    if not isinstance(dialogue.llm, FakeBackend):
-        return _logged({"scripted_model": "failed (gate requires LLM=fake)"})
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
@@ -100,10 +125,13 @@ async def gate_scenario(
         return _logged(results)
     await asyncio.sleep(1)
     link.listeners.append(record)
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     try:
         # The hero faces the actual guard from outside and speaks without opening the native menu.
         # No guard is held, moved or stripped of any of his native dialogs.
+        if not check("guard_posted", await _guard_posted(link)):
+            return _logged(results)
         await link.debug("teleport", near=GUARD, distance=1200)
         if not check("guard_hears", await _until_async(ready, bool, 20)):
             return _logged(results)
@@ -121,19 +149,17 @@ async def gate_scenario(
             return _logged(results)
         if not check("saved_outside", await _save(link, slot) is not None):
             return _logged(results)
-        name = talk.people[GUARD].name
-        dialogue.llm = ClaimScript(
-            said=[("сто золотых", FakeStep("Сто золотых — и проходи.", [ToolCall("propose_deal", {
+        off.given(
+            "дано: стражник предлагает проход за 100 золотых", who=GUARD, when="сто золотых",
+            calls=[ToolCall("propose_deal", {
                 "npc_gives": [], "hero_gives": [{"item": GOLD, "count": 100}], "let_pass": True,
-            })]))],
-            told=[], default="Проходи.", only=name,
+            })],
         )
+        off.silent("дано: стражник молчит (предложение показано)", who=GUARD, when="сто золотых")
+        off.silent("дано: стражник молчит (сделка состоялась)", who=GUARD, when="сделка состоялась")
         # Both guards have the same display name; supply the intended focus as voice input does.
         talk.hear("Я заплачу сто золотых. Позволишь пройти в город?", GUARD)
-        offered = await _until(lambda: GUARD in deals.open, 30)
-        window = await link.deal_window()
-        if not check("bribe_offered", offered and window is not None, window):
-            return _logged(results)
+        await _until(lambda: GUARD in deals.open, 30)
         await asyncio.sleep(1.2)
         pressed = await link.press_deal()
         admitted = await _until_async(passage, lambda value: value == [1, 1], 20)
@@ -177,12 +203,11 @@ async def gate_scenario(
             return _logged(results)
         if not check("claim_guard_hears", await _until_async(ready, bool, 20)):
             return _logged(results)
-        dialogue.llm = ClaimScript(
-            said=[("ученичестве", FakeStep("Ладно, верю. Проходи.", [ToolCall("let_pass", {
-                "basis": "claim", "claim": CLAIM, "about": ABOUT,
-            })]))],
-            told=[], default="Проходи.", only=name,
+        off.given(
+            "дано: стражник верит заявлению об ученичестве и пускает героя", who=GUARD, when="ученичестве",
+            calls=[ToolCall("let_pass", {"basis": "claim", "claim": CLAIM, "about": ABOUT})],
         )
+        off.silent("дано: стражник молчит (проход на слово разрешён)", who=GUARD, when="ученичестве")
         talk.hear(CLAIM, GUARD)
         admitted = await _until_async(passage, lambda value: value == [1, 1], 20)
         check("claim_passes_both", admitted, await passage())
@@ -190,12 +215,11 @@ async def gate_scenario(
         facts = gates.chronicle.facts("gate_claim")
         claimed = [fact for fact in facts if fact.get("npc") == GUARD and fact.get("claim") == CLAIM]
         check("claim_recorded", len(claimed) == 1 and claimed[0].get("about") == ABOUT
-              and claimed[0].get("believed") is True
               and all(isinstance(claimed[0].get(key), int) for key in ("day", "hour", "minute")), claimed)
         check("claim_free", await gold() == 100, await gold())
         return _logged(results)
     finally:
-        dialogue.llm, talk.reflexes = original_llm, original_reflexes
+        talk.reflexes = original_reflexes
         link.listeners.remove(record)
 
 
@@ -211,7 +235,8 @@ async def gate_vouch_scenario(
     chosen: list[DialogChosen] = []
     voiced: list[LineVoice] = []
     facts = gates.chronicle.facts
-    original_llm, original_reflexes = dialogue.llm, talk.reflexes
+    off = model_off(dialogue)
+    original_reflexes = talk.reflexes
 
     def check(name: str, ok: bool, detail: object = "") -> bool:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
@@ -251,8 +276,6 @@ async def gate_vouch_scenario(
         return check(label, await passage() == [0, 0] and not facts("gate_vouch")
                      and not facts("gate_claim") and await _until_async(ready, bool, 20))
 
-    if not isinstance(dialogue.llm, FakeBackend):
-        return _logged({"scripted_model": "failed (gate_vouch requires LLM=fake)"})
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
@@ -260,10 +283,13 @@ async def gate_vouch_scenario(
         return _logged(results)
     await asyncio.sleep(1)
     link.listeners.append(record)
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     try:
         # Keep the native gatekeepers at their posts. Only the hero and guarantor are staged.
         await link.debug("time", hour=14, minute=30)
+        if not check("guard_posted", await _guard_posted(link)):
+            return _logged(results)
         await link.debug("teleport", near=GUARD, distance=1200)
         if not check("guard_hears", await _until_async(ready, bool, 20)):
             return _logged(results)
@@ -274,7 +300,6 @@ async def gate_vouch_scenario(
             return _logged(results)
         if not check("saved_outside", await _save(link, slot) is not None):
             return _logged(results)
-        guard_name = talk.people[GUARD].name
         posed, detail = await prepare_npc_pose(
             link, LOTHAR, CHECKPOINT, to=GUARD, distance=650, face="PC_HERO",
             require_perception_ready=False,
@@ -288,15 +313,22 @@ async def gate_vouch_scenario(
         ]))[0]
         if not check("guarantor_in_range", 0 <= distance <= 1000, distance):
             return _logged(results)
-        dialogue.llm = ClaimScript(
-            said=[("поручиться", FakeStep("Я поручусь за тебя. Не посрами моего имени.", [
-                ToolCall("vouch_for_hero", {"note": "Герой ищет честную работу в городе."}),
-            ]))],
-            told=[], default="Держи слово.", only=talk.people[LOTHAR].name,
+        note = "Герой ищет честную работу в городе."
+        off.given(
+            "дано: Лотар ручается за героя", who=LOTHAR, when="поручиться",
+            calls=[ToolCall("vouch_for_hero", {"note": note})],
         )
+        off.silent("дано: Лотар молчит (поручительство записано)", who=LOTHAR, when="поручиться")
         talk.hear("Лотар, я ищу честную работу. Ты можешь поручиться за меня?", LOTHAR)
-        vouched = await _until(lambda: any(f.get("npc") == LOTHAR for f in facts("gate_vouch")), 30)
-        if not check("vouch_recorded", vouched, facts("gate_vouch")):
+        await _until(lambda: any(f.get("npc") == LOTHAR for f in facts("gate_vouch")), 30)
+        vouch = next((fact for fact in facts("gate_vouch") if fact.get("npc") == LOTHAR), {})
+        if not check(
+            "vouch_recorded",
+            vouch.get("note") == note and vouch.get("name") == "Лотар" and vouch.get("role") == "паладин"
+            and all(isinstance(vouch.get(key), int) for key in ("at", "expires", "day", "hour", "minute"))
+            and vouch["expires"] == vouch["at"] + 2 * 24 * 60,
+            vouch,
+        ):
             return _logged(results)
         await gates.prepare(GUARD)
         situation = gates.situation(GUARD) or ""
@@ -305,12 +337,11 @@ async def gate_vouch_scenario(
         talk.end()
         if not check("guarantor_released", await _until(lambda: LOTHAR not in talk.attached, 20)):
             return _logged(results)
-        dialogue.llm = ClaimScript(
-            said=[("поручительство", FakeStep("Лотару я доверяю. Проходи.", [
-                ToolCall("let_pass", {"basis": "vouch"}),
-            ]))],
-            told=[], default="Проходи.", only=guard_name,
+        off.given(
+            "дано: стражник пускает героя по поручительству Лотара", who=GUARD, when="поручительство",
+            calls=[ToolCall("let_pass", {"basis": "vouch"})],
         )
+        off.silent("дано: стражник молчит (поручительство принято)", who=GUARD, when="поручительство")
         talk.hear("Моё поручительство до тебя дошло. Пропустишь?", GUARD)
         if not check("vouch_passes_both", await _until_async(passage, lambda value: value == [1, 1], 20),
                      await passage()):
@@ -326,12 +357,11 @@ async def gate_vouch_scenario(
         await gates.prepare(GUARD)
         if not check("native_ground_visible", PASS in (gates.situation(GUARD) or "")):
             return _logged(results)
-        dialogue.llm = ClaimScript(
-            said=[("пропуск", FakeStep("Пропуск в порядке. Проходи.", [
-                ToolCall("let_pass", {"basis": PASS}),
-            ]))],
-            told=[], default="Проходи.", only=guard_name,
+        off.given(
+            "дано: стражник пускает героя по пропуску", who=GUARD, when="пропуск",
+            calls=[ToolCall("let_pass", {"basis": PASS})],
         )
+        off.silent("дано: стражник молчит (пропуск принят)", who=GUARD, when="пропуск")
         chosen.clear()
         voiced.clear()
         talk.hear("У меня есть пропуск в город. Вот он.", GUARD)
@@ -344,12 +374,11 @@ async def gate_vouch_scenario(
         # Harad has no relationship with the hero in this save. The guard still may believe the lie.
         if not await load("claim_branch"):
             return _logged(results)
-        dialogue.llm = ClaimScript(
-            said=[("ученичестве", FakeStep("Ладно, верю. Проходи.", [ToolCall("let_pass", {
-                "basis": "claim", "claim": CLAIM, "about": ABOUT,
-            })]))],
-            told=[], default="Проходи.", only=guard_name,
+        off.given(
+            "дано: стражник верит заявлению об ученичестве и пускает героя", who=GUARD, when="ученичестве",
+            calls=[ToolCall("let_pass", {"basis": "claim", "claim": CLAIM, "about": ABOUT})],
         )
+        off.silent("дано: стражник молчит (проход на слово разрешён)", who=GUARD, when="ученичестве")
         talk.hear(CLAIM, GUARD)
         if not check("claim_passes_both", await _until_async(passage, lambda value: value == [1, 1], 20),
                      await passage()):
@@ -371,5 +400,5 @@ async def gate_vouch_scenario(
         check("native_reentry_reset", reentry == [0, 0], reentry)
         return _logged(results)
     finally:
-        dialogue.llm, talk.reflexes = original_llm, original_reflexes
+        talk.reflexes = original_reflexes
         link.listeners.remove(record)

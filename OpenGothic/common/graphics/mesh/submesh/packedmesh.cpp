@@ -1,19 +1,46 @@
 #include "packedmesh.h"
+#include "loadprobe.h"
 
 #include <Tempest/Application>
 #include <Tempest/Log>
+#include <array>
+#include <bit>
 #include <cassert>
 #include <fstream>
 #include <algorithm>
+#include <cmath>
+#include <limits>
+#include <map>
+#include <numeric>
+#include <stdexcept>
 
 #include "game/compatibility/phoenix.h"
-#include "graphics/shaders.h"
+#include "graphics/mesh/clusterlod.h"
+#include "worldchunkbinary.h"
+#include "worldchunksruntime.h"
 
 using namespace Tempest;
 
 static uint64_t mkUInt64(uint32_t a, uint32_t b) {
   return (uint64_t(a)<<32) | uint64_t(b);
   };
+
+// A unit vector as octahedral snorm16x2, x in the low half; the shader decodes it with octNormal (vertex_process.glsl)
+static uint32_t packOctNormal(float x, float y, float z) {
+  const float s = std::abs(x)+std::abs(y)+std::abs(z);
+  if(s<=0.f)
+    return 0;
+  x /= s; y /= s; z /= s;
+  if(z<0.f) {
+    const float ox = (1.f-std::abs(y))*(x>=0.f ? 1.f : -1.f);
+    const float oy = (1.f-std::abs(x))*(y>=0.f ? 1.f : -1.f);
+    x = ox; y = oy;
+    }
+  auto q = [](float v) {
+    return uint32_t(uint16_t(int16_t(std::lround(std::clamp(v,-1.f,1.f)*32767.f))));
+    };
+  return q(x) | (q(y)<<16);
+  }
 
 static bool isVisuallySame(const asset::Material& a, const asset::Material& b) {
   return
@@ -41,19 +68,6 @@ static bool isVisuallySame(const asset::Material& a, const asset::Material& b) {
     a.ignore_sun                   == b.ignore_sun &&
     // a.alpha_func                   == b.alpha_func &&
     a.default_mapping              == b.default_mapping;
-  }
-
-static float areaOf(const Vec3 sahMin, const Vec3 sahMax) {
-  auto sz = sahMax - sahMin;
-  return 2*(sz.x*sz.y + sz.x*sz.z + sz.y*sz.z);
-  }
-
-static float areaOf(const Vec3 sz) {
-  return 2*(sz.x*sz.y + sz.x*sz.z + sz.y*sz.z);
-  }
-
-static uint32_t floatBitsToUint(float f) {
-  return reinterpret_cast<uint32_t&>(f);
   }
 
 struct PackedMesh::PrimitiveHeap {
@@ -168,9 +182,11 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices,
 void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices, std::vector<VertexA>& verticesA,
                                 std::vector<uint32_t>& indices, std::vector<uint8_t>& indices8,
                                 std::vector<uint32_t>* verticesId,
-                                const std::vector<zenkit::Vec3>& vboList,
+                                const std::vector<asset::Vec3>& vboList,
                                 const std::vector<asset::MeshWedge>& wedgeList,
-                                const std::vector<SkeletalData>* skeletal) {
+                                const std::vector<SkeletalData>* skeletal,
+                                const std::vector<SkinRest>* rest,
+                                const std::vector<uint32_t>* colors) {
   if(indSz==0)
     return;
 
@@ -205,7 +221,7 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices, std::vector<Verte
       vx.norm[2] = v.normal.z;
       vx.uv[0]   = v.texture.x;
       vx.uv[1]   = v.texture.y;
-      vx.color    = 0xFFFFFFFF;
+      vx.color    = colors!=nullptr ? (*colors)[vert[i].second] : 0xFFFFFFFF;
       vertices[vboSz+i]   = vx;
       if(verticesId!=nullptr)
         (*verticesId)[vboSz+i] = vert[i].first;
@@ -233,6 +249,24 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices, std::vector<Verte
         vx.pos    [r][2] = sk[vert[i].first].localPositions[r].z;
         vx.boneId [r]    = sk[vert[i].first].boneIndices[r];
         vx.weights[r]    = sk[vert[i].first].weights[r];
+        }
+      // the bones turn the normal like the position: store it in each bone's rest frame, n_r = R_r^T n
+      bool posed = rest!=nullptr;
+      for(int r=0; r<4 && posed; ++r)
+        if(vx.weights[r]>0.f && (vx.boneId[r]>=rest->size() || !(*rest)[vx.boneId[r]].valid))
+          posed = false;
+      if(posed) {
+        for(int r=0; r<4; ++r) {
+          if(vx.weights[r]<=0.f)
+            continue;
+          auto& R = (*rest)[vx.boneId[r]].rot;
+          const float n[3] = {v.normal.x, v.normal.y, v.normal.z};
+          float l[3];
+          for(int c=0; c<3; ++c)
+            l[c] = R[0][c]*n[0] + R[1][c]*n[1] + R[2][c]*n[2];
+          vx.normalLocal[r] = packOctNormal(l[0],l[1],l[2]);
+          }
+        vx.color = 0;
         }
       verticesA[vboSz+i]  = vx;
       }
@@ -350,7 +384,7 @@ void PackedMesh::Meshlet::updateBounds(const asset::StaticMesh& mesh) {
   updateBounds(mesh.positions);
   }
 
-void PackedMesh::Meshlet::updateBounds(const std::vector<zenkit::Vec3>& vbo) {
+void PackedMesh::Meshlet::updateBounds(const std::vector<asset::Vec3>& vbo) {
   float dim = 0;
   for(size_t i=0; i<vertSz; ++i)
     for(size_t r=i+1; r<vertSz; ++r) {
@@ -406,10 +440,6 @@ void PackedMesh::Meshlet::merge(const Meshlet& other) {
 
 
 PackedMesh::PackedMesh(const asset::WorldMesh& mesh, PkgType type) {
-  if(type==PK_VisualLnd && Resources::hasGraphicsDevice() && Shaders::options().doSoftwareRT) {
-    packBVH(mesh);
-    }
-
   if(type==PK_VisualLnd) {
     // dbgMesh(mesh);
     }
@@ -426,7 +456,198 @@ PackedMesh::PackedMesh(const asset::WorldMesh& mesh, PkgType type) {
     }
   }
 
-PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest) {
+PackedMesh::PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
+                       std::span<const uint32_t> materialMap,
+                       std::span<const uint32_t> vertexIds, std::span<const uint32_t> featureIds) {
+  const auto materials=materialMap.empty() ? landscapeMaterialMap(mesh) : std::vector<uint32_t>();
+  packMeshletsLnd(mesh,triangles,materialMap.empty() ? std::span<const uint32_t>(materials) : materialMap,vertexIds,featureIds);
+  computeBbox();
+  // A chunk package: one texture owner per material, measured here on the packing thread.
+  measureTexels();
+  }
+
+namespace {
+
+// The hierarchy can merge two local position/feature pairs with identical values.
+using CornerKey = std::array<uint32_t,9>;
+using TriangleKey = std::pair<uint32_t,std::array<CornerKey,3>>;
+
+CornerKey cornerKey(const CookedChunk& chunk, uint32_t position, uint32_t feature) {
+  const auto& p = chunk.positions()[position];
+  const auto& f = chunk.features()[feature];
+  std::array<float,8> values = {p.x,p.y,p.z,f.nx,f.ny,f.nz,f.u,f.v};
+  CornerKey key;
+  for(size_t i=0; i<values.size(); ++i)
+    key[i] = std::bit_cast<uint32_t>(values[i]);
+  key.back() = f.light;
+  return key;
+  }
+
+TriangleKey triangleKey(uint32_t material, std::array<CornerKey,3> corners) {
+  // A cyclic rotation has the same assembled triangle, including winding.
+  const std::array<CornerKey,3> next = {corners[1],corners[2],corners[0]};
+  const std::array<CornerKey,3> last = {corners[2],corners[0],corners[1]};
+  return {material,std::min({corners,next,last})};
+  }
+
+}
+
+PackedMesh::PackedMesh(const WorldChunkMesh& source, std::span<const uint32_t> materialMap) {
+  static_assert(MaxVert==ClusterLod::MaxVertices && MaxPrim==ClusterLod::MaxTriangles);
+  const auto& chunk = *source.clusterHierarchy;
+  const auto hierarchy = chunk.hierarchy();
+  const auto ref = [&](const auto& cluster, uint8_t index) -> const wcb::VertexRef& {
+    return hierarchy.vertices[hierarchy.vertexIndices[cluster.vertexOffset+index]];
+    };
+
+  std::vector<uint64_t> excluded;
+  std::vector<bool> blocked(hierarchy.groups.size());
+#ifndef CONTENT_CONVERT_PACKED_MESH
+  // The base's texture classification is baked. A replacement texture or
+  // material map can still turn an opaque surface into a card at runtime.
+  std::vector<int8_t> rigidMaterial(chunk.materials().size(), -1);
+  Resources::TextureLoadScope textureLoadScope(true);
+  for(const auto& c : hierarchy.clusters) {
+    if(c.level!=0 || std::isinf(hierarchy.groups[c.parentGroup].errorCm))
+      continue;
+    auto& rigid = rigidMaterial[c.material];
+    if(rigid<0) {
+      const auto id = materialMap[source.clusterMaterialIds[c.material]];
+      const auto material = Resources::loadMaterial(source.mesh.materials[id], true);
+      rigid = int8_t(material.alpha==Material::AlphaTest || material.twoSided!=Material::TwoSided::Off);
+      }
+    if(rigid!=0)
+      blocked[c.parentGroup] = true;
+    }
+#endif
+
+  if(source.mesh.polygons.material_indices.size()!=chunk.triangles().size()) {
+    excluded.resize(hierarchy.clusters.size());
+    std::vector<bool> present(chunk.triangles().size());
+    for(const auto i:source.clusterTriangleSources)
+      present[i] = true;
+    std::map<TriangleKey,size_t> missing;
+    for(size_t i=0; i<present.size(); ++i) {
+      if(present[i])
+        continue;
+      const auto& triangle = chunk.triangles()[i];
+      std::array<CornerKey,3> corners;
+      for(size_t c=0; c<corners.size(); ++c)
+        corners[c] = cornerKey(chunk,triangle.vertex[c],triangle.feature[c]);
+      ++missing[triangleKey(triangle.material,corners)];
+      }
+    for(size_t i=0; i<hierarchy.clusters.size() && !missing.empty(); ++i) {
+      const auto& c = hierarchy.clusters[i];
+      if(c.level!=0)
+        continue;
+      for(size_t t=0; t<c.triangleCount; ++t) {
+        std::array<CornerKey,3> corners;
+        for(size_t k=0; k<corners.size(); ++k) {
+          const auto& v = ref(c,hierarchy.indices[c.indexOffset+t*3+k]);
+          corners[k] = cornerKey(chunk,v.position,v.feature);
+          }
+        auto found = missing.find(triangleKey(c.material,corners));
+        if(found==missing.end())
+          continue;
+        excluded[i] |= uint64_t(1)<<t;
+        blocked[c.parentGroup] = true;
+        if(--found->second==0)
+          missing.erase(found);
+        }
+      }
+    if(!missing.empty())
+      throw std::runtime_error("LOD 0 does not contain every triangle extracted into cloth");
+    }
+
+  // A replacement of an excluded or rigid face would undo the level-0
+  // decision. Walk the transitions from children to parents.
+  if(std::ranges::any_of(blocked, [](bool value) { return value; })) {
+    std::vector<std::pair<uint32_t,uint32_t>> parents;
+    for(const auto& c:hierarchy.clusters)
+      if(c.level!=0)
+        parents.emplace_back(c.refinedGroup,c.parentGroup);
+    std::sort(parents.begin(),parents.end());
+    for(const auto& [child,parent]:parents)
+      if(blocked[child])
+        blocked[parent] = true;
+    }
+
+  // Reuse the landscape packer's vertex layout, winding and both index encodings.
+  asset::WorldMesh geometry;
+  geometry.vertices.reserve(chunk.positions().size());
+  for(const auto& p:chunk.positions())
+    geometry.vertices.push_back({p.x,p.y,p.z});
+  geometry.features.reserve(chunk.features().size());
+  for(const auto& f:chunk.features())
+    geometry.features.push_back({{f.u,f.v},f.light,{f.nx,f.ny,f.nz}});
+
+  std::map<uint32_t,std::vector<size_t>> byMaterial;
+  for(size_t i=0; i<hierarchy.clusters.size(); ++i) {
+    const auto& c = hierarchy.clusters[i];
+    if(c.level!=0 && blocked[c.refinedGroup])
+      continue;
+    byMaterial[materialMap[source.clusterMaterialIds[c.material]]].push_back(i);
+    }
+  const auto toVec = [](const ClusterLod::Sphere& s) {
+    return Vec4(s.center[0],s.center[1],s.center[2],s.radius);
+    };
+  const auto append = [&](size_t i) {
+    const auto& c = hierarchy.clusters[i];
+    Meshlet meshlet;
+    meshlet.vertSz = uint8_t(c.vertexCount);
+    meshlet.bounds.pos = {c.bounds.center[0],c.bounds.center[1],c.bounds.center[2]};
+    meshlet.bounds.r = c.bounds.radius;
+    for(uint8_t j=0; j<meshlet.vertSz; ++j) {
+      const auto& v = ref(c,j);
+      meshlet.vert[j] = {v.position,v.feature};
+      }
+    const uint64_t skip = excluded.empty() ? 0 : excluded[i];
+    for(size_t t=0; t<c.triangleCount; ++t) {
+      if((skip & (uint64_t(1)<<t))!=0)
+        continue;
+      std::copy_n(hierarchy.indices.data()+c.indexOffset+t*3,3,meshlet.indexes+meshlet.indSz);
+      meshlet.indSz += 3;
+      }
+    if(meshlet.indSz==0)
+      return;
+    meshlet.flush(vertices,indices,indices8,meshletBounds,geometry);
+    ClusterLevel level;
+    level.level = c.level;
+    level.flags = 1;
+    if(c.level!=0) {
+      const auto& own = hierarchy.groups[c.refinedGroup];
+      level.bounds = toVec(own.bounds);
+      level.errorCm = own.errorCm;
+      }
+    const auto& parent = hierarchy.groups[c.parentGroup];
+    level.parentBounds = toVec(parent.bounds);
+    level.parentErrorCm = blocked[c.parentGroup] ? std::numeric_limits<float>::infinity() : parent.errorCm;
+    clusterLevels.push_back(level);
+    };
+
+  for(const auto& [material,ids]:byMaterial) {
+    SubMesh sub;
+    sub.iboOffset = indices.size();
+    for(const auto i:ids)
+      if(hierarchy.clusters[i].level==0)
+        append(i);
+    sub.clusterL0Length = indices.size()-sub.iboOffset;
+    for(const auto i:ids)
+      if(hierarchy.clusters[i].level!=0)
+        append(i);
+    sub.iboLength = indices.size()-sub.iboOffset;
+    if(sub.iboLength==0)
+      continue;
+    sub.material = source.mesh.materials[material];
+    sub.texel = TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),sub.iboOffset,sub.clusterL0Length);
+    subMeshes.push_back(std::move(sub));
+    }
+  computeBbox();
+  }
+
+PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest,
+                       const std::vector<std::vector<uint32_t>>* colors) {
+  LoadProbe::Vobs::Scope probe("mesh_pack");
   subMeshes.resize(mesh.sub_meshes.size());
   /* NOTE: some mods do have corrupted content description,
    * using alpha_test==0, for some of vegetation
@@ -438,7 +659,8 @@ PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explici
   mBbox[1] = Vec3(bbox.max.x,bbox.max.y,bbox.max.z);
   }
 
-  packMeshletsObj(mesh,type,nullptr);
+  packMeshletsObj(mesh,type,nullptr,nullptr,colors);
+  measureTexels();
   // Native MRM keeps its historical alpha heuristics. GLB declares OPAQUE or
   // MASK explicitly, including when both occur in one mesh.
   if(explicitAlphaTest) {
@@ -449,7 +671,117 @@ PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explici
     }
   }
 
+PackedMesh::PackedMesh(const asset::StaticMesh& mesh, const ClusterLod::Graph& graph) {
+  static_assert(MaxVert==ClusterLod::MaxVertices && MaxPrim==ClusterLod::MaxTriangles);
+  LoadProbe::Vobs::Scope probe("mesh_pack");
+  mBbox[0] = {mesh.bbox.min.x,mesh.bbox.min.y,mesh.bbox.min.z};
+  mBbox[1] = {mesh.bbox.max.x,mesh.bbox.max.y,mesh.bbox.max.z};
+
+  std::vector<asset::Vec3> positions;
+  std::vector<asset::MeshWedge> wedges;
+  std::vector<uint32_t> colors;
+  positions.reserve(graph.vertices.size());
+  wedges.reserve(graph.vertices.size());
+  colors.reserve(graph.vertices.size());
+  for(const auto& v:graph.vertices) {
+    positions.push_back({v.position[0],v.position[1],v.position[2]});
+    wedges.push_back({{v.normal[0],v.normal[1],v.normal[2]},{v.uv[0],v.uv[1]},0});
+    colors.push_back(v.color);
+    }
+
+  std::vector<std::vector<const ClusterLod::Cluster*>> byMaterial(mesh.sub_meshes.size());
+  for(const auto& c:graph.clusters)
+    byMaterial[c.material].push_back(&c);
+  const auto sphere = [](const ClusterLod::Sphere& s) {
+    return Vec4(s.center[0],s.center[1],s.center[2],s.radius);
+    };
+  const auto append = [&](const ClusterLod::Cluster& c) {
+    Meshlet meshlet;
+    meshlet.vertSz = uint8_t(c.vertexCount);
+    meshlet.indSz  = uint8_t(c.triangleCount*3);
+    for(uint8_t i=0; i<meshlet.vertSz; ++i) {
+      const auto vertex = graph.vertexIndices[c.vertexOffset+i];
+      meshlet.vert[i] = {vertex,vertex};
+      }
+    std::copy_n(graph.indices.data()+c.indexOffset,meshlet.indSz,meshlet.indexes);
+    meshlet.flush(vertices,verticesA,indices,indices8,nullptr,positions,wedges,nullptr,nullptr,&colors);
+    meshletBounds.push_back({{c.bounds.center[0],c.bounds.center[1],c.bounds.center[2]},c.bounds.radius});
+
+    ClusterLevel level;
+    level.level = c.level;
+    level.flags = 1;
+    if(c.level!=0) {
+      const auto& own = graph.groups[c.refinedGroup];
+      level.bounds = sphere(own.bounds);
+      level.errorCm = own.errorCm;
+      }
+    const auto& parent = graph.groups[c.parentGroup];
+    level.parentBounds = sphere(parent.bounds);
+    level.parentErrorCm = parent.errorCm;
+    clusterLevels.push_back(level);
+    };
+
+  subMeshes.resize(mesh.sub_meshes.size());
+  for(size_t i=0; i<subMeshes.size(); ++i) {
+    auto& sub = subMeshes[i];
+    sub.material = mesh.sub_meshes[i].mat;
+    sub.alphaTest = sub.material.alpha_func!=asset::AlphaFunction::NONE;
+    sub.alphaTestRequired = sub.alphaTest;
+    sub.iboOffset = indices.size();
+    for(const auto* c:byMaterial[i])
+      if(c->level==0)
+        append(*c);
+    sub.clusterL0Length = indices.size()-sub.iboOffset;
+    for(const auto* c:byMaterial[i])
+      if(c->level!=0)
+        append(*c);
+    sub.iboLength = indices.size()-sub.iboOffset;
+    sub.texel = TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),sub.iboOffset,sub.clusterL0Length);
+    }
+  }
+
+void PackedMesh::addLevel(const asset::StaticMesh& level, float px, const std::vector<std::vector<uint32_t>>* colors) {
+  if(level.sub_meshes.size()!=subMeshes.size())
+    throw std::runtime_error("a level of detail must have the mesh's materials");
+  if(levels.empty()) {
+    mainEnd[0] = vertices.size();
+    mainEnd[1] = indices.size();
+    mainEnd[2] = indices8.size();
+    mainEnd[3] = meshletBounds.size();
+    }
+  // a meshlet is MaxVert vertices, MaxInd indices of them and its 8-bit list: the level's go after, its indices
+  // counted from its first vertex
+  const PackedMesh packed(level,PK_Visual,true,colors);
+  const auto firstVertex = uint32_t(vertices.size());
+  const auto firstIndex  = indices.size();
+  vertices.insert(vertices.end(),packed.vertices.begin(),packed.vertices.end());
+  indices.reserve(indices.size()+packed.indices.size());
+  for(auto i:packed.indices)
+    indices.push_back(firstVertex+i);
+  indices8.insert(indices8.end(),packed.indices8.begin(),packed.indices8.end());
+  meshletBounds.insert(meshletBounds.end(),packed.meshletBounds.begin(),packed.meshletBounds.end());
+
+  Level lv;
+  lv.px = px;
+  for(auto& sub:packed.subMeshes)
+    lv.sub.emplace_back(firstIndex+sub.iboOffset,sub.iboLength);
+  lv.bbox[0] = Vec3(level.bbox.min.x,level.bbox.min.y,level.bbox.min.z);
+  lv.bbox[1] = Vec3(level.bbox.max.x,level.bbox.max.y,level.bbox.max.z);
+  levels.push_back(std::move(lv));
+  }
+
+void PackedMesh::dropLevels() {
+  if(levels.empty())
+    return;
+  vertices.resize(mainEnd[0]);
+  indices.resize(mainEnd[1]);
+  indices8.resize(mainEnd[2]);
+  meshletBounds.resize(mainEnd[3]);
+  levels.clear();
+  }
+
 PackedMesh::PackedMesh(const asset::SoftSkinMesh& skinned) {
+  LoadProbe::Vobs::Scope probe("mesh_pack");
   auto& mesh = skinned.mesh;
   subMeshes.resize(mesh.sub_meshes.size());
   {
@@ -481,7 +813,177 @@ PackedMesh::PackedMesh(const asset::SoftSkinMesh& skinned) {
       }
     }
 
-  packMeshletsObj(mesh,PK_Visual,&vertices);
+  const auto rest = fitSkinRest(skinned);
+  packMeshletsObj(mesh,PK_Visual,&vertices,&rest);
+  measureBindTexels(mesh);
+  }
+
+// The packed vertices of a soft skin hold positions in their bones' frames: the UV density comes from the bind pose
+// (the source positions in model space), measured per submesh as for a static mesh. Animation and morphs are ignored.
+void PackedMesh::measureBindTexels(const asset::StaticMesh& mesh) {
+  std::vector<Vertex>   bind;
+  std::vector<uint32_t> ibo;
+  for(size_t mId=0; mId<mesh.sub_meshes.size() && mId<subMeshes.size(); ++mId) {
+    auto& sm = mesh.sub_meshes[mId];
+    bind.clear();
+    ibo.clear();
+    bind.reserve(sm.wedges.size());
+    for(auto& w:sm.wedges) {
+      Vertex v = {};
+      if(w.index<mesh.positions.size()) {
+        v.pos[0] = mesh.positions[w.index].x;
+        v.pos[1] = mesh.positions[w.index].y;
+        v.pos[2] = mesh.positions[w.index].z;
+        }
+      v.uv[0] = w.texture.x;
+      v.uv[1] = w.texture.y;
+      bind.push_back(v);
+      }
+    ibo.reserve(sm.triangles.size()*3);
+    for(auto& t:sm.triangles)
+      for(int x=0; x<3; ++x)
+        ibo.push_back(t.wedges[x]);
+    subMeshes[mId].texel = TexelDensity::measure(bind.data(),bind.size(),ibo.data(),0,ibo.size());
+    }
+  }
+
+// Symmetric 4x4 eigen-decomposition by Jacobi rotations: a ends diagonal, the columns of v are the eigenvectors.
+static void jacobi4(double a[4][4], double v[4][4]) {
+  for(int i=0; i<4; ++i)
+    for(int j=0; j<4; ++j)
+      v[i][j] = (i==j) ? 1.0 : 0.0;
+  for(int sweep=0; sweep<64; ++sweep) {
+    double off = 0;
+    for(int p=0; p<4; ++p)
+      for(int q=p+1; q<4; ++q)
+        off += a[p][q]*a[p][q];
+    if(off<1e-24)
+      break;
+    for(int p=0; p<4; ++p)
+      for(int q=p+1; q<4; ++q) {
+        if(std::abs(a[p][q])<1e-300)
+          continue;
+        const double theta = (a[q][q]-a[p][p])/(2.0*a[p][q]);
+        const double t     = (theta>=0 ? 1.0 : -1.0)/(std::abs(theta)+std::sqrt(theta*theta+1.0));
+        const double c     = 1.0/std::sqrt(t*t+1.0), s = t*c;
+        for(int k=0; k<4; ++k) {
+          const double kp = a[k][p], kq = a[k][q];
+          a[k][p] = c*kp - s*kq;
+          a[k][q] = s*kp + c*kq;
+          }
+        for(int k=0; k<4; ++k) {
+          const double pk = a[p][k], qk = a[q][k];
+          a[p][k] = c*pk - s*qk;
+          a[q][k] = s*pk + c*qk;
+          }
+        for(int k=0; k<4; ++k) {
+          const double kp = v[k][p], kq = v[k][q];
+          v[k][p] = c*kp - s*kq;
+          v[k][q] = s*kp + c*kq;
+          }
+        }
+    }
+  }
+
+// Every weight of a soft skin holds the vertex in its node's rest frame, so the local and the model positions of
+// the vertices a node carries differ by that node's rest transform, P = R*p + t. Horn's quaternion fit recovers R
+// per node; a node whose points are too few, collinear, or do not fit one rigid transform stays invalid, and its
+// vertices keep the rest normal. The fit takes the vertices a node dominates, its weight within 90% of its own
+// maximum, when it has enough of them: a blended vertex's model position may be the blend of its nodes' rest
+// positions rather than each one's (our MDM writer), and a clavicle may carry no vertex alone.
+std::vector<PackedMesh::SkinRest> PackedMesh::fitSkinRest(const asset::SoftSkinMesh& skinned) {
+  static constexpr double Tolerance = 0.5;  // RMS of the fit, model units (cm)
+  static constexpr size_t MinRigid  = 6;
+  auto& positions = skinned.mesh.positions;
+  const size_t count = std::min(skinned.weights.size(),positions.size());
+  std::vector<float> top;
+  for(size_t i=0; i<count; ++i)
+    for(auto& w:skinned.weights[i]) {
+      if(w.node_index>=top.size())
+        top.resize(w.node_index+1u,0.f);
+      top[w.node_index] = std::max(top[w.node_index],w.weight);
+      }
+  std::vector<std::vector<std::pair<asset::Vec3,asset::Vec3>>> pairs(top.size()), rigid(top.size()); // (local, model)
+  for(size_t i=0; i<count; ++i)
+    for(auto& w:skinned.weights[i]) {
+      pairs[w.node_index].emplace_back(w.position,positions[i]);
+      if(w.weight>=0.9f*top[w.node_index])
+        rigid[w.node_index].emplace_back(w.position,positions[i]);
+      }
+
+  std::vector<SkinRest> ret(pairs.size());
+  size_t failed = 0;
+  double worst  = 0;
+  for(size_t node=0; node<pairs.size(); ++node) {
+    auto& pr = rigid[node].size()>=MinRigid ? rigid[node] : pairs[node];
+    if(pr.size()<3)
+      continue;
+    double cq[3] = {}, cp[3] = {};
+    for(auto& [q,p]:pr) {
+      cq[0] += q.x; cq[1] += q.y; cq[2] += q.z;
+      cp[0] += p.x; cp[1] += p.y; cp[2] += p.z;
+      }
+    for(int k=0; k<3; ++k) {
+      cq[k] /= double(pr.size());
+      cp[k] /= double(pr.size());
+      }
+    double S[3][3] = {};
+    for(auto& [q,p]:pr) {
+      const double a[3] = {q.x-cq[0], q.y-cq[1], q.z-cq[2]};
+      const double b[3] = {p.x-cp[0], p.y-cp[1], p.z-cp[2]};
+      for(int i=0; i<3; ++i)
+        for(int j=0; j<3; ++j)
+          S[i][j] += a[i]*b[j];
+      }
+    double N[4][4] = {
+      {S[0][0]+S[1][1]+S[2][2], S[1][2]-S[2][1],          S[2][0]-S[0][2],          S[0][1]-S[1][0]},
+      {S[1][2]-S[2][1],         S[0][0]-S[1][1]-S[2][2],  S[0][1]+S[1][0],          S[2][0]+S[0][2]},
+      {S[2][0]-S[0][2],         S[0][1]+S[1][0],         -S[0][0]+S[1][1]-S[2][2],  S[1][2]+S[2][1]},
+      {S[0][1]-S[1][0],         S[2][0]+S[0][2],          S[1][2]+S[2][1],         -S[0][0]-S[1][1]+S[2][2]},
+      };
+    double V[4][4];
+    jacobi4(N,V);
+    int best = 0;
+    for(int k=1; k<4; ++k)
+      if(N[k][k]>N[best][best])
+        best = k;
+    double second = -1e300;
+    for(int k=0; k<4; ++k)
+      if(k!=best)
+        second = std::max(second,N[k][k]);
+    if(N[best][best]-second <= 1e-6*std::max(1.0,std::abs(N[best][best])))
+      continue; // collinear points: the turn about their line is unknown
+    double w = V[0][best], x = V[1][best], y = V[2][best], z = V[3][best];
+    const double len = std::sqrt(w*w+x*x+y*y+z*z);
+    w /= len; x /= len; y /= len; z /= len;
+    const double R[3][3] = {
+      {1-2*(y*y+z*z), 2*(x*y-w*z),   2*(x*z+w*y)},
+      {2*(x*y+w*z),   1-2*(x*x+z*z), 2*(y*z-w*x)},
+      {2*(x*z-w*y),   2*(y*z+w*x),   1-2*(x*x+y*y)},
+      };
+    double err = 0;
+    for(auto& [q,p]:pr) {
+      const double a[3] = {q.x-cq[0], q.y-cq[1], q.z-cq[2]};
+      const double b[3] = {p.x-cp[0], p.y-cp[1], p.z-cp[2]};
+      for(int i=0; i<3; ++i) {
+        const double d = R[i][0]*a[0] + R[i][1]*a[1] + R[i][2]*a[2] - b[i];
+        err += d*d;
+        }
+      }
+    const double rms = std::sqrt(err/double(pr.size()));
+    if(rms>Tolerance) {
+      failed++;
+      worst = std::max(worst,rms);
+      continue;
+      }
+    for(int i=0; i<3; ++i)
+      for(int j=0; j<3; ++j)
+        ret[node].rot[i][j] = float(R[i][j]);
+    ret[node].valid = true;
+    }
+  if(failed>0)
+    Log::i("skin rest: ",failed," node(s) do not fit one rigid frame (worst rms ",float(worst),"), rest normals kept");
+  return ret;
   }
 
 void PackedMesh::packPhysics(const asset::WorldMesh& mesh, PkgType type) {
@@ -560,687 +1062,22 @@ void PackedMesh::packPhysics(const asset::WorldMesh& mesh, PkgType type) {
     }
   }
 
-void PackedMesh::packBVH(const asset::WorldMesh& mesh) {
-  packBVH2(mesh);
-  // packCWBVH8(mesh);
-  }
-
-void PackedMesh::quadAddPrim(Fragment& f, const asset::WorldMesh& mesh, uint32_t prim0, uint32_t prim1, uint32_t iMin, uint32_t iMax) {
+std::pair<Vec3,Vec3> PackedMesh::landscapeBbox(const asset::WorldMesh& mesh) {
+  auto& vbo = mesh.vertices;
   auto& ibo = mesh.polygons.vertex_indices;
-
-  f.prim0 = prim0;
-  f.prim1 = prim1;
-
-  auto i0 = ibo[prim0*3+0];
-  auto i1 = ibo[prim0*3+1];
-  auto i2 = ibo[prim0*3+2];
-  while(i1==iMin || i1==iMax) {
-    auto t = i0;
-    i0 = i1;
-    i1 = i2;
-    i2 = t;
+  if(ibo.empty())
+    return {};
+  Vec3 lo(vbo[ibo[0]].x,vbo[ibo[0]].y,vbo[ibo[0]].z);
+  Vec3 hi = lo;
+  for(const auto i:ibo) {
+    const auto& p = vbo[i];
+    lo.x = std::min(lo.x,p.x); lo.y = std::min(lo.y,p.y); lo.z = std::min(lo.z,p.z);
+    hi.x = std::max(hi.x,p.x); hi.y = std::max(hi.y,p.y); hi.z = std::max(hi.z,p.z);
     }
-  f.ibo[0] = i0;
-  f.ibo[1] = i1;
-  f.ibo[2] = i2;
-
-  if(prim1==0xFFFFFFFF) {
-    f.ibo[3] = i2;
-    return;
-    }
-
-  i0 = ibo[prim1*3+0];
-  i1 = ibo[prim1*3+1];
-  i2 = ibo[prim1*3+2];
-  while(i1==iMin || i1==iMax) {
-    auto t = i0;
-    i0 = i1;
-    i1 = i2;
-    i2 = t;
-    }
-  f.ibo[3] = i1;
+  return {lo,hi};
   }
 
-std::vector<PackedMesh::Fragment> PackedMesh::packQuads(const asset::WorldMesh& mesh) {
-  auto pullVert = [&](const asset::WorldMesh& mesh, uint32_t i) {
-    auto v = mesh.vertices[i];
-    return Tempest::Vec3(v.x, v.y, v.z);
-    };
-
-  auto& ibo  = mesh.polygons.vertex_indices;
-  //auto& feat = mesh.polygons.feature_indices;
-  auto& mid  = mesh.polygons.material_indices;
-
-  // https://www.highperformancegraphics.org/posters23/Fast_Triangle_Pairing_for_Ray_Tracing.pdf
-  std::vector<HalfEdge> edgeFrag;
-  for(size_t i=0; i<mid.size(); ++i) {
-    const auto primId = uint32_t(i*3);
-    uint32_t ib[3] = {};
-    ib[0] = ibo[primId+0];
-    ib[1] = ibo[primId+1];
-    ib[2] = ibo[primId+2];
-
-    if(ib[0]==ib[1] || ib[0]==ib[2] || ib[1]==ib[2])
-      continue;
-
-    for(size_t r=0; r<3; ++r) {
-      auto i0     = ib[(r  )  ];
-      auto i1     = ib[(r+1)%3];
-      auto bbox   = pullVert(mesh, i0) - pullVert(mesh, i1);
-      bbox.x = std::abs(bbox.x);
-      bbox.y = std::abs(bbox.y);
-      bbox.z = std::abs(bbox.z);
-
-      HalfEdge f;
-      f.sah  = areaOf(bbox);
-      f.iMin = std::min(i0, i1);
-      f.iMax = std::max(i0, i1);
-      f.prim = uint32_t(i);
-      f.wnd  = i0==f.iMin;
-      edgeFrag.push_back(f);
-      }
-    }
-
-  std::sort(edgeFrag.begin(), edgeFrag.end(), [](const HalfEdge& l, const HalfEdge& r){
-    return std::tie(l.sah, l.iMin, l.iMax, l.prim) > std::tie(r.sah, r.iMin, r.iMax, r.prim);
-    });
-
-  std::vector<bool>     pairings(mid.size());
-  std::vector<Fragment> frag;
-  for(size_t i=0; i<edgeFrag.size(); ++i) {
-    const auto& a = edgeFrag[i+0];
-    const auto& b = (i+1<edgeFrag.size()) ? edgeFrag[i+1] : a;
-    if(pairings[a.prim] || pairings[b.prim])
-      continue;
-
-    Fragment f;
-    if(i+1<edgeFrag.size() && a.iMin==b.iMin && a.iMax==b.iMax) {
-      pairings[a.prim] = true;
-      pairings[b.prim] = true;
-      quadAddPrim(f, mesh, a.prim, b.prim, a.iMin, a.iMax);
-      frag.push_back(f);
-      ++i;
-      continue;
-      }
-    }
-  for(size_t i=0; i<pairings.size(); ++i) {
-    if(pairings[i])
-      continue;
-    Fragment f;
-    quadAddPrim(f, mesh, uint32_t(i), 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF);
-    frag.push_back(f);
-    }
-
-  for(auto& f:frag) {
-    Vec3 bbmin = pullVert(mesh, f.ibo[0]);
-    Vec3 bbmax = bbmin;
-    for(size_t i=1; i<4; ++i) {
-      Vec3 vec = pullVert(mesh, f.ibo[i]);
-      bbmin.x = std::min(bbmin.x, vec.x);
-      bbmin.y = std::min(bbmin.y, vec.y);
-      bbmin.z = std::min(bbmin.z, vec.z);
-
-      bbmax.x = std::max(bbmax.x, vec.x);
-      bbmax.y = std::max(bbmax.y, vec.y);
-      bbmax.z = std::max(bbmax.z, vec.z);
-      }
-
-    f.centroid = (bbmin+bbmax)/2.f;
-    f.bbmin    = bbmin;
-    f.bbmax    = bbmax;
-    }
-
-  return frag;
-  }
-
-std::pair<uint32_t, float> PackedMesh::findNodeSplit(const Fragment* frag, size_t size, const bool useSah) {
-  if(!useSah)
-    return std::make_pair(size/2, 0); // median split
-
-  size_t split    = size/2;
-  float  bestCost = std::numeric_limits<float>::max();
-
-  std::vector<float> sahB(size);
-  Vec3 sahMin = frag[size-1].bbmin;
-  Vec3 sahMax = frag[size-1].bbmax;
-  for(size_t i=size; i>1; ) {
-    --i;
-    auto& f = frag[i];
-    sahMin.x = std::min(sahMin.x, f.bbmin.x);
-    sahMin.y = std::min(sahMin.y, f.bbmin.y);
-    sahMin.z = std::min(sahMin.z, f.bbmin.z);
-
-    sahMax.x = std::max(sahMax.x, f.bbmax.x);
-    sahMax.y = std::max(sahMax.y, f.bbmax.y);
-    sahMax.z = std::max(sahMax.z, f.bbmax.z);
-
-    sahB[i-1] = areaOf(sahMin, sahMax);
-    }
-
-  sahMin = frag[0].bbmin;
-  sahMax = frag[0].bbmax;
-  for(size_t i=0; i+1<size; ++i) {
-    auto& f = frag[i];
-    sahMin.x = std::min(sahMin.x, f.bbmin.x);
-    sahMin.y = std::min(sahMin.y, f.bbmin.y);
-    sahMin.z = std::min(sahMin.z, f.bbmin.z);
-
-    sahMax.x = std::max(sahMax.x, f.bbmax.x);
-    sahMax.y = std::max(sahMax.y, f.bbmax.y);
-    sahMax.z = std::max(sahMax.z, f.bbmax.z);
-
-    const float sahA = areaOf(sahMin, sahMax);
-    const float cost = sahA*float(i) + sahB[i]*float(size-i);
-    if(cost<bestCost) {
-      bestCost = cost;
-      split    = i+1;
-      }
-    }
-
-  return std::make_pair(split, bestCost);
-  }
-
-std::pair<uint32_t, bool> PackedMesh::findNodeSplitSah(Fragment* frag, size_t size) {
-  const bool useSah = true;
-  if(!useSah)
-    return std::make_pair(size/2, 0); // median split
-
-  std::sort(frag, frag+size, [](const Fragment& l, const Fragment& r){ return l.centroid.x < r.centroid.x; });
-  const auto retX = findNodeSplit(frag, size, useSah);
-
-  std::sort(frag, frag+size, [](const Fragment& l, const Fragment& r){ return l.centroid.y < r.centroid.y; });
-  const auto retY = findNodeSplit(frag, size, useSah);
-
-  std::sort(frag, frag+size, [](const Fragment& l, const Fragment& r){ return l.centroid.z < r.centroid.z; });
-  const auto retZ = findNodeSplit(frag, size, useSah);
-
-  if(retZ.second <= retX.second && retZ.second <= retY.second)
-    return std::make_pair(retZ.first, true);
-  if(retY.second <= retX.second && retY.second <= retZ.second) {
-    std::sort(frag, frag+size, [](const Fragment& l, const Fragment& r){ return l.centroid.y < r.centroid.y; });
-    return std::make_pair(retY.first, true);
-    }
-  std::sort(frag, frag+size, [](const Fragment& l, const Fragment& r){ return l.centroid.x < r.centroid.x; });
-  return std::make_pair(retX.first, true);
-  }
-
-void PackedMesh::packBlocks(Block* out, uint32_t& outSz, uint8_t destSz, Fragment* frag, size_t size) {
-  out[outSz].frag  = frag;
-  out[outSz].size  = size;
-  ++outSz;
-
-  while(outSz<destSz) {
-    uint32_t current = 0;
-    for(uint32_t i=1; i<outSz; ++i) {
-      if(out[i].size > out[current].size)
-        current = i;
-      }
-
-    auto& cur = out[current];
-    if(cur.size<=1)
-      break;
-
-    const auto   splitV = findNodeSplitSah(cur.frag, cur.size);
-    const size_t split  = splitV.first;
-
-    auto& nxt = out[outSz]; ++outSz;
-    nxt.frag = cur.frag+split;
-    nxt.size = cur.size-split;
-    cur.size = split;
-    }
-
-  for(size_t i=0; i<outSz; ++i) {
-    auto& cur = out[i];
-    computeBbox(cur.bbmin, cur.bbmax, cur.frag, cur.size);
-    }
-
-  std::sort(out, out+outSz, [](const Block& l, const Block& r){
-    return areaOf(l.bbmin, l.bbmax)*float(l.size) < areaOf(r.bbmin, r.bbmax)*float(r.size);
-    });
-  }
-
-void PackedMesh::computeBbox(Tempest::Vec3& bbmin, Tempest::Vec3& bbmax, const Fragment* frag, size_t size) {
-  bbmin = frag[0].bbmin;
-  bbmax = frag[0].bbmax;
-  for(size_t i=1; i<size; ++i) {
-    auto& f = frag[i];
-    bbmin.x = std::min(bbmin.x, f.bbmin.x);
-    bbmin.y = std::min(bbmin.y, f.bbmin.y);
-    bbmin.z = std::min(bbmin.z, f.bbmin.z);
-
-    bbmax.x = std::max(bbmax.x, f.bbmax.x);
-    bbmax.y = std::max(bbmax.y, f.bbmax.y);
-    bbmax.z = std::max(bbmax.z, f.bbmax.z);
-    }
-  }
-
-void PackedMesh::packBVH2(const asset::WorldMesh& mesh) {
-  auto frag = packQuads(mesh);
-
-  std::vector<BVHNode> nodes;
-  packBVH2(mesh, nodes, frag.data(), frag.size(), size_t(-1));
-
-  //TODO: ensure, that first node is a box node
-  bvhNodes = std::move(nodes);
-  }
-
-uint32_t PackedMesh::packBVH2(const asset::WorldMesh& mesh, std::vector<BVHNode>& nodes,
-                              Fragment* frag, size_t size, size_t parentSz) {
-  auto pullVert = [&](const asset::WorldMesh& mesh, uint32_t i) {
-    auto v = mesh.vertices[i];
-    return Tempest::Vec3(v.x, v.y, v.z);
-    };
-
-  if(size==0) {
-    assert(0);
-    return BVH_NullNode;
-    }
-
-  if(size<=1) {
-    const auto& f = frag[0];
-    BVHNode node = {};
-    node.padd0 = 0;
-    node.padd1 = f.prim0;
-    node.lmin  = pullVert(mesh, f.ibo[0]);
-    node.lmax  = pullVert(mesh, f.ibo[1]);
-    node.rmin  = pullVert(mesh, f.ibo[2]);
-    node.lmax -= node.lmin;
-    node.rmin -= node.lmin;
-
-    const size_t nId = nodes.size();
-    if(true && frag[0].prim1!=0xFFFFFFFF) {
-      node.rmax  = pullVert(mesh, f.ibo[3]);
-      node.rmax -= node.lmin;
-      nodes.emplace_back(node);
-      return uint32_t(nId | BVH_Tri2Node);
-      }
-
-    nodes.emplace_back(node);
-    return uint32_t(nId | BVH_Tri1Node);
-    }
-
-  Block block[2] = {};
-  {
-  uint32_t blockSz = 0;
-  packBlocks(block, blockSz, 2, frag, size);
-  }
-
-  const size_t nId = nodes.size();
-  nodes.emplace_back(); //reserve memory
-
-  BVHNode node = {};
-  node.left  = packBVH2(mesh, nodes, block[0].frag, block[0].size, size);
-  node.right = packBVH2(mesh, nodes, block[1].frag, block[1].size, size);
-  node.lmin  = block[0].bbmin;
-  node.lmax  = block[0].bbmax;
-  node.rmin  = block[1].bbmin;
-  node.rmax  = block[1].bbmax;
-  nodes[nId] = node;
-  /*
-  if(size<=16 && parentSz>16) {
-    paintBvh(nodes.data(), (nId | BVH_BoxNode), counter);
-    ++counter;
-    }
-  */
-  return uint32_t(nId | BVH_BoxNode);
-  }
-
-void PackedMesh::packCWBVH8(const asset::WorldMesh& mesh) {
-  //TODO: quad packing in leaf nodes
-  auto frag = packQuads(mesh);
-
-  std::vector<UVec4> nodes(sizeof(CWBVH8)/sizeof(UVec4));
-  auto root = packCWBVH8(mesh, nodes, frag.data(), frag.size());
-  std::memcpy(nodes.data(), &root, sizeof(root));
-
-  //TODO: ensure, that first node is a box node
-  bvh8Nodes = std::move(nodes);
-  }
-
-PackedMesh::CWBVH8 PackedMesh::packCWBVH8(const asset::WorldMesh& mesh, std::vector<UVec4>& nodes, Fragment* frag, size_t size) {
-  auto pullVert = [&](const asset::WorldMesh& mesh, uint32_t i) {
-    auto v = mesh.vertices[i];
-    return Tempest::Vec3(v.x, v.y, v.z);
-    };
-
-  auto toUvec4 = [](const Vec3 a){
-    UVec4 v;
-    v.x = floatBitsToUint(a.x);
-    v.y = floatBitsToUint(a.y);
-    v.z = floatBitsToUint(a.z);
-    v.w = 0; //TODO: texcoords
-    return v;
-    };
-
-  if(size==0) {
-    assert(0);
-    return CWBVH8();
-    }
-
-  Block block[8] = {};
-  {
-  uint32_t blockSz = 0;
-  packBlocks(block, blockSz, 8, frag, size);
-  assert(blockSz<=8);
-  }
-
-  constexpr uint32_t numVec = (sizeof(CWBVH8)/sizeof(UVec4));
-  auto node = nodeFromBlocks(block);
-
-  const uint32_t numNodes = node.pNodes;
-  const uint32_t numPrims = node.pPrimitives;
-
-  node.pNodes      = node.pNodes==0      ? 0 : uint32_t(nodes.size());
-  node.pPrimitives = node.pPrimitives==0 ? 0 : uint32_t(nodes.size() + numNodes*numVec);
-  nodes.resize(nodes.size() + numNodes*numVec + numPrims*3);
-
-  uint32_t iNode = 0, iPrim = 0;
-  for(size_t i=0; i<8; ++i) {
-    auto& b = block[i];
-    if(b.size==0)
-      continue;
-
-    if((node.imask & (1u << i))!=0) {
-      auto  child  = packCWBVH8(mesh, nodes, b.frag, b.size);
-      auto* cwnode = reinterpret_cast<CWBVH8*>(nodes.data() + node.pNodes);
-      cwnode[iNode] = child;
-      iNode++;
-      continue;
-      }
-
-    if(b.size<=1) {
-      const auto&    f    = b.frag[0];
-      const uint32_t prim = b.frag[0].prim0;
-      const Vec3     ta   = pullVert(mesh, f.ibo[0]);
-      const Vec3     tb   = pullVert(mesh, f.ibo[1]);
-      const Vec3     tc   = pullVert(mesh, f.ibo[2]);
-
-      auto* cwnode = (nodes.data() + node.pPrimitives + iPrim*3);
-      cwnode[0] = toUvec4(ta);
-      cwnode[1] = toUvec4(tb);
-      cwnode[2] = toUvec4(tc);
-
-      cwnode[0].w = prim;
-      iPrim++;
-      continue;
-      }
-
-    assert(0);
-    }
-
-  return node;
-  }
-
-
-PackedMesh::CWBVH8 PackedMesh::packCWBVH8(const asset::WorldMesh& mesh, std::vector<UVec4>& nodes,
-                                          const std::vector<uint32_t>& ibo, Fragment* frag, size_t size) {
-  auto pullVert = [&](uint32_t i) {
-    auto v = mesh.vertices[i];
-    return Tempest::Vec3(v.x, v.y, v.z);
-    };
-
-  auto toUvec4 = [](const Vec3 a){
-    UVec4 v;
-    v.x = floatBitsToUint(a.x);
-    v.y = floatBitsToUint(a.y);
-    v.z = floatBitsToUint(a.z);
-    v.w = 0; //TODO: texcoords
-    return v;
-    };
-
-  if(size==0) {
-    assert(0);
-    return CWBVH8();
-    }
-
-  Block block[8] = {};
-  {
-  uint32_t blockSz = 0;
-  packCW8Blocks(block, blockSz, mesh, nodes, frag, size, 0);
-  assert(blockSz<=8);
-  }
-
-  constexpr uint32_t numVec = (sizeof(CWBVH8)/sizeof(UVec4));
-  CWBVH8 node = nodeFromBlocks(block);
-
-  const uint32_t numNodes = node.pNodes;
-  const uint32_t numPrims = node.pPrimitives;
-
-  node.pNodes      = node.pNodes==0      ? 0 : uint32_t(nodes.size());
-  node.pPrimitives = node.pPrimitives==0 ? 0 : uint32_t(nodes.size()) + numNodes*numVec;
-  nodes.resize(nodes.size() + numNodes*numVec + numPrims*3);
-
-  uint32_t iNode = 0, iPrim = 0;
-  for(size_t i=0; i<8; ++i) {
-    auto& b = block[i];
-    if(b.size==0)
-      continue;
-
-    if((node.imask & (1u << i))!=0) {
-      auto  child  = packCWBVH8(mesh, nodes, ibo, b.frag, b.size);
-      auto* cwnode = reinterpret_cast<CWBVH8*>(nodes.data() + node.pNodes);
-      cwnode[iNode] = child;
-      iNode++;
-      continue;
-      }
-
-    if(b.size<=1) {
-      const uint32_t prim = b.frag[0].prim0;
-      const Vec3     ta   = pullVert(ibo[prim+0]);
-      const Vec3     tb   = pullVert(ibo[prim+1]);
-      const Vec3     tc   = pullVert(ibo[prim+2]);
-
-      auto* cwnode = (nodes.data() + node.pPrimitives + iPrim*3);
-      cwnode[0] = toUvec4(ta);
-      cwnode[1] = toUvec4(tb);
-      cwnode[2] = toUvec4(tc);
-
-      cwnode[0].w = prim;
-      iPrim++;
-      continue;
-      }
-
-    assert(0);
-    }
-
-  return node;
-  }
-
-void PackedMesh::packCW8Blocks(Block* out, uint32_t& outSz, const asset::WorldMesh& mesh, std::vector<UVec4>& nodes,
-                               Fragment* frag, size_t size, uint8_t depth) {
-  Tempest::Vec3 bbmin = {}, bbmax = {};
-  bbmin = frag[0].bbmin;
-  bbmax = frag[0].bbmax;
-  for(size_t i=1; i<size; ++i) {
-    auto& f = frag[i];
-    bbmin.x = std::min(bbmin.x, f.bbmin.x);
-    bbmin.y = std::min(bbmin.y, f.bbmin.y);
-    bbmin.z = std::min(bbmin.z, f.bbmin.z);
-
-    bbmax.x = std::max(bbmax.x, f.bbmax.x);
-    bbmax.y = std::max(bbmax.y, f.bbmax.y);
-    bbmax.z = std::max(bbmax.z, f.bbmax.z);
-    }
-
-  if(depth>=3) {
-    out[outSz].bbmin = bbmin;
-    out[outSz].bbmax = bbmax;
-    out[outSz].frag  = frag;
-    out[outSz].size  = size;
-    outSz++;
-    return;
-    }
-
-  Vec3 sz = bbmax-bbmin;
-  if(sz.x>sz.y && sz.x>sz.z) {
-    std::sort(frag, frag+size, [](const Fragment& l, const Fragment& r){ return l.centroid.x < r.centroid.x; });
-    }
-  else if(sz.y>sz.x && sz.y>sz.z) {
-    std::sort(frag, frag+size, [](const Fragment& l, const Fragment& r){ return l.centroid.y < r.centroid.y; });
-    }
-  else {
-    std::sort(frag, frag+size, [](const Fragment& l, const Fragment& r){ return l.centroid.z < r.centroid.z; });
-    }
-  //
-  const bool useSah = false;
-  const auto split  = findNodeSplit(frag, size, useSah).first;
-
-  packCW8Blocks(out, outSz, mesh, nodes, frag,       split,      depth+1);
-  packCW8Blocks(out, outSz, mesh, nodes, frag+split, size-split, depth+1);
-
-  if(depth==0) {
-    orderBlocks(out, outSz, bbmin, bbmax);
-    }
-  }
-
-void PackedMesh::orderBlocks(Block* block, const uint32_t numBlocks, const Tempest::Vec3 bbmin, const Tempest::Vec3 bbmax) {
-  // Greedy child node ordering
-  const Vec3 nodeCen = (bbmin + bbmax) * 0.5f;
-
-  int assignment[8] = {};
-  float cost[8][8];
-  bool  isSlotEmpty[8];
-
-  for(uint32_t s=0; s<8; s++) {
-    isSlotEmpty[s] = true;
-    for(size_t i=0; i<8; ++i)
-      cost[s][i] = std::numeric_limits<float>::max();
-    }
-
-  for(size_t i=0; i<8; i++)
-    assignment[i] = -1;
-
-  for(uint32_t s = 0; s < 8; s++) {
-    Vec3 ds = Vec3(
-      (((s >> 2) & 1) == 1) ? -1.0f : 1.0f,
-      (((s >> 1) & 1) == 1) ? -1.0f : 1.0f,
-      (((s >> 0) & 1) == 1) ? -1.0f : 1.0f);
-
-    for(size_t i=0; i<numBlocks; ++i) {
-      Vec3 cen = (block[i].bbmin + block[i].bbmax) * 0.5f;
-      cost[s][i] = Vec3::dotProduct(cen - nodeCen, ds);
-      }
-    }
-
-  while(true) {
-    float minCost  = std::numeric_limits<float>::max();
-    IVec2 minEntry = IVec2(-1);
-
-    for(int s = 0; s < 8; s++) {
-      for(int i = 0; i < 8; i++) {
-        if(assignment[i] == -1 && isSlotEmpty[s] && cost[s][i] < minCost) {
-          minCost  = cost[s][i];
-          minEntry = IVec2(s, i);
-          }
-        }
-      }
-
-    if(minEntry.x != -1 || minEntry.y != -1) {
-      assert(minEntry.x != -1 && minEntry.y != -1);
-      isSlotEmpty[minEntry.x] = false;
-      assignment [minEntry.y] = minEntry.x;
-      } else {
-      assert(minEntry.x == -1 && minEntry.y == -1);
-      break;
-      }
-    }
-
-  for(size_t i = 0; i < 8; i++) {
-    if(assignment[i] == -1) {
-      for(int s = 0; s < 8; s++) {
-        if(isSlotEmpty[s]) {
-          isSlotEmpty[s] = false;
-          assignment[i] = s;
-          break;
-          }
-        }
-      }
-    }
-
-  Block tmp[8];
-  for(size_t i=0; i<8; ++i)
-    tmp[i] = block[assignment[i]];
-  std::memcpy(block, tmp, sizeof(Block)*8);
-  }
-
-PackedMesh::CWBVH8 PackedMesh::nodeFromBlocks(Block* block) {
-  CWBVH8 node = {};
-
-  Vec3 bbmin = block[0].bbmin;
-  Vec3 bbmax = block[0].bbmax;
-  for(size_t i=1; i<8; ++i) {
-    auto& f = block[i];
-    bbmin.x = std::min(bbmin.x, f.bbmin.x);
-    bbmin.y = std::min(bbmin.y, f.bbmin.y);
-    bbmin.z = std::min(bbmin.z, f.bbmin.z);
-
-    bbmax.x = std::max(bbmax.x, f.bbmax.x);
-    bbmax.y = std::max(bbmax.y, f.bbmax.y);
-    bbmax.z = std::max(bbmax.z, f.bbmax.z);
-    }
-
-  node.p[0] = bbmin.x;
-  node.p[1] = bbmin.y;
-  node.p[2] = bbmin.z;
-
-  // Calculate quantization parameters for each axis respectively
-  constexpr int   Nq    = 8;
-  constexpr float denom = 1.0f / float((1 << Nq) - 1);
-
-  const float ex = exp2f(ceilf(log2f((bbmax.x - bbmin.x) * denom)));
-  const float ey = exp2f(ceilf(log2f((bbmax.y - bbmin.y) * denom)));
-  const float ez = exp2f(ceilf(log2f((bbmax.z - bbmin.z) * denom)));
-
-  const float inv_ex = 1.f/ex;
-  const float inv_ey = 1.f/ey;
-  const float inv_ez = 1.f/ez;
-
-  node.e[0] = uint8_t(reinterpret_cast<const uint32_t&>(ex) >> 23);
-  node.e[1] = uint8_t(reinterpret_cast<const uint32_t&>(ey) >> 23);
-  node.e[2] = uint8_t(reinterpret_cast<const uint32_t&>(ez) >> 23);
-
-  node.imask       = 0;
-  node.pPrimitives = 0;
-  node.pNodes      = 0;
-
-  const size_t maxPrimPerNode = 1;
-  for(size_t i=0; i<8; ++i) {
-    auto& b = block[i];
-    if(b.size==0)
-      continue;
-
-    if(b.size<=maxPrimPerNode) {
-      static const uint32_t uNum[] = {0b000, 0b001, 0b011, 0b111};
-      const uint32_t triIndex = node.pPrimitives * 3; // 3 x uvec4, per trinagle
-      node.pPrimitives++;
-      assert(triIndex<=24);
-
-      node.imask |= (0u << i); // nop
-      node.meta[i] = uint8_t((uNum[b.size] << 5) | (triIndex & 0b11111));
-      } else {
-      node.pNodes++;
-
-      node.imask |= (1u << i);
-      node.meta[i] = (1u << 5) | ((24+i) & 0b11111);
-      }
-
-    node.qmin_x[i] = uint8_t(floorf((b.bbmin.x - node.p[0]) * inv_ex));
-    node.qmin_y[i] = uint8_t(floorf((b.bbmin.y - node.p[1]) * inv_ey));
-    node.qmin_z[i] = uint8_t(floorf((b.bbmin.z - node.p[2]) * inv_ez));
-
-    node.qmax_x[i] = uint8_t(ceilf ((b.bbmax.x - node.p[0]) * inv_ex));
-    node.qmax_y[i] = uint8_t(ceilf ((b.bbmax.y - node.p[1]) * inv_ey));
-    node.qmax_z[i] = uint8_t(ceilf ((b.bbmax.z - node.p[2]) * inv_ez));
-    }
-
-  return node;
-  }
-
-void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
-  auto& ibo  = mesh.polygons.vertex_indices;
-  auto& feat = mesh.polygons.feature_indices;
-  auto& mid  = mesh.polygons.material_indices;
-
+std::vector<uint32_t> PackedMesh::landscapeMaterialMap(const asset::WorldMesh& mesh) {
   std::vector<uint32_t> mat(mesh.materials.size());
   for(size_t i=0; i<mesh.materials.size(); ++i)
     mat[i] = uint32_t(i);
@@ -1256,9 +1093,28 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
       }
     }
 
+  return mat;
+  }
+
+void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
+  std::vector<uint32_t> triangles(mesh.polygons.material_indices.size());
+  std::iota(triangles.begin(),triangles.end(),uint32_t(0));
+  packMeshletsLnd(mesh,triangles,landscapeMaterialMap(mesh));
+  }
+
+void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
+                                std::span<const uint32_t> mat,
+                                std::span<const uint32_t> vertexIds, std::span<const uint32_t> featureIds) {
+  auto& ibo  = mesh.polygons.vertex_indices;
+  auto& feat = mesh.polygons.feature_indices;
+  auto& mid  = mesh.polygons.material_indices;
+  const auto key=[&](uint32_t vertex, uint32_t feature) {
+    return mkUInt64(vertexIds.empty() ? vertex : vertexIds[vertex],featureIds.empty() ? feature : featureIds[feature]);
+    };
+
   std::vector<Prim> prim;
-  prim.reserve(mid.size());
-  for(size_t i=0; i<mid.size(); ++i) {
+  prim.reserve(triangles.size());
+  for(const auto i:triangles) {
     Prim p;
     p.primId = uint32_t(i*3);
     p.mat    = mat[mid[i]];
@@ -1269,12 +1125,12 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
     });
 
   PrimitiveHeap heap;
-  heap.reserve(mid.size());
+  heap.reserve(triangles.size());
   std::vector<bool> used(mid.size(),false);
 
-  vertices.reserve(mesh.vertices.size());
-  indices .reserve(ibo.size());
-  indices8.reserve(ibo.size());
+  vertices.reserve(std::min(mesh.vertices.size(),triangles.size()*3));
+  indices .reserve(triangles.size()*3);
+  indices8.reserve(triangles.size()*4);
   meshletBounds.reserve(prim.size()/MaxPrim);
   for(size_t i=0; i<prim.size();) {
     const auto mId = prim[i].mat;
@@ -1283,9 +1139,9 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
     for(; i<prim.size() && prim[i].mat==mId; ++i) {
       const uint32_t id = prim[i].primId;
 
-      auto a = mkUInt64(ibo[id+0],feat[id+0]);
-      auto b = mkUInt64(ibo[id+1],feat[id+1]);
-      auto c = mkUInt64(ibo[id+2],feat[id+2]);
+      auto a = key(ibo[id+0],feat[id+0]);
+      auto b = key(ibo[id+1],feat[id+1]);
+      auto c = key(ibo[id+2],feat[id+2]);
 
       heap.push_back(std::make_pair(a, id));
       heap.push_back(std::make_pair(b, id));
@@ -1295,7 +1151,7 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
     if(heap.size()==0)
       continue;
 
-    std::vector<Meshlet> meshlets = buildMeshlets(&mesh,nullptr,heap,used);
+    std::vector<Meshlet> meshlets = buildMeshlets(&mesh,nullptr,heap,used,vertexIds,featureIds);
     for(size_t i=0; i<meshlets.size(); ++i)
       meshlets[i].updateBounds(mesh);
 
@@ -1313,7 +1169,9 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
   }
 
 void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
-                                 const std::vector<SkeletalData>* skeletal) {
+                                 const std::vector<SkeletalData>* skeletal,
+                                 const std::vector<SkinRest>* rest,
+                                 const std::vector<std::vector<uint32_t>>* colors) {
   auto* vId = (type==PK_VisualMorph) ? &verticesId : nullptr;
 
   size_t maxTri = 0;
@@ -1342,9 +1200,14 @@ void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
     for(size_t i=0; i<meshlets.size(); ++i)
       meshlets[i].updateBounds(mesh);
 
+    const auto* color = colors!=nullptr && mId<colors->size() && (*colors)[mId].size()==sm.wedges.size() ? &(*colors)[mId] : nullptr;
     pack.iboOffset = indices.size();
-    for(auto& i:meshlets)
-      i.flush(vertices,verticesA,indices,indices8,vId,mesh.positions,sm.wedges,skeletal);
+    for(auto& i:meshlets) {
+      // a sphere for each meshlet flushed, by its index (the shadow pages' test of an object's meshlets)
+      if(i.indSz!=0)
+        meshletBounds.push_back(i.bounds);
+      i.flush(vertices,verticesA,indices,indices8,vId,mesh.positions,sm.wedges,skeletal,rest,color);
+      }
     pack.iboLength = indices.size() - pack.iboOffset;
 
     //dbgUtilization(meshlets);
@@ -1353,7 +1216,9 @@ void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
 
 std::vector<PackedMesh::Meshlet> PackedMesh::buildMeshlets(const asset::WorldMesh* mesh,
                                                            const asset::SubMesh* proto_mesh,
-                                                           PrimitiveHeap& heap, std::vector<bool>& used) {
+                                                           PrimitiveHeap& heap, std::vector<bool>& used,
+                                                           std::span<const uint32_t> vertexIds,
+                                                           std::span<const uint32_t> featureIds) {
   heap.sort();
   std::fill(used.begin(), used.end(), false);
 
@@ -1369,7 +1234,8 @@ std::vector<PackedMesh::Meshlet> PackedMesh::buildMeshlets(const asset::WorldMes
 
     for(size_t r=firstVert; r<active.vertSz; ++r) {
       auto i = active.vert[r];
-      auto e = heap.equal_range(mkUInt64(i.first,i.second));
+      auto e = heap.equal_range(mkUInt64(vertexIds.empty() ? i.first : vertexIds[i.first],
+                                        featureIds.empty() ? i.second : featureIds[i.second]));
       for(auto it = e.first; it!=e.second; ++it) {
         auto id = it->second/3;
         if(used[id])
@@ -1460,6 +1326,13 @@ void PackedMesh::debug(std::ostream &out) const {
 
 std::pair<Vec3, Vec3> PackedMesh::bbox() const {
   return std::make_pair(mBbox[0],mBbox[1]);
+  }
+
+void PackedMesh::measureTexels() {
+  if(vertices.empty())
+    return;
+  for(auto& sub:subMeshes)
+    sub.texel = TexelDensity::measure(vertices.data(),vertices.size(),indices.data(),sub.iboOffset,sub.iboLength);
   }
 
 void PackedMesh::computeBbox() {

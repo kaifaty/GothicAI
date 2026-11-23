@@ -66,7 +66,7 @@ std::string npcId(World& world, Npc& npc) {
 // what a mob is called in the game: its focus name is a script string (MOBNAME_BOOKSBOARD), shown by value
 std::string mobName(World& world, std::string_view focus) {
   auto sym = world.script().findSymbol(focus);
-  if(sym!=nullptr && sym->type()==zenkit::DaedalusDataType::STRING)
+  if(sym!=nullptr && sym->type()==daedalus::DaedalusDataType::STRING)
     return sym->get_string();
   return std::string(focus);
   }
@@ -128,10 +128,10 @@ std::string_view attitude(Attitude a) {
 
 bool partyMember(World& world, const Npc& npc) {
   auto* s = world.script().getVm().find_symbol_by_name("AIV_PARTYMEMBER");
-  if(s==nullptr || s->type()!=zenkit::DaedalusDataType::INT)
+  if(s==nullptr || s->type()!=daedalus::DaedalusDataType::INT)
     return false;
   const int32_t aiv = s->get_int(0);
-  return aiv>=0 && uint32_t(aiv)<zenkit::INpc::aivar_count && npc.handlePtr()->aivar[size_t(aiv)]!=0;
+  return aiv>=0 && uint32_t(aiv)<daedalus::INpc::aivar_count && npc.handlePtr()->aivar[size_t(aiv)]!=0;
   }
 
 bool distantMonster(World& world, const Npc& self, const Npc& other) {
@@ -251,9 +251,10 @@ void writeItems(Writer& w, World& world, Npc& npc, float range) {
 
 void writeTraces(Writer& w, World& world, Npc& npc, float range) {
   struct SeenTrace { const World::PhysicsTrace* trace; float dist; };
-  const auto traces = world.physicsTraces();
-  std::vector<SeenTrace> seen;
   const auto maxRange = std::min(range,TraceRange);
+  const auto viewer   = npc.position();
+  const auto traces   = world.physicsTraces(&viewer,maxRange);
+  std::vector<SeenTrace> seen;
   for(const auto& trace:traces) {
     const auto dist = (trace.position-npc.position()).length();
     if(dist>maxRange)
@@ -279,12 +280,14 @@ void writeTraces(Writer& w, World& world, Npc& npc, float range) {
     str(w,"id",trace.id);
     str(w,"kind",trace.kind);
     str(w,"name",trace.name); // engine trace labels are UTF-8
+    if(!trace.npc.empty())
+      str(w,"npc",trace.npc); // v58 body: the dead one, as `look` names it
     if(const auto* waypoint = world.findWayPoint(trace.position))
       str(w,"waypoint",waypoint->name);
     w.Key("distance"); w.Double(std::round(double(seenTrace.dist)));
     w.Key("age");
     if(trace.appearedAt<0)
-      w.Null(); // records written before trace metadata do not reveal their age
+      w.Null(); // records written before trace metadata (bodies: before v58) do not reveal their age
     else
       w.Int64(std::max(int64_t(0),minute-trace.appearedAt));
     if(pl!=nullptr) {

@@ -1,40 +1,57 @@
 #include "mdlvisual.h"
+#include "gameservices.h"
+#include "mdlvisual_internal.h"
+#include "animationpfx.h"
 
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
+#include "graphics/mesh/renderrig.h"
 #include "game/serialize.h"
 #include "world/objects/npc.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
+#include "world/npclogicalstate.h"
+#include "graphics/worldview.h"
 #include "objvisual.h"
-#include "gothic.h"
-#include "graphics/mesh/animmath.h"
+
+#include <Tempest/Log>
+
+#include <chrono>
+#include <ctime>
 #include "graphics/mesh/ikmath.h"
 #include "frameprofile.h"
+#include "worldchunksruntime.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <limits>
+#include <mutex>
+#include <set>
 
 using namespace Tempest;
+using namespace MdlVisualInternal;
 
 namespace {
+class VisualAnimationPfx final : public AnimationPfx {
+  public:
+    VisualAnimationPfx(World& world, MdlVisual& visual, bool inRange) : world(world), visual(visual), inRange(inRange) {}
 
-constexpr uint32_t ArrowSaveMagic=0x31525041u; // APR1, independent of the NPC/visual layout.
-constexpr uint16_t ArrowSaveVersion=1;
-constexpr size_t MaxArrowSaveName=512;
+    void animationPfx(const Animation::MdsParticleEffect& event) override {
+      world.animationPfx(event,visual,inRange);
+      }
 
-bool readArrowName(Serialize& fin, std::string& value) {
-  uint32_t size=0;
-  fin.read(size);
-  if(size==0 || size>MaxArrowSaveName)
-    return false;
-  value.resize(size);
-  fin.readBytes(value.data(),size);
-  return value.find('\0')==std::string::npos;
-  }
+  private:
+    World& world;
+    MdlVisual& visual;
+    bool   inRange = true;
+  };
+}
+
+namespace MdlVisualInternal {
 
 bool inverseBasis(const Matrix4x4& m, double inverse[3][3]) {
   const double a=m.at(0,0), b=m.at(1,0), c=m.at(2,0);
@@ -57,6 +74,20 @@ bool validRenderFrame(const Matrix4x4& m) {
   return std::abs(m.at(0,3))<1e-5f && std::abs(m.at(1,3))<1e-5f &&
          std::abs(m.at(2,3))<1e-5f && std::abs(m.at(3,3)-1.f)<1e-5f;
   }
+
+Vec3 asidePoint(const Vec3& head, const Vec3& target, float yaw, float pitch) {
+  const Vec3  d   = target - head;
+  const float len = std::sqrt(d.x*d.x + d.z*d.z);
+  if(len<=1.f)
+    return target;
+  const float c = std::cos(yaw), s = std::sin(yaw);
+  const Vec3  r = {d.x*c - d.z*s, 0, d.x*s + d.z*c};
+  return head + Vec3(r.x, d.y + len*std::tan(pitch), r.z);
+  }
+
+}
+
+namespace {
 
 bool blendPhysicalBone(const Matrix4x4& animated, const Matrix4x4& physical, float weight, Matrix4x4& out) {
   if(weight>=1.f) {
@@ -167,11 +198,13 @@ void MdlVisual::setVisual(const Skeleton *v) {
     rebindAttaches(*v);
   solver.setSkeleton(v);
   skInst->setSkeleton(v);
-  view.setSkeleton(v);
 
   skeleton = v;
+  const bool rigChanged = bindBodyRig();
   hitZones.setSkeleton(v);
   setObjMatrix(pos); // invalidate obj matrix
+  if(rigChanged)
+    syncAttaches();
   }
 
 bool MdlVisual::setPhysicalPose(const std::vector<Matrix4x4>& physical,
@@ -216,7 +249,7 @@ bool MdlVisual::setPhysicalPose(const std::vector<Matrix4x4>& physical,
   for(size_t i=0; i<count; ++i)
     if(!bone(bone,i))
       return clearPhysicalPose();
-  view.setPose(pos,renderedPose.data());
+  pushBodyPose();
   return true;
   }
 
@@ -225,7 +258,7 @@ bool MdlVisual::clearPhysicalPose() {
     return false;
   renderedPose.clear();
   renderedMask.clear();
-  view.setPose(pos,*skInst);
+  pushBodyPose();
   return true;
   }
 
@@ -235,114 +268,101 @@ const Matrix4x4& MdlVisual::renderedBone(size_t bone) const {
   return skInst->bone(bone);
   }
 
-bool MdlVisual::stickArrow(MeshObjects::Mesh&& arrow, size_t bone, const Matrix4x4& worldMatrix,
-                           std::string_view visualName) {
-  if(arrow.isEmpty() || skeleton==nullptr || bone>=skeleton->nodes.size() || bone>=skInst->boneCount() ||
-     !validRenderFrame(worldMatrix))
+const Matrix4x4* MdlVisual::skinPalette(size_t& count) const {
+  if(bodyRig!=nullptr) {
+    count = rigPalette.size();
+    return rigPalette.data();
+    }
+  count = skInst->boneCount();
+  return renderedPose.empty() ? skInst->transform() : renderedPose.data();
+  }
+
+const Skeleton* MdlVisual::skinSkeleton() const {
+  return bodyRig!=nullptr ? &bodyRig->skeleton() : skeleton;
+  }
+
+bool MdlVisual::bindBodyRig() {
+  const RenderRig* const was   = bodyRig;
+  const ProtoMesh*       proto = view.protoMesh();
+  const RenderRig*       rig   = proto!=nullptr && skeleton!=nullptr ? Resources::renderRigOfMesh(proto->fname) : nullptr;
+  // the palette the mesh reads: its bones are the rig's
+  size_t bones = 0;
+  if(proto!=nullptr)
+    for(const auto& skin:proto->skined)
+      bones = std::max(bones,skin.bonesCount);
+  std::string why;
+  if(rig!=nullptr && !rig->fits(*skeleton))
+    why = "is put on \""+std::string(skeleton->name())+"\", not on the rig's source: drawn on it";
+  else if(rig!=nullptr && bones>rig->bones())
+    why = "has "+std::to_string(bones)+" bones, the rig "+std::to_string(rig->bones())+": drawn on the visual's skeleton";
+  if(!why.empty()) {
+    // once for a body, a skeleton and a rig: each NPC so dressed would repeat it
+    static std::mutex            sync;
+    static std::set<std::string> told;
+    const std::string key = std::string(rig->name())+"|"+proto->fname+"|"+std::string(skeleton->name());
+    std::lock_guard<std::mutex> guard(sync);
+    if(told.insert(key).second)
+      Log::e("render rig ",rig->name(),": body \"",proto->fname,"\" ",why);
+    rig = nullptr;
+    }
+  if(bodyRig!=rig)
+    rigGait = rigGaitNow = RenderRig::Gait();
+  bodyRig = rig;
+  rigPalette.resize(rig!=nullptr ? rig->bones() : 0);
+  view.setSkeleton(rig!=nullptr ? &rig->skeleton() : skeleton);
+  if(bodyRig==was)
     return false;
-  const auto& animated=skInst->bone(bone);
-  double inverse[3][3];
-  if(!validRenderFrame(animated) || !inverseBasis(animated,inverse))
-    return false;
-  ArrowPin pin;
-  pin.visual=visualName;
-  pin.bone=bone;
-  pin.local.identity();
-  // Keep the complete arrow basis, including scale. Subtract world translations first so
-  // an impact far from the origin retains its small offset from the animated bone.
-  for(int c=0; c<4; ++c)
-    for(int r=0; r<3; ++r) {
-      double value=0;
-      for(int k=0; k<3; ++k) {
-        const double v=c<3 ? double(worldMatrix.at(c,k)) : double(worldMatrix.at(3,k))-animated.at(3,k);
-        value+=inverse[r][k]*v;
-        }
-      pin.local.set(c,r,float(value));
-      }
-  if(!validRenderFrame(pin.local))
-    return false;
-  arrow.setObjMatrix(renderedBone(bone)*pin.local);
-  pin.view=std::move(arrow);
-  if(stuckArrows.size()>=MaxStuckArrows)
-    stuckArrows.erase(stuckArrows.begin());
-  stuckArrows.push_back(std::move(pin));
+  // the effects on the skin (burning, spells): the new body's emitter mesh and its bones
+  for(auto& e:effects)
+    e.view.setMesh(&view,bodySkin());
+  hnpcVisual.view.setMesh(&view,bodySkin());
   return true;
   }
 
-void MdlVisual::saveStuckArrows(Serialize& fout) const {
-  fout.write(ArrowSaveMagic,ArrowSaveVersion);
-  fout.write(skeleton!=nullptr ? skeleton->name() : std::string_view());
-  uint32_t count=0;
-  for(const auto& pin:stuckArrows)
-    if(!pin.visual.empty() && skeleton!=nullptr && pin.bone<skeleton->nodes.size())
-      ++count;
-  fout.write(count);
-  for(const auto& pin:stuckArrows) {
-    if(pin.visual.empty() || skeleton==nullptr || pin.bone>=skeleton->nodes.size())
-      continue;
-    fout.write(pin.visual,skeleton->nodes[pin.bone].name,pin.local);
+void MdlVisual::pushBodyPose() {
+  const Matrix4x4* source = renderedPose.empty() ? skInst->transform() : renderedPose.data();
+  if(bodyRig==nullptr) {
+    view.setPose(pos,source);
+    return;
     }
+  // the legs' memory: every push of a frame is one step from what the last frame left (rigGait), so pushing twice
+  // in a frame - the place first, the pose after - does not step twice
+  RenderRig::Gait gait = rigGait;
+  const bool solved = bodyRig->solve(source,skInst->boneCount(),rigPalette.data(),RenderRig::Hands{rigHold,std::max(rigWorld,skInst->reachIk().weight()),
+                                                                                       skInst->reachIk().weight(0),skInst->reachIk().weight(1)},
+                                     &gait,rigStep);
+  if(solved)
+    rigGaitNow = gait;
+  if(!solved) {
+    // the Gothic pose is not there yet: the rig's bind pose where the body stands
+    const auto& bind = bodyRig->skeleton().tr;
+    for(size_t i=0; i<rigPalette.size() && i<bind.size(); ++i)
+      rigPalette[i] = pos*bind[i];
+    }
+  view.setPose(pos,rigPalette.data());
   }
 
-bool MdlVisual::loadStuckArrows(Serialize& fin, World& world) {
-  clearStuckArrows();
-  if(!Gothic::physicsFlags().arrowSticking)
-    return true;
-  try {
-    uint32_t magic=0,count=0;
-    uint16_t version=0;
-    std::string savedSkeleton;
-    fin.read(magic,version);
-    if(magic!=ArrowSaveMagic || version!=ArrowSaveVersion ||
-       !readArrowName(fin,savedSkeleton) || skeleton==nullptr || savedSkeleton!=skeleton->name())
-      return false;
-    fin.read(count);
-    if(count>MaxStuckArrows)
-      return false;
-    std::vector<ArrowPin> loaded;
-    loaded.reserve(count);
-    for(uint32_t i=0; i<count; ++i) {
-      ArrowPin pin;
-      std::string boneName;
-      if(!readArrowName(fin,pin.visual) || !readArrowName(fin,boneName))
-        return false;
-      fin.read(pin.local);
-      pin.bone=skeleton->findNode(boneName);
-      double inverse[3][3];
-      if(pin.bone>=skeleton->nodes.size() || pin.bone>=skInst->boneCount() ||
-         !validRenderFrame(pin.local) || !inverseBasis(pin.local,inverse))
-        return false;
-      for(int c=0; c<4; ++c)
-        for(int r=0; r<3; ++r)
-          if(std::abs(pin.local.at(c,r))>100000000.f)
-            return false;
-      pin.view=world.addView(pin.visual);
-      if(pin.view.isEmpty())
-        return false;
-      pin.view.setObjMatrix(renderedBone(pin.bone)*pin.local);
-      loaded.push_back(std::move(pin));
+Matrix4x4 MdlVisual::attachMatrix(size_t node) const {
+  Matrix4x4 m;
+  if(bodyRig!=nullptr && bodyRig->socket(node,rigPalette.data(),m))
+    return m;
+  return renderedBone(node);
+  }
+
+const Matrix4x4* MdlVisual::skinOf(const Matrix4x4* bones, size_t n, std::vector<Matrix4x4>& rig, size_t& count) const {
+  if(bodyRig!=nullptr) {
+    rig.resize(bodyRig->bones());
+    // without the legs' memory: these poses are not the drawn one (the bind pose, a pose asked for a fit)
+    if(bodyRig->solve(bones,n,rig.data(),RenderRig::Hands{rigHold,std::max(rigWorld,skInst->reachIk().weight()),
+                                               skInst->reachIk().weight(0),skInst->reachIk().weight(1)})) {
+      count = rig.size();
+      return rig.data();
       }
-    stuckArrows=std::move(loaded);
-    return true;
-    } catch(const std::exception&) {
-    return false;
+    count = 0;  // too few Gothic bones: no skin
+    return rig.data();
     }
-  }
-
-void MdlVisual::clearStuckArrows() {
-  stuckArrows.clear();
-  }
-
-bool MdlVisual::stuckArrowProbe(size_t index, ArrowPinProbe& out) const {
-  if(index>=stuckArrows.size())
-    return false;
-  const auto& pin=stuckArrows[index];
-  if(pin.view.isEmpty())
-    return false;
-  out.bone=pin.bone;
-  out.local=pin.local;
-  out.world=pin.view.node(0).position();
-  return true;
+  count = n;
+  return bones;
   }
 
 void MdlVisual::setYTranslationEnable(bool e) {
@@ -355,12 +375,68 @@ void MdlVisual::setVisualBody(World& owner, MeshObjects::Mesh&& body) {
   implSetBody(nullptr,owner,std::move(body),0);
   }
 
+void MdlVisual::setVisualBody(WorldView& owner, MeshObjects::Mesh&& body) {
+  // Mobsi keep their solver and pose while only these draw instances leave residency.
+  attach.clear();
+  if(auto proto=body.protoMesh())
+    for(const auto& slot:proto->attach)
+      if(!slot.hasNode)
+        setSlotAttachment(owner.addAtachView(slot,0),slot.name);
+  view=std::move(body);
+  bodyDetached=false;
+  addTextureOwner(view);
+  bindBodyRig();
+  pushBodyPose();
+  for(auto& slot:item) {
+    slot.view.restore(owner);
+    addTextureOwner(slot.view);
+    }
+  syncAttaches();
+  }
+
+void MdlVisual::clearVisualBody() {
+  view={};
+  bindBodyRig();  // no body, no rig: the effects on its skin let go of the palette
+  attach.clear();
+  for(auto& slot:item)
+    slot.view.release();
+  quiv.clear();
+  bodyDetached=true;
+  }
+
+size_t MdlVisual::bodyNodesCount() const {
+  size_t count=view.nodesCount();
+  for(const auto& slot:attach)
+    count+=slot.view.nodesCount();
+  for(const auto& slot:item)
+    count+=slot.view.nodesCount();
+  return count;
+  }
+
 // Mdl_SetVisualBody
 void MdlVisual::setVisualBody(Npc& npc, MeshObjects::Mesh &&h, MeshObjects::Mesh &&body, int32_t version) {
+  const auto instance=npc.world().rules().symbolName(npc.instanceSymbol());
+  if(!instance.empty())
+    if(const auto* own=Resources::loadCharacterHead(instance))
+      h=npc.world().addView(own);
   bind(head,std::move(h),"BIP01 HEAD");
+  // the strands of an own head: hair and beard as ribbons, rigid on the head's bone
+  const ProtoMesh* strands=!instance.empty() ? Resources::loadCharacterGroom(instance) : nullptr;
+  bind(groom,strands!=nullptr ? npc.world().addView(strands) : MeshObjects::Mesh(),"BIP01 HEAD");
+  groom.view.setAsGhost(hnpcFlagGhost);
+  // a new view of the head: the face goes to it again (the anims go on)
+  const auto* proto=head.view.protoMesh();
+  face.setup(headMesh(),proto!=nullptr ? proto->face.get() : nullptr);
+  // the jumps of the eyes repeat for the same npc (the test bench)
+  eyes.setup(face.eyes(),uint32_t(npc.instanceSymbol()));
   implSetBody(&npc,npc.world(),std::move(body),version);
   head.view.setAsGhost(hnpcFlagGhost);
   head.view.setFatness(npc.fatness());
+  }
+
+const GltfHeadMesh* MdlVisual::headMesh() const {
+  const auto* proto=head.view.protoMesh();
+  return proto!=nullptr ? proto->head.get() : nullptr;
   }
 
 bool MdlVisual::hasOverlay(const Skeleton* sk) const {
@@ -400,6 +476,8 @@ void MdlVisual::setArmor(Npc& npc, MeshObjects::Mesh&& armor) {
   }
 
 void MdlVisual::implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, const int32_t version) {
+  if(npc)
+    setTextureOwner(npc->position(),!npc->isPlayer());
   clearPhysicalPose();
   attach.clear();
   if(auto p = body.protoMesh()) {
@@ -412,20 +490,44 @@ void MdlVisual::implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, co
     syncAttaches();
     }
   view = std::move(body);
+  addTextureOwner(view);
   view.setAsGhost(hnpcFlagGhost);
   view.setFatness(npc==nullptr ? 0 : npc->fatness());
-  view.setSkeleton(skeleton);
-  view.setPose(pos,*skInst);
-  hnpcVisual.view.setMesh(&view);
+  const bool rigChanged = bindBodyRig();
+  pushBodyPose();
+  hnpcVisual.view.setMesh(&view,bodySkin());
   fitHitZones();
+  if(rigChanged)
+    syncAttaches();  // the head and the hands: from the rig's sockets or back on Gothic's nodes
   }
 
 void MdlVisual::fitHitZones() {
   // the zones as thick as the body is: its mesh by bone, its parts on the bones of their names, the head's
   // mesh on its bone
   std::vector<HitZones::Shape> shape;
+  // a body on its render rig: the points of a rig bone go to its Gothic node (RenderRig::sourceOf), from the rig posed
+  // as Gothic's bind pose into that node's bind frame; the zones stay Gothic's
+  std::vector<std::vector<Vec3>> byNode;
+  std::vector<Matrix4x4>         rigBind;
+  size_t                         rigCount = 0;
+  if(auto p = view.protoMesh(); p!=nullptr && bodyRig!=nullptr && skeleton!=nullptr) {
+    skinOf(skeleton->tr.data(),skeleton->tr.size(),rigBind,rigCount);
+    byNode.resize(skeleton->tr.size());
+    for(size_t r=0; r<p->nodePoints.size() && r<rigCount; ++r) {
+      const size_t node = bodyRig->sourceOf(r);
+      if(node>=byNode.size())
+        continue;
+      auto toNode = skeleton->tr[node];
+      toNode.inverse();
+      toNode.mul(rigBind[r]);
+      for(auto pt:p->nodePoints[r]) {
+        toNode.project(pt);
+        byNode[node].push_back(pt);
+        }
+      }
+    }
   if(auto p = view.protoMesh()) {
-    shape.push_back({&p->nodePoints,size_t(-1),nullptr});
+    shape.push_back({bodyRig!=nullptr && skeleton!=nullptr ? &byNode : &p->nodePoints,size_t(-1),nullptr});
     for(size_t i=0; skeleton!=nullptr && i<p->attach.size() && i<p->attachPoints.size(); ++i)
       if(!p->attach[i].hasNode)
         shape.push_back({nullptr,skeleton->findNode(p->attach[i].name),&p->attachPoints[i]});
@@ -436,6 +538,7 @@ void MdlVisual::fitHitZones() {
   }
 
 void MdlVisual::setSlotAttachment(MeshObjects::Mesh&& itm, std::string_view bone) {
+  addTextureOwner(itm);
   if(bone.empty() || skeleton==nullptr)
     return;
 
@@ -457,24 +560,24 @@ void MdlVisual::setSlotAttachment(MeshObjects::Mesh&& itm, std::string_view bone
   attach.push_back(std::move(slt));
   }
 
-void MdlVisual::setSword(MeshObjects::Mesh &&s) {
+void MdlVisual::setSword(ItemView&& s) {
   bind(sword,std::move(s),"ZS_RIGHTHAND");
   }
 
-void MdlVisual::setRangedWeapon(MeshObjects::Mesh &&b) {
+void MdlVisual::setRangedWeapon(ItemView&& b) {
   bind(bow,std::move(b),"ZS_BOW");
   }
 
-void MdlVisual::setShield(MeshObjects::Mesh&& s) {
+void MdlVisual::setShield(ItemView&& s) {
   bind(shield,std::move(s),"ZS_SHIELD");
   }
 
-void MdlVisual::setAmmoItem(MeshObjects::Mesh&& a, std::string_view bone) {
+void MdlVisual::setAmmoItem(ItemView&& a, std::string_view bone) {
   bind(ammunition,std::move(a),bone);
   }
 
 void MdlVisual::dropAmmo() {
-  ammunition.view = MeshObjects::Mesh();
+  ammunition.view = ItemView();
   }
 
 void MdlVisual::setMagicWeapon(Effect&& spell, World& owner) {
@@ -494,7 +597,8 @@ void MdlVisual::setMagicWeaponKey(World& owner, SpellFxKey key, int32_t keyLvl) 
   pfx.view.setKey(owner,key,keyLvl);
   }
 
-void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone) {
+void MdlVisual::setSlotItem(ItemView&& itm, std::string_view bone) {
+  addTextureOwner(itm);
   if(bone.empty() || skeleton==nullptr)
     return;
 
@@ -508,20 +612,24 @@ void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone) {
 
   for(auto& i:item) {
     if(i.boneId==id) {
+      if(bodyDetached)
+        itm.release();
       i.view=std::move(itm);
       syncAttaches();
       return;
       }
     }
 
-  MeshAttach slt;
+  ItemAttach slt;
   slt.bone = skeleton->nodes[id].name;
+  if(bodyDetached)
+    itm.release();
   bind(slt,std::move(itm),slt.bone);
   item.push_back(std::move(slt));
   syncAttaches();
   }
 
-void MdlVisual::setStateItem(MeshObjects::Mesh&& a, std::string_view bone) {
+void MdlVisual::setStateItem(ItemView&& a, std::string_view bone) {
   bind(stateItm,std::move(a),bone);
   syncAttaches();
   }
@@ -568,11 +676,11 @@ bool MdlVisual::setFightMode(asset::MdsFightMode mode) {
       break;
     }
 
-  return setToFightMode(f);
+  return setToFightMode(f,true);
   }
 
 void MdlVisual::dropWeapon(Npc& npc) {
-  MeshAttach* att  = &sword;
+  ItemAttach* att  = &sword;
   auto&       pose = *skInst;
 
   if(fgtMode!=WeaponState::W1H && fgtMode!=WeaponState::W2H &&
@@ -591,14 +699,14 @@ void MdlVisual::dropWeapon(Npc& npc) {
   if(itm==nullptr)
     return;
 
-  auto it = npc.world().addItemDyn(itm->clsId(),p,npc.handle().symbol_index());
+  auto it = npc.world().addItemDyn(itm->clsId(),p,npc.instanceSymbol());
   it->setCount(1);
 
   npc.delItem(itm->clsId(),1);
   }
 
 void MdlVisual::dropShield(Npc& npc) {
-  MeshAttach* att  = &sword;
+  ItemAttach* att  = &sword;
   auto&       pose = *skInst;
 
   if(fgtMode!=WeaponState::W1H && fgtMode!=WeaponState::W2H)
@@ -612,13 +720,13 @@ void MdlVisual::dropShield(Npc& npc) {
   if(itm==nullptr)
     return;
 
-  auto it = npc.world().addItemDyn(itm->clsId(),p,npc.handle().symbol_index());
+  auto it = npc.world().addItemDyn(itm->clsId(),p,npc.instanceSymbol());
   it->setCount(1);
 
   npc.delItem(itm->clsId(),1);
   }
 
-void MdlVisual::startEffect(World& owner, Effect&& vfx, int32_t slot, bool noSlot) {
+void MdlVisual::startEffect(World& owner, Effect&& vfx, int32_t slot, bool noSlot, bool untilStop) {
   uint64_t timeUntil = vfx.effectPrefferedTime();
   if(timeUntil!=0)
     timeUntil+=owner.tickCount();
@@ -626,12 +734,13 @@ void MdlVisual::startEffect(World& owner, Effect&& vfx, int32_t slot, bool noSlo
   if(skeleton==nullptr)
     return;
 
-  vfx.setMesh(&view);
+  vfx.setMesh(&view,bodySkin());
   vfx.setBullet(nullptr,owner);
 
   for(auto& i:effects) {
     if(i.id==slot && !i.noSlot) {
       i.timeUntil = timeUntil;
+      i.untilStop = untilStop;
       i.view = std::move(vfx);
       i.view.bindAttaches(*skInst,*skeleton);
       syncAttaches();
@@ -643,6 +752,7 @@ void MdlVisual::startEffect(World& owner, Effect&& vfx, int32_t slot, bool noSlo
   slt.id        = slot;
   slt.timeUntil = timeUntil;
   slt.noSlot    = noSlot;
+  slt.untilStop = untilStop;
   slt.view      = std::move(vfx);
   slt.view.bindAttaches(*skInst,*skeleton);
   effects.push_back(std::move(slt));
@@ -671,10 +781,18 @@ void MdlVisual::stopEffect(int32_t slot) {
     }
   }
 
-void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, zenkit::NpcFlag flags) {
+void MdlVisual::stopLoopedEffects() {
+  const auto end = std::remove_if(effects.begin(),effects.end(),[](const PfxSlot& i) { return i.untilStop; });
+  if(end==effects.end())
+    return;
+  effects.erase(end,effects.end());
+  syncAttaches();
+  }
+
+void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, NpcFlag flags) {
   if(hnpcVisualName!=s) {
     hnpcVisualName = s;
-    auto vfx = Gothic::inst().loadVisualFx(s);
+    auto vfx = GameServices::inst().loadVisualFx(s);
     if(vfx==nullptr) {
       hnpcVisual.view = Effect();
       return;
@@ -684,14 +802,15 @@ void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, zenkit:
       hnpcVisual.view.bindAttaches(*skInst,*skeleton);
     hnpcVisual.view.setActive(true);
     hnpcVisual.view.setLooped(true);
-    hnpcVisual.view.setMesh(&view);
+    hnpcVisual.view.setMesh(&view,bodySkin());
     }
 
-  const bool nextGhost = (flags & zenkit::NpcFlag::GHOST);
+  const bool nextGhost = (flags & NpcFlag::GHOST);
   if(hnpcFlagGhost!=nextGhost) {
     hnpcFlagGhost=nextGhost;
     view.setAsGhost(hnpcFlagGhost);
     head.view.setAsGhost(hnpcFlagGhost);
+    groom.view.setAsGhost(hnpcFlagGhost);
     for(auto& i:attach)
       i.view.setAsGhost(hnpcFlagGhost);
     }
@@ -722,10 +841,11 @@ void MdlVisual::emitBlockEffect(Npc& dest, Npc& source) {
   s.play();
   }
 
-bool MdlVisual::setToFightMode(const WeaponState f) {
+bool MdlVisual::setToFightMode(const WeaponState f, bool fromAnimation) {
   if(f==fgtMode)
     return false;
   fgtMode = f;
+  skInst->recordLogicalWeapon(f,fromAnimation);
   return true;
   }
 
@@ -733,22 +853,56 @@ void MdlVisual::setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach) {
   FrameProfile::Scope timing(FrameProfile::Zone::PaletteCpu,FrameProfile::actorContext());
   pos = m;
   skInst->setObjectMatrix(m,syncAttach);
-  view.setPose(m,renderedPose.empty() ? skInst->transform() : renderedPose.data());
+  pushBodyPose();
   if(syncAttach)
     syncAttaches();
+  }
+
+float MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
+  if(textureOwnerKnown && textureOwnerSpatial==spatial) {
+    if(!spatial)
+      return std::numeric_limits<float>::infinity();
+    textureOwnerLast=position;
+    const auto d=position-textureOwnerPosition;
+    const float moved=d.x*d.x+d.y*d.y+d.z*d.z;
+    if(moved<=textureOwnerReach*textureOwnerReach)
+      return textureOwnerReach-std::sqrt(moved);
+    }
+  textureOwnerKnown=true;
+  textureOwnerSpatial=spatial;
+  textureOwnerPosition=position;
+  textureOwnerLast=position;
+  float reach=view.setTextureOwner(position,spatial);
+  for(auto* slot:{&head,&groom})
+    reach=std::min(reach,slot->view.setTextureOwner(position,spatial));
+  for(auto* slot:{&sword,&shield,&bow,&ammunition,&stateItm})
+    reach=std::min(reach,slot->view.setTextureOwner(position,spatial));
+  for(auto& slot:item)
+    reach=std::min(reach,slot.view.setTextureOwner(position,spatial));
+  for(auto& slot:attach)
+    reach=std::min(reach,slot.view.setTextureOwner(position,spatial));
+  for(auto& pin:stuckArrows)
+    reach=std::min(reach,pin.view.setTextureOwner(position,spatial));
+  reach=std::min(reach,quiv.setTextureOwner(position,spatial));
+  if(torch.view)
+    reach=std::min(reach,torch.view->setTextureOwner(position,spatial));
+  textureOwnerReach=reach;
+  return reach;
   }
 
 bool MdlVisual::minSkinnedVertex(float fatness,Vec3& point) const {
   const auto* mesh=view.protoMesh();
   if(mesh==nullptr)
     return false;
-  const auto* bones=renderedPose.empty() ? skInst->transform() : renderedPose.data();
-  return mesh->minSkinnedVertex(bones,skInst->boneCount(),pos,fatness,point);
+  size_t count = 0;
+  const auto* bones = skinPalette(count);
+  return mesh->minSkinnedVertex(bones,count,pos,fatness,point);
   }
 
 void MdlVisual::setHeadRotation(float dx, float dz) {
   skInst->setHeadRotation(dx,dz);
   syncAttaches(head);
+  syncAttaches(groom);
   }
 
 Vec2 MdlVisual::headRotation() const {
@@ -784,20 +938,23 @@ void MdlVisual::setTorch(bool t, World& owner) {
     torch.view.reset();
     return;
     }
-  size_t torchId = owner.script().findSymbolIndex("ItLsTorchburning");
+  size_t torchId = owner.rules().findSymbolIndex("ItLsTorchburning");
   if(torchId==size_t(-1))
     return;
 
-  auto hitem = std::make_shared<zenkit::IItem>();
-  owner.script().initializeInstanceItem(hitem, torchId);
+  auto hitem = owner.rules().createItem(torchId);
+  const auto* residency=owner.chunkResidency();
+  Resources::TextureLoadScope textureLoadScope(textureOwnerKnown && textureOwnerSpatial && residency &&
+      residency->textureDistance(ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z))>2);
   torch.view.reset(new ObjVisual());
   torch.view->setVisual(*hitem,owner,false);
+  addTextureOwner(*torch.view);
   torch.boneId = (skeleton==nullptr ? size_t(-1) : skeleton->findNode("ZS_LEFTHAND"));
 
   auto& pose = *skInst;
   auto  p    = pos;
   if(torch.boneId<pose.boneCount())
-    p = renderedBone(torch.boneId);
+    p = attachMatrix(torch.boneId);
   torch.view->setObjMatrix(p);
   }
 
@@ -814,11 +971,14 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
     pose.processSfx(*npc,tickCount);
   if(!pausePose && mobsi!=nullptr && world.isInSfxRange(pos3))
     pose.processSfx(*mobsi,tickCount);
-  if(!pausePose && world.isInPfxRange(pos3))
-    pose.processPfx(*this,world,tickCount);
+  if(!pausePose) {
+    // out of the particles' range stops and looped effects still come (World::animationPfx)
+    VisualAnimationPfx pfx(world,*this,world.isInPfxRange(pos3));
+    pose.processPfx(pfx,tickCount);
+    }
 
   for(size_t i=0;i<effects.size();) {
-    if(effects[i].timeUntil<tickCount) {
+    if(!effects[i].untilStop && effects[i].timeUntil<tickCount) {
       effects[i] = std::move(effects.back());
       effects.pop_back();
       } else {
@@ -826,6 +986,13 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
       ++i;
       }
     }
+  for(auto* i:{&sword,&shield,&bow,&ammunition,&stateItm})
+    i->view.tick(dt);
+  for(auto& i:item)
+    i.view.tick(dt);
+  // a stuck arrow's effect fades, the arrow stays
+  for(auto& pin:stuckArrows)
+    pin.view.tick(dt);
 
   // Effects retain their world-clock lifetime while the actor's solved bones hold still.
   if(pausePose)
@@ -833,6 +1000,11 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
 
   solver.update(tickCount);
   pose.setObjectMatrix(pos,false);
+  {
+    // pressed into an obstacle the body stands, the run under the stand plays on (reports/physics/2026-11-15-reach-wall)
+    const float halt = npc!=nullptr ? npc->wallReach().press : 0.f;
+    pose.setHalt(halt>0.f ? solver.solveAnim(AnimationSolver::Idle,npc->weaponState(),npc->walkMode(),pose) : nullptr,halt);
+  }
   const bool changed=[&] { FrameProfile::Scope timing(FrameProfile::Zone::PoseCpu,FrameProfile::watchedActor(npc));
     return pose.update(tickCount, force); }();
   if(npc!=nullptr && npc->isPlayer()) {
@@ -845,305 +1017,33 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
   if(npc!=nullptr && npc==Pose::probeNpc)
     pose.probe(Pose::subjectProbe);
 
-  if(changed) {
+  // the render rig's arms: one thing in both hands (a 2H weapon, a bow, a crossbow, a spell) - the left hand holds on
+  // to the right as Gothic's does; at a mob (a ladder, a workbench) - the hands go onto Gothic's
+  // the render rig's legs: this frame steps from what the last one left
+  if(bodyRig!=nullptr) {
+    rigGait = rigGaitNow;
+    rigStep = float(dt)/1000.f;
+    }
+  bool handsMoved = false;
+  if(bodyRig!=nullptr && npc!=nullptr) {
+    const auto  ws    = npc->weaponState();
+    const float hold  = (ws==WeaponState::W2H || ws==WeaponState::Bow || ws==WeaponState::CBow ||
+                         ws==WeaponState::Mage) ? 1.f : 0.f;
+    const float world = npc->interactive()!=nullptr ? 1.f : 0.f;
+    const float ease  = 1.f - std::exp(-float(dt)/150.f);
+    const float h = rigHold  + (hold -rigHold )*ease;
+    const float w = rigWorld + (world-rigWorld)*ease;
+    auto settle = [](float v, float goal) { return std::abs(v-goal)<1e-3f ? goal : v; };
+    handsMoved = settle(h,hold)!=rigHold || settle(w,world)!=rigWorld;
+    rigHold    = settle(h,hold);
+    rigWorld   = settle(w,world);
+    }
+
+  if(changed || handsMoved) {
     FrameProfile::Scope timing(FrameProfile::Zone::PaletteCpu,FrameProfile::watchedActor(npc));
-    view.setPose(pos,pose);
+    pushBodyPose();
     }
-  return changed;
-  }
-
-bool MdlVisual::updateGaze(Npc& npc, uint64_t dt) {
-  Pose& pose = *skInst;
-  auto& gaze = pose.gazeIk();
-  if(!gaze.isValid()) {
-    if(&npc==Gaze::probeNpc)
-      Gaze::subjectProbe = Gaze::Probe();
-    return false;
-    }
-
-  const float a = npc.rotationRad();
-  Gaze::Input in;
-  in.dt      = dt;
-  in.forward = {std::cos(a), 0, std::sin(a)};
-  in.talk    = {gestures.head().pitch, gestures.head().yaw, gestures.head().roll};
-  // a blow throws the head around: the gaze lets go while one stumbles
-  if(!npc.isDown() && (npc.bodyStateMasked() & BS_MAX)!=BS_STUMBLE)
-    in.source = npc.gazeTarget(in.target);
-  // thinking of an answer: the eyes go aside and up from the one it talks to (TalkGestures)
-  if(const auto& as = gestures.eyesAside(); as.weight>0.f && in.source==Gaze::Source::Talk) {
-    const Vec3  head = npc.mapHeadBone();
-    const Vec3  d    = in.target - head;
-    const float len  = std::sqrt(d.x*d.x + d.z*d.z);
-    if(len>1.f) {
-      const float yaw = as.yaw*as.weight;
-      const float c = std::cos(yaw), s = std::sin(yaw);
-      // around Up, + to the left as Gaze turns
-      const Vec3 r = {d.x*c - d.z*s, 0, d.x*s + d.z*c};
-      in.target = head + Vec3(r.x, d.y + len*std::tan(as.pitch*as.weight), r.z);
-      }
-    }
-  if(in.source!=Gaze::Source::None) {
-    in.active   = true;
-    // the hero's body is the player's; one walking or busy at a bench, a book turns the head only;
-    // a four-legged spine does not turn like a man's
-    const auto bs = npc.bodyStateMasked() & BS_MAX;
-    // aiming by hand the trunk is the aim's: a turn of it would throw the arrow off
-    in.headOnly = in.source==Gaze::Source::Input || npc.isPlayer() || npc.hasManualAim() || npc.interactive()!=nullptr || pose.footIk().isQuadruped() ||
-                  bs==(BS_WALK & BS_MAX) || bs==BS_RUN || bs==BS_SPRINT || bs==(BS_SNEAK & BS_MAX);
-    }
-  const bool changed = pose.updateGaze(in);
-  if(npc.isPlayer())
-    gaze.probe(Gaze::playerProbe);
-  if(&npc==Gaze::probeNpc)
-    gaze.probe(Gaze::subjectProbe);
-  if(changed)
-    view.setPose(pos,pose);
-  return changed;
-  }
-
-bool MdlVisual::updateLean(Npc& npc, uint64_t dt) {
-  Pose& pose = *skInst;
-  auto& lean = pose.leanIk();
-  if(!lean.isValid()) {
-    if(npc.isPlayer())
-      Lean::playerProbe = Lean::Probe();
-    if(&npc==Lean::probeNpc)
-      Lean::subjectProbe = Lean::Probe();
-    return false;
-    }
-
-  // on the ground, going somewhere; four legs turn and climb their own way (FootIk)
-  const float a  = npc.rotationRad();
-  const auto  bs = npc.bodyStateMasked() & BS_MAX;
-  Lean::Input in;
-  in.dt       = dt;
-  in.position = npc.position();
-  in.forward  = {std::cos(a), 0, std::sin(a)};
-  in.active   = (bs==(BS_WALK & BS_MAX) || bs==BS_RUN || bs==BS_SPRINT || bs==(BS_SNEAK & BS_MAX)) &&
-                !npc.isDown() && !npc.isInAir() && !npc.isSwim() && !npc.isDive() && !npc.isSlide() &&
-                npc.interactive()==nullptr && !pose.footIk().isQuadruped();
-  const bool changed = pose.updateLean(in);
-  if(npc.isPlayer())
-    lean.probe(Lean::playerProbe);
-  if(&npc==Lean::probeNpc)
-    lean.probe(Lean::subjectProbe);
-  if(changed)
-    view.setPose(pos,pose);
-  return changed;
-  }
-
-bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
-  Pose& pose = *skInst;
-  auto& aim  = pose.aimIk();
-  if(!aim.isValid()) {
-    if(npc.isPlayer())
-      Aim::playerProbe = Aim::Probe();
-    if(&npc==Aim::probeNpc)
-      Aim::subjectProbe = Aim::Probe();
-    return false;
-    }
-
-  // drawing the bow at the target (a crossbow, a spell): where the shot leaves to, as World shoots it.
-  // From where the bow is held in the stance, not from the hand: the turn moves the hand, the aim would
-  // chase itself (straight down most of all)
-  const float a  = npc.rotationRad();
-  const auto  bs = npc.bodyStateMasked() & BS_MAX;
-  const auto  ws = npc.weaponState();
-  const Npc*  t  = npc.target();
-  // aimed by hand (game/archery): at the crosshair, else at the target
-  const bool  manual = npc.hasManualAim();
-  Aim::Input in;
-  in.dt      = dt;
-  in.forward = {std::cos(a), 0, std::sin(a)};
-  if((manual || (t!=nullptr && t!=&npc)) && !npc.isDown()) {
-    // only while aiming: the target may not be valid yet (a save loading)
-    auto aimAt = [&]() { return manual ? npc.manualAimPoint() : t->collosionCenter(); };
-    float shoulder = 145; // human, bind pose
-    if(skeleton!=nullptr) {
-      const size_t sh = skeleton->findNode("BIP01 R UPPERARM");
-      if(sh<skeleton->tr.size())
-        shoulder = skeleton->tr[sh].at(3,1);
-      }
-    const Tempest::Vec3 from = npc.position() + Tempest::Vec3(0,shoulder,0) + in.forward*35.f;
-    // a shot is a frame of BS_HIT, the reload goes on aiming
-    if((ws==WeaponState::Bow || ws==WeaponState::CBow) && (bs==BS_AIMNEAR || bs==BS_AIMFAR || bs==(BS_HIT & BS_MAX))) {
-      in.active = true;
-      in.arrow  = true;
-      if(manual) {
-        // by hand: the arrow straight at the crosshair (the archer holds over by himself), from where
-        // the arrow is (not too close: the turn moves it)
-        in.dir    = npc.aimDirection(aimAt());
-        in.referenceDir = aimAt()-from;
-        in.sway   = npc.manualAimSway();
-        in.tremor = npc.manualAimTremor();
-        in.manual = true;
-        in.follow = (1.f - CrouchSlow*npc.aimCrouch())*(1.f + CantQuick*(ws==WeaponState::Bow ? npc.aimCant() : 0.f));
-        in.reload = pose.animProgress(ws==WeaponState::CBow ? Archery::CBowReload : Archery::BowReload,npc.world().tickCount())>=0.f;
-        in.holdOrigin = npc.archer().stage()==Archer::Reloading;
-        // the shot leaves along the arrow (the bolt) as it lies: in the crossbow it is in the left hand
-        in.slot   = ammunition.boneId;
-        } else {
-        in.dir  = World::bulletVelocity(from,aimAt());
-        }
-      }
-    else if(ws==WeaponState::Mage && bs==BS_CASTING) {
-      in.active = true;
-      in.dir    = aimAt() - from;
-      }
-    if(in.active && manual && npc.aimPeek()!=0.f) {
-      // round a corner: lean out sideways as far as there is room beside the head
-      const float           peek  = npc.aimPeek();
-      const Tempest::Vec3   right = Tempest::Vec3::normalize(Tempest::Vec3::crossProduct(Tempest::Vec3(0,1,0),in.forward));
-      // from where the head is upright (not leaned: the room does not chase itself)
-      const Tempest::Vec3   head  = npc.position() + Tempest::Vec3(0,shoulder+HeadOverShoulder,0);
-      const Tempest::Vec3   dir   = right*(peek>0.f ? 1.f : -1.f);
-      const float           reach = Aim::SideReach + PeekClear;
-      auto                  r     = npc.world().physic()->ray(head,head+dir*reach);
-      const float           room  = r.hasCol ? std::clamp(((r.v-head).length()-PeekClear)/Aim::SideReach,0.f,1.f) : 1.f;
-      in.side = peek*room*Aim::SideMax*float(M_PI)/180.f;
-      }
-    if(in.active) {
-      if(npc.isPlayer() && manual) {
-        in.leanDirection = npc.aimLeanDirection(aimAt());
-        in.lean = npc.aimLean(aimAt(),true).angle;
-        if(Aim::playerLeanOverride>=0.f)
-          in.lean = Aim::playerLeanOverride;
-        } else {
-        // Classic aiming and NPCs keep their original angular rule and room check.
-        static constexpr float reach = 58.f, drop = 28.f;
-        const Tempest::Vec3 d = in.dir;
-        const float down = -std::atan2(d.y,std::sqrt(d.x*d.x+d.z*d.z));
-        in.lean = Aim::leanForNpc(down);
-        if(in.lean>0.f) {
-          const float k = in.lean/(Aim::NpcLeanMax*float(M_PI)/180.f);
-          const auto dir = Tempest::Vec3::normalize(Tempest::Vec3::normalize(Tempest::Vec3(d.x,0,d.z)) + in.forward*0.25f);
-          const auto head = mapHeadBone();
-          const auto to = head + dir*(reach*k) - Tempest::Vec3(0,drop*k,0);
-          if(npc.world().physic()->ray(head,to).hasCol)
-            in.lean = 0;
-          }
-        }
-      }
-    }
-  // steps with the bow drawn: the legs walk under the aim (graphics/mesh/aimwalk), sneaking with the bow
-  // (the crossbow), slowly
-  AimWalk::Input wk;
-  wk.dt   = dt;
-  wk.active = manual && in.active;
-  const float requestedWalk = manual && in.active ? npc.aimWalk() : 0.f;
-  Tempest::Vec3 walkDirection(0,0,requestedWalk);
-  if(requestedWalk==0.f && pose.aimWalk().isActive())
-    walkDirection = pose.aimWalk().move(dt);
-  const bool edgeBlocked = manual && in.active && npc.isEdgeMoveBlocked(walkDirection);
-  wk.blocked = edgeBlocked || npc.isAimWalkStopped();
-  wk.walk = edgeBlocked ? 0.f : requestedWalk;
-  // Keep the gait while the stopped legs ease back into the stance, without further root motion.
-  if(wk.walk!=0.f || pose.aimWalk().isActive()) {
-    const bool cbow = ws==WeaponState::CBow;
-    wk.legs = solver.solveFrm(cbow ? "S_CBOWSNEAKL" : "S_BOWSNEAKL");
-    if(wk.legs==nullptr)
-      wk.legs = solver.solveFrm(cbow ? "S_CBOWWALKL" : "S_BOWWALKL");
-    }
-  bool changed = pose.updateAimWalk(wk);
-  if(npc.isPlayer())
-    pose.aimWalk().probe(AimWalk::playerProbe);
-  changed |= pose.updateAim(in);
-  if(npc.isPlayer())
-    aim.probe(Aim::playerProbe);
-  if(&npc==Aim::probeNpc)
-    aim.probe(Aim::subjectProbe);
-
-  // a bow drawn by hand: the hand goes to the string as far as it is not drawn, the string with it (a
-  // crossbow is not drawn). The bow of G2 is drawn by its morph: S_READY holds it as the animation does,
-  // StringDrawn straight back as the bow is held by hand (graphics/mesh/bowdraw)
-  auto&          ar = npc.archer();
-  BowDraw::Input bd;
-  bd.dt     = dt;
-  bd.active = manual && in.active && ws==WeaponState::Bow;
-  bd.ready  = ar.stage()==Archer::Nocked || ar.stage()==Archer::Drawing || ar.stage()==Archer::Held;
-  bd.draw   = ar.draw();
-  bd.span   = bowSpan();
-  bd.arrow  = !ammunition.view.isEmpty() && ammunition.bone=="ZS_RIGHTHAND";
-  bd.cant   = npc.aimCant();
-  if(auto p = bow.view.protoMesh()) {
-    bool high = false, straight = false;
-    for(auto& m:p->morph) {
-      if(m.name==BowHeld) {
-        high          = true;
-        bd.stringHigh = m.peakMove;
-        }
-      if(m.name==BowDraw::StringDrawn) {
-        straight      = true;
-        bd.stringRest = m.peakAt;
-        bd.stringPull = m.peakMove;
-        }
-      }
-    // along the limbs: the longest way of the bow
-    const Tempest::Vec3 ext = p->bboxMesh[1]-p->bboxMesh[0];
-    bd.bowAxis   = ext.x>=ext.y && ext.x>=ext.z ? Tempest::Vec3(1,0,0) : (ext.y>=ext.z ? Tempest::Vec3(0,1,0) : Tempest::Vec3(0,0,1));
-    bd.hasString = high && straight;
-    }
-  if(ar.stage()==Archer::Reloading) {
-    // how far the reload is: not begun (the shot), the animation, over (the bow comes to rest)
-    const float p = pose.animProgress("T_BOWRELOAD",npc.world().tickCount());
-    bd.reload = p>=0.f ? p : (ar.isNocking() ? 1.f : 0.f);
-    }
-  changed  |= pose.updateBowDraw(bd);
-  // the string as drawn by hand: straight back as far as the bow is held so, else as G2 draws it
-  const float string = pose.bowDrawIk().string();
-  const float held   = pose.bowDrawIk().aligned();
-  if(string>=0.f) {
-    bow.view.setMMShape(BowHeld,0,0,0,string*(1.f-held));
-    bow.view.setMMShape(BowDraw::StringDrawn,0,0,0,string*held);
-    stringByHand = true;
-    }
-  else if(stringByHand) {
-    // let go: the string goes (the shot: it trembles at once, the animation's release is late), else the
-    // animation's morphs from here
-    bow.view.startMMAnim(BowHeld,0,0);
-    bow.view.startMMAnim(BowDraw::StringDrawn,0,0);
-    if(pose.bowDrawIk().loosed()) {
-      bow.view.startMMAnim(held>0.5f ? BowDraw::StringLoose : BowLoose,1,uint64_t(-1));
-      looseAt = npc.world().tickCount();
-      }
-    stringByHand = false;
-    }
-  if(npc.isPlayer())
-    pose.bowDrawIk().probe(BowDraw::playerProbe);
-
-  if(changed)
-    view.setPose(pos,pose);
-  return changed;
-  }
-
-bool MdlVisual::updateFlinch(Npc& npc, uint64_t dt) {
-  Pose& pose = *skInst;
-  auto& fl   = pose.flinchIk();
-  if(!fl.isValid()) {
-    if(npc.isPlayer())
-      Flinch::playerProbe = Flinch::Probe();
-    if(&npc==Flinch::probeNpc)
-      Flinch::subjectProbe = Flinch::Probe();
-    return false;
-    }
-  const float a = npc.rotationRad();
-  Flinch::Input in;
-  in.dt       = dt;
-  in.forward  = {std::cos(a), 0, std::sin(a)};
-  in.headOnly = pose.footIk().isQuadruped();
-  const bool changed = pose.updateFlinch(in);
-  if(npc.isPlayer())
-    fl.probe(Flinch::playerProbe);
-  if(&npc==Flinch::probeNpc)
-    fl.probe(Flinch::subjectProbe);
-  if(changed)
-    view.setPose(pos,pose);
-  return changed;
-  }
-
-void MdlVisual::flinch(const Npc& npc, const Flinch::Hit& hit) {
-  const float a = npc.rotationRad();
-  skInst->flinchIk().hit(hit,{std::cos(a), 0, std::sin(a)});
+  return changed || handsMoved;
   }
 
 bool MdlVisual::hasGaze() const {
@@ -1155,6 +1055,8 @@ bool MdlVisual::hasQuadrupedIk() const {
   }
 
 bool MdlVisual::updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedToGround) {
+  if(npc.usesSimplifiedMovement())
+    return false;
   Pose& pose = *skInst;
   auto& ik   = pose.footIk();
   if(!ik.isValid()) {
@@ -1163,7 +1065,7 @@ bool MdlVisual::updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedTo
     return false;
     }
 
-  auto       in      = ik.mkInput(npc,world,pos,alignedToGround,dt,&pose.aimWalk());
+  auto       in      = mkFootIkInput(ik,npc,world,pos,alignedToGround,dt,&pose.aimWalk());
   // crouched stepping with the bow drawn: the steps are low already (sneaking), as low as crouched standing
   in.crouch = std::max(0.f, in.crouch - pose.aimWalk().lowered());
   const bool changed = pose.updateFootIk(in);
@@ -1171,7 +1073,7 @@ bool MdlVisual::updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedTo
   if(npc.isPlayer())
     ik.probe(FootIk::playerProbe,in);
   if(changed)
-    view.setPose(pos,pose);
+    pushBodyPose();
   return changed;
   }
 
@@ -1181,10 +1083,18 @@ void MdlVisual::processLayers(World& world) {
   pose.processLayers(solver,tickCount);
   }
 
-bool MdlVisual::processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev) {
+bool MdlVisual::processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev, NpcLogicalState* logic) {
   Pose&    pose      = *skInst;
   uint64_t tickCount = world.tickCount();
-  return pose.processEvents(barrier,tickCount,ev);
+  Pose::LogicEventObserver observer;
+  if(logic!=nullptr && NpcLogicAudit::enabled()) {
+    observer.context=logic;
+    observer.fired=[](void* opaque, const Animation::Sequence* sequence, uint64_t origin,
+                      const Animation::LogicEvent& event, uint64_t now) {
+      static_cast<NpcLogicalState*>(opaque)->eventFired(sequence,origin,event,now);
+      };
+    }
+  return pose.processEvents(barrier,tickCount,ev,&observer);
   }
 
 Vec3 MdlVisual::mapBone(const size_t boneId) const {
@@ -1204,49 +1114,16 @@ Vec3 MdlVisual::mapWeaponBone() const {
   return {pos.at(3,0), pos.at(3,1), pos.at(3,2)};
   }
 
+void MdlVisual::setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now) {
+  skInst->setLayerSpeed(seq,k,now);
+  }
+
+void MdlVisual::hitStop(uint64_t until, float k) {
+  skInst->hitStop(until,k);
+  }
+
 void MdlVisual::setAnimSpeed(std::string_view name, float k) {
   skInst->setAnimSpeed(name,k);
-  }
-
-float MdlVisual::bowSpan() const {
-  // how far the string goes from rest to held drawn: the string's middle moves the most
-  if(auto p = bow.view.protoMesh())
-    for(auto& m:p->morph)
-      if(m.name==BowHeld)
-        return m.peak;
-  return 0;
-  }
-
-bool MdlVisual::arrowRay(Vec3& p, Vec3& d) const {
-  // the arrow (the bolt) lies along -X of its slot, the nock at the string (graphics/mesh/aim)
-  size_t id = ammunition.boneId;
-  if(id==size_t(-1) && skeleton!=nullptr)
-    id = skeleton->findNode("ZS_RIGHTHAND");
-  if(id==size_t(-1) || id>=skInst->boneCount())
-    return false;
-  const auto& m = skInst->bone(id);
-  p = Vec3(m.at(3,0),m.at(3,1),m.at(3,2));
-  d = Vec3::normalize(Vec3(-m.at(0,0),-m.at(0,1),-m.at(0,2)));
-  return true;
-  }
-
-bool MdlVisual::aimAttachmentBounds(bool ammo, Matrix4x4& matrix, Vec3 (&bounds)[2]) const {
-  const auto& mesh = ammo ? ammunition.view : bow.view;
-  const auto* proto = mesh.protoMesh();
-  if(mesh.isEmpty() || proto==nullptr)
-    return false;
-  matrix = mesh.node(0).position();
-  bounds[0] = proto->bboxMesh[0];
-  bounds[1] = proto->bboxMesh[1];
-  // Frame interpolation stays within each morph's component bounds. Sum the currently
-  // shown morphs, as the vertex shader does; a string pulled along the arrow must not
-  // expand the bow by its full draw length sideways as well.
-  for(const auto& morph:proto->morph) {
-    const float weight = mesh.morphWeight(morph.name);
-    bounds[0] += morph.moveMin*weight;
-    bounds[1] += morph.moveMax*weight;
-    }
-  return true;
   }
 
 HitZones::Zone MdlVisual::rayHitZone(const Vec3& from, const Vec3& to, float& t, size_t* bone) const {
@@ -1271,189 +1148,29 @@ float MdlVisual::animTime(std::string_view name) const {
   return sq!=nullptr ? sq->totalTime() : 0.f;
   }
 
-std::string MdlVisual::animInfo(std::string_view name) const {
-  const Animation::Sequence* sq = solver.solveFrm(name);
-  if(sq==nullptr || sq->data==nullptr)
-    return std::string(name) + ": none";
-  const auto& d  = *sq->data;
-  const float ms = sq->totalTime();
-  char buf[512];
-  std::snprintf(buf,sizeof(buf),"%s: layer %u %s frames %u fps %.1f %.0f ms nodes %zu move %d tr %.0f %.0f %.0f (%.0f cm/s) next %s",
-                sq->name.c_str(),unsigned(sq->layer),sq->animCls==Animation::Loop ? "loop" : "trans",unsigned(d.numFrames),
-                double(d.fpsRate),double(ms),d.nodeIndex.size(),int(d.hasMoveTr),double(d.moveTr.x),double(d.moveTr.y),
-                double(d.moveTr.z),ms>0.f ? double(d.moveTr.length()/ms*1000.f) : 0.0,sq->next.c_str());
-  std::string out = buf;
-  if(skeleton==nullptr || d.nodeIndex.empty() || d.numFrames==0)
-    return out;
-  // the nodes it moves (not all: an upper body only animation)
-  auto& nodes = skeleton->nodes;
-  if(d.nodeIndex.size()<nodes.size()) {
-    out += "; moves";
-    for(auto i:d.nodeIndex)
-      if(i<nodes.size())
-        out += " " + nodes[i].name;
-    }
-  // the hips at 0, 1/4, 1/2, 3/4: the thighs' line, degrees of yaw in the model (the bind pose 0); the
-  // root's height
-  const size_t lt = skeleton->findNode("BIP01 L THIGH");
-  const size_t rt = skeleton->findNode("BIP01 R THIGH");
-  if(lt>=nodes.size() || rt>=nodes.size())
-    return out;
-  std::vector<Tempest::Matrix4x4> local(nodes.size()), world(nodes.size());
-  auto yaw = [&](const Tempest::Matrix4x4* m) {
-    const float dx = m[lt].at(3,0)-m[rt].at(3,0);
-    const float dz = m[lt].at(3,2)-m[rt].at(3,2);
-    return std::atan2(dz,dx)*180.f/float(M_PI);
-    };
-  // f: a frame, else the bind pose
-  auto pose = [&](uint32_t f) {
-    for(size_t i=0; i<nodes.size(); ++i)
-      local[i] = nodes[i].tr;
-    for(size_t i=0; i<d.nodeIndex.size() && f<d.numFrames; ++i)
-      if(d.nodeIndex[i]<nodes.size())
-        local[d.nodeIndex[i]] = mkMatrix(d.samples[size_t(f)*d.nodeIndex.size()+i]);
-    std::vector<bool> done(nodes.size(),false);
-    for(size_t i=0; i<nodes.size(); ++i) {
-      size_t chain[Resources::MAX_NUM_SKELETAL_NODES];
-      size_t n = 0;
-      for(size_t b=i; b<nodes.size() && !done[b] && n<nodes.size(); b=nodes[b].parent)
-        chain[n++] = b;
-      while(n>0) {
-        const size_t b = chain[--n];
-        const size_t p = nodes[b].parent;
-        world[b] = p<nodes.size() ? world[p]*local[b] : local[b];
-        done[b]  = true;
-        }
-      }
-    };
-  pose(uint32_t(-1));
-  std::snprintf(buf,sizeof(buf),"; hips bind %.0f, at frames",double(yaw(world.data())));
-  out += buf;
-  for(uint32_t q=0; q<4; ++q) {
-    const uint32_t f = std::min(d.numFrames-1,d.numFrames*q/4);
-    pose(f);
-    std::snprintf(buf,sizeof(buf)," %u:%.0f/%.0f",unsigned(f),double(yaw(world.data())),double(world[0].at(3,1)));
-    out += buf;
-    }
-  return out;
-  }
-
-std::string MdlVisual::bowDump() const {
-  // points of the bow and the bow hand in the frame of the arrow: x along it from the slot it sits in
-  // (forward), y up across it, z to the side
-  auto proto = bow.view.protoMesh();
-  if(proto==nullptr || skeleton==nullptr || bow.boneId>=skInst->boneCount())
-    return "bow: none";
-  const size_t aSlot = skeleton->findNode("ZS_RIGHTHAND");
-  if(aSlot>=skInst->boneCount())
-    return "bow: no arrow slot";
-  const auto& am = skInst->bone(aSlot);
-  const Vec3  o  = Vec3(am.at(3,0),am.at(3,1),am.at(3,2));
-  const Vec3  ax = Vec3::normalize(Vec3(-am.at(0,0),-am.at(0,1),-am.at(0,2)));
-  Vec3        up = Vec3(0,1,0) - ax*Vec3::dotProduct(Vec3(0,1,0),ax);
-  up             = Vec3::normalize(up);
-  const Vec3  sd = Vec3::crossProduct(ax,up);
-  const auto& bm = skInst->bone(bow.boneId);
-  std::string out;
-  char        buf[200];
-  auto put = [&](const char* name, Vec3 p) {
-    p = p - o;
-    std::snprintf(buf,sizeof(buf),"  %-14s %6.1f %6.1f %6.1f\n",name,double(Vec3::dotProduct(p,ax)),double(Vec3::dotProduct(p,up)),
-                  double(Vec3::dotProduct(p,sd)));
-    out += buf;
-    };
-  auto inBow = [&](Vec3 p) {
-    bm.project(p);
-    return p;
-    };
-  auto dirOf = [&](const Vec3& d) {
-    return Vec3(bm.at(0,0)*d.x + bm.at(1,0)*d.y + bm.at(2,0)*d.z,
-                bm.at(0,1)*d.x + bm.at(1,1)*d.y + bm.at(2,1)*d.z,
-                bm.at(0,2)*d.x + bm.at(1,2)*d.y + bm.at(2,2)*d.z);
-    };
-  const Vec3* bb = proto->bboxMesh;
-  std::snprintf(buf,sizeof(buf),"bow %s: bbox %.1f %.1f %.1f .. %.1f %.1f %.1f (mesh)\n",proto->fname.c_str(),
-                double(bb[0].x),double(bb[0].y),double(bb[0].z),double(bb[1].x),double(bb[1].y),double(bb[1].z));
-  out += buf;
-  const Vec3 mid = (bb[0]+bb[1])*0.5f;
-  for(int i=0; i<3; ++i) {
-    const Vec3 e  = i==0 ? Vec3(1,0,0)        : (i==1 ? Vec3(0,1,0)        : Vec3(0,0,1));
-    const Vec3 lo = i==0 ? Vec3(bb[0].x,mid.y,mid.z) : (i==1 ? Vec3(mid.x,bb[0].y,mid.z) : Vec3(mid.x,mid.y,bb[0].z));
-    const Vec3 hi = i==0 ? Vec3(bb[1].x,mid.y,mid.z) : (i==1 ? Vec3(mid.x,bb[1].y,mid.z) : Vec3(mid.x,mid.y,bb[1].z));
-    const Vec3 d = dirOf(e);
-    std::snprintf(buf,sizeof(buf),"  mesh axis %d in the arrow frame: %.2f %.2f %.2f\n",i,double(Vec3::dotProduct(d,ax)),
-                  double(Vec3::dotProduct(d,up)),double(Vec3::dotProduct(d,sd)));
-    out += buf;
-    char n0[16], n1[16];
-    std::snprintf(n0,sizeof(n0),"bbox-%d",i);
-    std::snprintf(n1,sizeof(n1),"bbox+%d",i);
-    put(n0,inBow(lo));
-    put(n1,inBow(hi));
-    }
-  put("grip (slot)",inBow(Vec3()));
-  put("bbox middle",inBow((bb[0]+bb[1])*0.5f));
-  for(auto& m:proto->morph) {
-    std::snprintf(buf,sizeof(buf),"  morph %s: peak %.1f at %.1f %.1f %.1f move %.1f %.1f %.1f (mesh)\n",m.name.c_str(),double(m.peak),
-                  double(m.peakAt.x),double(m.peakAt.y),double(m.peakAt.z),double(m.peakMove.x),double(m.peakMove.y),double(m.peakMove.z));
-    out += buf;
-    if(m.name==BowHeld) {
-      put("string rest",inBow(m.peakAt));
-      put("string drawn",inBow(m.peakAt+m.peakMove));
-      }
-    if(m.name==BowDraw::StringDrawn) {
-      put("straight rest",inBow(m.peakAt));
-      put("straight drawn",inBow(m.peakAt+m.peakMove));
-      }
-    }
-  if(ammunition.boneId<skInst->boneCount()) {
-    // the arrow (the bolt) as it lies: where the shot leaves from, along what
-    const auto& m = skInst->bone(ammunition.boneId);
-    const Vec3  d = Vec3::normalize(Vec3(-m.at(0,0),-m.at(0,1),-m.at(0,2)));
-    std::snprintf(buf,sizeof(buf),"  ammo in %s%s, along %.3f %.3f %.3f (the arrow frame)\n",std::string(ammunition.bone).c_str(),
-                  ammunition.view.isEmpty() ? " (not shown)" : "",double(Vec3::dotProduct(d,ax)),double(Vec3::dotProduct(d,up)),
-                  double(Vec3::dotProduct(d,sd)));
-    out += buf;
-    put("ammo",Vec3(m.at(3,0),m.at(3,1),m.at(3,2)));
-    }
-  for(auto name:{"BIP01 L HAND","BIP01 L FINGER0","BIP01 L FINGER1","BIP01 L FINGER2","BIP01 L FOREARM","BIP01 R HAND","BIP01 HEAD"}) {
-    const size_t id = skeleton->findNode(name);
-    if(id<skInst->boneCount()) {
-      const auto& m = skInst->bone(id);
-      put(name+6,Vec3(m.at(3,0),m.at(3,1),m.at(3,2)));
-      }
-    }
-  return out;
-  }
-
-void MdlVisual::hitZonesPosed(std::vector<HitZones::Posed>& out) const {
-  const Vec3 sx = Vec3(pos.at(0,0),pos.at(0,1),pos.at(0,2));
-  hitZones.posed(skInst->transform(),skInst->boneCount(),sx.length(),out);
-  }
-
-std::string MdlVisual::hitZonesDump() const {
-  const Vec3 sx = Vec3(pos.at(0,0),pos.at(0,1),pos.at(0,2));
-  auto       body = view.protoMesh();
-  return hitZones.dump(skInst->transform(),skInst->boneCount(),sx.length()) +
-         hitZones.coverage(skInst->transform(),skInst->boneCount(),sx.length()) +
-         " body " + (body!=nullptr ? body->fname : std::string("-"));
-  }
-
-float MdlVisual::aimTrackError() const {
-  return skInst->aimIk().trackError();
-  }
-
-bool MdlVisual::isAimSteady() const {
-  return skInst->aimIk().isSteady();
-  }
-
-bool MdlVisual::isAimValid() const {
-  return skInst->aimIk().isValid() && Aim::isEnabled();
-  }
-
 Vec3 MdlVisual::mapHeadBone() const {
   if(skeleton->BIP01_HEAD==size_t(-1))
     return {pos.at(3,0), pos.at(3,1)+180, pos.at(3,2)};
   return mapBone(skeleton->BIP01_HEAD);
+  }
+
+bool MdlVisual::eyesInHead(Vec3& at) const {
+  const auto* e = face.eyes();
+  if(e==nullptr || skeleton==nullptr || head.boneId!=skeleton->BIP01_HEAD)
+    return false;
+  // the head bone: x up, y across, z forward (the frame of a head's vertices)
+  at = (e->eye[0].center + e->eye[1].center)*0.5f;
+  return true;
+  }
+
+Vec3 MdlVisual::mapEyes() const {
+  const size_t bone = skeleton->BIP01_HEAD;
+  if(bone==size_t(-1) || bone>=skInst->boneCount())
+    return mapHeadBone();
+  Vec3 at = Vec3(EyesUp,0,0);
+  eyesInHead(at);
+  renderedBone(bone).project(at);
+  return at;
   }
 
 void MdlVisual::stopAnim(Npc& npc, std::string_view anim) {
@@ -1491,6 +1208,14 @@ bool MdlVisual::hasAnim(AnimationSolver::Anim a, WeaponState st, WalkBit wlk) co
   return solver.solveAnim(a,st,wlk,*skInst)!=nullptr;
   }
 
+const Animation::Sequence* MdlVisual::movementSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const {
+  return solver.solveAnim(AnimationSolver::Move,weapon,mode,*skInst,&npc);
+  }
+
+const Animation::Sequence* MdlVisual::idleSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const {
+  return solver.solveAnim(AnimationSolver::Idle,weapon,mode,*skInst,&npc);
+  }
+
 const Animation::Sequence* MdlVisual::startAnimAndGet(std::string_view name, uint64_t tickCount, bool forceAnim) {
   auto sq = solver.solveFrm(name);
   if(sq!=nullptr) {
@@ -1502,9 +1227,9 @@ const Animation::Sequence* MdlVisual::startAnimAndGet(std::string_view name, uin
   return nullptr;
   }
 
-const Animation::Sequence* MdlVisual::startAnimAndGet(Npc &npc, std::string_view name, uint8_t comb, BodyState bs) {
+const Animation::Sequence* MdlVisual::startAnimAndGet(Npc &npc, std::string_view name, uint8_t comb, BodyState bs, bool force) {
   const Animation::Sequence* sq  = solver.solveFrm(name);
-  if(skInst->startAnim(solver,sq,comb,bs,Pose::NoHint,npc.world().tickCount()))
+  if(skInst->startAnim(solver,sq,comb,bs,force ? Pose::Force : Pose::NoHint,npc.world().tickCount()))
     return sq;
   return nullptr;
   }
@@ -1567,12 +1292,14 @@ const Animation::Sequence* MdlVisual::startAnimAndGet(Npc& npc, AnimationSolver:
     case AnimationSolver::Anim::Move:
     case AnimationSolver::Anim::MoveL:
     case AnimationSolver::Anim::MoveR:
-      if(bool(wlk & WalkBit::WM_Walk))
+      if(npc.isUsingItemInHand() || bool(wlk & WalkBit::WM_Walk))
         bs = BS_WALK; else
         bs = BS_RUN;
       break;
     case AnimationSolver::Anim::MoveBack:
-      if(st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H)
+      if(npc.isUsingItemInHand())
+        bs = BS_WALK;
+      else if(st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H)
         bs = BS_PARADE; else
         bs = BS_RUN;
     case AnimationSolver::Anim::RotL:
@@ -1669,17 +1396,17 @@ bool MdlVisual::startAnim(Npc &npc, WeaponState st) {
   }
 
 void MdlVisual::setAnimRotate(Npc &npc, int dir) {
-  skInst->setAnimRotate(solver,npc,fgtMode,AnimationSolver::TurnType::Std,dir);
+  skInst->setAnimRotate(solver,npc.walkMode(),npc.world().tickCount(),fgtMode,AnimationSolver::TurnType::Std,dir);
   }
 
 void MdlVisual::setAnimWhirl(Npc &npc, int dir) {
-  skInst->setAnimRotate(solver,npc,fgtMode,AnimationSolver::TurnType::Whirl,dir);
+  skInst->setAnimRotate(solver,npc.walkMode(),npc.world().tickCount(),fgtMode,AnimationSolver::TurnType::Whirl,dir);
   }
 
 void MdlVisual::interrupt() {
   skInst->interrupt();
   item.clear();
-  setStateItem(MeshObjects::Mesh(),"");
+  setStateItem(ItemView(),"");
   }
 
 Tempest::Vec3 MdlVisual::displayPosition() const {
@@ -1724,8 +1451,16 @@ Bounds MdlVisual::bounds() const {
 void MdlVisual::bind(MeshAttach& slot, MeshObjects::Mesh&& itm, std::string_view bone) {
   slot.boneId = skeleton==nullptr ? size_t(-1) : skeleton->findNode(bone);
   slot.view   = std::move(itm);
+  addTextureOwner(slot.view);
   slot.bone   = bone;
   // sync?
+  }
+
+void MdlVisual::bind(ItemAttach& slot, ItemView&& itm, std::string_view bone) {
+  slot.boneId = skeleton==nullptr ? size_t(-1) : skeleton->findNode(bone);
+  slot.view   = std::move(itm);
+  addTextureOwner(slot.view);
+  slot.bone   = bone;
   }
 
 void MdlVisual::bind(PfxAttach& slot, Effect&& itm, std::string_view bone) {
@@ -1743,8 +1478,9 @@ void MdlVisual::bind(Attach<View>& slot, std::string_view bone) {
   }
 
 void MdlVisual::rebindAttaches(const Skeleton& to) {
-  auto  mesh = {&head,&sword,&bow,&ammunition,&stateItm};
-  for(auto i:mesh)
+  for(auto i:{&head,&groom})
+    rebindAttaches(*i,to);
+  for(auto i:{&sword,&bow,&ammunition,&stateItm})
     rebindAttaches(*i,to);
   for(auto& i:item)
     rebindAttaches(i,to);
@@ -1754,6 +1490,7 @@ void MdlVisual::rebindAttaches(const Skeleton& to) {
     i.view.bindAttaches(*skInst,to);
   pfx.view.bindAttaches(*skInst,to);
   hnpcVisual.view.bindAttaches(*skInst,to);
+  quiv.rebind(to);
   }
 
 template<class View>
@@ -1764,8 +1501,10 @@ void MdlVisual::rebindAttaches(Attach<View>& mesh, const Skeleton& to) {
   }
 
 void MdlVisual::syncAttaches() {
-  MdlVisual::MeshAttach* mesh[] = {&head, &sword,&shield,&bow,&ammunition,&stateItm};
-  for(auto i:mesh)
+  for(auto i:{&head,&groom})
+    syncAttaches(*i);
+  // an item's effect goes with its mesh (graphics/itemview)
+  for(auto i:{&sword,&shield,&bow,&ammunition,&stateItm})
     syncAttaches(*i);
   for(auto& i:item)
     syncAttaches(i);
@@ -1773,6 +1512,9 @@ void MdlVisual::syncAttaches() {
     syncAttaches(i);
   for(auto& pin:stuckArrows)
     pin.view.setObjMatrix(renderedBone(pin.bone)*pin.local);
+  if(quiv.isShown() && quiv.bone()<skInst->boneCount())
+    quiv.sync(renderedBone(quiv.bone()),
+              renderedBone(quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone()));
   for(auto& i:effects) {
     i.view.setObjMatrix(pos);
     // i.view.setTarget(targetPos);
@@ -1783,7 +1525,7 @@ void MdlVisual::syncAttaches() {
     auto& pose = *skInst;
     auto  p    = pos;
     if(torch.boneId<pose.boneCount())
-      p = renderedBone(torch.boneId);
+      p = attachMatrix(torch.boneId);
     torch.view->setObjMatrix(p);
     }
   }
@@ -1807,12 +1549,12 @@ void MdlVisual::syncAttaches(Attach<View>& att) {
   auto& pose = *skInst;
   auto  p    = pos;
   if(att.boneId<pose.boneCount())
-    p = renderedBone(att.boneId);
+    p = attachMatrix(att.boneId);
   att.view.setObjMatrix(p);
   }
 
 const Animation::Sequence* MdlVisual::startAnimItem(Npc &npc, std::string_view scheme, int state) {
-  return skInst->setAnimItem(solver,npc,scheme,state);
+  return skInst->setAnimItem(solver,npc.world().tickCount(),scheme,state);
   }
 
 const Animation::Sequence* MdlVisual::startAnimSpell(Npc &npc, std::string_view scheme, bool invest) {
@@ -1826,6 +1568,10 @@ const Animation::Sequence* MdlVisual::startAnimSpell(Npc &npc, std::string_view 
   }
 
 namespace {
+// The head is held against a gesture's animation (Gaze::Input::steady) this long after the gesture is over, ms: its
+// bones blend back to the stance meanwhile, at ease the longest (AnimBlend: 1.875 of the gestures' blend out, 0.4 s)
+constexpr uint64_t GestureHeadHold = 900;
+
 // T_DIALOGGESTURE_01..
 std::array<char,32> gestureName(uint16_t id) {
   std::array<char,32> name = {};
@@ -1836,7 +1582,7 @@ std::array<char,32> gestureName(uint16_t id) {
 
 void MdlVisual::setupGestures() {
   // how long each gesture plays; an alias of one before it (Gothic II: 11 is 01) is left out
-  const uint16_t count = Gothic::inst().version().dialogGestureCount();
+  const uint16_t count = 11;
   std::vector<uint32_t>                   time(count);
   std::vector<const Animation::AnimData*> seen;
   for(uint16_t i=0; i<count; ++i) {
@@ -1846,7 +1592,7 @@ void MdlVisual::setupGestures() {
     seen.push_back(sq->data.get());
     time[i] = uint32_t(sq->totalTime());
     }
-  gestures.setGestures(std::move(time),Gothic::inst().version().game==2);
+  gestures.setGestures(std::move(time));
   }
 
 bool MdlVisual::startAnimDialog(Npc &npc) {
@@ -1862,7 +1608,7 @@ bool MdlVisual::startAnimDialog(Npc &npc) {
   if(npc.bodyStateMasked()!=BS_STAND)
     return true;
 
-  const uint16_t count = Gothic::inst().version().dialogGestureCount();
+  const uint16_t count = 11;
   const int      id    = std::rand()%count + 1;
 
   const Animation::Sequence *sq   = solver.solveFrm(gestureName(uint16_t(id)).data());
@@ -1885,12 +1631,16 @@ void MdlVisual::updateGestures(Npc& npc, uint64_t dt) {
   const bool playing = gestureSeq!=nullptr && skInst->isInAnim(gestureSeq);
   if(!playing)
     gestureSeq = nullptr;
-  const uint32_t syl = mouth.syllableCount();
+  const uint32_t syl = mouth.judgedCount();
   const bool     beat = syl!=gestureSyl;
   gestureSyl = syl;
 
   // the head: Gaze turns it (updateGaze)
-  gestures.updateHead(now,dt,voiced || left>0,beat,mouth.syllablePeak());
+  gestures.updateHead(now,dt,voiced || left>0,beat,mouth.judgedDb(),mouth.isLive());
+  if(gestures.listenNodCount()!=listenNodsSeen) {
+    listenNodsSeen = gestures.listenNodCount();
+    listenNod(npc,now,voiced || left>0);
+    }
 
   TalkGestures::Input in;
   in.now      = now;
@@ -1904,14 +1654,26 @@ void MdlVisual::updateGestures(Npc& npc, uint64_t dt) {
   in.playing  = playing;
   in.syllable = beat;
 
+  // the head is the gaze's and the voice's while the hands gesture, and until they are back at rest (updateGaze);
+  // an animation that took the gesture's place (a nod of the ai queue) has the head at once
+  if(playing)
+    gestureHead = now + GestureHeadHold;
+  else if(!in.allowed)
+    gestureHead = std::min(gestureHead,now);
   const auto d = gestures.update(in);
   if(d.act==TalkGestures::Act::Start) {
     auto sq = solver.solveFrm(gestureName(d.gesture).data());
-    if(sq!=nullptr && skInst->startAnim(solver,sq,0,BS_STAND,Pose::NoHint,now))
-      gestureSeq = sq;
+    if(sq!=nullptr && skInst->startAnim(solver,sq,0,BS_STAND,Pose::NoHint,now)) {
+      gestureSeq  = sq;
+      gestureHead = now + GestureHeadHold;
+      }
     }
   else if(d.act==TalkGestures::Act::Stop && gestureSeq!=nullptr) {
-    skInst->stopAnim(gestureSeq->name);
+    // the voice is over: the hands come to rest; another animation takes the body (in.allowed is off): at once, and
+    // the head is that animation's from now on
+    skInst->stopAnim(gestureSeq->name,in.allowed && Gaze::holdsGestureHead());
+    if(!in.allowed)
+      gestureHead = now;
     gestureSeq = nullptr;
     }
   if(probing)
@@ -1924,42 +1686,181 @@ void MdlVisual::updateBlink(Npc& npc, uint64_t dt) {
   if(skInst==nullptr || head.view.isEmpty() || (npc.processPolicy()>NpcProcessPolicy::AiNormal && !probing))
     return;
   const uint64_t now = npc.world().tickCount();
-  const uint32_t sh  = skInst->gazeIk().shiftCount();
+  // the head turns elsewhere, or the eyes jump far
+  const uint32_t sh  = skInst->gazeIk().shiftCount() + eyes.bigSaccades();
 
   EyeBlink::Input in;
   in.now      = now;
   in.dt       = dt;
-  in.allowed  = !npc.isDown() && (npc.bodyStateMasked() & BS_MAX)!=BS_LIE && head.view.morphWeight("S_EYESCLOSED")<0.1f;
+  in.allowed  = !npc.isDown() && (npc.bodyStateMasked() & BS_MAX)!=BS_LIE && faceWeight(npc,"S_EYESCLOSED")<0.1f;
   in.speaking = mouth.isSpeaking(now) || npc.speechLeft()>0;
   in.voice    = mouth.voiceLevel();
   in.shift    = sh!=blinkShift;
   // a frightened face blinks more, a hostile or angry stare less
-  in.rate     = 1.f + 0.6f*head.view.morphWeight("S_FRIGHTENED")
-                    - 0.3f*std::max(head.view.morphWeight("S_HOSTILE"),head.view.morphWeight("S_ANGRY"));
+  in.rate     = 1.f + 0.6f*faceWeight(npc,"S_FRIGHTENED")
+                    - 0.3f*std::max(faceWeight(npc,"S_HOSTILE"),faceWeight(npc,"S_ANGRY"));
   blinkShift  = sh;
 
   uint64_t hold = 0;
-  if(blink.update(in,hold))
-    head.view.startMMAnim("R_EYESBLINK",1,now+hold,true);  // not in place of a face
+  if(blink.update(in,hold)) {
+    if(face.isActive())
+      face.startAnim("R_EYESBLINK",1,now+hold,now); // a layer of its own: never in place of a face
+    else
+      head.view.startMMAnim("R_EYESBLINK",1,now+hold,true);  // not in place of a face
+    }
   if(probing)
     blink.probe(EyeBlink::subjectProbe);
   }
 
+float MdlVisual::faceWeight(const Npc& npc, std::string_view anim) const {
+  if(face.isActive())
+    return face.weight(anim,npc.world().tickCount());
+  return head.view.morphWeight(anim);
+  }
+
+void MdlVisual::startCues(Npc& npc, std::shared_ptr<const SpeechCues::Plan> plan, bool voiced) {
+  cues.start(std::move(plan),voiced,npc.world().tickCount());
+  }
+
+bool MdlVisual::startCue(Npc& npc, std::string_view name, char side) {
+  const auto* profile = face.faceProfile();
+  const auto* cue     = profile!=nullptr ? profile->findCue(name) : nullptr;
+  if(cue==nullptr)
+    return false;
+  if(side==0)
+    side = SpeechCues::sideOf(SpeechCues::seedOf(name)^(uint32_t(npc.instanceSymbol())*2654435761u)^(cueCount++*40503u));
+  const uint64_t now = npc.world().tickCount();
+  return playCue(name,cue->side!=0 && side!=cue->side,-1,now,now);
+  }
+
+bool MdlVisual::playCue(std::string_view name, bool mirror, float hold, uint64_t at, uint64_t now) {
+  if(!face.startCue(name,mirror,hold,at,now))
+    return false;
+  if(const auto* cue = face.faceProfile()->findCue(name); cue!=nullptr && cue->look.has_value())
+    eyes.startCue(*cue,mirror,std::min(at,now));
+  return true;
+  }
+
+float MdlVisual::cueWeight(const Npc& npc, std::string_view name) const {
+  const uint64_t now = npc.world().tickCount();
+  return std::max(face.cueWeight(name,now),eyes.cueWeight(name,now));
+  }
+
+bool MdlVisual::startLeak(Npc& npc, std::string_view felt, bool lower) {
+  const auto* profile = face.faceProfile();
+  if(profile==nullptr || profile->findLeak(felt,lower)==nullptr)
+    return false;
+  // a line of its own without a voice: the leak now (its word 0.1 s on), the liar's blinks in the time after
+  auto plan = std::make_shared<SpeechCues::Plan>("leak");
+  plan->leak     = SpeechCues::Plan::Leak{std::string(felt),lower,0};
+  plan->silentMs = ManualLeakMs;
+  plan->seed     = SpeechCues::seedOf(felt)^(uint32_t(npc.instanceSymbol())*2654435761u)^(cueCount++*40503u);
+  plan->setWord(0,float(SpeechCues::UpperLeadMs)/1000.f,0.5f);
+  cues.start(std::move(plan),false,npc.world().tickCount());
+  return true;
+  }
+
+float MdlVisual::leakWeight(const Npc& npc) const {
+  return face.leakWeight(npc.world().tickCount());
+  }
+
+void MdlVisual::updateEyes(Npc& npc, uint64_t now) {
+  if(!eyes.isActive() || skInst==nullptr || head.boneId>=skInst->boneCount())
+    return;
+  Eyes::Input in;
+  in.now      = now;
+  in.head     = renderedBone(head.boneId);
+  in.target   = lookSource!=Gaze::Source::None;
+  in.at       = lookAt;
+  // Gaze aims the head at one's head bone, the eyes go to its eyes (the bone is at the neck)
+  const Npc* whom = nullptr;
+  Vec3       at;
+  if(in.target && npc.gazeTarget(at,&whom)==lookSource && whom!=nullptr)
+    in.at = whom->mapEyes();
+  in.talk     = lookSource==Gaze::Source::Talk;
+  in.speaking = mouth.isSpeaking(now) || npc.speechLeft()>0;
+  in.left     = std::max(npc.speechLeft(),mouth.voiceLeft(now));
+  // thinking: the eyes go all the way aside (the head a part of it, updateGaze)
+  const auto& as = gestures.eyesAside();
+  in.aside    = in.talk && as.weight>=0.5f;
+  in.asideAt  = asidePoint(mapEyes(),in.at,as.yaw,as.pitch);
+  eyes.update(in);
+  face.setEyes(eyes.turn(0),eyes.turn(1));
+  }
+
+bool MdlVisual::updatesFace(const Npc& npc) const {
+  return face.isActive() || &npc==Eyes::probeNpc;
+  }
+
+void MdlVisual::updateFace(Npc& npc) {
+  if(!face.isActive()) {
+    if(&npc==Eyes::probeNpc)
+      Eyes::subjectProbe = Eyes::Probe();
+    return;
+    }
+  const bool     probing = &npc==FaceRig::probeNpc;
+  const uint64_t now     = npc.world().tickCount();
+  // the gestures of the line, far too: a face seen again shows them as they go
+  cueStarts.clear();
+  cues.update(*face.faceProfile(),now,blink.lastBlink(),cueStarts);
+  updateBrows(npc,now,probing);
+  for(auto& s:cueStarts.cues)
+    playCue(s.name,s.mirror,s.hold,s.at,now);
+  // a lie: the leak of the felt emotion, the liar's blinks (ordinary ones keep away from them), a smile put on
+  if(cueStarts.leak)
+    face.startLeak(cueStarts.leakFelt,cueStarts.leakLower,cueStarts.leakAt,now);
+  for(auto r:cueStarts.reserve)
+    blink.reserve(r);
+  for(uint32_t i=0; i<cueStarts.blinks && EyeBlink::isEnabled(); ++i)
+    face.startAnim("R_EYESBLINK",1,now+SpeechCues::LiarBlinkHold,now);
+  face.setPosed(cueStarts.posed,now);
+  // a far face stays as it was last shown, as a far one does not blink; its eyes stop
+  if(!head.view.isEmpty() && (npc.processPolicy()<=NpcProcessPolicy::AiNormal || probing)) {
+    updateEyes(npc,now);
+    voiceFace.play(face,now);
+    const auto r = face.update(now);
+    if(r!=FaceRig::Result::Same) {
+      const auto start = std::chrono::steady_clock::now();
+      if(r==FaceRig::Result::Deformed)
+        head.view.setPartDeformation(face.deformation(),face.changed().first,face.changed().second); else
+        head.view.setDeformation({});
+      faceUploadUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count());
+      }
+    }
+  if(probing) {
+    face.probe(FaceRig::subjectProbe,now);
+    FaceRig::subjectProbe.uploadUs  = faceUploadUs;
+    FaceRig::subjectProbe.accents   = uint32_t(voiceBrows.accents().size());
+    FaceRig::subjectProbe.browMoves = voiceBrows.moves();
+    FaceRig::subjectProbe.listenNods  = listenFace.nods();
+    FaceRig::subjectProbe.listenFaces = listenFace.faces();
+    }
+  if(&npc==Eyes::probeNpc)
+    eyes.probe(Eyes::subjectProbe);
+  }
+
 void MdlVisual::startMMAnim(Npc& npc, std::string_view anim, std::string_view bone) {
-  MdlVisual::MeshAttach* mesh[] = {&head,&sword,&shield,&bow,&ammunition,&stateItm};
-  for(auto i:mesh) {
-    if(i->bone!=bone && !bone.empty())
+  const std::pair<MeshObjects::Mesh*,std::string_view> mesh[] = {{&head.view,head.bone},{&sword.view.view(),sword.bone},
+    {&shield.view.view(),shield.bone},{&bow.view.view(),bow.bone},{&ammunition.view.view(),ammunition.bone},
+    {&stateItm.view.view(),stateItm.bone}};
+  for(auto& [view,at]:mesh) {
+    if(at!=bone && !bone.empty())
       continue;
+    const bool isBow = view==&bow.view.view();
     // the string drawn by hand: the animation does not draw it; held by hand, the bow lets it go straight
-    if(i==&bow && skInst->bowDrawIk().string()>=0.f)
+    if(isBow && skInst->bowDrawIk().string()>=0.f)
       continue;
-    if(i==&bow && anim==BowLoose && looseAt>0 && npc.world().tickCount()<looseAt+LooseLate)
+    if(isBow && anim==BowLoose && looseAt>0 && npc.world().tickCount()<looseAt+LooseLate)
       continue;
-    if(i==&bow && anim==BowLoose && skInst->bowDrawIk().aligned()>0.5f) {
-      i->view.startMMAnim(BowDraw::StringLoose,1,uint64_t(-1));
+    if(isBow && anim==BowLoose && skInst->bowDrawIk().aligned()>0.5f) {
+      view->startMMAnim(BowDraw::StringLoose,1,uint64_t(-1));
       continue;
       }
-    i->view.startMMAnim(anim,1,uint64_t(-1));
+    if(view==&head.view && face.isActive()) {
+      face.startAnim(anim,1,uint64_t(-1),npc.world().tickCount());
+      continue;
+      }
+    view->startMMAnim(anim,1,uint64_t(-1));
     }
   }
 
@@ -1969,7 +1870,9 @@ void MdlVisual::startFaceAnim(Npc& npc, std::string_view anim, float intensity, 
     return;
   if(duration!=uint64_t(-1) && duration!=0)
     duration += npc.world().tickCount();
-  head.view.startMMAnim(anim,intensity,duration);
+  if(face.isActive())
+    face.startAnim(anim,intensity,duration,npc.world().tickCount()); else
+    head.view.startMMAnim(anim,intensity,duration);
   }
 
 void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
@@ -1977,31 +1880,103 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
     return;
   // the mouth shapes of the head: a head without them gets the talk loop
   std::vector<float> shapes;
-  if(auto proto = head.view.protoMesh())
+  if(face.isActive())
+    shapes = face.strength("VISEME");
+  else if(auto proto = head.view.protoMesh())
     for(auto& m:proto->morph)
       if(m.name=="VISEME") {
         shapes = m.strength;
         break;
         }
   mouth.setShapes(std::move(shapes));
-  mouth.start(std::move(voice),npc.world().tickCount());
+  const uint64_t now = npc.world().tickCount();
+  cues.voice(voice,now);
+  // the brows on the accents: by the seed of the npc and the line (the mood goes by the line, setTalkMood)
+  voiceOwnBrows = SpeechBrows::isEnabled() && face.isActive() && face.faceProfile()->brows.has_value();
+  if(voiceOwnBrows)
+    voiceBrows.start(voice,SpeechCues::seedOf(voice->name())^(uint32_t(npc.instanceSymbol())*2654435761u),now); else
+    voiceBrows.stop();
+  voiceNow = voice;  // its accents for the one it says it to (voiceAccents)
+  voiceAt  = now;
+  heardBrows.stop();
+  heardRule.reset();
+  accentsLogged = 0;
+  // the face from the voice: the track of its line (say_face), or of a file next to the head for a voice of the game
+  std::string tracks;
+  if(face.isActive() && face.faceProfile()->speech.has_value())
+    if(const auto* proto = head.view.protoMesh())
+      tracks = std::filesystem::path(proto->fname).parent_path().string();
+  voiceFace.start(voice,tracks,now);
+  if(&npc==FaceRig::probeNpc && face.isActive())
+    Log::i("[face] voice ",npc.displayName(),": ",voice->name()," ",voice->durationMs()," ms",
+           voice->isFinished() ? "" : " (streaming)",SpeechBrows::isEnabled() ? "" : ", brows off",
+           voiceFace.current()!=nullptr ? ", face track "+std::to_string(voiceFace.current()->frames)+" frames"+
+             (voiceFace.current()->emotion.empty() ? std::string() : " "+voiceFace.current()->emotion) : std::string());
+  mouth.start(std::move(voice),now);
+  }
+
+void MdlVisual::stopSpeech(uint64_t now) {
+  mouth.stop();
+  voiceBrows.stop();
+  voiceFace.stop(now);
+  voiceNow = nullptr;
+  }
+
+void MdlVisual::setFaceTrack(std::shared_ptr<const SpeechFace::Track> track, std::string_view line) {
+  voiceFace.setTrack(std::move(track),line);
+  }
+
+void MdlVisual::setTalkMood(std::string_view mood, std::string_view line, uint64_t holdUntil) {
+  lineMood      = TalkGestures::moodOf(mood);
+  lineMoodUntil = holdUntil;
+  gestures.setMood(TalkGestures::moodOf(mood));
+  voiceBrows.setMood(TalkGestures::moodOf(mood),line);
+  }
+
+void MdlVisual::updateBrows(Npc& npc, uint64_t now, bool probing) {
+  const auto* profile = face.faceProfile();
+  if(profile==nullptr || !profile->brows.has_value())
+    return;
+  // an angry or hostile line lowers the brows on its accents
+  voiceBrows.play(face,now);
+  if(!probing)
+    return;
+  // the accents of the watched one's line, as they are found
+  const auto& found = voiceBrows.accents();
+  for(; accentsLogged<found.size(); ++accentsLogged) {
+    const auto& a = found[accentsLogged];
+    char buf[96];
+    std::snprintf(buf,sizeof(buf),"%lld ms, rise %.1f st, loud %.2f: %s",(long long)a.ms,double(a.rise),double(a.loud),
+                  a.moves ? (voiceBrows.lowered() ? "down" : "up") : "skip");
+    Log::i("[face] accent ",npc.displayName(),": ",buf);
+    }
   }
 
 void MdlVisual::updateMouth(Npc& npc, uint64_t dt) {
   LipSync::Shape s;
-  if(mouth.update(npc.world().tickCount(),dt,s))
-    head.view.setMMShape("VISEME",s.frame0,s.frame1,s.alpha,s.intensity);
+  if(mouth.update(npc.world().tickCount(),dt,s)) {
+    if(face.isActive())
+      face.setShape("VISEME",s.frame0,s.frame1,s.alpha,s.intensity,npc.world().tickCount()); else
+      head.view.setMMShape("VISEME",s.frame0,s.frame1,s.alpha,s.intensity);
+    }
   if(&npc==LipSync::probeNpc)
     mouth.probe(LipSync::subjectProbe);
   }
 
-void MdlVisual::stopDlgAnim(Npc& npc) {
+void MdlVisual::stopDlgAnim(Npc& npc, bool atEase) {
   mouth.stop();
+  cues.stop();
+  voiceBrows.stop();
+  voiceFace.stop(npc.world().tickCount());
+  voiceNow = nullptr;
   gestures.stop();
   gestureSeq = nullptr;
-  const uint16_t count = Gothic::inst().version().dialogGestureCount();
+  atEase     = atEase && Gaze::holdsGestureHead();
+  if(!atEase)
+    gestureHead = npc.world().tickCount();  // the head goes with what the body does next
+  const uint16_t count = 11;
   for(uint16_t i=0; i<count; i++)
-    skInst->stopAnim(gestureName(uint16_t(i+1)).data());
+    skInst->stopAnim(gestureName(uint16_t(i+1)).data(),atEase);
 
   if(npc.processPolicy()<=NpcProcessPolicy::AiNormal) {
     // avoid PCI traffic on distant npc's

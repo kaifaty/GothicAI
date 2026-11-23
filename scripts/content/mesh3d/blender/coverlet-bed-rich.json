@@ -1,0 +1,6 @@
+{"_": "The rich bed (BEDHIGH_NW_EDEL_01): a quilted tick and a wool coverlet as on the master's bed; its end boards at x +-1.15, its side rails up to 0.45 m (measured on the generator's mesh). The coverlet hangs over the rails.",
+ "mattress": {"x": [-1.145, 1.145], "half": 0.48, "base": 0.38, "edge": 0.48, "crown": 0.02, "r": 0.05},
+ "colliders": [{"x": [-1.16, 1.16], "y": [0.17, 0.45], "az": [0.495, 0.60]},
+               {"x": [-1.29, -1.15], "y": [0.0, 0.65], "z": [-0.64, 0.64]},
+               {"x": [1.15, 1.29], "y": [0.0, 0.66], "z": [-0.64, 0.64]}],
+ "sheet": {"x": [-1.13, 1.13], "width": 1.38}}

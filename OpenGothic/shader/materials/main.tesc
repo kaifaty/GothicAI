@@ -40,6 +40,17 @@ float tessInnerFactor(in vec4 a, in vec4 b, in vec4 c) {
   }
 
 void main() {
+  // The instanced draw pads short meshlets. Discard the whole patch before
+  // reading the padding vertices' unwritten material attributes.
+  if(all(equal(gl_in[0].gl_Position,MeshletPaddingPosition))) {
+    if(gl_InvocationID==0) {
+      gl_TessLevelOuter[0] = 0.0;
+      gl_TessLevelOuter[1] = 0.0;
+      gl_TessLevelOuter[2] = 0.0;
+      gl_TessLevelInner[0] = 0.0;
+      }
+    return;
+    }
   if(gl_InvocationID==0) {
     vec4 pos0 = gl_in[0].gl_Position;
     vec4 pos1 = gl_in[1].gl_Position;

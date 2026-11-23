@@ -1,0 +1,67 @@
+{
+ "macro": {
+  "gender": 1.0,
+  "age": 0.577,
+  "muscle": 0.6,
+  "weight": 0.45,
+  "proportions": 0.6
+ },
+ "race": {
+  "caucasian": 1.0,
+  "asian": 0.0,
+  "african": 0.0
+ },
+ "eyes": true,
+ "res": [
+  887,
+  887
+ ],
+ "ipd_px": 153,
+ "front_eye": [
+  471.5,
+  338
+ ],
+ "profile_eye": [
+  250,
+  340
+ ],
+ "targets": {
+  "head-square": 0.6,
+  "head-scale-horiz-decr-incr": 0.25,
+  "forehead-trans-backward-forward": 0.0,
+  "forehead-scale-vert-decr-incr": 0.1,
+  "eyebrows-trans-down-up": -0.3,
+  "eyebrows-trans-backward-forward": 1.0,
+  "eye-scale-decr-incr": -0.2,
+  "eye-height2-decr-incr": -0.3,
+  "eye-bag-decr-incr": 0.5,
+  "nose-scale-horiz-decr-incr": 0.4,
+  "nose-point-width-decr-incr": 0.4,
+  "nose-volume-decr-incr": 0.2,
+  "cheek-bones-decr-incr": 0.6,
+  "cheek-volume-decr-incr": -0.3,
+  "chin-width-decr-incr": 0.6,
+  "chin-bones-decr-incr": 0.7,
+  "chin-prominent-decr-incr": 0.2,
+  "mouth-upperlip-volume-decr-incr": -0.3,
+  "mouth-lowerlip-volume-decr-incr": -0.2,
+  "mouth-angles-down-up": -0.2,
+  "neck-scale-horiz-decr-incr": 0.5,
+  "nose-scale-depth-decr-incr": 0.6,
+  "nose-scale-vert-decr-incr": 0.2,
+  "nose-hump-decr-incr": 0.2,
+  "nose-trans-backward-forward": 0.5,
+  "measure-neck-circ-decr-incr": 0.4,
+  "head-scale-depth-decr-incr": 0.3,
+  "asym-brown-1-l": 0.4,
+  "asym-mouth-1-r": 0.3,
+  "asym-nose-1-l": 0.3,
+  "asym-eye-1-r": 0.3
+ },
+ "quarter": true,
+ "ref_origin": [
+  0.0,
+  -0.0553,
+  1.5916
+ ]
+}

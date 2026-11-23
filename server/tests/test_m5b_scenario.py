@@ -1,11 +1,14 @@
 import asyncio
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from gothic_ai.game import GameDisconnected, GameError
+from gothic_ai.scenarios.basics import _m5b_check_hero, _m5b_protect_hero
 from gothic_ai.scenarios.common import _m5b_player_weapon
+from gothic_ai.triggers import HERO
 
 
 @pytest.fixture
@@ -73,3 +76,54 @@ async def test_weapon_preparation_has_one_deadline_and_disables_watch(link, bloc
         link.debug.assert_not_awaited()
     elif blocked == "refusal":
         assert link.debug.await_count >= 2
+
+
+@pytest.mark.parametrize("initially_immune", [False, True])
+@pytest.mark.parametrize("interrupted", [False, True])
+async def test_immunity_restores_only_the_original_hero_bit(link, initially_immune, interrupted):
+    flags = ["field", HERO, "FLAGS"]
+    immortal = ["var", "NPC_FLAG_IMMORTAL"]
+    mask = 2
+    bits = mask if initially_immune else 0
+    fired = set()
+
+    def rearm(npc, steps):
+        step, = steps
+        assert npc == "PC_HERO" and step["do"] == "set" and step["value"] == 0
+        fired.discard(step["var"])
+
+    def apply(ops):
+        nonlocal bits
+        for op in ops:
+            for step in op.get("steps") or ():
+                assert op["id"] not in fired  # Removing a one-shot trigger keeps its counter.
+                fired.add(op["id"])
+                assert step["do"] == "set" and step["target"] == flags
+                if step["value"] == ["|", flags, immortal]:
+                    bits |= mask
+                else:
+                    assert step["value"] == ["&", flags, ["~", immortal]]
+                    bits &= ~mask
+
+    def evaluate(npc, expressions):
+        assert npc == "PC_HERO" and expressions == [["&", flags, immortal]]
+        return [bits & mask]
+
+    link.patch_graph = AsyncMock(side_effect=apply)
+    link.story_eval = AsyncMock(side_effect=evaluate)
+    link.story_effect = AsyncMock(side_effect=rearm)
+    with pytest.raises(RuntimeError, match="fight interrupted") if interrupted else nullcontext():
+        async with _m5b_protect_hero(link):
+            assert bits & mask
+            bits |= 1
+            if initially_immune:
+                bits &= ~mask
+            if interrupted:
+                raise RuntimeError("fight interrupted")
+    assert bits == 1 | (mask if initially_immune else 0)
+
+
+def test_hero_guard_rejects_a_living_hero_at_five_of_forty_hp():
+    snap = SimpleNamespace(player=SimpleNamespace(hp=5, hp_max=40))
+    with pytest.raises(GameError, match="after_attached_flee"):
+        _m5b_check_hero(snap, "after_attached_flee", 40)

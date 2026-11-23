@@ -38,7 +38,7 @@ REMOTE
     "$HOST:$REMOTE/source/server/"
   rsync -a --exclude=__pycache__/ "$ROOT/libs/chatgpt-auth/pyproject.toml" \
     "$ROOT/libs/chatgpt-auth/src" "$HOST:$REMOTE/source/libs/chatgpt-auth/"
-  rsync -a "$ROOT/scripts/e2e.sh" "$HOST:$REMOTE/source/scripts/"
+  rsync -a "$ROOT/scripts/e2e.sh" "$ROOT/scripts/base-ensure.sh" "$HOST:$REMOTE/source/scripts/"
   remote_script "$REMOTE" <<'REMOTE'
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
@@ -182,6 +182,8 @@ fi
 [[ -z "$7" ]] || binary="$7"
 out="$root/runs/$run"
 [[ -x "$binary" ]] || { echo "Build $binary first" >&2; exit 1; }
+converter="$(dirname "$binary")/content-convert"
+[[ -x "$converter" ]] || { echo "Missing converter: $converter. Rebuild the engine before running physics e2e." >&2; exit 1; }
 [[ ! -e "$out" ]] || { echo 'Choose a fresh run name' >&2; exit 1; }
 exec 9>"$HOME/gothic-ai/body-simulation.lock"
 flock -w "$lock_wait" 9 || { echo 'Another simulation owns the shared lock' >&2; exit 1; }
@@ -207,10 +209,11 @@ mkdir -p "$out"
 printf '%s\n' "$binary" > "$out/source-binary.txt"
 mkdir -p "$out/reference"
 cp "$binary" "$out/reference/Gothic2Notr"
+cp "$converter" "$out/"
 binary="$out/reference/Gothic2Notr"
 cat > "$out/game-wrapper.sh" <<'WRAPPER'
 #!/usr/bin/env bash
-exec "$PHYSICS_E2E_BINARY" "$@" -g2 -window -aa 0 -gi 0 -rt 0
+exec "$PHYSICS_E2E_BINARY" "$@" -window -aa 0 -gi 0 -rt 0
 WRAPPER
 chmod +x "$out/game-wrapper.sh"
 printf '%s\n' "$engine" > "$out/engine.txt"
@@ -273,7 +276,7 @@ PY
     --setenv="VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json" \
     --setenv="LP_NUM_THREADS=$renderer_threads" --setenv=ALSOFT_DRIVERS=null --setenv=GOTHIC_AI=1 \
     --setenv="OPENGOTHIC_TEXTURES=" --setenv="DECIDER_URL=" \
-    --setenv=LLM=fake --setenv=ASR=fake --setenv=TTS=fake \
+    --setenv=LLM=off --setenv=ASR=fake --setenv=TTS=fake \
     --setenv=UV_NO_DEV=1 --setenv=UV_FROZEN=1 \
     --setenv="PHYSICS_E2E_BINARY=$binary" --setenv="GAME_BIN=$out/game-wrapper.sh" \
     --setenv="GOTHIC_DIR=$HOME/gothic-ai/body-baseline/assets" \
@@ -343,7 +346,7 @@ for scenario, names in expected_names.items():
                            "known_human_pairs": [{"native_tick": v["t"], **pair}
                                                  for v in views for pair in v["known_human_pairs"]]}
 report = {"schema_version": 1, "kind": "physics_stage1_e2e", "engine": (out / "engine.txt").read_text().strip(),
-          "renderer": "lavapipe", "screen": "320x240", "llm": "fake", "brain": False,
+          "renderer": "lavapipe", "screen": "320x240", "llm": "off", "brain": False,
           "started_at_utc": (out / "started-at.txt").read_text().strip(),
           "completed_at_utc": (out / "completed-at.txt").read_text().strip(), "scenarios": scenarios,
           "status": "passed" if all(s["status"] == "passed" for s in scenarios.values()) else "failed"}

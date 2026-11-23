@@ -1,7 +1,10 @@
+#include "loadprobe.h"
 #include "worldobjects.h"
-
 #include "game/serialize.h"
 #include "game/physicssave.h"
+#include "physics/placedcensuscache.h"
+#include "basestore.h"
+#include "resources.h"
 #include "game/herodeed.h"
 #include "game/bodyarena.h"
 #include "physics/physicsnoise.h"
@@ -20,13 +23,33 @@
 #include "world.h"
 #include "utils/workers.h"
 #include "utils/dbgpainter.h"
-#include "gothic.h"
+#include "settings.h"
+#include "gameservices.h"
+#include "game/gamehost.h"
 #include "frameprofile.h"
+#include "camera.h"
+#include "graphics/dynamic/frustrum.h"
+#include "graphics/mesh/pose.h"
+#include "graphics/mesh/gaze.h"
+#include "graphics/mesh/lean.h"
+#include "graphics/mesh/flinch.h"
+#include "graphics/mesh/aim.h"
+#include "graphics/mesh/talkgestures.h"
+#include "graphics/mesh/eyeblink.h"
+#include "graphics/mesh/lipsync.h"
+#include "graphics/worldview.h"
 #include "navdemos.h"
-
+#include "sha256.h"
 #include <Tempest/Painter>
 #include <Tempest/Application>
 #include <Tempest/Log>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <optional>
+#include <stdexcept>
+#include <unordered_set>
 
 using namespace Tempest;
 
@@ -79,6 +102,8 @@ void WorldObjects::load(Serialize &fin) {
   fin.read(v);
   fin.setVersion(v);
   }
+  for(auto& source:placedItems)
+    source.item=nullptr;
   itemArr.clear();
   items.clear();
 
@@ -98,12 +123,13 @@ void WorldObjects::load(Serialize &fin) {
     for(size_t i=0; i<npcInvalid.size(); ++i) {
       npcInvalid[i]->load(fin,i,"/npc_invalid/");
       npcInvalid[i]->suspendRagdoll();
+      npcInvalid[i]->suspendLogicalBodyState();
       }
     }
 
   fin.setEntry("worlds/",fin.worldName(),"/items");
   fin.read(sz);
-  const auto burningTorch=owner.script().findSymbolIndex("ItLsTorchburning");
+  const auto burningTorch=owner.rules().findSymbolIndex("ItLsTorchburning");
   for(size_t i=0; i<sz; ++i) {
     auto it = std::make_unique<Item>(owner,fin,Item::T_World);
     if(burningTorch!=size_t(-1) && it->clsId()==burningTorch)
@@ -112,6 +138,7 @@ void WorldObjects::load(Serialize &fin) {
     items.add(itemArr.back().get());
     }
 
+  loadPlacedItems(fin);
   loadItemPhysics(fin);
 
   for(auto& i:rootVobs)
@@ -220,48 +247,325 @@ void WorldObjects::loadItemPhysics(Serialize& fin) {
          !finiteVelocity(state.velocity) || !finiteVelocity(state.angular))
         return;
       }
-    for(const auto& state:states)
-      itemArr[state.index]->restorePhysics(state.matrix,state.velocity,state.angular,state.sleeping);
+    for(const auto& state:states) {
+      auto& item=*itemArr[state.index];
+      // Linked placements use their saved matrix, but always enter the new
+      // proximity set asleep. Their original ZEN census has already run.
+      if(Settings::physicsFlags().placedItems && item.isPlacedItem())
+        continue;
+      item.restorePhysics(state.matrix,state.velocity,state.angular,state.sleeping);
+      }
     }
   catch(const std::exception& e) {
     Tempest::Log::e("item physics load: ",e.what());
     }
   }
 
+void WorldObjects::linkPlacedItem(PlacedItem& source, Item& item) {
+  source.item=&item;
+  item.placedZenId=source.zenId;
+  item.placedAllowed=source.validation.enabled;
+  if(Settings::physicsFlags().placedItems)
+    item.setPhysicsDisable();
+  }
+
+std::vector<DynamicWorld::PlacedItemCensusEntry> WorldObjects::placedCensusVerdicts(
+    const std::vector<DynamicWorld::PlacedItemCandidate>& candidates, bool& bodies) {
+  using Clock=std::chrono::steady_clock;
+  auto& stats=placedCensus;
+  stats={};
+  stats.items=candidates.size();
+  auto& physic=*owner.physic();
+  auto started=Clock::now();
+  const auto elapsed=[&]() {
+    const auto now=Clock::now();
+    const double ms=std::chrono::duration<double,std::milli>(now-started).count();
+    started=now;
+    return ms;
+    };
+  // Build all authored shapes before querying any of them. The same Item path
+  // selects item_hulls and applies scale for both the census and live bodies.
+  bodies=false;
+  const auto createBodies=[&]() {
+    for(auto& source:placedItems) {
+      LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
+      source.item->setPhysicsEnable(owner);
+      }
+    bodies=true;
+    elapsed(); // body preparation is reported by the load probe, not as census time
+    };
+  std::vector<DynamicWorld::PlacedItemCensusEntry> verdicts;
+  std::optional<PlacedCensusCache> cache;
+  auto status=PlacedCensusCache::Status::Disabled;
+  if(PlacedCensusCache::enabled()) {
+    std::filesystem::path cacheRoot;
+    try {
+      cacheRoot=BaseStore::cacheRoot();
+      }
+    catch(const std::exception&) {
+      // Without a derived root the census is simply computed live.
+      }
+    const auto inputs=Resources::wayHeightInputs(owner.name());
+    const auto& flags=Settings::physicsFlags();
+    const uint32_t bits=uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)|(uint32_t(physic.staticCollisionSplit())<<2)|
+                        (uint32_t(flags.furnitureParts)<<3)|(uint32_t(flags.itemHulls)<<4)|(uint32_t(flags.placedItems)<<5)|
+                        (uint32_t(flags.destruction)<<6);
+    if(!cacheRoot.empty() && !inputs.baseFingerprint.empty()) {
+      cache.emplace(cacheRoot,PlacedCensusCache::Key{inputs.baseFingerprint,
+          std::filesystem::path(owner.name()).stem().string(),inputs.contentFingerprint,bits,
+          physic.placedItemCensusInputs(candidates)});
+      stats.keyMs=elapsed();
+      status=cache->read(candidates.size(),verdicts);
+      stats.readMs=elapsed();
+      }
+    }
+  stats.status=PlacedCensusCache::statusName(status);
+  if(status!=PlacedCensusCache::Status::Hit) {
+    createBodies();
+    verdicts=physic.placedItemCensus(candidates);
+    stats.censusMs=elapsed();
+    if(cache && !cache->path().empty()) {
+      cache->save(verdicts);
+      stats.writeMs=elapsed();
+      }
+    if(status!=PlacedCensusCache::Status::Disabled)
+      Tempest::Log::i("placed item census cache: miss (",stats.status,"), recomputed ",candidates.size()," items");
+    return verdicts;
+    }
+  Tempest::Log::i("placed item census cache: hit, ",candidates.size()," items");
+  if(PlacedCensusCache::checkMode()) {
+    // Equivalence check: the live census must match the stored one bit for bit.
+    createBodies();
+    const auto live=physic.placedItemCensus(candidates);
+    stats.checkMs=elapsed();
+    stats.checked=true;
+    size_t differing=0;
+    for(size_t i=0;i<live.size();++i) {
+      const auto fields=PlacedCensusCache::differences(verdicts[i],live[i]);
+      if(fields.empty())
+        continue;
+      ++differing;
+      // One short line per field: Tempest truncates a log line at 255 bytes.
+      Tempest::Log::e("placed item census check: index=",i," zen=",placedItems[i].zenId," visual=",placedItems[i].visual,
+                      " differing_fields=",fields.size());
+      for(const auto& field:fields)
+        Tempest::Log::e("placed item census check: index=",i," ",field.field," cached=",field.a," live=",field.b);
+      }
+    if(differing>0) {
+      Tempest::Log::e("placed item census check: FAILED, ",differing," of ",live.size()," items differ");
+      std::abort();
+      }
+    Tempest::Log::i("placed item census check: passed, ",live.size()," items identical");
+    }
+  return verdicts;
+  }
+
+void WorldObjects::finalizePlacedItems() {
+  LoadProbe::Startup::Scope probe(LoadProbe::Startup::Other,true,"placed-items");
+  const auto started=std::chrono::steady_clock::now();
+  std::vector<DynamicWorld::PlacedItemCandidate> candidates;
+  candidates.reserve(placedItems.size());
+  // Candidates carry the inputs of their bodies; the bodies themselves are
+  // created only if the census runs live (see placedCensusVerdicts).
+  for(auto& source:placedItems) {
+    LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
+    auto& item=*source.item;
+    candidates.push_back({&item.physic,item.isMission(),source.visual,source.zenId,source.instance,
+                          item.physicsProto(),item.transform(),uint32_t(item.handle().material)});
+    }
+  bool bodies=false;
+  const auto verdicts=placedCensusVerdicts(candidates,bodies);
+  size_t allowed=0;
+  for(size_t i=0;i<placedItems.size();++i) {
+    auto& source=placedItems[i];
+    source.validation=verdicts[i];
+    source.item->placedAllowed=source.validation.enabled;
+    allowed+=source.validation.enabled;
+    if(bodies) {
+      LoadProbe::Startup::Scope removeProbe(LoadProbe::Startup::PhysicsRemove,false,"placed-items");
+      source.item->setPhysicsDisable();
+      }
+    }
+  if(!bodies) {
+    // Cache hit: no temporary body ever existed. Jolt still hands out the
+    // body IDs the live path would leave behind (one per candidate with a
+    // mesh), so later bodies and their contact order stay the same.
+    // Admitted items get their bodies near the hero later; build their hulls
+    // now, as the live path does, so proximity creation never builds one in a frame.
+    {
+    LoadProbe::Startup::Scope removeProbe(LoadProbe::Startup::PhysicsRemove,false,"placed-items");
+    owner.physic()->cycleBodyIds(size_t(std::count_if(candidates.begin(),candidates.end(),
+                                 [](const DynamicWorld::PlacedItemCandidate& c) { return c.proto!=nullptr; })));
+    }
+    if(Settings::physicsFlags().itemHulls)
+      for(size_t i=0;i<placedItems.size();++i)
+        if(placedItems[i].validation.enabled && candidates[i].proto!=nullptr) {
+          LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
+          owner.physic()->itemHullShape(*candidates[i].proto,placedItems[i].visual);
+          }
+    owner.invalidateVobIndex();
+    }
+  placedValidationMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+  Tempest::Log::i("placed item geometry: ",placedItems.size()," candidates, ",allowed,
+                 " allowed, ",placedValidationMs," ms");
+  }
+
+WorldObjects::PhysicsDigest WorldObjects::physicsDigest() const {
+  PhysicsDigest result;
+  result.native=owner.physic()->bodyDigest();
+  Sha256 items;
+  for(size_t i=0;i<itemArr.size();++i) {
+    const auto& item=*itemArr[i];
+    if(!item.isDynamic())
+      continue;
+    ++result.itemBodies;
+    const uint32_t head[5]={uint32_t(i),uint32_t(item.clsId()),item.placedItemZenId(),item.physicsBodyId(),
+                            uint32_t(item.physicsSleeping())};
+    items.update(head,sizeof(head));
+    items.update(item.transform().data(),16*sizeof(float));
+    }
+  result.items=items.finish();
+  return result;
+  }
+
+void WorldObjects::tickPlacedItems() {
+  placedCreatedThisFrame=0;
+  if(!Settings::physicsFlags().placedItems)
+    return;
+  const auto* hero=owner.player();
+  if(hero==nullptr)
+    return;
+  constexpr float enterSquared=2000.f*2000.f, leaveSquared=2200.f*2200.f;
+  constexpr size_t creationBudget=4;
+  for(auto& source:placedItems) {
+    auto* item=source.item;
+    if(item==nullptr)
+      continue;
+    if(!source.validation.enabled) {
+      if(item->isDynamic())
+        item->setPhysicsDisable();
+      continue;
+      }
+    const float distance=(item->position()-hero->position()).quadLength();
+    if(item->isDynamic()) {
+      if(distance>leaveSquared && item->physicsSleeping())
+        item->setPhysicsDisable();
+      }
+    else if(distance<enterSquared && placedCreatedThisFrame<creationBudget) {
+      placedCreatedThisFrame+=item->wakePhysics() ? 1 : 0;
+      }
+    }
+  }
+
+void WorldObjects::savePlacedItems(Serialize& fout) const {
+  uint32_t count=0;
+  for(const auto& item:itemArr)
+    count+=item->isPlacedItem();
+  // Even an empty entry distinguishes a new save from a legacy save. Dropped
+  // items must not acquire an authored identity merely by landing on its pose.
+  fout.setEntry("worlds/",fout.worldName(),"/placed-items");
+  fout.write(uint32_t(0x314c4950),uint16_t(1),fout.worldName(),uint32_t(itemArr.size()),count);
+  for(size_t i=0;i<itemArr.size();++i)
+    if(itemArr[i]->isPlacedItem())
+      fout.write(uint32_t(i),itemArr[i]->placedZenId);
+  }
+
+void WorldObjects::loadPlacedItems(Serialize& fin) {
+  if(!fin.setEntry("worlds/",fin.worldName(),"/placed-items")) {
+    // Legacy saves have no identity. Only an unchanged instance at its exact
+    // authored pose can be linked; every other item keeps its legacy physics.
+    const auto samePose=[](const PlacedItem& source, const Item& item) {
+      const auto& matrix=item.localTransform();
+      if(!PhysicsSave::validTransform(matrix))
+        return false;
+      if(const auto* box=item.bBox()) {
+        for(unsigned i=0;i<8;++i) {
+          Vec3 original(box[(i&1)!=0].x,box[(i&2)!=0].y,box[(i&4)!=0].z);
+          auto saved=original;
+          source.origin.project(original);
+          matrix.project(saved);
+          if((original-saved).quadLength()>.01f*.01f)
+            return false;
+          }
+        return true;
+        }
+      for(size_t i=0;i<16;++i)
+        if((i<12 || i>14) && std::abs(source.origin.data()[i]-matrix.data()[i])>1.e-6f)
+          return false;
+      const Vec3 distance(source.origin.at(3,0)-matrix.at(3,0),source.origin.at(3,1)-matrix.at(3,1),
+                          source.origin.at(3,2)-matrix.at(3,2));
+      return distance.quadLength()<=.01f*.01f;
+      };
+    for(auto& item:itemArr)
+      for(auto& source:placedItems)
+        if(source.item==nullptr && source.instance==item->clsId() &&
+           samePose(source,*item)) {
+          linkPlacedItem(source,*item);
+          break;
+          }
+    return;
+    }
+  uint32_t magic=0,total=0,count=0;
+  uint16_t schema=0;
+  std::string worldName;
+  fin.read(magic,schema,worldName,total,count);
+  if(magic!=0x314c4950 || schema!=1 || worldName!=fin.worldName() || total!=itemArr.size() || count>total)
+    throw std::runtime_error("Invalid placed item save header");
+  std::unordered_set<uint32_t> linked;
+  uint32_t previous=0;
+  for(uint32_t i=0;i<count;++i) {
+    uint32_t index=0,zenId=0;
+    fin.read(index,zenId);
+    if(index>=total || (i>0 && index<=previous) || !linked.insert(zenId).second)
+      throw std::runtime_error("Invalid placed item save identity");
+    previous=index;
+    auto source=std::find_if(placedItems.begin(),placedItems.end(),[&](const PlacedItem& source) {
+      return source.zenId==zenId;
+      });
+    if(source==placedItems.end() || source->instance!=itemArr[index]->clsId())
+      throw std::runtime_error("Unknown placed item save identity");
+    linkPlacedItem(*source,*itemArr[index]);
+    }
+  }
+
+// Keep the training/arena dependencies in this translation unit, as for the animation tail.
+bool WorldObjects::keepsFullSimulation(const Npc& npc) {
+  return NavDemos::fullSimulation(npc) || BodyArena::isActor(npc);
+  }
+
+bool WorldObjects::keepsNearPolicy(const Npc& npc) {
+  return NavDemos::fullSimulation(npc);
+  }
+
 void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
+  updateSimTiers(true);
+  reservations.tick();
+  const auto& logic = NpcLogicAudit::stats();
+  const uint64_t logicBefore[] = {logic.ticks,logic.bodyMismatch,logic.weaponMismatch,
+                                 logic.early,logic.late,logic.events,logic.eventMismatch,
+                                 logic.waitEarly,logic.waitLate,logic.reanchoredCount(),logic.bodySamples,logic.weaponSamples};
+  tickPlacedItems();
   auto passive=std::move(sndPerc);
   sndPerc.clear();
 
-  bool needSort = false;
-  for(size_t i=1; i<npcArr.size(); ++i) {
-    auto& a = npcArr[i-1];
-    auto& b = npcArr[i-0];
-    if(a->handle().id>b->handle().id) {
-      needSort = true;
-      break;
-      }
-    }
-
-  if(needSort) {
-    std::sort(npcArr.begin(),npcArr.end(),[](std::unique_ptr<Npc>& a, std::unique_ptr<Npc>& b){
-      return a->handle().id<b->handle().id;
-      });
-    }
-
-  auto       camera  = Gothic::inst().camera();
+  auto       camera  = GameServices::inst().camera();
   const bool freeCam = (camera!=nullptr && camera->isFree());
   const auto pl      = owner.player();
   // Body training with a frozen world: other NPCs (but the hero) and interactive objects stand still.
   const bool frozen  = BodyArena::frozenWorld();
-  for(size_t i=0; i<npcArr.size(); ++i) {
-    auto& npc = *npcArr[i];
-    uint64_t d = (pl==&npc ? dtPlayer : dt);
-    if(freeCam && pl==&npc)
-      continue;
-    if(frozen && pl!=&npc && !BodyArena::isActor(npc))
-      continue;
-    npc.tick(d);
-    }
+  tickNpcs(dt,dtPlayer,pl,freeCam,frozen);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicSamples,logic.ticks-logicBefore[0]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicBodyMismatch,logic.bodyMismatch-logicBefore[1]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponMismatch,logic.weaponMismatch-logicBefore[2]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEarly,logic.early-logicBefore[3]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicLate,logic.late-logicBefore[4]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEvents,logic.events-logicBefore[5]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEventMismatch,logic.eventMismatch-logicBefore[6]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWaitEarly,logic.waitEarly-logicBefore[7]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWaitLate,logic.waitLate-logicBefore[8]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicReanchored,logic.reanchoredCount()-logicBefore[9]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicBodySamples,logic.bodySamples-logicBefore[10]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponSamples,logic.weaponSamples-logicBefore[11]);
 
   for(auto& i:routines) {
     auto s = i.stateByTime(owner.time());
@@ -271,21 +575,30 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
       }
     }
 
+  {
+  FrameProfile::Scope timing(FrameProfile::Zone::CollisionZones);
   collisionZn.erase(std::remove_if(collisionZn.begin(), collisionZn.end(), [](CollisionZone* b){
     return b==nullptr;
     }), collisionZn.end());
 
   for(CollisionZone* z:collisionZn)
     z->tick(dt);
+  }
 
+  {
+  FrameProfile::Scope timing(FrameProfile::Zone::InteractiveTick);
   if(!frozen)
     for(auto& i:interactiveObj)
       i->tick(dt);
+  }
 
+  {
+  FrameProfile::Scope timing(FrameProfile::Zone::TriggersTick);
   for(auto i:triggersTk)
     i->tick(dt);
 
   tickTriggers(dt);
+  }
 
   bullets.remove_if([](Bullet& b){
     return b.isFinished();
@@ -302,35 +615,14 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
       }
     }
 
-  npcNear.clear();
-  //const int   PERC_DIST_INTERMEDIAT = 1000;
-  const float nearDist              = 3000*3000;
-  const float farDist               = 6000*6000;
-
-  auto cpos  = camera!=nullptr ? camera->originLwc() : Vec3();
-  auto plPos = pl!=nullptr ? pl->position() : cpos;
-  for(auto& i:npcArr) {
-    float dist = (i->position()-plPos).quadLength();
-    // Training actors keep native AI/perception and animation at every distance.
-    if(dist<nearDist || NavDemos::fullSimulation(*i)){
-      npcNear.push_back(i.get());
-      if(i.get()!=pl)
-        i->setProcessPolicy(NpcProcessPolicy::AiNormal);
-      } else
-    if(dist<farDist) {
-      i->setProcessPolicy(NpcProcessPolicy::AiFar);
-      } else {
-      i->setProcessPolicy(NpcProcessPolicy::AiFar2);
-      }
-    // debug
-    // if(i.get()!=pl)
-    //   i->setProcessPolicy(NpcProcessPolicy::AiFar2);
-    }
-  tickNear(dt);
+  const auto cpos = camera!=nullptr ? camera->originLwc() : Vec3();
+  updateNpcPolicies(pl,pl!=nullptr ? pl->position() : cpos);
+  { FrameProfile::Scope timing(FrameProfile::Zone::NpcTickNear); tickNear(dt); }
 
   if(pl==nullptr)
     return;
 
+  FrameProfile::Scope perception(FrameProfile::Zone::NpcPerception);
   for(auto& ptr:npcNear) {
     Npc& i = *ptr;
     if(i.isPlayer() || i.isDead())
@@ -348,7 +640,7 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
     }
   for(auto& r:passive)
     if(r.deed!=nullptr)
-      Gothic::inst().onHeroDeed(*r.deed);
+      GameHost::inst().emitHeroDeed(*r.deed);
   }
 
 uint32_t WorldObjects::npcId(const Npc *ptr) const {
@@ -378,6 +670,8 @@ uint32_t WorldObjects::mobsiId(const void* ptr) const {
   }
 
 Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Npc);
+  LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Npc,sizeof(Npc));
   Npc* npc = new Npc(owner,npcInstance,at);
   if(auto pos = npc->currentTaPoint()) {
     if(pos->isLocked()) {
@@ -389,15 +683,16 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
     npc->setDirection (pos->direction());
     npc->attachToPoint(pos);
     npc->updateTransform();
-    owner.script().invokeRefreshAtInsert(*npc);
+    owner.rules().invokeRefreshAtInsert(*npc);
     npcArr.emplace_back(npc);
     } else {
-    const auto* sym = owner.script().findSymbol(npcInstance);
-    Log::e("addNpc: ", npcInstance, " (", (sym!=nullptr ? sym->name() : "nullptr" ), ") has invalid spawnpoint (", at, ")");
+    const auto sym = owner.rules().symbolName(npcInstance);
+    Log::e("addNpc: ", npcInstance, " (", (sym.empty() ? std::string_view("nullptr") : sym ), ") has invalid spawnpoint (", at, ")");
     auto& point = owner.deadPoint();
     npc->attachToPoint(nullptr);
     npc->setPosition(point.position());
     npc->updateTransform();
+    npc->suspendLogicalBodyState();
     npcInvalid.emplace_back(npc);
     }
 
@@ -405,6 +700,8 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
   }
 
 Npc* WorldObjects::addNpc(size_t npcInstance, const Vec3& pos) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Npc);
+  LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Npc,sizeof(Npc));
   auto point = owner.findWayPoint(pos);
   if(point==nullptr) {
     point = owner.findFreePoint(pos, "");
@@ -414,7 +711,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, const Vec3& pos) {
   Npc* npc   = new Npc(owner,npcInstance,pstr);
   npc->setPosition  (pos.x,pos.y,pos.z);
   npc->updateTransform();
-  owner.script().invokeRefreshAtInsert(*npc);
+  owner.rules().invokeRefreshAtInsert(*npc);
 
   npcArr.emplace_back(npc);
   return npc;
@@ -458,11 +755,16 @@ void WorldObjects::removeNpc(Npc& npc) {
   auto ptr = takeNpc(&npc);
   if(ptr==nullptr)
     return;
+  npc.stopActivityEvents(ActivityEvents::Interrupted);
+  // The removed NPC is kept for dangling references, not destroyed: its object is free for others now.
+  npc.setInteraction(nullptr,true);
+  npc.endMeleeAiSpecial();
   BodyObservations::forget(&npc);
   auto& point = owner.deadPoint();
   npc.attachToPoint(nullptr);
   npc.setPosition(point.position());
   npc.updateTransform();
+  npc.suspendLogicalBodyState();
   npcRemoved.emplace_back(std::move(ptr));
   }
 
@@ -527,6 +829,70 @@ void WorldObjects::syncRagdolls() {
     npc->syncRagdoll();
   }
 
+static bool animationProbed(const Npc& npc) {
+  // Test-bench probes sample this NPC's solved pose every frame.
+  const void* p = &npc;
+  return p==Pose::probeNpc || p==Gaze::probeNpc || p==Lean::probeNpc || p==Flinch::probeNpc ||
+         p==Aim::probeNpc || p==TalkGestures::probeNpc || p==EyeBlink::probeNpc || p==LipSync::probeNpc;
+  }
+
+bool WorldObjects::makeAnimationLodView(AnimationLod::View& view) const {
+  const auto* camera = GameHost::inst().sessionCamera(owner.gameSession());
+  if(camera==nullptr)
+    return false;
+  const Tempest::Vec3* sun = nullptr;
+  Tempest::Vec3 sunDir;
+  if(auto* wview = owner.view()) {
+    sunDir = wview->mainLight().dir();
+    sun    = &sunDir;
+    }
+  view.make(camera->viewProj(),camera->originLwc(),sun);
+  return true;
+  }
+
+void WorldObjects::pinAnimationLodTargets() {
+  // A blade's victims and bystanders: their melee shadow bodies are queried
+  // against every swing, and hit reactions read their bones. Only NPCs with a
+  // drawn weapon and a target swing; there are few of them.
+  constexpr float BladeReach = 400.f;
+  fighters.clear();
+  for(auto& npc:npcArr) {
+    npc->setAnimationLodTargeted(false);
+    if(npc->weaponState()==WeaponState::NoWeapon || npc->isDead())
+      continue;
+    if(auto* t = npc->target()) {
+      t->setAnimationLodTargeted(true);
+      fighters.push_back(npc->position());
+      }
+    }
+  if(fighters.empty())
+    return;
+  for(auto& npc:npcArr) {
+    const auto at = npc->position();
+    for(const auto& f:fighters)
+      if((at-f).quadLength()<BladeReach*BladeReach) {
+        npc->setAnimationLodTargeted(true);
+        break;
+        }
+    }
+  }
+
+bool WorldObjects::mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const {
+  // NpcProcessPolicy::AiNormal is the hero's 30 m ring: perceptions, living
+  // bodies, dialogs and native combat around the hero read the pose there.
+  return npc.processPolicy()!=NpcProcessPolicy::AiFar && npc.processPolicy()!=NpcProcessPolicy::AiFar2 ? true :
+         npc.animationLodPinned() || view.nearCamera(npc) || BodyObservations::watched(npc) ||
+         BodyArena::isActor(npc) || NavDemos::fullSimulation(npc) || animationProbed(npc);
+  }
+
+bool WorldObjects::animationPassSkips(const Npc& npc, const Npc* player, bool skipFar, bool frozen) {
+  // Headless body training may skip NPCs beyond the far range (>60 m from the hero)
+  // that are not arena actors: nobody sees them, and they are most of the world.
+  if(skipFar && npc.processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(npc))
+    return true;
+  return frozen && &npc!=player && !BodyArena::isActor(npc);
+  }
+
 void WorldObjects::updateAnimation(uint64_t dt) {
   FrameProfile::Scope timing(FrameProfile::Zone::ParallelAnimation);
   static bool doAnim=true;
@@ -534,52 +900,102 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     return;
   if(dt==0)
     return;
-  // Headless body training may skip NPCs beyond the far range (>60 m from the hero)
-  // that are not arena actors: nobody sees them, and they are most of the world.
   static const bool skipFar = [] {
     const char* v = std::getenv("OPENGOTHIC_ANIM_SKIP_FAR");
     return v!=nullptr && v[0]=='1';
     }();
   const bool frozen = BodyArena::frozenWorld();
   const auto pl     = owner.player();
-  Workers::parallelTasks(npcArr,[dt,frozen,pl](std::unique_ptr<Npc>& i){
-    if(skipFar && i->processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(*i))
+  bool animationProbe=FrameProfile::enabled();
+  const auto& lodCfg = AnimationLod::config();
+  AnimationLod::View view;
+  const bool hasView = (lodCfg.enabled || animationProbe) && makeAnimationLodView(view);
+  const bool lod     = lodCfg.enabled && hasView && !frozen;
+  const uint32_t rate  = lodCfg.rate;
+  const uint32_t frame = animationLodFrame++;
+  if(lod)
+    pinAnimationLodTargets();
+  const bool keepShadow = animationTailKeepsShadow();
+  // What the steps after the pass have to do for each NPC (world/animationtail.h); the pass
+  // decides it at the end of its work on that NPC, the skipped ones included.
+  tailPlan.assign(npcArr.size(),0);
+  std::atomic<uint64_t> deferred{0};
+  FrameProfile::Scope npcPass(FrameProfile::Zone::AnimationNpcPass);
+  AnimationLod::beginPass();
+  Workers::parallelTasks(npcArr,[&](std::unique_ptr<Npc>& i){
+    auto& plan = tailPlan[size_t(&i-npcArr.data())];
+    if(animationPassSkips(*i,pl,skipFar,frozen)) {
+      plan = i->animationTailPlan(true,keepShadow);
       return;
-    if(frozen && i.get()!=pl && !BodyArena::isActor(*i))
-      return;
-    i->updateAnimation(dt);
-    });
-  // Retiring a shadow window can also run damage scripts here. Scripts may
-  // append or remove NPCs, so retain neither vector iterators nor references.
-  for(size_t i=0;i<npcArr.size();) {
-    auto* npc = npcArr[i].get();
-    if(skipFar && npc->processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(*npc))
-      ++i;
-    else if(frozen && npc!=pl && !BodyArena::isActor(*npc))
-      ++i;
-    else {
-      npc->updateMeleeShadow();
-      if(i<npcArr.size() && npcArr[i].get()==npc)
-        ++i;
-      else if(const auto at=npcId(npc); at!=uint32_t(-1))
-        i=size_t(at)+1;
       }
+    if(lod && i.get()!=pl && (frame+AnimationLod::phase(*i))%rate!=0 &&
+       !view.visible(*i) && !mustUpdateAnimation(*i,view)) {
+      // Outside the frustum and its shadow: the next update applies this dt.
+      i->deferAnimation(dt);
+      deferred.fetch_add(1,std::memory_order_relaxed);
+      // The same bones the shadow loop would pose this body from in place.
+      i->prepareMeleeShadowBody();
+      plan = i->animationTailPlan(false,keepShadow);
+      return;
+      }
+    if(animationProbe) {
+      // Conservative body sphere in world coordinates; no occlusion test.
+      const bool visible=view.probeVisible(*i);
+      const auto started=std::chrono::steady_clock::now();
+      i->updateAnimation(dt);
+      const auto ns=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-started).count();
+      FrameProfile::npcAnimation(size_t(i->simTier()),size_t(i->processPolicy()),visible,uint64_t(ns));
+      } else {
+      i->updateAnimation(dt);
+      }
+    // The melee shadow loop below publishes this body unless its bones move first.
+    i->prepareMeleeShadowBody();
+    plan = i->animationTailPlan(false,keepShadow);
+    });
+  AnimationLod::endPass();
+  npcPass.finish();
+  animationLodDeferred = deferred.load(std::memory_order_relaxed);
+  FrameProfile::add(FrameProfile::Amount::NpcAnimDeferred,animationLodDeferred);
+  updateAnimationTail(dt,pl,skipFar,frozen);
+  }
+
+void WorldObjects::catchUpAnimation() {
+  // Runs after the camera has moved for this frame and before anything is
+  // drawn: an NPC the turn has brought into view gets its pose now.
+  FrameProfile::add(FrameProfile::Amount::NpcAnimSyncOnRead,AnimationLod::takeSyncs());
+  const bool catchUp = AnimationLod::config().enabled && animationLodDeferred!=0;
+  if(!catchUp && !campfireBodiesSuspended)
+    return;
+  AnimationLod::View view;
+  if(!makeAnimationLodView(view))
+    return;
+  if(campfireBodiesSuspended) {
+    // A camera turn can bring a distant campfire into view in the same frame.
+    // Restore the collision entry on this thread before the parallel pose pass.
+    for(auto& npc:npcArr)
+      if(npc->campfireBodySuspended() && (mustUpdateAnimation(*npc,view) || view.visible(*npc)))
+        npc->resumeCampfireBody();
     }
-  // Query the final published interval before callers can decide a terminal
-  // combat outcome. The flush does not advance physics, animation or clocks.
-  owner.physic()->flushShadowBlades();
-  for(size_t i=0;i<npcArr.size();) {
-    auto* npc = npcArr[i].get();
-    npc->resolveMeleeContacts();
-    if(i<npcArr.size() && npcArr[i].get()==npc)
-      ++i;
-    else if(const auto at=npcId(npc); at!=uint32_t(-1))
-      i=size_t(at)+1;
-    }
-  if(!frozen)
-    interactiveObj.parallelFor([dt](Interactive& i){
-      i.updateAnimation(dt);
-      });
+  if(!catchUp)
+    return;
+  std::atomic<uint64_t> caught{0};
+  AnimationLod::beginPass();
+  Workers::parallelTasks(npcArr,[&](std::unique_ptr<Npc>& i){
+    if(!i->hasDeferredAnimation())
+      return;
+    if(!view.visible(*i) && !view.nearCamera(*i))
+      return;
+    i->updateAnimation(0);
+    caught.fetch_add(1,std::memory_order_relaxed);
+    });
+  AnimationLod::endPass();
+  FrameProfile::add(FrameProfile::Amount::NpcAnimCatchUp,caught.load(std::memory_order_relaxed));
+  }
+
+void WorldObjects::syncDeferredAnimation() {
+  for(auto& npc:npcArr)
+    if(npc->hasDeferredAnimation())
+      npc->updateAnimation(0);
   }
 
 bool WorldObjects::isTargeted(Npc& dst) {
@@ -611,7 +1027,7 @@ Npc *WorldObjects::findHero() {
 
 Npc *WorldObjects::findNpcByInstance(size_t instance, size_t n) {
   for(auto& i:npcArr) {
-    if(i->handle().symbol_index()==instance) {
+    if(i->instanceSymbol()==instance) {
       if(n==0)
         return i.get();
       --n;
@@ -622,7 +1038,7 @@ Npc *WorldObjects::findNpcByInstance(size_t instance, size_t n) {
 
 Item* WorldObjects::findItemByInstance(size_t instance, size_t n) {
   for(auto& i:itemArr) {
-    if(i->handle().symbol_index()==instance) {
+    if(i->clsId()==instance) {
       if(n==0)
         return i.get();
       --n;
@@ -648,12 +1064,17 @@ void WorldObjects::detectNpc(const float x, const float y, const float z,
 
 void WorldObjects::detectItem(const float x, const float y, const float z,
                               const float r, const std::function<void(Item&)>& f) {
-  float maxDist=r*r;
-  for(auto& i:itemArr) {
-    auto qDist = (i->position()-Vec3(x,y,z)).quadLength();
+  const Vec3 center(x,y,z);
+  const float maxDist=r*r;
+  std::vector<Item*> nearby;
+  items.find(center,r,[&](Item& item) {
+    const auto qDist = (item.position()-center).quadLength();
     if(qDist<maxDist)
-      f(*i);
-    }
+      nearby.push_back(&item);
+    });
+  // Spell callbacks can create bodies and invalidate this same spatial index.
+  for(auto* item:nearby)
+    f(*item);
   }
 
 void WorldObjects::detectMover(const std::function<void(MoveTrigger&)>& f) {
@@ -736,7 +1157,7 @@ void WorldObjects::stopEffect(const VisualFx& vfx) {
   }
 
 Item* WorldObjects::addItem(const asset::VItem& vob) {
-  size_t inst = owner.script().findSymbolIndex(vob.instance);
+  size_t inst = owner.rules().findSymbolIndex(vob.instance);
   Item*  it   = addItem(inst,"");
   if(it==nullptr)
     return nullptr;
@@ -745,6 +1166,14 @@ Item* WorldObjects::addItem(const asset::VItem& vob) {
                               vob.rotation.columns[0].z, vob.rotation.columns[1].z, vob.rotation.columns[2].z, vob.position.z,
                               0, 0, 0, 1);
   it->setObjMatrix(m);
+  PlacedItem source;
+  source.zenId=vob.id;
+  source.instance=inst;
+  source.visual=it->handle().visual;
+  source.origin=m;
+  source.item=it;
+  it->placedZenId=vob.id;
+  placedItems.push_back(std::move(source));
   return it;
   }
 
@@ -756,6 +1185,15 @@ std::unique_ptr<Item> WorldObjects::takeItem(Item &it) {
       itemArr.pop_back();
       items.del(ret.get());
       ret->setPhysicsDisable();
+      if(ret->isPlacedItem()) {
+        for(auto& source:placedItems)
+          if(source.item==ret.get()) {
+            source.item=nullptr;
+            break;
+            }
+        ret->placedZenId=uint32_t(-1);
+        ret->placedAllowed=true;
+        }
       onItemRemoved(*ret);
       return ret;
       }
@@ -779,7 +1217,7 @@ size_t WorldObjects::hasItems(std::string_view tag, size_t itemCls) {
 void WorldObjects::onItemRemoved(const Item& itm) {
   for(auto& i:npcArr)
     i->onWldItemRemoved(itm);
-  owner.script().onWldItemRemoved(itm);
+  owner.rules().onWldItemRemoved(itm);
   }
 
 Bullet& WorldObjects::shootBullet(const Item& itmId, const Vec3& pos, const Vec3& dir, float tgRange, float speed) {
@@ -828,8 +1266,8 @@ Item* WorldObjects::addItem(size_t itemInstance, const Tempest::Vec3& pos, const
   }
 
 Item* WorldObjects::addItemDyn(size_t itemInstance, const Tempest::Matrix4x4& pos, size_t ownerNpc) {
-  //size_t ItLsTorchburned  = owner.script().findSymbolIndex("ItLsTorchburned");
-  size_t ItLsTorchburning = owner.script().findSymbolIndex("ItLsTorchburning");
+  //size_t ItLsTorchburned  = owner.rules().findSymbolIndex("ItLsTorchburned");
+  size_t ItLsTorchburning = owner.rules().findSymbolIndex("ItLsTorchburning");
 
   if(itemInstance==size_t(-1))
     return nullptr;
@@ -930,7 +1368,7 @@ Npc* WorldObjects::findNpcNear(const Npc& pl, Npc* def, const SearchOpt& opt) {
       return def;
     }
   auto r = findObj(npcNear,pl,opt);
-  if(r!=nullptr && (!Gothic::options().hideFocus || !r->isDead() ||
+  if(r!=nullptr && (!Settings::options().hideFocus || !r->isDead() ||
                      r->inventory().iterator(Inventory::T_Ransack).isValid()))
     return r;
   return nullptr;
@@ -998,7 +1436,7 @@ void WorldObjects::drawVobBoxNpcNear(DbgPainter& p) const {
   for(auto& i:npcNear)
     i->drawVobBox(p);
 
-  auto camera = Gothic::inst().camera();
+  auto camera = GameServices::inst().camera();
   const float nearDist = 3000*3000;
   for(auto& i:interactiveObj) {
     auto bbox = i->bBox();
@@ -1033,10 +1471,13 @@ Interactive *WorldObjects::availableMob(const Npc &pl, std::string_view dest) {
     if(i->checkMobName(dest))
       return i;
     }
+  // A routine activity walks to the object it reserved; others do not get it meanwhile.
+  if(auto i = reservations.reserved(pl); i!=nullptr && i->checkMobName(dest) && i->isAvailable())
+    return i;
 
   float curDist=dist*dist;
   interactiveObj.find(pl.position(),dist,[&](Interactive& i){
-    if(i.isAvailable() && i.checkMobName(dest)) {
+    if(i.checkMobName(dest) && reservations.isFree(i,pl)) {
       float d = pl.qDistTo(i);
       if(d<curDist){
         ret    = &i;
@@ -1098,7 +1539,7 @@ void WorldObjects::sendPassivePerc(Npc &self, Npc &other, Npc* victim, Item* itm
   m.other  = &other;
   m.victim = victim;
   if(itm!=nullptr)
-    m.item   = itm->handle().symbol_index();
+    m.item   = itm->clsId();
   sndPerc.push_back(m);
   }
 
@@ -1114,7 +1555,7 @@ void WorldObjects::sendImmediatePerc(Npc& self, Npc& other, Npc& victim, Item* i
   r.other  = &other;
   r.victim = &victim;
   if(itm!=nullptr)
-    r.item   = itm->handle().symbol_index();
+    r.item   = itm->clsId();
 
   for(auto& ptr:npcNear) {
     passivePerceptionProcess(r, *ptr, *pl);
@@ -1147,7 +1588,7 @@ void WorldObjects::passivePerceptionProcess(PerceptionMsg& msg, Npc& npc, Npc& p
     }
 
   if(msg.item!=size_t(-1) && msg.other!=nullptr)
-    owner.script().setInstanceItem(*msg.other,msg.item);
+    owner.rules().setInstanceItem(*msg.other,msg.item);
   npc.perceptionProcess(*msg.other,msg.victim,distance,PercType(msg.what),msg.deed);
   }
 
@@ -1171,11 +1612,20 @@ void WorldObjects::resetPositionToTA() {
   for(auto& r:routines)
     r.curState = 0;
 
-  for(auto& i:npcInvalid)
-    if(i->handlePtr().use_count()>1)
-      npcArr.push_back(std::move(i)); else
+  // [GAME] body_traces: a clock leap (sleep, Wld_SetTime, world re-entry) neither retires
+  // the dead nor carries them to their routine point. Bodies lie where they fell and
+  // leave by the three-day rule (World::sweepBodies). Off: vanilla OpenGothic.
+  const bool keepBodies = Settings::physicsFlags().bodyTraces;
+  std::vector<std::unique_ptr<Npc>> retired;
+  for(auto& i:npcInvalid) {
+    if(i->handlePtr().use_count()<=1)
       npcRemoved.push_back(std::move(i));
-  npcInvalid.clear();
+    else if(keepBodies && i->isDead())
+      retired.push_back(std::move(i)); // retired earlier: it would only be retired again
+    else
+      npcArr.push_back(std::move(i));
+    }
+  npcInvalid = std::move(retired);
 
   for(auto& i : npcArr) {
     i->attachToPoint(nullptr);
@@ -1183,7 +1633,23 @@ void WorldObjects::resetPositionToTA() {
 
   for(size_t i=0;i<npcArr.size();) {
     auto& n = *npcArr[i];
+    LoadProbe::Startup::Detail::Scope detail("placement_npc",[&]{
+      const auto symbol=owner.rules().symbolName(n.instanceSymbol());
+      return symbol.empty() ? std::to_string(n.instanceSymbol()) : std::string(symbol);
+      });
+    if(keepBodies && n.isDead() && !n.isPlayer()) {
+      owner.rules().startupFloorBeforeKeep(n);
+      ++i;
+      continue;
+      }
     if(n.resetPositionToTA()){
+      LoadProbe::Startup::Detail::Scope sync("logical_sync");
+      n.syncLogicalBodyState(true);
+      sync.stop();
+      if(LoadProbe::enabled()) {
+        const auto pos=n.position();
+        detail.position(pos.x,pos.y,pos.z,n.isPlayer());
+        }
       ++i;
       } else {
       npcInvalid.emplace_back(std::move(npcArr[i]));
@@ -1191,12 +1657,15 @@ void WorldObjects::resetPositionToTA() {
 
       auto& point = owner.deadPoint();
       auto& npc   = *npcInvalid.back();
+      owner.rules().startupFloorBeforeResetMove(npc,point.position());
       npc.suspendRagdoll();
       npc.attachToPoint(nullptr);
       npc.setPosition(point.position());
       npc.updateTransform();
+      npc.suspendLogicalBodyState();
       }
     }
+  LoadProbe::Startup::Detail::Scope mobs("placement_mobs");
   for(auto& i:routines) {
     auto s = i.stateByTime(owner.time());
     i.curState = s;
@@ -1325,4 +1794,11 @@ bool WorldObjects::testObj(T &src, const Npc &pl, const WorldObjects::SearchOpt 
     return true;
     }
   return false;
+  }
+
+
+size_t WorldObjects::probeVobBytes() const {
+  size_t bytes=rootVobs.capacity()*sizeof(rootVobs[0]);
+  for(const auto& vob:rootVobs) bytes+=vob->probeBaseBytes();
+  return bytes;
   }

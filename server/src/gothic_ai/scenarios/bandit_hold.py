@@ -9,7 +9,7 @@ from collections import Counter
 from typing import TYPE_CHECKING
 
 from ..bodies import Bodies
-from ..game import GameError, GameLink
+from ..game import GameLink
 from ..protocol import (
     GameMessage,
     HoldVerdictCmd,
@@ -21,6 +21,10 @@ from ..protocol import (
     ThreatControlCmd,
 )
 from .common import _logged, _m5b_player_weapon, _until, _until_async, prepare_npc_pose
+
+SCENARIOS = {
+    "bandit_hold": ("OFF", {"save": False, "timeout": 240}),
+}
 
 if TYPE_CHECKING:
     from ..dialogue import DialogueManager
@@ -35,9 +39,7 @@ PARTY_POINT, PARK = "NW_FARM2_TO_TAVERN_05", "NW_FARM1_FIELD_06"
 
 
 async def bandit_hold(link: GameLink, dialogue: DialogueManager) -> dict[str, str]:
-    """New game, LLM=fake: two sight directions stay quiet for 30 s, then scripts attack."""
-    if dialogue.llm.name != "fake":
-        raise GameError("scenario bandit_hold requires LLM=fake and a new game without SAVE")
+    """New game: two sight directions stay quiet for 30 s, then scripts attack."""
     await link.wait_world()
     results: dict[str, str] = {}
     roster: dict[str, RosterEntry] = {}

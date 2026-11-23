@@ -3,13 +3,13 @@
 #include "lifter.h"
 #include "vocab.h"
 
-#include <zenkit/DaedalusScript.hh>
+#include "daedalus/script.h"
 
 #include <vector>
 
 using namespace storygraph;
 
-Predicates::Predicates(const zenkit::DaedalusScript& script, const Lifter& lifter)
+Predicates::Predicates(const daedalus::DaedalusScript& script, const Lifter& lifter)
   :script(script), lifter(lifter) {
   }
 

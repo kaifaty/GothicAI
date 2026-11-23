@@ -1,0 +1,22 @@
+#version 450
+
+// Depth for the SSAO trace at its own size: each texel holds the depth of the pixel the texel traces from, the
+// top-left one of its block, as ssao.comp reads it. The trace's scattered samples read this copy instead of the
+// full-size depth buffer, whose cache they missed (docs/performance.md, 2026-11-08). A point sample, not an average:
+// an averaged depth would put surfaces where there are none into the hit test.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0)       uniform sampler2D         depthBuf;
+layout(binding = 1, r32f) uniform writeonly image2D result;
+
+void main() {
+  const ivec2 at   = ivec2(gl_GlobalInvocationID.xy);
+  const ivec2 size = imageSize(result);
+  if(any(greaterThanEqual(at, size)))
+    return;
+
+  const ivec2 depthSize  = textureSize(depthBuf, 0);
+  const ivec2 depthRatio = (depthSize + size - 1)/size;
+  imageStore(result, at, vec4(texelFetch(depthBuf, min(at*depthRatio, depthSize-1), 0).r));
+  }

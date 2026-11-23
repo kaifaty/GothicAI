@@ -1,0 +1,1079 @@
+#!/usr/bin/env python3
+"""Summarize frame-profile CSVs and compare repeatable world performance runs."""
+
+import argparse
+from bisect import bisect_left
+import csv
+import json
+import math
+from pathlib import Path
+import re
+import statistics
+import sys
+
+
+METADATA_COLUMNS = {
+    "attempt", "cmd_id", "dt", "segment", "frame", "begin_ns", "observer_ns",
+    "end_ns", "outcome", "flags", "overflow", "gpu_ns", "gpu_done", "gpu_buffers",
+    "drawable_width", "drawable_height", "width", "height",
+}
+TEXTURE_ACTIVITIES = ("read", "upload", "complete", "ready", "publish")
+TIMING = (
+    "Frame intervals are differences between consecutive submitted attempt begin_ns "
+    "timestamps in the same contiguous perf-PLACE/view-N or streaming-flythrough/PASS segment. Intervening "
+    "FenceBusy attempts count toward elapsed time and zone costs, never as rendered "
+    "frames. Partial time before the first and after the last submitted attempt "
+    "of each segment is omitted. FPS is "
+    "interval count / measured wall time; percentiles use linear interpolation. "
+    "appcadence.csv is retained as a clock diagnostic, not used for these statistics."
+)
+
+
+def percentile(values, fraction):
+    """Linear interpolation at (n-1)*fraction, including the endpoints."""
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    position = (len(ordered) - 1) * fraction
+    low = math.floor(position)
+    high = math.ceil(position)
+    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+def describe(values):
+    return {
+        "mean": statistics.fmean(values),
+        "p50": percentile(values, 0.50),
+        "p95": percentile(values, 0.95),
+        "p99": percentile(values, 0.99),
+        "max": max(values),
+    }
+
+
+def read_profile(path):
+    with Path(path).open(newline="") as stream:
+        reader = csv.DictReader(stream)
+        fields = reader.fieldnames or []
+        required = {"begin_ns", "end_ns", "segment", "outcome"}
+        if not required.issubset(fields):
+            raise ValueError(f"{path}: missing columns: {', '.join(sorted(required - set(fields)))}")
+        zones = [name[:-3] for name in fields if name.endswith("_ns")
+                 and name not in METADATA_COLUMNS
+                 and not name.endswith(("_first_ns", "_last_ns"))]
+        zone_columns = {name + suffix for name in zones
+                        for suffix in ("_ns", "_calls", "_first_ns", "_last_ns")}
+        amounts = [name for name in fields if name not in METADATA_COLUMNS | zone_columns]
+        rows = []
+        previous = None
+        for line, raw in enumerate(reader, 2):
+            try:
+                row = {name: (value if name == "segment" else int(value))
+                       for name, value in raw.items()}
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{path}:{line}: invalid numeric field") from exc
+            if row["begin_ns"] < 0 or row["end_ns"] < row["begin_ns"]:
+                raise ValueError(f"{path}:{line}: invalid attempt timestamps")
+            if previous is not None and row["begin_ns"] < previous:
+                raise ValueError(f"{path}:{line}: attempt timestamps went backwards")
+            previous = row["begin_ns"]
+            rows.append(row)
+    return rows, zones, amounts, "gpu_ns" in fields
+
+
+def segment_parts(segment):
+    parts = segment.split("/")
+    if len(parts) == 2 and parts[0] == "streaming-flythrough" and parts[1] in {"run", "fly"}:
+        return tuple(parts)
+    # view-N, or view-N-LABEL: a view measured again under another switch (perf-meadow's `-noroad`)
+    if len(parts) == 2 and parts[0].startswith("perf-") and re.fullmatch(r"view-[1-9][0-9]*(-[a-z0-9]+)?", parts[1]):
+        return parts[0][5:], parts[1]
+    return None
+
+
+def read_texture_activity(path):
+    path = Path(str(path) + ".texture.csv")
+    if not path.exists():
+        return None
+    events = {kind: [] for kind in TEXTURE_ACTIVITIES}
+    with path.open(newline="") as stream:
+        for row in csv.DictReader(stream):
+            kind = row["kind"]
+            begin, end = int(row["begin_ns"]), int(row["end_ns"])
+            if kind not in events or begin < 0 or end < begin:
+                raise ValueError(f"{path}: invalid texture activity")
+            if int(row["overflow"]):
+                raise ValueError(f"{path}: texture profiler overflow; recording is truncated")
+            if kind in ("read", "upload") and begin == end:
+                continue
+            events[kind].append((begin, end))
+    indexed = {}
+    for kind, rows in events.items():
+        rows.sort()
+        starts, ends = [], []
+        for begin, end in rows:
+            starts.append(begin)
+            ends.append(max(ends[-1] if ends else 0, end))
+        indexed[kind] = starts, ends
+    return indexed
+
+
+GPU_PASS_COLUMNS = {"attempt", "labels", "gpu_ns", "valid"}
+
+
+def read_gpu_passes(path):
+    """Valid `.gpu.csv` rows as {attempt: {label: ns}}; None without a pass sidecar."""
+    path = Path(str(path) + ".gpu.csv")
+    if not path.exists():
+        return None
+    passes = {}
+    with path.open(newline="") as stream:
+        reader = csv.DictReader(stream)
+        if not GPU_PASS_COLUMNS.issubset(reader.fieldnames or []):
+            return None
+        for line, row in enumerate(reader, 2):
+            try:
+                attempt, gpu_ns, valid = int(row["attempt"]), int(row["gpu_ns"]), int(row["valid"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{path}:{line}: invalid GPU pass row") from exc
+            if valid != 1 or gpu_ns < 0:
+                continue
+            labels = passes.setdefault(attempt, {})
+            labels[row["labels"]] = labels.get(row["labels"], 0) + gpu_ns
+    # FrameProfile always writes the sidecar header: no valid rows means no pass timing.
+    return passes or None
+
+
+def gpu_pass_summary(samples):
+    measured = [row["gpu_passes"] for row in samples if "gpu_passes" in row]
+    if not any(measured):
+        return None
+    result = {}
+    for label in {label for row in measured for label in row}:
+        values = [row[label] for row in measured if label in row]
+        result[label] = {"frames": len(values), "mean_ms": statistics.fmean(values),
+                         "p95_ms": percentile(values, 0.95)}
+    return dict(sorted(result.items(), key=lambda item: item[1]["mean_ms"], reverse=True))
+
+
+def texture_activity(events, left, right):
+    flags = {}
+    for kind, (starts, ends) in events.items():
+        before = bisect_left(starts, right)
+        flags[kind] = (before > 0 and ends[before - 1] > left) if kind in ("read", "upload") else (
+            before > bisect_left(starts, left))
+    flags["worker_active"] = flags["read"] or flags["upload"]
+    return flags
+
+
+def samples_from_profile(path):
+    rows, zones, amounts, has_gpu = read_profile(path)
+    activity = read_texture_activity(path)
+    passes = read_gpu_passes(path)
+    samples = {}
+    start = 0
+    while start < len(rows):
+        end = start + 1
+        while end < len(rows) and rows[end]["segment"] == rows[start]["segment"]:
+            end += 1
+        parts = segment_parts(rows[start]["segment"])
+        if parts:
+            selected = [index for index in range(start, end) if rows[index]["outcome"] == 1]
+            key = parts
+            target = samples.setdefault(key, [])
+            for left, right in zip(selected, selected[1:]):
+                elapsed = rows[right]["begin_ns"] - rows[left]["begin_ns"]
+                if elapsed <= 0:
+                    raise ValueError(f"{path}: nonpositive submitted frame interval")
+                attempts = rows[left:right]
+                submitted = rows[left]
+                gpu_valid = (has_gpu and submitted.get("gpu_done", 1) != 0
+                             and submitted["gpu_ns"] > 0)
+                target.append({
+                    "frame_ms": elapsed / 1e6,
+                    "cpu_ms": sum(row["end_ns"] - row["begin_ns"] for row in attempts) / 1e6,
+                    "submitted_cpu_ms": (submitted["end_ns"] - submitted["begin_ns"]) / 1e6,
+                    "attempts": len(attempts),
+                    "zones": {zone: sum(row[zone + "_ns"] for row in attempts) / 1e6
+                              for zone in zones},
+                    "calls": {zone: sum(row.get(zone + "_calls", 0) for row in attempts)
+                              for zone in zones},
+                    "amounts": {name: sum(row[name] for row in attempts) for name in amounts},
+                    "has_gpu": has_gpu,
+                    "gpu_ms": submitted["gpu_ns"] / 1e6 if gpu_valid else None,
+                    "gpu_buffers": submitted.get("gpu_buffers") if gpu_valid else None,
+                    "begin_ns": submitted["begin_ns"],
+                    "next_ns": rows[right]["begin_ns"],
+                })
+                if activity is not None:
+                    target[-1]["texture_activity"] = texture_activity(activity, submitted["begin_ns"], rows[right]["begin_ns"])
+                if passes is not None:
+                    frame = {}
+                    for row in attempts:
+                        for label, gpu_ns in passes.get(row.get("attempt"), {}).items():
+                            frame[label] = frame.get(label, 0) + gpu_ns / 1e6
+                    target[-1]["gpu_passes"] = frame
+        start = end
+    warnings = []
+    overflow = max((row.get("overflow", 0) for row in rows), default=0)
+    if overflow:
+        raise ValueError(f"{path}: profiler overflow {overflow}; recording is truncated")
+    if any(row["outcome"] == 4 and segment_parts(row["segment"]) for row in rows):
+        warnings.append(f"{path}: render errors occurred inside measurement segments")
+    return samples, warnings
+
+
+def summarize(samples):
+    if not samples:
+        raise ValueError("No complete submitted frame intervals in a measurement segment")
+    frames = len(samples)
+    intervals = [row["frame_ms"] for row in samples]
+    elapsed_ms = sum(intervals)
+    zones = sorted({zone for row in samples for zone in row["zones"]})
+    amounts = sorted({name for row in samples for name in row["amounts"]})
+    result = {
+        "frames": frames,
+        "attempts": sum(row["attempts"] for row in samples),
+        "elapsed_s": elapsed_ms / 1000,
+        "fps": frames * 1000 / elapsed_ms,
+        "frame_ms": describe(intervals),
+        "cpu_ms": describe([row["cpu_ms"] for row in samples]),
+        "zones": [{"name": zone,
+                   "mean_ms": sum(row["zones"].get(zone, 0) for row in samples) / frames,
+                   "frame_pct": sum(row["zones"].get(zone, 0) for row in samples) * 100 / elapsed_ms,
+                   "calls_per_frame": sum(row["calls"].get(zone, 0) for row in samples) / frames}
+                  for zone in zones],
+        "amounts": {name: {"total": sum(row["amounts"].get(name, 0) for row in samples),
+                           "per_frame": sum(row["amounts"].get(name, 0) for row in samples) / frames}
+                    for name in amounts},
+        "gpu": None,
+    }
+    result["zones"].sort(key=lambda item: item["mean_ms"], reverse=True)
+    measured_activity = [row for row in samples if "texture_activity" in row]
+    if measured_activity:
+        result["texture_activity"] = {}
+        for kind in ("worker_active", *TEXTURE_ACTIVITIES):
+            groups = {}
+            for label, active in (("with", True), ("without", False)):
+                intervals = [row["frame_ms"] for row in measured_activity if row["texture_activity"][kind] == active]
+                groups[label] = {"frames": len(intervals), "p99_ms": percentile(intervals, .99)}
+            result["texture_activity"][kind] = groups
+    if any(row["has_gpu"] for row in samples):
+        completed = [row for row in samples if row["gpu_ms"] is not None]
+        buffers = [row["gpu_buffers"] for row in completed if row["gpu_buffers"] is not None]
+        result["gpu"] = {
+            "completed_frames": len(completed),
+            "completion_fraction": len(completed) / frames,
+            "mean_ms": statistics.fmean(row["gpu_ms"] for row in completed) if completed else None,
+            "p50_ms": percentile([row["gpu_ms"] for row in completed], 0.5),
+            "p95_ms": percentile([row["gpu_ms"] for row in completed], 0.95),
+            "longer_than_cpu_fraction": (sum(row["gpu_ms"] > row["submitted_cpu_ms"] for row in completed)
+                                         / len(completed)) if completed else None,
+            "buffers_per_completed_frame": statistics.fmean(buffers) if buffers else None,
+        }
+    gpu_passes = gpu_pass_summary(samples)
+    if gpu_passes is not None:
+        result["gpu_passes"] = gpu_passes
+    return result
+
+
+def read_metadata(directory):
+    path = directory / "metadata.json"
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def read_streaming(directory):
+    events = [json.loads(line) for line in (directory / "events.jsonl").read_text().splitlines()]
+    completed = [event for event in events if event.get("kind") == "route_end" and event.get("pass")]
+    if sorted(event.get("speed_cm_s") for event in completed) != [500, 2000]:
+        raise ValueError(f"{directory}: both route passes must reach their endpoints")
+    path = directory / "streaming.csv"
+    if not path.exists():
+        if any(event.get("kind") == "perf_segment" and event.get("residency_manager") is True for event in events):
+            raise ValueError(f"{path}: residency manager was enabled but samples are missing")
+        return None
+    with path.open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    grouped = {}
+    for row in rows:
+        parts = segment_parts(row["segment"])
+        if parts and parts[0] == "streaming-flythrough":
+            sample = {key: float(value) for key, value in row.items() if key not in {"segment", "publication_ms"}}
+            publications = [float(value) for value in row.get("publication_ms", "").split(";") if value]
+            if not all(math.isfinite(value) and value >= 0 for value in [*sample.values(), *publications]):
+                raise ValueError(f"{path}: invalid residency metric")
+            sample["publication_ms"] = publications
+            grouped.setdefault(parts[1], []).append(sample)
+    if set(grouped) != {"run", "fly"} or any(len(rows) < 2 for rows in grouped.values()):
+        raise ValueError(f"{path}: both run and fly require complete residency samples")
+    for samples in grouped.values():
+        if "vob_near_missing_seconds" in samples[-1]:
+            samples[-1]["vob_near_missing_seconds_route"] = samples[-1]["vob_near_missing_seconds"]
+    warmup = None
+    for event in events:
+        if event.get("kind") == "streaming_ready":
+            warmup = event
+            continue
+        parts = segment_parts(event.get("segment", ""))
+        if not parts or parts[0] != "streaming-flythrough":
+            continue
+        if event.get("kind") == "perf_segment" and warmup is not None and "far_publication_ms" in warmup:
+            publications = warmup.get("far_publication_ms", [])
+            maximum = warmup.get("far_max_per_frame", 0)
+            queue_ms = warmup.get("queue_max_ms", 0)
+            if not all(math.isfinite(value) and value >= 0 for value in [*publications, maximum, queue_ms]):
+                raise ValueError(f"{directory}: invalid warmup publication metric")
+            grouped[parts[1]][0].update(warmup_far_publication_ms=publications,
+                                      warmup_far_max_per_frame=maximum, warmup_queue_max_ms=queue_ms)
+            warmup = None
+        elif event.get("kind") == "streaming_end":
+            gpu_mb = event["gpu_mb"]
+            if not math.isfinite(gpu_mb) or gpu_mb < 0:
+                raise ValueError(f"{directory}: invalid GPU allocation metric")
+            grouped[parts[1]][-1]["gpu_mb"] = gpu_mb
+            for field in ("tex_promoted", "tex_demoted", "tex_near_tail_seconds", "tex_shortfall_seconds", *FLOW_SUM_FIELDS):
+                if field in event:
+                    value = event[field]
+                    if not math.isfinite(value) or value < 0:
+                        raise ValueError(f"{directory}: invalid route texture metric")
+                    grouped[parts[1]][-1][field + "_route"] = value
+            for field in FLOW_WORST_FIELDS:
+                # -1: nothing of that kind in the pass
+                if field in event:
+                    value = event[field]
+                    if not math.isfinite(value) or value < -1:
+                        raise ValueError(f"{directory}: invalid route texture metric")
+                    if value >= 0:
+                        grouped[parts[1]][-1][field + "_route"] = value
+    return grouped
+
+
+# Step 4 (common/textureflow.h, common/texturedump.cpp): the streaming_end event's fields of a pass. The shortfall's
+# texture-seconds by state: waiting for a load slot, reading, uploading, waiting for publication, loading a level already
+# too coarse; then the visible shortfall (reserve 0), loads started and textures that became short - all added up over
+# passes - and the distributions of a pass (latency demand -> publication, wait for a slot, bursts), of which several
+# passes report the worst.
+FLOW_STATES = ("wait", "read", "upload", "publish", "stale")
+FLOW_SUM_FIELDS = (*(f"tex_shortfall_{state}_seconds" for state in FLOW_STATES), "tex_visible_shortfall_seconds",
+                   "tex_loads_started", "tex_short_entries", "tex_latency_n", "tex_wait_n", "tex_bursts", "tex_publications",
+                   "tex_publish_ms", "tex_ahead_seconds")
+FLOW_WORST_FIELDS = ("tex_latency_p50_ms", "tex_latency_p90_ms", "tex_latency_max_ms", "tex_wait_p50_ms", "tex_wait_p90_ms",
+                     "tex_wait_max_ms", "tex_burst_p50", "tex_burst_p90", "tex_burst_max", "tex_publish_max_ms",
+                     "tex_lookahead_ms")
+
+
+def texture_flow(textures):
+    """Where the shortfall goes (step 4): per pass from the events, peaks of the loads in flight from the CSV rows."""
+    if not any(f"{field}_route" in row for row in textures for field in FLOW_SUM_FIELDS) and "tex_loads" not in textures[-1]:
+        return None
+
+    def route(field):
+        return sum(row[f"{field}_route"] for row in textures if f"{field}_route" in row)
+
+    def worst(field):
+        return max((row[f"{field}_route"] for row in textures if f"{field}_route" in row), default=None)
+
+    def peak(field):
+        values = [row[field] for row in textures if field in row]
+        return int(max(values)) if values else None
+
+    return {
+        "state_seconds": {state: route(f"tex_shortfall_{state}_seconds") for state in FLOW_STATES},
+        "visible_seconds": route("tex_visible_shortfall_seconds"),
+        # part C: texture-seconds queued for the look-ahead alone; its horizon at the end of the pass (the longest)
+        "ahead_seconds": route("tex_ahead_seconds"),
+        "horizon_ms": worst("tex_lookahead_ms"),
+        "loads_started": int(route("tex_loads_started")),
+        "short_entries": int(route("tex_short_entries")),
+        "latency": {"n": int(route("tex_latency_n")), **{key: worst(f"tex_latency_{key}") for key in ("p50_ms", "p90_ms", "max_ms")}},
+        "wait": {"n": int(route("tex_wait_n")), **{key: worst(f"tex_wait_{key}") for key in ("p50_ms", "p90_ms", "max_ms")}},
+        "bursts": {"n": int(route("tex_bursts")), **{key: worst(f"tex_burst_{key}") for key in ("p50", "p90", "max")}},
+        # the publications' own cost on the main thread: mean of the passes, the longest of the session
+        "publish": {"n": int(route("tex_publications")),
+                    "mean_us": 1000*route("tex_publish_ms")/route("tex_publications") if route("tex_publications") else None,
+                    "max_us": None if worst("tex_publish_max_ms") is None else 1000*worst("tex_publish_max_ms")},
+        "waiting_peak": peak("tex_shortfall_wait_n"),
+        "visible_peak": peak("tex_visible_shortfall_n"),
+        "loads_peak": peak("tex_loads"),
+        "load_bytes_peak": peak("tex_load_bytes"),
+    }
+
+
+# Resources' TextureBudget::Source (common/texturebudget.h), as tex_target_source carries it
+TARGET_SOURCES = ("default", "rule", "setting", "environment")
+# TextureBudget::MaxStage: the streaming CSV has tex_stage<N>_seconds for every stage 0..MAX_STAGE
+MAX_STAGE = 25
+
+
+def texture_budget(textures):
+    """The memory budget and the stage above the target (texturebudget.h): end of the pass and over the pass."""
+    if "tex_stage" not in textures[-1]:
+        return None
+    end = textures[-1]
+    source = int(end["tex_target_source"])
+    # The seconds counters are cumulative per process: sum them frame to frame within a pass, so passes and repeats
+    # joined in one list do not count the time between them.
+    stages = [stage for stage in range(MAX_STAGE + 1) if f"tex_stage{stage}_seconds" in end]
+    seconds = [0.0] * len(stages)
+    for previous, row in zip(textures, textures[1:]):
+        if row["frame"] == previous["frame"] + 1:
+            for stage in stages:
+                seconds[stage] += max(0.0, row[f"tex_stage{stage}_seconds"] - previous[f"tex_stage{stage}_seconds"])
+    return {
+        "device_budget_end_bytes": int(end["tex_device_budget_bytes"]),
+        "device_usage_end_bytes": int(end["tex_device_usage_bytes"]),
+        "device_shared": bool(end["tex_device_shared"]),
+        "device_measured": bool(end["tex_device_measured"]),
+        "target_end_bytes": int(end["tex_target_bytes"]),
+        "target_source": TARGET_SOURCES[source] if 0 <= source < len(TARGET_SOURCES) else str(source),
+        "budget_end_bytes": int(end["tex_budget_bytes"]),
+        "stage_end": int(end["tex_stage"]),
+        "stage_deepest": int(max(row["tex_stage"] for row in textures)),
+        # seconds on each stage over the pass, index = stage
+        "stage_seconds": seconds,
+        "d0_end_bytes": int(end["tex_stage_bytes0"]),
+        "d_end_bytes": int(end["tex_stage_bytes"]),
+    }
+
+
+def streaming_stats(rows):
+    publications = [value for row in rows for value in row["publication_ms"]]
+    warmup = [value for row in rows for value in row.get("warmup_far_publication_ms", [])]
+    pages = [row for row in rows if "page_used_bytes" in row]
+    textures = [row for row in rows if "tex_live_bytes" in row]
+    vobs = [row for row in rows if "vob_near" in row]
+    return {
+        "updates": len(rows),
+        "near_transitions": int(sum(row["near_transitions"] for row in rows)),
+        "far_transitions": int(sum(row["far_transitions"] for row in rows)),
+        "peak_near": int(max(row["near"] for row in rows)),
+        "update_ms": describe([row["update_ms"] for row in rows]),
+        "work_ms": describe([row["work_ms"] for row in rows]),
+        # Each timing is one chunk, including synchronous Near publications.
+        "publication_ms": describe(publications) if publications else None,
+        "warmup_far_publication_ms": describe(warmup) if warmup else None,
+        "warmup_far_count": len(warmup) if any("warmup_far_publication_ms" in row for row in rows) else None,
+        "warmup_far_max_per_frame": max((row["warmup_far_max_per_frame"] for row in rows
+                                         if "warmup_far_max_per_frame" in row), default=None),
+        "warmup_queue_max_ms": max((row["warmup_queue_max_ms"] for row in rows
+                                    if "warmup_queue_max_ms" in row), default=None),
+        "published": int(sum(row.get("published", 0) for row in rows)),
+        "released": int(sum(row.get("released", 0) for row in rows)),
+        "gpu_end_mb": next((row["gpu_mb"] for row in reversed(rows) if "gpu_mb" in row), None),
+        "page_used_end_bytes": int(pages[-1]["page_used_bytes"]) if pages else None,
+        "page_free_end_bytes": int(pages[-1]["page_free_bytes"]) if pages else None,
+        "page_retired_end_bytes": int(pages[-1]["page_retired_bytes"]) if pages else None,
+        "page_count_end": int(pages[-1]["page_count"]) if pages else None,
+        "page_capacity_peak_bytes": int(max(row["page_used_bytes"]+row["page_free_bytes"]+row["page_retired_bytes"]
+                                            for row in pages)) if pages else None,
+        "vobs": {
+            "near_end": int(vobs[-1]["vob_near"]),
+            "far_end": int(vobs[-1]["vob_far"]),
+            "outside_end": int(vobs[-1]["vob_outside"]),
+            "created": int(sum(row["vob_created"] for row in vobs)),
+            "released": int(sum(row["vob_released"] for row in vobs)),
+            "pending_peak": int(max(row["vob_pending"] for row in vobs)),
+            "publication_ms": describe([row["vob_publication_ms"] for row in vobs]),
+            "near_missing_peak": int(max(row["vob_near_missing"] for row in vobs)),
+            "near_missing_seconds": sum(row["vob_near_missing_seconds_route"] for row in vobs
+                                        if "vob_near_missing_seconds_route" in row),
+        } if vobs else None,
+        "textures": {
+            "live_end_bytes": int(textures[-1]["tex_live_bytes"]),
+            "retired_end_bytes": int(textures[-1]["tex_retired_bytes"]),
+            "peak_bytes": int(max(row["tex_peak_bytes"] for row in textures)),
+            "count_end": int(textures[-1]["tex_live_n"]),
+            "evicted": int(max(row["tex_evicted"] for row in textures)),
+            "reloaded": int(max(row["tex_reloaded"] for row in textures)),
+            "full_end_bytes": int(textures[-1]["tex_full_bytes"]) if "tex_full_bytes" in textures[-1] else None,
+            "tail_end_bytes": int(textures[-1]["tex_tail_bytes"]) if "tex_tail_bytes" in textures[-1] else None,
+            "promoted": int(sum(row["tex_promoted_route"] for row in textures
+                                if "tex_promoted_route" in row)) if any("tex_promoted_route" in row for row in textures) else None,
+            "demoted": int(sum(row["tex_demoted_route"] for row in textures
+                               if "tex_demoted_route" in row)) if any("tex_demoted_route" in row for row in textures) else None,
+            "promotion_queue_peak": int(max(row["tex_promotion_queue"] for row in textures
+                                            if "tex_promotion_queue" in row)) if any("tex_promotion_queue" in row for row in textures) else None,
+            "near_tail_peak": int(max(row["tex_near_tail_n"] for row in textures
+                                      if "tex_near_tail_n" in row)) if any("tex_near_tail_n" in row for row in textures) else None,
+            "near_tail_seconds": sum(row["tex_near_tail_seconds_route"] for row in textures
+                                     if "tex_near_tail_seconds_route" in row) if any("tex_near_tail_seconds_route" in row for row in textures) else None,
+            "level_end_bytes": [int(textures[-1][f"tex_level{level}_bytes"]) for level in range(6)]
+                               if "tex_level0_bytes" in textures[-1] else None,
+            "shortfall_peak": int(max(row["tex_shortfall_n"] for row in textures
+                                      if "tex_shortfall_n" in row)) if any("tex_shortfall_n" in row for row in textures) else None,
+            "shortfall_seconds": sum(row["tex_shortfall_seconds_route"] for row in textures
+                                     if "tex_shortfall_seconds_route" in row) if any("tex_shortfall_seconds_route" in row for row in textures) else None,
+            # view jumps since the start of the run (cumulative): count, not yet at zero shortfall, worst times
+            "jumps": {
+                "count": int(textures[-1]["tex_jumps"]),
+                "open": int(textures[-1]["tex_jumps_open"]),
+                "sync_ms_max": textures[-1]["tex_jump_sync_max_ms"],
+                "zero_ms_max": textures[-1]["tex_jump_zero_max_ms"],
+            } if "tex_jumps" in textures[-1] else None,
+            "budget": texture_budget(textures),
+            "flow": texture_flow(textures),
+            "categories": {category: {
+                "bytes": int(textures[-1][f"tex_{category}_bytes"]),
+                "count": int(textures[-1][f"tex_{category}_n"]),
+            } for category in ("landscape", "static", "dynamic", "other")},
+        } if textures else None,
+    }
+
+
+GPU_GAP = "журнал GPU не покрывает"
+
+
+def find_gpu_log(path):
+    """The run's GPU clock journal: gpu.csv beside the profile or in the run folder of perf.sh's
+    $OUT/<place>/repeat-N/ layout, also when a compared leaf such as market/repeat-1 is the report folder."""
+    folders = [path.parent] + ([path.parents[2]] if len(path.parents) > 2 else [])
+    return next((folder / "gpu.csv" for folder in folders if (folder / "gpu.csv").exists()), None)
+
+
+def gpu_clock(rows):
+    """Means of the journal rows (scripts/perf_gpu_log.py) inside a view's frames; None where no row has a value."""
+    def mean(name):
+        values = [row[name] for row in rows if row[name] is not None]
+        return statistics.fmean(values) if values else None
+    return {**{name: mean(name) for name in ("sm_mhz", "mem_mhz", "temp_c", "power_w")}, "samples": len(rows)}
+
+
+def build_report(directory):
+    directory = Path(directory).resolve()
+    # The warm-up games before the first place (perf.sh) are never measurements.
+    profiles = sorted(path for path in directory.rglob("frameprofile.csv")
+                      if "warmup" not in path.relative_to(directory).parts)
+    if not profiles:
+        raise ValueError(f"{directory}: no frameprofile.csv files")
+    grouped = {}
+    streaming = {}
+    warnings = []
+    sources = []
+    journals = {}
+    clocks = {}
+    for path in profiles:
+        segments, issues = samples_from_profile(path)
+        journal_path = find_gpu_log(path)
+        if journal_path is not None and journal_path not in journals:
+            import perf_gpu_log  # only runs that wrote a journal need it
+            journals[journal_path] = perf_gpu_log.read_log(journal_path)
+        journal = journals.get(journal_path)
+        warnings.extend(issues)
+        relative = str(path.parent.relative_to(directory))
+        metadata = read_metadata(path.parent)
+        if any(place == "streaming-flythrough" for place, _ in segments):
+            streaming[relative] = read_streaming(path.parent)
+        sources.append({"directory": relative, "metadata": metadata})
+        for (place, view), samples in segments.items():
+            if not samples:
+                raise ValueError(f"{path}: {place}/{view} has fewer than two submitted frames")
+            grouped.setdefault(place, {}).setdefault(relative, {}).setdefault(view, []).extend(samples)
+            if journal is not None:
+                first, last = min(row["begin_ns"] for row in samples), max(row["next_ns"] for row in samples)
+                clocks.setdefault(place, {}).setdefault(relative, {}).setdefault(view, []).extend(
+                    row for row in journal if first <= row["mono_ns"] <= last)
+    if not grouped:
+        raise ValueError(f"{directory}: no performance measurement segments")
+    places = {}
+    for place, repeats in grouped.items():
+        view_samples = {}
+        repeat_reports = []
+        expected_views = {
+            "grass-track": {"view-1", "view-5"},
+            "grass-ground": {"view-3", "view-4", "view-5"},
+            "grass-ground-fields": {"view-1", "view-4"},
+        }.get(place, {"view-1", "view-2", "view-3", "view-4"})
+        if place in {"grass-pack", "grass-fields-pack"}:
+            expected_views = {f"view-{view}-pack{pack}" for view in range(1, 5) for pack in (1, 4, 16, 64)}
+        for repeat, views in repeats.items():
+            if place != "streaming-flythrough" and not expected_views <= views.keys():
+                missing = ", ".join(sorted(expected_views - views.keys()))
+                warnings.append(f"{place}/{repeat}: missing {missing}, found {', '.join(sorted(views))}")
+            repeat_reports.append({"directory": repeat,
+                                   "summary": summarize([sample for rows in views.values() for sample in rows]),
+                                   "views": {view: summarize(rows) for view, rows in sorted(views.items())}})
+            if place == "streaming-flythrough":
+                if set(views) != {"run", "fly"}:
+                    raise ValueError(f"{directory}/{repeat}: both run and fly frame segments are required")
+                if streaming[repeat] is not None:
+                    for view, stats in repeat_reports[-1]["views"].items():
+                        stats["streaming"] = streaming_stats(streaming[repeat][view])
+                    repeat_reports[-1]["summary"]["streaming"] = streaming_stats(
+                        [row for rows in streaming[repeat].values() for row in rows])
+            for view, rows in views.items():
+                view_samples.setdefault(view, []).extend(rows)
+        places[place] = {
+            "summary": summarize([sample for rows in view_samples.values() for sample in rows]),
+            "views": {view: summarize(rows) for view, rows in sorted(view_samples.items())},
+            "repeats": repeat_reports,
+        }
+        if place in clocks:
+            pooled = {}
+            for repeat in repeat_reports:
+                measured = clocks[place].get(repeat["directory"], {})
+                for view, stats in repeat["views"].items():
+                    stats["gpu_clock"] = gpu_clock(measured.get(view, []))
+                    gap = f"{GPU_GAP} {place}/{view}"
+                    if repeat["directory"] in clocks[place] and not stats["gpu_clock"]["samples"] and gap not in warnings:
+                        warnings.append(gap)
+                    pooled.setdefault(view, []).extend(measured.get(view, []))
+                repeat["summary"]["gpu_clock"] = gpu_clock([row for rows in measured.values() for row in rows])
+            for view, stats in places[place]["views"].items():
+                stats["gpu_clock"] = gpu_clock(pooled.get(view, []))
+            places[place]["summary"]["gpu_clock"] = gpu_clock([row for rows in pooled.values() for row in rows])
+        measured = [repeat for repeat in repeats if streaming.get(repeat) is not None]
+        if place == "streaming-flythrough" and measured:
+            for view, stats in places[place]["views"].items():
+                stats["streaming"] = streaming_stats(
+                    [row for repeat in measured for row in streaming[repeat][view]])
+            places[place]["summary"]["streaming"] = streaming_stats(
+                [row for repeat in measured for rows in streaming[repeat].values() for row in rows])
+    # gpu_clock and warmup are optional additions, present only with a GPU clock journal.
+    report = {"schema_version": 1, "directory": str(directory), "metadata": read_metadata(directory),
+              "timing": TIMING, "warnings": warnings, "sources": sources, "places": places}
+    if journals and (directory / "warmup.json").exists():
+        report["warmup"] = json.loads((directory / "warmup.json").read_text())
+    return report
+
+
+def number(value, digits=3):
+    return f"{value:.{digits}f}" if value is not None else "n/a"
+
+
+def summary_table(report):
+    lines = ["| Place / view | Frames | FPS | Mean ms | p50 ms | p95 ms | p99 ms | Max ms |",
+             "|---|---:|---:|---:|---:|---:|---:|---:|"]
+    for place, data in report["places"].items():
+        for name, stats in [(place, data["summary"])] + [
+                (place + "/" + view, stats) for view, stats in data["views"].items()]:
+            frame = stats["frame_ms"]
+            lines.append(f"| {name} | {stats['frames']} | {stats['fps']:.2f} | "
+                         + " | ".join(number(frame[key]) for key in ("mean", "p50", "p95", "p99", "max")) + " |")
+    streaming = report["places"].get("streaming-flythrough")
+    if streaming and "streaming" in streaming["summary"]:
+        lines.extend(["", "| Pass | Near transitions | Far transitions | Peak Near | Update p99 ms | Work p99 / max ms | Publish p99 / max ms | Published / released | GPU end MiB | Pages end | Page used / free / retired end MiB | Page capacity peak MiB |",
+                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            data = stats["streaming"]
+            publication = data["publication_ms"] or {"p99": None, "max": None}
+            page_end = " / ".join(number(None if data[key] is None else data[key]/1048576.0, 2)
+                                  for key in ("page_used_end_bytes", "page_free_end_bytes", "page_retired_end_bytes"))
+            capacity = data["page_capacity_peak_bytes"]
+            lines.append(f"| {view} | {data['near_transitions']} | {data['far_transitions']} | {data['peak_near']} | "
+                         f"{data['update_ms']['p99']:.6f} | {data['work_ms']['p99']:.6f} / {data['work_ms']['max']:.6f} | "
+                         f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
+                         f"{data['published']} / {data['released']} | {number(data['gpu_end_mb'], 1)} | "
+                         f"{number(data['page_count_end'], 0)} | {page_end} | "
+                         f"{number(None if capacity is None else capacity/1048576.0, 2)} |")
+        lines.extend(["", "| Warmup before pass | Far published | Publish p99 / max ms | Max Far per frame | Queue max ms |",
+                      "|---|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            data = stats["streaming"]
+            publication = data["warmup_far_publication_ms"] or {"p99": None, "max": None}
+            lines.append(f"| {view} | {number(data['warmup_far_count'], 0)} | "
+                         f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
+                         f"{number(data['warmup_far_max_per_frame'], 0)} | {number(data['warmup_queue_max_ms'], 6)} |")
+        if any(stats["streaming"]["vobs"] is not None for stats in streaming["views"].values()):
+            lines.extend(["", "| Pass | Vobs Near / Far / Outside end | Created / released | Queue peak | Publish p99 / max ms per frame | Near missing peak | Near missing vob-seconds |",
+                          "|---|---:|---:|---:|---:|---:|---:|"])
+            for view, stats in streaming["views"].items():
+                vobs = stats["streaming"]["vobs"]
+                if vobs is None:
+                    lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a |")
+                    continue
+                publication = vobs["publication_ms"]
+                lines.append(f"| {view} | {vobs['near_end']} / {vobs['far_end']} / {vobs['outside_end']} | "
+                             f"{vobs['created']} / {vobs['released']} | {vobs['pending_peak']} | "
+                             f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
+                             f"{vobs['near_missing_peak']} | {number(vobs['near_missing_seconds'], 9)} |")
+        lines.extend(["", "| Pass | Textures end | Texture live / retired end MiB | Texture session peak MiB | Session evicted / reloaded |",
+                      "|---|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            if textures is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a |")
+                continue
+            lines.append(f"| {view} | {textures['count_end']} | {textures['live_end_bytes']/1048576:.2f} / "
+                         f"{textures['retired_end_bytes']/1048576:.2f} | {textures['peak_bytes']/1048576:.2f} | "
+                         f"{textures['evicted']} / {textures['reloaded']} |")
+        lines.extend(["", "| Pass | Landscape MiB / count | Static MiB / count | NPC/items MiB / count | Other MiB / count |",
+                      "|---|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            categories = textures["categories"] if textures is not None else {}
+            cells = [f"{categories[category]['bytes']/1048576:.2f} / {categories[category]['count']}"
+                     if category in categories else "n/a" for category in ("landscape", "static", "dynamic", "other")]
+            lines.append(f"| {view} | " + " | ".join(cells) + " |")
+        lines.extend(["", "Spatial texture demand: Full within ring 2; demotion beyond ring 3; Near on Tail within ring 1.", "",
+                      "| Pass | Full / Tail end MiB | Promoted / demoted on route | Promotion queue peak | Near (ring 1) on Tail peak | Near (ring 1) on Tail texture-seconds |",
+                      "|---|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            if textures is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a |")
+                continue
+            residency = " / ".join(number(None if textures[key] is None else textures[key]/1048576, 2)
+                                   for key in ("full_end_bytes", "tail_end_bytes"))
+            lines.append(f"| {view} | {residency} | {number(textures['promoted'], 0)} / {number(textures['demoted'], 0)} | "
+                         f"{number(textures['promotion_queue_peak'], 0)} | {number(textures['near_tail_peak'], 0)} | "
+                         f"{number(textures['near_tail_seconds'], 9)} |")
+        lines.extend(["", "Texture levels: live bytes by first resident level, and the shortfall (resident coarser than "
+                      "wanted, or missing).", "",
+                      "| Pass | Level 0 / 1 / 2 / 3 / 4 / 5+ end MiB | Shortfall peak | Shortfall texture-seconds on route | "
+                      "Jumps so far (open) | Worst jump sync ms | Worst jump to zero shortfall ms |",
+                      "|---|---:|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            if textures is None or textures.get("level_end_bytes") is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a |")
+                continue
+            levels = " / ".join(f"{value/1048576:.2f}" for value in textures["level_end_bytes"])
+            jumps = textures.get("jumps")
+            jump_cells = ("n/a | n/a | n/a" if jumps is None else
+                          f"{jumps['count']} ({jumps['open']}) | {number(jumps['sync_ms_max'], 1)} | "
+                          f"{number(jumps['zero_ms_max'], 1)}")
+            lines.append(f"| {view} | {levels} | {number(textures['shortfall_peak'], 0)} | "
+                         f"{number(textures['shortfall_seconds'], 9)} | {jump_cells} |")
+        lines.extend(["", "Texture shortfall by state (texture-seconds on route): waiting for a load slot, reading, uploading, "
+                      "waiting for publication, loading a level already too coarse; the visible shortfall (reserve 0); the "
+                      "latency from a rise of demand to the publication that met it and the wait for a slot (worst pass); "
+                      "bursts, textures that became short within a second.", "",
+                      "| Pass | Wait / read / upload / publish / stale | Visible | Loads started | Loads / MiB in flight peak | "
+                      "Waiting peak | Latency p50 / p90 / max ms | Wait p50 / p90 ms | Bursts p50 / p90 / max | "
+                      "Publication µs mean / max | Ahead s / horizon ms |",
+                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            flow = textures.get("flow") if textures is not None else None
+            if flow is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+                continue
+            split = " / ".join(f"{flow['state_seconds'][state]:.2f}" for state in FLOW_STATES)
+            in_flight = (f"{number(flow['loads_peak'], 0)} / "
+                         f"{number(None if flow['load_bytes_peak'] is None else flow['load_bytes_peak']/1048576, 1)}")
+            latency = " / ".join(number(flow["latency"][key], 0) for key in ("p50_ms", "p90_ms", "max_ms"))
+            wait = " / ".join(number(flow["wait"][key], 0) for key in ("p50_ms", "p90_ms"))
+            bursts = " / ".join(number(flow["bursts"][key], 0) for key in ("p50", "p90", "max"))
+            lines.append(f"| {view} | {split} | {flow['visible_seconds']:.2f} | {flow['loads_started']} | {in_flight} | "
+                         f"{number(flow['waiting_peak'], 0)} | {latency} | {wait} | {bursts} | "
+                         f"{number(flow['publish']['mean_us'], 1)} / {number(flow['publish']['max_us'], 1)} | "
+                         f"{flow['ahead_seconds']:.2f} / {number(flow['horizon_ms'], 0)} |")
+        lines.extend(["", "Texture budget: the device's budget and this process's usage, the working target, the stage "
+                      "above it, and D(s), the bytes the demanded textures take at stage s.", "",
+                      "| Pass | Device budget / usage end MiB | Target end MiB (source) | Stage end / deepest | "
+                      "Seconds by stage | D(0) / D(stage) end MiB |",
+                      "|---|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            budget = textures.get("budget") if textures is not None else None
+            if budget is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a |")
+                continue
+            device = (f"{budget['device_budget_end_bytes']/1048576:.0f} / {budget['device_usage_end_bytes']/1048576:.0f}"
+                      + (" shared" if budget["device_shared"] else "") + ("" if budget["device_measured"] else " estimated"))
+            seconds = ", ".join(f"{stage}: {value:.1f}" for stage, value in enumerate(budget["stage_seconds"]) if value > 0) or "0"
+            lines.append(f"| {view} | {device} | {budget['target_end_bytes']/1048576:.0f} ({budget['target_source']}) | "
+                         f"{budget['stage_end']} / {budget['stage_deepest']} | {seconds} | "
+                         f"{budget['d0_end_bytes']/1048576:.1f} / {budget['d_end_bytes']/1048576:.1f} |")
+    return "\n".join(lines)
+
+
+def warmup_line(warmup):
+    if warmup["reason"] == "skipped-recent-game":
+        return f"Прогрев GPU: пропущен, прошлая игра стенда кончилась {warmup['last_game_age_s']:.0f} с назад."
+    if warmup["reason"] in ("off", "no-gpu-log"):
+        return f"Прогрев GPU: нет ({warmup['reason']})."
+    return (f"Прогрев GPU ({warmup['mode']}): {warmup['reason']} за {warmup['seconds']:.0f} с, запусков {warmup['runs']}; "
+            f"{number(warmup['temp_start_c'], 0)} → {number(warmup['temp_end_c'], 0)} °C, "
+            f"SM {number(warmup['sm_start_mhz'], 0)} → {number(warmup['sm_end_mhz'], 0)} МГц.")
+
+
+def clock_table(report):
+    """Mean GPU clocks over each view's frames, from the run's gpu.csv; empty without a journal."""
+    lines = []
+    for place, data in report["places"].items():
+        if "gpu_clock" not in data["summary"]:
+            continue
+        lines.extend(["| Вид | SM, МГц | Память, МГц | °C | Вт |", "|---|---:|---:|---:|---:|"] if not lines else [])
+        for name, stats in [(place, data["summary"])] + [
+                (place + "/" + view, stats) for view, stats in data["views"].items()]:
+            clock = stats["gpu_clock"]
+            lines.append(f"| {name} | {number(clock['sm_mhz'], 0)} | {number(clock['mem_mhz'], 0)} | "
+                         f"{number(clock['temp_c'], 1)} | {number(clock['power_w'], 1)} |")
+    return "\n".join(lines)
+
+
+def report_markdown(report):
+    lines = ["# World performance", "", f"Run: `{report['directory']}`", "",
+             "Metadata: `" + json.dumps(report["metadata"], ensure_ascii=False, sort_keys=True) + "`", "",
+             report["timing"], "", summary_table(report), ""]
+    if "warmup" in report:
+        lines.extend([warmup_line(report["warmup"]), ""])
+    clocks = clock_table(report)
+    if clocks:
+        lines.extend(["Частоты GPU по журналу `gpu.csv`: средние отсчёты `nvidia-smi` между первым и последним кадром вида.",
+                      "", clocks, ""])
+    lines += ["Zone times include all attempts between submitted frames. Scopes can overlap or "
+              "contain child scopes; worker elapsed sums can exceed wall time. Percentages must "
+              "not be added. GPU/CPU comparisons use the matched submitted attempt's end_ns-begin_ns; "
+              "they indicate overlap pressure, not exclusive bottleneck attribution.", ""]
+    for warning in report["warnings"]:
+        lines.append("Warning: " + warning + "\n")
+    for source in report["sources"]:
+        lines.extend([f"Source `{source['directory']}`: `"
+                      + json.dumps(source["metadata"], ensure_ascii=False, sort_keys=True) + "`", ""])
+    for place, data in report["places"].items():
+        for name, stats in [(place, data["summary"])] + [
+                (place + "/" + view, stats) for view, stats in data["views"].items()]:
+            lines.extend([f"## {name}", "",
+                          f"{stats['frames']} frame intervals, {stats['attempts']} attempts, "
+                          f"{stats['elapsed_s']:.3f} s; CPU attempt work mean {stats['cpu_ms']['mean']:.3f} ms/frame.", ""])
+            gpu = stats["gpu"]
+            if gpu is None:
+                lines.extend(["GPU timestamps unavailable.", ""])
+            else:
+                lines.extend([f"GPU mean/p50/p95 {number(gpu['mean_ms'])}/{number(gpu['p50_ms'])}/{number(gpu['p95_ms'])} ms; "
+                              f"completed {gpu['completed_frames']}/{stats['frames']} frames "
+                              f"({100 * gpu['completion_fraction']:.1f}%); GPU longer than CPU "
+                              f"{number(None if gpu['longer_than_cpu_fraction'] is None else 100 * gpu['longer_than_cpu_fraction'], 1)}%; "
+                              f"buffers/completed frame {number(gpu['buffers_per_completed_frame'])}.", ""])
+            if "gpu_passes" in stats:
+                lines.extend(["GPU passes: per frame, the sum of a label's valid `.gpu.csv` rows; frames count "
+                              "frames with that label. Pass intervals can overlap and must not be added.", "",
+                              "| GPU pass | Frames | Mean ms | p95 ms |", "|---|---:|---:|---:|"])
+                lines.extend(f"| {label.replace('|', '\\|')} | {values['frames']} | {values['mean_ms']:.3f} | {number(values['p95_ms'])} |"
+                             for label, values in stats["gpu_passes"].items())
+                lines.append("")
+            lines.extend(["| Zone | Mean ms/frame | % frame | Calls/frame |",
+                          "|---|---:|---:|---:|"])
+            lines.extend(f"| {zone['name']} | {zone['mean_ms']:.3f} | {zone['frame_pct']:.2f} | {zone['calls_per_frame']:.2f} |"
+                         for zone in stats["zones"])
+            lines.extend(["", "| Amount | Total | Per frame |", "|---|---:|---:|"])
+            lines.extend(f"| {amount} | {values['total']} | {values['per_frame']:.3f} |"
+                         for amount, values in stats["amounts"].items())
+            lines.append("")
+            if "texture_activity" in stats:
+                lines.extend(["Texture activity intersects submitted-frame intervals, including intervening FenceBusy time. "
+                              "Read/upload use interval overlap; complete/ready/publish use point timestamps in [begin, next begin). "
+                              "Complete marks CPU worker completion; ready marks the main thread observing GPU upload completion; "
+                              "publish marks the payload swap. Groups overlap and indicate correlation.", "",
+                              "| Texture activity | Frames with | Frame p99 with ms | Frames without | Frame p99 without ms |",
+                              "|---|---:|---:|---:|---:|"])
+                for kind, groups in stats["texture_activity"].items():
+                    yes, no = groups["with"], groups["without"]
+                    lines.append(f"| {kind} | {yes['frames']} | {number(yes['p99_ms'])} | "
+                                 f"{no['frames']} | {number(no['p99_ms'])} |")
+                lines.append("")
+        lines.extend([f"### {place} repeats", "", "| Repeat | FPS | p95 ms |",
+                      "|---|---:|---:|"])
+        lines.extend(f"| {repeat['directory']} | {repeat['summary']['fps']:.2f} | {repeat['summary']['frame_ms']['p95']:.3f} |"
+                     for repeat in data["repeats"])
+        lines.append("")
+    return "\n".join(lines)
+
+
+def zone_value(stats, name):
+    return next((zone["mean_ms"] for zone in stats["zones"] if zone["name"] == name), 0)
+
+
+def delta(a, b, repeats_a, repeats_b, getter):
+    spreads = [max(values) - min(values) for repeats in (repeats_a, repeats_b)
+               if len(repeats) > 1 for values in [[getter(repeat["summary"]) for repeat in repeats]]]
+    noise = max(spreads) if spreads else None
+    change = b - a
+    return {"a": a, "b": b, "delta": change,
+            "delta_pct": change * 100 / a if a else (0.0 if b == 0 else None),
+            "noise": noise, "within_noise": abs(change) <= noise if noise is not None else None}
+
+
+def compare_reports(a, b):
+    warnings = []
+    for label, report in (("A", a), ("B", b)):
+        missing = [key for key in ("binary_sha256", "source_fingerprint") if not report["metadata"].get(key)]
+        if missing:
+            warnings.append(f"{label} ({report['directory']}): missing {', '.join(missing)} "
+                            "(old run); binary/source identity cannot be verified")
+    if (a["metadata"].get("source_fingerprint")
+            and a["metadata"]["source_fingerprint"] == b["metadata"].get("source_fingerprint")
+            and a["metadata"].get("binary_sha256") and b["metadata"].get("binary_sha256")
+            and a["metadata"]["binary_sha256"] != b["metadata"]["binary_sha256"]):
+        warnings.append("A and B have different binary_sha256 with the same source_fingerprint; "
+                        "check which engine binaries were measured")
+    places = {}
+    for place in sorted(set(a["places"]) & set(b["places"])):
+        left, right = a["places"][place], b["places"][place]
+        def compare(getter):
+            return delta(getter(left["summary"]), getter(right["summary"]),
+                         left["repeats"], right["repeats"], getter)
+        zones = {zone["name"] for data in (left, right) for zone in data["summary"]["zones"]}
+        changes = [{"name": name, **compare(lambda stats, name=name: zone_value(stats, name))}
+                   for name in zones]
+        changes.sort(key=lambda item: item["delta"], reverse=True)
+        # Where the frame waits on the processor the change of a pass shows in the graphics card's own time alone.
+        def gpu_p50(stats):
+            return stats["gpu"]["p50_ms"] if stats["gpu"] else None
+        measured = [gpu_p50(data["summary"]) for data in (left, right)]
+        measured += [gpu_p50(repeat["summary"]) for data in (left, right) for repeat in data["repeats"]]
+        places[place] = {"fps": compare(lambda stats: stats["fps"]),
+                         "p95_ms": compare(lambda stats: stats["frame_ms"]["p95"]),
+                         "gpu_p50_ms": compare(gpu_p50) if all(v is not None for v in measured) else None,
+                         "zones": changes}
+        # GPU Boost lowers the clock as the card heats up: a time difference can be a clock difference.
+        sm = [(data["summary"].get("gpu_clock") or {}).get("sm_mhz") for data in (left, right)]
+        if all(sm):
+            spread = abs(sm[1] - sm[0]) * 100 / sm[0]
+            places[place]["gpu_sm_mhz"] = {"a": sm[0], "b": sm[1], "delta_pct": (sm[1] - sm[0]) * 100 / sm[0]}
+            if spread > 1:
+                warnings.append(f"{place}: частоты SM расходятся на {spread:.1f} %: "
+                                "в разнице времени есть разница частоты GPU")
+    if not places:
+        raise ValueError("Runs have no places in common")
+    return {"schema_version": 1, "a": a["directory"], "b": b["directory"],
+            "warnings": warnings,
+            "metadata_a": a["metadata"], "metadata_b": b["metadata"],
+            "only_a": sorted(set(a["places"]) - set(b["places"])),
+            "only_b": sorted(set(b["places"]) - set(a["places"])),
+            "noise_method": "Within noise when absolute delta <= the larger max-min repeat spread "
+                            "of A or B for that metric; unavailable without at least two repeats.",
+            "places": places}
+
+
+def noise_label(change):
+    if change["within_noise"] is None:
+        return "noise unknown (single repeat)"
+    return "в пределах шума" if change["within_noise"] else "exceeds repeat spread"
+
+
+def compare_markdown(report):
+    lines = ["# Performance comparison", "", f"A: `{report['a']}`  \nB: `{report['b']}`", "",
+             *[f"> **Warning:** {warning}\n" for warning in report["warnings"]],
+             "A metadata: `" + json.dumps(report["metadata_a"], ensure_ascii=False, sort_keys=True) + "`", "",
+             "B metadata: `" + json.dumps(report["metadata_b"], ensure_ascii=False, sort_keys=True) + "`", "",
+             report["noise_method"], "", "| Place | FPS A → B | p95 ms A → B | FPS / p95 noise |",
+             "|---|---:|---:|---|"]
+    for place, data in report["places"].items():
+        fps, p95 = data["fps"], data["p95_ms"]
+        lines.append(f"| {place} | {fps['a']:.2f} → {fps['b']:.2f} | {p95['a']:.3f} → {p95['b']:.3f} | "
+                     f"{noise_label(fps)} / {noise_label(p95)} |")
+    if any(data["gpu_p50_ms"] for data in report["places"].values()):
+        lines.extend(["", "| Place | GPU p50 ms A → B | Δ ms | Δ % | Repeat spread ms | GPU noise |",
+                      "|---|---:|---:|---:|---:|---|"])
+        for place, data in report["places"].items():
+            gpu = data["gpu_p50_ms"]
+            if gpu is None:
+                continue
+            lines.append(f"| {place} | {gpu['a']:.3f} → {gpu['b']:.3f} | {gpu['delta']:+.3f} | "
+                         f"{number(gpu['delta_pct'], 2)} | {number(gpu['noise'])} | {noise_label(gpu)} |")
+    if any("gpu_sm_mhz" in data for data in report["places"].values()):
+        lines.extend(["", "| Place | GPU SM MHz A → B | Δ % |", "|---|---:|---:|"])
+        lines.extend(f"| {place} | {data['gpu_sm_mhz']['a']:.0f} → {data['gpu_sm_mhz']['b']:.0f} | "
+                     f"{data['gpu_sm_mhz']['delta_pct']:+.1f} |"
+                     for place, data in report["places"].items() if "gpu_sm_mhz" in data)
+    if report["only_a"] or report["only_b"]:
+        lines.extend(["", f"Only A: {', '.join(report['only_a']) or 'none'}; "
+                      f"only B: {', '.join(report['only_b']) or 'none'}."])
+    for place, data in report["places"].items():
+        lines.extend(["", f"## {place}: zones, largest regression first", "",
+                      "| Zone | A ms | B ms | Δ ms | Δ % | Repeat spread ms | Noise |",
+                      "|---|---:|---:|---:|---:|---:|---|"])
+        for zone in data["zones"]:
+            lines.append(f"| {zone['name']} | {zone['a']:.3f} | {zone['b']:.3f} | {zone['delta']:+.3f} | "
+                         f"{number(zone['delta_pct'], 2)} | {number(zone['noise'])} | {noise_label(zone)} |")
+    return "\n".join(lines) + "\n"
+
+
+def build_series(off, on, tolerance_ms):
+    runs = {}
+    for side, directories in (("off", off), ("on", on)):
+        runs[side] = []
+        for directory in directories:
+            report = build_report(directory)
+            streaming = report["places"].get("streaming-flythrough")
+            if streaming is None:
+                raise ValueError(f"{directory}: no streaming-flythrough measurement segments")
+            runs[side].append((report["directory"], streaming["views"]))
+    passes = {}
+    for name in ("run", "fly"):
+        data = {side: [{"directory": directory, "p99_ms": views[name]["frame_ms"]["p99"]}
+                       for directory, views in reports] for side, reports in runs.items()}
+        off_p99 = [run["p99_ms"] for run in data["off"]]
+        on_p99 = [run["p99_ms"] for run in data["on"]]
+        off_median, on_median = statistics.median(off_p99), statistics.median(on_p99)
+        spread = max(off_p99) - min(off_p99)
+        tolerance = max(tolerance_ms, spread)
+        change = on_median - off_median
+        passes[name] = {**data, "off_median_p99_ms": off_median, "on_median_p99_ms": on_median,
+                        "delta_ms": change, "off_spread_ms": spread, "tolerance_ms": tolerance,
+                        "verdict": "pass" if change <= tolerance else "fail"}
+    return {"schema_version": 1, "minimum_tolerance_ms": tolerance_ms, "passes": passes}
+
+
+def series_markdown(report):
+    lines = ["# Streaming flythrough series", "",
+             "Delta = median ON p99 - median OFF p99. OFF spread = max OFF p99 - min OFF p99.",
+             f"Pass when delta <= max({number(report['minimum_tolerance_ms'])} ms, OFF spread).", "",
+             "| Pass | OFF median p99 ms | ON median p99 ms | Δ ms | OFF spread ms | Tolerance ms | Verdict |",
+             "|---|---:|---:|---:|---:|---:|---|"]
+    for name, data in report["passes"].items():
+        lines.append(f"| {name} | {number(data['off_median_p99_ms'])} | {number(data['on_median_p99_ms'])} | "
+                     f"{data['delta_ms']:+.3f} | {number(data['off_spread_ms'])} | "
+                     f"{number(data['tolerance_ms'])} | {data['verdict']} |")
+    lines.extend(["", "| Pass | Side | Run directory | p99 ms |", "|---|---|---|---:|"])
+    for name, data in report["passes"].items():
+        for side in ("off", "on"):
+            for run in data[side]:
+                lines.append(f"| {name} | {side.upper()} | `{run['directory']}` | {number(run['p99_ms'])} |")
+    return "\n".join(lines) + "\n"
+
+
+def write_outputs(directory, stem, report, markdown):
+    (directory / (stem + ".json")).write_text(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
+    (directory / (stem + ".md")).write_text(markdown)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    subcommands = parser.add_subparsers(dest="command", required=True)
+    run_parser = subcommands.add_parser("run", help="write report.md and report.json in a run folder")
+    run_parser.add_argument("directory", type=Path)
+    compare_parser = subcommands.add_parser("compare", help="write compare.md and compare.json in B")
+    compare_parser.add_argument("a", type=Path)
+    compare_parser.add_argument("b", type=Path)
+    series_parser = subcommands.add_parser("series", help="compare alternating streaming-flythrough OFF/ON runs")
+    series_parser.add_argument("--off", type=Path, nargs="+", required=True)
+    series_parser.add_argument("--on", type=Path, nargs="+", required=True)
+    series_parser.add_argument("--tolerance-ms", type=float, default=1.0)
+    series_parser.add_argument("--out", type=Path)
+    args = parser.parse_args(argv)
+    if args.command == "series":
+        if len(args.off) < 2 or len(args.on) < 2:
+            series_parser.error("series requires at least two run directories for each of --off and --on")
+        if not math.isfinite(args.tolerance_ms) or args.tolerance_ms < 0:
+            series_parser.error("--tolerance-ms must be a finite nonnegative number")
+    try:
+        if args.command == "series":
+            report = build_series(args.off, args.on, args.tolerance_ms)
+            markdown = series_markdown(report)
+            output = args.out if args.out is not None else args.on[-1]
+            output.mkdir(parents=True, exist_ok=True)
+            write_outputs(output, "series", report, markdown)
+            print(markdown, end="")
+            return 0 if all(data["verdict"] == "pass" for data in report["passes"].values()) else 1
+        elif args.command == "run":
+            report = build_report(args.directory)
+            write_outputs(args.directory, "report", report, report_markdown(report))
+            print(summary_table(report))
+            for warning in report["warnings"]:
+                print("Warning: " + warning, file=sys.stderr)
+        else:
+            report = compare_reports(build_report(args.a), build_report(args.b))
+            markdown = compare_markdown(report)
+            write_outputs(args.b, "compare", report, markdown)
+            print(markdown.split("\n## ", 1)[0])
+    except (OSError, ValueError) as exc:
+        print(f"perf_report: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

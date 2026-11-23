@@ -18,7 +18,7 @@
 #include "world/world.h"
 #include "gothic.h"
 #include "resources.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 using namespace Tempest;
 
@@ -187,7 +187,7 @@ bool Necromancy::start(World& world, Npc& npc, Card c, std::string spl, std::str
   spell  = std::move(spl);
   // the hero can die now (the bench and the scripts may keep him alive)
   auto& h = hero->handle();
-  h.flags = zenkit::NpcFlag(uint32_t(h.flags) & ~uint32_t(zenkit::NpcFlag::IMMORTAL));
+  h.flags = daedalus::NpcFlag(uint32_t(h.flags) & ~uint32_t(daedalus::NpcFlag::IMMORTAL));
   heroHp  = hero->attribute(ATR_HITPOINTS);
   Gothic::inst().setHudHidden(true);  // a scene of its own from here on
   // after its last words (they are in its queue), off the bookstand or the bench: a spell is cast standing
@@ -309,13 +309,17 @@ void Necromancy::tick(World& world) {
         if(screen==nullptr) {
           screen = std::make_unique<Screen>();
           screen->onKey = [this]() {
-            if(stage!=Stage::Card || TestBench::isActive())
+            if(stage!=Stage::Card || Bench::isActive())
               return;
             auto* w = Gothic::inst().world();
             if(w==nullptr || w->tickCount()-since < FadeMs+PictureMs+KeyAfterMs)
               return;
-            Log::i("[necro] the end: back to the main menu");
             clear();
+            if(onEnd) {
+              onEnd();
+              return;
+              }
+            Log::i("[necro] the end: back to the main menu");
             if(auto s = Gothic::inst().gameSession())
               s->exitSession();
             };

@@ -1,4 +1,5 @@
 #include "asset/fromzenkit.h"
+#include "baseimport.h"
 #include <zenkit/World.hh>
 #include "commandline.h"
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -9,11 +10,15 @@
 #include "physics/worldcloth.h"
 #include "resources.h"
 #include "worldbase.h"
-#include "worldchunks.h"
+#include "worldchunksruntime.h"
 #include "worlddata.h"
+#include "world/chunkresidency.h"
+#include "world/npcsimtier.h"
 #include "world/portalrooms.h"
+#include "worldchunk_fixtures.h"
 
 #include <zenkit/Stream.hh>
+#include <zenkit/Vfs.hh>
 
 #include <array>
 #include <bit>
@@ -23,6 +28,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -176,6 +183,11 @@ inline void worldbasePhysicsContract(const asset::WorldMesh& zen, const asset::W
 
 namespace {
 namespace fs = std::filesystem;
+using WorldChunkFixtures::chunkFixtureMesh;
+using WorldChunkFixtures::readText;
+using WorldChunkFixtures::selectionMesh;
+using WorldChunkFixtures::withChunks;
+using WorldChunkFixtures::writeText;
 
 void require(bool condition, const std::string& message) {
   if(!condition)
@@ -277,19 +289,21 @@ void clothContract(const WorldCloth::Extracted& zen, const WorldCloth::Extracted
   std::printf("Cloth: %zu surfaces with identical id, names, pins and triangles\n",zen.surfaces.size());
   }
 
-asset::WorldMesh selectionMesh() {
-  asset::WorldMesh mesh;
-  mesh.materials.resize(1);
-  mesh.materials[0].name="CONTRACT";
-  mesh.materials[0].group=asset::MaterialGroup::STONE;
-  mesh.vertices={{100,100,100},{100,200,100},{200,100,100}};
-  mesh.features={{{0,0},0xffffffffu,{0,0,1}},{{0,1},0xffffffffu,{0,0,1}},{{1,0},0xffffffffu,{0,0,1}}};
-  mesh.polygons.vertex_indices={0,1,2};
-  mesh.polygons.feature_indices={0,1,2};
-  mesh.polygons.material_indices={0};
-  mesh.polygons.lightmap_indices={-1};
-  mesh.polygons.flags.resize(1);
-  return mesh;
+asset::WorldMesh expandChunkMesh(const WorldChunkMesh& compact, const asset::WorldMesh& source) {
+  require(compact.mesh.vertices.size()==compact.vertexIds.size() && compact.mesh.features.size()==compact.featureIds.size(),
+          "compact chunk values must have matching source IDs");
+  auto expanded=canonicalWorldMesh(source);
+  expanded.materials=compact.mesh.materials;
+  expanded.polygons=compact.mesh.polygons;
+  for(size_t i=0;i<compact.vertexIds.size();++i)
+    expanded.vertices.at(compact.vertexIds[i])=compact.mesh.vertices[i];
+  for(size_t i=0;i<compact.featureIds.size();++i)
+    expanded.features.at(compact.featureIds[i])=compact.mesh.features[i];
+  for(auto& vertex:expanded.polygons.vertex_indices)
+    vertex=compact.vertexIds.at(vertex);
+  for(auto& feature:expanded.polygons.feature_indices)
+    feature=compact.featureIds.at(feature);
+  return expanded;
   }
 
 void worldDataContract(const zenkit::World& world, const WorldChunkSource& source, const fs::path& dir) {
@@ -305,7 +319,7 @@ void worldDataContract(const zenkit::World& world, const WorldChunkSource& sourc
   const auto nz=uint64_t(std::ceil(double(bounds.max.z-bounds.min.z)/400.));
   size_t samples=0, indoor=0;
   for(uint64_t x=0;x<=nx;++x) for(uint64_t z=0;z<=nz;++z) for(unsigned h=0;h<3;++h) {
-    const zenkit::Vec3 p{bounds.min.x+(bounds.max.x-bounds.min.x)*float(double(x)/double(std::max(uint64_t(1),nx))),
+    const asset::Vec3 p{bounds.min.x+(bounds.max.x-bounds.min.x)*float(double(x)/double(std::max(uint64_t(1),nx))),
                          bounds.min.y+(bounds.max.y-bounds.min.y)*float(h+1)/4.f,
                          bounds.min.z+(bounds.max.z-bounds.min.z)*float(double(z)/double(std::max(uint64_t(1),nz)))};
     const auto expected=rooms.isIndoor({p.x,p.y,p.z});
@@ -337,7 +351,383 @@ void selectionContract(const fs::path& root) {
   const auto difference=compareWorldMeshes(canonicalWorldMesh(changed),mesh);
   require(difference.empty(),"override must replace base chunk: "+difference);
   require(!compareWorldMeshes(canonicalWorldMesh(original),mesh).empty(),"override fixture must change a vertex");
+  auto moved=original;
+  for(auto& vertex:moved.vertices)
+    vertex.x+=4.f*ChunkId::Size;
+  const auto movedDir=root/"moved";
+  const auto movedManifest=writeWorldChunks(moved,source,movedDir);
+  fs::copy_file(movedDir/movedManifest.chunks.front(),overrideDir/chunk,fs::copy_options::overwrite_existing);
+  ChunkTable chunks;
+  const auto movedMesh=readWorldChunks(dir,overrideDir,&chunks);
+  require(compareWorldMeshes(canonicalWorldMesh(moved),movedMesh).empty(),"moved override geometry differs");
+  require(chunks.entries.size()==1 && chunks.entries[0].id==ChunkId{0,0} &&
+          chunks.entries[0].file==manifest.chunks.front() && chunks.entries[0].min.x>4.f*ChunkId::Size &&
+          chunks.triangleChunks==std::vector<uint32_t>{0},"moved override must retain source chunk ownership and exact bounds");
+  require(chunks.source!=nullptr && chunks.triangleSources.size()==1,"edited chunks must retain a file-backed source");
+  const auto compact=chunks.source->read(0,chunks.triangleSources);
+  require(compareWorldMeshes(canonicalWorldMesh(movedMesh),expandChunkMesh(compact,movedMesh)).empty(),
+          "compact reads must use the selected override with the stitched vertex, feature and material IDs");
   std::puts("Selection: matching override chunk replaces base");
+  }
+
+// The fields world.json carries; the unreferenced counts are the writer's only.
+void sameManifest(const WorldChunkManifest& a, const WorldChunkManifest& b, const std::string& label) {
+  require(a.source.world==b.source.world && a.source.size==b.source.size && a.source.crc32==b.source.crc32 &&
+          a.chunkSize==b.chunkSize && a.chunks==b.chunks && a.triangles==b.triangles && a.vertices==b.vertices &&
+          a.features==b.features && a.materials.size()==b.materials.size(),label+": manifest fields differ");
+  for(size_t i=0;i<a.materials.size();++i)
+    require(sameMaterial(a.materials[i],b.materials[i]),label+": material "+std::to_string(i)+" differs");
+  }
+
+void expectRejected(const fs::path& dir, const std::string& json, const std::string& list, const std::string& reason) {
+  writeText(dir/"world.json",withChunks(json,list));
+  try {
+    (void)readWorldChunkManifest(dir);
+    }
+  catch(const std::runtime_error& error) {
+    const std::string message=error.what();
+    require(message.find(reason)!=std::string::npos,"manifest error must say '"+reason+"', got: "+message);
+    return;
+    }
+  throw std::runtime_error("manifest must be rejected with '"+reason+"': "+list);
+  }
+
+// world.json entries: strings as the writer writes them, the same world as
+// objects with extra meshes that are never opened, and every rejected form.
+void manifestContract(const fs::path& root, const fs::path& directory, const WorldChunkManifest& written,
+                      const asset::WorldMesh& restored, const ChunkTable& table) {
+  const auto strings=readWorldChunkManifest(directory);
+  sameManifest(written,strings,"string entries");
+  require(strings.cells.size()==written.chunks.size() && table.entries.size()==written.chunks.size(),
+          "string entries must give one cell and one table entry each");
+  for(size_t i=0;i<strings.cells.size();++i) {
+    const auto& cell=strings.cells[i];
+    const std::vector<ChunkMeshRef> single={{written.chunks[i],ChunkMeshRole::Draw,0}};
+    require(fs::path(written.chunks[i]).stem().string()==std::to_string(cell.id.x)+"_"+std::to_string(cell.id.z) &&
+            cell.meshes==single &&
+            table.entries[i].id==cell.id && table.entries[i].meshes==cell.meshes,
+            "a string entry must be one draw level 0 mesh in the cell of its file stem");
+    }
+
+  const auto objects=root/"chunk-objects";
+  fs::copy(directory,objects,fs::copy_options::recursive);
+  std::string list;
+  std::vector<ChunkCell> expected;
+  size_t extra=0;
+  for(size_t i=0;i<strings.cells.size();++i) {
+    auto cell=strings.cells[i];
+    std::string meshes="{\"file\":\""+cell.meshes[0].file+"\",\"role\":\"draw\",\"level\":0}";
+    if(i%2==0) {
+      // Listed before the draw level 0 mesh, with no files on disk.
+      const auto name="chunks/"+std::to_string(cell.id.x)+"_"+std::to_string(cell.id.z);
+      require(!fs::exists(objects/(name+"_collision.glb")) && !fs::exists(objects/(name+"_lod1.glb")),
+              "extra meshes of the fixture must have no files");
+      cell.meshes.insert(cell.meshes.begin(),{{name+"_collision.glb",ChunkMeshRole::Collision,0},
+                                              {name+"_lod1.glb",ChunkMeshRole::Draw,1}});
+      meshes="{\"file\":\""+name+"_collision.glb\",\"role\":\"collision\"},"
+             "{\"file\":\""+name+"_lod1.glb\",\"role\":\"draw\",\"level\":1},"+meshes;
+      extra+=2;
+      }
+    list+=std::string(i==0 ? "" : ",")+"{\"cell\":["+std::to_string(cell.id.x)+","+std::to_string(cell.id.z)+
+          "],\"meshes\":["+meshes+"]}";
+    expected.push_back(std::move(cell));
+    }
+  require(extra>0,"the object fixture must carry extra meshes");
+  const auto json=readText(directory/"world.json");
+  writeText(objects/"world.json",withChunks(json,list));
+  const auto read=readWorldChunkManifest(objects);
+  sameManifest(strings,read,"object entries");
+  require(read.cells==expected,"object entries must carry every mesh descriptor in manifest order");
+  ChunkTable objectTable;
+  const auto objectMesh=readWorldChunks(objects,{},&objectTable);
+  const auto difference=compareWorldMeshes(restored,objectMesh);
+  require(difference.empty(),"object entries must read the same world mesh: "+difference);
+  require(objectTable.entries.size()==table.entries.size() && objectTable.triangleChunks==table.triangleChunks &&
+          objectTable.triangleSources==table.triangleSources && objectTable.source!=nullptr,
+          "object entries must give the same triangle ownership");
+  for(size_t i=0;i<table.entries.size();++i) {
+    const auto& a=table.entries[i];
+    const auto& b=objectTable.entries[i];
+    require(a.id==b.id && a.file==b.file && a.min==b.min && a.max==b.max && a.triangleCount==b.triangleCount &&
+            b.meshes==expected[i].meshes,"object entries must give the same table entry apart from its meshes");
+    }
+
+  const auto rejected=root/"chunk-rejected";
+  fs::create_directories(rejected);
+  const auto draw=[](const std::string& file, const std::string& level="0") {
+    return "{\"file\":\""+file+"\",\"role\":\"draw\",\"level\":"+level+"}";
+    };
+  const auto cell=[](const std::string& id, const std::string& meshes) {
+    return "{\"cell\":"+id+",\"meshes\":["+meshes+"]}";
+    };
+  const auto zero=draw("chunks/0_0.glb");
+  const std::vector<std::pair<std::string,std::string>> cases={
+    {"\"chunks/0_0.glb\",\"other/0_0.glb\"","cell 0,0 is listed twice"},
+    {"\"chunks/0_0.glb\","+cell("[0,0]",zero),"cell 0,0 is listed twice"},
+    {cell("[0,0]",zero)+","+cell("[0,0]",draw("chunks/0_0_b.glb")),"cell 0,0 is listed twice"},
+    {cell("[0,0]",draw("chunks/0_0_lod1.glb","1")+",{\"file\":\"chunks/0_0_c.glb\",\"role\":\"collision\"}"),
+     "cell 0,0 has no draw level 0 mesh"},
+    {cell("[0,0]",zero+","+draw("chunks/0_0_b.glb")),"two draw level 0 meshes"},
+    {cell("[0,0]",zero+",{\"file\":\"chunks/0_0_c.glb\",\"role\":\"collision\"},"
+                       "{\"file\":\"chunks/0_0_d.glb\",\"role\":\"collision\"}"),"two collision meshes"},
+    {cell("[0,0]",zero+",{\"file\":\"chunks/0_0_s.glb\",\"role\":\"shadow\"}"),"unknown role 'shadow'"},
+    {cell("[0,0]",zero+","+draw("chunks/0_0_lod.glb","-1")),"level of chunks/0_0_lod.glb must be a non-negative integer"},
+    {cell("[0,0]",zero+","+draw("chunks/0_0_lod.glb","1.5")),"level of chunks/0_0_lod.glb must be a non-negative integer"},
+    {cell("[0,0]",zero+",{\"file\":\"chunks/0_0_c.glb\",\"role\":\"collision\",\"level\":0}"),
+     "collision mesh chunks/0_0_c.glb has a level"},
+    {"\"../0_0.glb\"","chunk path must stay inside the world directory: ../0_0.glb"},
+    {"\"/tmp/0_0.glb\"","chunk path must be relative: /tmp/0_0.glb"},
+    {"\"chunks/zero.glb\"","chunk file name is not <x>_<z>: chunks/zero.glb"},
+    {cell("[0,0]",draw("../0_0.glb")),"chunk path must stay inside the world directory: ../0_0.glb"},
+    {cell("[0]",zero),"chunks entry 0: cell must be two integers"},
+    {cell("[0,0.5]",zero),"chunks entry 0: cell must be two integers"},
+    {cell("\"0_0\"",zero),"chunks entry 0: cell must be two integers"},
+    {"{\"meshes\":["+zero+"]}","chunks entry 0: cell must be two integers"},
+  };
+  for(const auto& [entries,reason]:cases)
+    expectRejected(rejected,json,entries,reason);
+  std::printf("Chunk manifest: %zu string cells equal; object cells with %zu extra meshes read the same mesh and table; "
+              "%zu invalid manifests rejected\n",strings.cells.size(),extra,cases.size());
+  }
+
+using SourceTriangle = std::array<uint32_t,7>;
+
+std::multiset<SourceTriangle> unpackLandscape(const PackedMesh& packed, const asset::WorldMesh& source) {
+  std::multiset<SourceTriangle> result;
+  for(const auto& sub:packed.subMeshes) {
+    const auto material=std::find_if(source.materials.begin(),source.materials.end(),[&](const auto& candidate) {
+      return sameMaterial(sub.material,candidate);
+      });
+    require(material!=source.materials.end(),"packed landscape material must retain its whole-mesh representative");
+    for(size_t at=sub.iboOffset;at<sub.iboOffset+sub.iboLength;at+=3) {
+      if(packed.indices[at]==packed.indices[at+1] && packed.indices[at]==packed.indices[at+2])
+        continue;
+      SourceTriangle triangle {};
+      triangle[6]=uint32_t(material-source.materials.begin());
+      for(size_t corner=0;corner<3;++corner) {
+        const auto& vertex=packed.vertices[packed.indices[at+corner]];
+        bool found=false;
+        for(size_t id=0;id<source.vertices.size() && !found;++id) {
+          const auto& position=source.vertices[id];
+          if(position.x!=vertex.pos[0] || position.y!=vertex.pos[1] || position.z!=vertex.pos[2])
+            continue;
+          for(size_t feature=0;feature<source.features.size();++feature) {
+            const auto& value=source.features[feature];
+            if(value.texture.x!=vertex.uv[0] || value.texture.y!=vertex.uv[1] ||
+               value.normal.x!=vertex.norm[0] || value.normal.y!=vertex.norm[1] || value.normal.z!=vertex.norm[2])
+              continue;
+            triangle[corner*2]=uint32_t(id);
+            triangle[corner*2+1]=uint32_t(feature);
+            found=true;
+            break;
+            }
+          }
+        require(found,"packed landscape corner must retain the source vertex/feature pair");
+        }
+      result.insert(triangle);
+      }
+    }
+  return result;
+  }
+
+void chunkContract(const fs::path& root) {
+  for(const auto& sample:std::array<std::pair<float,int32_t>,6>{{
+      {-0.01f,-1},{0.f,0},{6399.99f,0},{6400.f,1},{-6400.f,-1},{-6400.01f,-2}}}) {
+    require(ChunkId::fromPosition(sample.first,sample.first)==ChunkId{sample.second,sample.second},
+            "chunk coordinate must floor at positive and negative boundaries");
+    }
+
+  const auto mesh=chunkFixtureMesh();
+  const auto directory=root/"chunks";
+  const auto manifest=writeWorldChunks(mesh,{"CONTRACT.ZEN",0,0},directory);
+  ChunkTable table;
+  auto restored=readWorldChunks(directory,{},&table);
+  require(compareWorldMeshes(canonicalWorldMesh(mesh),restored).empty(),"chunk metadata must not reorder the stitched mesh");
+  require(table.entries.size()==manifest.chunks.size() && table.triangleChunks.size()==8 && table.triangleSources.size()==8 &&
+          table.source!=nullptr,"chunk table must cover the manifest and stitched/file-backed triangles");
+  for(size_t i=0;i<table.entries.size();++i) {
+    const auto& chunk=table.entries[i];
+    require(chunk.file==manifest.chunks[i],"chunk table file must match manifest order");
+    uint32_t count=0;
+    asset::Vec3 minimum {},maximum {};
+    for(size_t t=0;t<table.triangleChunks.size();++t) {
+      const auto& a=mesh.vertices[mesh.polygons.vertex_indices[t*3]];
+      const auto& b=mesh.vertices[mesh.polygons.vertex_indices[t*3+1]];
+      const auto& c=mesh.vertices[mesh.polygons.vertex_indices[t*3+2]];
+      const auto id=ChunkId::fromPosition(float((double(a.x)+b.x+c.x)/3.),float((double(a.z)+b.z+c.z)/3.));
+      require(table.entries.at(table.triangleChunks[t]).id==id,"stitched triangle ownership must match the converter's centroid grid");
+      if(table.triangleChunks[t]!=i)
+        continue;
+      if(count==0)
+        minimum=maximum=a;
+      for(size_t corner=0;corner<3;++corner) {
+        const auto& vertex=mesh.vertices[mesh.polygons.vertex_indices[t*3+corner]];
+        for(unsigned axis=0;axis<3;++axis) {
+          minimum[axis]=std::min(minimum[axis],vertex[axis]);
+          maximum[axis]=std::max(maximum[axis],vertex[axis]);
+          }
+        }
+      ++count;
+      }
+    require(chunk.triangleCount==count && chunk.min==minimum && chunk.max==maximum,
+            "chunk bounds and counts must use their actual triangles, including overhangs");
+    }
+  manifestContract(root,directory,manifest,restored,table);
+
+  const auto beforeCloth=table.triangleChunks;
+  const auto sourcesBeforeCloth=table.triangleSources;
+  const auto extracted=WorldCloth::extract(restored,&table);
+  require(extracted.surfaces.size()==1 && extracted.original.polygons.material_indices.size()==4 &&
+          restored.polygons.material_indices.size()==4,"small chunk fixture must extract the four cloth triangles");
+  require(table.triangleChunks==std::vector<uint32_t>(beforeCloth.begin(),beforeCloth.begin()+4),
+          "cloth extraction must filter ownership alongside the exact retained source triangles");
+  require(table.source!=nullptr && table.triangleSources==
+          std::vector<uint32_t>(sourcesBeforeCloth.begin(),sourcesBeforeCloth.begin()+4),
+          "cloth extraction must filter file-backed triangle IDs alongside ownership");
+  require(restored.vertices==mesh.vertices && restored.polygons.vertex_indices==
+          std::vector<uint32_t>(mesh.polygons.vertex_indices.begin(),mesh.polygons.vertex_indices.begin()+12) &&
+          restored.polygons.feature_indices==std::vector<uint32_t>(mesh.polygons.feature_indices.begin(),mesh.polygons.feature_indices.begin()+12),
+          "cloth extraction must preserve all source vertex and feature IDs");
+  const auto lists=chunkTriangleLists(restored,table);
+  const auto representatives=PackedMesh::landscapeMaterialMap(restored);
+  const PackedMesh whole(restored,PackedMesh::PK_VisualLnd);
+  std::multiset<SourceTriangle> expected,combined;
+  for(size_t triangle=0;triangle<restored.polygons.material_indices.size();++triangle) {
+    SourceTriangle value {};
+    for(size_t corner=0;corner<3;++corner) {
+      value[corner*2]=restored.polygons.vertex_indices[triangle*3+corner];
+      value[corner*2+1]=restored.polygons.feature_indices[triangle*3+corner];
+      }
+    value[6]=representatives[restored.polygons.material_indices[triangle]];
+    expected.insert(value);
+    }
+  for(size_t chunk=0;chunk<lists.size();++chunk) {
+    require(lists[chunk].size()==table.entries[chunk].triangleCount,"filtered per-chunk count must match its source triangle list");
+    const PackedMesh packed(restored,lists[chunk],representatives);
+    const auto triangles=unpackLandscape(packed,restored);
+    combined.insert(triangles.begin(),triangles.end());
+    std::vector<uint32_t> sources;
+    for(const auto triangle:lists[chunk])
+      sources.push_back(table.triangleSources[triangle]);
+    const auto compact=table.source->read(chunk,sources);
+    auto expectedChunk=restored;
+    retainWorldTriangles(expectedChunk,lists[chunk]);
+    require(compareWorldMeshes(expectedChunk,expandChunkMesh(compact,restored)).empty(),
+            "compact chunk reads must retain exact source values, polygon IDs and material records after cloth filtering");
+    std::vector<uint32_t> localTriangles(sources.size());
+    for(size_t i=0;i<localTriangles.size();++i)
+      localTriangles[i]=uint32_t(i);
+    const PackedMesh compactPacked(compact.mesh,localTriangles,representatives,compact.vertexIds,compact.featureIds);
+    require(unpackLandscape(compactPacked,restored)==triangles,
+            "file-backed chunk packing must match in-memory packing with global source IDs and whole-world material representatives");
+    }
+  require(unpackLandscape(whole,restored)==expected && combined==expected,
+          "whole and chunk landscapes must contain the same triangles, original vertex/feature IDs and representative materials");
+  auto sparse=restored;
+  auto sparseTable=table;
+  retainWorldTriangles(sparse,std::array<uint32_t,2>{1,3},&sparseTable);
+  require(sparseTable.triangleChunks==std::vector<uint32_t>{table.triangleChunks[1],table.triangleChunks[3]} &&
+          sparseTable.triangleSources==std::vector<uint32_t>{table.triangleSources[1],table.triangleSources[3]} &&
+          sparse.polygons.vertex_indices==std::vector<uint32_t>{3,4,5,9,10,11},
+          "the reusable filter must preserve source IDs and ownership for a noncontiguous subset");
+  std::printf("Chunk landscape contract: %zu chunks, %zu triangles, 4 cloth triangles; disk/in-memory source IDs/materials equal\n",lists.size(),expected.size());
+
+  ChunkTable grid;
+  for(int32_t x=-4;x<=14;++x) for(int32_t z=-4;z<=4;++z)
+    grid.entries.push_back({{x,z},{},{float(x*ChunkId::Size),0,float(z*ChunkId::Size)},
+                           {float((x+1)*ChunkId::Size),100,float((z+1)*ChunkId::Size)},1});
+  grid.entries.push_back({{20,20},{},{},{},0});
+  const Tempest::Vec3 origin(100,0,100), distant(64100,0,100);
+  ChunkResidency coincident(grid), split(grid);
+  coincident.update(origin,origin,100000);
+  split.update(origin,distant,100000);
+  require(coincident.stats().near==25 && split.stats().near==50,"Near must be the union of hero and camera squares");
+  require(coincident.desired(grid.entries.size()-1)==ChunkResidency::State::Outside,
+          "empty chunk geometry must not use default origin bounds for Far residency");
+  for(size_t i=0;i<grid.entries.size();++i)
+    require(split.actualLoaded(i),"all chunks must remain actually loaded");
+
+  ChunkTable single;
+  single.entries.push_back({{0,0},{},{0,0,0},{6400,100,6400},1});
+  using State=ChunkResidency::State;
+  ChunkResidency near(single);
+  size_t nearEvents=0;
+  const auto subscription=near.subscribe([&, count=size_t(0)](ChunkId id,State,State) mutable {
+    require(id==ChunkId{0,0},"state transition must identify the changed chunk");
+    ++nearEvents;
+    require(++count==nearEvents,"chunk listener must retain its mutable captured state between transitions");
+    });
+  auto nearAt=[&](float x) { near.update({x,0,100},{x,0,100},100000); };
+  nearAt(2.f*ChunkId::Size+100);
+  for(unsigned i=0;i<10;++i) {
+    nearAt(3.f*ChunkId::Size-1);
+    nearAt(3.f*ChunkId::Size+1);
+    }
+  require(near.desired(ChunkId{0,0})==State::Near && nearEvents==1,"Near boundary jitter must not emit transitions");
+  nearAt(4.f*ChunkId::Size+1);
+  nearAt(3.f*ChunkId::Size+1);
+  require(near.desired(size_t(0))==State::Far && nearEvents==2,"Near must leave at radius four and stay out at radius three");
+  nearAt(3.f*ChunkId::Size-1);
+  require(near.desired(size_t(0))==State::Near && nearEvents==3,"Near must re-enter only at radius two");
+  near.unsubscribe(subscription);
+  nearAt(4.f*ChunkId::Size+1);
+  require(nearEvents==3,"unsubscribed chunk listeners must not receive transitions");
+
+  ChunkResidency far(single);
+  auto farAt=[&](float x) { far.update({1000000,0,1000000},{x,0,100},100000); };
+  farAt(106401);
+  require(far.desired(size_t(0))==State::Outside,"Far must enter only within zFar of the actual AABB");
+  farAt(106399);
+  for(unsigned i=0;i<10;++i) { farAt(106401); farAt(106399); }
+  require(far.desired(size_t(0))==State::Far && far.stats().totalTransitions==1,"Far boundary jitter must not emit transitions");
+  farAt(112801);
+  farAt(106401);
+  require(far.desired(size_t(0))==State::Outside && far.stats().totalTransitions==2,"Far must leave beyond zFar plus one chunk and re-enter at zFar");
+
+  const auto* previous=std::getenv("OPENGOTHIC_STREAMING");
+  const std::string previousValue=previous==nullptr ? "" : previous;
+  setenv("OPENGOTHIC_STREAMING","0",1);
+  require(ChunkResidency::create(single)==nullptr,"OPENGOTHIC_STREAMING=0 must not create the manager");
+  if(previous==nullptr)
+    unsetenv("OPENGOTHIC_STREAMING");
+  else
+    setenv("OPENGOTHIC_STREAMING",previousValue.c_str(),1);
+  std::puts("Chunks: negative boundaries, converter ownership/AABBs, independent rings, hysteresis and disabled manager passed");
+
+  using Mode=NpcSimTiers::Mode;
+  bool valid=false;
+  require(NpcSimTiers::parseMode(nullptr,nullptr,&valid)==Mode::Auto && valid &&
+          NpcSimTiers::parseMode("auto",nullptr)==Mode::Auto && NpcSimTiers::parseMode("full",nullptr)==Mode::Full &&
+          NpcSimTiers::parseMode("simplified","1")==Mode::Simplified,
+          "OPENGOTHIC_NPC_SIM_TIER must parse auto, full and simplified");
+  require(NpcSimTiers::parseMode("bogus",nullptr,&valid)==Mode::Auto && !valid,
+          "an unknown NPC tier must fall back to auto and be reported");
+  require(NpcSimTiers::parseMode("simplified","0")==Mode::Full && NpcSimTiers::parseMode(nullptr,"0")==Mode::Full,
+          "OPENGOTHIC_STREAMING=0 must keep every NPC Full");
+  ChunkResidency tiers(single);
+  tiers.update({100,0,100},{100,0,100},100000);
+  const auto tier=[&](Mode mode, bool hero, bool keep, const ChunkResidency* residency, ChunkId cell, NpcSimTier previous) {
+    return NpcSimTiers::desired(mode,hero,keep,residency,cell,previous);
+    };
+  for(const auto mode:{Mode::Auto,Mode::Full,Mode::Simplified})
+    require(tier(mode,true,false,&tiers,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full,
+            "the hero must be Full in every mode");
+  require(tier(Mode::Full,false,false,&tiers,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full &&
+          tier(Mode::Simplified,false,false,&tiers,ChunkId{0,0},NpcSimTier::Full)==NpcSimTier::Simplified,
+          "full and simplified modes must override residency for ordinary NPCs");
+  require(tier(Mode::Auto,false,false,nullptr,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full,
+          "auto without a residency manager must keep every NPC Full");
+  for(const auto mode:{Mode::Auto,Mode::Full,Mode::Simplified})
+    require(tier(mode,false,true,&tiers,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full,
+            "training and arena actors must stay Full in every mode");
+  require(tier(Mode::Auto,false,false,&tiers,ChunkId{0,0},NpcSimTier::Simplified)==NpcSimTier::Full &&
+          tier(Mode::Auto,false,false,&tiers,ChunkId{2,-2},NpcSimTier::Simplified)==NpcSimTier::Full,
+          "an NPC in a Near chunk or cell must be Full");
+  require(tier(Mode::Auto,false,false,&tiers,ChunkId{3,0},NpcSimTier::Full)==NpcSimTier::Full &&
+          tier(Mode::Auto,false,false,&tiers,ChunkId{3,0},NpcSimTier::Simplified)==NpcSimTier::Simplified &&
+          tier(Mode::Auto,false,false,&tiers,ChunkId{4,0},NpcSimTier::Full)==NpcSimTier::Simplified,
+          "the NPC tier must use the Near enter radius 2 and exit radius 3");
+  std::puts("NPC simulation tiers: modes, hero, streaming switch, Near ring and exit hysteresis passed");
   }
 }
 
@@ -349,9 +739,12 @@ int main() {
     const char* args[]={"gothic-worldbase-contract","-g",gothic};
     CommandLine commandLine(3,args);
     Resources resources;
-    Resources::loadVdfs({},true);
-    const auto* entry=Resources::vdfsIndex().find("NEWWORLD.ZEN");
-    require(entry!=nullptr,"NEWWORLD.ZEN is missing from the engine VFS");
+    Resources::loadBase();
+    zenkit::Vfs sourceVfs;
+    fs::path work;
+    BaseImport::mountRuntime(sourceVfs,gothic,work);
+    const auto* entry=sourceVfs.find("NEWWORLD.ZEN");
+    require(entry!=nullptr,"NEWWORLD.ZEN is missing from the import reference VFS");
     auto input=entry->open_read();
     input->seek(0,zenkit::Whence::END);
     std::vector<std::byte> bytes(input->tell()); input->seek(0,zenkit::Whence::BEG);
@@ -370,10 +763,13 @@ int main() {
     auto base=readWorldChunks(dir);
     const auto difference=compareWorldMeshes(canonicalWorldMesh(zen),base);
     require(difference.empty(),"canonical round trip: "+difference);
+    const auto cells=readWorldChunkManifest(dir);
+    sameManifest(manifest,cells,"NEWWORLD string entries");
+    require(cells.cells.size()==manifest.chunks.size(),"NEWWORLD must give one cell per chunk");
     std::printf("NEWWORLD.ZEN: %zu bytes, CRC32 %08x, %zu triangles, %zu chunks; canonical round trip equal\n",
                 bytes.size(),source.crc32,zen.polygons.material_indices.size(),manifest.chunks.size());
     WorldData::Data loaded;
-    Resources::loadWorld(loaded,base,"NEWWORLD.ZEN");
+    loadWorld(loaded,base,"NEWWORLD.ZEN");
     require(base.name==zen.name && base.bbox.min==zen.bbox.min && base.bbox.max==zen.bbox.max,"base load must preserve source name and bounds");
     require(world.world_mesh.geometry.size()==rawPolygons && world.world_mesh.polygon_vertex_indices==rawVertices &&
             world.world_mesh.polygon_feature_indices==rawFeatures,"mesh conversion must preserve raw BSP geometry");
@@ -381,6 +777,7 @@ int main() {
     const auto baseCloth=WorldCloth::extract(base);
     clothContract(zenCloth,baseCloth);
     selectionContract(temporary.path);
+    chunkContract(temporary.path);
     worldbasePhysicsContract(zen,base);
     if(!zenCloth.original.polygons.material_indices.empty())
       visualContract(zenCloth.original,baseCloth.original,"Original cloth");

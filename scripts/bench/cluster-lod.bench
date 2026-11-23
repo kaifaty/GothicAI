@@ -1,0 +1,75 @@
+# Dense NEWWORLD. Use the same scene with OPENGOTHIC_BENCH_TAKE=off/on
+# and OPENGOTHIC_CLUSTER_LOD=0/1 respectively, at a fixed window size.
+world-check NEWWORLD.ZEN
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+# Start both takes beyond all landscape rings before warming the first camera.
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
+cam at 40000 4724 -1515 41250 3350 650
+streaming wait
+wait 500
+shot near
+wait 100
+rec fly
+cam fly 26500 12100 -29100 41250 3350 650 8000
+wait 8000
+stop
+cam at 26500 12100 -29100 41250 3350 650
+streaming wait
+shot far
+wait 100
+
+cluster-lod mask on
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
+cam at 40000 4724 -1515 41250 3350 650
+streaming wait
+rec mask
+cam fly 26500 12100 -29100 41250 3350 650 8000
+wait 8000
+stop
+cluster-lod mask off
+
+on: cluster-lod levels
+on: cam at 40000 4724 -1515 41250 3350 650
+on: streaming wait
+on: wait 500
+on: shot levels-near
+on: wait 100
+on: rec levels
+on: cam fly 26500 12100 -29100 41250 3350 650 8000
+on: wait 8000
+on: stop
+on: cam at 26500 12100 -29100 41250 3350 650
+on: streaming wait
+on: shot levels-far
+on: wait 100
+on: cluster-lod normal
+
+# Timing is from ordinary submitted frames after all capture work.
+goto pos 300000 60000 -300000
+cam at 300000 60000 -300000 41250 3350 650
+wait 100
+goto pos 36500 3900 -7577
+cam at 38907 4994 -1252 42532 2685 438
+streaming wait
+cadence normal
+wait 2000
+perf sample perf-cluster-lod/view-1-near
+wait 4000
+perf stop
+cam at 26500 12100 -29100 41250 3350 650
+wait 2000
+perf sample perf-cluster-lod/view-2-far
+wait 4000
+perf stop
+cadence wait

@@ -25,6 +25,13 @@ from ..game import GameError, GameLink
 from ..protocol import Session, TriggerFired
 from .common import _logged, _m5b_player_weapon, _save_or_fail, wait_message
 
+SCENARIOS = {
+    "memprobe": ("OFF", {
+        "save": False, "timeout": 1200,
+        "env": {"MEMPROBE_CYCLES": "8", "MEMPROBE_PHASES": "wave,save,load,spawn,teleport"},
+    }),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 REFUGE = "NW_XARDAS_TOWER_VALLEY_01"
 ARENA = "NW_XARDAS_GOBBO_02"
@@ -187,7 +194,7 @@ class _Metrics:
 
 
 async def memprobe_scenario(
-    link: GameLink, *, bodies: Bodies, log_dir: Path, llm_name: str, body_enabled: bool = False,
+    link: GameLink, *, bodies: Bodies, log_dir: Path, body_enabled: bool = False,
 ) -> dict[str, str]:
     """Measure isolated save/load/spawn/teleport operations and native combat waves.
 
@@ -195,8 +202,8 @@ async def memprobe_scenario(
     and a short render settle; ``cycle_end`` includes grouped smaps and its largest
     mappings. MEMPROBE_CYCLE_PAUSE can expose checkpoints to an external profiler.
     """
-    if llm_name != "fake" or body_enabled:
-        raise GameError("memprobe requires LLM=fake, no --body-url and no body pilot")
+    if body_enabled:
+        raise GameError("memprobe requires no --body-url and no body pilot")
     phases = tuple(value.strip() for value in os.environ.get("MEMPROBE_PHASES", ",".join(PHASES)).split(","))
     if not phases or any(phase not in PHASES for phase in phases) or len(set(phases)) != len(phases):
         raise GameError(f"MEMPROBE_PHASES must be unique names from {','.join(PHASES)}")

@@ -1,4 +1,5 @@
 #include "physicmesh.h"
+#include "loadprobe.h"
 
 #include "graphics/mesh/attachbinder.h"
 #include "graphics/mesh/skeleton.h"
@@ -7,6 +8,7 @@
 
 PhysicMesh::PhysicMesh(const ProtoMesh& proto, DynamicWorld& owner, bool movable)
   :ani(&proto) {
+  LoadProbe::Vobs::Scope probe("physics_mesh");
   Tempest::Matrix4x4 pos;
   pos.identity();
 

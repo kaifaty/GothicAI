@@ -1,0 +1,64 @@
+# Onar's north field after step A of reports/content/2026-11-19-crop-fields/alive.md (the field grown and worked):
+# the four cameras of crop-onar.bench for the pairs «сейчас | стало», two new views and two clips.
+#   TEMPEST_WINDOW_SIZE=2560x1440 OPENGOTHIC_CONTENT=<set> scripts/bench.sh crop-onar-alive <out>
+# @timeout 600
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+walkmode walk
+watch player
+goto pos 57094 1850 -11100
+# view 1: the eye's height, along the strips
+cam at 57800 2190 -10600 57800 2030 -7000
+clear 3000
+wait 15000
+grass wait
+wait 2000
+shot strip
+wait 300
+# view 2: at a wall of rye, close
+cam at 57600 2160 -9800 58600 2060 -8600
+wait 6000
+shot edge
+wait 300
+# view 3: from 6 m over the west corner across the plot
+cam at 55400 2300 -10000 59000 2050 -8000
+wait 6000
+shot corner
+wait 300
+# view 4: from 30 m over the south side: both plots
+cam at 61400 5100 -12500 61400 2100 -7600
+wait 8000
+shot over
+wait 300
+# view 5: the strip being reaped: the cart, lying sheaves, swaths, the ragged front of the rye
+cam at 56950 2000 -8350 56450 1790 -7300
+wait 6000
+shot front
+wait 300
+# view 6: the eye's height along a wall of rye, its weeds and tufts
+cam at 58640 2230 -10350 58900 2150 -8800
+wait 6000
+shot wall
+wait 300
+# clip 1: a gust crosses the plot, from 7 m over its corner
+cam at 55400 2700 -10400 58500 2000 -8000
+foliage wait-gust 4000 -9000
+rec gust
+wait 10000
+stop
+wait 500
+# clip 2: the hero walks on the stubble along the wall of rye
+cam game
+goto pos 58720 2080 -10200
+wait 2500
+face 90
+wait 800
+rec walk
+hold forward 10000
+wait 10500
+stop
+wait 500

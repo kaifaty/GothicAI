@@ -21,7 +21,7 @@ import sys
 import time
 from typing import Any
 
-from body_headless_suite import (process_sample, rng_environment,
+from body_headless_suite import (engine_library_provenance, process_sample, rng_environment,
                                  service_snapshot, sha256, write_json)
 
 
@@ -45,7 +45,7 @@ class ObserverRunner:
         workdir.mkdir(exist_ok=True)
         (workdir / "Gothic.ini").write_bytes((args.reference / "run/Gothic.ini").read_bytes())
         self.process = subprocess.Popen(
-            [str(args.runner), "-g", str(args.assets), "-g2", "-devmode", "--save", str(args.save),
+            [str(args.runner), "-g", str(args.assets), "-devmode", "--save", str(args.save),
              "--scenario", str(args.scenario), "--output", str(args.output / "initial"),
              "--mode", "lockstep", "--stdio"] +
             (["--compact-replies"] if getattr(args, "compact_replies", False) else [])+native_worker_arguments(args)+
@@ -141,7 +141,7 @@ def provenance(args: argparse.Namespace) -> dict[str, Any]:
     return {"schema_version": 1, "kind": "body_observe_stage3",
             "recorded_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
             "host": platform.node(), "platform": platform.platform(), "python": platform.python_version(),
-            "binary_sha256": sha256(args.runner), "engine_library_sha256": sha256(args.engine_library),
+            "binary_sha256": sha256(args.runner), **engine_library_provenance(args.engine_library),
             "source_sha256": digest.hexdigest(), "source_files_hashed": files,
             "save_sha256": sha256(args.save), "settings_sha256": baseline["settings_sha256"],
             "game_version": baseline["game_version"],

@@ -451,7 +451,7 @@ def _tool_choice(
         return "none"
     return {
         "type": "allowed_tools",
-        "mode": "auto",
+        "mode": "required" if choice == "required" else "auto",
         "tools": [{"type": "function", "name": n} for n in names],
     }
 

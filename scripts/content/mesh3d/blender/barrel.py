@@ -6,7 +6,8 @@ config: {"target": mesh3d-pilot.json (default: the repo's), "id": "barrel",
          "hoops": [[centre_fraction, height_m], ...], "hoop_thickness": 0.008, "hoop_slope": 0.02,
          "rim": 0.025, "chime_depth": 0.03, "gap": 0.004, "rim_drop": 0.006,
          "lid_planks": 4, "jitter": 0.12,
-         "stave_tile": 0.38, "planks_per_tile": 4, "ring_step": 0.09}
+         "stave_tile": 0.38, "planks_per_tile": 4, "ring_step": 0.09,
+         "debris": {...}: also model.debris.glb, the pieces it breaks into (barrel_debris.py)}
 The concept's front view gives the silhouette; part counts are read from the
 concept by eye and passed in. The target gives size, origin and budget. One
 facet per stave, so the texture's plank seams fall on facet edges; each stave
@@ -129,6 +130,14 @@ def quad(verts, material, uvs):
     return face
 
 
+def use_shell(new_bm):
+    """Point vert, ring, quad, box and rivet at another bmesh: the debris pieces (barrel_debris.py)."""
+    global bm, uv
+    bm = new_bm
+    uv = bm.loops.layers.uv.new("UVMap")
+    return uv
+
+
 def inside_hoop(z0, z1):
     return any(a - 1e-6 <= z0 and z1 <= b + 1e-6 for a, b in hoops)
 
@@ -199,7 +208,10 @@ def rivet(centre, tu, tv, tn, radius, height_, material):
 from mathutils import Vector  # noqa: E402
 
 seam = cfg.get("seam_stave", 0)
-for a, b in hoops:
+
+
+def seam_plate(a, b):
+    """The plate and its two rivets on the hoop from a to b, into the current bm."""
     za, zb = a, b - cfg.get("hoop_slope", 0.02)  # the plate sits on the hoop skin, below its sloped top
     s0, s1 = angles[seam], angles[seam + 1]
     def p(r, ang, z):
@@ -217,6 +229,10 @@ for a, b in hoops:
     box(centre, tu, tv, tn, plate, (zb - za) / 2 - 0.004, depth, BAND)
     for side in (-1, 1):
         rivet(centre + tn * depth + tu * side * plate * 0.45, tu, tv, tn, 0.009, 0.006, BAND)
+
+
+for a, b in hoops:
+    seam_plate(a, b)
 
 # Crown: every stave end is its own block above the lid, with a gap to the next and an uneven top.
 rim = cfg.get("rim", 0.025)
@@ -301,5 +317,11 @@ metrics = {"concept_front": cfg["front"], "triangles": len(mesh.polygons), "budg
            "target_aspect_h_over_d": round(float(height / (2 * target_r)), 4),
            "bbox_delta_min_m": (lo - target_lo).round(4).tolist(), "bbox_delta_max_m": (hi - target_hi).round(4).tolist(),
            "blender_version": bpy.app.version_string}
+if "debris" in cfg:  # the pieces the barrel breaks into, next to the whole: model.debris.glb
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from types import SimpleNamespace
+
+    import barrel_debris
+    metrics["debris"] = barrel_debris.build(SimpleNamespace(**globals()), cfg["debris"], out)
 (out / "metrics.json").write_text(json.dumps(metrics, indent=2))
 print("BUILT", json.dumps(metrics))

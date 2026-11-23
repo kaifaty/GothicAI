@@ -6,9 +6,9 @@
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "gothic.h"
+#include "settings.h"
 #include "serialize.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "navdemos.h"
 
 #include <cstdio>
@@ -23,7 +23,7 @@
 struct MoveAlgo::MovementTrace final {
   MovementTrace(MoveAlgo& owner, uint64_t dt, MvFlags moveFlags)
     :owner(owner),previous(owner.movementTrace),dt(dt),moveFlags(moveFlags) {
-    active = TestBench::bodyTracing() && (owner.npc.bodyTraceMovementActive || owner.npc.target()!=nullptr);
+    active = Bench::bodyTracing() && (owner.npc.bodyTraceMovementActive || owner.npc.target()!=nullptr);
     if(!active)
       return;
     start = owner.npc.position();
@@ -54,7 +54,7 @@ struct MoveAlgo::MovementTrace final {
                   double(owner.npc.rotation()),owner.flags==Run ? "true" : "false",unsigned(owner.flags),
                   attempts,failures,land ? "true" : "false",otherNpc ? "true" : "false",vob ? "true" : "false",
                   preFall ? "true" : "false");
-    TestBench::bodyEvent(owner.npc,owner.npc.target(),"physics_step",owner.npc.world().tickCount(),fields);
+    Bench::bodyEvent(owner.npc,owner.npc.target(),"physics_step",owner.npc.world().tickCount(),fields);
     }
 
   void collision(const Tempest::Vec3& displacement, bool accepted, const DynamicWorld::CollisionTest& info) {
@@ -91,6 +91,9 @@ MoveAlgo::MoveAlgo(Npc& unit)
 
 void MoveAlgo::load(Serialize &fin) {
   resetCharacterVirtual();
+  bumpSignal = {};
+  reachSignal = {};
+  reach = {};
   npcVirtualInRange = false;
   npcVirtualMobTransition = false;
   fin.read(reinterpret_cast<uint32_t&>(flags));
@@ -151,7 +154,14 @@ bool MoveAlgo::tryMove(float x,float y,float z, DynamicWorld::CollisionTest& out
   }
 
 bool MoveAlgo::tryMove(const Tempest::Vec3& dp, DynamicWorld::CollisionTest& out) {
+  out.trackBodyImpact=Settings::physicsFlags().bodyImpactDamage && npc.hasBodyImpactSpellFlight() && (flags==InAir || flags==Falling);
+  if(out.trackBodyImpact) {
+    out.bodyImpactVelocity=fallSpeed;
+    out.bodyImpactSpeed=0;
+    }
   const bool accepted = npc.tryMove(dp,out);
+  if(out.trackBodyImpact && out.bodyImpactSpeed>0.f)
+    npc.recordBodyImpact(out.bodyImpactSpeed,npc.bodyImpactCulprit(),"spell_capsule");
   if(movementTrace!=nullptr)
     movementTrace->collision(dp,accepted,out);
   return accepted;
@@ -191,7 +201,7 @@ void MoveAlgo::tickJumpup(uint64_t dt) {
 void MoveAlgo::tickClimb(uint64_t dt) {
   if(npc.bodyStateMasked()!=BS_CLIMB) {
     //NOTE: climb allows npc to violate collision detection, need to readjust
-    npc.owner.script().fixNpcPosition(npc, 0, 0);
+    npc.owner.rules().fixNpcPosition(npc, 0, 0);
     setState(Run);
 
     Tempest::Vec3 p={}, v={0,0,climbMove};
@@ -223,6 +233,16 @@ void MoveAlgo::tickClimb(uint64_t dt) {
   }
 
 void MoveAlgo::tick(uint64_t dt, MvFlags moveFlg) {
+  if(npc.usesSimplifiedMovement()) {
+    // Detached native Mobsi ownership has finished before the graph resumes.
+    if(npc.interactive()==nullptr)
+      npcVirtualMobTransition=false;
+    takeRagdollControl();
+    // Mobsi attachment transitions remain native until their executor in 6d.
+    if(npc.interactive()!=nullptr)
+      tickMobsi(dt);
+    return;
+    }
   ++movementTraceSerial;
   MovementTrace trace(*this,dt,moveFlg);
   if(npc.isDown() && (flags==Swim || flags==Dive)) {
@@ -261,9 +281,7 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   const auto bs = npc.bodyStateMasked();
   const bool liftOff = bs==BS_JUMP && npc.isFlyAnim();
   const bool virtualEnabled = useCharacterVirtual();
-  const bool virtualWalking = virtualEnabled && !npcVirtualMobTransition &&
-                              !npc.isDown() && npc.physic.isEnabled() && !canFlyOverWater() &&
-                              (flags==Run || flags==Slide || flags==InWater) && !liftOff;
+  const bool virtualWalking = characterVirtualReady();
   if(!virtualWalking) {
     if(virtualMovementActive && flags==Run && liftOff)
       virtualJumpVelocity = virtualGroundVelocity*0.001f;
@@ -317,8 +335,11 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
       dp.y = 0.f; // walking root bob cannot detach the controller from its support
     const auto root = dp;
     dp += assist;
+    // A body at rest passes only its stance's root sway: it must not slide
+    // down a walkable slope (the controller's static friction).
+    const bool standing = bs==BS_STAND && assist==Tempest::Vec3() && state!=Slide;
     const auto assistOrigin = npc.position();
-    const bool moved = tickCharacterVirtual(dt,dp);
+    const bool moved = tickCharacterVirtual(dt,wallStop(dp),standing,assist!=Tempest::Vec3());
     npc.noteMeleeStep(root,assist,npc.position()-assistOrigin,dt);
     if(impulseGeneration!=movementImpulseGeneration)
       return moved;
@@ -677,33 +698,37 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   return true;
   }
 
+bool MoveAlgo::characterVirtualReady() {
+  const bool liftOff = npc.bodyStateMasked()==BS_JUMP && npc.isFlyAnim();
+  return useCharacterVirtual() && npc.interactive()==nullptr && !npc.spellFrozen() &&
+         !npcVirtualMobTransition && !npc.isDown() && npc.physic.isEnabled() && !canFlyOverWater() &&
+         (flags==Run || flags==Slide || flags==InWater) && !liftOff;
+  }
+
 bool MoveAlgo::useCharacterVirtual() {
+  if(npc.usesSimplifiedMovement())
+    return false;
   if(npc.isPlayer())
-    return Gothic::physicsFlags().characterVirtual;
+    return Settings::physicsFlags().characterVirtual;
   if(NavDemos::forceCharacterVirtual(npc) && npc.isHuman() && !npc.isDown())
     return true;
   const auto* hero = npc.world().player();
   const bool human = npc.isHuman();
-  const bool enabled = human ? Gothic::physicsFlags().npcCharacterVirtual :
-                               Gothic::physicsFlags().monsterCharacterVirtual &&
-                               Gothic::physicsFlags().allowsMonsterCharacterVirtual(npc.isDown(),canFlyOverWater());
-  if(!enabled || npc.isDown() || hero==nullptr) {
-    npcVirtualInRange = false;
-    return false;
-    }
-  constexpr float enterRadius = 2000.f, leaveRadius = 2200.f;
-  const float distance = npc.qDistTo(*hero);
-  npcVirtualInRange = npcVirtualInRange ? distance<=leaveRadius*leaveRadius
-                                       : distance<enterRadius*enterRadius;
+  const bool enabled = human ? Settings::physicsFlags().npcCharacterVirtual :
+                               Settings::physicsFlags().monsterCharacterVirtual &&
+                               Settings::physicsFlags().allowsMonsterCharacterVirtual(npc.isDown(),canFlyOverWater());
+  npcVirtualInRange = MeleeFighter::keepPhysics(enabled,!npc.isDown() && hero!=nullptr,
+                                               npc.isMeleeFighter(),npcVirtualInRange,
+                                               hero!=nullptr ? npc.qDistTo(*hero) : 0.f);
   return npcVirtualInRange;
   }
 
-bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement) {
+bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement, bool standing, bool meleeStep) {
   const auto origin = npc.position();
   auto& world = npc.world();
   std::vector<Item*> nearbyItems;
   world.detectItem(origin,DynamicWorld::characterItemRange,[&](Item& item) {
-    if(!item.isDynamic())
+    if(!item.isDynamic() && !(Settings::physicsFlags().placedItems && item.isPlacedItem()))
       nearbyItems.push_back(&item);
     });
   // Creating a native body invalidates the item query index. Finish detection first,
@@ -715,12 +740,13 @@ bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displaceme
   const auto previousState=flags;
   const bool limitStairAdvance = !npc.isPlayer() && !npc.isHuman();
   const auto moved = npc.physic.moveVirtual(displacement,dt,stepHeight(),maxSlope,npc.physicsMass(),&npc,
-                                           limitStairAdvance,limitStairAdvance);
+                                           limitStairAdvance,limitStairAdvance,standing);
   if(preserveMovementImpulse(impulseGeneration,previousState,"virtual"))
     return true;
   npc.setViewPosition(moved.position);
   virtualMovementActive = true;
   virtualGroundVelocity = moved.groundVelocity;
+  tickBumpSignal(dt,origin,displacement,moved,meleeStep);
 
   auto collision = moved.collision;
   const bool faceTravel = limitStairAdvance && moved.steepContact && isForward(displacement) &&
@@ -860,8 +886,8 @@ bool MoveAlgo::preserveMovementImpulse(uint64_t generation,State previousState,s
   // not clear that new velocity or replace the airborne state with Run.
   npc.setViewPosition(npc.physic.position());
   resetCharacterVirtual();
-  if(TestBench::isActive())
-    TestBench::movementImpulseHandoff(npc,backend,uint32_t(previousState),uint32_t(flags),spellVelocity());
+  if(Bench::isActive())
+    Bench::movementImpulseHandoff(npc,backend,uint32_t(previousState),uint32_t(flags),spellVelocity());
   return true;
   }
 
@@ -879,7 +905,7 @@ void MoveAlgo::resetCharacterVirtual(bool mobTransition) {
   virtualGroundVelocity = {};
   virtualJumpVelocity = {};
   npcVirtualMobTransition |= mobTransition && !npc.isPlayer() &&
-                            (npc.isHuman() || Gothic::physicsFlags().monsterCharacterVirtual);
+                            (npc.isHuman() || Settings::physicsFlags().monsterCharacterVirtual);
   }
 
 void MoveAlgo::carryCharacterVirtual(uint64_t dt) {
@@ -1053,7 +1079,7 @@ bool MoveAlgo::testSlide(const Tempest::Vec3& pos, const Tempest::Vec3& norm, Dy
 
 float MoveAlgo::stepHeight() const {
   auto gl = npc.guild();
-  auto v  = float(npc.world().script().guildVal().step_height[gl]);
+  auto v  = float(npc.world().rules().guildVal().step_height[gl]);
   if(v>0.f)
     return v;
   return 50;
@@ -1165,33 +1191,33 @@ float MoveAlgo::edgeMoveFraction(const Tempest::Vec3& from, const Tempest::Vec3&
 float MoveAlgo::slideAngle() const {
   auto  gl = npc.guild();
   float k  = float(M_PI)/180.f;
-  return std::sin((90.f-float(npc.world().script().guildVal().slide_angle[gl]))*k);
+  return std::sin((90.f-float(npc.world().rules().guildVal().slide_angle[gl]))*k);
   }
 
 float MoveAlgo::slideAngle2() const {
   auto  gl = npc.guild();
   float k  = float(M_PI)/180.f;
-  return std::sin(float(npc.world().script().guildVal().slide_angle2[gl])*k);
+  return std::sin(float(npc.world().rules().guildVal().slide_angle2[gl])*k);
   }
 
 float MoveAlgo::waterDepthKnee() const {
   auto gl = npc.guild();
-  return float(npc.world().script().guildVal().water_depth_knee[gl]);
+  return float(npc.world().rules().guildVal().water_depth_knee[gl]);
   }
 
 float MoveAlgo::waterDepthChest() const {
   auto gl = npc.guild();
-  return float(npc.world().script().guildVal().water_depth_chest[gl]);
+  return float(npc.world().rules().guildVal().water_depth_chest[gl]);
   }
 
 float MoveAlgo::falldownHeight() const {
   auto gl = npc.guild();
-  return float(npc.world().script().guildVal().falldown_height[gl]);
+  return float(npc.world().rules().guildVal().falldown_height[gl]);
   }
 
 bool MoveAlgo::canFlyOverWater() const {
   auto  gl = npc.guild();
-  auto& g  = npc.world().script().guildVal();
+  auto& g  = npc.world().rules().guildVal();
   return g.water_depth_chest[gl]==flyOverWaterHint &&
          g.water_depth_knee [gl]==flyOverWaterHint;
   }
@@ -1455,6 +1481,9 @@ void MoveAlgo::onMoveFailed(const Tempest::Vec3& dp, const DynamicWorld::Collisi
 
   if(dp==Tempest::Vec3())
     return;
+  // A melee dodge that runs into a wall or a body is neither cut nor turned: the dodger just stops there
+  if(npc.isMeleeDodging())
+    return;
 
   const auto  ortho   = Tempest::Vec3::crossProduct(Tempest::Vec3::normalize(dp),Tempest::Vec3(0,1,0));
   const float stp     = speed*float(dt)/1000.f;
@@ -1472,7 +1501,7 @@ void MoveAlgo::onMoveFailed(const Tempest::Vec3& dp, const DynamicWorld::Collisi
   if(forward && !info.preFall && npc.currentTarget==info.npc && npc.bodyStateMasked()==BS_HIT) {
     // if charge attack run into npc, FAI should be reengaged
     // makes ai behaviour more consistent with vanilla, when fighting field-raiders
-    TestBench::monsterCharacterCollision(npc,info.npc);
+    Bench::monsterCharacterCollision(npc,info.npc);
     npc.implFaiWait(0);
     return;
     }

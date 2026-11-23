@@ -1,3 +1,4 @@
+#include "loadprobe.h"
 #include "skeleton.h"
 
 #include <cassert>
@@ -8,6 +9,7 @@ using namespace Tempest;
 
 Skeleton::Skeleton(const asset::ModelHierarchy& src, const Animation* anim, std::string_view name)
       :fileName(name), anim(anim) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Skeleton);
   bbox   [0] = {src.bbox.min.x, src.bbox.min.y, src.bbox.min.z};
   bbox   [1] = {src.bbox.max.x, src.bbox.max.y, src.bbox.max.z};
 
@@ -50,6 +52,7 @@ Skeleton::Skeleton(const asset::ModelHierarchy& src, const Animation* anim, std:
       }
   BIP01_HEAD = findNode("BIP01 HEAD");
   mkSkeleton();
+  if(LoadProbe::enabled()) LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Skeleton,probeCpuBytes());
   }
 
 size_t Skeleton::findNode(std::string_view name, size_t def) const {
@@ -103,4 +106,9 @@ void Skeleton::mkSkeleton(const Tempest::Matrix4x4 &mt, size_t parent) {
     tr[i].mul(nodes[i].tr);
     mkSkeleton(tr[i],i);
     }
+  }
+
+
+size_t Skeleton::probeCpuBytes() const {
+  return sizeof(*this)+nodes.capacity()*sizeof(Node)+rootNodes.capacity()*sizeof(size_t)+tr.capacity()*sizeof(tr[0]);
   }

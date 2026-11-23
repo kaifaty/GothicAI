@@ -371,6 +371,12 @@ def test_partial_known_failure_rejects_promotion_or_changed_causal_chain(tmp_pat
 def test_runtime_scheduling_transition_requires_native_pending_input_proof(tmp_path):
     with pytest.raises(ValueError,match="native pending-input proof"):
         final.pending_input_binding(tmp_path,"binary","source","library",{"frozen_files":{}})
+    folder=tmp_path/"pending-input-probe";folder.mkdir()
+    helper=tmp_path/"code/scripts/body_pending_input_probe.py";helper.parent.mkdir(parents=True);helper.touch()
+    write(folder/"manifest.json",{"binary_sha256":"binary","source_sha256":"source","engine_library_sha256":"library"})
+    write(folder/"probe.json",{})
+    with pytest.raises(ValueError,match="legacy single-library hashes cannot be compared"):
+        final.pending_input_binding(tmp_path,"binary","source","library",{"frozen_files":{}})
 
 
 def test_separate_queue_proof_cannot_change_native_binary_or_source(tmp_path,monkeypatch):

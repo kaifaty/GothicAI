@@ -21,6 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ryzen_game import game_environment
 
 SEEDS = (18102027, 18102028, 18102029)
 REGIONS = {"market", "harbour", "onar", "lobart", "port_streets", "upper_streets"}
@@ -143,7 +144,7 @@ class FinalBatch:
 
     def common(self):
         return ["--runner", self.task / "build/opengothic/gothic-body-runner",
-                "--assets", self.task.parent / "game", "--save", self.task / "save_slot_1.sav",
+                "--assets", Path(os.environ.get("GOTHIC_DIR", Path.home() / "gothic-ai/game-settings")), "--save", self.task / "save_slot_1.sav",
                 "--cache", self.task / "cache", "--links", self.source.parent / "reports/navigation/2026-10-16-teacher/raw/accepted-links.txt",
                 "--roads", self.source.parent / "server/src/gothic_ai/gamedata/places.json",
                 "--physics", "cv", "--limit-ms", "240000"]
@@ -225,6 +226,7 @@ def main():
     args = parser.parse_args()
     if sys.platform != "linux" or not args.task.is_absolute() or not args.python.is_absolute():
         parser.error("Run under gq on Ryzen with absolute task and venv Python paths")
+    os.environ.update(game_environment())
     FinalBatch(args).run()
 
 

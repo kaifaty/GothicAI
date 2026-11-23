@@ -1,0 +1,35 @@
+# The hero's face close up at noon in the Khorinis market (hair on cards, reports/content/2026-11-npc-hair): the cost
+# of the hair, brows and lashes of the own head, filling the frame. Run with the head's content, with and without
+# the hair (OPENGOTHIC_HASHED_ALPHA=0|1 for the alpha test alone):
+#   BENCH_HOST=local PERF_ENV='OPENGOTHIC_CONTENT=<content>' scripts/perf.sh face
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+cam face 38 0 1
+# Ten real seconds after the teleport for loading and native simulation.
+wait 10000
+perf sample perf-face/view-1
+wait 8000
+perf stop
+cam face 38 40 1
+wait 1500
+perf sample perf-face/view-2
+wait 8000
+perf stop
+cam face 38 90 1
+wait 1500
+perf sample perf-face/view-3
+wait 8000
+perf stop
+cam face 60 180 1
+wait 1500
+perf sample perf-face/view-4
+wait 8000
+perf stop

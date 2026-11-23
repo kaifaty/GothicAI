@@ -1,0 +1,1 @@
+../../../character-tool/src/character_tool/anim/bvh_to_soma.py

@@ -1,0 +1,7 @@
+Style: a bold, crude woodcut print in black ink on plain aged parchment, cut with a wide gouge. Very thick black outlines, about three times heavier than a fine engraving. Every shadow and every dark material is one large solid black mass. Inside the shapes only a few wide parallel cuts, never fine hatching, stippling or texture. Simplify the subject to its essential shapes, like a broadside print or a tavern sign. Black and parchment only, plus one small muted oxblood-red accent on a single detail.
+
+Subject: an empty wolf pelt hanging on a wooden fence post
+
+Square image, 1:1. One single subject, centred, filling about 70% of the square, with even empty margin on every side. A few large, clearly separated shapes and a bold silhouette, so it still reads as a small 96-pixel icon. No text, no letters, no runes, no numbers, no border, no frame, no blood, no gore, no human faces. Medieval low-fantasy world, rough and earthy, nothing modern, nothing shiny or heroic.
+
+The attached images are samples of the style only: match their ink weight, cuts, parchment and single red accent. Do not copy their subjects or composition.

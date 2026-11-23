@@ -1,10 +1,7 @@
 #include <Tempest/Window>
 #include <Tempest/Application>
 #include <Tempest/Log>
-#include <Tempest/Painter>
-#include <Tempest/Except>
 
-#include <zenkit/Logger.hh>
 
 #include <Tempest/VulkanApi>
 
@@ -16,11 +13,6 @@
 #include <Tempest/MetalApi>
 #endif
 
-#if defined(__IOS__) || defined(__ANDROID__)
-#include "utils/installdetect.h"
-#include <filesystem>
-#endif
-
 #include "utils/crashlog.h"
 #include "mainwindow.h"
 #include "gothic.h"
@@ -28,8 +20,13 @@
 #include "commandline.h"
 #include "resources.h"
 #include "aibridge.h"
+#include "basestore.h"
+#include "testbench.h"
 
 #include <dmusic.h>
+
+#include <cstdlib>
+#include <string_view>
 
 std::string_view selectDevice(const Tempest::AbstractGraphicsApi& api) {
   auto d = api.devices();
@@ -72,80 +69,30 @@ std::unique_ptr<Tempest::AbstractGraphicsApi> mkApi(const CommandLine& g) {
 #endif
   }
 
-// Startup cannot use game textures or fonts: the base may still be importing.
-class BaseLoadingWindow final : public Tempest::Window {
-  public:
-    explicit BaseLoadingWindow(Tempest::Device& device)
-      : device(device), swapchain(device,hwnd()), atlas(device) {
-      setWindowTitle("Gothic II - Preparing game data");
-      }
-    ~BaseLoadingWindow() override { device.waitIdle(); }
-    void progress(std::string_view message) {
-      text=message;
-      update();
-      Tempest::Application::processEvents();
-      render();
-      }
-    void failure(std::string_view message) {
-      failed=true;
-      setWindowTitle("Gothic II - Cannot load game data");
-      progress(std::string(message)+"\n\nPress Enter or close this window to exit.");
-      }
-  private:
-    void paintEvent(Tempest::PaintEvent& event) override {
-      Tempest::Painter painter(event);
-      painter.setFont(Tempest::Application::defaultFont());
-      painter.setPen(Tempest::Color(1.f));
-      painter.drawText(20,20,w()-40,h()-40,text);
-      }
-    void closeEvent(Tempest::CloseEvent& event) override {
-      event.ignore();
-      if(failed) Tempest::SystemApi::exit();
-      }
-    void keyDownEvent(Tempest::KeyEvent& event) override {
-      if(failed && (event.key==Tempest::Event::K_Return || event.key==Tempest::Event::K_ESCAPE))
-        Tempest::SystemApi::exit();
-      }
-    void render() override {
-      if(w()<=0 || h()<=0) return;
-      try {
-        device.waitIdle();
-        dispatchPaintEvent(image,atlas);
-        mesh.update(device,image);
-        {
-        auto encoder=commands.startEncoding(device);
-        encoder.setFramebuffer({{swapchain[swapchain.currentImage()],Tempest::Vec4(0,0,0,1),Tempest::Preserve}});
-        mesh.draw(encoder);
-        }
-        auto fence=device.submit(commands);
-        fence.wait();
-        device.present(swapchain);
-        }
-      catch(const Tempest::SwapchainSuboptimal&) { device.waitIdle(); swapchain.reset(); }
-      }
-    Tempest::Device& device;
-    Tempest::Swapchain swapchain;
-    Tempest::TextureAtlas atlas;
-    Tempest::VectorImage image;
-    Tempest::VectorImage::Mesh mesh;
-    Tempest::CommandBuffer commands;
-    std::string text;
-    bool failed=false;
-  };
+static bool envIs(const char* name, std::string_view value) {
+  const char* env = std::getenv(name);
+  return env!=nullptr && std::string_view(env)==value;
+  }
+
+// On by default; OPENGOTHIC_PIPELINE_CACHE=0 turns the on-disk pipeline cache off.
+// It sits next to the other derived caches, but is keyed by GPU and driver, not by the game base.
+// OPENGOTHIC_MSL_CACHE=0 turns off the SPIR-V -> MSL translation cache (Metal) on its own;
+// OPENGOTHIC_MSL_CACHE_CHECK=1 translates every cached shader again and aborts on any difference.
+static void setupPipelineCache() {
+  try {
+    const auto derived = BaseStore::cacheRoot()/"derived";
+    if(!envIs("OPENGOTHIC_PIPELINE_CACHE","0"))
+      Tempest::Device::setPipelineCacheDirectory(derived/"pipelines");
+    if(!envIs("OPENGOTHIC_MSL_CACHE","0"))
+      Tempest::Device::setShaderCacheDirectory(derived/"msl",envIs("OPENGOTHIC_MSL_CACHE_CHECK","1"));
+    }
+  catch(const std::exception& e) {
+    Tempest::Log::i("pipeline cache: no cache directory (",e.what(),")");
+    }
+  }
 
 int main(int argc,const char** argv) {
-#if defined(__ANDROID__)
-  {
-    auto appdir = InstallDetect::androidInternalDataPath();
-    std::filesystem::current_path(appdir);
-  }
-#elif defined(__IOS__)
-  {
-    auto appdir = InstallDetect::applicationSupportDirectory();
-    std::filesystem::current_path(appdir);
-  }
-#endif
-
+  TestBench::install();
   try {
     static Tempest::WFile logFile("log.txt");
     Tempest::Log::setOutputCallback([](Tempest::Log::Mode mode, const char* text) {
@@ -160,7 +107,7 @@ int main(int argc,const char** argv) {
     }
   CrashLog::setup();
 
-  zenkit::Logger::set(zenkit::LogLevel::INFO, Resources::zenkitLog);
+  daedalus::set_log_level(daedalus::LogLevel::INFO);
   Dm_setLogger(DmLogLevel_INFO, [](void* ctx, DmLogLevel lvl, char const* msg) {
     switch (lvl) {
       case DmLogLevel_FATAL:
@@ -186,34 +133,25 @@ int main(int argc,const char** argv) {
   const auto           gpuName = selectDevice(*api);
   CrashLog::setGpu(gpuName);
 
+  setupPipelineCache();
   Tempest::Device      device{*api,gpuName};
   CrashLog::setGpu(device.properties().name);
 
   Tempest::Application app;
-  std::unique_ptr<BaseLoadingWindow> loading;
   const auto startup=Tempest::Application::tickCount();
-  const auto progress=[&](std::string_view message) {
-    if(!loading && message!="base: importing installation") return;
-    if(!loading) loading=std::make_unique<BaseLoadingWindow>(device);
-    loading->progress(message);
-    };
   try {
-  Resources            resources{device,progress};
+  Resources            resources{device};
   Gothic               gothic;
   GameMusic            music;
   gothic.setupGlobalScripts();
   AiBridge             aiBridge;
 
   MainWindow           wx(device);
-  loading.reset();
   Tempest::Log::i("base: game window ready (",Tempest::Application::tickCount()-startup," ms since base preparation)");
   return app.exec();
   }
   catch(const BaseStore::Error& error) {
     Tempest::Log::e(error.what());
-    if(!loading) loading=std::make_unique<BaseLoadingWindow>(device);
-    loading->failure(error.what());
-    app.exec();
     return EXIT_FAILURE;
     }
   }

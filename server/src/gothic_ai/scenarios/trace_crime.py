@@ -6,21 +6,18 @@ import asyncio
 import logging
 import math
 import re
-from collections.abc import AsyncIterator
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..brain.reflex import Reflexes
 from ..game import GameError, GameLink
-from ..llm import LLMEvent, Message, ToolCall
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..protocol import Session
 from ..trace import read as read_trace
 from .common import (
     HILDA,
     LOBART,
-    ClaimScript,
     FixedDecider,
     WitnessReaction,
     _logged,
@@ -29,9 +26,17 @@ from .common import (
     _until,
     _until_async,
     attach_when_free,
+    model_off,
     prepare_theft_witness,
     wait_message,
 )
+
+SCENARIOS = {
+    "trace_crime": ("GIVEN", {
+        "save": True, "timeout": 240,
+        "env": {"OPENGOTHIC_FRACTURE": "~/.local/share/gothic-ai/fracture"},
+    }),
+}
 
 if TYPE_CHECKING:
     from ..crimes import Crimes
@@ -62,7 +67,7 @@ async def trace_crime(
     log_dir: str,
     slot: int = 7,
 ) -> dict[str, str]:
-    """Keep native theft perceptions enabled; only positions and fake model choices are scripted.
+    """Keep native theft perceptions enabled; NPC decisions are declared givens.
 
     Lobart asks Hilda about an earlier visit before the combined denial. Her real testimony supplies
     a С row; later the actual sword break supplies a В row. Both catches must finish in the same
@@ -84,7 +89,8 @@ async def trace_crime(
         "failed (scene did not reach this check)",
     )
     directory, desk, chronicle = Path(log_dir), sightings.desk, service.chronicle
-    original_llm, original_gate, original_stage = dialogue.llm, rumors.gate, rumors.stage
+    off = model_off(dialogue)
+    original_gate, original_stage = rumors.gate, rumors.stage
     original_reflexes = talk.reflexes
     facts = chronicle.facts
 
@@ -162,12 +168,11 @@ async def trace_crime(
         )
 
     try:
-        if not check("backend", isinstance(original_llm, FakeBackend), original_llm.name):
-            return _logged(results)
         await link.wait_world()
         if link.session is None:
             await wait_message(link, Session, timeout=10)
         await mark("trace_crime_ready")
+        log.info("given: дано: собеседники слушают героя (FixedDecider posture=listen)")
         talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
         # This scene uses actual ask_witness testimony. Keep unrelated random meetings out of it.
         rumors.gate, rumors.stage = lambda *_: False, None
@@ -241,20 +246,22 @@ async def trace_crime(
         ):
             return _logged(results)
         await witnesses.prepare(LOBART)
-        dialogue.llm = ClaimScript(
-            [
-                (
-                    ASK,
-                    FakeStep(
-                        "Хильда, что ты видела в доме?",
-                        [ToolCall("ask_witness", {"who": "Хильда", "said": ASK})],
-                    ),
-                )
-            ],
-            [],
-            "Я запомню, что сказала Хильда.",
-            only="Лобарт",
-            others=FakeBackend("Я сама видела, как он взял серебряный кубок в нашем доме.", delay=0),
+        off.given(
+            "дано: Лобарт спрашивает Хильду о визите героя",
+            who=LOBART, when=ASK,
+            calls=[ToolCall("ask_witness", {"who": "Хильда", "said": ASK})],
+        )
+        off.silent(
+            "дано: Лобарт молчит (вопрос Хильде задан)", who=LOBART, when=ASK,
+        )
+        off.given(
+            "дано: реплика свидетеля Хильды о краже кубка",
+            who=HILDA, when="спрашивает тебя о герое",
+            line="Я сама видела, как он взял серебряный кубок в нашем доме.",
+        )
+        off.silent(
+            "дано: Лобарт молчит (показание Хильды получено до отрицания кражи)",
+            who=LOBART, when="Ответ:",
         )
         await link.debug("type", text=f"Лобарт, {ASK}.")
         await _until(lambda: any(cid in f.get("crime_told", []) for f in facts("testimony")), 60)
@@ -347,36 +354,29 @@ async def trace_crime(
             return _logged(results)
         assert observed is not None
 
-        class EvidenceScript:
-            """Choose evidence ids from this request: fresh sightings can renumber the В rows."""
-
-            name = "trace-crime-script"
-
-            async def stream(self, **kw: Any) -> AsyncIterator[LLMEvent]:
-                prompt = "\n".join(
-                    m.content for m in kw["messages"] if isinstance(m, Message) and m.role == "developer"
-                )
-                last = kw["messages"][-1]
-                step = FakeStep("Я запомню.")
-                if kw.get("cache_key") == LOBART and isinstance(last, Message) and DENIAL in last.content:
-                    sid, _ = _trace_evidence_line(prompt, observed)
-                    told_ids = re.findall(r"^- (С\d+):", prompt, re.MULTILINE)
-                    told = next(
-                        (s for s in told_ids if (t := witnesses.told(LOBART, s)) and t.crime == cid), ""
-                    )
-                    step = FakeStep(
-                        "Не с весны: обломки свежие! И Хильда сама видела, как ты взял наш кубок.",
-                        [
-                            ToolCall("catch_lie", {"said": AGE_LIE, "seen": sid}),
-                            ToolCall("catch_lie", {"said": THEFT_LIE, "seen": told}),
-                        ],
-                    )
-                async for event in FakeBackend(script=[step], delay=0).stream(**kw):
-                    yield event
-
-        dialogue.llm = EvidenceScript()  # type: ignore[assignment]
         await link.debug("teleport", near=LOBART, distance=250)
         await _until(lambda: LOBART in talk.people and talk.people[LOBART].distance < 800, 10)
+        await desk.fresh(LOBART)
+        prompt = await dialogue.situation(LOBART, "Лобарт")
+        sid, debris_line = _trace_evidence_line(prompt, observed)
+        told_ids = re.findall(r"^- (С\d+):", prompt, re.MULTILINE)
+        told = next((s for s in told_ids if (t := witnesses.told(LOBART, s)) and t.crime == cid), "")
+        told_lines = [
+            line
+            for line in prompt.splitlines()
+            if re.match(r"- С\d+:", line) and "Хильд" in line and service.describe(crime) in line
+        ]
+        off.given(
+            "дано: Лобарт уличает героя по свежим обломкам и показанию Хильды",
+            who=LOBART, when=DENIAL,
+            calls=[
+                ToolCall("catch_lie", {"said": AGE_LIE, "seen": sid}),
+                ToolCall("catch_lie", {"said": THEFT_LIE, "seen": told}),
+            ],
+        )
+        off.silent(
+            "дано: Лобарт молчит (оба уличения записаны)", who=LOBART, when=DENIAL,
+        )
         previous = {r["id"] for r in turns()}
         await link.debug("type", text=f"Лобарт, {DENIAL}.")
         await _until(
@@ -390,18 +390,6 @@ async def trace_crime(
             r for r in turns() if r["id"] not in previous and DENIAL in r.get("trigger", {}).get("text", "")
         ]
         row = rows[-1] if rows else {}
-        prompt = "\n".join(
-            str(item.get("content", ""))
-            for step in row.get("steps", [])
-            for item in step.get("added", [])
-            if item.get("role") == "developer"
-        )
-        sid, debris_line = _trace_evidence_line(prompt, observed)
-        told_lines = [
-            line
-            for line in prompt.splitlines()
-            if re.match(r"- С\d+:", line) and "Хильд" in line and service.describe(crime) in line
-        ]
         calls = [
             c for step in row.get("steps", []) for c in step.get("calls", []) if c.get("name") == "catch_lie"
         ]
@@ -417,10 +405,7 @@ async def trace_crime(
         check(
             "both_accepted",
             len(calls) == 2
-            and all(c.get("outcome") == "accepted" for c in calls)
-            and calls[0].get("arguments") == {"said": AGE_LIE, "seen": sid}
-            and any(line.startswith(f"- {calls[1].get('arguments', {}).get('seen')}:") for line in told_lines)
-            and calls[1].get("arguments", {}).get("said") == THEFT_LIE,
+            and all(c.get("outcome") == "accepted" for c in calls),
             calls,
         )
         debris_facts = [f for f in caught() if f.get("title") == AGE_LIE]
@@ -504,5 +489,5 @@ async def trace_crime(
         )
         return _logged(results)
     finally:
-        dialogue.llm, talk.reflexes = original_llm, original_reflexes
+        talk.reflexes = original_reflexes
         rumors.gate, rumors.stage = original_gate, original_stage

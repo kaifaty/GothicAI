@@ -44,6 +44,7 @@ class InstanceStorage {
         InstanceStorage* owner = nullptr;
         Range            rgn;
       friend class InstanceStorage;
+      friend struct InstanceStorageContractAccess;
       };
 
     InstanceStorage();
@@ -55,6 +56,15 @@ class InstanceStorage {
     bool commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void join();
 
+    // A GPU copy of the buffer as it was after the previous commit (motion vectors).
+    // Off by default; main thread, between frames. Turning it on makes the next
+    // commit copy the whole buffer; turning it off releases the copy.
+    void setHistory(bool enabled);
+    bool hasHistory() const { return history; }
+    // The previous frame's buffer when history is on and filled, otherwise ssbo():
+    // a reader of "prev" then sees prev==cur, i.e. no motion.
+    auto ssboPrev() const -> const Tempest::StorageBuffer&;
+
   private:
     void free(const Range& r);
     void uploadMain();
@@ -64,6 +74,29 @@ class InstanceStorage {
       uint32_t src;
       uint32_t size;
       };
+
+    // cur -> prev at the same offset; bytes while planning, uint's in patchCpu
+    struct Copy {
+      uint32_t at;
+      uint32_t size;
+      };
+
+    // What one commit does, decided on the CPU without a device. patchCpu holds
+    // the frame's patch buffer: [Path headers][payload][save Copy's][fresh Copy's].
+    struct Plan {
+      bool     grow       = false; // recreate the GPU buffer(s) from dataCpu, nothing else
+      bool     upload     = false; // patchCpu must reach patchGpu[fId]
+      uint32_t patchCount = 0;     // Path headers at uint 0
+      uint32_t saveBase   = 0;     // uint offset of the save list: cur->prev before the patch
+      uint32_t saveCount  = 0;
+      uint32_t freshBase  = 0;     // uint offset of the fresh list: cur->prev after the patch
+      uint32_t freshCount = 0;
+      };
+
+    size_t gpuBytes() const;
+    Plan   planCommit(size_t gpuCapacity);
+    void   markFresh(const Range& r);
+    void   pushCopies(std::vector<Copy>& out, size_t firstBlock, size_t endBlock);
 
     std::vector<Range>      rgn;
     std::vector<uint32_t>   durty;
@@ -75,6 +108,15 @@ class InstanceStorage {
 
     Tempest::StorageBuffer  dataGpu;
     std::vector<uint8_t>    dataCpu;
+
+    // history: kept only while it is on
+    bool                    history      = false;
+    bool                    historyValid = false; // prev holds a full copy, kept by the 3-step rule
+    std::vector<uint32_t>   durtyPrev;            // blocks dirty in the previous commit
+    std::vector<uint32_t>   fresh;                // blocks allocated since the previous commit
+    std::vector<Copy>       saveBlock;
+    std::vector<Copy>       freshBlock;
+    Tempest::StorageBuffer  dataGpuPrev;
 
     std::thread             uploadTh;
     std::mutex              sync;

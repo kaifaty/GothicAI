@@ -8,44 +8,98 @@
 #include <array>
 
 #include "worlddata.h"
+#include "graphics/mesh/animation.h"
+#include "clothworld.h"
+#include "blooddecalsource.h"
+#include "physics/physicshost.h"
 
 #include "graphics/worldview.h"
 #include "graphics/lightgroup.h"
 #include "graphics/meshobjects.h"
-#include "game/gamescript.h"
+#include "graphics/itemview.h"
+#include "game/gamerules.h"
+#include "game/rpgvocabulary.h"
 #include "physics/dynamicworld.h"
 #include "worldobjects.h"
 #include "worldsound.h"
 #include "waypoint.h"
 #include "waymatrix.h"
 #include "portalrooms.h"
+#include "chunkresidency.h"
+#include "bodytraces.h"
+#include "bloodstains.h"
 
 class GameSession;
+class GameScript;
 class Focus;
 class WayMatrix;
 class VisualFx;
 class GlobalEffects;
 class ParticleFx;
 class Interactive;
-class VersionInfo;
 class GlobalFx;
 class ClothVisual;
+class MdlVisual;
 struct PhysicsNoise;
 struct HeroDeed;
+struct ItemRecord;
+struct FocusRecord;
 
-class World final {
+class World final : public ClothWorld, public BloodDecalSource, public PhysicsHost {
   public:
+    void setOriginalClothVisible(bool visible) override;
+    PhysicsHost::PhysicalSpell physicalSpell(int32_t spellId) const override;
+    std::weak_ptr<void> npcHandle(const Npc& npc) const override;
+    Npc* resolveNpc(const std::shared_ptr<void>& handle) const override;
+    std::string npcTraceName(const Npc& npc) const override;
+    std::string_view npcSymbolName(const Npc* npc) const override;
+    Tempest::Vec3 npcPosition(const Npc& npc) const override;
+    uint64_t npcTickCount(const Npc& npc) const override;
+    bool npcUsesSimplifiedMovement(const Npc& npc) const override;
+    uint32_t npcCreationSeq(const Npc& npc) const override;
+    void finishNpcSupport(Npc& npc, uint64_t dt) override;
+    HitZones::Zone npcRayHitZone(const Npc& npc, const Tempest::Vec3& from,
+                               const Tempest::Vec3& to, float& distance) const override;
+    bool npcBodySinks(const Npc& npc) const override;
+    ItemMaterial itemMaterial(const Item& item) const override;
+    std::string_view itemVisual(const Item& item) const override;
+    bool isPlacedItem(const Item& item) const override;
+    uint32_t placedItemZenId(const Item& item) const override;
+    void setPhysicsMatrix(Item& item, const Tempest::Matrix4x4& matrix) override;
+    void setPhysicsDisable(Item& item) override;
+    size_t wakeItems(const Tempest::Vec3& min, const Tempest::Vec3& max, size_t budget) override;
+    void itemHit(Item& item, asset::MaterialGroup material, float impulse, float mass) override;
+
+    // inPfxRange: the visual is in the particles' range; out of it only stops and looped effects come
+    void animationPfx(const Animation::MdsParticleEffect& event, MdlVisual& visual, bool inPfxRange);
+
+    void probeMemory(std::string_view stage) const;
+
     World()=delete;
     World(const World&)=delete;
-    World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress);
+    World(GameSession& game, GameRules& rules, std::string_view file, bool startup, std::function<void(int)> loadProgress);
     ~World();
 
     void                 createPlayer(std::string_view cls);
     void                 insertPlayer(std::unique_ptr<Npc>&& npc, std::string_view waypoint);
     void                 setPlayer(Npc* npc);
     void                 postInit();
-    std::string_view     name() const { return wname; }
+    std::string_view     name() const override { return wname; }
     double               loadMilliseconds() const { return worldLoadMs; }
+    const std::vector<WorldObjects::PlacedItem>& placedItemCensus() const { return wobj.placedItemCensus(); }
+    WorldObjects::PhysicsDigest physicsDigest() const { return wobj.physicsDigest(); }
+    double               placedItemValidationMilliseconds() const { return wobj.placedItemValidationMilliseconds(); }
+    size_t               placedItemsCreatedThisFrame() const { return wobj.placedItemsCreatedThisFrame(); }
+    const ChunkTable&    chunkTable() const { return chunks; }
+    ChunkResidency*      chunkResidency() const { return residency.get(); }
+    void                 updateLandscape(const Camera& camera);
+    // NPC simulation tiers (world/npcsimtier.h): recomputed every world tick;
+    // loading calls updateNpcSimTiers() after the first residency update.
+    void                 updateNpcSimTiers() { wobj.updateSimTiers(); }
+    const NpcSimTiers::Stats& npcSimTierStats() const { return wobj.simTierStats(); }
+    void noteGraphFpLoadResolution() { wobj.noteGraphFpLoadResolution(); }
+    void noteNpcGraphFallback(bool ground) { wobj.noteNpcGraphFallback(ground); }
+    bool                 landscapeReady() const { return !wview || wview->landscapeReady(); }
 
     void                 load(Serialize& fin );
     void                 save(Serialize& fout);
@@ -53,14 +107,17 @@ class World final {
     uint32_t             npcId(const Npc* ptr) const;
     Npc*                 npcById(uint32_t id);
     uint32_t             npcCount() const;
+    // Load probe: one line per NPC after a fresh start's placement (game/gamescript_startupfloor.h).
+    void                 logStartupFloorDigest();
     Npc*                 npcForRagdoll(const Ragdoll* body);
-    bool                 stickArrow(MeshObjects::Mesh&& arrow, const Tempest::Matrix4x4& worldMatrix,
+    bool                 stickArrow(ItemView&& arrow, const Tempest::Matrix4x4& worldMatrix,
                                     std::string_view visual = {},
                                     std::shared_ptr<const DynamicWorld::MovableVobPose> movable = {},
                                     const Npc* culprit = nullptr, const Tempest::Vec3* sightPoint = nullptr,
                                     std::string_view surface = "unknown");
     size_t               stuckArrowCount() const { return stuckArrows.size(); }
     bool                 stuckArrowTransform(size_t index, Tempest::Matrix4x4& out) const;
+    const ItemView*      stuckArrowView(size_t index) const { return index<stuckArrows.size() ? &stuckArrows[index].mesh : nullptr; }
     bool                 stuckArrowAttachment(size_t index, uint32_t& zenId, Tempest::Matrix4x4& local) const;
     struct PhysicsTrace {
       std::string id, kind, name;
@@ -68,8 +125,33 @@ class World final {
       std::array<Tempest::Vec3,6> sightPoints;
       int64_t appearedAt = -1; // game minutes; -1 for traces from legacy saves
       std::string culprit; // engine truth: never serialize this field to the AI bridge
+      std::string npc;     // a body: the dead one's instance symbol, as npc_view's look names it
       };
-    std::vector<PhysicsTrace> physicsTraces() const;
+    // `viewer` (with `range`, cm): body rows farther from it are not built; the rows that are
+    // built do not change. Without it, every trace of the world.
+    std::vector<PhysicsTrace> physicsTraces(const Tempest::Vec3* viewer = nullptr, float range = 0) const;
+
+    // Bodies (physics stage 8, step 4b; world/bodytraces.h holds the rules).
+    int64_t              gameMinute() const;                  // minutes since the first day began
+    uint32_t             allocBodyTraceId() { return nextBodyTraceId++; }
+    std::string          bodyTraceId(const Npc& body) const;  // "<world>:body:<n>"
+    std::array<Tempest::Vec3,6> bodySightPoints(const Npc& body) const;
+    bool                 heroSeesBody(const Npc& hero, const Npc& body) const;
+    bool                 isStoryNpcType(int32_t type) const;
+    BodyTraces::Body     bodyRule(const Npc& body, const Npc* hero) const; // all but heroSees
+
+    // Blood (physics stage 8, step 4c; world/bloodstains.h holds the rules). [GAME] blood=0:
+    // addBloodStain adds nothing, bloodStains() is empty and there are no `blood` traces.
+    uint32_t             addBloodStain(BloodStains::Stain stain); // its id; 0: blood is off
+    const std::vector<BloodStains::Stain>& bloodStains() const override;
+    int64_t bloodTime() const override { return time().toInt(); }
+    bool                 bodyInWorld(uint32_t bodyTraceId) const;  // a dead NPC with this body trace id
+    bool                 bodyTraceInWorld(uint32_t bodyTraceId) const; // ... and it is reported as a body trace
+    std::string          bloodTraceId(uint32_t stainId) const;     // "<world>:blood:<n>"
+    // On the ground below `near` (Marvin and bridge `blood`, benches): surface, normal and indoor
+    // from the world; 0 when blood is off or there is no ground.
+    uint32_t             placeBloodStain(const Tempest::Vec3& near, BloodStains::Kind kind, float radiusCm,
+                                         uint32_t bodyId = 0);
 
     uint32_t             mobsiId(const Interactive* ptr) const;
     Interactive*         mobsiById(uint32_t id);
@@ -84,7 +166,7 @@ class World final {
     const WayPoint*      findWayPoint(const Tempest::Vec3& pos, const std::function<bool(const WayPoint&)>& f) const;
     const WayPoint*      findWayPoint(const Tempest::Vec3& pos, std::string_view name) const;
 
-    const WayPoint*      findFreePoint(const Npc& pos,           std::string_view name) const;
+    const WayPoint*      findFreePoint(const Npc& npc, std::string_view name, std::vector<const WayPoint*>* occupied=nullptr) const;
     const WayPoint*      findFreePoint(const Tempest::Vec3& pos, std::string_view name) const;
 
     const WayPoint*      findNextFreePoint(const Npc& pos, std::string_view name) const;
@@ -99,15 +181,19 @@ class World final {
     void                 detectItem(const Tempest::Vec3& p, const float r, const std::function<void(Item&)>& f);
 
     WayPath              wayTo(const Npc& pos,const WayPoint& end) const;
+    WayPath              wayTo(const WayPoint& begin, const WayPoint& end) const;
+    const WayHeights::Profile& groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                             float stepHeight,float slopeCos) const;
 
     WorldView*           view()     const { return wview.get();    }
     WorldSound*          sound()          { return &wsound;        }
-    DynamicWorld*        physic()   const { return wdynamic.get(); }
+    DynamicWorld*        physic()   const override { return wdynamic.get(); }
     GlobalEffects*       globalFx() const { return globFx.get();   }
 
     GameScript&          script()   const;
+    GameRules&           rules()    const { return *gameRules; }
+    const GuildTraits&   guildTraits() const { return guildKinds; }
     GameSession&         gameSession() const { return game; }
-    auto                 version()  const -> const VersionInfo&;
 
     void                 assignRoomToGuild(std::string_view room, int32_t guildId);
     int32_t              guildOfRoom(const Tempest::Vec3& pos);
@@ -119,16 +205,18 @@ class World final {
     GlobalFx             addGlobalEffect(std::string_view what, uint64_t len, const std::string* argv, size_t argc);
     MeshObjects::Mesh    addView(std::string_view visual) const;
     MeshObjects::Mesh    addView(std::string_view visual, int32_t headTex, int32_t teetTex, int32_t bodyColor) const;
-    MeshObjects::Mesh    addView(const zenkit::IItem& itm);
+    MeshObjects::Mesh    addView(const ItemRecord& itm);
     MeshObjects::Mesh    addView(const ProtoMesh* visual);
     MeshObjects::Mesh    addAtachView (const ProtoMesh::Attach& visual, const int32_t version);
-    MeshObjects::Mesh    addStaticView(const ProtoMesh* visual, bool staticDraw);
+    MeshObjects::Mesh    addStaticView(const ProtoMesh* visual, bool staticDraw) override;
     MeshObjects::Mesh    addStaticView(std::string_view visual);
     MeshObjects::Mesh    addDecalView (const asset::VisualDecal& decal);
     LightGroup::Light    addLight(const asset::VLight& vob);
     LightGroup::Light    addLight(std::string_view preset);
+    LightGroup::Light    addLight(const asset::LightPreset& preset);
 
     void                 updateAnimation(uint64_t dt);
+    void                 catchUpAnimation();
     void                 resetPositionToTA();
 
     auto                 takeHero() -> std::unique_ptr<Npc>;
@@ -137,10 +225,12 @@ class World final {
     Item*                findItemByInstance(size_t instance, size_t n = 0);
     std::string_view     roomAt(const Tempest::Vec3& arr);
     bool                 isIndoor(const Tempest::Vec3& point) const;
+    // BSP root bounds: the whole level, independent of landscape streaming.
+    auto                 bspBounds() const -> std::pair<Tempest::Vec3,Tempest::Vec3>;
 
     void                 scaleTime(uint64_t& dt);
     void                 tick(uint64_t dt);
-    uint64_t             tickCount() const;
+    uint64_t             tickCount() const override;
     void                 setDayTime(int32_t h,int32_t min);
     gtime                time() const;
 
@@ -164,6 +254,7 @@ class World final {
     void                 disableCollizionZone(CollisionZone& z);
 
     Interactive*         availableMob(const Npc &pl, std::string_view name);
+    MobReservations&     mobReservations() { return wobj.mobReservations(); }
     Interactive*         findInteractive(const Npc& pl);
     void                 setMobRoutine(gtime time, std::string_view scheme, int32_t state);
 
@@ -211,6 +302,9 @@ class World final {
 
     bool                 isInSfxRange(const Tempest::Vec3& pos) const;
     bool                 isInPfxRange(const Tempest::Vec3& pos) const;
+    // A headless run that stands in for the rendered game: the camera origin the renderer would hand to
+    // its particle range after this step. Without it a headless world treats every point as in range.
+    void                 setHeadlessViewer(const Tempest::Vec3& pos) { headlessViewer = pos; hasHeadlessViewer = true; }
 
     void                 addDlgSound(std::string_view s, const Tempest::Vec3& pos, float range, uint64_t &timeLen,
                                      std::shared_ptr<LipSync::Track>* voice = nullptr);
@@ -231,15 +325,22 @@ class World final {
 
   private:
     friend struct WorldDataContract;
+    friend struct WayHeightsContract;
     double               worldLoadMs = 0;
-    const zenkit::IFocus& searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const;
+    bool                 textureLoadingPending = true;
+    Resources::TextureStartup textureStartup;
+    const FocusRecord& searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const;
     std::string                           wname;
     GameSession&                          game;
+    GameRules* const                      gameRules;
+    const GuildTraits&                    guildKinds;
 
     std::unique_ptr<WayMatrix>            wmatrix;
+    ChunkTable                            chunks;
+    std::unique_ptr<ChunkResidency>        residency;
 
     struct BspSector final {
-      int32_t guild=GIL_NONE;
+      int32_t guild=GuildNone;
       };
 
     struct {
@@ -254,13 +355,15 @@ class World final {
 
     std::unique_ptr<DynamicWorld>         wdynamic;
     std::unique_ptr<WorldView>            wview;
+    Tempest::Vec3                         headlessViewer;
+    bool                                  hasHeadlessViewer = false;
     std::vector<std::unique_ptr<ClothVisual>> clothSurfaces;
     mutable MeshObjects                  cpuObjects;
     std::unique_ptr<GlobalEffects>        globFx;
     WorldSound                            wsound;
     WorldObjects                          wobj;
     struct StuckArrow {
-      MeshObjects::Mesh mesh;
+      ItemView mesh; // with the arrow's effect while it fades (graphics/itemview)
       std::string visual;
       Tempest::Matrix4x4 local;
       std::weak_ptr<const DynamicWorld::MovableVobPose> movable;
@@ -272,9 +375,22 @@ class World final {
       };
     std::vector<StuckArrow>               stuckArrows;
     uint64_t                             nextArrowTraceId = 1;
+    uint32_t                             nextBodyTraceId  = 1;
+    int64_t                              bodySweepMinute  = -1;
+    mutable std::array<int32_t,3>        storyNpcTypes    = BodyTraces::StoryTypes;
+    mutable bool                         storyNpcTypesRead = false;
+    std::vector<BloodStains::Stain>      blood;
+    uint32_t                             nextBloodStainId = 1;
+    void                                 sweepBodies();
+    void                                 sweepBodiesAt(int64_t now);
+    void                                 sweepBloodStains();
+    void                                 saveBloodStains(Serialize& fout) const;
+    void                                 loadBloodStains(Serialize& fin);
+    void                                 saveBodyTraces(Serialize& fout) const;
+    void                                 loadBodyTraces(Serialize& fin);
     void                                 saveStuckArrows(Serialize& fout) const;
     void                                 loadStuckArrows(Serialize& fin);
-    void                                 updateStuckArrows();
+    void                                 updateStuckArrows(uint64_t dt = 0);
     struct SpellField {
       Tempest::Vec3 center;
       Npc* caster = nullptr; // identities only; never dereferenced by a field

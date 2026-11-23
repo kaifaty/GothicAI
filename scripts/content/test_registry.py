@@ -365,3 +365,24 @@ def test_world_chunk_edit(tmp_path):
     bad["replaces"] = ["NEWWORLD.ZEN"]
     with pytest.raises(registry.RegistryError, match="worldchunk.replaces"):
         registry.validate_entry(bad)
+
+
+def test_world_chunk_edits(tmp_path):
+    entry = world_chunk_entry("c" * 64)
+    entry["tool"]["script"] = "scripts/content/world/world_edit.py"
+    entry["edits"] = [{"script": "scripts/content/world/harbour_stairs.py", "sha256": "d" * 64},
+                      {"script": "scripts/content/world/roof_holes.py", "sha256": "e" * 64,
+                       "inputs": [{"path": "data/content/world/roof01-holes.json", "sha256": "f" * 64}]}]
+    registry.validate_entry(entry)
+    bad = json.loads(json.dumps(entry))
+    bad["edits"].append(dict(bad["edits"][0]))
+    with pytest.raises(registry.RegistryError, match="appears twice"):
+        registry.validate_entry(bad)
+    bad = json.loads(json.dumps(entry))
+    bad["tool"]["script"] = "scripts/content/world/harbour_stairs.py"
+    with pytest.raises(registry.RegistryError, match="worldchunk.edits"):
+        registry.validate_entry(bad)
+    bad = json.loads(json.dumps(entry))
+    bad["edits"][1]["inputs"][0]["sha256"] = "x"
+    with pytest.raises(registry.RegistryError, match="inputs"):
+        registry.validate_entry(bad)

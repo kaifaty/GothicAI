@@ -1,5 +1,7 @@
 #include "asset/fromzenkit.h"
+#include "baseimport.h"
 #include <zenkit/World.hh>
+#include <zenkit/Vfs.hh>
 #include "basemesh.h"
 #include "commandline.h"
 #include "gothicglb.h"
@@ -67,6 +69,7 @@ struct AssetDigest {
   Digest total;
   size_t rows=0;
   bool archiveTextures=false;
+  zenkit::Vfs sourceVfs;
 
   void emit(const std::string& kind, const std::string& name, Digest& digest) {
     const auto line=kind+" "+name+" "+digest.finish()+"\n";
@@ -95,7 +98,7 @@ struct AssetDigest {
     if(name.empty() || resources.texCache.count(name)) return;
     std::string key=name;
     for(auto& c:key) c=char(std::toupper(static_cast<unsigned char>(c)));
-    const auto* entry=Resources::vdfsIndex().find(key.ends_with(".TGA") ? key.substr(0,key.size()-4)+"-C.TEX" : key);
+    const auto* entry=sourceVfs.find(key.ends_with(".TGA") ? key.substr(0,key.size()-4)+"-C.TEX" : key);
     Tempest::Texture2d texture;
     if(entry && key.ends_with(".TGA")) {
       auto input=entry->open_read();
@@ -113,7 +116,7 @@ struct AssetDigest {
         texture=Resources::device().texture(pm,true);
         }
       }
-    else if(const auto* raw=Resources::vdfsIndex().find(name)) {
+    else if(const auto* raw=sourceVfs.find(name)) {
       auto input=raw->open_read();
       input->seek(0,zenkit::Whence::END);
       std::vector<uint8_t> bytes(input->tell()); input->seek(0,zenkit::Whence::BEG);
@@ -220,6 +223,8 @@ struct AssetDigest {
     }
 
   void run(const fs::path& base, Tempest::Device& device) {
+    fs::path work;
+    BaseImport::mountRuntime(sourceVfs,fs::path(CommandLine::inst().rootPath()),work);
     // Each path gets fresh texture caches, so Material sees its actual decoded format.
     for(const bool useBase:{false,true}) {
       setenv("OPENGOTHIC_BASE",base.c_str(),1);
@@ -227,7 +232,7 @@ struct AssetDigest {
       Resources resources(device);
       Shaders shaders;
       shaders.waitCompiler();
-      Resources::loadVdfs({},true);
+      Resources::loadBase();
       if(archiveTextures) {
         // Material's animation frames use uppercase names; seed their GPU textures
         // from ZenKit in the test, without an archive loader in Resources.
@@ -239,11 +244,11 @@ struct AssetDigest {
         if(useBase) {
           WorldData::Data loaded;
           asset::WorldMesh mesh;
-          const auto result=tryWorldData(loaded,mesh,key,base/"worlds"/name,{},resources.mountedArchives);
+          const auto result=tryWorldData(loaded,mesh,key,base/"worlds"/name,{},resources.baseArchives);
           if(!result.replaced) throw std::runtime_error(key+": "+result.error);
           world(std::move(mesh),key,path);
           } else {
-          auto input=Resources::getFileBuffer(key);
+          auto input=sourceVfs.find(key)->open_read();
           zenkit::World loaded;
           loaded.load(input.get(),zenkit::GameVersion::GOTHIC_2);
           world(asset::fromZenKit(loaded.world_mesh),key,path);
@@ -251,14 +256,14 @@ struct AssetDigest {
         }
       // Use the converted index on both paths; require the archive loader to contain every entry.
       Resources::BaseIndex index;
-      index.load(base,"meshes"); index.validate(resources.mountedArchives);
+      index.load(base,"meshes"); index.validate(resources.baseArchives);
       if(!index.enabled || index.files.empty()) throw std::runtime_error("Mesh base index is unavailable");
       const std::map<std::string,std::string> files(index.files.begin(),index.files.end());
       for(const auto& [key,file]:files) {
         if(useBase) {
           mesh(readBaseMesh(base/"meshes"/file),key+".MRM",path);
           } else {
-          auto input=Resources::getFileBuffer(key+".MRM");
+          auto input=sourceVfs.find(key+".MRM")->open_read();
           zenkit::MultiResolutionMesh loaded;
           loaded.load(input.get());
           mesh(asset::fromZenKit(loaded),key+".MRM",path);

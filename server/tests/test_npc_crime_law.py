@@ -193,15 +193,17 @@ async def test_courage_three_surrenders_real_goods_once(system, mode):
     assert len(system.chronicle.facts("npc_crime_settled")) == 1
 
 
-async def test_courage_four_fights_far_and_records_terminal_outcome_once(system):
+@pytest.mark.parametrize("outcome", ["defender_down", "timeout"])
+async def test_courage_four_fights_far_and_records_terminal_outcome_once(system, outcome):
     event = crime(system)
+    system.will.outcome = outcome
     system.will.cards[THIEF] = card(THIEF, 4)
     await system.law.tick(NOW + REPORT_DELAYS["theft"])
     assert system.link.effects == []
     assert system.will.fights == [(event["id"], GUARD)]
     assert system.will.fight_roles == ["law"]
     [settled] = system.chronicle.facts("npc_crime_settled")
-    assert settled["how"] == "defender_down" and settled["far"]
+    assert settled["how"] == outcome and settled["far"]
     await system.law.tick(NOW + 5000)
     assert len(system.will.fights) == 1
 
@@ -417,7 +419,8 @@ async def test_surrender_claims_the_same_reservation_before_sending_transfer(sys
 
 
 @pytest.mark.parametrize("far", [False, True])
-async def test_saved_defense_without_law_settlement_is_projected_after_load(system, far):
+@pytest.mark.parametrize("outcome", ["defender_down", "timeout"])
+async def test_saved_defense_without_law_settlement_is_projected_after_load(system, far, outcome):
     event = crime(system, kind="attack")
     system.chronicle.record({
         "fact": "npc_crime_reaction", "crime": event["id"], "npc": GUARD,
@@ -426,14 +429,14 @@ async def test_saved_defense_without_law_settlement_is_projected_after_load(syst
     # An older process can save its completed body defense before this law subsystem is enabled.
     system.memory.add_fact("A", json.dumps({
         "fact": "npc_crime_defense", "crime": event["id"], "fighter": GUARD,
-        "act": "saved-fight", "outcome": "defender_down", **({"far": True} if far else {}),
+        "act": "saved-fight", "outcome": outcome, **({"far": True} if far else {}),
     }))
     head = system.memory.head("A")
     system.link.receive(Session(type="session", branch="saved", parent="A", parent_seq=head, reason="load"))
     await system.law.tick(NOW + REPORT_DELAYS["attack"])
     [settled] = system.chronicle.facts("npc_crime_settled")
     assert settled == {
-        "fact": "npc_crime_settled", "crime": event["id"], "by": GUARD, "how": "defender_down",
+        "fact": "npc_crime_settled", "crime": event["id"], "by": GUARD, "how": outcome,
         **({"far": True} if far else {}),
     }
     assert system.link.actions == [] and system.will.fights == []

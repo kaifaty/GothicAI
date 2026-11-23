@@ -68,8 +68,39 @@ class NavMemoryTeacher final {
       bool startFound = false, escapeRequired = false;
       Point escapeTarget;
       uint32_t overlapDangerCells = 0;
+      // No start was found and the body exit chose a way out (bodyExitCm > 0) or found none.
+      bool bodyExit = false;
+      float bodyExitCm = 0;
       };
     const PlanStatus& lastPlanStatus() const { return latestPlanStatus; }
+
+    // Which rule of decide() produced the keys. Diagnosis only, never an input.
+    enum class Branch : uint8_t {
+      Airborne,       // in the air, falling, climbing: no keys
+      AtGoal,         // within 75 cm of the goal
+      StartNotFound,  // no start cell and (with the body exit off, or no exit) no keys
+      Escape,         // a step out of the raw occupied start cell
+      EscapeBlocked,  // occupied start, but neither axis step is clear
+      BodyExit,       // no start cell: a step along the body-testified exit
+      Standoff,       // a moving target's stand-off carrot is at the body: hold or retreat
+      Recovery,       // stuck: a backward or side recovery step
+      RecoveryBlocked,// stuck, and the recovery step is not clear
+      NoAim,          // the plan gives no direction
+      Behind,         // the route is behind: a backward or side step
+      BehindBlocked,  // the route is behind and neither step is clear
+      Strafe, Forward,
+      Turn,           // turning toward the route, no step by design
+      ForwardBlocked, // facing the route, but the next forward step is not clear
+      SideBlocked,    // the route is to the side, and the side step is not clear
+      Count
+      };
+    static const char* name(Branch branch);
+    Branch lastBranch() const { return branch; }
+
+    // The body exit (default on). Off restores the teacher without it: a stand
+    // comparison switch, never changed during an episode.
+    void setBodyExit(bool enabled) { bodyExitEnabled = enabled; }
+    bool bodyExit() const { return bodyExitEnabled; }
 
     void reset();
     // Call exactly once per 100-ms decision, reset at every episode boundary.
@@ -84,8 +115,25 @@ class NavMemoryTeacher final {
     bool planComplete() const { return complete; }
 
   private:
+    void updateTrack(const Input& input);
+
     std::vector<Point> route;
     PlanStatus latestPlanStatus;
+    Branch branch = Branch::NoAim;
+    bool bodyExitEnabled = true;
+    // Where the feet have stood, newest last, in the current body frame:
+    // dead-reckoned from the observed velocity and the previous turn key.
+    std::vector<Point> track;
+    // Where an escape step pushed without moving the body: 30 cm along the step,
+    // carried like the track, forgotten after `ttl` decisions.
+    struct Refusal final { Point point; uint32_t ttl = 0; };
+    std::vector<Refusal> refused;
+    uint32_t pushTicks = 0;
+    // The exit cell of the last body exit, carried like the track; exit cells the
+    // body reached without finding a start, forgotten after their `ttl`.
+    Point exitCell;
+    bool exitPending = false;
+    std::vector<Refusal> failedExits;
     float routeLength = 0;
     uint32_t stuckTicks = 0, recoveryTicks = 0, recoveryAttempts = 0;
     float recoverySide = 1;

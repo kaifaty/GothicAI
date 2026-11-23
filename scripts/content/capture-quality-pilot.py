@@ -85,6 +85,7 @@ def check(directory, scenario, material_index, iteration3=False, market_house=Fa
         require(len(index) == (0 if directory.name == "original" else 58), "expected 0 original or 58 staging materials")
     census = json.loads((directory / "census.json").read_text())
     opened = {texture_key(row["name"]) for row in census["files"] if row["kind"] == "texture"}
+    opened.update(texture_key(row["name"]) for row in census["replacements"] if row["kind"] == "basetexture")
     replaced = {texture_key(row["name"]) for row in census["replacements"] if row["kind"] == "texture"}
     targets = set(ITERATION3_MATERIALS if iteration3 or directory.name in ("pilot-3a", "pilot-3b") else MATERIALS)
     if market_house and directory.name != "pilot-3b":

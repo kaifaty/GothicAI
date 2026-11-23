@@ -1,0 +1,1 @@
+../../../../character-tool/src/character_tool/anim/blender/gothic_rig.py

@@ -4,12 +4,10 @@
 #include <Tempest/Matrix4x4>
 #include <Tempest/Point>
 
-#include "game/definitions/definitiontypes.h"
+#include "records/definitions.h"
 
-class World;
-class Npc;
+class CameraTarget;
 class DbgPainter;
-class Serialize;
 
 class Camera final {
   public:
@@ -46,11 +44,29 @@ class Camera final {
       Tempest::Vec3 pos;
       };
 
-    void reset();
-    void reset(const Npc* pl);
+    struct SaveState {
+      float         range;
+      Tempest::Vec3 spin;
+      Tempest::Vec3 target;
+      Tempest::Vec3 interTarget;
+      Tempest::Vec3 rotOffset;
+      Tempest::Vec3 origin;
+      Tempest::Vec3 angles;
+      Tempest::Vec3 veloTrans;
+      float         userRange;
+      };
 
-    void save(Serialize &s);
-    void load(Serialize &s, Npc* pl);
+    void reset();
+    void reset(const CameraTarget* pl);
+    // a cut: the next frame does not continue this one (TAA starts its history over); counted, the renderer
+    // compares the count
+    void     markCut() { ++cutCount; }
+    uint32_t cuts() const { return cutCount; }
+    // a blow along `dir` (world) nods the view by about `deg` and lets it back within a tenth of a second
+    void impact(const Tempest::Vec3& dir, float deg);
+
+    SaveState saveState() const;
+    void setSaveState(SaveState saved);
 
     void changeZoom(int delta);
     void setViewport(uint32_t w, uint32_t h);
@@ -134,6 +150,7 @@ class Camera final {
 
     float              zNear() const;
     float              fovY() const; // degrees, the vertical field of view (the aim narrows it)
+    uint32_t           viewportHeight() const { return vpHeight; }
     void               setNearClip(float zNear); // debug (test bench): clips away what is closer to the camera
     float              zFar()  const;
 
@@ -163,6 +180,9 @@ class Camera final {
     Tempest::Vec3         veloTrans = {};
     float                 userRange  = 0;
     Tempest::Vec3         shake      = {};
+    Tempest::Vec3         kickAmp    = {};  // impact: degrees of pitch and yaw
+    Tempest::Vec3         kickOff    = {};
+    float                 kickT      = 1;   // seconds since the impact
 
     float                 targetVelo = 0;
 
@@ -184,6 +204,7 @@ class Camera final {
     bool                  inWater       = false;
 
     mutable int           raysCasted = 0;
+    uint32_t              cutCount   = 0;
 
     bool                  aimOn      = false;
     float                 aimBlend   = 0;   // 0..1: from the usual camera to over the shoulder

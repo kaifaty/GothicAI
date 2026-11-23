@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from .audio import RATE, read_wav, resample
+from .laughter import DEFAULT_URL, RemoteLaughter
 from .providers import PROVIDERS, AsrError, make_provider
 from .recognizer import Recognizer
 from .service import AsrService
@@ -43,16 +44,23 @@ def _recognizer(args: argparse.Namespace) -> Recognizer:
         make_provider(args.provider),
         make_provider(args.fallback) if args.fallback and args.fallback != "none" else None,
         timeout=args.timeout,
+        laughter=None if args.no_laughter else RemoteLaughter(args.laughter_url),
     )
 
 
 async def serve(args: argparse.Namespace) -> int:
     recognizer = _recognizer(args)
-    if not args.no_warmup:
-        await recognizer.warmup()
+    preparing = (
+        asyncio.create_task(recognizer.laughter.prepare()) if recognizer.laughter is not None else None
+    )
     try:
+        if not args.no_warmup:
+            await recognizer.warmup()
         await AsrService(recognizer, args.host, args.port).serve_forever()
     finally:
+        if preparing is not None:
+            preparing.cancel()
+            await asyncio.gather(preparing, return_exceptions=True)
         await recognizer.aclose()
     return 0
 
@@ -60,9 +68,14 @@ async def serve(args: argparse.Namespace) -> int:
 async def transcribe(args: argparse.Namespace) -> int:
     """Transcribe wav files and print latency: compare providers on the same audio."""
     recognizer = _recognizer(args)
+    preparing = (
+        asyncio.create_task(recognizer.laughter.prepare()) if recognizer.laughter is not None else None
+    )
     try:
         started = time.monotonic()
         await recognizer.warmup()
+        if preparing is not None:
+            await preparing
         print(f"warmup {time.monotonic() - started:.1f}s", file=sys.stderr)
         latencies: list[float] = []
         for path in args.files:
@@ -82,7 +95,10 @@ async def transcribe(args: argparse.Namespace) -> int:
                 else:
                     r = await recognizer.recognize(audio, args.lang)
                 latencies.append(r.latency_s)
-            print(f"{Path(path).name}: [{r.provider} {r.audio_s:.1f}s audio, {r.latency_s:.2f}s] {r.text}")
+            print(
+                f"{Path(path).name}: [{r.provider} {r.audio_s:.1f}s audio, "
+                f"{r.latency_s:.2f}s, laughing={r.laughing}] {r.text}"
+            )
             if expected.exists():
                 print(f"{' ' * len(Path(path).name)}  expected: {expected.read_text().strip()}")
         if latencies:
@@ -95,8 +111,40 @@ async def transcribe(args: argparse.Namespace) -> int:
         print(f"error: {err}", file=sys.stderr)
         return 1
     finally:
+        if preparing is not None:
+            preparing.cancel()
+            await asyncio.gather(preparing, return_exceptions=True)
         await recognizer.aclose()
     return 0
+
+
+async def laughter(args: argparse.Namespace) -> int:
+    detector = RemoteLaughter(args.laughter_url)
+    try:
+        await detector.prepare()
+        code = 0
+        for path in args.files:
+            try:
+                audio, rate = read_wav(path)
+                score = await asyncio.to_thread(detector.score, resample(audio, rate))
+            except (OSError, ValueError) as err:
+                print(f"error: {path}: {err}", file=sys.stderr)
+                return 1
+            print(f"{Path(path).name}: laughing={score}")
+            if score is None:
+                code = 1
+        return code
+    finally:
+        await asyncio.to_thread(detector.close)
+
+
+def _add_laughter_args(p: argparse.ArgumentParser, *, optional: bool = False) -> None:
+    p.add_argument(
+        "--laughter-url", default=os.environ.get("GOTHIC_LAUGHTER_URL", DEFAULT_URL),
+        help="URL of the laughter HTTP service",
+    )
+    if optional:
+        p.add_argument("--no-laughter", action="store_true", help="disable laughter detection")
 
 
 def _add_provider_args(p: argparse.ArgumentParser) -> None:
@@ -124,6 +172,7 @@ def main() -> None:
     p.add_argument("--port", type=int, default=47819)
     p.add_argument("--no-warmup", action="store_true", help="load models on the first request")
     _add_provider_args(p)
+    _add_laughter_args(p, optional=True)
 
     p = sub.add_parser("transcribe", help="transcribe 16-bit wav files and measure latency")
     p.add_argument("files", nargs="+")
@@ -139,6 +188,11 @@ def main() -> None:
         "--realtime", action="store_true", help="feed audio at speaking pace (streaming providers)"
     )
     _add_provider_args(p)
+    _add_laughter_args(p, optional=True)
+
+    p = sub.add_parser("laughter", help="score laughter in wav files")
+    p.add_argument("files", nargs="+")
+    _add_laughter_args(p)
 
     args = parser.parse_args()
     logging.basicConfig(
@@ -156,6 +210,8 @@ def main() -> None:
                 code = asyncio.run(serve(args))
             case "transcribe":
                 code = asyncio.run(transcribe(args))
+            case "laughter":
+                code = asyncio.run(laughter(args))
             case _:
                 code = 2
     except ValueError as err:

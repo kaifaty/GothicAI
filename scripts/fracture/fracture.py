@@ -3,7 +3,9 @@
 
 Stock meshes and pieces contain game assets and belong in the local cache,
 never in git. Content mode reads only our indexed GLBs, without game archives,
-and writes adjacent version 2 sidecars. Requires numpy and scipy (fracture.sh).
+and writes adjacent version 2 sidecars; a GLB with a `model.debris.glb` beside it
+gets version 3, its pieces the debris parts (debris.py). Requires numpy and scipy
+(fracture.sh).
 """
 from __future__ import annotations
 
@@ -21,6 +23,8 @@ import zlib
 
 import numpy as np
 from scipy.spatial import ConvexHull, HalfspaceIntersection, cKDTree
+
+import debris
 
 
 def read_source(path: Path):
@@ -211,7 +215,10 @@ def bind_source(data, glb):
 
 
 def validate(data, glb=None):
-    """Check the actual serialized geometry consumed by the game."""
+    """Check the actual serialized geometry consumed by the game: (pieces, volume in cm3)."""
+    if data.startswith(b"GOTHIC_FRACTURE 3\n"):
+        stats = debris.validate(data, glb)
+        return stats["pieces"], stats["volume"]
     lines = iter(data.decode("ascii").splitlines())
     header = next(lines)
     if header == "GOTHIC_FRACTURE 2":
@@ -296,29 +303,55 @@ def content_meshes(root):
     return sorted(selected.items())
 
 
+def convert(extractor, glb, nodes=False):
+    """The engine converter's triangles of these exact GLB bytes: read_source or debris.read_nodes rows."""
+    with tempfile.TemporaryDirectory(prefix="gothic-fracture-") as directory:
+        source_path = Path(directory) / "source.mesh"
+        snapshot = Path(directory) / "source.glb"
+        # The converter reads exactly the bytes identified by the source row.
+        snapshot.write_bytes(glb)
+        subprocess.run([str(extractor), *(["--nodes"] if nodes else []), str(snapshot), str(source_path)], check=True)
+        return debris.read_nodes(source_path) if nodes else read_source(source_path)
+
+
 def cut_content(args):
     rows = []
     for visual, (glb_path, cls) in content_meshes(args.cache):
         glb = glb_path.read_bytes()
         target = glb_path.with_suffix(".fracture")
+        pieces_glb = glb_path.with_suffix(".debris.glb")
         if args.verify:
             # Reject a stale sidecar before recutting or invoking the converter.
             validate(target.read_bytes(), glb)
         started = time.monotonic()
-        with tempfile.TemporaryDirectory(prefix="gothic-fracture-") as directory:
-            source_path = Path(directory) / "source.mesh"
-            snapshot = Path(directory) / "source.glb"
-            # The converter reads exactly the bytes identified by the source row.
-            snapshot.write_bytes(glb)
-            subprocess.run([str(args.extractor), str(snapshot), str(source_path)], check=True)
-            source, textures = read_source(source_path)
-        cutter = fracture_boards if cls == "fence" else fracture
-        data, shell_volume, _ = cutter(source, textures, args.seed, args.pieces)
-        data = bind_source(data, glb)
-        count, actual_volume = validate(data, glb)
-        ratio = actual_volume / shell_volume
-        if not 0.9 <= ratio <= 1.1:
-            raise ValueError(f"{visual}: serialized volume ratio {ratio}")
+        if pieces_glb.is_file():
+            data = debris.cut(convert(args.extractor, pieces_glb.read_bytes(), nodes=True), glb)
+            stats = debris.validate(data, glb)
+            count = stats["pieces"]
+            summary = (f"version 3 from {pieces_glb.name}: {count} pieces, {stats['hulls']} hulls, "
+                       f"largest piece {stats['largest']:.0f} cm3, overlap {10 * stats['overlap']:.2f} mm, "
+                       f"hulls/pieces volume {stats['hull_volume'] / stats['volume']:.3f}, bonds " +
+                       (", ".join(f"{kind} {n}" for kind, n in stats["bonds"].items()) or "none") +
+                       f" ({stats['islands']} islands joined)")
+            # per class of detail: how far the written hulls stand outside (and a ring's inside), the least
+            # cover of the shapes before the 1.5 mm shrink, the largest overlap with another piece
+            classes = "".join(
+                f"\n  {cls}: {row['pieces']} pieces, {row['hulls']} hulls, outside {10 * row['outside']:.2f} mm, "
+                f"cover {row['cover']:.3f}, overlap {10 * row['overlap']:.2f} mm" +
+                (f", inward {10 * row['inward']:.2f} mm" if "inward" in row else "")
+                for cls, row in stats["classes"].items())
+        else:
+            source, textures = convert(args.extractor, glb)
+            cutter = fracture_boards if cls == "fence" else fracture
+            data, shell_volume, _ = cutter(source, textures, args.seed, args.pieces)
+            data = bind_source(data, glb)
+            count, actual_volume = validate(data, glb)
+            ratio = actual_volume / shell_volume
+            if not 0.9 <= ratio <= 1.1:
+                raise ValueError(f"{visual}: serialized volume ratio {ratio}")
+            summary = (f"{count} pieces, shell {shell_volume:.6f} cm3, pieces {actual_volume:.6f} cm3, "
+                       f"volume {ratio:.9f}, closed + convex")
+            classes = ""
         if args.verify:
             if target.read_bytes() != data:
                 raise ValueError(f"{target}: repeated fracture differs byte-for-byte")
@@ -328,13 +361,11 @@ def cut_content(args):
                 temporary.write_bytes(data)
                 temporary.replace(target)
         rows.append((visual, count))
-        print(f"{visual}: {count} pieces, {time.monotonic() - started:.3f} s, "
-              f"shell {shell_volume:.6f} cm3, pieces {actual_volume:.6f} cm3, "
-              f"volume {ratio:.9f}, closed + convex" +
-              (", identical bytes" if args.verify else ""), flush=True)
+        print(f"{visual}: {summary}, {time.monotonic() - started:.3f} s" +
+              (", identical bytes" if args.verify else "") + classes, flush=True)
     if not rows:
         raise ValueError("no indexed destructible GLB meshes")
-    print(f"Validated {len(rows)} visuals, {sum(row[1] for row in rows)} convex closed pieces.")
+    print(f"Validated {len(rows)} visuals, {sum(row[1] for row in rows)} pieces.")
 
 
 def main():
@@ -343,7 +374,8 @@ def main():
     parser.add_argument("--seed", type=int, default=601)
     parser.add_argument("--pieces", type=int, default=12, choices=range(8, 21))
     parser.add_argument("--verify", action="store_true", help="re-cut and compare bytes without overwriting")
-    parser.add_argument("--content", action="store_true", help="cut indexed GLB files into adjacent version 2 sidecars")
+    parser.add_argument("--content", action="store_true",
+                        help="cut indexed GLB files into adjacent sidecars: version 3 beside a model.debris.glb, else 2")
     parser.add_argument("--extractor", type=Path, help="CPU GLB-to-source converter for --content")
     args = parser.parse_args()
     if args.content:

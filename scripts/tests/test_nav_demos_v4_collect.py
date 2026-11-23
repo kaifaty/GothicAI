@@ -341,6 +341,26 @@ def test_no_heldout_commands_or_recording_paths(tmp_path, split):
         collect.commands(collect.runner_args(options, 0), tagged)
 
 
+def test_live_suite_rejects_ids_and_renamed_routes_in_both_directions(tmp_path, monkeypatch):
+    suite = tmp_path / "scenarios.json"
+    suite.write_text(json.dumps(dict(training_eligible=False, scenarios=[
+        dict(point(), id="live-point", training_eligible=False,
+             variants=[dict(id="live-offset", start="OFFSET", goal="ROUTINE")]),
+        dict(moving(2), id="live-follow", training_eligible=False)])))
+    monkeypatch.setattr(collect, "LIVE_SUITE", suite)
+    options = SimpleNamespace(task=tmp_path, limit_ms=240000)
+    excluded = [dict(point(99), id="live-point"), dict(point(99), id="live-point-live-offset"),
+                dict(point(99), start="G0", goal="S0"),
+                dict(point(99), start="ROUTINE", goal="OFFSET"),
+                dict(moving(99), route=["OTHER", "T2", "S2"])]
+    for value in excluded:
+        with pytest.raises(ValueError, match="Live navigation suite"):
+            collect.directory_for(tmp_path, value)
+        with pytest.raises(ValueError, match="Live navigation suite"):
+            collect.commands(collect.runner_args(options, 0), value)
+    assert collect.directory_for(tmp_path, point(99)).name == "point-99"
+
+
 def test_commands_enable_recording_memory_input_and_correct_teacher(tmp_path):
     args = collect.runner_args(SimpleNamespace(task=tmp_path, limit_ms=240000), 0)
     commands = collect.commands(args, point())

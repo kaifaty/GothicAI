@@ -1,23 +1,39 @@
 #include "aiqueue.h"
+#include <algorithm>
+#include "npcactivityprobe.h"
 
 #include <limits>
 #include "game/serialize.h"
+#include "world/world.h"
+#include "world/waypoint.h"
 
 AiQueue::AiQueue() {
   }
 
-void AiQueue::save(Serialize& fout) const {
+void AiQueue::save(Serialize& fout, const World& world) const {
   fout.write(uint32_t(aiActions.size()));
   for(auto& i:aiActions){
     fout.write(uint32_t(i.act));
     fout.write(i.target,i.victim);
-    fout.write(i.point,i.func,i.i0,i.i1,i.s0);
+    int i1=i.i1;
+    if(i.act==AI_GoToPoint && i.point && (!i.s0.empty() || i.i1==AiAction::ExternalPointWalk)) {
+      // A selected guard post is saved before the walk has a GoTo::pos. i1 is unused by GoToPoint.
+      int ordinal=0;
+      world.forEachWayPoint([&](const WayPoint& p) {
+        if(!p.isFreePoint() || p.name!=i.point->name)
+          return;
+        ++ordinal;
+        if(&p==i.point)
+          i1=ordinal;
+        });
+      }
+    fout.write(i.point,i.func,i.i0,i1,i.s0);
     if(i.act==AI_PrintScreen)
       fout.write(i.i2,i.s1);
     }
   }
 
-void AiQueue::load(Serialize& fin) {
+void AiQueue::load(Serialize& fin, const World& world) {
   uint32_t size = 0;
   fin.read(size);
   aiActions.resize(size);
@@ -27,6 +43,21 @@ void AiQueue::load(Serialize& fin) {
     fin.read(reinterpret_cast<uint32_t&>(i.act));
     fin.read(i.target,i.victim);
     fin.read(i.point,i.func,i.i0,i.i1,i.s0);
+    if(i.act==AI_GoToPoint)
+      i.activity=!i.s0.empty() || i.i1==AiAction::SavedGuardCommand;
+    else
+      i.activity=i.i1==AiAction::SavedGuardCommand &&
+                 (i.act==AI_StandUp || i.act==AI_AlignToFp || i.act==AI_AlignToWp || i.act==AI_PlayAnim || i.act==AI_PlayAnimBs);
+    if(i.act==AI_GoToPoint && i.point && i.i1>0) {
+      const auto& name=i.point->name;
+      int ordinal=0;
+      i.point=nullptr;
+      world.forEachWayPoint([&](const WayPoint& p) {
+        if(p.isFreePoint() && p.name==name && ++ordinal==i.i1)
+          i.point=&p;
+        });
+      i.i1=i.activity ? AiAction::SavedGuardCommand : AiAction::ExternalPointWalk;
+      }
     if(i.act==AI_PrintScreen)
       fin.read(i.i2,i.s1);
     }
@@ -36,7 +67,8 @@ void AiQueue::clear() {
   aiActions.clear();
   }
 
-void AiQueue::pushBack(AiAction&& a) {
+void AiQueue::pushBack(AiAction&& a, const Npc* actor) {
+  if(auto* probe=NpcActivityProbe::instance; probe && actor) probe->queued(actor,a);
   if(aiActions.size()>0) {
     if(aiActions.back().act==AI_LookAtNpc && a.act==AI_LookAtNpc) {
       aiActions.back() = a;
@@ -60,6 +92,11 @@ AiQueue::AiAction AiQueue::pop() {
   return act;
   }
 
+void AiQueue::removeActivity() {
+  aiActions.erase(std::remove_if(aiActions.begin(),aiActions.end(),[](const AiAction& a) { return a.activity; }),
+                  aiActions.end());
+  }
+
 AiQueue::AiAction AiQueue::popPhysicsNoiseState() {
   for(auto i=aiActions.begin(); i!=aiActions.end(); ++i) {
     if(i->act!=AI_StartState || !i->physicsNoiseState)
@@ -77,6 +114,19 @@ int AiQueue::aiOutputOrderId() const {
     if(i.i0<v && (i.act==AI_Output || i.act==AI_OutputSvm || i.act==AI_OutputSvmOverlay || i.act==AI_StopProcessInfo))
       v = i.i0;
   return v;
+  }
+
+bool AiQueue::hasItemUse() const {
+  for(const auto& action:aiActions)
+    if(action.act==AI_UseItem)
+      return true;
+  return false;
+  }
+
+bool AiQueue::hasMovement() const {
+  return std::any_of(aiActions.begin(),aiActions.end(),[](const AiAction& a) {
+    return a.act==AI_GoToPoint || a.act==AI_GoToNextFp || a.act==AI_GoToNpc || a.act==AI_GotoItem || a.act==AI_Teleport;
+    });
   }
 
 bool AiQueue::nativeCombatOnly(const Npc* target) const {
@@ -456,4 +506,17 @@ AiQueue::AiAction AiQueue::aiPrintScreen(int time, std::string_view font, int x,
   a.i2     = time;
   a.s1     = font;
   return a;
+  }
+
+const char* AiQueue::actionName(uint32_t act) {
+  static const char* names[] = {
+    "None","LookAtNpc","StopLookAt","RemoveWeapon","TurnToNpc","GoToNpc","GoToNextFp","GoToPoint",
+    "StartState","PlayAnim","PlayAnimBs","Wait","StandUp","StandUpQuick","EquipArmor","EquipBestArmor",
+    "EquipMelee","EquipRange","UseMob","UseItem","UseItemToState","Teleport","DrawWeaponMelee",
+    "DrawWeaponRange","DrawSpell","Attack","Flee","Dodge","UnEquipWeapons","UnEquipArmor","Output",
+    "OutputSvm","OutputSvmOverlay","ProcessInfo","StopProcessInfo","ContinueRoutine","AlignToFp",
+    "AlignToWp","SetNpcsToState","SetWalkMode","FinishingMove","DrawWeapon","TakeItem","GotoItem",
+    "PointAtNpc","PointAt","StopPointAt","PrintScreen","LookAt","WhirlToNpc","TurnAway",
+    };
+  return act<sizeof(names)/sizeof(names[0]) ? names[act] : "?";
   }

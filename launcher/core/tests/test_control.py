@@ -1,17 +1,23 @@
 import asyncio
-import fcntl
 import json
+import os
 import sys
 import zipfile
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
+from gothic_launcher import cli, commands
 from gothic_launcher import control as control_module
 from gothic_launcher import supervisor as sv
-from gothic_launcher.commands import Ports, Proc
+from gothic_launcher.commands import LaunchError, Ports, Proc
 from gothic_launcher.control import Control
+from gothic_launcher.state import AlreadyRunning, SessionFile
 from tests.test_supervisor import FAKE, gone
+
+# the window's sessions on POSIX process groups, and the Linux install lock; Windows: test_windows.py
+fcntl = pytest.importorskip("fcntl", reason="POSIX process groups and the Linux install lock")
 
 NPC_LINE = {"kind": "npc", "npc": "NONE_100_XARDAS", "name": "Ксардас", "text": "Придержи язык."}
 
@@ -52,6 +58,8 @@ async def call(c: Control, method: str, **params):
 def setup(tmp_path, monkeypatch):
     """A config with everything find_layout wants, and fake processes instead of the real services."""
     monkeypatch.setattr(sv, "STOP_GRACE_S", 1.0)
+    monkeypatch.delenv("OPENGOTHIC_BASE", raising=False)
+    monkeypatch.delenv("OPENGOTHIC_BASE_FINGERPRINT", raising=False)
     repo = tmp_path / "repo"
     (repo / "server").mkdir(parents=True)
     (repo / "server" / "pyproject.toml").write_text("")
@@ -61,6 +69,9 @@ def setup(tmp_path, monkeypatch):
     binary = tmp_path / "Gothic2Notr"
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
+    converter = binary.with_name("content-convert")
+    converter.write_text("#!/bin/sh\nexit 0\n")
+    converter.chmod(0o755)
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "settings.toml").write_text(  # present: no import from the real repository's .env
@@ -141,8 +152,25 @@ async def test_session_events_and_journal_reach_the_window(setup):
     assert state["session"]["services"]["server"]["state"] == "stopped"
 
 
-async def test_a_second_session_is_refused_while_one_runs(setup):
+async def test_a_second_session_is_refused_while_one_runs(setup, monkeypatch):
     c, window, tmp_path = setup
+    with monkeypatch.context() as broken:
+        def invalid_layout(_config):
+            raise LaunchError("invalid layout")
+
+        broken.setattr(control_module, "find_layout", invalid_layout)
+        held = SessionFile(c.state_file)
+        held.acquire()
+        try:
+            with pytest.raises(AlreadyRunning):
+                await c.session_start()
+        finally:
+            held.release()
+        with pytest.raises(LaunchError, match="invalid layout"):
+            await c.session_start()
+        released = SessionFile(c.state_file)
+        released.acquire()
+        released.release()
     await call(c, "session.start")
     with pytest.raises(RuntimeError, match="уже запущена"):
         await call(c, "session.start")
@@ -150,19 +178,45 @@ async def test_a_second_session_is_refused_while_one_runs(setup):
     assert window.events("session")[-1]["state"] == "stopped"
 
 
-async def test_report_has_the_logs_without_keys(setup):
+async def test_report_has_the_logs_without_keys(setup, monkeypatch):
     c, window, tmp_path = setup
+    tokens = tmp_path / "chatgpt.json"
+    tokens.write_text(json.dumps({"access_token": "access-secret", "refresh_token": "refresh-secret"}))
+    monkeypatch.setattr(control_module.checks, "CHATGPT_TOKENS", tokens)
     await call(c, "settings.set", key="secrets.inworld_api_key", value="iw-secret")
     log_dir = tmp_path / "logs" / "2026-10-11_18-00-00"
     log_dir.mkdir(parents=True)
-    (log_dir / "tts.log").write_text("key iw-secret leaked\n")
+    (log_dir / "tts.log").write_text(
+        "key iw-secret leaked\nAuthorization: Bearer abc.DEF-123_x\n"
+        "authorization: bEaReR abc.DEF-123_x\naccess_token=access-secret\nrefresh_token=refresh-secret\n"
+    )
 
     path = Path((await call(c, "report.create"))["path"])
 
     with zipfile.ZipFile(path) as z:
         text = z.read("2026-10-11_18-00-00/tts.log").decode()
         settings = z.read("settings.toml").decode()
-    assert "iw-secret" not in text and "<hidden>" in text and "<set>" in settings
+        contents = "\n".join(z.read(name).decode() for name in z.namelist())
+    for secret in ("iw-secret", "abc.DEF-123_x", "access-secret", "refresh-secret"):
+        assert secret not in contents
+    assert text.count("<hidden>") == 5 and "Bearer <hidden>" in text and "<set>" in settings
+
+
+@pytest.mark.parametrize("tokens_json", [None, "{broken", "{}"])
+async def test_report_without_chatgpt_tokens(setup, monkeypatch, tokens_json):
+    c, window, tmp_path = setup
+    tokens = tmp_path / "chatgpt.json"
+    if tokens_json is not None:
+        tokens.write_text(tokens_json)
+    monkeypatch.setattr(control_module.checks, "CHATGPT_TOKENS", tokens)
+    log_dir = tmp_path / "logs" / "2026-10-11_18-00-00"
+    log_dir.mkdir(parents=True)
+    (log_dir / "server.log").write_text("Authorization: Bearer abc.DEF-123_x\n")
+
+    path = Path((await call(c, "report.create"))["path"])
+
+    with zipfile.ZipFile(path) as z:
+        assert z.read(f"{log_dir.name}/server.log").decode() == "Authorization: Bearer <hidden>\n"
 
 
 @pytest.fixture
@@ -250,7 +304,8 @@ def test_idle_linux_core_holds_install_lock_until_serve_returns(tmp_path, monkey
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(sys, "platform", "linux")
 
-    async def serve():
+    async def serve(install_lock=None):
+        assert install_lock is not None and not install_lock.closed
         with (tmp_path / "gothic-ai/play.install.lock").open("ab") as updating:
             with pytest.raises(BlockingIOError):
                 fcntl.flock(updating, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -277,7 +332,7 @@ def test_linux_core_refuses_to_start_while_installing(tmp_path, monkeypatch):
     path = tmp_path / "gothic-ai/play.install.lock"
     path.parent.mkdir()
 
-    async def serve():
+    async def serve(install_lock=None):
         pytest.fail("control must not start while install/update holds the lock")
 
     monkeypatch.setattr(control_module, "serve", serve)
@@ -291,8 +346,532 @@ def test_macos_core_does_not_take_linux_install_lock(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(control_module, "installation_lock", lambda: pytest.fail("Linux-only lock"))
 
-    async def serve():
+    async def serve(install_lock=None):
+        assert install_lock is None
         return 0
 
     monkeypatch.setattr(control_module, "serve", serve)
     assert control_module.main() == 0
+
+
+@pytest.fixture
+async def update_setup(setup, monkeypatch):
+    original, window, root = setup
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(control_module, "UPDATE_POLL_S", 0.01)
+    monkeypatch.setattr(control_module, "UPDATE_CHECK_S", 0.01)
+    play = root / "gothic-ai/play"
+    scripts = play / "scripts"
+    scripts.mkdir(parents=True)
+    unit = root / ".config/systemd/user/gothic-play-update.service"
+    unit.parent.mkdir(parents=True)
+    unit.touch()
+    lock_path = play.parent / "play.install.lock"
+    held = lock_path.open("ab")
+    fcntl.flock(held, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    os.set_inheritable(held.fileno(), True)  # helpers must close it even if the caller did not
+    status = {
+        "head": "old", "latest": "new", "target": "new", "good": "old", "built": "old",
+        "failed": "", "current": False, "latest_failed": False, "behind": 2,
+        "changes": [{"pr": 101, "title": "New game behavior"}, {"pr": None, "title": "A fix"}],
+        "report": {"result": "busy", "time": "2026-11-01T00:00:00+00:00"},
+    }
+    (root / "status.json").write_text(json.dumps(status))
+    (scripts / "ryzen-play.sh").write_text(
+        "import json, os, pathlib, sys\n"
+        f"root = pathlib.Path({str(root)!r})\n"
+        "(root / 'status-args.json').write_text(json.dumps(sys.argv[1:]))\n"
+        "try:\n"
+        f"    stat = os.fstat({held.fileno()})\n"
+        "except OSError:\n"
+        "    pass\n"
+        "else:\n"
+        f"    lock = pathlib.Path({str(lock_path)!r}).stat()\n"
+        "    assert (stat.st_dev, stat.st_ino) != (lock.st_dev, lock.st_ino), 'inherited install lock'\n"
+        "print((root / 'status.json').read_text())\n"
+    )
+    binary_dir = root / "bin"
+    binary_dir.mkdir()
+    fake_systemd = (
+        f"#!{sys.executable}\n"
+        "import datetime, json, pathlib, sys\n"
+        f"root = pathlib.Path({str(root)!r})\n"
+        "command, args = pathlib.Path(sys.argv[0]).name, sys.argv[1:]\n"
+        "with (root / 'systemd.jsonl').open('a') as trace:\n"
+        "    trace.write(json.dumps({'command': command, 'args': args}) + '\\n')\n"
+        "if command == 'journalctl':\n"
+        "    if (root / 'journal-error').exists():\n"
+        "        (root / 'journal-failed').touch()\n"
+        "        print('journal unavailable', file=sys.stderr)\n"
+        "        sys.exit(1)\n"
+        "    print('Building launcher')\n"
+        "elif args[1] == 'start':\n"
+        "    count = root / 'starts'\n"
+        "    count.write_text(str(int(count.read_text()) + 1 if count.exists() else 1))\n"
+        "elif args[1] == 'show':\n"
+        "    count = root / 'starts'\n"
+        "    if not count.exists():\n"
+        "        failures = root / 'prestart-show-errors'\n"
+        "        if failures.exists():\n"
+        "            polls = root / 'prestart-polls'\n"
+        "            number = int(polls.read_text()) + 1 if polls.exists() else 1\n"
+        "            polls.write_text(str(number))\n"
+        "            if number <= int(failures.read_text()):\n"
+        "                print('show unavailable before start', file=sys.stderr)\n"
+        "                sys.exit(1)\n"
+        "        print('active' if (root / 'stale-busy').exists() else 'inactive')\n"
+        "        sys.exit(0)\n"
+        "    failures = root / 'show-errors'\n"
+        "    if failures.exists():\n"
+        "        polls = root / 'show-polls'\n"
+        "        number = int(polls.read_text()) + 1 if polls.exists() else 1\n"
+        "        polls.write_text(str(number))\n"
+        "        if number <= int(failures.read_text()):\n"
+        "            print('show unavailable', file=sys.stderr)\n"
+        "            sys.exit(1)\n"
+        "    starts = int(count.read_text())\n"
+        "    busy = (root / 'stale-busy').exists() and starts == 1\n"
+        "    if busy:\n"
+        "        print('inactive')\n"
+        "        sys.exit(0)\n"
+        "    if (root / 'release').exists():\n"
+        "        when = datetime.datetime.now(datetime.timezone.utc).isoformat()\n"
+        "        report = {'result': 'updated', 'time': when}\n"
+        "        (root / 'gothic-ai/play-update.json').write_text(json.dumps(report))\n"
+        "        print('inactive')\n"
+        "    else:\n"
+        "        print('active')\n"
+    )
+    for name in ("systemctl", "journalctl"):
+        binary = binary_dir / name
+        binary.write_text(fake_systemd)
+        binary.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{binary_dir}{os.pathsep}{os.environ['PATH']}")
+    c = Control(
+        window, config_dir=original.config_dir, state_file=original.state_file,
+        log_root=original.log_root, install_dir=play, install_lock=held,
+    )
+    try:
+        yield c, window, root
+    finally:
+        (root / "release").touch()
+        if c.update_task is not None:
+            await asyncio.wait_for(c.update_task, 5)
+        held.close()
+
+
+@pytest.mark.parametrize("kind", ["development", "macos", "admitted"])
+async def test_update_is_only_for_the_personal_linux_core(setup, monkeypatch, kind):
+    original, window, root = setup
+    monkeypatch.setattr(sys, "platform", "darwin" if kind == "macos" else "linux")
+    c = Control(
+        window, config_dir=original.config_dir, state_file=original.state_file,
+        log_root=original.log_root, admitted=kind == "admitted",
+        **({"install_dir": root / "gothic-ai/play"} if kind != "development" else {}),
+    )
+    assert (await call(c, "state"))["update"] is None
+    with pytest.raises(RuntimeError, match="Обновление из окна есть только у личной установки Ryzen"):
+        await call(c, "update.start")
+
+
+async def test_update_state_comes_from_the_read_only_status_command(update_setup):
+    c, window, root = update_setup
+    raw = json.loads((root / "status.json").read_text())
+    update = (await call(c, "state"))["update"]
+    assert update == {
+        "current": False, "behind": 2, "built": True, "latest_failed": False,
+        "head": "old", "target": "new", "changes": raw["changes"], "report": raw["report"],
+        "auto": True, "updating": None,
+    }
+    assert json.loads((root / "status-args.json").read_text()) == ["__status"]
+    raw.update(built=None, latest_failed=True, target="old", behind=0, changes=[])
+    (root / "status.json").write_text(json.dumps(raw))
+    await c.refresh_update()
+    assert c.update["built"] is False and c.update["latest_failed"] is True
+    assert c.update["target"] == "old" and c.update["behind"] == 0 and c.update["changes"] == []
+
+
+async def test_update_polling_only_emits_changed_status_and_handles_failures(
+    update_setup, monkeypatch, caplog,
+):
+    c, window, root = update_setup
+    polling = asyncio.create_task(c.poll_updates())
+    try:
+        await window.wait(lambda: bool(window.events("update")))
+        initial = len(window.events("update"))
+        await asyncio.sleep(0.1)
+        assert len(window.events("update")) == initial
+        raw = json.loads((root / "status.json").read_text())
+        raw["behind"] = 3
+        (root / "status.json").write_text(json.dumps(raw))
+        await window.wait(lambda: any(u and u["behind"] == 3 for u in window.events("update")))
+        script = root / "gothic-ai/play/scripts/ryzen-play.sh"
+        script.write_text("import sys\nprint('status failed', file=sys.stderr)\nsys.exit(4)\n")
+        await window.wait(lambda: window.events("update")[-1] is None)
+        assert (await call(c, "state"))["update"] is None
+        assert "status failed" in caplog.text
+        script.write_text("import time\ntime.sleep(60)\n")
+        monkeypatch.setattr(control_module, "UPDATE_STATUS_TIMEOUT_S", 0.02)
+        await c.refresh_update()
+        assert c.update is None and "timeout" in caplog.text.lower()
+    finally:
+        polling.cancel()
+        await asyncio.gather(polling, return_exceptions=True)
+
+
+async def test_update_releases_the_install_lock_and_streams_the_service_result(update_setup, monkeypatch):
+    c, window, root = update_setup
+    await c.refresh_update()
+    lock_path = root / "gothic-ai/play.install.lock"
+    with lock_path.open("ab") as other:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        response = await call(c, "update.start")
+        assert response == window.events("update")[-1] == (await call(c, "state"))["update"]
+        started = response["updating"]
+        assert started["state"] == "running" and started["detail"] == "Запускаю обновление"
+        assert isinstance(started["started"], float)
+        assert started["result"] is None and started["error"] is None
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(other, fcntl.LOCK_UN)
+    monkeypatch.setattr(
+        control_module, "find_layout", lambda _config: pytest.fail("state must not launch clone programs")
+    )
+    assert (await call(c, "state"))["update"]["updating"]["state"] == "running"
+    changed = await call(c, "settings.set", key="tts.enabled", value=True)
+    assert changed["settings"]["tts"]["enabled"] is True
+    await window.wait(lambda: any(
+        u and u["updating"] and u["updating"]["detail"] == "Building launcher"
+        for u in window.events("update")
+    ))
+    for method in ("session.start", "test.voice", "test.speech", "test.llm", "login.chatgpt", "mics"):
+        with pytest.raises(RuntimeError, match="Идёт обновление установки"):
+            await call(c, method)
+    with pytest.raises(RuntimeError, match="[Оо]бновлен"):
+        await call(c, "update.start")
+    (root / "status-args.json").unlink()
+    await c.refresh_update()
+    assert not (root / "status-args.json").exists()
+    (root / "release").touch()
+    await asyncio.wait_for(c.update_task, 5)
+    events = [u["updating"] for u in window.events("update") if u and u["updating"]]
+    assert events[0]["state"] == "running" and events[-1]["state"] == "finished"
+    assert events[-1]["result"] == "updated" and events[-1]["error"] is None
+    assert c.update["report"]["result"] == "updated"
+    with pytest.raises(RuntimeError, match="Идёт обновление установки"):
+        await call(c, "session.start")
+    assert (await call(c, "state"))["update"]["updating"]["state"] == "finished"
+    changed = await call(c, "settings.set", key="tts.enabled", value=False)
+    assert changed["settings"]["tts"]["enabled"] is False
+    assert await call(c, "schema")
+    trace = [json.loads(line) for line in (root / "systemd.jsonl").read_text().splitlines()]
+    assert [t["args"] for t in trace if t["command"] == "systemctl" and t["args"][1] == "start"] == [
+        ["--user", "start", "--no-block", "gothic-play-update.service"]
+    ]
+    journal = next(t["args"] for t in trace if t["command"] == "journalctl")
+    assert journal == [
+        "--user", "-u", "gothic-play-update.service", "--since", f"@{started['started']}",
+        "-n", "1", "-o", "cat", "--no-pager",
+    ]
+
+
+@pytest.mark.parametrize("prestart_errors", [0, 2])
+async def test_update_retries_a_stale_busy_run_only_once(update_setup, prestart_errors):
+    c, window, root = update_setup
+    (root / "stale-busy").touch()
+    if prestart_errors:
+        (root / "prestart-show-errors").write_text(str(prestart_errors))
+    report = root / "gothic-ai/play-update.json"
+    busy = {"result": "busy", "time": "2000-01-01T00:00:00+00:00"}
+    report.write_text(json.dumps(busy))
+    os.utime(report, (946684800, 946684800))
+    await call(c, "update.start")
+    async with asyncio.timeout(5):
+        while not (root / "starts").exists() or (root / "starts").read_text() != "2":
+            await asyncio.sleep(0.01)
+    assert json.loads(report.read_text()) == busy and report.stat().st_mtime == 946684800
+    (root / "release").touch()
+    await asyncio.wait_for(c.update_task, 5)
+    assert (root / "starts").read_text() == "2"
+    if prestart_errors:
+        assert (root / "prestart-polls").read_text() == "3"
+    assert c.update["updating"]["state"] == "finished"
+    assert c.update["updating"]["result"] == "updated"
+
+
+async def test_update_keeps_polling_when_the_journal_is_unavailable(update_setup, caplog):
+    c, window, root = update_setup
+    (root / "journal-error").touch()
+    await call(c, "update.start")
+    async with asyncio.timeout(5):
+        while not (root / "journal-failed").exists():
+            await asyncio.sleep(0.01)
+    assert c.update["updating"]["state"] == "running"
+    assert c.update["updating"]["error"] is None
+    assert c.update["updating"]["detail"] == "Запускаю обновление"
+    (root / "release").touch()
+    await asyncio.wait_for(c.update_task, 5)
+    assert c.update["updating"]["state"] == "finished"
+    assert c.update["updating"]["result"] == "updated" and c.update["updating"]["error"] is None
+    assert "journal unavailable" in caplog.text
+
+
+@pytest.mark.parametrize("failures", [2, 5])
+async def test_update_retries_active_state_errors_before_giving_up(update_setup, failures):
+    c, window, root = update_setup
+    (root / "show-errors").write_text(str(failures))
+    (root / "release").touch()
+    await call(c, "update.start")
+    await asyncio.wait_for(c.update_task, 5)
+    assert c.update["updating"]["state"] == "finished"
+    if failures == 2:
+        assert c.update["updating"]["result"] == "updated" and c.update["updating"]["error"] is None
+        assert (root / "show-polls").read_text() == "3"
+    else:
+        assert c.update["updating"]["error"] and c.update["updating"]["result"] is None
+        assert (root / "show-polls").read_text() == "5"
+
+
+async def test_login_allows_other_helpers_but_blocks_the_installation_update(update_setup):
+    c, window, root = update_setup
+    uv = root / "bin/uv"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        "import pathlib, sys, time\n"
+        f"root = pathlib.Path({str(root)!r})\n"
+        "if 'login' in sys.argv:\n"
+        "    (root / 'login-running').touch()\n"
+        "    while not (root / 'login-release').exists(): time.sleep(0.01)\n"
+        "elif sys.argv[-1] == 'mics':\n"
+        "    print('[{\"id\": 0, \"name\": \"Test microphone\"}]')\n"
+        "else:\n"
+        "    sys.exit(2)\n"
+    )
+    uv.chmod(0o755)
+    await call(c, "settings.set", key="paths.uv", value=str(uv))
+    login = asyncio.create_task(c.login_chatgpt())
+    try:
+        async with asyncio.timeout(5):
+            while not (root / "login-running").exists():
+                await asyncio.sleep(0.01)
+        assert await asyncio.wait_for(call(c, "mics"), 1) == [{"id": 0, "name": "Test microphone"}]
+        assert not login.done() and not c._testing.locked() and c._helpers == 1
+        with pytest.raises(RuntimeError, match="Сначала завершите проверку"):
+            await call(c, "update.start")
+        assert not (root / "starts").exists()
+    finally:
+        (root / "login-release").touch()
+        result = await asyncio.wait_for(login, 5)
+    assert result["ok"] and c._helpers == 0
+    (root / "release").touch()
+    response = await call(c, "update.start")
+    assert response["updating"]["state"] == "running"
+    await asyncio.wait_for(c.update_task, 5)
+    assert c.update["updating"]["result"] == "updated" and c.update["updating"]["error"] is None
+
+
+async def test_update_refuses_games_checks_and_missing_auto_service(update_setup):
+    c, window, root = update_setup
+    for state in ("waiting", "running"):
+        c.session = {"state": state}
+        with pytest.raises(RuntimeError, match="Сначала остановите игру"):
+            await call(c, "update.start")
+    c.session = None
+    async with c._testing:
+        with pytest.raises(RuntimeError, match="проверк"):
+            await call(c, "update.start")
+    (root / ".config/systemd/user/gothic-play-update.service").unlink()
+    await c.refresh_update()
+    with pytest.raises(RuntimeError, match="Автообновление не установлено: выполните"):
+        await call(c, "update.start")
+    assert not (root / "starts").exists()
+
+
+async def test_macos_preparation_progress_and_order_reach_the_window(setup, monkeypatch):
+    c, window, root = setup
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(control_module, "services", lambda *args, **kwargs: [])
+    monkeypatch.setattr(control_module, "game", commands.game)
+    trace, release = root / "order", root / "release"
+    (root / "Gothic2Notr").write_text(f"#!/bin/sh\necho game >> '{trace}'\n")
+    (root / "content-convert").write_text(
+        f"#!{sys.executable}\nimport json, pathlib, sys, time\n"
+        f"pathlib.Path({str(trace)!r}).write_text(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "print('packing 1/2', file=sys.stderr, flush=True)\n"
+        f"while not pathlib.Path({str(release)!r}).exists(): time.sleep(0.01)\n"
+        "print('packing 2/2', file=sys.stderr, flush=True)\n"
+        "print('/ready/base')\n"
+    )
+    try:
+        await c.session_start()
+        await window.wait(lambda: any(
+            e["proc"] == "prepare" and e["detail"] == "packing 1/2" for e in window.events("service")
+        ))
+        state = await c.state()
+        assert state["session"]["services"]["prepare"]["detail"] == "packing 1/2"
+        assert "game" not in state["session"]["services"]
+        release.touch()
+        await asyncio.wait_for(c.task, 10)
+        assert trace.read_text().splitlines() == [
+            json.dumps(["resolve", str(root / "Gothic II")]), "game"
+        ]
+        log = Path(c.session["log_dir"]) / "prepare.log"
+        assert "packing 1/2\npacking 2/2\n" in log.read_text()
+        assert "/ready/base" not in log.read_text()
+        assert c.session["code"] == 0 and c.session["failed"] is None
+    finally:
+        release.touch()
+        await c.shutdown()
+
+
+@pytest.mark.parametrize(("explicit", "code"), [(False, 0), (True, 13)])
+def test_prepare_cli_selects_installation_without_starting_services(setup, monkeypatch, explicit, code):
+    c, window, root = setup
+    monkeypatch.setattr(cli, "_config", c._config)
+    monkeypatch.setattr(cli, "SessionFile", lambda: SessionFile(root / "prepare-session.json"))
+    monkeypatch.setattr(sv, "SessionFile", lambda: SessionFile(root / "prepare-session.json"))
+    monkeypatch.setattr(cli, "new_log_dir", lambda: root / "prepare-logs")
+    monkeypatch.setattr(cli, "services", lambda *args, **kwargs: pytest.fail("prepare started services"))
+    trace = root / "resolve.json"
+    (root / "Gothic2Notr").write_text("#!/bin/sh\nexit 77\n")
+    (root / "content-convert").write_text(
+        f"#!{sys.executable}\nimport json, pathlib, sys\n"
+        f"pathlib.Path({str(trace)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        f"print('converter exit {code}', file=sys.stderr)\nsys.exit({code})\n"
+    )
+    selected = root / "another install" if explicit else root / "Gothic II"
+    if explicit:
+        (selected / "Data").mkdir(parents=True)
+    monkeypatch.setattr(sys, "argv", ["gothic-launcher", "prepare", *([str(selected)] if explicit else [])])
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == code
+    assert json.loads(trace.read_text()) == ["resolve", str(selected)]
+    assert (c.config_dir / "settings.toml").read_text().find(str(root / "Gothic II")) >= 0
+
+
+def test_up_prepares_before_starting_the_game(setup, monkeypatch):
+    c, window, root = setup
+    monkeypatch.setattr(cli, "_config", c._config)
+    monkeypatch.setattr(cli, "SessionFile", lambda: SessionFile(root / "up-session.json"))
+    monkeypatch.setattr(cli, "new_log_dir", lambda: root / "up-logs")
+    monkeypatch.setattr(cli, "services", lambda *args, **kwargs: [])
+    monkeypatch.setattr(sys, "platform", "darwin")
+    trace = root / "order"
+    (root / "content-convert").write_text(
+        f"#!/bin/sh\nprintf '%s\\n' \"$1 $2\" >> '{trace}'\n"
+    )
+    (root / "Gothic2Notr").write_text(f"#!/bin/sh\necho game >> '{trace}'\n")
+    monkeypatch.setattr(sys, "argv", ["gothic-launcher", "up", "--smoke"])
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == 0
+    assert trace.read_text().splitlines() == [f"resolve {root / 'Gothic II'}", "game"]
+
+
+@pytest.fixture
+def linux_preparation(setup, monkeypatch):
+    from gothic_launcher import linux_session as linux
+
+    c, window, root = setup
+    c.admitted = False
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: root))
+    monkeypatch.setenv("DISPLAY", ":test")
+    icd = root / "nvidia.json"
+    icd.touch()
+    monkeypatch.setattr(linux, "NVIDIA_ICD", icd)
+    monkeypatch.setattr(linux, "portaudio_available", lambda: True)
+    trace, release = root / "order", root / "release"
+    (root / "Gothic2Notr").write_text(f"#!/bin/sh\necho game >> '{trace}'\n")
+    (root / "content-convert").write_text(
+        f"#!{sys.executable}\nimport json, os, pathlib, sys, time\n"
+        f"pathlib.Path({str(trace)!r}).write_text(json.dumps(sys.argv[1:]) + '\\n')\n"
+        f"pathlib.Path({str(root / 'converter.pid')!r}).write_text(str(os.getpid()))\n"
+        "print('packing 1/2', file=sys.stderr, flush=True)\n"
+        f"while not pathlib.Path({str(release)!r}).exists(): time.sleep(0.01)\n"
+        "print('packing 2/2', file=sys.stderr, flush=True)\n"
+    )
+
+    def fake_queue(runner):
+        # The real admitted CLI worker runs under a queue stand-in with the same EOF cancellation.
+        worker = (
+            "import pathlib, sys\nfrom argparse import Namespace\n"
+            "from gothic_launcher import cli, control\n"
+            f"pathlib.Path.home = classmethod(lambda cls: pathlib.Path({str(root)!r}))\n"
+            "sys.platform = 'linux'\ncontrol.services = lambda *args, **kwargs: []\n"
+            f"sys.exit(cli.session_worker(Namespace(config_dir=pathlib.Path({str(c.config_dir)!r}), "
+            f"log_dir=pathlib.Path({str(runner.log_dir)!r}), mode='new', smoke=True, no_voice=True)))\n"
+        )
+        queue = (
+            "import contextlib, os, signal, subprocess, sys, threading\n"
+            f"worker = subprocess.Popen([sys.executable, '-c', {worker!r}])\n"
+            "def cancel():\n"
+            "    os.read(sys.stdin.fileno(), 1)\n"
+            "    with contextlib.suppress(ProcessLookupError): worker.send_signal(signal.SIGTERM)\n"
+            "threading.Thread(target=cancel, daemon=True).start()\n"
+            "sys.exit(worker.wait())\n"
+        )
+        return [sys.executable, "-c", queue]
+
+    monkeypatch.setattr(linux.LinuxSession, "command", fake_queue)
+    return c, window, root
+
+
+@pytest.mark.parametrize("outcome", ["success", "stop", "failure"])
+async def test_linux_session_prepares_inside_admitted_worker(linux_preparation, outcome):
+    from gothic_launcher.linux_session import LinuxSession
+
+    c, window, root = linux_preparation
+    release = root / "release"
+    if outcome == "failure":
+        converter = root / "content-convert"
+        with converter.open("a") as script:
+            script.write("print('cannot import base', file=sys.stderr)\nsys.exit(17)\n")
+    try:
+        await c.session_start(mode="new", smoke=True)
+        assert isinstance(c.supervisor, LinuxSession)
+        await window.wait(lambda: any(
+            e["proc"] == "prepare" and e["detail"] == "packing 1/2" for e in window.events("service")
+        ))
+        assert c.session["services"]["prepare"]["detail"] == "packing 1/2"
+        assert "game" not in c.session["services"]
+        pid = int((root / "converter.pid").read_text())
+        if outcome == "stop":
+            await asyncio.wait_for(c.session_stop(), 10)
+        else:
+            release.touch()
+            await asyncio.wait_for(c.task, 10)
+        assert await gone(pid)
+        expected = [json.dumps(["resolve", str(root / "Gothic II")])]
+        assert (root / "order").read_text().splitlines() == expected + (
+            ["game"] if outcome == "success" else []
+        )
+        assert "packing 1/2" in (Path(c.session["log_dir"]) / "prepare.log").read_text()
+        assert c.session["code"] == (17 if outcome == "failure" else 0)
+        if outcome == "failure":
+            assert c.session["failed"]["proc"] == "prepare"
+            assert "cannot import base" in c.session["failed"]["detail"]
+    finally:
+        release.touch()
+        await asyncio.wait_for(c.shutdown(), 10)
+
+
+def test_terminal_play_prepares_before_starting_the_game(linux_preparation, monkeypatch):
+    c, window, root = linux_preparation
+    (root / "release").touch()
+
+    def make_control(write):
+        def emit(msg):
+            window(msg)
+            write(msg)
+
+        c.write = emit
+        return c
+
+    monkeypatch.setattr(control_module, "Control", make_control)
+    assert cli.play(Namespace(smoke=True)) == 0
+    assert (root / "order").read_text().splitlines() == [
+        json.dumps(["resolve", str(root / "Gothic II")]), "game"
+    ]
+    assert any(e["proc"] == "prepare" and e["detail"] == "packing 1/2" for e in window.events("service"))

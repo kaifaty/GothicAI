@@ -1,12 +1,16 @@
 #pragma once
 
+#include <zenkit/Boxes.hh>
+
 #include "font.h"
+#include "program.h"
 #include "staticmesh.h"
 #include "modeltypes.h"
 #include "worldmesh.h"
 #include "worlddata.h"
 
 namespace zenkit {
+struct DaedalusProgramRecord;
 class Font;
 class Material;
 class Mesh;
@@ -24,6 +28,15 @@ class BspTree;
 }
 
 namespace asset {
+Vec2 fromZenKit(const zenkit::Vec2& source);
+Vec3 fromZenKit(const zenkit::Vec3& source);
+Vec4 fromZenKit(const zenkit::Vec4& source);
+Quat fromZenKit(const zenkit::Quat& source);
+Mat3 fromZenKit(const zenkit::Mat3& source);
+Mat4 fromZenKit(const zenkit::Mat4& source);
+Color fromZenKit(const zenkit::Color& source);
+Aabb fromZenKit(const zenkit::AxisAlignedBoundingBox& source);
+Obb fromZenKit(const zenkit::OrientedBoundingBox& source);
 Material fromZenKit(const zenkit::Material& source);
 WorldMesh fromZenKit(const zenkit::Mesh& source);
 StaticMesh fromZenKit(const zenkit::MultiResolutionMesh& source);
@@ -35,6 +48,7 @@ ModelScript fromZenKit(const zenkit::ModelScript& source);
 MorphMesh fromZenKit(const zenkit::MorphMesh& source);
 Model fromZenKit(const zenkit::Model& source);
 Font fromZenKit(const zenkit::Font& source);
+ProgramRecord fromZenKit(const zenkit::DaedalusProgramRecord& source);
 // Original MAN codes, before host-specific floating-point decoding.
 // The reader retains its position on success.
 std::vector<QuantizedAnimationSample> animationSamplesFromZenKit(zenkit::Read* source,

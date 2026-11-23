@@ -1,0 +1,746 @@
+# Facet shards (reports/render-features/2026-11-11-facet-shards): the hero's own head close to the camera with the
+# sun at noon in the Khorinis market and with the candle of the harbour house, then the city at a low sun and the
+# lamps at night. Every view as shots of one camera: `-old` the shadow test as before 2026-11-11 (`vsm study 1` for
+# the sun, `2` for the lamps), `-new` the game's, `-old2` the old one again (the world does not stand still between
+# shots: what differs between the two old ones is not the fix), `-class` the facets by their cosine to the light,
+# `-diff` (the sun) where the fix changes the shadow in that very frame.
+#   TEMPEST_WINDOW_SIZE=1920x1080 OPENGOTHIC_LIGHT_FREEZE=1 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content with the head> \
+#     scripts/bench.sh facet-shards <out>
+#   python reports/render-features/2026-11-11-facet-shards/tools/pairs.py <out>
+# @timeout 900
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+cam cut
+# 1. The sun at noon in the face, close and at a talk's distance
+set time 12 0
+goto pos 7900 270 -4350
+watch player
+wait 6000
+turn 180
+wait 2500
+cam face 40 20 1
+wait 4000
+vsm study 1
+wait 700
+shot sunface-close-old
+wait 200
+vsm study 0
+wait 700
+shot sunface-close-new
+wait 200
+vsm study 1
+wait 700
+shot sunface-close-old2
+wait 200
+vsm study 5
+wait 700
+shot sunface-close-class-old
+wait 200
+vsm study 4
+wait 700
+shot sunface-close-class
+wait 200
+vsm study 8
+wait 700
+shot sunface-close-diff
+wait 200
+vsm study 0
+wait 300
+cam face 40 -30 1
+wait 2500
+vsm study 1
+wait 700
+shot sunface-close2-old
+wait 200
+vsm study 0
+wait 700
+shot sunface-close2-new
+wait 200
+vsm study 1
+wait 700
+shot sunface-close2-old2
+wait 200
+vsm study 5
+wait 700
+shot sunface-close2-class-old
+wait 200
+vsm study 4
+wait 700
+shot sunface-close2-class
+wait 200
+vsm study 8
+wait 700
+shot sunface-close2-diff
+wait 200
+vsm study 0
+wait 300
+cam face 140 30 1
+wait 2500
+vsm study 1
+wait 700
+shot sunface-talk-old
+wait 200
+vsm study 0
+wait 700
+shot sunface-talk-new
+wait 200
+vsm study 1
+wait 700
+shot sunface-talk-old2
+wait 200
+vsm study 5
+wait 700
+shot sunface-talk-class-old
+wait 200
+vsm study 4
+wait 700
+shot sunface-talk-class
+wait 200
+vsm study 8
+wait 700
+shot sunface-talk-diff
+wait 200
+vsm study 0
+wait 300
+# 2. The market at a low sun, morning and evening: four views round, the hero at a talk's distance, the ground near
+cam cut
+set time 7 30
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+cam look 120
+cam world 700 280 0
+wait 8000
+cam hold
+vsm study 1
+wait 700
+shot market-am-1-old
+wait 200
+vsm study 0
+wait 700
+shot market-am-1-new
+wait 200
+vsm study 1
+wait 700
+shot market-am-1-old2
+wait 200
+vsm study 5
+wait 700
+shot market-am-1-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-am-1-class
+wait 200
+vsm study 8
+wait 700
+shot market-am-1-diff
+wait 200
+vsm study 0
+wait 300
+cam world 700 280 90
+wait 300
+cam hold
+wait 1500
+vsm study 1
+wait 700
+shot market-am-2-old
+wait 200
+vsm study 0
+wait 700
+shot market-am-2-new
+wait 200
+vsm study 1
+wait 700
+shot market-am-2-old2
+wait 200
+vsm study 5
+wait 700
+shot market-am-2-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-am-2-class
+wait 200
+vsm study 8
+wait 700
+shot market-am-2-diff
+wait 200
+vsm study 0
+wait 300
+cam world 700 280 180
+wait 300
+cam hold
+wait 1500
+vsm study 1
+wait 700
+shot market-am-3-old
+wait 200
+vsm study 0
+wait 700
+shot market-am-3-new
+wait 200
+vsm study 1
+wait 700
+shot market-am-3-old2
+wait 200
+vsm study 5
+wait 700
+shot market-am-3-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-am-3-class
+wait 200
+vsm study 8
+wait 700
+shot market-am-3-diff
+wait 200
+vsm study 0
+wait 300
+cam world 700 280 270
+wait 300
+cam hold
+wait 1500
+vsm study 1
+wait 700
+shot market-am-4-old
+wait 200
+vsm study 0
+wait 700
+shot market-am-4-new
+wait 200
+vsm study 1
+wait 700
+shot market-am-4-old2
+wait 200
+vsm study 5
+wait 700
+shot market-am-4-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-am-4-class
+wait 200
+vsm study 8
+wait 700
+shot market-am-4-diff
+wait 200
+vsm study 0
+wait 300
+cam face 140 30 1
+wait 2500
+vsm study 1
+wait 700
+shot market-am-hero-old
+wait 200
+vsm study 0
+wait 700
+shot market-am-hero-new
+wait 200
+vsm study 1
+wait 700
+shot market-am-hero-old2
+wait 200
+vsm study 5
+wait 700
+shot market-am-hero-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-am-hero-class
+wait 200
+vsm study 8
+wait 700
+shot market-am-hero-diff
+wait 200
+vsm study 0
+wait 300
+cam world 260 150 200
+wait 300
+cam hold
+wait 1500
+vsm study 1
+wait 700
+shot market-am-near-old
+wait 200
+vsm study 0
+wait 700
+shot market-am-near-new
+wait 200
+vsm study 1
+wait 700
+shot market-am-near-old2
+wait 200
+vsm study 5
+wait 700
+shot market-am-near-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-am-near-class
+wait 200
+vsm study 8
+wait 700
+shot market-am-near-diff
+wait 200
+vsm study 0
+wait 300
+cam cut
+set time 17 30
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+cam look 120
+cam world 700 280 0
+wait 8000
+cam hold
+vsm study 1
+wait 700
+shot market-pm-1-old
+wait 200
+vsm study 0
+wait 700
+shot market-pm-1-new
+wait 200
+vsm study 1
+wait 700
+shot market-pm-1-old2
+wait 200
+vsm study 5
+wait 700
+shot market-pm-1-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-pm-1-class
+wait 200
+vsm study 8
+wait 700
+shot market-pm-1-diff
+wait 200
+vsm study 0
+wait 300
+cam world 700 280 90
+wait 300
+cam hold
+wait 1500
+vsm study 1
+wait 700
+shot market-pm-2-old
+wait 200
+vsm study 0
+wait 700
+shot market-pm-2-new
+wait 200
+vsm study 1
+wait 700
+shot market-pm-2-old2
+wait 200
+vsm study 5
+wait 700
+shot market-pm-2-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-pm-2-class
+wait 200
+vsm study 8
+wait 700
+shot market-pm-2-diff
+wait 200
+vsm study 0
+wait 300
+cam world 700 280 180
+wait 300
+cam hold
+wait 1500
+vsm study 1
+wait 700
+shot market-pm-3-old
+wait 200
+vsm study 0
+wait 700
+shot market-pm-3-new
+wait 200
+vsm study 1
+wait 700
+shot market-pm-3-old2
+wait 200
+vsm study 5
+wait 700
+shot market-pm-3-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-pm-3-class
+wait 200
+vsm study 8
+wait 700
+shot market-pm-3-diff
+wait 200
+vsm study 0
+wait 300
+cam world 700 280 270
+wait 300
+cam hold
+wait 1500
+vsm study 1
+wait 700
+shot market-pm-4-old
+wait 200
+vsm study 0
+wait 700
+shot market-pm-4-new
+wait 200
+vsm study 1
+wait 700
+shot market-pm-4-old2
+wait 200
+vsm study 5
+wait 700
+shot market-pm-4-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-pm-4-class
+wait 200
+vsm study 8
+wait 700
+shot market-pm-4-diff
+wait 200
+vsm study 0
+wait 300
+cam face 140 30 1
+wait 2500
+vsm study 1
+wait 700
+shot market-pm-hero-old
+wait 200
+vsm study 0
+wait 700
+shot market-pm-hero-new
+wait 200
+vsm study 1
+wait 700
+shot market-pm-hero-old2
+wait 200
+vsm study 5
+wait 700
+shot market-pm-hero-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-pm-hero-class
+wait 200
+vsm study 8
+wait 700
+shot market-pm-hero-diff
+wait 200
+vsm study 0
+wait 300
+cam world 260 150 200
+wait 300
+cam hold
+wait 1500
+vsm study 1
+wait 700
+shot market-pm-near-old
+wait 200
+vsm study 0
+wait 700
+shot market-pm-near-new
+wait 200
+vsm study 1
+wait 700
+shot market-pm-near-old2
+wait 200
+vsm study 5
+wait 700
+shot market-pm-near-class-old
+wait 200
+vsm study 4
+wait 700
+shot market-pm-near-class
+wait 200
+vsm study 8
+wait 700
+shot market-pm-near-diff
+wait 200
+vsm study 0
+wait 300
+# 3. The harbour at a low sun
+cam cut
+set time 17 30
+goto pos 5391 320 -5822
+watch player
+cam look 120
+cam world 850 300 0
+wait 8000
+cam hold
+vsm study 1
+wait 700
+shot harbour-pm-1-old
+wait 200
+vsm study 0
+wait 700
+shot harbour-pm-1-new
+wait 200
+vsm study 1
+wait 700
+shot harbour-pm-1-old2
+wait 200
+vsm study 5
+wait 700
+shot harbour-pm-1-class-old
+wait 200
+vsm study 4
+wait 700
+shot harbour-pm-1-class
+wait 200
+vsm study 8
+wait 700
+shot harbour-pm-1-diff
+wait 200
+vsm study 0
+wait 300
+cam world 850 300 180
+wait 300
+cam hold
+wait 1500
+vsm study 1
+wait 700
+shot harbour-pm-2-old
+wait 200
+vsm study 0
+wait 700
+shot harbour-pm-2-new
+wait 200
+vsm study 1
+wait 700
+shot harbour-pm-2-old2
+wait 200
+vsm study 5
+wait 700
+shot harbour-pm-2-class-old
+wait 200
+vsm study 4
+wait 700
+shot harbour-pm-2-class
+wait 200
+vsm study 8
+wait 700
+shot harbour-pm-2-diff
+wait 200
+vsm study 0
+wait 300
+# 4. Lamps: the candle on the face, the harbour house, the night harbour
+cam cut
+set time 22 0
+goto pos 3924 -73 -6663
+watch player
+cam face 70 40 1
+wait 10000
+cam face 40 20 1
+wait 2500
+vsm study 2
+wait 700
+shot candle-close-old
+wait 200
+vsm study 0
+wait 700
+shot candle-close-new
+wait 200
+vsm study 2
+wait 700
+shot candle-close-old2
+wait 200
+vsm study 4
+wait 700
+shot candle-close-class
+wait 200
+vsm study 0
+wait 300
+cam face 70 40 1
+wait 2500
+vsm study 2
+wait 700
+shot candle-quarter-old
+wait 200
+vsm study 0
+wait 700
+shot candle-quarter-new
+wait 200
+vsm study 2
+wait 700
+shot candle-quarter-old2
+wait 200
+vsm study 4
+wait 700
+shot candle-quarter-class
+wait 200
+vsm study 0
+wait 300
+cam look 110
+cam world 160 170 0
+wait 300
+cam hold
+wait 2500
+vsm study 2
+wait 700
+shot interior-1-old
+wait 200
+vsm study 0
+wait 700
+shot interior-1-new
+wait 200
+vsm study 2
+wait 700
+shot interior-1-old2
+wait 200
+vsm study 4
+wait 700
+shot interior-1-class
+wait 200
+vsm study 0
+wait 300
+cam world 160 170 90
+wait 300
+cam hold
+wait 2500
+vsm study 2
+wait 700
+shot interior-2-old
+wait 200
+vsm study 0
+wait 700
+shot interior-2-new
+wait 200
+vsm study 2
+wait 700
+shot interior-2-old2
+wait 200
+vsm study 4
+wait 700
+shot interior-2-class
+wait 200
+vsm study 0
+wait 300
+cam world 160 170 180
+wait 300
+cam hold
+wait 2500
+vsm study 2
+wait 700
+shot interior-3-old
+wait 200
+vsm study 0
+wait 700
+shot interior-3-new
+wait 200
+vsm study 2
+wait 700
+shot interior-3-old2
+wait 200
+vsm study 4
+wait 700
+shot interior-3-class
+wait 200
+vsm study 0
+wait 300
+cam world 160 170 270
+wait 300
+cam hold
+wait 2500
+vsm study 2
+wait 700
+shot interior-4-old
+wait 200
+vsm study 0
+wait 700
+shot interior-4-new
+wait 200
+vsm study 2
+wait 700
+shot interior-4-old2
+wait 200
+vsm study 4
+wait 700
+shot interior-4-class
+wait 200
+vsm study 0
+wait 300
+cam cut
+set time 0 0
+goto pos -3150 140 -4560
+watch player
+cam look 120
+cam world 600 220 60
+wait 10000
+cam hold
+vsm study 2
+wait 700
+shot harbour-brazier-old
+wait 200
+vsm study 0
+wait 700
+shot harbour-brazier-new
+wait 200
+vsm study 2
+wait 700
+shot harbour-brazier-old2
+wait 200
+vsm study 4
+wait 700
+shot harbour-brazier-class
+wait 200
+vsm study 0
+wait 300
+goto pos 5391 320 -5822
+watch player
+cam look 120
+cam world 850 300 0
+wait 8000
+cam hold
+vsm study 2
+wait 700
+shot harbour-night-1-old
+wait 200
+vsm study 0
+wait 700
+shot harbour-night-1-new
+wait 200
+vsm study 2
+wait 700
+shot harbour-night-1-old2
+wait 200
+vsm study 4
+wait 700
+shot harbour-night-1-class
+wait 200
+vsm study 0
+wait 300
+cam world 850 300 90
+wait 300
+cam hold
+wait 2500
+vsm study 2
+wait 700
+shot harbour-night-2-old
+wait 200
+vsm study 0
+wait 700
+shot harbour-night-2-new
+wait 200
+vsm study 2
+wait 700
+shot harbour-night-2-old2
+wait 200
+vsm study 4
+wait 700
+shot harbour-night-2-class
+wait 200
+vsm study 0
+wait 300

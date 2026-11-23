@@ -55,6 +55,8 @@ class MtCommandBuffer : public AbstractGraphicsApi::CommandBuffer {
                       size_t ioffset, size_t isize, size_t firstInstance, size_t instanceCount) override;
 
     void drawIndirect(const AbstractGraphicsApi::Buffer& indirect, size_t offset) override;
+    void drawIndexedIndirect(const AbstractGraphicsApi::Buffer& ibo, Detail::IndexClass cls,
+                             const AbstractGraphicsApi::Buffer& indirect, size_t offset) override;
 
     void dispatchMesh(size_t x, size_t y, size_t z) override;
     void dispatchMeshIndirect(const AbstractGraphicsApi::Buffer& indirect, size_t offset) override;
@@ -66,6 +68,12 @@ class MtCommandBuffer : public AbstractGraphicsApi::CommandBuffer {
     void generateMipmap(AbstractGraphicsApi::Texture& image, uint32_t texWidth, uint32_t texHeight, uint32_t mipLevels) override;
     void copy          (AbstractGraphicsApi::Buffer& dst, size_t offset,
                         AbstractGraphicsApi::Texture& src, uint32_t width, uint32_t height, uint32_t mip) override;
+    void upscale       (AbstractGraphicsApi::Texture& src, AbstractGraphicsApi::Texture& dst) override;
+    void upscaleTemporal(AbstractGraphicsApi::Texture& color, AbstractGraphicsApi::Texture& depth,
+                         AbstractGraphicsApi::Texture& motion, AbstractGraphicsApi::Texture& dst,
+                         const TemporalUpscaleDesc& desc) override;
+    void buildTlas     (AbstractGraphicsApi::AccelerationStructure& tlas, const AbstractGraphicsApi::Buffer* instances,
+                        size_t count) override;
 
   private:
     enum EncType:uint8_t {
@@ -73,6 +81,7 @@ class MtCommandBuffer : public AbstractGraphicsApi::CommandBuffer {
       E_Draw,
       E_Comp,
       E_Blit,
+      E_As,
       };
 
     struct Push {
@@ -105,12 +114,21 @@ class MtCommandBuffer : public AbstractGraphicsApi::CommandBuffer {
     bool useResource(const MtTopAccelerationStructure& tlas, ShaderReflection::Stage stage);
     void clearUseResource();
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    struct GpuProfile;
+    void profileCommand(bool dispatch);
+    void submitGpuProfile();
+    std::shared_ptr<GpuProfile> gpuProfile;
+    size_t profilePass=size_t(-1);
+#endif
+
     MtDevice&                         device;
     NsPtr<MTL::CommandBuffer>         impl;
 
     NsPtr<MTL::RenderCommandEncoder>  encDraw;
     NsPtr<MTL::ComputeCommandEncoder> encComp;
     NsPtr<MTL::BlitCommandEncoder>    encBlit;
+    NsPtr<MTL::AccelerationStructureCommandEncoder> encAs;
 
     std::vector<const void*>          usedResources;
 

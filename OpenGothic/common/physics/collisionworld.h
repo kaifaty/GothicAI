@@ -3,12 +3,15 @@
 #include <Tempest/Matrix4x4>
 #include <Tempest/Vec>
 #include "asset/material.h"
+#include "game/meleeimpact.h"
 
 #include <functional>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <vector>
 #include <string_view>
+#include <utility>
 
 #include "physics/physics.h"
 #include "physics/physicsnoise.h"
@@ -25,15 +28,25 @@ class Ragdoll;
 class Cloth;
 struct MeleeBladeSegment;
 struct MeleeBodyCapsule;
+struct MeleeShadowBody;
 struct MeleeBladeContact;
-namespace zenkit { struct INpc; }
-namespace JPH { class PhysicsSystem; }
+class PhysicsHost;
+namespace JPH { class PhysicsSystem; class GroupFilter; }
+namespace RagdollBrace { struct Contacts; }
 
 class CollisionWorld final {
   public:
-    CollisionWorld();
+    explicit CollisionWorld(PhysicsHost* host = nullptr);
+    PhysicsHost* physicsHost() const { return host; }
     ~CollisionWorld();
     CollisionWorld(const CollisionWorld&) = delete;
+
+    // Contact slop of broken pieces (C_Fragment, C_FragmentSmall), metres; everything else keeps Jolt's 2 cm.
+    // At 2 cm resting 1.9 cm cut boards sat their whole thickness deep and left through one-sided terrain.
+    static constexpr float fragmentPenetrationSlop = .005f;
+    // Debris from this largest extent on (metres) stops a blade and blocks characters; smaller
+    // pieces are passed (reports/physics/2026-11-destruction-bonds, second step).
+    static constexpr float fragmentBlockSize = .5f;
 
     static float         toMeters(float v);
     static JPH::Vec3     toMeters(const Tempest::Vec3& v);
@@ -54,11 +67,15 @@ class CollisionWorld final {
         Tempest::Vec3       position() const;
         Tempest::Matrix4x4  matrix() const;
         void                getAabb(JPH::Vec3& min, JPH::Vec3& max) const;
+        Tempest::Vec3       lowestPoint() const; // actual convex envelope, world centimetres
         float               mass() const; // kilograms; zero for non-dynamic bodies
+        float               friction() const;
         bool                isMovable() const; // native dynamic or kinematic, including doors/lifts
         Tempest::Vec3        velocity() const; // centimetres/second
         Tempest::Vec3        angularVelocity() const; // world radians/second
         bool                isSleeping() const;
+        bool                keepSleepingItem(const Tempest::Vec3& positionCm) const;
+        void                retainForItemWake();
         // World-space newton seconds. Rejects non-dynamic, zero or nonfinite input.
         bool                addImpulse(const Tempest::Vec3& impulseNs, Npc* culprit = nullptr,
                                        const Tempest::Vec3* pointCm = nullptr);
@@ -70,6 +87,9 @@ class CollisionWorld final {
         // Zero uses physical density; a target above one makes the body sink.
         void                setBuoyancyFraction(float fraction);
         void                setNoiseProfile(ItemMaterial material, asset::MaterialGroup surface, std::string_view what);
+        // A format 3 piece: one break shares `group` and its `filter` for life (fractureGroupFilter);
+        // every hull of a compound piece keeps its own ground contacts (no manifold reduction).
+        void                setFracturePiece(const JPH::GroupFilter* filter, uint32_t group, uint32_t piece);
         // The latest engine-known cause survives the short noise attribution
         // window and NPC destruction, until a new impulse replaces it.
         void                setTraceCulprit(Npc* culprit);
@@ -105,14 +125,19 @@ class CollisionWorld final {
         ItemMaterial       noiseMaterial = MAT_WOOD;
         asset::MaterialGroup noiseSurface = asset::MaterialGroup::STONE;
         std::string         noiseWhat = "item";
-        std::weak_ptr<zenkit::INpc> noiseCulprit;
+        Npc*                (*noiseCulpritResolver)(const CollisionBody&,uint64_t) = nullptr;
+        std::weak_ptr<void> noiseCulprit;
         uint64_t            noiseCulpritUntilStep = 0;
         uint64_t            nextNoiseStep = 0;
         std::string         traceCause;
         std::string         debugLabel;
+        Tempest::Matrix4x4  itemRestTransform;
+        uint64_t            itemWakeUntilStep = 0;
+        bool                itemRecovered = false;
 
       friend class CollisionWorld;
       friend class DynamicBody;
+      friend Npc* noiseCulpritNpc(const CollisionBody& body, uint64_t step);
       };
 
     class DynamicBody final : public CollisionBody {
@@ -140,6 +165,9 @@ class CollisionWorld final {
       Tempest::Vec3 position = {}, velocity = {}, groundNormal = {}, groundVelocity = {};
       // Opposing, non-walkable world contact left unresolved by the stair pass.
       Tempest::Vec3 steepContactNormal = {};
+      // Strongest opposing non-floor contact, including movable bodies and stairs.
+      Tempest::Vec3 obstacleNormal = {};
+      bool obstacleDynamic = false;
       bool grounded = false;
       bool steep = false;
       bool steepContact = false;
@@ -152,7 +180,7 @@ class CollisionWorld final {
         ~VirtualCharacter();
         CharacterMoveResult move(const Tempest::Vec3& displacement, uint64_t dt,
                                  float stepHeight, float maxSlope, float mass, Npc* culprit,
-                                 bool limitStairAdvance = false);
+                                 bool limitStairAdvance = false, bool standing = false);
         CharacterMoveResult carry(uint64_t dt);
         void setPosition(const Tempest::Vec3& feet);
         void setDiagnosticsEnabled(bool enabled);
@@ -166,6 +194,8 @@ class CollisionWorld final {
       };
 
     std::unique_ptr<VirtualCharacter> createVirtualCharacter(float radius, float height, const Tempest::Vec3& feet);
+    // A character a new body of debris appeared around passes that body until they separate.
+    void passCharacterOverlaps(const CollisionBody& body);
 
     void tick(uint64_t dt);
     // Stage-0 cost probe. All entry points require OPENGOTHIC_MELEE_BENCH.
@@ -175,11 +205,22 @@ class CollisionWorld final {
     void measureMeleeBench(std::string path);
     void reportMeleeBench();
     void updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules);
+    // Publishes a body bounded by boundShadowBody. An owner keeps its slot until
+    // removeShadowBody; casts see the bodies in the order they were first published.
+    // slotHint: the owner's slot from its last publication, checked before use.
+    void updateShadowBody(Npc* owner, const MeleeShadowBody& body, size_t* slotHint = nullptr);
+    static void boundShadowBody(MeleeShadowBody& body);
     void removeShadowBody(const Npc* owner);
+    bool shadowBody(const Npc* owner, MeleeShadowBody& out) const;
+    // Every published body in cast order (tests).
+    std::vector<std::pair<const Npc*,MeleeShadowBody>> shadowBodies() const;
     // Pose time and the half-open active window use absolute game milliseconds.
+    // forward: the attacker's facing; a wall met by a blade going back or up (the wind-up,
+    // the follow-through) does not stop the swing. Zero: every wall stops it.
     void updateShadowBlade(const Npc* owner, uint64_t swingId,
                            const std::vector<MeleeBladeSegment>& segments, uint64_t timeMs,
-                           double activeBeginMs, double activeEndMs, float walkableCos = .7f);
+                           double activeBeginMs, double activeEndMs, float walkableCos = .7f,
+                           Tempest::Vec3 forward = {}, MeleeImpact::Weapon weapon = MeleeImpact::Weapon::OneHand);
     std::vector<MeleeBladeContact> takeShadowBladeContacts(const Npc* owner);
     void removeShadowBlade(const Npc* owner);
     void flushShadowBlades();
@@ -190,13 +231,20 @@ class CollisionWorld final {
     void setWaterSurfaceCallback(std::function<bool(const Tempest::Vec3&,float,float&)> callback);
     void setBuoyancyEnabled(bool enabled);
     bool buoyancyEnabled() const;
+    void setItemWakeEnabled(bool enabled);
+    void setItemDeepestContactEnabled(bool enabled);
+    void setRagdollBirthGuardEnabled(bool enabled);
+    void setBodyImpactEnabled(bool enabled);
+    bool itemWakeEnabled() const { return itemWake; }
+    void setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback);
+    void wakeItemsInBounds(const Tempest::Vec3& min, const Tempest::Vec3& max);
     struct WaterBodySnapshot {
       const CollisionBody* body = nullptr;
       const Ragdoll* ragdoll = nullptr;
       uint32_t bone = 0, nativeId = 0;
       float targetFraction = 0;
       Tempest::Matrix4x4 transform;
-      Tempest::Vec3 worldBounds[2], velocity;
+      Tempest::Vec3 worldBounds[2], collisionBounds[2], velocity;
       float mass = 0, density = 0, waterY = 0, submergedFraction = 0;
       bool sleeping = true, inWater = false;
       };
@@ -215,10 +263,19 @@ class CollisionWorld final {
     void updateAabbs() const {}
     void touchAabbs() const {}
 
-    bool hasCollision(const JPH::Shape* shape, const Tempest::Vec3& center, Tempest::Vec3& normal, Interactive*& vob) const;
+    // Accepted capsule contacts: support, outward normal, world point and support point velocity (cm/s).
+    using CapsuleContact = std::function<void(CollisionBody*,const Tempest::Vec3&,const Tempest::Vec3&,const Tempest::Vec3&)>;
+    bool hasCollision(const JPH::Shape* shape, const Tempest::Vec3& center, Tempest::Vec3& normal, Interactive*& vob,
+                      const CapsuleContact& contact = {}) const;
 
     // Diagnostic: every contact of the body's own shape at its current pose,
     // including separated ones within marginCm. Depth is positive when penetrating.
+    struct NativeTriangle {
+      bool valid = false;
+      uint32_t nativeSubShapeId = uint32_t(-1), sourceTriangle = uint32_t(-1);
+      Tempest::Vec3 normal, vertices[3];
+      float edgesCm[3] = {};
+      };
     struct Overlap {
       CollisionBody*        body = nullptr;
       int                   category = 0;
@@ -227,8 +284,28 @@ class CollisionWorld final {
       Tempest::Vec3         point1 = {}, point2 = {}; // world centimetres
       asset::MaterialGroup material = asset::MaterialGroup::UNDEFINED;
       const char*           sector = nullptr;
+      NativeTriangle        triangle;
       };
-    std::vector<Overlap> overlaps(const CollisionBody& body, float marginCm, uint32_t mask) const;
+    std::vector<Overlap> overlaps(const CollisionBody& body, float marginCm, uint32_t mask, bool triangles = false) const;
+    struct ItemSweepTrace {
+      uint64_t nativeStep = 0;
+      uint32_t itemBodyId = uint32_t(-1), bodyId = uint32_t(-1);
+      int category = 0;
+      bool tested = false, hit = false, triggered = false;
+      std::string status;
+      Tempest::Vec3 from, to, point, normal;
+      float fraction = 1.f, beforeCm = 0, afterCm = 0;
+      NativeTriangle triangle;
+      };
+    struct ItemSolverContact {
+      uint64_t nativeStep = 0;
+      uint32_t itemBodyId = uint32_t(-1), bodyId = uint32_t(-1);
+      bool persisted = false;
+      Overlap contact;
+      };
+    void setItemTraceTarget(const Item* item);
+    std::vector<ItemSweepTrace> takeItemSweepTrace();
+    std::vector<ItemSolverContact> takeItemSolverContacts();
 
     // Bench-only narrow-phase snapshot at the native parts' current poses.
     // Unlike contact callbacks, this also includes sleeping rigs and supports.
@@ -250,6 +327,19 @@ class CollisionWorld final {
                                                    int category, bool movable = false, bool sensor = false, const PhysicVbo* mesh = nullptr);
     std::unique_ptr<DynamicBody> addDynamicBody(JPH::ShapeRefC shape, const Tempest::Matrix4x4& matrix, float friction, float mass,
                                                int category = 6, bool startSleeping = false);
+    // Leaves Jolt's body ID allocation (free list order, sequence numbers) as
+    // `count` bodies created and then destroyed in creation order would. The
+    // placeholder bodies never enter the broadphase. Jolt orders contacts and
+    // active bodies by BodyID, so later bodies must receive the same IDs.
+    void cycleBodyIds(size_t count);
+    // A fresh native collision group for the pieces of one format 3 break.
+    uint32_t newFractureGroup();
+    // SHA-256 over every native body: ID (index and sequence), motion type,
+    // layer, sensor, activity and full shape geometry (SaveWithChildren, shared
+    // shapes once); pose, bounds and velocities too, except for animated
+    // (kinematic) bodies.
+    struct BodyDigest { std::string digest; size_t bodies = 0, active = 0; };
+    BodyDigest bodyDigest() const;
     std::unique_ptr<Ragdoll> createRagdoll(const Skeleton& skeleton, const HitZones& zones,
                                          const Tempest::Matrix4x4* worldPose, size_t numBones,
                                          const Tempest::Matrix4x4& objectMatrix,
@@ -258,6 +348,7 @@ class CollisionWorld final {
                                                const Tempest::Matrix4x4* worldPose, size_t numBones,
                                                const Tempest::Matrix4x4& objectMatrix);
     size_t bodyCount() const;
+    JPH::Shape::Stats staticCollisionStats() const;
     float stepMilliseconds() const;
     uint64_t rayCount() const;
     uint64_t simulationStep() const;
@@ -265,10 +356,13 @@ class CollisionWorld final {
     struct StaticTriangle {
       Tempest::Vec3 vertices[3]; // world metres, including the native shape's scale
       bool water = false;
+      uint8_t category = 0; // 1 landscape, 2 static object, 3 water, 4 kinematic object
       };
     // Bench-only snapshot of static collision geometry, never render meshes.
     // Water is exported separately from solid surfaces for depth filtering.
-    void staticTriangles(const std::function<void(const StaticTriangle&)>& output) const;
+    // Returns body counts in category order. Kinematic objects are dump-only.
+    std::array<size_t,4> staticTriangles(const std::function<void(const StaticTriangle&)>& output,
+                                       bool includeKinematic = false) const;
 
     // Masks use 1u << DynamicWorld::Category. Normals keep the mesh's winding.
     QueryResult rayCast(const Tempest::Vec3& from, const Tempest::Vec3& to, uint32_t mask,
@@ -294,23 +388,47 @@ class CollisionWorld final {
     void stepMeleeBlades(float seconds, float fraction);
     void stepShadowBlades(float fraction, bool bodiesLocked = false);
     void sampleMeleeBench();
+    void wakeItems();
+    void wakeShadowItems();
+    void recoverItems();
+    void prepareItemSweeps();
+    void recoverTunneledItems();
+    void recoverItem(CollisionBody& body, const Tempest::Vec3& failedPosition);
     void fillMaterial(QueryResult& result, const JPH::Shape& shape, JPH::SubShapeID subShape) const;
     void fillRagdoll(QueryResult& result, JPH::BodyID body) const;
     JPH::PhysicsSystem& physicsSystem();
     friend class ClothContractDriver;
+    friend class RagdollBraceContract;
+    // A braced rig's touches (collisionworld_brace.cpp); null stops them. Main thread, outside Update.
+    void trackBraceContacts(uint32_t group, RagdollBrace::Contacts* contacts);
     uint32_t registerRagdoll(Ragdoll& body);
+
     void unregisterRagdoll(Ragdoll& body);
+    std::vector<uint32_t> ragdollBirthGuardGroups(const Ragdoll& body) const;
+    PhysicsHost* host = nullptr;
     std::unique_ptr<Impl> impl;
     std::vector<CollisionBody*> bodies;
     std::vector<DynamicBody*> rigid;
     std::vector<Ragdoll*> ragdolls;
     uint32_t nextRagdollGroup = 1;
+    // Disjoint from ragdoll groups: a ragdoll's filter table drops equal IDs with another filter.
+    uint32_t nextFractureGroup = 0x80000000u;
     std::function<void(Item&, asset::MaterialGroup, float, float)> hitItem;
     std::function<void(const PhysicsNoise&)> physicsNoise;
     std::function<void(CollisionBody&,float,const Tempest::Vec3&,std::string_view)> bodyImpact;
     std::function<bool(const Tempest::Vec3&,float,float&)> waterSurface;
     Cloth* cloth = nullptr;
     bool buoyancy = true;
+    bool itemWake = true;
+    std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> itemWakeCallback;
+    size_t itemWakeCursor = 0;
+    size_t itemSweepCursor = 0;
+    std::vector<std::pair<CollisionBody*,Tempest::Vec3>> itemSweeps;
+    const Item* itemTraceTarget = nullptr;
+    CollisionBody* itemSweepTraceBody = nullptr;
+    size_t itemSweepTraceIndex = size_t(-1);
+    std::vector<ItemSweepTrace> itemSweepTrace;
+    size_t itemWakeQueries = 0, itemWakeCreated = 0, itemShadowWakeCursor = 0;
     JPH::Vec3 bboxMin = JPH::Vec3::sZero();
     float accumulatedTime = 0;
     friend class Ragdoll;

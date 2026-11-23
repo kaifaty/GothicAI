@@ -5,6 +5,12 @@
 //       read everything back and compare with the source.
 //   content-convert verify-world <gothic dir> <WORLD.ZEN> <world dir> [override dir]
 //       Compare existing chunks and world data with the source .ZEN.
+//   content-convert check-vob-layer <base world dir> <layer.json> [content dir]
+//       Validate the layer schema, base ids, world keys and visual resources without a game.
+//   content-convert check-vob-tree <base root> <tree.json> [content root]
+//       Validate a slot-local add-only bundle using the same vob layer parser.
+//   content-convert check-particles <base root> <content dir>
+//       Validate all particles.d definitions using the game's particle loader.
 //   content-convert zen|verify-zen <gothic dir> <dir>
 //       Engine-consumed meshless .ZEN files, including loose _work files.
 //   content-convert textures <gothic dir> <out dir>
@@ -42,13 +48,28 @@
 //   content-convert sources|verify-sources <gothic dir> <dir>
 //       sources.json: selected FNT/audio/BIK/music/DAT/OU inputs of the engine
 //       and server readers, their origin and SHA-256; no payload conversion.
+//   content-convert resolve-base|resolve <gothic dir>
+//       Select or import the base through BaseStore; resolve also prepares videos.
+//       Progress goes to stderr and the selected base path goes to stdout.
+//   content-convert formats
+//       Print the compiled base and video importer format hashes as JSON.
+//   content-convert stress-base <ready base> <out dir> --subdivide 0..3 | verify-stress-base <base> <copy>
+//       A copy of a ready base with every world triangle split in four N times (stressbase.h).
+//   content-convert cook-world|verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
+//       Cooked binary chunks (.wcb) beside the GLBs, the set's index (chunks.wci) and world cloth bundle
+//       (cloth.wcl), and their comparison with readWorldChunks and the island search (worldcook.h).
+//   content-convert time-world <world dir> [--content <dir>] [--out <dir>]
+//       Wall time of the stages (five runs) of the GLB and the cooked read, and of the world cloth.
+//   content-convert cluster-lod-census <world dir> [--out <file>]
+//       Cluster hierarchy totals for each draw GLB and the whole world, as TSV.
 //   content-convert --self-test
 //       Round trips of synthetic meshes, world data and presets; no game files.
 //
 // The output is Gothic content: it never goes into git.
 
 #include "baseimport.h"
-#include "basestore.h"
+#include "baseformat.h"
+#include "basestoreimport.h"
 #include "videodata.h"
 #include "sha256.h"
 #include "asset/fromzenkit.h"
@@ -58,10 +79,16 @@
 #include "outputunits.h"
 #include "audiodata.h"
 #include "musicdata.h"
+#include "dmusic/musicrecord.h"
 #include "musicnative.h"
-#include "worldchunks.h"
+#include "worldchunksruntime.h"
 #include "worlddata.h"
+#include "world/voblayer.h"
+#include "game/definitions/particlecontent.h"
 #include "gothicglb.h"
+#include "stressbase.h"
+#include "npcsnapshot.h"
+#include "worldcook.h"
 
 #include <zenkit/Archive.hh>
 #include <zenkit/CutsceneLibrary.hh>
@@ -81,6 +108,7 @@
 #include <algorithm>
 #include <bit>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <chrono>
@@ -96,7 +124,17 @@
 
 namespace fs = std::filesystem;
 
+void runClusterLodCensus(const fs::path& world, const fs::path& output);
+void runOwnMeshClusterLod(const std::vector<fs::path>& roots, const fs::path& output, bool cook);
+void stressOwnMeshContent(const fs::path& root, const fs::path& output, int level);
+
 namespace {
+
+constexpr char clusterLodCensusUsage[] =
+  "content-convert cluster-lod-census <world dir> [--out <file>]\n"
+  "       content-convert cluster-lod-census --meshes <content dir>... [--out <file>]\n"
+  "       content-convert cook-mesh-lod <content dir>...\n"
+  "       content-convert stress-base <content dir> <out dir> --meshes 0..3\n";
 void require(bool ok, const std::string& what) {
   if(!ok) throw std::runtime_error(what);
   }
@@ -193,6 +231,10 @@ int selfTest() {
   fs::copy_file(dir/manifest.chunks[0],over/manifest.chunks[0]);
   diff = compareWorldMeshes(expected,readWorldChunks(dir,over));
   require(diff.empty(),"override round trip: "+diff);
+  // The same world cooked into .wcb, with and without the override, assembles into readWorldChunks' result.
+  WorldCook::roundTrip(dir,{},dir/"cooked");
+  WorldCook::roundTrip(dir,over,dir/"cooked-override");
+  WorldCook::clothRoundTrip(dir/"cloth");
   fs::remove(over/manifest.chunks[0]);
   fs::copy_file(dir/manifest.chunks[1],over/manifest.chunks[0]);
   bool rejected = false;
@@ -267,29 +309,29 @@ int selfTest() {
   // A program record: generated name, raw string bytes with \0 and \xFF, float bits (NaN payload,
   // -0.0, infinity), a member and a FUNCTION without values; through the codec and the native factory.
   {
-  using zenkit::DaedalusDataType;
-  namespace Flag = zenkit::DaedalusSymbolFlag;
-  zenkit::DaedalusProgramRecord program;
+  using daedalus::DaedalusDataType;
+  namespace Flag = daedalus::DaedalusSymbolFlag;
+  asset::ProgramRecord program;
   program.version = 50;
   auto& gen = program.symbols.emplace_back();
-  gen.name = "$INSTANCE_HELP"; gen.generated = true; gen.type = DaedalusDataType::INSTANCE; gen.address = 0;
+  gen.name = "$INSTANCE_HELP"; gen.generated = true; gen.type = uint32_t(DaedalusDataType::INSTANCE); gen.address = 0;
   auto& ints = program.symbols.emplace_back();
-  ints.name = "INTS"; ints.type = DaedalusDataType::INT; ints.count = 2; ints.flags = Flag::CONST;
+  ints.name = "INTS"; ints.type = uint32_t(DaedalusDataType::INT); ints.count = 2; ints.flags = Flag::CONST;
   ints.int_values = {-1,0x7FFFFFFF}; ints.file_index = 3; ints.char_start = 0xFFFFFF;
   auto& floats = program.symbols.emplace_back();
-  floats.name = "FLOATS"; floats.type = DaedalusDataType::FLOAT; floats.count = 3;
+  floats.name = "FLOATS"; floats.type = uint32_t(DaedalusDataType::FLOAT); floats.count = 3;
   floats.float_bits = {0x7FC12345u,0x80000000u,0x7F800000u};
   auto& strings = program.symbols.emplace_back();
-  strings.name = "STRINGS"; strings.type = DaedalusDataType::STRING; strings.count = 2;
+  strings.name = "STRINGS"; strings.type = uint32_t(DaedalusDataType::STRING); strings.count = 2;
   strings.string_values = {std::string("a\xFF\0b",4),""};
   auto& cls = program.symbols.emplace_back();
-  cls.name = "C_TEST"; cls.type = DaedalusDataType::CLASS; cls.count = 1; cls.class_size = 4;
+  cls.name = "C_TEST"; cls.type = uint32_t(DaedalusDataType::CLASS); cls.count = 1; cls.class_size = 4;
   auto& member = program.symbols.emplace_back();
-  member.name = "C_TEST.VALUE"; member.type = DaedalusDataType::INT; member.count = 1; member.flags = Flag::MEMBER;
+  member.name = "C_TEST.VALUE"; member.type = uint32_t(DaedalusDataType::INT); member.count = 1; member.flags = Flag::MEMBER;
   member.parent = 4; member.member_offset = 0;
   auto& fn = program.symbols.emplace_back();
-  fn.name = "FN"; fn.type = DaedalusDataType::FUNCTION; fn.flags = Flag::RETURN; fn.address = 1;
-  fn.return_type = DaedalusDataType::INT;
+  fn.name = "FN"; fn.type = uint32_t(DaedalusDataType::FUNCTION); fn.flags = Flag::RETURN; fn.address = 1;
+  fn.return_type = uint32_t(DaedalusDataType::INT);
   program.bytecode = {std::byte{0x4B},std::byte{0x00},std::byte{0xFF}};
 
   const auto programs = dir/"programs";
@@ -304,7 +346,7 @@ int selfTest() {
   require(diff.empty(),"program round trip: "+diff);
   require(read.symbols[2].float_bits[0]==0x7FC12345u && read.symbols[3].string_values[0]==std::string("a\xFF\0b",4),
           "program record raw bits");
-  diff = ProgramData::compare(program,zenkit::DaedalusScript::from_program(read).export_program());
+  diff = ProgramData::compare(program,daedalus::DaedalusScript::from_program(read).export_program());
   require(diff.empty(),"program through the native factory: "+diff);
   auto changed = read;
   changed.symbols[2].float_bits[1] ^= 1u;
@@ -312,7 +354,7 @@ int selfTest() {
   auto shape = read;
   shape.symbols[1].int_values.pop_back();
   rejected = false;
-  try { (void)zenkit::DaedalusScript::from_program(shape); } catch(const std::exception&) { rejected = true; }
+  try { (void)daedalus::DaedalusScript::from_program(shape); } catch(const std::exception&) { rejected = true; }
   require(rejected,"program value shape mismatch must be rejected");
   const auto bin = programs/(name+".bin");
   fs::resize_file(bin,fs::file_size(bin)-1);
@@ -783,6 +825,7 @@ int selfTest() {
   }
 
   WorldData::selfTest(dir/"world-data");
+  StressBase::selfTest(dir);
   fs::remove_all(dir);
   std::cout << "self-test passed\n";
   return 0;
@@ -797,8 +840,70 @@ int main(int argc, char** argv) {
       BaseImport::onZenkitLog(level,component,message);
       });
     const std::vector<std::string> args(argv+1,argv+argc);
+    if(args.size()==1 && args[0]=="formats") {
+      std::cout << "{\"base\":\"" << BaseFormatSha256 << "\",\"videos\":\"" << VideoData::formatSha256() << "\"}\n";
+      return 0;
+      }
     if(args.size()==1 && args[0]=="--self-test")
       return selfTest();
+    if(args.size()==5 && args[0]=="stress-base" && args[3]=="--meshes" &&
+       args[4].size()==1 && args[4][0]>='0' && args[4][0]<='3') {
+      stressOwnMeshContent(args[1],args[2],args[4][0]-'0');
+      return 0;
+      }
+    if(const auto stress=StressBase::run(args)) return *stress;
+    if(const auto cooked=WorldCook::run(args)) return *cooked;
+    if(!args.empty() && (args[0]=="cook-mesh-lod" || (args.size()>=2 && args[0]=="cluster-lod-census" && args[1]=="--meshes"))) {
+      const bool cook = args[0]=="cook-mesh-lod";
+      const size_t first = cook ? 1 : 2;
+      std::vector<fs::path> roots;
+      fs::path output;
+      for(size_t i=first; i<args.size(); ++i) {
+        if(!cook && i+2==args.size() && args[i]=="--out" && !args[i+1].empty()) {
+          output = args[i+1];
+          break;
+          }
+        if(args[i].empty() || args[i].starts_with("--")) {
+          roots.clear();
+          break;
+          }
+        roots.emplace_back(args[i]);
+        }
+      if(roots.empty()) {
+        std::cerr << "usage: " << clusterLodCensusUsage;
+        return 2;
+        }
+      runOwnMeshClusterLod(roots,output,cook);
+      return 0;
+      }
+    if(!args.empty() && args[0]=="cluster-lod-census") {
+      if(args.size()!=2 && (args.size()!=4 || args[2]!="--out" || args[3].empty())) {
+        std::cerr << "usage: " << clusterLodCensusUsage;
+        return 2;
+        }
+      runClusterLodCensus(args[1],args.size()==4 ? fs::path(args[3]) : fs::path());
+      return 0;
+      }
+    if(args.size()==3 && args[0]=="check-particles") {
+      const auto result=ParticleContent::check(args[1],args[2]);
+      for(const auto& error:result.errors)
+        std::cerr << error << '\n';
+      if(!result.errors.empty()) return 1;
+      std::cout << args[2] << ": valid (" << result.effects.size() << " particle effects)\n";
+      return 0;
+      }
+    if((args.size()==3 || args.size()==4) && (args[0]=="check-vob-layer" || args[0]=="check-vob-tree")) {
+      std::vector<std::shared_ptr<asset::VirtualObject>> tree;
+      const auto content=args.size()==4 ? fs::path(args[3]) : fs::path();
+      const auto result=args[0]=="check-vob-tree" ? VobLayer::readTree(tree,args[1],args[2],ParticleContent::nameChecker(),content)
+                                                  : VobLayer::check(args[1],args[2],ParticleContent::nameChecker(),content);
+      for(const auto& error:result.errors)
+        std::cerr << error << '\n';
+      if(!result.errors.empty()) return 1;
+      std::cout << args[2] << ": valid (" << result.added << " added, " << result.removed
+                << " removed, " << result.moved << " moved)\n";
+      return 0;
+      }
     if(args.size()==4 && args[0]=="world")
       return BaseImport::convertWorld(args[1],args[2],args[3]);
     if(args.size()==3 && args[0]=="base") {
@@ -813,6 +918,18 @@ int main(int argc, char** argv) {
       return BaseImport::convertModels(args[1],args[2],args[0]=="verify-models");
     if(args.size()==3 && (args[0]=="fonts" || args[0]=="verify-fonts"))
       return BaseImport::convertFonts(args[1],args[2],args[0]=="verify-fonts");
+    if(args.size()==3 && (args[0]=="npc-snapshot" || args[0]=="verify-npc-snapshot")) {
+      const auto base = fs::weakly_canonical(args[1]);
+      const auto output = fs::weakly_canonical(args[2]);
+      const auto relative = output.lexically_relative(base);
+      if(relative.empty() || *relative.begin()!="..")
+        throw std::runtime_error("NPC snapshot output must be outside the base");
+      const auto program = NpcSnapshot::load(base);
+      if(args[0]=="verify-npc-snapshot")
+        return NpcSnapshot::verify(program,args[2])==0 ? 0 : 1;
+      NpcSnapshot::write(program,args[2]);
+      return 0;
+      }
     if(args.size()==3 && (args[0]=="programs" || args[0]=="verify-programs"))
       return BaseImport::convertPrograms(args[1],args[2],args[0]=="verify-programs");
     if(args.size()==3 && (args[0]=="outputunits" || args[0]=="verify-outputunits"))
@@ -825,10 +942,45 @@ int main(int argc, char** argv) {
       return BaseImport::convertMusic(args[1],args[2],args[0]=="verify-music");
     if(args.size()==3 && (args[0]=="videos" || args[0]=="verify-videos"))
       return VideoData::convert(args[1],args[2],args[0]=="verify-videos");
-    if(args.size()==2 && args[0]=="resolve-videos") {
-      auto selection=BaseStore::resolveVideos(args[1],[](std::string_view message) { std::cerr << message << '\n'; });
-      if(selection.publication.valid()) selection.publication.get();
-      std::cout << selection.path.string() << '\n';
+    if(args.size()==2 && (args[0]=="resolve-base" || args[0]=="resolve" || args[0]=="resolve-videos")) {
+      // Importers also write detailed reports to cout. Keep stdout exclusively for the result path.
+      struct StdoutRedirect {
+        std::streambuf* original;
+        ~StdoutRedirect() { std::cout.rdbuf(original); }
+        } redirect{std::cout.rdbuf(std::cerr.rdbuf())};
+      std::ostream output(redirect.original);
+      const auto progress=[](std::string_view message) { std::cerr << message << '\n'; };
+      fs::path selected;
+      BaseStore::Selection base;
+      if(args[0]!="resolve-videos") {
+        BaseImport::Files archives;
+        const auto* explicitBase=std::getenv("OPENGOTHIC_BASE");
+        const auto* fingerprint=std::getenv("OPENGOTHIC_BASE_FINGERPRINT");
+        if((explicitBase && *explicitBase) || !fingerprint || !*fingerprint)
+          for(const auto& archive:BaseImport::runtimeArchives(args[1]))
+            if(!archive.mod) archives.emplace_back(archive.name,archive.size);
+        base=BaseStore::ensure(args[1],archives,progress);
+        if(base.publication.valid()) base.publication.get();
+        selected=base.path;
+        }
+      const auto* videoFingerprint=std::getenv("OPENGOTHIC_VIDEOS_FINGERPRINT");
+      const bool videosDisabled=args[0]=="resolve" && videoFingerprint && !*videoFingerprint;
+      if(videosDisabled)
+        std::cerr << "video base: disabled by OPENGOTHIC_VIDEOS_FINGERPRINT\n";
+      else if(args[0]!="resolve-base") {
+        try {
+          auto videos=BaseStore::ensureVideos(args[1],progress);
+          if(videos.publication.valid()) videos.publication.get();
+          if(args[0]=="resolve-videos") selected=videos.path;
+          else if(VideoData::readIndex(videos.path).empty())
+            std::cerr << "video base: warning: installation contains no videos\n";
+          }
+        catch(const std::exception& error) {
+          if(args[0]!="resolve") throw;
+          std::cerr << "video base: warning: " << error.what() << '\n';
+          }
+        }
+      output << selected.string() << std::endl;
       return 0;
       }
     if(args.size()==3 && (args[0]=="sources" || args[0]=="verify-sources"))
@@ -839,18 +991,24 @@ int main(int argc, char** argv) {
       return BaseImport::verifyWorld(args[1],args[2],args[3],args.size()==5 ? fs::path(args[4]) : fs::path());
       }
     std::cerr << "usage: content-convert world|verify-world <gothic dir> <WORLD.ZEN> <dir> [override]\n"
+                 "       content-convert check-vob-layer <base world dir> <layer.json> [content dir]\n"
+                 "       content-convert check-vob-tree <base root> <tree.json> [content root]\n"
+                 "       content-convert check-particles <base root> <content dir>\n"
                  "       content-convert textures|verify-textures|meshes|verify-meshes|zen|verify-zen <gothic dir> <dir>\n"
                  "       content-convert models|verify-models <gothic dir> <dir>\n"
                  "       content-convert fonts|verify-fonts <gothic dir> <dir>\n"
+                 "       content-convert npc-snapshot|verify-npc-snapshot <ready base> <dir>\n"
                  "       content-convert programs|verify-programs <gothic dir> <dir>\n"
                  "       content-convert outputunits|verify-outputunits <gothic dir> <dir>\n"
                  "       content-convert outputunits-file <OU.BIN|OU.DAT> <record.json>\n"
                  "       content-convert audio|verify-audio <gothic dir> <dir>\n"
                  "       content-convert music|verify-music <gothic dir> <dir>\n"
                  "       content-convert videos|verify-videos <gothic dir> <dir>\n"
-                 "       content-convert resolve-videos <gothic dir>\n"
+                 "       content-convert resolve-base|resolve-videos|resolve <gothic dir>\n"
                  "       content-convert sources|verify-sources <gothic dir> <dir>\n"
                  "       content-convert base <gothic dir> <dir>\n"
+                 "       content-convert formats\n" << StressBase::usage << WorldCook::usage <<
+                 "       " << clusterLodCensusUsage <<
                  "       content-convert --self-test\n";
     return 2;
     }

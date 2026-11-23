@@ -1,0 +1,32 @@
+# Physics stage 8, step 4c: do blood decals draw, and how they age. A pool laid by hand at its real
+# size on Onar's field (earth) at 06:00, seen at noon (6 h old) and at 18:00 next to a fresh one.
+seed 73015
+cheat god
+set time 6 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 pool 45
+hold back 900
+hold right 900
+wait 1500
+set time 12 0
+cam follow 200 230 200
+wait 5000
+shot aged-6h-noon
+blood_stains sample
+wait 1000
+set time 18 0
+wait 5000
+shot aged-12h-evening
+wait 1000
+hold left 1500
+wait 1500
+blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 pool 45
+wait 3000
+shot fresh-evening
+blood_stains sample
+wait 2000
+quit

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the game (OpenGothic/build/opengothic/Gothic2Notr). Everything it needs is in the repository,
+# Builds the game and adjacent content-convert (OpenGothic/build/opengothic/). Everything it needs is in the repository,
 # including the engine's libraries (OpenGothic/lib, see OpenGothic/lib/VENDORED.md).
 #
 #   scripts/build-engine.sh                 # RelWithDebInfo
@@ -7,5 +7,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cmake -S "$ROOT/OpenGothic" -B "$ROOT/OpenGothic/build" -G Ninja -DCMAKE_BUILD_TYPE="${BUILD_TYPE:-RelWithDebInfo}"
+RYZEN_CMAKE_FLAGS=()
+if [[ "$(uname -s)" == Linux ]]; then
+  source "$ROOT/scripts/ryzen-build.sh"
+fi
+cmake -S "$ROOT/OpenGothic" -B "$ROOT/OpenGothic/build" -G Ninja -DCMAKE_BUILD_TYPE="${BUILD_TYPE:-RelWithDebInfo}" \
+  ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"}
 cmake --build "$ROOT/OpenGothic/build" --target Gothic2Notr

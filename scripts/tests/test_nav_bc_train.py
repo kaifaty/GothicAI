@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import json
+import lzma
+import random
 import sys
 from types import SimpleNamespace
 
@@ -10,6 +12,83 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import nav_bc_train as train
+
+
+@pytest.mark.parametrize("version,input_variant,workers,prefetch", [
+    (2, "hd", 4, 1), (3, "hd-familiar", 8, 3)])
+def test_parallel_loader_preserves_packed_bytes_batch_order_and_training_rng(
+        tmp_path, version, input_variant, workers, prefetch):
+    demos = train.nav_demos
+    entries = []
+    layout = np.tile(np.array([0, 0, 1000], dtype=np.float32), (demos.RAY_COUNT, 1))
+    for number, steps in enumerate((2, 4, 3)):
+        directory = tmp_path / str(number)
+        directory.mkdir()
+        (directory / "episode.json").write_text(json.dumps({"eye_layout": layout.tolist()}))
+        records = np.zeros(steps, dtype=demos.RECORD_DTYPES[version])
+        records["time_ms"] = np.arange(steps) * demos.PERIOD_MS
+        records["eye"]["distance_cm"] = 1000
+        records["roads"]["carrot_direction"][:, 2] = 1
+        records["keys"]["forward"] = number - 1
+        records["keys"]["turn"] = np.arange(steps) % 3 - 1
+        if version == 3:
+            records["memory_near"]["channels"][:, 3, 4, 7] = 128 + number
+            records["memory_far"]["channels"][:, 60, 70, 7] = 255 - number
+        samples = directory / "samples.bin.xz"
+        with lzma.open(samples, "wb") as stream:
+            stream.write(demos.HEADER.pack(demos.MAGIC, version, demos.RECORD_BYTES_BY_VERSION[version],
+                demos.RAY_COUNT, demos.NEAR_SIZE, demos.FAR_SIZE, demos.PERIOD_MS))
+            stream.write(records.tobytes())
+        entries.append(dict(id=str(number), storage="navdemo", file=samples.relative_to(tmp_path).as_posix(),
+            teacher_version=None, input_variant=input_variant, steps=steps))
+    expected = {entry["id"]: train.load(tmp_path, entry, packed=True) for entry in entries}
+    random.seed(317)
+    np.random.seed(317)
+    train.torch.manual_seed(317)
+    python_rng, numpy_rng = random.getstate(), np.random.get_state()
+    torch_rng = train.torch.random.get_rng_state().clone()
+    epoch_batches = [train.training_batches(entries, 1, seed) for seed in (17, 18)]
+    with train.BatchLoader(tmp_path, workers=workers, prefetch=prefetch) as loader:
+        executor = None
+        for epoch, batches in enumerate(epoch_batches):
+            next_batches = epoch_batches[epoch + 1] if epoch + 1 < len(epoch_batches) else None
+            actual_order = []
+            for batch, group in loader.loaded_batches(batches, packed=True, next_batches=next_batches):
+                executor = executor or loader.executor
+                assert loader.executor is executor
+                assert len(loader.pending) <= prefetch
+                actual_order.append([entry["id"] for entry in batch])
+                for entry, episode in zip(batch, group):
+                    reference = expected[entry["id"]]
+                    assert episode.keys() == reference.keys()
+                    for name, values in episode.items():
+                        assert values.dtype == reference[name].dtype
+                        assert values.shape == reference[name].shape
+                        assert values.tobytes() == reference[name].tobytes()
+            assert actual_order == [[entry["id"] for entry in batch] for batch in batches]
+            waits = loader.wait_stats()
+            per_batch = waits["load_wait_per_batch_seconds"]
+            assert len(per_batch) == len(batches)
+            assert all(value >= 0 for value in per_batch)
+            assert waits["load_wait_seconds"] == sum(per_batch)
+            assert waits["load_wait_first_batch_seconds"] == per_batch[0]
+            assert waits["load_wait_after_first_seconds"] == sum(per_batch[1:])
+            assert waits["load_wait_max_batch_seconds"] == max(per_batch)
+            if next_batches is not None:
+                assert [batch for batch, _ in loader.pending] == next_batches[:prefetch]
+                # Wait until the queued prefix is decoded, then remove only its
+                # source files: the next epoch must consume the retained bytes.
+                for batch, futures in loader.pending:
+                    for entry, future in zip(batch, futures):
+                        future.result()
+                        (tmp_path / entry["file"]).unlink()
+            else:
+                assert not loader.pending
+    assert random.getstate() == python_rng
+    numpy_after = np.random.get_state()
+    assert numpy_after[0] == numpy_rng[0] and numpy_after[2:] == numpy_rng[2:]
+    np.testing.assert_array_equal(numpy_after[1], numpy_rng[1])
+    assert train.torch.equal(train.torch.random.get_rng_state(), torch_rng)
 
 
 def test_training_batches_cap_dagger_and_retain_every_episode():
@@ -41,6 +120,68 @@ def test_dagger_step_cap_uses_valid_steps_when_episode_lengths_differ():
     mask = np.array([[0, 0], [1, 1]], bool)
     train.cap_dagger_steps(mask, [False, True], np.random.default_rng(17))
     assert not mask.any()
+
+
+def test_family_balance_keeps_v4_decision_shares_and_half_teacher_control_weight(tmp_path):
+    v4 = [{"family": family, "steps": count} for family, count in
+          (("point", 500), ("object", 200), ("follow_below_gate", 300))]
+    entries = v4 + [{"family": "point", "steps": 1000, "effective_steps": 500}]
+    weights, result = train.family_balance_weights(entries, v4)
+    assert weights == pytest.approx({"point": 1., "object": 2., "follow": 2.})
+    assert result["effective_decisions"] == {"point": 1000, "object": 200, "follow": 300}
+    assert result["minimum_shares"] == {"object": .2, "follow": .3}
+    assert result["weighted_shares"]["object"] == pytest.approx(.2)
+    assert result["weighted_shares"]["follow"] == pytest.approx(.3)
+    # Long DAgger tails disappear when teacher episodes end. Family weights
+    # must use the exact randomly retained decisions, including half weights.
+    teachers = [dict(family=family, steps=steps, source_kind="teacher") for family, steps in
+                (("point", 2), ("object", 1), ("follow_below_gate", 1))]
+    dagger = []
+    for number, values in enumerate(([.5, 1.], [1., .5], [.5, .5])):
+        file = f"dagger-{number}.npz"
+        np.savez_compressed(tmp_path / file, sample_weight=np.tile(values, 3).astype(np.float32))
+        dagger.append(dict(family="point", steps=6, source_kind="dagger", file=file))
+    selected = np.array([[1, 1], [1, 0], [1, 0], [1, 1], [1, 1], [1, 1]], bool)
+    train.cap_dagger_steps(selected, [False] * 3 + [True] * 3, np.random.default_rng(17))
+    expected_point = 2 + sum(np.asarray(values)[selected[row + 3]].sum()
+                             for row, values in enumerate(([.5, 1.], [1., .5], [.5, .5])))
+    cached_weights = {}
+    weights, actual = train.epoch_family_balance([teachers + dagger], tmp_path, 2, 17,
+        result["v4_decisions"], cached_weights)
+    assert actual["effective_decisions"] == {"point": expected_point, "object": 1, "follow": 1}
+    assert len(cached_weights) == 3
+    assert actual["weighted_shares"]["object"] == pytest.approx(.2)
+    assert actual["weighted_shares"]["follow"] == pytest.approx(.3)
+    assert train.epoch_family_balance([teachers + dagger], tmp_path, 2, 17,
+        result["v4_decisions"], cached_weights)[0] == weights
+
+
+def test_aggregate_training_index_combines_hd_versions_without_opening_episode_files(tmp_path):
+    caches = [tmp_path / "v4", tmp_path / "v5"]
+    for number, cache in enumerate(caches):
+        cache.mkdir()
+        version, memory = (2, 3) if number == 0 else (3, 4)
+        preprocessing = (train.HD_PREPROCESSING if memory == 3 else
+                         {**train.HD_PREPROCESSING, "navigation_memory_version": 4})
+        entries = [{"id": family, "pair": [family, "goal"], "split": "train", "family": family,
+                    "steps": steps, "source_kind": "teacher", "file": f"episodes/{family}.npz"}
+                   for family, steps in (("point", 50 * (number + 1)), ("object", 20), ("follow_below_gate", 30))]
+        index = dict(cache_version=train.HD_CACHE_VERSION, navdemo_version=version,
+            navigation_memory_version=memory, preprocessing=preprocessing, vector_size=train.VECTOR_SIZE,
+            near_shape=list(train.HD_NEAR_SHAPE), far_shape=list(train.HD_FAR_SHAPE),
+            heads=list(train.BC3_HEADS), classes=list(train.BC3_CLASSES), eye_layout=[[0, 0, 1]],
+            episodes=entries, action_change={"N": sum(ep["steps"] for ep in entries), "n_I": 10},
+            class_counts={"train": {head: [10] * count for head, count in zip(train.BC3_HEADS, train.BC3_CLASSES)}},
+            auxiliary={"detour": {"available_steps": 0}})
+        (cache / "index.json").write_text(json.dumps(index))
+    result = train.aggregate_training_index(caches[0], [str(caches[1])], str(caches[0]))
+    assert len(result["episodes"]) == 6
+    assert result["navigation_memory_version"] == 4
+    assert result["preprocessing"]["navigation_memory_version"] == 4
+    assert all(Path(ep["file"]).is_absolute() for ep in result["episodes"])
+    assert result["family_balance"]["weighted_shares"]["object"] == pytest.approx(.2)
+    assert result["family_balance"]["weighted_shares"]["follow"] == pytest.approx(.3)
+    assert result["class_counts"]["train"]["maneuver"] == [20, 20, 20]
 
 
 def test_index_rejects_v1_semantics_even_with_same_vector_dimensions(tmp_path):
@@ -104,6 +245,30 @@ def test_bc3_loss_weights_action_changes_and_maneuver_windows():
         assert ratio.item() == pytest.approx(50 if head == "maneuver" else 10)
     assert all(terms[name].item() == 0 for name in auxiliary)
 
+    # Teacher-control attenuation must survive normalization and apply to every
+    # action/auxiliary term; a link mask removes only the maneuver gradient.
+    for value in logits.values():
+        value.grad = None
+    for name in auxiliary:
+        auxiliary[name].grad = None
+        targets[name + "_valid"] = torch.ones(1, 2)
+    targets["next_near"].fill_(1)
+    targets["detour"].fill_(1)
+    targets["sample_weight"] = torch.full((1, 2), .5)
+    _, half = train.bc3_loss(logits, auxiliary, labels, mask, targets,
+                            [torch.ones(c) for c in train.BC3_CLASSES], 10.)
+    targets["sample_weight"] = torch.ones(1, 2)
+    _, full = train.bc3_loss(logits, auxiliary, labels, mask, targets,
+                            [torch.ones(c) for c in train.BC3_CLASSES], 10.)
+    for name in full:
+        torch.testing.assert_close(half[name], full[name] * .5)
+    targets["maneuver_valid"] = torch.tensor([[1., 0.]])
+    loss, _ = train.bc3_loss(logits, auxiliary, labels, mask, targets,
+                            [torch.ones(c) for c in train.BC3_CLASSES], 10.)
+    loss.backward()
+    assert logits["maneuver"].grad[0, 1].abs().sum() == 0
+    assert logits["forward"].grad[0, 1].abs().sum() > 0
+
 
 def test_bc3_next_frame_targets_cross_tbptt_boundary_without_episode_leak():
     episode = dict(labels=np.zeros((3, 5), np.int64),
@@ -137,3 +302,90 @@ def test_bc3_initialization_preserves_actor_and_conditions_exclusive_maneuvers(t
                                             jump.weight[0] + climb.weight[1])))
     with pytest.raises(ValueError, match="eye layout"):
         train.initialize_bc3(current, path, {**index, "eye_layout": [[1, 0, 1]]})
+
+    hd = NavPolicy(train.VECTOR_SIZE, 8, format_version=3, auxiliary=True)
+    hd_index = dict(preprocessing={**train.HD_PREPROCESSING, "navigation_memory_version": 4},
+                    eye_layout=index["eye_layout"])
+    export_weights(hd, tmp_path / "policy.navbc", preprocessing={**hd_index["preprocessing"],
+                                                                "eye_layout": hd_index["eye_layout"]})
+    checkpoint = tmp_path / "last.pt"
+    torch.save(dict(config=dict(format_version=3, auxiliary=True, vector_size=train.VECTOR_SIZE, hidden_size=8),
+                    model=hd.state_dict()), checkpoint)
+    learner = NavPolicy(train.VECTOR_SIZE, 8, format_version=3, auxiliary=True)
+    initialization = train.initialize_bc3_hd(learner, checkpoint, hd_index)
+    assert initialization["reset"] == [] and initialization["expanded"] == []
+    for name, value in hd.state_dict().items():
+        torch.testing.assert_close(learner.state_dict()[name], value)
+
+
+def test_pace_input_training_reads_teacher_walk_and_exports_v5(tmp_path):
+    import gzip
+
+    import torch
+    from nav_bc_model import NavPolicy, export_weights
+    from nav_bc_numpy import NumpyPolicy
+    demos = train.nav_demos
+    layout = np.tile(np.array([0, 0, 1000], dtype=np.float32), (demos.RAY_COUNT, 1))
+    cache = tmp_path / "cache"
+    (cache / "episodes").mkdir(parents=True)
+    entries, walks = [], ([1, 1, 0, 0], [0, 1, 1, 0])
+    for number, walk in enumerate(walks):
+        records = np.zeros(4, dtype=demos.RECORD_V2_DTYPE)
+        records["time_ms"] = np.arange(4) * demos.PERIOD_MS
+        records["eye"]["distance_cm"] = 1000
+        records["roads"]["carrot_direction"][:, 2] = 1
+        records["keys"]["forward"] = 1
+        records["keys"]["walk"] = walk
+        samples = tmp_path / f"{number}.bin.gz"
+        with gzip.open(samples, "wb") as stream:
+            stream.write(demos.HEADER.pack(demos.MAGIC, 2, demos.RECORD_BYTES, demos.RAY_COUNT,
+                                           demos.NEAR_SIZE, demos.FAR_SIZE, demos.PERIOD_MS))
+            stream.write(records.tobytes())
+        arrays = train.encode_episode(samples, layout, 3, "hd")
+        np.savez_compressed(cache / f"episodes/{number}.npz", **arrays)
+        entries.append(dict(id=str(number), pair=[str(number), "goal"], family="point", split="train",
+                            steps=4, file=f"episodes/{number}.npz", source_kind="teacher"))
+    counts = {head: [8 if index == 0 else 0 for index in range(classes)]
+              for head, classes in zip(train.BC3_HEADS, train.BC3_CLASSES)}
+    index = dict(cache_version=train.HD_CACHE_VERSION, navdemo_version=2, navigation_memory_version=3,
+                 preprocessing=train.HD_PREPROCESSING, vector_size=train.VECTOR_SIZE,
+                 near_shape=list(train.HD_NEAR_SHAPE), far_shape=list(train.HD_FAR_SHAPE),
+                 eye_layout=layout.tolist(), episodes=entries, class_counts=dict(train=counts),
+                 action_change_weight=1., auxiliary={})
+    (cache / "index.json").write_text(json.dumps(index))
+    source = tmp_path / "hd"
+    source.mkdir()
+    hd = NavPolicy(train.VECTOR_SIZE, 256, format_version=3, auxiliary=True)
+    torch.save(dict(config=dict(vector_size=train.VECTOR_SIZE, hidden_size=256, format_version=3, auxiliary=True),
+                    model=hd.state_dict()), source / "last.pt")
+    export_weights(hd, source / "policy.navbc", {**train.HD_PREPROCESSING, "eye_layout": layout.tolist()})
+    output = tmp_path / "run"
+    train.train(SimpleNamespace(cache=str(cache), output=str(output), epochs=1, batch=2, segment=3, seed=17,
+        threads=1, device="cpu", lr=3e-4, init=str(source / "last.pt"), resume=False, pace_input=True))
+    config = json.loads((output / "training_config.json").read_text())
+    # Walk changes only (0->1 and 1->0 twice) no longer count as action changes.
+    assert config["pace_input"]["action_change"] == dict(N=8, n_I=0, weight=1., heads=list(train.PACE_HEADS),
+                                                         walk_excluded=True)
+    assert config["initialization"]["source_format_version"] == 3
+    history = json.loads((output / "history.json").read_text())
+    assert np.isfinite(history[0]["loss"]) and "walk" not in history[0]["losses"]
+    policy = NumpyPolicy(output / "policy.navbc")
+    assert policy.format_version == 5 and policy.head_names == train.PACE_HEADS
+    episode = train.pace_episode(train.load(cache, entries[1]))
+    np.testing.assert_array_equal(episode["vector"][:, -1], walks[1])
+    assert episode["labels"].shape == (4, 4)
+
+
+@pytest.mark.parametrize("version", [train.CACHE_VERSION, train.BC3_CACHE_VERSION])
+def test_pace_input_refuses_compact_caches_before_choosing_a_trainer(tmp_path, monkeypatch, version):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "index.json").write_text(json.dumps(dict(cache_version=version, vector_size=train.VECTOR_SIZE,
+                                                      preprocessing=train.PREPROCESSING, episodes=[])))
+    monkeypatch.setattr(train, "train_bc3", lambda *_: pytest.fail("pace input reached a trainer"))
+    args = SimpleNamespace(cache=str(cache), output=str(tmp_path / "run"), pace_input=True)
+    with pytest.raises(ValueError, match="--pace-input requires HD caches"):
+        train.train(args)
+    assert not (tmp_path / "run").exists()
+    with pytest.raises(ValueError, match="not --source"):
+        train.train(SimpleNamespace(**vars(args), source=str(cache)))

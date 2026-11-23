@@ -14,22 +14,11 @@ from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
-from gothic_ai.gamedata import storygraph
+from gothic_ai.gamedata import base, storygraph
 
 HERO_VOICE = "15"
 _WAV_NAME = re.compile(rb"([A-Za-z0-9_]+)\.WAV")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
-
-
-def find_ou_file(game_dir: Path) -> Path | None:
-    """Probe the original physical source's presence without opening it (until P18)."""
-    cutscene = game_dir / "_work" / "Data" / "Scripts" / "CONTENT" / "CUTSCENE"
-    if not cutscene.is_dir():
-        return None
-    for entry in cutscene.iterdir():
-        if entry.name.upper() == "OU.BIN":
-            return entry
-    return None
 
 
 def native_messages(game_dir: Path) -> list[tuple[bytes, bytes]] | None:
@@ -43,9 +32,14 @@ def native_messages(game_dir: Path) -> list[tuple[bytes, bytes]] | None:
             "or set STORYGRAPH_TOOL."
         )
     try:
-        result = subprocess.run(
-            [str(tool), str(game_dir), "--ou-messages"], check=True, capture_output=True, timeout=1800
-        )
+        with base.resolve(game_dir) as selected:
+            result = subprocess.run(
+                [str(tool), str(selected.path), "--ou-messages"],
+                env={**os.environ, "OPENGOTHIC_BASE": str(selected.path)},
+                check=True,
+                capture_output=True,
+                timeout=1800,
+            )
     except (OSError, subprocess.SubprocessError) as error:
         stderr = getattr(error, "stderr", None) or b""
         if isinstance(stderr, bytes):
@@ -124,15 +118,11 @@ def voice_index(lines: Iterable[tuple[str, str]]) -> str | None:
     return voices.most_common(1)[0][0] if voices else None
 
 
-def game_lines(game_dir: Path) -> dict[str, str] | None:
-    """All the dialog lines of the game: None without OU.BIN. The native reader takes seconds, so callers
-    that need many npc's lines read them once (persona.py)."""
-    path = find_ou_file(game_dir)
-    if path is None:
-        return None
+def game_lines(game_dir: Path) -> dict[str, str]:
+    """All dialog lines from the ready base; persona.py reads them once for many NPCs."""
     messages = native_messages(game_dir)
     if messages is None:
-        raise RuntimeError(f"The base has no server OU for an existing OU.BIN: {path}")
+        raise RuntimeError(f"The selected base has no server OU for {game_dir}")
     return lines_from_messages(messages)
 
 

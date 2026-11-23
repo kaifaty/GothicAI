@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusVm;
   class DaedalusSymbol;
   struct INpc;
@@ -47,17 +47,17 @@ class EffectCheck final {
       };
 
     // every script function of the VM is wrapped (calls are recorded at the dialog function's own level)
-    EffectCheck(zenkit::DaedalusVm& vm, Externals& world);
+    EffectCheck(daedalus::DaedalusVm& vm, Externals& world);
     ~EffectCheck();
 
     // bind this to the VM in place of the world: it records the engine calls of the dialog's function
     Externals& engine();
     // runs the node's function with self = `self`, other = hero = `hero`, compares, and puts the script
     // variables and the members of both npc's back as they were
-    Result     run(const Node& n, const std::shared_ptr<zenkit::INpc>& self, const std::shared_ptr<zenkit::INpc>& hero,
+    Result     run(const Node& n, const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& hero,
                    Evaluator& ev);
     // the node's script function (a dialog's information, or the choice's function), nullptr if none
-    zenkit::DaedalusSymbol* function(const Node& n);
+    daedalus::DaedalusSymbol* function(const Node& n);
 
     // when set, run() reports what the model expects and what the VM did
     std::function<void(const std::string&)> trace;
@@ -66,12 +66,12 @@ class EffectCheck final {
     class Recorder;
     struct Store;
 
-    void                          enter(zenkit::DaedalusVm& vm, zenkit::DaedalusSymbol& fn);
+    void                          enter(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& fn);
     const Lifted&                 lifted(uint32_t fn);
     const std::set<std::string>&  writes(const std::string& fn);
     std::string                   text(const Call& c) const;
 
-    zenkit::DaedalusVm&                               vm;
+    daedalus::DaedalusVm&                               vm;
     std::unique_ptr<Recorder>                         recorder;
     std::unique_ptr<Bytecode>                         code;
     std::unique_ptr<Lifter>                           lifter;
@@ -79,9 +79,9 @@ class EffectCheck final {
     std::unordered_map<uint32_t,std::unique_ptr<Lifted>> liftedFns;
     std::map<std::string,std::set<std::string>>       footprints;
     std::set<std::string>                             busy;
-    std::unordered_map<std::string,zenkit::DaedalusSymbol*> functions;
-    std::vector<zenkit::DaedalusSymbol*>              globals;   // int globals, compared after a run
-    std::vector<zenkit::DaedalusSymbol*>              npcInts;   // int members of C_NPC, put back after a run
+    std::unordered_map<std::string,daedalus::DaedalusSymbol*> functions;
+    std::vector<daedalus::DaedalusSymbol*>              globals;   // int globals, compared after a run
+    std::vector<daedalus::DaedalusSymbol*>              npcInts;   // int members of C_NPC, put back after a run
 
     bool                                              recording = false;
     uint32_t                                          level     = 0;  // script calls deep below the dialog function

@@ -1,14 +1,20 @@
+#include <unordered_set>
 #include "animation.h"
+#include "bowdraw.h"
 
 #include <Tempest/Log>
 #include <cctype>
-
-#include "world/objects/npc.h"
-#include "world/objects/interactive.h"
-#include "world/world.h"
+#include <cmath>
 
 #include "utils/string_frm.h"
 #include "resources.h"
+#include "animationsound.h"
+#include "animationpfx.h"
+#include "stopfoot.h"
+#include "transend.h"
+#include "animsample.h"
+
+#include <array>
 
 using namespace Tempest;
 
@@ -91,6 +97,8 @@ Animation::Animation(asset::ModelScript& p, std::string_view name, const bool ig
   }
 
 const Animation::Sequence* Animation::sequence(std::string_view name) const {
+  if(name.empty())
+    return nullptr;
   if(sqHot!=nullptr && sqHot->name==name)
     return sqHot;
   auto it = std::lower_bound(sequences.begin(),sequences.end(),name,[](const Sequence& s,std::string_view n){
@@ -165,6 +173,20 @@ void Animation::setupIndex() {
       i = char(std::toupper(i));
     }
 
+  // the reload from the quiver (own content, OPENGOTHIC_QUIVERRELOAD): its clip plays as T_BOWRELOAD, so the tempo,
+  // the solver and every check of the reload stay as they are; off, G2's
+  if(BowDraw::isQuiverReload()) {
+    auto own = std::find_if(sequences.begin(),sequences.end(),[](const Sequence& s){ return s.name==BowDraw::QuiverReloadAnim; });
+    if(own!=sequences.end()) {
+      sequences.erase(std::remove_if(sequences.begin(),sequences.end(),[](const Sequence& s){
+        return s.name==BowDraw::ReloadAnim;
+        }),sequences.end());
+      own = std::find_if(sequences.begin(),sequences.end(),[](const Sequence& s){ return s.name==BowDraw::QuiverReloadAnim; });
+      own->name      = BowDraw::ReloadAnim;
+      own->ownReload = true;
+      }
+    }
+
   std::sort(sequences.begin(),sequences.end(),[](const Sequence& a,const Sequence& b){
     return a.name<b.name;
     });
@@ -230,6 +252,7 @@ Animation::Sequence::Sequence(const asset::MdsAnimation& hdr, std::string_view f
   data->samples   = p.samples;
 
   data->setupMoveTr();
+  data->sparse = AnimSample::sparse(data->fpsRate,data->numFrames);
   }
 
 bool Animation::Sequence::isFinished(uint64_t now, uint64_t sTime, uint16_t comboLen) const {
@@ -258,6 +281,11 @@ bool Animation::Sequence::canInterrupt(uint64_t now, uint64_t sTime, uint16_t co
   if(animCls==Animation::Transition) {
     if(size_t(cId+1)<data->defWindow.size() && data->defWindow.size()>0 && !data->defHitEnd.empty()) {
       return !((now-sTime)<=data->defWindow[cId+0]);
+      }
+    if(isSettle() && StopFoot::enabled()) {
+      // a stop of our own: the body has come to rest, the rest of the clip only straightens it up
+      const uint64_t frame = uint64_t(float(now-sTime)*data->fpsRate/1000.f);
+      return frame>=data->restFrame;
       }
     return false;
     }
@@ -323,17 +351,18 @@ bool Animation::Sequence::extractFrames(uint64_t& frameA,uint64_t& frameB,bool& 
   if(frameA==frameB)
     return false;
 
+  const uint64_t count = animCls==Animation::Loop ? d.loopFrames() : numFrames;
   if(animCls==Animation::Loop){
-    frameA%=numFrames;
-    frameB%=numFrames;
+    frameA%=count;
+    frameB%=count;
     } else {
     frameA = std::min<uint64_t>(frameA,numFrames);
     frameB = std::min<uint64_t>(frameB,numFrames);
     }
 
   if(reverse) {
-    frameA = numFrames-frameA;
-    frameB = numFrames-frameB;
+    frameA = count-frameA;
+    frameB = count-frameB;
     std::swap(frameA,frameB);
     }
 
@@ -343,7 +372,7 @@ bool Animation::Sequence::extractFrames(uint64_t& frameA,uint64_t& frameB,bool& 
   return true;
   }
 
-void Animation::Sequence::processSfx(uint64_t barrier, uint64_t sTime, uint64_t now, Npc* npc, Interactive* mob) const {
+void Animation::Sequence::processSfx(uint64_t barrier, uint64_t sTime, uint64_t now, AnimationGroundSound* npc, AnimationSound* mob) const {
   uint64_t frameA=0,frameB=0;
   bool     invert=false;
   if(!extractFrames(frameA,frameB,invert,barrier,sTime,now))
@@ -368,7 +397,7 @@ void Animation::Sequence::processSfx(uint64_t barrier, uint64_t sTime, uint64_t 
     }
   }
 
-void Animation::Sequence::processPfx(uint64_t barrier, uint64_t sTime, uint64_t now, MdlVisual& visual, World& world) const {
+void Animation::Sequence::processPfx(uint64_t barrier, uint64_t sTime, uint64_t now, AnimationPfx& world) const {
   if(data->pfx.empty())
     return;
 
@@ -384,36 +413,112 @@ void Animation::Sequence::processPfx(uint64_t barrier, uint64_t sTime, uint64_t 
     for(auto& i:d.pfx) {
       uint64_t fr = frameClamp(i.frame,d.firstFrame,d.numFrames,d.lastFrame);
       if(!(fr<frameB))
-        processPfx(i, visual, world);
+        processPfx(i, world);
       }
     for(auto& i:d.pfx) {
       uint64_t fr = frameClamp(i.frame,d.firstFrame,d.numFrames,d.lastFrame);
       if(!(frameA<=fr))
-        processPfx(i, visual, world);
+        processPfx(i, world);
       }
     } else {
     for(auto& i:d.pfx) {
       uint64_t fr = frameClamp(i.frame,d.firstFrame,d.numFrames,d.lastFrame);
       if(frameA<=fr && fr<frameB)
-        processPfx(i, visual, world);
+        processPfx(i, world);
       }
     }
   }
 
-void Animation::Sequence::processPfx(const MdsParticleEffect& p, MdlVisual& visual, World& world) const {
-  if(p.pfxStop) {
-    visual.stopEffect(p.index);
-    }
-  else if(!p.name.empty()) {
-    if(p.name==visual.mutedPfx())
-      return;
-    Effect e(PfxEmitter(world,p.name),p.position);
-    e.setActive(true);
-    visual.startEffect(world,std::move(e),p.index,false);
-    }
+void Animation::Sequence::processPfx(const MdsParticleEffect& p, AnimationPfx& world) const {
+  world.animationPfx(p);
   }
 
-void Animation::Sequence::processEvents(uint64_t barrier, uint64_t sTime, uint64_t now, EvCount& ev) const {
+Animation::LogicEvent Animation::Sequence::logicEvent(LogicEvent::Kind kind, size_t index, uint64_t frame) const {
+  LogicEvent event;
+  event.kind = kind;
+  event.frame = frame;
+  event.index = index;
+  // extractFrames delivers forward events after their frame enters the
+  // half-open interval; reverse playback reaches that boundary from above.
+  const auto playedFrame = reverse ? uint64_t(data->numFrames)-frame : frame+1;
+  event.time = uint64_t(std::ceil(double(playedFrame)*1000.0/double(data->fpsRate)));
+  event.delivered = kind==LogicEvent::Tag || kind==LogicEvent::Ground || kind==LogicEvent::Morph;
+  if(kind==LogicEvent::Tag) {
+    const auto& tag = data->events[index];
+    event.def = tag.type;
+    event.item = tag.item;
+    event.slot[0] = tag.slot;
+    event.slot[1] = tag.slot2;
+    }
+  else if(kind==LogicEvent::Morph) {
+    event.item = data->mmStartAni[index].animation;
+    event.slot[0] = data->mmStartAni[index].node;
+    }
+  else if(kind==LogicEvent::Ground) {
+    event.item = data->gfx[index].name;
+    }
+  else if(kind==LogicEvent::Sound) {
+    event.item = data->sfx[index].name;
+    }
+  else if(kind==LogicEvent::Particle) {
+    event.item = data->pfx[index].name;
+    event.slot[0] = data->pfx[index].position;
+    }
+  return event;
+  }
+
+Animation::LogicEvent Animation::Sequence::logicTag(size_t index) const {
+  const auto& d=*data;
+  return logicEvent(LogicEvent::Tag,index,frameClamp(d.events[index].frame,d.firstFrame,d.numFrames,d.lastFrame));
+  }
+
+void Animation::Sequence::logicEvents(std::vector<LogicEvent>& out) const {
+  out.clear();
+  if(data==nullptr || data->numFrames==0 || data->fpsRate<=0.f)
+    return;
+  const auto& d = *data;
+  auto append = [&](LogicEvent::Kind kind, size_t index, int32_t frame) {
+    out.push_back(logicEvent(kind,index,frameClamp(frame,d.firstFrame,d.numFrames,d.lastFrame)));
+    };
+  for(size_t i=0; i<d.events.size(); ++i) {
+    const auto& tag = d.events[i];
+    if(tag.type==asset::MdsEventType::OPTIMAL_FRAME) {
+      for(auto frame:tag.frames)
+        out.push_back(logicEvent(LogicEvent::Tag,i,d.optimalFrame(frame)));
+      } else {
+      append(LogicEvent::Tag,i,tag.frame);
+      }
+    }
+  for(size_t i=0; i<d.gfx.size(); ++i)
+    append(LogicEvent::Ground,i,d.gfx[i].frame);
+  for(size_t i=0; i<d.mmStartAni.size(); ++i)
+    append(LogicEvent::Morph,i,d.mmStartAni[i].frame);
+  for(size_t i=0; i<d.sfx.size(); ++i)
+    append(LogicEvent::Sound,i,d.sfx[i].frame);
+  for(size_t i=0; i<d.pfx.size(); ++i)
+    append(LogicEvent::Particle,i,d.pfx[i].frame);
+  auto boundaries = [&](LogicEvent::Kind kind, asset::MdsEventType def, const std::vector<uint64_t>& times) {
+    for(size_t i=0; i<times.size(); ++i) {
+      LogicEvent event;
+      event.kind = kind;
+      event.def = def;
+      event.index = i;
+      // The combat queries use these times directly, including on reverse
+      // sequences; they do not use extractFrames' reversed event interval.
+      event.time = times[i];
+      out.push_back(event);
+      }
+    };
+  boundaries(LogicEvent::HitEnd,asset::MdsEventType::HIT_END,d.defHitEnd);
+  boundaries(LogicEvent::ParFrame,asset::MdsEventType::PARRY_FRAME,d.defParFrame);
+  boundaries(LogicEvent::Window,asset::MdsEventType::COMBO_WINDOW,d.defWindow);
+  std::stable_sort(out.begin(),out.end(),[](const LogicEvent& a,const LogicEvent& b) {
+    return a.time<b.time;
+    });
+  }
+
+void Animation::Sequence::processEvents(uint64_t barrier, uint64_t sTime, uint64_t now, EvCount& ev,
+                                        const LogicEventObserver* observer) const {
   uint64_t frameA=0,frameB=0;
   bool     invert=false;
   if(!extractFrames(frameA,frameB,invert,barrier,sTime,now))
@@ -422,33 +527,47 @@ void Animation::Sequence::processEvents(uint64_t barrier, uint64_t sTime, uint64
   auto& d       = *data;
   float fpsRate = d.fpsRate;
 
-  for(auto& e:d.events) {
+  for(size_t index=0; index<d.events.size(); ++index) {
+    const auto& e = d.events[index];
     if(e.type == asset::MdsEventType::OPTIMAL_FRAME) {
       for(auto i:e.frames) {
-        uint64_t fr = frameClamp(i,d.firstFrame,d.numFrames,d.lastFrame);
-        if((frameA<=fr && fr<frameB) ^ invert)
+        uint64_t fr = d.optimalFrame(i);
+        if((frameA<=fr && fr<frameB) ^ invert) {
           processEvent(e,ev,uint64_t(float(fr)*1000.f/fpsRate)+sTime);
+          if(observer!=nullptr && observer->fired!=nullptr)
+            observer->fired(observer->context,logicEvent(LogicEvent::Tag,index,fr));
+          }
         }
       } else {
       uint64_t fr = frameClamp(e.frame,d.firstFrame,d.numFrames,d.lastFrame);
-      if((frameA<=fr && fr<frameB) ^ invert)
+      if((frameA<=fr && fr<frameB) ^ invert) {
         processEvent(e,ev,uint64_t(float(fr)*1000.f/fpsRate)+sTime);
+        if(observer!=nullptr && observer->fired!=nullptr)
+          observer->fired(observer->context,logicEvent(LogicEvent::Tag,index,fr));
+        }
       }
     }
 
-  for(auto& i:d.gfx){
+  for(size_t index=0; index<d.gfx.size(); ++index) {
+    const auto& i = d.gfx[index];
     uint64_t fr = frameClamp(i.frame,d.firstFrame,d.numFrames,d.lastFrame);
-    if((frameA<=fr && fr<frameB) ^ invert)
+    if((frameA<=fr && fr<frameB) ^ invert) {
       ev.groundSounds++;
+      if(observer!=nullptr && observer->fired!=nullptr)
+        observer->fired(observer->context,logicEvent(LogicEvent::Ground,index,fr));
+      }
     }
 
-  for(auto& i:d.mmStartAni){
+  for(size_t index=0; index<d.mmStartAni.size(); ++index) {
+    const auto& i = d.mmStartAni[index];
     uint64_t fr = frameClamp(i.frame,d.firstFrame,d.numFrames,d.lastFrame);
     if((frameA<=fr && fr<frameB) ^ invert) {
       EvMorph e;
       e.anim = i.animation;
       e.node = i.node;
       ev.morph.push_back(e);
+      if(observer!=nullptr && observer->fired!=nullptr)
+        observer->fired(observer->context,logicEvent(LogicEvent::Morph,index,fr));
       }
     }
   }
@@ -532,11 +651,21 @@ Tempest::Vec3 Animation::Sequence::translateXZ(uint64_t at) const {
 
   if(animCls==Transition && !isFly()){
     uint64_t all=uint64_t(totalTime());
+    if(TransEnd::enabled())
+      all += uint64_t(1000.f/d.fpsRate); // the game frame that crosses the clip's end goes on at the end's speed
     if(at>all)
       at = all;
     }
 
   float    fr     = float(data->fpsRate*float(at))/1000.f;
+  float    over   = 0;
+  if(animCls==Transition && !isFly() && TransEnd::enabled() && TransEnd::past(fr,d.tr.size(),over)) {
+    // past the last sample the root has no step of its own: the body keeps the speed it ended with
+    const Tempest::Vec3 prev = d.tr.size()>1 ? d.tr.back() : Tempest::Vec3();
+    return Tempest::Vec3(TransEnd::extend(d.moveTr.x,prev.x,over),
+                         TransEnd::extend(d.moveTr.y,prev.y,over),
+                         TransEnd::extend(d.moveTr.z,prev.z,over));
+    }
   float    a      = std::fmod(fr,1.f);
   uint64_t frameA = uint64_t(fr);
   uint64_t frameB = frameA+1;
@@ -593,6 +722,10 @@ void Animation::AnimData::setupMoveTr() {
       p.y = bi.y-a.y;
       p.z = bi.z-a.z;
       }
+    std::vector<std::array<float,2>> way(tr.size());
+    for(size_t i=0; i<tr.size(); ++i)
+      way[i] = {tr[i].x,tr[i].z};
+    restFrame = StopFoot::restFrame(way,moveTr.x,moveTr.z,fpsRate);
     static const float eps = 0.4f;
     for(auto& i:tr) {
       if(std::fabs(i.x)<eps && std::fabs(i.y)<eps && std::fabs(i.z)<eps)
@@ -607,6 +740,25 @@ void Animation::AnimData::setupMoveTr() {
     translate.y = samples[0].position.y;
     translate.z = samples[0].position.z;
     }
+  }
+
+uint32_t Animation::AnimData::loopFrames() const {
+  static const float minTravel = 1.f; // cm over a cycle, along the ground
+  if(numFrames<2 || tr.empty())
+    return numFrames;
+  if(moveTr.x*moveTr.x+moveTr.z*moveTr.z<minTravel*minTravel)
+    return numFrames;
+  return numFrames-1;
+  }
+
+uint32_t Animation::AnimData::optimalFrame(int32_t frame) const {
+  // A side swing cut from the middle of a shared ASC counts its fight tags from its own first frame, as the
+  // hit end and the combo window are read: t_1hAttackR is frames 21..40 of the file whose 1..19 are
+  // t_1hAttackL and carries L's tags. A tag before the first frame is such a count; read as a frame of the
+  // file it clamped to 0, and the blow fell at the start of the backswing.
+  if(frame<int32_t(firstFrame))
+    frame += int32_t(firstFrame)-1;
+  return uint32_t(frameClamp(frame,firstFrame,numFrames,lastFrame));
   }
 
 void Animation::AnimData::setupEvents(float fpsRate) {
@@ -633,4 +785,21 @@ void Animation::AnimData::setupEvents(float fpsRate) {
     if(r.type==asset::MdsEventType::COMBO_WINDOW)
       setupTime(defWindow,r.frames,fpsRate);
     }
+  }
+
+
+size_t Animation::probeCpuBytes() const {
+  size_t bytes=sizeof(*this)+sequences.capacity()*sizeof(Sequence)+ref.capacity()*sizeof(ref[0])+mesh.capacity()*sizeof(mesh[0]);
+  std::unordered_set<const AnimData*> seen;
+  for(const auto& sq:sequences) {
+    bytes+=sq.comb.capacity()*sizeof(sq.comb[0]);
+    if(!sq.data || !seen.insert(sq.data.get()).second) continue;
+    const auto& d=*sq.data;
+    bytes+=sizeof(d)+d.samples.capacity()*sizeof(d.samples[0])+d.nodeIndex.capacity()*sizeof(d.nodeIndex[0])+
+           d.tr.capacity()*sizeof(d.tr[0])+d.gfx.capacity()*sizeof(d.gfx[0])+d.sfx.capacity()*sizeof(d.sfx[0])+
+           d.pfx.capacity()*sizeof(d.pfx[0])+d.tag.capacity()*sizeof(d.tag[0])+d.events.capacity()*sizeof(d.events[0])+
+           d.mmStartAni.capacity()*sizeof(d.mmStartAni[0])+d.defHitEnd.capacity()*sizeof(d.defHitEnd[0])+
+           d.defParFrame.capacity()*sizeof(d.defParFrame[0])+d.defWindow.capacity()*sizeof(d.defWindow[0]);
+    }
+  return bytes;
   }

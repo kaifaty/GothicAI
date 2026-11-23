@@ -20,7 +20,11 @@ remote_script() {
       printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"
     fi
   done
-  { cat "$ROOT/scripts/gq-job.sh"; cat; } |
+  {
+    cat "$ROOT/scripts/gq-job.sh"
+    if [[ "$HOST" == ryzen ]]; then cat "$ROOT/scripts/ryzen-build.sh"; else printf 'RYZEN_CMAKE_FLAGS=()\n'; fi
+    cat
+  } |
     ssh -o BatchMode=yes "$HOST" "env$remote_env bash -s --$remote_args"
 }
 
@@ -62,7 +66,8 @@ free_kib=$(df -Pk "$task_root" | awk 'NR==2 {print $4}')
 REMOTE_SCRIPT
   rsync -a --delete --exclude=build/ --exclude=.git/ --exclude=.DS_Store --exclude='*.o' --exclude='*.a' \
     "$ROOT/OpenGothic/" "$HOST:$REMOTE/source/OpenGothic/"
-  rsync -a "$ROOT/scripts/body-observe-remote.sh" "$ROOT/scripts/body_observe_suite.py" \
+  rsync -a --exclude=build/ --exclude=__pycache__/ "$ROOT/scripts/convert" "$HOST:$REMOTE/source/scripts/"
+  rsync -a "$ROOT/scripts/body-observe-remote.sh" "$ROOT/scripts/body_observe_suite.py" "$ROOT/scripts/base-ensure.sh" \
     "$ROOT/scripts/body_observe_report.py" "$ROOT/scripts/body_headless_suite.py" \
     "$ROOT/scripts/body_headless_parity.py" "$ROOT/scripts/body_baseline_report.py" "$HOST:$REMOTE/source/scripts/"
   rsync -a "$ROOT/scripts/bench/body-observe.bench" "$ROOT/scripts/bench/body-melee.bench" \
@@ -94,27 +99,29 @@ if gq_available; then
   build_command="$(cat <<'GQ_BUILD'
 set -euo pipefail
 task_root="$1"
+shift
+RYZEN_CMAKE_FLAGS=("$@")
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$VULKAN_SDK/bin:$PATH"
 nice -n 10 cmake -S "$task_root/source/OpenGothic" -B "$task_root/build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"} -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
   > "$task_root/provenance/configure.log" 2>&1
-nice -n 10 cmake --build "$task_root/build" --target gothic-body-runner Gothic2Notr --parallel 2 \
+nice -n 10 cmake --build "$task_root/build" --target gothic-body-runner --parallel 2 \
   > "$task_root/provenance/build.log" 2>&1 || { tail -80 "$task_root/provenance/build.log" >&2; exit 1; }
 tail -8 "$task_root/provenance/build.log"
 GQ_BUILD
 )"
   gq_job --class quick --threads 3 --mem 6G --max 30m --name "body-observe-build" -- \
-    bash -c "$build_command" bash "$task_root"
+    bash -c "$build_command" bash "$task_root" ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"}
 else
   export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
   export PATH="$VULKAN_SDK/bin:$PATH"
   nice -n 10 cmake -S "$task_root/source/OpenGothic" -B "$task_root/build" -G Ninja \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"} -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
     > "$task_root/provenance/configure.log" 2>&1
-  nice -n 10 cmake --build "$task_root/build" --target gothic-body-runner Gothic2Notr --parallel 2 \
+  nice -n 10 cmake --build "$task_root/build" --target gothic-body-runner --parallel 2 \
     > "$task_root/provenance/build.log" 2>&1 || { tail -80 "$task_root/provenance/build.log" >&2; exit 1; }
   tail -8 "$task_root/provenance/build.log"
 fi
@@ -133,13 +140,13 @@ suite_args=()
 binary="$task_root/build/opengothic/gothic-body-runner"
 out="$task_root/runs/$run_name"
 source_root="$task_root/source"
-engine_library="$task_root/build/libOpenGothic.a"
+engine_library="$task_root/build"
 if gq_available; then
   # Freeze binaries and their library together, outside any concurrent build.
   exec 8>"$task_root/build.lock"
   flock -n 8 || { echo 'Another build owns workspace' >&2; exit 1; }
 fi
-[[ -x "$binary" && -f "$task_root/build/libOpenGothic.a" ]] || { echo 'Build runner first' >&2; exit 1; }
+[[ -x "$binary" ]] || { echo 'Build runner first' >&2; exit 1; }
 [[ ! -e "$task_root/build-active" ]] || { echo 'Wait for build' >&2; exit 1; }
 if ! gq_available; then
   exec 9>"$HOME/gothic-ai/body-simulation.lock"
@@ -160,8 +167,16 @@ if gq_available; then
   source_root="$out/reference/source"
   mkdir -p "$source_root"
   tar -xzf "$out/source.tar.gz" -C "$source_root"
-  cp "$engine_library" "$out/reference/libOpenGothic.a"
-  engine_library="$out/reference/libOpenGothic.a"
+  mkdir -p "$out/reference/engine-libraries"
+  for library in libOpenGothic.a libengine-platform.a; do
+    [[ -f "$engine_library/$library" ]] || { echo "Engine library missing: $library" >&2; exit 1; }
+  done
+  while IFS= read -r -d '' library; do
+    relative="${library#"$engine_library"/}"
+    mkdir -p "$out/reference/engine-libraries/$(dirname "$relative")"
+    cp "$library" "$out/reference/engine-libraries/$relative"
+  done < <(find "$engine_library" -type d \( -name lib -o -name _deps \) -prune -o -name '*.a' ! -name libminiz.a -print0)
+  engine_library="$out/reference/engine-libraries"
   exec 8>&-
 else
   nice -n 10 tar -czf "$out/source.tar.gz" -C "$task_root/source" OpenGothic

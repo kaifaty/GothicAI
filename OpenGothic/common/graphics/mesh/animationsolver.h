@@ -3,14 +3,14 @@
 #include <Tempest/Matrix4x4>
 #include <vector>
 
-#include "game/constants.h"
+#include "engineconstants.h"
 #include "animation.h"
 
 class Skeleton;
 class Overlay;
 class Pose;
-class Interactive;
-class Serialize;
+class AnimationInteractive;
+class SaveArchive;
 class World;
 class Npc;
 
@@ -85,8 +85,8 @@ class AnimationSolver final {
       uint64_t        time    =0;
       };
 
-    void                           save(Serialize& fout) const;
-    void                           load(Serialize& fin);
+    void                           save(SaveArchive& fout) const;
+    void                           load(SaveArchive& fin);
 
     void                           setSkeleton(const Skeleton* sk);
     void                           update(uint64_t tickCount);
@@ -102,7 +102,7 @@ class AnimationSolver final {
     const Animation::Sequence*     solveAnim(Anim a, WeaponState st, WalkBit wlk, const Pose &pose, const Npc* npc = nullptr) const;
     const Animation::Sequence*     solveAnim(WeaponState st, WeaponState cur, bool run) const;
     const Animation::Sequence*     solveAnim(std::string_view scheme, bool run, bool invest) const;
-    const Animation::Sequence*     solveAnim(Interactive *inter, Anim a, const Pose &pose) const;
+    const Animation::Sequence*     solveAnim(AnimationInteractive *inter, Anim a, const Pose &pose) const;
 
   private:
     const Animation::Sequence*     solveFrm    (std::string_view format, WeaponState st) const;

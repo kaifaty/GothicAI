@@ -13,9 +13,6 @@ layout(local_size_x = 32, local_size_y = 32) in;
 layout(binding = 0, std430) buffer Pages { VsmHeader header; uint  pageList[]; } vsm;
 layout(binding = 1, r32ui)  uniform uimage3D pageTbl;
 
-shared uint minY;
-shared uint minX  [gl_WorkGroupSize.y/4];
-shared uint sWidth[gl_WorkGroupSize.y/4];
 shared uint data[VSM_PAGE_TBL_SIZE+3][VSM_PAGE_TBL_SIZE+3];
 
 uint packPage(uint samples, uvec2 size, uint prime) {
@@ -76,50 +73,24 @@ void storePageTable() {
   }
 
 void main() {
-  const ivec3 size = imageSize(pageTbl);
   const ivec3 at   = ivec3(gl_GlobalInvocationID);
-  const ivec3 id   = ivec3(gl_LocalInvocationID);
-  const uint  lane = gl_LocalInvocationIndex;
 
   poolPageTable();
-#if 0
-  storePageTable();
-  return;
-#endif
-
-  if(lane < minX.length()) {
-    minX  [lane] = 0xFFFF;
-    sWidth[lane] = 0;
-    }
-  minY = 0xFFFF;
-  barrier();
 
   const uint frag  = data[at.x][at.y];
   const bool prime = frag>0;
   if(prime) {
-    atomicMin(minY, at.y);
-
     atomicMin(vsm.header.pageBbox[at.z].x, at.x);
     atomicMin(vsm.header.pageBbox[at.z].y, at.y);
     atomicMax(vsm.header.pageBbox[at.z].z, at.x+1);
     atomicMax(vsm.header.pageBbox[at.z].w, at.y+1);
     }
-  barrier();
 
-  const uint stripe = (at.y-minY)/4;
-  if(frag>0)
-    atomicMin(minX[stripe], at.x);
-  barrier();
-
-  const ivec2 tileCoord = ivec2(at.x - minX[stripe], at.y-minY);
-  if(frag>0)
-    atomicMax(sWidth[stripe], tileCoord.x + 1);
-  barrier();
-
-  const bool valid = (0<=tileCoord.x && tileCoord.x<sWidth[stripe] && 0<=tileCoord.y);
-  const bool quad  = (valid && tileCoord.x%2==0 && tileCoord.y%2==0);
-  const bool bQuad = (valid && tileCoord.x%4==0 && tileCoord.y%4==0);
-  if(true && quad) {
+  // quads of 2x2 pages on the grid of the page table (VSM_STRIPE_PAGES): one more mark elsewhere, as the jitter of TAA
+  // puts at the edges of the marks, changes no quad but its own, and a quad lies in one ring of vsmSunBin. No quads of
+  // 4x4: none lies in one ring
+  const bool quad = (at.x%2==0 && at.y%2==0);
+  if(quad) {
     uint a = unpackPrimeBit(data[at.x+0][at.y+0]);
     uint b = unpackPrimeBit(data[at.x+1][at.y+0]);
     uint c = unpackPrimeBit(data[at.x+1][at.y+1]);
@@ -132,24 +103,6 @@ void main() {
     data[at.x][at.y] = packPage(0, uvec2(0));
   barrier();
 
-  if(true && bQuad) {
-    const int mergeQ = 5;
-    uint a = unpackSamples(data[at.x+0][at.y+0]);
-    uint b = unpackSamples(data[at.x+2][at.y+0]);
-    uint c = unpackSamples(data[at.x+2][at.y+2]);
-    uint d = unpackSamples(data[at.x+0][at.y+2]);
-    uint s = (a+b+c+d);
-
-    bool denie = (a==0 && b==0) || (c==0 && d==0); // horizontal-only patterns
-    if(!denie && s >= mergeQ) {
-      data[at.x+0][at.y+0] = packPage(s, uvec2(4));
-      data[at.x+2][at.y+0] = packPage(0, uvec2(0));
-      data[at.x+0][at.y+2] = packPage(0, uvec2(0));
-      data[at.x+2][at.y+2] = packPage(0, uvec2(0));
-      }
-    }
-  barrier();
-
   // prime bit
   {
   uint  d = unpackSamples(data[at.x][at.y]);
@@ -159,7 +112,7 @@ void main() {
   barrier();
 
   // demote unfilled quads to 1x1 pages
-  if(true && quad) {
+  if(quad) {
     uint q = unpackSize    (data[at.x][at.y]).x;
     uint a = unpackPrimeBit(data[at.x+0][at.y+0]);
     uint b = unpackPrimeBit(data[at.x+1][at.y+0]);

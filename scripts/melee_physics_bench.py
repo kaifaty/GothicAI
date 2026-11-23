@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Melee physics matrix and stage-1 shadow OFF/ON, normal 30 s cadence without video."""
+"""Melee physics matrix and paired flags, normal 30 s cadence without video."""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import statistics
 import subprocess
-import time
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,7 +46,23 @@ def summarize(output: Path, *, shadow: bool = False) -> dict:
     begin = next(row for row in events if row["kind"] == "melee_physics_measure_before")
     end = next(row for row in events if row["kind"] == "melee_physics_measure_after")
     result.update(game_seconds=(end["t"]-begin["t"])/1000,
-                  steady_mix=begin.get("steady_mix", False), attack_starts=end.get("attack_starts", 0))
+                  steady_mix=begin.get("steady_mix", False), brawl=begin.get("brawl", False),
+                  attack_starts=end.get("attack_starts", 0), knockdowns=0, posture_hits=0)
+    posture = output/"run/melee-posture.jsonl"
+    rows = []
+    if posture.is_file():
+        rows = [json.loads(line) for line in posture.read_text().splitlines()]
+        result["knockdowns"] = sum(row["event"] == "knockdown" for row in rows)
+        result["posture_hits"] = sum(row["event"] == "hit" for row in rows)
+    starts = [row for row in rows if row["event"] == "getup_start" and "wait_ms" in row]
+    durations = [row["getup_duration_ms"] for row in rows if row["event"] == "recover" and "getup_duration_ms" in row]
+    forced = sum(row["forced"] for row in starts)
+    result.update(getup_starts=len(starts), getup_completed=len(durations), forced_getup_starts=forced,
+                  forced_getup_fraction=forced/result["knockdowns"] if result["knockdowns"] else None,
+                  forced_getup_start_fraction=forced/len(starts) if starts else None)
+    for name, values in (("getup_wait_ms", [row["wait_ms"] for row in starts]), ("getup_duration_ms", durations)):
+        result.update({name+"_median": statistics.median(values) if values else None,
+                       name+"_min": min(values) if values else None, name+"_max": max(values) if values else None})
     with (output/"melee-physics.csv.steps.csv").open() as stream:
         steps = list(csv.DictReader(stream))
     result["fixed_steps"] = len(steps)
@@ -69,12 +84,13 @@ def main() -> int:
     parser.add_argument("--case", action="append", help="one matrix row: count:mode:pelvis:substeps")
     parser.add_argument("--shadow-pair", action="store_true", help="stage 1: ten native animated fighters, shadow OFF then ON")
     parser.add_argument("--hits-pair", action="store_true", help="stage 2: ten animated fighters, physics hits OFF then ON; shadow stays ON")
+    parser.add_argument("--posture-pair", action="store_true", help="stage 3: six native fighters, posture and body reactions OFF then ON; physics hits stay ON")
     args = parser.parse_args()
-    if args.hits_pair and args.shadow_pair:
-        parser.error("choose either --hits-pair or --shadow-pair")
-    paired = args.shadow_pair or args.hits_pair
+    if sum((args.hits_pair, args.shadow_pair, args.posture_pair)) > 1:
+        parser.error("choose one of --hits-pair, --shadow-pair or --posture-pair")
+    paired = args.shadow_pair or args.hits_pair or args.posture_pair
     if paired and args.case:
-        parser.error("--shadow-pair and --case are mutually exclusive")
+        parser.error("paired measurements and --case are mutually exclusive")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     binary = ROOT/"OpenGothic/build/opengothic/Gothic2Notr"
@@ -86,32 +102,33 @@ def main() -> int:
         cases = [f"{count}:base:kinematic:{steps}" for count in (0, 1, 2, 4, 10) for steps in (1, 2)] + cases
         cases += [f"10:blade:kinematic:{steps}" for steps in (1, 2)]
     if paired:
-        cases = ["10:base:kinematic:2", "10:base:kinematic:2"]
+        # the posture pair keeps the fighters' ordinary living bodies: the blows push them
+        cases = ["6:game:kinematic:2" if args.posture_pair else "10:base:kinematic:2"]*2
     template = (ROOT/"scripts/bench/melee-physics.bench").read_text()
     results = []
     for index, case in enumerate(cases):
-        # Match executable names, since pgrep also finds build command lines.
-        while True:
-            processes = subprocess.check_output(["ps", "-axo", "pid=,comm="], text=True)
-            games = [row for row in processes.splitlines() if row.split()[-1].endswith("/Gothic2Notr")]
-            if not games:
-                break
-            print("Waiting for the other Mac game: "+"; ".join(games), flush=True)
-            time.sleep(5)
+        subprocess.run(["/bin/sh", "-c", "until ! pgrep -x Gothic2Notr >/dev/null; do sleep 5; done"], check=True)
         count, mode, pelvis, steps = case.split(":")
-        label = f"{'hits' if args.hits_pair else 'shadow'}-{'on' if index else 'off'}" if paired else case.replace(":", "-")
+        flag = "posture" if args.posture_pair else "hits" if args.hits_pair else "shadow"
+        label = f"{flag}-{'on' if index else 'off'}" if paired else case.replace(":", "-")
         take = output/label
         take.mkdir()
         scenario = take/"melee-physics.bench"
         scenario_text = template.replace("setup 10 full kinematic 2", f"setup {count} {mode} {pelvis} {steps}")
         if args.hits_pair:
             scenario_text = scenario_text.replace("cadence normal", "melee-physics steady\ncadence normal")
+        if args.posture_pair:
+            scenario_text = scenario_text.replace("cadence normal", "melee-physics brawl\ncadence normal")
         scenario.write_text(scenario_text)
         env = {**os.environ, "BENCH_HOST": "local", "NO_BUILD": "1", "WORLD": "NEWWORLD.ZEN",
                "OPENGOTHIC_MELEE_BENCH": "fixture", "GOTHIC_AI": "0", "TIMEOUT": "180"}
         if paired:
-            env["MELEE_BLADE_SHADOW"] = "1" if args.hits_pair else str(index)
-            env["MELEE_PHYSICS_HITS"] = str(index) if args.hits_pair else "0"
+            env["MELEE_BLADE_SHADOW"] = str(index) if args.shadow_pair else "1"
+            env["MELEE_PHYSICS_HITS"] = str(index) if args.hits_pair else "0" if args.shadow_pair else "1"
+        if args.posture_pair:
+            # stage 3 as a whole: knockdown logic and the body's reaction to blows
+            env["MELEE_POSTURE"] = str(index)
+            env["MELEE_REACTIONS"] = str(index)
         print(f"Running {case}", flush=True)
         with (take/"launcher.log").open("w") as stream:
             subprocess.run([str(ROOT/"scripts/bench.sh"), str(scenario), str(take)],
@@ -135,7 +152,7 @@ def main() -> int:
                       "physics_budget_pass": max(candidate["physics_p95_ms"], candidate["step_p95_ms"]) <= 2,
                       "fps_budget_pass": loss <= 5}
         (output/"comparison.json").write_text(json.dumps(comparison, indent=2)+"\n")
-        print(f"Shadow ON: physics step p95 {candidate['step_p95_ms']:.3f} ms; FPS loss {loss:.2f}%", flush=True)
+        print(f"{flag} ON: physics step p95 {candidate['step_p95_ms']:.3f} ms; FPS loss {loss:.2f}%", flush=True)
         return int(not comparison["physics_budget_pass"] or not comparison["fps_budget_pass"])
     return 0
 

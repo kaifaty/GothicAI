@@ -1,4 +1,5 @@
 #include "cscamera.h"
+#include "world/objects/npc.h"
 
 #include <Tempest/Log>
 #include <cassert>

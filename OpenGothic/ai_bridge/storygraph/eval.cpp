@@ -2,10 +2,10 @@
 
 #include "model.h"
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 
 using namespace storygraph;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 static constexpr uint32_t MaxDepth = 64;  // script functions calling each other
 
@@ -29,14 +29,14 @@ Value Value::str(std::string v) {
   return r;
   }
 
-Value Value::instance(std::shared_ptr<zenkit::DaedalusInstance> v) {
+Value Value::instance(std::shared_ptr<daedalus::DaedalusInstance> v) {
   Value r;
   r.type = Inst;
   r.inst = std::move(v);
   return r;
   }
 
-std::string Value::text(const zenkit::DaedalusVm& vm) const {
+std::string Value::text(const daedalus::DaedalusVm& vm) const {
   switch(type) {
     case Int:   return std::to_string(i);
     case Float: return std::to_string(f);
@@ -61,8 +61,8 @@ static Value asReturned(DaedalusDataType t, const Value& v) {
     }
   }
 
-void storygraph::bindExternals(zenkit::DaedalusVm& vm, Externals& ext) {
-  vm.register_default_external_custom([&ext](zenkit::DaedalusVm& v, zenkit::DaedalusSymbol& fn) {
+void storygraph::bindExternals(daedalus::DaedalusVm& vm, Externals& ext) {
+  vm.register_default_external_custom([&ext](daedalus::DaedalusVm& v, daedalus::DaedalusSymbol& fn) {
     auto params = v.find_parameters_for_function(&fn);
     std::vector<Value> args(params.size());
     for(size_t k=params.size(); k>0; --k) {
@@ -85,7 +85,7 @@ void storygraph::bindExternals(zenkit::DaedalusVm& vm, Externals& ext) {
     });
   }
 
-std::optional<Value> storygraph::callFunction(zenkit::DaedalusVm& vm, const zenkit::DaedalusSymbol& fn,
+std::optional<Value> storygraph::callFunction(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& fn,
                                               const std::vector<Value>& args, std::string& error) {
   if(fn.type()!=DaedalusDataType::FUNCTION) {
     error = ident(fn.name()) + " is not a function";
@@ -131,13 +131,13 @@ std::optional<Value> storygraph::callFunction(zenkit::DaedalusVm& vm, const zenk
     }
   }
 
-Value VmExternals::call(const zenkit::DaedalusSymbol& fn, const std::vector<Value>& args) {
+Value VmExternals::call(const daedalus::DaedalusSymbol& fn, const std::vector<Value>& args) {
   std::string error;
   auto r = callFunction(vm, fn, args, error);
   return r ? *r : asReturned(fn.rtype(), Value());
   }
 
-zenkit::DaedalusSymbol* storygraph::member(zenkit::DaedalusVm& vm, const zenkit::DaedalusInstance& inst,
+daedalus::DaedalusSymbol* storygraph::member(daedalus::DaedalusVm& vm, const daedalus::DaedalusInstance& inst,
                                            const std::string& name) {
   auto* cls = vm.find_symbol_by_index(inst.symbol_index());
   while(cls!=nullptr && cls->type()!=DaedalusDataType::CLASS)
@@ -145,7 +145,7 @@ zenkit::DaedalusSymbol* storygraph::member(zenkit::DaedalusVm& vm, const zenkit:
   return cls ? vm.find_symbol_by_name(cls->name() + "." + name) : nullptr;
   }
 
-Evaluator::Evaluator(zenkit::DaedalusVm& vm, const std::map<std::string,Helper>& helpers, Externals& ext)
+Evaluator::Evaluator(daedalus::DaedalusVm& vm, const std::map<std::string,Helper>& helpers, Externals& ext)
   :vm(vm), helpers(helpers), ext(ext) {
   }
 

@@ -1,0 +1,1 @@
+../../../character-tool/src/character_tool/backends/mesh3d/generate_pixal3d.py

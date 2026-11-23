@@ -1,0 +1,82 @@
+# The hero's walk start and stops (reports/content/2026-11-hero-locomotion, «Старт и остановки шага»): from the
+# stance into a walk and to a stop, the forward key held so long that the stop falls on the left foot (3000 ms) and
+# on the right (2560 ms: half a cycle of the loop less) - from the side, from behind in three quarters and the legs
+# close; then a walk started again 0.5 s after the key is let go, and a tap of the key. Run it once per content
+# root with the same build and judge the takes side by side; OPENGOTHIC_STOPFOOT_LOG=1 names the right stops taken
+# in game.log. `anim pop` at the switches tells how the clips meet. A new game, noon, no armour.
+#   TIMEOUT=600 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=local WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=<root> \
+#     scripts/bench.sh scripts/bench/hero-walk-startstop.bench <abs out>
+seed 73013
+cheat god
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 3000
+watch player
+overlay off
+walkmode walk
+face wp NW_CITY_MERCHANT_PATH_09
+cam look 100
+cam follow 400 105 90
+wait 1500
+rec side_left
+hold forward 3000
+wait 4800
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+face wp NW_CITY_MERCHANT_PATH_09
+wait 2000
+rec side_right
+hold forward 2560
+wait 4400
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+face wp NW_CITY_MERCHANT_PATH_09
+cam look 110
+cam follow 360 125 150
+wait 2000
+rec back_left
+hold forward 3000
+wait 4800
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+face wp NW_CITY_MERCHANT_PATH_09
+wait 2000
+rec back_right
+hold forward 2560
+wait 4400
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+face wp NW_CITY_MERCHANT_PATH_09
+cam look 50
+cam follow 240 60 90
+wait 2000
+rec legs_left
+hold forward 3000
+wait 4800
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+face wp NW_CITY_MERCHANT_PATH_09
+wait 2000
+rec legs_right
+hold forward 2560
+wait 4400
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+face wp NW_CITY_MERCHANT_PATH_09
+cam look 100
+cam follow 400 105 90
+wait 2000
+rec walk_again
+hold forward 1500
+wait 2000
+hold forward 1500
+wait 3500
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+face wp NW_CITY_MERCHANT_PATH_09
+wait 2000
+rec tap
+hold forward 200
+wait 2500
+stop
+walkmode run

@@ -1,4 +1,5 @@
 #include "sounddefinitions.h"
+#include "definitiontypes.h"
 
 #include <Tempest/Log>
 #include <gothic.h>
@@ -8,11 +9,11 @@ using namespace Tempest;
 SoundDefinitions::SoundDefinitions() {
   auto vm = Gothic::inst().createPhoenixVm("Sfx.dat");
 
-  vm->enumerate_instances_by_class_name("C_SFX", [this, &vm](zenkit::DaedalusSymbol& s) {
+  vm->enumerate_instances_by_class_name("C_SFX", [this, &vm](daedalus::DaedalusSymbol& s) {
     try {
-      this->sfx[s.name()] = vm->init_instance<Def::SoundEffect>(&s);
+      this->sfx[s.name()] = std::make_shared<Def::SoundEffect>(vm->init_instance<VmDef::SoundEffect>(&s)->copy());
       }
-    catch(const zenkit::DaedalusScriptError&) {
+    catch(const daedalus::DaedalusScriptError&) {
       // There was an error during initialization. Ignore it.
       }
   });

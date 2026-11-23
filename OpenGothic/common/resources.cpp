@@ -1,13 +1,16 @@
 #include "resources.h"
+#include "gameservices.h"
+#include "resources_internal.h"
+#include "loadprobe.h"
 #include "basestore.h"
 #include "commandline.h"
 #include "musicnative.h"
 #include "videodata.h"
 
 #include <Tempest/MemReader>
+#include <Tempest/File>
 #include <Tempest/Pixmap>
 #include <Tempest/Device>
-#include <Tempest/Dir>
 #include <Tempest/Application>
 #include <Tempest/Sound>
 #include <Tempest/SoundEffect>
@@ -15,52 +18,48 @@
 #include <Tempest/Log>
 #include <Tempest/Color>
 
-#include <zenkit/Archive.hh>
 #include "asset/material.h"
 #include "asset/worldtypes.h"
 #include <miniz.h>
 
 #include <cctype>
+#include <cassert>
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <limits>
+#include <optional>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 #include <cstdio>
-
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
-#include <rapidjson/document.h>
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
 
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/meshlevels.h"
+#include "graphics/mesh/facerig.h"
+#include "graphics/mesh/renderrig.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/animation.h"
 #include "graphics/mesh/attachbinder.h"
 #include "graphics/mesh/bowdraw.h"
 #include "graphics/material.h"
-#include "dmusic/directmusic.h"
 #include "utils/fileext.h"
-#include "utils/fileutil.h"
 #include "utils/gthfont.h"
 
-#include "gothic.h"
 #include "contentcensus.h"
 #include "gltfmesh.h"
+#include "gltfmeshcolor.h"
+#include "meshclusterlod.h"
 #include "basemesh.h"
 #include "modeldata.h"
 #include "fontdata.h"
-#include "worldbase.h"
+#include "worlddata.h"
 #include "utils/string_frm.h"
 
 #include <dmusic.h>
@@ -68,8 +67,12 @@
 #include <unordered_map>
 
 using namespace Tempest;
+using ResourcesInternal::modelKey;
+
+namespace ModelData { asset::ModelScript readScriptOverlay(const std::filesystem::path& file); }
 
 Resources* Resources::inst=nullptr;
+std::atomic<uint64_t> Resources::instGeneration{0};
 
 struct Resources::VideoBase {
   std::shared_ptr<std::atomic_bool> cancelled=std::make_shared<std::atomic_bool>(false);
@@ -79,33 +82,7 @@ struct Resources::VideoBase {
   bool ready=false;
   };
 
-namespace {
-thread_local std::string* censusOpenSource = nullptr;
-thread_local bool preparingVideo = false;
-
-struct CensusOpenCapture {
-  explicit CensusOpenCapture(std::string* source) : previous(censusOpenSource) { censusOpenSource = source; }
-  ~CensusOpenCapture() { censusOpenSource = previous; }
-  std::string* previous;
-  };
-
-bool censusNodePath(const zenkit::VfsNode& parent, const zenkit::VfsNode* node, std::string& path) {
-  if(&parent==node)
-    return true;
-  if(parent.type()!=zenkit::VfsNodeType::DIRECTORY)
-    return false;
-  for(const auto& child:parent.children()) {
-    const auto size = path.size();
-    if(!path.empty())
-      path += '/';
-    path += child.name();
-    if(censusNodePath(child,node,path))
-      return true;
-    path.resize(size);
-    }
-  return false;
-  }
-
+namespace ResourcesInternal {
 std::string censusSourcePath(const std::filesystem::path& source) {
   auto relative = source;
   if(relative.is_absolute())
@@ -119,28 +96,30 @@ std::string censusSourcePath(const std::filesystem::path& source) {
   return relative.generic_string();
   }
 
-std::filesystem::path worldContentDir(const std::filesystem::path& root, std::string_view world) {
-  const auto separator = world.find_last_of("/\\");
-  std::string name(separator==std::string_view::npos ? world : world.substr(separator+1));
-  name = std::filesystem::path(name).stem().string();
-  for(auto& c:name)
-    c = char(std::toupper(static_cast<unsigned char>(c)));
-  return root/"worlds"/name;
+const char* scriptDirectory(int language) {
+  static constexpr const char* directories[]={"Scripts_EN","Scripts_DE","Scripts_PL","Scripts_RU",
+                                               "Scripts_FR","Scripts_ES","Scripts_IT","Scripts_CZ"};
+  return language>=0 && language<8 ? directories[language] : "Scripts";
   }
 }
 
 Resources::Resources() {
   inst=this;
+  ++instGeneration;
+  configureTextures();
   initCensus();
   indexMeshOverrides();
+  indexCharacterHeads();
   // Sound buffers remain CPU data: native sound selection consumes RNG and
   // dialogue uses their durations even when playback is disabled.
   fBuff.reserve(8*1024*1024);
   }
 
-Resources::Resources(Tempest::Device &device, BaseImport::Progress progress)
-  : baseProgress(std::move(progress)), dev(&device), sound(std::make_unique<Tempest::SoundDevice>()) {
+Resources::Resources(Tempest::Device &device, Audio audio)
+  : dev(&device), sound(audio==Audio::Open ? std::make_unique<Tempest::SoundDevice>() : nullptr) {
   inst=this;
+  ++instGeneration;
+  configureTextures();
   initCensus();
 
   static const uint16_t index[] = {
@@ -153,32 +132,11 @@ Resources::Resources(Tempest::Device &device, BaseImport::Progress progress)
     };
   cube = device.ibo(index, sizeof(index)/sizeof(index[0]));
 
-  const std::vector<std::u16string> musicPaths = {
-    Gothic::nestedPath({u"_work",u"Data",u"Music",u"newworld"},  Dir::FT_Dir),
-    Gothic::nestedPath({u"_work",u"Data",u"Music",u"AddonWorld"},Dir::FT_Dir),
-    Gothic::nestedPath({u"_work",u"Data",u"Music",u"dungeon"},  Dir::FT_Dir),
-    Gothic::nestedPath({u"_work",u"Data",u"Music",u"menu_men"}, Dir::FT_Dir),
-    Gothic::nestedPath({u"_work",u"Data",u"Music",u"orchestra"},Dir::FT_Dir),
-    Gothic::nestedPath({u"_work",u"Data",u"Music"},Dir::FT_Dir)
-    };
-  Dx8::DirectMusic::Native dxSource;
-  dxSource.segment = [this,musicPaths](const char16_t* name) {
-    return MusicData::decodeDx8Segment(readDxMusic(musicPaths,name,"segment"));
-    };
-  dxSource.style = [this,musicPaths](const char16_t* name) {
-    return MusicData::decodeDx8Style(readDxMusic(musicPaths,name,"style"));
-    };
-  dxSource.dls = [this,musicPaths](const char16_t* name) {
-    return MusicData::decodeDx8Dls(readDxMusic(musicPaths,name,"dls"));
-    };
-  dxMusic.reset(new Dx8::DirectMusic(std::move(dxSource)));
-  for(const auto& path:musicPaths)
-    dxMusic->addPath(path);
-
   fBuff .reserve(8*1024*1024);
   indexHdTextures();
   indexMaterialMaps();
   indexMeshOverrides();
+  indexCharacterHeads();
 
   {
   Pixmap pm(1,1,TextureFormat::RGBA8);
@@ -193,7 +151,9 @@ Resources::Resources(Tempest::Device &device, BaseImport::Progress progress)
   fbZero = device.texture(pm);
   }
 
-  fbImg = device.image2d(TextureFormat::R32U,1,1);
+  fbImg   = device.image2d(TextureFormat::R32U,1,1);
+  fbImg3d = device.image3d(TextureFormat::RGBA8,1,1,1);
+  fbPageTbl = device.image3d(TextureFormat::R32U,1,1,1);
 
   // Set up the DirectMusic loader
   DmResult rv = DmLoader_create(&dmLoader, DmLoader_DOWNLOAD);
@@ -224,129 +184,11 @@ Resources::Resources(Tempest::Device &device, BaseImport::Progress progress)
     throw std::runtime_error("unable to configure native music loader");
   }
 
-void Resources::zenkitLog(zenkit::LogLevel lvl, const char* cat, const char* message) {
-  BaseImport::onZenkitLog(lvl,cat,message);
-  if(preparingVideo) return;
-  switch (lvl) {
-    case zenkit::LogLevel::ERROR:
-      Tempest::Log::e("[zenkit] ", message);
-      break;
-    case zenkit::LogLevel::WARNING:
-      Tempest::Log::e("[zenkit] ", message);
-      break;
-    case zenkit::LogLevel::INFO:
-      Tempest::Log::i("[zenkit] ", message);
-      break;
-    case zenkit::LogLevel::DEBUG:
-    case zenkit::LogLevel::TRACE:
-      Tempest::Log::d("[zenkit] ", message); // unused
-      break;
-    }
-  }
-
-void Resources::mountWork(const std::filesystem::path& path) {
-  inst->gothicAssets.mkdir("/_work");
-  inst->gothicAssets.mount_host(path, "/_work", zenkit::VfsOverwriteBehavior::NONE);
-  }
-
-void Resources::loadVdfs(const std::vector<std::u16string>& modvdfs, bool modFilter) {
-  auto archives = BaseImport::runtimeArchives(std::filesystem::path(CommandLine::inst().rootPath()));
-
-  // Remove all mod files, that are not listed in modvdfs
-  if(modFilter) {
-    // NOTE: apparently in CoM there is no mods list declaration. In such case - assume all modes
-    archives.erase(std::remove_if(archives.begin(), archives.end(),
-                  [&modvdfs](const BaseImport::RuntimeArchive& a){
-                    return a.mod && modvdfs.end() == std::find_if(modvdfs.begin(), modvdfs.end(),
-                          [&a](const std::u16string& modname) {
-                            const std::u16string full_path = a.path.u16string();
-                            const std::u16string_view& file_name = modname;
-                            return (0 == full_path.compare(full_path.length() - file_name.length(),
-                                                           file_name.length(), file_name));
-                            });
-                    }), archives.end());
-    }
-
-  // runtimeArchives preserves the engine's timestamp and directory-order precedence.
-  std::vector<std::pair<std::string,uintmax_t>> mounted;
-  for(auto& i:archives) {
-    try {
-#ifdef __IOS__
-      // causes OOM on iPhone7
-      if(i.path.u16string().find(u"Speech")!=std::string::npos)
-        continue;
-#endif
-      inst->gothicAssets.mount_disk(i.path, zenkit::VfsOverwriteBehavior::OLDER);
-      mounted.emplace_back(i.name,std::filesystem::file_size(i.path));
-      }
-    catch(const zenkit::VfsBrokenDiskError& err) {
-      Log::e("unable to load archive: \"", TextCodec::toUtf8(i.path.u16string()), "\", reason: ", err.what());
-      }
-    catch(const std::exception& err) {
-      Log::e("unable to load archive: \"", TextCodec::toUtf8(i.path.u16string()), "\", reason: ", err.what());
-      }
-    }
-
-  std::sort(mounted.begin(),mounted.end());
-  try {
-    inst->automaticBase=BaseStore::resolve(std::filesystem::path(CommandLine::inst().rootPath()),mounted,
-                                         [](std::string_view message) {
-      Log::i(message);
-      if(inst->baseProgress) inst->baseProgress(message);
-      });
-    inst->indexBaseContent();
-    inst->baseTextures.validate(mounted);
-    inst->baseMeshes.validate(mounted);
-    inst->baseZen.validate(mounted);
-    inst->baseZen.validateLoose(std::filesystem::path(CommandLine::inst().rootPath()));
-    inst->baseModels.validate(mounted);
-    inst->baseModels.validateLoose(std::filesystem::path(CommandLine::inst().rootPath()));
-    inst->baseFonts.validate(mounted);
-    inst->baseFonts.validateLoose(std::filesystem::path(CommandLine::inst().rootPath()));
-    if(inst->basePrograms.archives!=mounted)
-      throw std::runtime_error("mounted archives differ from program base index: "+inst->basePrograms.dir.string());
-    for(const auto& [path,size]:inst->basePrograms.looseFiles) {
-      std::error_code error;
-      const auto actual = std::filesystem::file_size(std::filesystem::path(CommandLine::inst().rootPath())/path,error);
-      if(error || actual!=size)
-        throw std::runtime_error("loose file differs from program base index: "+path);
-      }
-    Log::i("base: ",inst->basePrograms.programs.size()," programs from \"",inst->basePrograms.dir.string(),"\"");
-    if(inst->baseOutputUnits.archives!=mounted)
-      throw std::runtime_error("mounted archives differ from output units base index: "+inst->baseOutputUnits.dir.string());
-    for(const auto& [path,size]:inst->baseOutputUnits.looseFiles) {
-      std::error_code error;
-      const auto actual = std::filesystem::file_size(std::filesystem::path(CommandLine::inst().rootPath())/path,error);
-      if(error || actual!=size)
-        throw std::runtime_error("loose file differs from output units base index: "+path);
-      }
-    Log::i("base: ",inst->baseOutputUnits.records.size()," output units records from \"",inst->baseOutputUnits.dir.string(),"\"");
-    if(inst->baseAudio.archives!=mounted)
-      throw std::runtime_error("mounted archives differ from audio base index: "+inst->baseAudio.dir.string());
-    for(const auto& [path,size]:inst->baseAudio.looseFiles) {
-      std::error_code error;
-      const auto actual = std::filesystem::file_size(std::filesystem::path(CommandLine::inst().rootPath())/path,error);
-      if(error || actual!=size)
-        throw std::runtime_error("loose file differs from audio base index: "+path);
-      }
-    Log::i("base: ",inst->baseAudio.sounds.size()," sounds from \"",inst->baseAudio.dir.string(),"\"");
-    if(inst->baseMusic.archives!=mounted)
-      throw std::runtime_error("mounted archives differ from music base index: "+inst->baseMusic.dir.string());
-    for(const auto& [path,size]:inst->baseMusic.looseFiles) {
-      std::error_code error;
-      const auto actual = std::filesystem::file_size(std::filesystem::path(CommandLine::inst().rootPath())/path,error);
-      if(error || actual!=size)
-        throw std::runtime_error("loose file differs from music base index: "+path);
-      }
-    Log::i("base: ",inst->baseMusic.records.size()," music records from \"",inst->baseMusic.dir.string(),"\"");
-    inst->baseProgress={};
-    }
-  catch(const std::exception& e) { throw BaseStore::Error(e.what()); }
-
-  inst->mountedArchives = std::move(mounted);
-  }
-
 Resources::~Resources() {
+  for(auto& reload:textureReloads)
+    if(reload->pending.valid())
+      reload->pending.wait();
+  textureReloads.clear();
   if(videoBase) videoBase->cancelled->store(true);
   if(videoWorker.joinable()) videoWorker.join();
   if(videoBase && videoBase->selection.publication.valid()) videoBase->selection.publication.wait();
@@ -363,14 +205,13 @@ void Resources::startVideoBase() {
   inst->videoBase=std::make_shared<VideoBase>();
   const auto state=inst->videoBase;
   const auto gothic=std::filesystem::path(CommandLine::inst().rootPath());
-  inst->videoWorker=std::thread([state,gothic] {
-    preparingVideo=true;
+  const auto mainBase=inst->automaticBase.path;
+  inst->videoWorker=std::thread([state,gothic,mainBase] {
     try {
-      const size_t workers=std::max<size_t>(1,std::min<size_t>(4,std::thread::hardware_concurrency()/2));
-      auto selection=BaseStore::resolveVideos(gothic,[](std::string_view message) {
-        // Import diagnostics never use the application's log callback.
+      auto selection=BaseStore::resolveVideos(gothic,mainBase,[](std::string_view message) {
+        // Background selection diagnostics do not use the application's log callback.
         std::fprintf(stderr,"%.*s\n",int(message.size()),message.data());
-        },state->cancelled,workers);
+        },state->cancelled);
       std::map<std::string,std::filesystem::path> files;
       for(const auto& entry:VideoData::readIndex(selection.path)) files.emplace(entry.source.name,selection.path/entry.file);
       std::lock_guard<std::mutex> guard(state->sync);
@@ -424,247 +265,10 @@ void Resources::videoFrameRead(std::string_view name) {
     inst->census->replaced(found->first,"base/videos/"+found->second.filename().string());
   }
 
-void Resources::initCensus() {
-  const char* path = std::getenv("OPENGOTHIC_CENSUS");
-  if(path==nullptr || path[0]=='\0')
-    return;
-  census = std::make_unique<ContentCensus>(path);
-  gothicAssets.set_open_observer([this](std::string_view name, std::string_view source) {
-    census->opened(name,source);
-    if(censusOpenSource!=nullptr)
-      *censusOpenSource = source;
-    });
-  }
-
-void Resources::censusFile(std::u16string_view path) {
-  if(inst==nullptr || inst->census==nullptr)
-    return;
-  const auto source = TextCodec::toUtf8(path);
-  inst->census->opened(source,source);
-  }
-
-void Resources::censusProfile(std::string_view game, std::string_view outputUnits, int language) {
-  if(inst!=nullptr && inst->census!=nullptr)
-    inst->census->profile(game,outputUnits,language);
-  }
-
-void Resources::censusSelected(std::string_view consumer, std::string_view request, int language,
-                              std::string_view branch, const CensusSource& source, zenkit::Read& read) noexcept {
-  if(inst==nullptr || inst->census==nullptr)
-    return;
-  try {
-    std::string path;
-    if(source.node==nullptr || !censusNodePath(inst->gothicAssets.root(),source.node,path))
-      path.clear();
-    inst->census->selected(consumer,request,language,branch,"vfs",path,censusSourcePath(source.source),read);
-    }
-  catch(...) { Log::e("census: unable to identify parsed VFS source"); }
-  }
-
-void Resources::censusSelected(std::string_view consumer, std::string_view request, int language,
-                              std::string_view branch, std::u16string_view path, zenkit::Read& read) noexcept {
-  if(inst==nullptr || inst->census==nullptr)
-    return;
-  try {
-    const auto relative = censusSourcePath(std::filesystem::path(path));
-    inst->census->selected(consumer,request,language,branch,"host",relative,relative,read);
-    }
-  catch(...) { Log::e("census: unable to identify parsed host source"); }
-  }
-
-void Resources::loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name) {
-  const auto dir = worldBaseDir(name);
-  const auto result = tryWorldData(world,worldMesh,name,dir,worldOverrideDir(name),inst->mountedArchives);
-  if(result.replaced) {
-    if(inst->census)
-      inst->census->replaced(name,(worldContentDir("base",name)/"world.json").generic_string());
-    Log::i("world base: \"",dir.string(),"\", ",result.triangles," triangles, ",
-           result.chunks," chunks, ",result.readMs," ms");
-    return;
-    }
-  if(inst->census) inst->census->missing(name,result.error);
-  throw BaseStore::Error("world "+std::string(name)+": "+result.error);
-  }
-
-bool Resources::loadBaseZen(std::string_view name, std::string_view kind, WorldData::ZenFile& out) {
-  const auto& index = inst->baseZen;
-  const auto separator = name.find_last_of("/\\");
-  std::string key(separator==std::string_view::npos ? name : name.substr(separator+1));
-  for(auto& c:key)
-    c = char(std::toupper(static_cast<unsigned char>(c)));
-  const auto found = index.files.find(key);
-  try {
-    if(found==index.files.end()) throw std::runtime_error("missing from base index");
-    auto data = WorldData::readZen(index.dir/found->second);
-    if(data.kind!=kind || data.source.world!=key)
-      throw std::runtime_error("ZEN kind or source name differs from index");
-    if(kind=="cameras")
-      for(const auto& camera:data.vobs)
-        if(!std::dynamic_pointer_cast<asset::VCutsceneCamera>(camera))
-          throw std::runtime_error("invalid dialog camera class");
-    out = std::move(data);
-    if(inst->census)
-      inst->census->replaced(key,"base/zen/"+found->second);
-    return true;
-    }
-  catch(const std::exception& error) {
-    Log::e("base: ",key,": ",error.what());
-    if(inst->census) inst->census->missing(key,error.what());
-    return false;
-    }
-  }
-
-bool Resources::writeCensus() {
-  return inst==nullptr || inst->census==nullptr || inst->census->write();
-  }
-
 Tempest::Device& Resources::device() {
   if(!hasGraphicsDevice())
     throw std::logic_error("graphics device access in headless simulation");
   return *inst->dev;
-  }
-
-bool Resources::hasFile(std::string_view name) {
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  return inst->gothicAssets.find(name) != nullptr;
-  }
-
-zenkit::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language,
-                                                std::string_view branch, std::u16string_view hostPath) {
-  try {
-    const auto& index = inst->basePrograms;
-    const ProgramData::Source* source = nullptr;
-    if(hostPath.empty()) {
-      std::string_view selectedBranch;
-      source = index.findVfs(request,&selectedBranch);
-      if(source==nullptr || selectedBranch!=branch)
-        throw std::runtime_error("selected VFS source missing from program base index");
-      }
-    else {
-      if(!FileUtil::exists(std::u16string(hostPath)))
-        throw std::runtime_error("selected host program source not found");
-      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
-      if(source==nullptr)
-        throw std::runtime_error("selected host source missing from program base index");
-      }
-    const auto file = index.path(*source);
-    std::string actualSha256;
-    auto program = ProgramData::readProgram(file,&actualSha256);
-    if(actualSha256!=source->recordSha256)
-      throw std::runtime_error("program record identity differs from base index");
-    auto script = zenkit::DaedalusScript::from_program(std::move(program));
-    if(inst->census) {
-      const auto record = "base/programs/"+file.filename().generic_string();
-      inst->census->replaced(request,record);
-      inst->census->program("Gothic::loadScript",request,language,branch,record,actualSha256,*source);
-      }
-    return script;
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(request,error.what());
-    throw BaseStore::Error("program "+std::string(request)+": "+error.what());
-    }
-  }
-
-bool Resources::loadBaseOutputUnits(std::string_view request, int language, std::string_view branch,
-                                   std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
-                                   std::u16string_view hostPath) {
-  try {
-    const auto& index = inst->baseOutputUnits;
-    const OutputUnits::Source* source = nullptr;
-    if(hostPath.empty()) {
-      std::string_view selectedBranch;
-      source = index.findVfs(request,&selectedBranch);
-      if(source==nullptr || selectedBranch!=branch)
-        throw std::runtime_error("selected VFS source missing from output units base index");
-      }
-    else {
-      source = index.findHost(censusSourcePath(std::filesystem::path(hostPath)));
-      if(source==nullptr)
-        throw std::runtime_error("selected host source missing from output units base index");
-      if(!source->skipped.empty())
-        return false;
-      }
-    if(!source->skipped.empty())
-      throw std::runtime_error("selected VFS output units source skipped: "+source->skipped);
-    const auto file = index.path(*source);
-    std::string actualSha256;
-    auto library = OutputUnits::readLibrary(file,&actualSha256);
-    if(actualSha256!=source->recordSha256)
-      throw std::runtime_error("output units record identity differs from base index");
-    auto loaded = OutputUnits::sortedBlocks(library);
-    blocks = std::move(loaded);
-    if(inst->census) {
-      const auto record = "base/outputunits/"+file.filename().generic_string();
-      inst->census->replaced(request,record);
-      inst->census->outputUnits("GameScript::loadDialogOU",request,language,branch,record,actualSha256,*source);
-      }
-    return true;
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(request,error.what());
-    throw BaseStore::Error("output units "+std::string(request)+": "+error.what());
-    }
-  }
-
-bool Resources::getFileData(std::string_view name, std::vector<uint8_t> &dat) {
-  dat.clear();
-
-  const auto* entry = Resources::vdfsIndex().find(name);
-  if(entry==nullptr)
-    return false;
-
-  // TODO: This should return a buffer!
-  auto reader = entry->open_read();
-
-  reader->seek(0, zenkit::Whence::END);
-  dat.resize(reader->tell());
-  reader->seek(0, zenkit::Whence::BEG);
-  reader->read(dat.data(), dat.size());
-
-  return true;
-  }
-
-std::vector<uint8_t> Resources::getFileData(std::string_view name) {
-  std::vector<uint8_t> data;
-  getFileData(name,data);
-  return data;
-  }
-
-std::unique_ptr<zenkit::Read> Resources::getFileBuffer(std::string_view name, CensusSource* source) {
-  const auto* entry = Resources::vdfsIndex().find(name);
-  if (entry == nullptr)
-    throw std::runtime_error("failed to open resource: " + std::string{name});
-  if(source!=nullptr && inst->census!=nullptr) {
-    source->node = entry;
-    source->source.clear();
-    CensusOpenCapture capture(&source->source);
-    return entry->open_read();
-    }
-  return entry->open_read();
-  }
-
-std::unique_ptr<zenkit::ReadArchive> Resources::openReader(std::string_view name, std::unique_ptr<zenkit::Read>& read, CensusSource* source) {
-  const auto* entry = Resources::vdfsIndex().find(name);
-  if(entry == nullptr)
-    throw std::runtime_error("failed to open resource: " + std::string{name});
-  std::unique_ptr<zenkit::Read> buf;
-  if(source!=nullptr && inst->census!=nullptr) {
-    source->node = entry;
-    source->source.clear();
-    CensusOpenCapture capture(&source->source);
-    buf = entry->open_read();
-    }
-  else {
-    buf = entry->open_read();
-    }
-  if(buf == nullptr)
-    throw std::runtime_error("failed to open resource: " + std::string{name});
-  auto zen = zenkit::ReadArchive::from(buf.get());
-  if(zen == nullptr)
-    throw std::runtime_error("failed to open resource: " + std::string{name});
-  read = std::move(buf);
-  return zen;
   }
 
 const char* Resources::renderer() {
@@ -707,7 +311,7 @@ static void straightenString(asset::MorphMesh& zmm) {
   const int back = 3-along-across;
   if(along==across)
     return;
-  auto comp = [](const zenkit::Vec3& v, int i) { return i==0 ? v.x : (i==1 ? v.y : v.z); };
+  auto comp = [](const asset::Vec3& v, int i) { return i==0 ? v.x : (i==1 ? v.y : v.z); };
 
   // the string's middle: the vertices drawn the farthest
   const size_t per  = ready->vertices.size();
@@ -807,233 +411,91 @@ const Tempest::StorageImage& Resources::fallbackImage() {
   return inst->fbImg;
   }
 
-const zenkit::Vfs& Resources::vdfsIndex() {
-  return inst->gothicAssets;
+const Tempest::StorageImage& Resources::fallbackImage3d() {
+  return inst->fbImg3d;
+  }
+
+const Tempest::StorageImage& Resources::fallbackPageTable() {
+  return inst->fbPageTbl;
   }
 
 const Tempest::IndexBuffer<uint16_t>& Resources::cubeIbo() {
   return inst->cube;
   }
-Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forceMips) {
-  if(isHeadless() || cname.empty())
+const ProtoMesh* Resources::loadCharacterGroom(std::string_view instance) {
+  if(!CommandLine::inst().doHeroHead())
     return nullptr;
-
-  //TODO: __cpp_lib_generic_unordered_lookup
-  std::string name = std::string(cname);
-  auto it=texCache.find(name);
-  if(it!=texCache.end())
-    return it->second.get();
-
-  auto tex = implLoadTextureUncached(cname, forceMips);
-  if(!tex.isEmpty()) {
-    std::unique_ptr<Texture2d> t{new Texture2d(std::move(tex))};
-    Texture2d* ret=t.get();
-    texCache[std::move(name)] = std::move(t);
-    return ret;
-    }
-  texCache[std::move(name)] = nullptr;
-  return nullptr;
-  }
-
-void Resources::indexHdTextures() {
-  const char* dir = std::getenv("OPENGOTHIC_TEXTURES");
-  if(dir==nullptr || dir[0]=='\0')
-    return;
-  std::error_code ec;
-  for(auto& e:std::filesystem::directory_iterator(dir,ec)) {
-    auto ext = e.path().extension().string();
-    for(auto& c:ext)
-      c = char(std::toupper(uint8_t(c)));
-    if(ext!=".DDS" && ext!=".PNG")
-      continue;
-    auto key = e.path().stem().string();
-    for(auto& c:key)
-      c = char(std::toupper(uint8_t(c)));
-    // DXT with mipmaps (DDS) over RGBA (PNG): a fraction of the memory
-    auto& path = hdTextures[key];
-    if(path.empty() || ext==".DDS")
-      path = e.path().string();
-    }
-  if(ec)
-    Log::e("textures: unable to read \"",dir,"\"");
-  Log::i("textures: ",hdTextures.size()," of our own from \"",dir,"\"");
-  }
-
-std::filesystem::path Resources::baseDir() {
-  return inst->automaticBase.path;
-  }
-
-std::filesystem::path Resources::worldBaseDir(std::string_view world) {
-  const auto root = baseDir();
-  return root.empty() ? root : worldContentDir(root,world);
-  }
-
-void Resources::indexBaseContent() {
-  const auto root = baseDir();
-  baseTextures.load(root,"textures");
-  baseMeshes.load(root,"meshes");
-  baseZen.load(root,"zen");
-  baseModels.load(root,"models");
-  baseFonts.load(root,"fonts");
-  basePrograms = ProgramData::readIndex(root/"programs");
-  baseOutputUnits = OutputUnits::readIndex(root/"outputunits");
-  baseAudio = AudioData::readIndex(root/"audio");
-  baseMusic = MusicData::readIndex(root/"music");
-  }
-
-void Resources::BaseIndex::load(const std::filesystem::path& root, const char* kind) {
-  *this = {};
-  const auto folder = root/kind;
-  const auto resourceKind = std::string_view(kind);
-  const char* entries = resourceKind=="zen" || resourceKind=="models" ? "files" : kind;
-  std::ifstream file(folder/(std::string(kind)+".json"),std::ios::binary);
-  if(!file)
-    throw std::runtime_error("base index missing: "+(folder/(std::string(kind)+".json")).string());
-  try {
-    const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
-    rapidjson::Document table;
-    table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
-    if(table.HasParseError() || !table.IsObject() ||
-       !table.HasMember("archives") || !table["archives"].IsArray() ||
-       !table.HasMember(entries) || !table[entries].IsObject())
-      throw std::runtime_error("invalid index");
-    if(resourceKind=="models" &&
-       (!table.HasMember("format") || !table["format"].IsString() ||
-        std::string_view(table["format"].GetString(),table["format"].GetStringLength())!="gothic-models" ||
-        !table.HasMember("version") || !table["version"].IsUint() || table["version"].GetUint()!=1))
-      throw std::runtime_error("unsupported model index format or version");
-    if(resourceKind=="fonts" &&
-       (!table.HasMember("format") || !table["format"].IsString() ||
-        std::string_view(table["format"].GetString(),table["format"].GetStringLength())!="gothic-fonts" ||
-        !table.HasMember("version") || !table["version"].IsUint() || table["version"].GetUint()!=1))
-      throw std::runtime_error("unsupported font index format or version");
-    for(const auto& archive:table["archives"].GetArray()) {
-      if(!archive.IsObject() || !archive.HasMember("name") || !archive["name"].IsString() ||
-         !archive.HasMember("size") || !archive["size"].IsUint64())
-        throw std::runtime_error("invalid archive identity");
-      archives.emplace_back(archive["name"].GetString(),archive["size"].GetUint64());
+  std::string key(instance);
+  for(auto& c:key)
+    c=char(std::toupper(uint8_t(c)));
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  const auto it=inst->characterHeads.find(key);
+  if(it==inst->characterHeads.end() || it->second.groom.empty())
+    return nullptr;
+  auto& entry=it->second;
+  if(!entry.groomAttempted) {
+    entry.groomAttempted=true;
+    try {
+      // OPENGOTHIC_GROOM_SHARE=0.25: a quarter of the strands, four times wider (the cost of strands, a far head)
+      const char* env=std::getenv("OPENGOTHIC_GROOM_SHARE");
+      const float share=env!=nullptr ? float(std::atof(env)) : 1.f;
+      PackedMesh packed(entry.groom,share>0.f ? share : 1.f);
+      const size_t meshlets=packed.indices.size()/PackedMesh::MaxInd;
+      entry.groomMesh=std::make_unique<ProtoMesh>(std::move(packed),entry.groom.generic_string(),false);
+      Log::i("characters: loaded strands for ",key,": ",meshlets," meshlets");
       }
-    std::sort(archives.begin(),archives.end());
-    if((resourceKind=="zen" || resourceKind=="models" || resourceKind=="fonts") && table.HasMember("loose_files")) {
-      if(!table["loose_files"].IsArray())
-        throw std::runtime_error("invalid loose file list");
-      for(const auto& entry:table["loose_files"].GetArray()) {
-        if(!entry.IsObject() || !entry.HasMember("path") || !entry["path"].IsString() ||
-           !entry.HasMember("size") || !entry["size"].IsUint64())
-          throw std::runtime_error("invalid loose file identity");
-        const std::string name(entry["path"].GetString(),entry["path"].GetStringLength());
-        const std::filesystem::path path(name);
-        if(name.empty() || path.is_absolute() || name.find('\0')!=std::string::npos ||
-           std::any_of(path.begin(),path.end(),[](const auto& part) { return part==".."; }))
-          throw std::runtime_error("invalid loose file path");
-        looseFiles.emplace_back(name,entry["size"].GetUint64());
+    catch(const std::exception& error) {
+      Log::e("characters: unable to load strands for ",key," from \"",entry.groom.string(),"\": ",error.what());
+      }
+    }
+  return entry.groomMesh.get();
+  }
+
+const ProtoMesh* Resources::loadCharacterHead(std::string_view instance) {
+  if(!CommandLine::inst().doHeroHead())
+    return nullptr;
+  std::string key(instance);
+  for(auto& c:key)
+    c=char(std::toupper(uint8_t(c)));
+  // any script instance the table lists: the hero and the npcs with heads of their own
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  const auto it=inst->characterHeads.find(key);
+  if(it==inst->characterHeads.end())
+    return nullptr;
+  auto& entry=it->second;
+  if(!entry.attempted) {
+    entry.attempted=true;
+    try {
+      auto head=std::make_unique<GltfHeadMesh>(loadGltfHeadMesh(entry.file));
+      // PK_VisualMorph retains source IDs; this does not install MMB animations.
+      PackedMesh packed(head->mesh,PackedMesh::PK_VisualMorph,true);
+      head->renderVertexIds=std::move(packed.verticesId);
+      auto mesh=std::make_unique<ProtoMesh>(std::move(packed),entry.file.generic_string());
+      Log::i("characters: loaded head for ",key,": ",head->parts.size()," parts, ",
+             head->mesh.positions.size()," vertices, ",head->targets.size()," targets");
+      if(!entry.face.empty()) {
+        try {
+          std::ifstream file(entry.face,std::ios::binary);
+          if(!file)
+            throw std::runtime_error("unable to open the file");
+          const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+          mesh->face=FaceProfile::parse(text,*head);
+          Log::i("characters: face profile for ",key,": ",mesh->face->anims.size()," anims, ",mesh->face->cues.size()," cues, ",
+                  mesh->face->leaks.size()," leaks");
+          }
+        catch(const std::exception& error) {
+          Log::e("characters: invalid face profile for ",key," in \"",entry.face.string(),"\": ",error.what(),
+                 "; the head shows no face anims");
+          }
         }
+      mesh->head=std::move(head);
+      entry.mesh=std::move(mesh);
       }
-    for(const auto& entry:table[entries].GetObject()) {
-      if(!entry.value.IsString())
-        throw std::runtime_error("invalid file entry");
-      const std::string key(entry.name.GetString(),entry.name.GetStringLength());
-      const std::string name(entry.value.GetString(),entry.value.GetStringLength());
-      if(key.empty() || name.empty() || key.find_first_of("/\\")!=std::string::npos ||
-         name.find_first_of("/\\")!=std::string::npos || key.find('\0')!=std::string::npos ||
-         name.find('\0')!=std::string::npos || name=="." || name=="..")
-        throw std::runtime_error("invalid file name");
-      files.emplace(key,name);
-      }
-    dir = folder;
-    }
-  catch(const std::exception& error) {
-    files.clear();
-    archives.clear();
-    looseFiles.clear();
-    throw std::runtime_error("base index "+folder.string()+": "+error.what());
-    }
-  }
-
-void Resources::BaseIndex::validate(const std::vector<std::pair<std::string,uintmax_t>>& mounted) {
-  if(dir.empty())
-    return;
-  enabled = archives==mounted;
-  if(enabled)
-    Log::i("base: ",files.size()," entries from \"",dir.string(),"\"");
-  else
-    throw std::runtime_error("mounted archives differ from base index: "+dir.string());
-  }
-
-void Resources::BaseIndex::validateLoose(const std::filesystem::path& game) {
-  if(!enabled)
-    return;
-  for(const auto& [path,size]:looseFiles) {
-    std::error_code error;
-    const auto actual=std::filesystem::file_size(game/path,error);
-    if(error || actual!=size) {
-      enabled=false;
-      throw std::runtime_error("loose file differs from base index: "+path);
+    catch(const std::exception& error) {
+      Log::e("characters: unable to load head for ",key," from \"",entry.file.string(),"\": ",error.what());
       }
     }
-  }
-
-std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
-  if(const char* dir = std::getenv("OPENGOTHIC_CONTENT")) {
-    if(dir[0]=='\0')
-      return {};
-    return worldContentDir(dir,world);
-    }
-  if(const char* home = std::getenv("HOME"))
-    return worldContentDir(std::filesystem::path(home)/".local/share/gothic-ai/content",world);
-  return {};
-  }
-
-void Resources::indexMeshOverrides() {
-  std::filesystem::path root;
-  if(const char* dir = std::getenv("OPENGOTHIC_CONTENT")) {
-    if(dir[0]=='\0')
-      return;
-    root = dir;
-    } else if(const char* home = std::getenv("HOME")) {
-    root = std::filesystem::path(home)/".local/share/gothic-ai/content";
-    } else {
-    return;
-    }
-  root /= "meshes";
-  std::ifstream file(root/"meshes.json",std::ios::binary);
-  if(!file)
-    return;
-  const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
-  rapidjson::Document table;
-  table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
-  if(table.HasParseError() || !table.IsObject()) {
-    Log::e("meshes: invalid meshes.json in \"",root.string(),"\"");
-    return;
-    }
-  for(const auto& entry:table.GetObject()) {
-    std::string key(entry.name.GetString(),entry.name.GetStringLength());
-    if(key.empty() || key.find('\0')!=std::string::npos || key.find_first_of("/\\")!=std::string::npos ||
-       std::filesystem::path(key).has_extension() || !entry.value.IsObject() ||
-       !entry.value.HasMember("glb") || !entry.value["glb"].IsString()) {
-      Log::e("meshes: invalid entry \"",key,"\"");
-      continue;
-      }
-    const auto& value = entry.value["glb"];
-    const std::string path(value.GetString(),value.GetStringLength());
-    const std::filesystem::path relative(path);
-    bool valid = !path.empty() && path.find('\0')==std::string::npos &&
-                 !relative.is_absolute() && !relative.has_root_name() && FileExt::hasExt(path,"GLB");
-    for(const auto& part:relative)
-      if(part=="..")
-        valid = false;
-    if(!valid) {
-      Log::e("meshes: invalid glb path for \"",key,"\"");
-      continue;
-      }
-    for(auto& c:key)
-      c = char(std::toupper(uint8_t(c)));
-    meshOverrides[std::move(key)] = {
-      (root/relative).lexically_normal(),
-      (std::filesystem::path("meshes")/relative).lexically_normal().generic_string()
-      };
-    }
-  Log::i("meshes: ",meshOverrides.size()," entries from \"",root.string(),"\"");
+  return entry.mesh.get();
   }
 
 bool Resources::meshReplacementLoaded(std::string_view name, MeshReplacementSource* source) {
@@ -1057,7 +519,8 @@ bool Resources::meshReplacementLoaded(std::string_view name, MeshReplacementSour
   return true;
   }
 
-asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replaced) {
+asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replaced, std::vector<std::vector<uint32_t>>* colors) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   if(replaced!=nullptr)
     *replaced = false;
@@ -1072,6 +535,14 @@ asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replace
       try {
         std::vector<uint8_t> bytes;
         auto mesh = loadGltfMesh(it->second.file,&bytes);
+        if(colors!=nullptr) {
+          try {
+            *colors = loadGltfMeshColors(bytes,mesh);
+            }
+          catch(const std::exception& error) {
+            Log::e("meshes: \"",it->second.file.string(),"\" is drawn without its vertex colour: ",error.what());
+            }
+          }
         if(inst->census)
           inst->census->replaced(key+".MRM",it->second.replacement);
         if(replaced!=nullptr)
@@ -1104,198 +575,136 @@ asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replace
   return {};
   }
 
-void Resources::indexMaterialMaps() {
-  std::filesystem::path root;
-  if(const char* dir = std::getenv("OPENGOTHIC_CONTENT")) {
-    if(dir[0]=='\0')
-      return;
-    root = dir;
-    } else if(const char* home = std::getenv("HOME")) {
-    root = std::filesystem::path(home)/".local/share/gothic-ai/content";
-    } else {
-    return;
-    }
-  root /= "materials";
-
-  std::ifstream file(root/"materials.json", std::ios::binary);
-  if(!file)
-    return;
-  const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-  rapidjson::Document table;
-  table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(), text.size());
-  if(table.HasParseError() || !table.IsObject()) {
-    Log::e("materials: invalid materials.json in \"",root.string(),"\"");
-    return;
-    }
-
-  for(auto& entry:table.GetObject()) {
-    if(!entry.value.IsObject()) {
-      Log::e("materials: invalid entry \"",entry.name.GetString(),"\"");
-      continue;
-      }
-    MaterialMapFiles maps;
-    auto path = [&](const char* field, std::string& out, std::string* replacement = nullptr) {
-      const auto it = entry.value.FindMember(field);
-      if(it==entry.value.MemberEnd())
-        return true;
-      if(!it->value.IsString())
-        return false;
-      const std::string name(it->value.GetString(), it->value.GetStringLength());
-      const auto relative = std::filesystem::path(name);
-      if(name.empty() || name.find('\0')!=std::string::npos || relative.is_absolute() || !FileExt::hasExt(name,"DDS"))
-        return false;
-      for(const auto& component:relative)
-        if(component=="..")
-          return false;
-      out = (root/relative).lexically_normal().string();
-      if(replacement!=nullptr)
-        *replacement = (std::filesystem::path("materials")/relative).lexically_normal().generic_string();
-      return true;
-      };
-    bool valid = path("albedo", maps.albedo, &maps.albedoReplacement) && path("normal", maps.normal) && path("orm", maps.orm);
-    if(const auto mode = entry.value.FindMember("antitile"); mode!=entry.value.MemberEnd()) {
-      if(!mode->value.IsString()) {
-        valid = false;
-        } else {
-        const std::string_view value(mode->value.GetString(), mode->value.GetStringLength());
-        if(value=="offset")
-          maps.antitile = Material::Antitile::Offset;
-        else if(value=="rotate")
-          maps.antitile = Material::Antitile::Rotate;
-        else if(value!="off")
-          valid = false;
-        }
-      }
-    if(const auto cell = entry.value.FindMember("antitile_cell"); cell!=entry.value.MemberEnd()) {
-      if(!cell->value.IsNumber()) {
-        valid = false;
-        } else {
-        const auto value = cell->value.GetDouble();
-        if(!std::isfinite(value) || value<=0 || value>std::numeric_limits<float>::max() ||
-           float(value)<=0 || !std::isfinite(1.f/float(value)))
-          valid = false;
-        else
-          maps.antitileCell = float(value);
-        }
-      }
-    if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
-      if(!scale->value.IsNumber()) {
-        valid = false;
-        } else {
-        const auto value = scale->value.GetDouble();
-        if(!std::isfinite(value) || std::abs(value)>std::numeric_limits<float>::max())
-          valid = false;
-        else
-          maps.scale = float(value);
-        }
-      }
-    if(!valid) {
-      Log::e("materials: invalid entry \"",entry.name.GetString(),"\"");
-      continue;
-      }
-    std::string key(entry.name.GetString(), entry.name.GetStringLength());
-    for(auto& c:key)
-      c = char(std::toupper(uint8_t(c)));
-    materialMaps[std::move(key)] = std::move(maps);
-    }
-  materialMapsPresent = !materialMaps.empty();
-  Log::i("materials: ",materialMaps.size()," entries from \"",root.string(),"\"");
-  }
-
-const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, bool normalMap) {
-  if(path.empty())
-    return nullptr;
-  // The normal map must be DXT5 even if the same file was already used as colour.
-  const auto key = (normalMap ? "normal:" : "color:")+path;
-  if(auto it = materialTextureCache.find(key); it!=materialTextureCache.end())
-    return it->second.get();
-  std::unique_ptr<Texture2d> texture;
+std::vector<Resources::MeshLevel> Resources::implLoadMeshLevels(std::string_view key, const MeshOverride& source,
+                                                                const asset::StaticMesh& main,
+                                                                bool colored) {
+  std::vector<MeshLevel> ret;
+  std::string summary;
   try {
-    Pixmap pm(path);
-    if(pm.format()!=TextureFormat::DXT5 && (normalMap || pm.format()!=TextureFormat::DXT1)) {
-      Log::e("materials: unsupported DDS format in \"",path,"\"");
-      } else {
-      texture = std::make_unique<Texture2d>(device().texture(pm,pm.mipCount()>1));
+    for(size_t i=0; i<source.levels.size(); ++i) {
+      const auto& [file,px] = source.levels[i];
+      const auto  level     = "level "+std::to_string(i+1)+" \""+file.string()+"\": ";
+      std::vector<uint8_t> bytes;
+      asset::StaticMesh mesh;
+      try {
+        mesh = loadGltfMesh(file,&bytes);
+        }
+      catch(const std::exception& error) {
+        throw std::runtime_error(level+error.what());
+        }
+      // the same materials, each once: a level is drawn by the mesh's buckets, a slice for each of them
+      std::vector<size_t> order(main.sub_meshes.size(),size_t(-1));
+      bool same = mesh.sub_meshes.size()==main.sub_meshes.size();
+      for(size_t r=0; same && r<main.sub_meshes.size(); ++r) {
+        for(size_t k=0; k<mesh.sub_meshes.size(); ++k)
+          if(mesh.sub_meshes[k].mat.texture==main.sub_meshes[r].mat.texture &&
+             std::find(order.begin(),order.end(),k)==order.end()) {
+            order[r] = k;
+            break;
+            }
+        same = order[r]!=size_t(-1) && !mesh.sub_meshes[order[r]].triangles.empty();
+        }
+      if(!same) {
+        std::string want, got;
+        for(auto& sm:main.sub_meshes)
+          want += (want.empty() ? "" : ", ")+sm.mat.texture;
+        for(auto& sm:mesh.sub_meshes)
+          got  += (got.empty()  ? "" : ", ")+sm.mat.texture;
+        throw std::runtime_error(level+"materials "+got+" are not the mesh's "+want);
+        }
+      GltfMeshColors colors;
+      try {
+        colors = loadGltfMeshColors(bytes,mesh);
+        }
+      catch(const std::exception& error) {
+        throw std::runtime_error(level+"vertex colour: "+error.what());
+        }
+      if(colors.empty()==colored)
+        throw std::runtime_error(level+(colored ? "no COLOR_0, the mesh has it" : "COLOR_0, the mesh has none"));
+
+      MeshLevel out;
+      out.px = px;
+      out.mesh.positions = std::move(mesh.positions);
+      out.mesh.normals   = std::move(mesh.normals);
+      out.mesh.materials = std::move(mesh.materials);
+      out.mesh.alpha_test = mesh.alpha_test;
+      out.mesh.bbox      = mesh.bbox;
+      out.mesh.obbox     = mesh.obbox;
+      size_t triangles = 0;
+      for(auto k:order) {
+        triangles += mesh.sub_meshes[k].triangles.size();
+        out.mesh.sub_meshes.push_back(std::move(mesh.sub_meshes[k]));
+        if(!colors.empty())
+          out.colors.push_back(std::move(colors[k]));
+        }
+      summary += (summary.empty() ? "" : ", ")+std::to_string(triangles)+" triangles under "+
+                 std::to_string(int(std::lround(px)))+" px";
+      ret.push_back(std::move(out));
       }
     }
-  catch(...) {
-    Log::e("materials: unable to load \"",path,"\"");
+  catch(const std::exception& error) {
+    Log::e("meshes: \"",key,"\" is drawn without its levels of detail: ",error.what());
+    return {};
     }
-  const auto ret = texture.get();
-  materialTextureCache.emplace(key,std::move(texture));
+  Log::i("meshes: \"",key,"\" levels of detail: ",summary);
   return ret;
   }
 
-Texture2d Resources::implLoadTextureUncached(std::string_view name, bool forceMips) {
-  if(isHeadless() || name.empty())
-    return Texture2d();
-
-  // a sharper texture of our own (scripts/hd-textures.sh) instead of the game's: mipmaps from the file
-  // (DDS) or made here (PNG)
-  if(!hdTextures.empty() && FileExt::hasExt(name,"TGA")) {
-    std::string key(name.substr(0,name.size()-4));
-    for(auto& c:key)
-      c = char(std::toupper(uint8_t(c)));
-    if(auto it = hdTextures.find(key); it!=hdTextures.end()) {
-      try {
-        Tempest::Pixmap pm(it->second);
-        auto texture = device().texture(pm,true);
-        if(census)
-          census->replaced(name,it->second);
-        return texture;
-        }
-      catch(...) {
-        Log::e("textures: unable to load \"",it->second,"\"");
-        }
+void Resources::implLoadMeshImpostor(std::string_view key, const MeshImpostor& source, StaticMesh& mesh) {
+  try {
+    const bool graphics = hasGraphicsDevice();
+    for(const auto& sub:mesh.sub) {
+      const auto& mat = sub.material;
+      if(!mat.isSolid() || (graphics && mat.tex==nullptr) || mat.hasFrameAnimation() ||
+         mat.hasUvAnimation() || mat.hasProjection() || mat.antitile!=Material::Antitile::Off ||
+         mat.emissive>0.f || mat.hair || mat.strand || mat.eye)
+        throw std::runtime_error("unsupported material "+sub.texName);
       }
-    }
-
-  if(baseTextures.enabled && FileExt::hasExt(name,"TGA")) {
-    std::string key(name.substr(0,name.size()-4));
-    for(auto& c:key)
-      c = char(std::toupper(static_cast<unsigned char>(c)));
-    if(const auto it = baseTextures.files.find(key); it!=baseTextures.files.end()) {
+    if(graphics && !device().properties().hasSamplerFormat(TextureFormat::DXT5))
+      throw std::runtime_error("the graphics device cannot sample DXT5 atlases");
+    StaticMesh::Impostor stage;
+    for(size_t i=0; i<source.files.size(); ++i) {
+      const auto& file = source.files[i];
       try {
-        const auto path = baseTextures.dir/it->second;
-        auto decoded = decodeBaseTexture(path,forceMips);
-        auto texture = device().texture(decoded.pixmap,decoded.useMipmap);
-        if(!texture.isEmpty()) {
-          if(census)
-            census->replaced(name,"base/textures/"+it->second);
-          return texture;
-          }
-        Log::e("base: unable to load texture \"",it->second,"\"");
+        Pixmap pixmap(file.u16string());
+        if(pixmap.format()!=TextureFormat::DXT5 || pixmap.w()!=MeshLevels::ImpostorAtlasSize ||
+           pixmap.h()!=MeshLevels::ImpostorAtlasSize || pixmap.mipCount()!=MeshLevels::ImpostorMipCount)
+          throw std::runtime_error("expected a 1536 x 1536 DXT5 DDS with five mip levels");
+        if(graphics)
+          stage.textures[i] = device().texture(pixmap);
         }
       catch(const std::exception& error) {
-        Log::e("base: unable to load texture \"",it->second,"\": ",error.what());
+        throw std::runtime_error(file.string()+": "+error.what());
         }
       }
+    stage.px = source.px;
+    mesh.impostor = std::move(stage);
     }
-
-  Log::e("base: unable to load texture \"",name,"\"");
-  if(census) census->missing(name,"texture unavailable");
-  return Texture2d();
-  }
-
-Resources::TextureData Resources::decodeBaseTexture(const std::filesystem::path& path, bool forceMips) {
-  if(FileExt::hasExt(path.string(),"PNG"))
-    return {Tempest::Pixmap(path.string()),true}; // device.texture(pm) generates mips for non-DXT originals.
-  TextureData decoded{Tempest::Pixmap(path.string())};
-  decoded.useMipmap = forceMips || decoded.pixmap.mipCount()>1;
-  return decoded;
+  catch(const std::exception& error) {
+    Log::e("meshes: the impostor of \"",key,"\" is not used: ",error.what());
+    return;
+    }
+  Log::i("meshes: \"",key,"\" impostor under ",source.px," px");
   }
 
 ProtoMesh* Resources::implLoadMesh(std::string_view name) {
+  LoadProbe::Requests::add(0,name);
+  LoadProbe::Vobs::Scope probe("mesh_hit");
   if(name.size()==0)
     return nullptr;
 
   auto cname = std::string(name);
   auto it    = aniMeshCache.find(cname);
+  if(LoadProbe::enabled())
+    LoadProbe::Vobs::mesh(cname,it!=aniMeshCache.end());
   if(it!=aniMeshCache.end())
     return it->second.get();
 
+  probe.rename("mesh_miss");
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Model);
   auto  t   = implLoadMeshMain(cname);
   auto  ret = t.get();
+  if(LoadProbe::enabled() && ret) LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Model,ret->probeCpuBytes());
   aniMeshCache[cname] = std::move(t);
   if(ret==nullptr)
     Log::e("unable to load mesh \"",cname,"\"");
@@ -1304,6 +713,7 @@ ProtoMesh* Resources::implLoadMesh(std::string_view name) {
 
 bool Resources::replaceModelMesh(asset::ModelMesh& model, std::unique_ptr<Skeleton>& skeleton,
                                  std::string_view visual, std::string_view meshFile) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   auto key = std::string(visual.substr(0,visual.find_last_of('.')));
   for(auto& c:key)
     c = char(std::toupper(uint8_t(c)));
@@ -1379,7 +789,7 @@ bool Resources::replaceModelMesh(asset::ModelMesh& model, std::unique_ptr<Skelet
           throw std::runtime_error("non-finite local attachment position");
         }
       // Inverse-transpose of the model-to-local transform is bind^T.
-      auto normal = [&bind](zenkit::Vec3& n) {
+      auto normal = [&bind](asset::Vec3& n) {
         const double x = double(bind[0][0])*n.x + double(bind[0][1])*n.y + double(bind[0][2])*n.z;
         const double y = double(bind[1][0])*n.x + double(bind[1][1])*n.y + double(bind[1][2])*n.z;
         const double z = double(bind[2][0])*n.x + double(bind[2][1])*n.y + double(bind[2][2])*n.z;
@@ -1434,13 +844,80 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
     FileExt::exchangeExt(name,"3DS","MRM");
 
     bool replaced = false;
-    auto zmsh = loadVisualMesh(name,&replaced);
+    GltfMeshColors colors;
+    auto zmsh = loadVisualMesh(name,&replaced,&colors);
 
     if(zmsh.sub_meshes.empty())
       return nullptr;
 
-    PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced);
-    return std::unique_ptr<ProtoMesh>{new ProtoMesh(std::move(packed),name)};
+    PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced,colors.empty() ? nullptr : &colors);
+    std::optional<PackedMesh> visual;
+    const MeshOverride* source = nullptr;
+    std::string key;
+    if(replaced) {
+      key = name.substr(0,name.size()-4);
+      for(auto& c:key)
+        c = char(std::toupper(uint8_t(c)));
+      const auto it = meshOverrides.find(key);
+      if(it!=meshOverrides.end())
+        source = &it->second;
+      if(source!=nullptr && source->hasLevels) {
+        if(!source->levels.empty() && MeshLevels::enabled())
+          for(auto& level:implLoadMeshLevels(key,*source,zmsh,!colors.empty()))
+            packed.addLevel(level.mesh,level.px,level.colors.empty() ? nullptr : &level.colors);
+        }
+      else if(source!=nullptr) {
+        const auto enabled = [](const char* env, const char* setting) {
+          const char* value = std::getenv(env);
+          const std::string_view flag = value!=nullptr ? value : "";
+          const bool ini = !Settings::exists() || !Settings::has("INTERNAL",setting) ||
+                           Settings::getI("INTERNAL",setting)!=0;
+          return flag=="1" || flag=="levels" || (flag!="0" && ini);
+          };
+        if(enabled("OPENGOTHIC_CLUSTER_LOD","clusterLod") &&
+           enabled("OPENGOTHIC_CLUSTER_LOD_MESHES","clusterLodMeshes")) {
+          auto sidecar = source->file;
+          sidecar.replace_extension(".clod");
+          try {
+            if(std::filesystem::is_regular_file(sidecar)) {
+              std::vector<uint8_t> locked(zmsh.sub_meshes.size());
+              bool rigid = true;
+              for(size_t i=0; i<locked.size(); ++i) {
+                const auto& m = zmsh.sub_meshes[i].mat;
+                std::string material = m.texture;
+                for(auto& c:material)
+                  c = char(std::toupper(uint8_t(c)));
+                if(const auto found = materialMaps.find(material); found!=materialMaps.end()) {
+                  locked[i] = uint8_t(found->second.twoSided!=Material::TwoSided::Off);
+                  rigid &= !found->second.foliage.on && !found->second.strand;
+                  }
+                }
+              if(rigid) {
+                auto graph = MeshClusterLod::read(source->file,source->sourceSize,source->sourceCrc32,zmsh,locked);
+                if(!graph) {
+                  Log::e("meshes: cluster hierarchy for \"",key,"\" is not used: stale or invalid .clod file");
+                  }
+                else if(std::ranges::any_of(graph->clusters, [](const auto& c) { return c.level!=0; })) {
+                  visual.emplace(zmsh,*graph);
+                  Log::i("[cluster-lod] mesh ",key,": ",uint64_t(graph->clusters.size())," clusters");
+                  }
+                }
+              }
+            }
+          catch(const std::exception& error) {
+            Log::e("meshes: cluster hierarchy for \"",key,"\" is not used: ",error.what());
+            }
+          }
+        }
+      }
+    auto ret = std::make_unique<ProtoMesh>(std::move(packed),name,true,visual ? &*visual : nullptr);
+    auto& mesh = ret->attach[0];
+    mesh.ownMesh = replaced;
+    if(source!=nullptr && !mesh.levels.empty() && source->impostor.px>0.f && MeshLevels::impostorsEnabled())
+      implLoadMeshImpostor(key,source->impostor,mesh);
+    if(source!=nullptr && !source->hierarchy.empty() && mesh.clusterLevels.empty() && TreeBough::enabled())
+      TreeBough::attach(mesh,source->hierarchy);
+    return ret;
     }
 
   if(FileExt::hasExt(name,"MMS") || FileExt::hasExt(name,"MMB")) {
@@ -1558,7 +1035,8 @@ PfxEmitterMesh* Resources::implLoadEmiterMesh(std::string_view name) {
 
   auto& ret = emiMeshCache[cname];
 
-  if(FileExt::hasExt(cname,"3DS")) {
+  // a static mesh by its visual's name (.3DS) or by its ProtoMesh's (.MRM: an item's mesh, graphics/itemview)
+  if(FileExt::hasExt(cname,"3DS") || FileExt::hasExt(cname,"MRM")) {
     FileExt::exchangeExt(cname,"3DS","MRM");
 
     bool replaced = false;
@@ -1568,6 +1046,17 @@ PfxEmitterMesh* Resources::implLoadEmiterMesh(std::string_view name) {
       return nullptr;
 
     PackedMesh packed(zmsh,PackedMesh::PK_Visual,replaced);
+    ret = std::unique_ptr<PfxEmitterMesh>(new PfxEmitterMesh(packed));
+    return ret.get();
+    }
+
+  if(FileExt::hasExt(cname,"MMS") || FileExt::hasExt(cname,"MMB")) {
+    // a morph mesh (a bow): its points at rest
+    FileExt::exchangeExt(cname,"MMS","MMB");
+    auto zmm = loadMorphData(cname);
+    if(zmm.mesh.sub_meshes.empty())
+      return nullptr;
+    PackedMesh packed(zmm.mesh,PackedMesh::PK_Visual);
     ret = std::unique_ptr<PfxEmitterMesh>(new PfxEmitterMesh(packed));
     return ret.get();
     }
@@ -1630,8 +1119,7 @@ std::unique_ptr<Animation> Resources::implLoadAnimation(std::string name) {
   if(name.size()<4)
     return nullptr;
 
-  if(Gothic::inst().version().game==2)
-    FileExt::exchangeExt(name,"MDS","MSB");
+  FileExt::exchangeExt(name,"MDS","MSB");
 
   if(FileExt::hasExt(name,"MSB") || FileExt::hasExt(name,"MDS")) {
     asset::ModelScript own {};
@@ -1684,31 +1172,18 @@ DmResult Resources::readGkMusic(std::string_view name, const char* kind, std::ve
 
 std::vector<uint8_t> Resources::readDxMusic(const std::vector<std::u16string>& paths, const char16_t* name,
                                           const char* kind) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
   for(const auto& path:paths) {
-    const auto file = FileUtil::nestedPath(path,{name},Dir::FT_File);
-    if(!FileUtil::exists(file))
-      continue;
-    const auto relative = std::filesystem::path(file).lexically_relative(std::filesystem::path(CommandLine::inst().rootPath()))
-                                                     .lexically_normal().generic_string();
-    const auto* source = baseMusic.findDx8(relative);
-    if(source==nullptr) {
-      const auto reason = "music data: selected host file is not indexed: "+relative;
-      if(census) census->missing(Tempest::TextCodec::toUtf8(name),reason);
-      Log::e("base: ",reason);
-      throw std::runtime_error(reason);
-      }
+    auto file=std::filesystem::path(path)/name;
+    if(file.is_absolute()) file=file.lexically_relative(std::filesystem::path(CommandLine::inst().rootPath()));
+    const auto* source=inst->baseMusic.findDx8(file.lexically_normal().generic_string());
+    if(source==nullptr) continue;
     if(source->dx8.failure)
       throw std::runtime_error(*source->dx8.failure);
-    return readMusicRecord("dx8",Tempest::TextCodec::toUtf8(name),kind,*source);
+    return inst->readMusicRecord("dx8",Tempest::TextCodec::toUtf8(name),kind,*source);
     }
+  if(inst->census) inst->census->missing(Tempest::TextCodec::toUtf8(name),"music data: missing from base index");
   throw std::runtime_error("file not found");
-  }
-
-Dx8::PatternList Resources::implLoadDxMusic(std::string_view name) {
-  if(isHeadless())
-    return Dx8::PatternList();
-  auto u = Tempest::TextCodec::toUtf16(name);
-  return dxMusic->load(u.c_str());
   }
 
 DmSegment* Resources::implLoadMusicSegment(char const* name) {
@@ -1727,7 +1202,7 @@ Tempest::Sound Resources::implLoadSoundBuffer(std::string_view name) {
   if(name.empty())
     return Tempest::Sound();
 
-  auto& external = Gothic::inst().externalSoundFn;
+  auto& external = GameServices::inst().externalSoundFn;
   if(!(external && external(name,fBuff))) {
     const auto* source = baseAudio.find(name);
     if(source==nullptr)
@@ -1835,159 +1310,8 @@ GthFont &Resources::implLoadFont(std::string_view name, FontType type, const flo
   return *f;
   }
 
-Texture2d Resources::loadTextureUncached(std::string_view name, bool forceMips) {
-  return inst->implLoadTextureUncached(name, forceMips);
-  }
-
-const Texture2d* Resources::loadTexture(std::string_view name, bool forceMips) {
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  return inst->implLoadTexture(name,forceMips);
-  }
-
-const Texture2d* Resources::loadTexture(Tempest::Color color) {
-  if(isHeadless() || color==Color())
-    return nullptr;
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  auto& cache = inst->pixCache;
-  auto it = cache.find(color);
-  if(it!=cache.end())
-    return it->second.get();
-
-  uint8_t iv[4] = { uint8_t(255.f*color.r()), uint8_t(255.f*color.g()), uint8_t(255.f*color.b()), uint8_t(255.f*color.a()) };
-  Pixmap p2(1,1,TextureFormat::RGBA8);
-  std::memcpy(p2.data(),iv,4);
-
-  auto t       = std::make_unique<Texture2d>(device().texture(p2));
-  auto ret     = t.get();
-  cache[color] = std::move(t);
-  return ret;
-  }
-
-bool Resources::hasTextureVariant(std::string_view name) {
-  return name.find("_V0")!=std::string_view::npos || name.find("_C0")!=std::string_view::npos;
-  }
-
-std::string Resources::textureVariantName(std::string_view name, int32_t iv, int32_t ic) {
-  std::string ret(name);
-  // Preserve the original long-name fallback and first-tag substitution.
-  if(name.size()>=128)
-    return ret;
-  if(const auto at = ret.find("_V0"); at!=std::string::npos)
-    ret.replace(at+1,2,"V"+std::to_string(iv));
-  if(const auto at = ret.find("_C0"); at!=std::string::npos)
-    ret.replace(at+1,2,"C"+std::to_string(ic));
-  return ret;
-  }
-
-const Texture2d *Resources::loadTexture(std::string_view name, int32_t iv, int32_t ic) {
-  return loadMaterialAlbedo(textureVariantName(name,iv,ic));
-  }
-
-bool Resources::hasTexture(std::string_view name) const {
-  if(!FileExt::hasExt(name,"TGA")) return false;
-  std::string key(name.substr(0,name.size()-4));
-  for(auto& c:key) c=char(std::toupper(static_cast<unsigned char>(c)));
-  return hdTextures.count(key)!=0 || baseTextures.files.count(key)!=0;
-  }
-
-std::vector<const Texture2d*> Resources::loadTextureAnim(std::string_view name) {
-  std::vector<const Texture2d*> ret;
-  if(name.find("_A0")==std::string::npos &&
-     name.find("_a0")==std::string::npos)
-    return ret;
-
-  for(int id=0; ; ++id) {
-    size_t at = 0;
-    char   buf[128]={};
-    for(size_t i=0;i<name.size();++i) {
-      if(i+2<name.size() && name[i]=='_' && (name[i+1]=='A' || name[i+1]=='a') && name[i+2]=='0'){
-        at += size_t(std::snprintf(buf+at,sizeof(buf)-at,"_A%d",id));
-        i+=2;
-        } else {
-        buf[at] = name[i];
-        if('a'<=buf[at] && buf[at]<='z')
-          buf[at] = char(buf[at]+'A'-'a');
-        at++;
-        }
-      if(at>sizeof(buf))
-        return ret;
-      }
-   auto t = inst->hasTexture(buf) ? loadTexture(buf) : nullptr;
-    if(t==nullptr) {
-      string_frm buf2(buf,".TGA");
-      t = inst->hasTexture(buf2) ? loadTexture(buf2) : nullptr;
-      if(t==nullptr)
-        return ret;
-      }
-    ret.push_back(t);
-    }
-  }
-
-Texture2d Resources::loadTexturePm(const Pixmap &pm) {
-  if(isHeadless())
-    return Texture2d();
-  if(pm.isEmpty()) {
-    Pixmap p2(1,1,TextureFormat::R8);
-    std::memset(p2.data(),0,1);
-    return device().texture(p2);
-    }
-  return device().texture(pm);
-  }
-
 Material Resources::loadMaterial(const asset::Material& src, bool enableAlphaTest, bool requireAlphaTest) {
   return Material(src,enableAlphaTest,requireAlphaTest);
-  }
-
-Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
-  if(isHeadless() || name.empty())
-    return {};
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  if(inst->materialMaps.empty())
-    return {};
-  std::string key(name);
-  for(auto& c:key)
-    c = char(std::toupper(uint8_t(c)));
-  const auto it = inst->materialMaps.find(key);
-  if(it==inst->materialMaps.end())
-    return {};
-  const auto& files = it->second;
-  MaterialMaps ret;
-  ret.albedo = inst->implLoadMaterialTexture(files.albedo,false);
-  ret.normal = inst->implLoadMaterialTexture(files.normal,true);
-  ret.orm    = inst->implLoadMaterialTexture(files.orm,false);
-  ret.scale  = files.scale;
-  ret.antitileCell = files.antitileCell;
-  ret.antitile = files.antitile;
-  ret.present = true;
-  ret.hasAlbedo = !files.albedo.empty();
-  return ret;
-  }
-
-const Texture2d* Resources::loadMaterialAlbedo(std::string_view name) {
-  const auto maps = loadMaterialMaps(name);
-  if(!maps.hasAlbedo)
-    return loadTexture(name);
-  // A broken replacement must not silently open the original texture.
-  if(maps.albedo==nullptr)
-    return &fallbackTexture();
-  materialAlbedoReplaced(name);
-  return maps.albedo;
-  }
-
-void Resources::materialAlbedoReplaced(std::string_view name) {
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  if(!inst->census)
-    return;
-  std::string key(name);
-  for(auto& c:key)
-    c = char(std::toupper(uint8_t(c)));
-  const auto it = inst->materialMaps.find(key);
-  if(it!=inst->materialMaps.end() && !it->second.albedoReplacement.empty())
-    inst->census->replaced(name,it->second.albedoReplacement);
-  }
-
-bool Resources::materialMapsEnabled() {
-  return inst!=nullptr && inst->materialMapsPresent;
   }
 
 const ProtoMesh* Resources::loadMesh(std::string_view name) {
@@ -2011,7 +1335,23 @@ const Skeleton* Resources::loadSkeleton(std::string_view name) {
   return s->skeleton.get();
   }
 
+const RenderRig* Resources::loadRenderRig(std::string_view name) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  return inst->renderRigs ? inst->renderRigs->rig(name) : nullptr;
+  }
+
+const RenderRig* Resources::renderRigOfMesh(std::string_view mesh) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  return inst->renderRigs ? inst->renderRigs->rigOfMesh(mesh) : nullptr;
+  }
+
+std::string Resources::bodyOfVariant(std::string_view body, int32_t variant) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  return inst->renderRigs ? inst->renderRigs->bodyOf(body,variant) : std::string();
+  }
+
 const Animation* Resources::loadAnimation(std::string_view name) {
+  LoadProbe::Requests::add(1,name);
   auto cname = std::string(name);
 
   std::lock_guard<std::recursive_mutex> g(inst->sync);
@@ -2019,29 +1359,50 @@ const Animation* Resources::loadAnimation(std::string_view name) {
   auto it=cache.find(cname);
   if(it!=cache.end())
     return it->second.get();
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Animation);
   auto t       = inst->implLoadAnimation(cname);
   auto ret     = t.get();
+  if(LoadProbe::enabled() && ret) LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Animation,ret->probeCpuBytes());
   cache[cname] = std::move(t);
   return ret;
   }
 
 std::filesystem::path Resources::baseModelFile(std::string_view name) {
-  const auto separator = name.find_last_of("/\\");
-  std::string key(separator==std::string_view::npos ? name : name.substr(separator+1));
-  for(auto& c:key)
-    c = char(std::toupper(static_cast<unsigned char>(c)));
-  const auto found = inst->baseModels.files.find(key);
+  const auto found = inst->baseModels.files.find(modelKey(name));
   if(found==inst->baseModels.files.end())
     return {};
   return inst->baseModels.dir/found->second;
   }
 
-bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& out) {
+template<class T>
+bool Resources::loadModelRecord(std::string_view name, T& out, T (*read)(const std::filesystem::path&)) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
+  const auto content = inst->contentModels.find(modelKey(name));
+  if(content!=inst->contentModels.end()) {
+    try {
+      auto record = read(content->second);
+      if constexpr(std::is_same_v<T,asset::ModelAnimation>) {
+        if(record.frame_count==0 || record.node_count==0 || record.fps<=0 ||
+           record.node_indices.size()!=record.node_count ||
+           uint64_t(record.frame_count)*record.node_count!=record.samples.size() ||
+           std::any_of(record.node_indices.begin(),record.node_indices.end(),[](uint32_t node) {
+             return node>=MAX_NUM_SKELETAL_NODES;
+             }))
+          throw std::runtime_error("invalid animation frames, nodes, samples or fps");
+        }
+      out = std::move(record);
+      if(inst->census) inst->census->replaced(name,content->second.generic_string());
+      return true;
+      }
+    catch(const std::exception& error) {
+      Log::e("content models: skipping \"",content->second.string(),"\": ",error.what());
+      }
+    }
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
   try {
-    out = ModelData::readHierarchy(file);
+    out = read(file);
     }
   catch(const std::exception& error) {
     if(inst->census) inst->census->missing(name,error.what());
@@ -2049,39 +1410,23 @@ bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& 
     }
   if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
   return true;
+  }
+
+bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& out) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Skeleton);
+  return loadModelRecord(name,out,ModelData::readHierarchy);
   }
 
 bool Resources::loadModelMeshData(std::string_view name, asset::ModelMesh& out) {
-  const auto file = baseModelFile(name);
-  if(file.empty())
-    return false;
-  try {
-    out = ModelData::readMesh(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
-  return true;
+  return loadModelRecord(name,out,ModelData::readMesh);
   }
 
 bool Resources::loadModelData(std::string_view name, asset::Model& out) {
-  const auto file = baseModelFile(name);
-  if(file.empty())
-    return false;
-  try {
-    out = ModelData::readModel(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
-  return true;
+  return loadModelRecord(name,out,ModelData::readModel);
   }
 
 bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2093,50 +1438,53 @@ bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& o
     throw;
     }
   if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
+  const auto content = inst->contentModels.find(modelKey(name));
+  if(content!=inst->contentModels.end()) {
+    try {
+      auto overlay = ModelData::readScriptOverlay(content->second);
+      for(const auto& animation:overlay.animations)
+        if(std::any_of(out.aliases.begin(),out.aliases.end(),[&](const auto& alias) { return alias.name==animation.name; }))
+          throw std::runtime_error("overlay animation changes kind: "+animation.name);
+      for(const auto& alias:overlay.aliases)
+        if(std::any_of(out.animations.begin(),out.animations.end(),[&](const auto& animation) { return animation.name==alias.name; }))
+          throw std::runtime_error("overlay alias changes kind: "+alias.name);
+      const auto merge = [](auto& base, auto& additions) {
+        for(auto& entry:additions) {
+          const auto found = std::find_if(base.begin(),base.end(),[&](const auto& old) {
+            return old.name==entry.name;
+            });
+          if(found==base.end()) base.push_back(std::move(entry));
+          else *found = std::move(entry);
+          }
+        };
+      merge(out.animations,overlay.animations);
+      merge(out.aliases,overlay.aliases);
+      if(inst->census) inst->census->replaced(name,content->second.generic_string());
+      }
+    catch(const std::exception& error) {
+      Log::e("content models: skipping \"",std::filesystem::absolute(content->second).string(),"\": ",error.what());
+      }
+    }
   return true;
   }
 
 bool Resources::loadAnimationData(std::string_view name, asset::ModelAnimation& out) {
-  const auto file = baseModelFile(name);
-  if(file.empty())
-    return false;
-  try {
-    out = ModelData::readAnimation(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
-  return true;
+  LoadProbe::Requests::add(1,name);
+  return loadModelRecord(name,out,ModelData::readAnimation);
   }
 
 asset::MorphMesh Resources::loadMorphData(std::string_view name) {
-  const auto file = baseModelFile(name);
-  if(file.empty()) {
+  asset::MorphMesh out;
+  if(!loadModelRecord(name,out,ModelData::readMorph)) {
     if(inst->census) inst->census->missing(name,"missing from base index");
     throw std::runtime_error("failed to open resource: " + std::string(name));
     }
-  asset::MorphMesh out;
-  try {
-    out = ModelData::readMorph(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
   return out;
   }
 
 Tempest::Sound Resources::loadSoundBuffer(std::string_view name) {
   std::lock_guard<std::recursive_mutex> g(inst->sync);
   return inst->implLoadSoundBuffer(name);
-  }
-
-Dx8::PatternList Resources::loadDxMusic(std::string_view name) {
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
-  return inst->implLoadDxMusic(name);
   }
 
 DmSegment* Resources::loadMusicSegment(char const* name) {
@@ -2149,9 +1497,9 @@ const ProtoMesh* Resources::decalMesh(const asset::VisualDecal& decal) {
   return inst->implDecalMesh(decal);
   }
 
-const Resources::VobTree* Resources::loadVobBundle(std::string_view name) {
+const Resources::VobTree* Resources::loadVobBundle(std::string_view name, bool (*readLayer)(VobTree&,std::string_view)) {
   std::lock_guard<std::recursive_mutex> g(inst->sync);
-  return inst->implLoadVobBundle(name);
+  return inst->implLoadVobBundle(name,readLayer);
   }
 
 void Resources::resetRecycled(uint8_t fId) {
@@ -2163,6 +1511,9 @@ void Resources::resetRecycled(uint8_t fId) {
   inst->recycled[fId].zb.clear();
   inst->recycled[fId].arr.clear();
   inst->recycled[fId].rtas.clear();
+  inst->recycled[fId].lifetime.clear();
+  inst->recycled[fId].textures.clear();
+  inst->recycled[fId].textureBytes=0;
   }
 
 void Resources::recycle(Tempest::DescriptorArray &&arr) {
@@ -2207,22 +1558,29 @@ void Resources::recycle(Tempest::AccelerationStructure&& rtas) {
   inst->recycled[inst->recycledId].rtas.emplace_back(std::move(rtas));
   }
 
-const Resources::VobTree* Resources::implLoadVobBundle(std::string_view filename) {
+void Resources::recycle(std::shared_ptr<void>&& lifetime) {
+  if(!lifetime)
+    return;
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  inst->recycled[inst->recycledId].lifetime.emplace_back(std::move(lifetime));
+  }
+
+const Resources::VobTree* Resources::implLoadVobBundle(std::string_view filename, bool (*readLayer)(VobTree&,std::string_view)) {
   auto cname = std::string(filename);
   auto i     = zenCache.find(cname);
   if(i!=zenCache.end())
     return i->second.get();
 
   std::vector<std::shared_ptr<asset::VirtualObject>> bundle;
-  try {
-    WorldData::ZenFile base;
-    if(loadBaseZen(cname,"world",base)) {
-      bundle = std::move(base.vobs);
-
+  const bool overridden=readLayer(bundle,filename);
+  if(!overridden) {
+    try {
+      WorldData::ZenFile base;
+      if(loadBaseZen(cname,"world",base)) bundle=std::move(base.vobs);
       }
-    }
-  catch(...) {
-    Log::e("unable to load Zen-file: \"",cname,"\"");
+    catch(...) {
+      Log::e("unable to load Zen-file: \"",cname,"\"");
+      }
     }
 
   auto ret = zenCache.insert(std::make_pair(filename,std::make_unique<VobTree>(std::move(bundle))));
@@ -2364,4 +1722,21 @@ Tempest::VertexBuffer<Resources::Vertex> Resources::sphere(int passCount, float 
     }
 
   return device().vbo(r);
+  }
+
+
+void Resources::probeMemory(std::string_view stage) {
+  if(!LoadProbe::enabled()) return;
+  std::lock_guard<std::recursive_mutex> lock(inst->sync);
+  size_t models=0,npcModels=0,skeletons=0,animations=0;
+  for(const auto& [name,mesh]:inst->aniMeshCache) {
+    if(!mesh) continue;
+    models+=mesh->probeCpuBytes();
+    if(LoadProbe::Requests::npcModels.count(name)) npcModels+=mesh->probeCpuBytes();
+    if(mesh->skeleton) skeletons+=mesh->skeleton->probeCpuBytes();
+    }
+  for(const auto& [name,animation]:inst->animCache)
+    if(animation) animations+=animation->probeCpuBytes();
+  for(const auto& [name,bytes]:{std::pair{"model_cpu",models},std::pair{"npc_model_cpu",npcModels},std::pair{"skeleton_cpu",skeletons},std::pair{"animation_cpu",animations}})
+    Tempest::Log::i("[loadprobe-owner] stage=",stage," name=",name," bytes=",bytes);
   }

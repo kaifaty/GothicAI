@@ -1,0 +1,189 @@
+# The hero or an NPC standing still on a walkable slope must not slide while an
+# armed stance sways its root (S_1HRUN, S_BOWRUN): CharacterVirtual's static
+# friction for a standing body. Each stance is prepared on the same slope,
+# drawn without the draw animation, then measured for 8 s with no input.
+# Report: reports/physics/2026-11-03-armed-idle-slide/README.md
+seed 73013
+cheat god
+set time 12 0
+character on
+npccharacter on
+release all
+animinfo S_RUN S_FISTRUN S_1HRUN S_2HRUN S_BOWRUN
+
+# hero, steeper, none
+character idle hero steeper
+wait 500
+wait 1800
+character idle begin
+character idle snapshot hero-steeper-none-start
+wait 8000
+character idle snapshot hero-steeper-none-end
+
+# hero, steeper, fist
+character idle hero steeper
+wait 500
+character idle weapon fist
+wait 1800
+character idle begin
+character idle snapshot hero-steeper-fist-start
+wait 8000
+character idle snapshot hero-steeper-fist-end
+
+# hero, steeper, 1h
+character idle hero steeper
+wait 500
+character idle weapon 1h
+wait 1800
+character idle begin
+character idle snapshot hero-steeper-1h-start
+wait 8000
+character idle snapshot hero-steeper-1h-end
+
+# hero, steeper, 2h
+character idle hero steeper
+wait 500
+character idle weapon 2h
+wait 1800
+character idle begin
+character idle snapshot hero-steeper-2h-start
+wait 8000
+character idle snapshot hero-steeper-2h-end
+
+# hero, steeper, bow
+character idle hero steeper
+wait 500
+character idle weapon bow
+wait 1800
+character idle begin
+character idle snapshot hero-steeper-bow-start
+wait 8000
+character idle snapshot hero-steeper-bow-end
+
+# hero, gentle, none
+character idle hero gentle
+wait 500
+wait 1800
+character idle begin
+character idle snapshot hero-gentle-none-start
+wait 8000
+character idle snapshot hero-gentle-none-end
+
+# hero, gentle, fist
+character idle hero gentle
+wait 500
+character idle weapon fist
+wait 1800
+character idle begin
+character idle snapshot hero-gentle-fist-start
+wait 8000
+character idle snapshot hero-gentle-fist-end
+
+# hero, gentle, 1h
+character idle hero gentle
+wait 500
+character idle weapon 1h
+wait 1800
+character idle begin
+character idle snapshot hero-gentle-1h-start
+wait 8000
+character idle snapshot hero-gentle-1h-end
+
+# hero, gentle, 2h
+character idle hero gentle
+wait 500
+character idle weapon 2h
+wait 1800
+character idle begin
+character idle snapshot hero-gentle-2h-start
+wait 8000
+character idle snapshot hero-gentle-2h-end
+
+# hero, gentle, bow
+character idle hero gentle
+wait 500
+character idle weapon bow
+wait 1800
+character idle begin
+character idle snapshot hero-gentle-bow-start
+wait 8000
+character idle snapshot hero-gentle-bow-end
+
+# npc, steeper, none
+character idle npc steeper
+wait 500
+wait 1800
+character idle begin
+character idle snapshot npc-steeper-none-start
+wait 8000
+character idle snapshot npc-steeper-none-end
+
+# npc, steeper, fist
+character idle npc steeper
+wait 500
+character idle weapon fist
+wait 1800
+character idle begin
+character idle snapshot npc-steeper-fist-start
+wait 8000
+character idle snapshot npc-steeper-fist-end
+
+# npc, steeper, 1h
+character idle npc steeper
+wait 500
+character idle weapon 1h
+wait 1800
+character idle begin
+character idle snapshot npc-steeper-1h-start
+wait 8000
+character idle snapshot npc-steeper-1h-end
+
+# npc, steeper, 2h
+character idle npc steeper
+wait 500
+character idle weapon 2h
+wait 1800
+character idle begin
+character idle snapshot npc-steeper-2h-start
+wait 8000
+character idle snapshot npc-steeper-2h-end
+
+# npc, steeper, bow
+character idle npc steeper
+wait 500
+character idle weapon bow
+wait 1800
+character idle begin
+character idle snapshot npc-steeper-bow-start
+wait 8000
+character idle snapshot npc-steeper-bow-end
+
+# clip: the hero with 1h on the steeper slope, 10 s at rest, camera beside the slope
+character idle hero steeper
+wait 500
+character idle weapon 1h
+# world yaw across the downhill direction of the steeper site
+cam world 320 70 230.868
+wait 1500
+cam hold
+character idle begin
+character idle snapshot clip-1h-start
+rec armed-idle-1h
+wait 10000
+stop
+character idle snapshot clip-1h-end
+
+# clip: the hero with bow on the steeper slope, 10 s at rest, camera beside the slope
+character idle hero steeper
+wait 500
+character idle weapon bow
+# world yaw across the downhill direction of the steeper site
+cam world 320 70 230.868
+wait 1500
+cam hold
+character idle begin
+character idle snapshot clip-bow-start
+rec armed-idle-bow
+wait 10000
+stop
+character idle snapshot clip-bow-end

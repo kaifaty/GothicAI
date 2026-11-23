@@ -1,0 +1,128 @@
+{
+ "format": 1,
+ "add": [
+  {
+   "key": "hand-torch",
+   "kind": "mesh",
+   "visual": "ITLS_TORCHBURNED_01",
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "yaw_deg": 0,
+   "collision": "none"
+  },
+  {
+   "key": "hand-flame",
+   "kind": "emitter",
+   "pfx": "OWN_HAND_FLAME",
+   "position": [
+    -40.5,
+    -0.8,
+    2.7
+   ],
+   "yaw_deg": 0,
+   "flicker": {
+    "pulse_hz": 4.5,
+    "jitter_hz": 12,
+    "amount": 0.2,
+    "seed": 61
+   },
+   "up_cm": 18.0
+  },
+  {
+   "key": "hand-flame-a",
+   "kind": "emitter",
+   "pfx": "OWN_HAND_FLAME_SIDE",
+   "position": [
+    -35.5,
+    -0.8,
+    4.7
+   ],
+   "yaw_deg": 0,
+   "flicker": {
+    "pulse_hz": 4.5,
+    "jitter_hz": 12,
+    "amount": 0.2,
+    "seed": 62
+   },
+   "up_cm": 10.0
+  },
+  {
+   "key": "hand-flame-b",
+   "kind": "emitter",
+   "pfx": "OWN_HAND_FLAME_SIDE",
+   "position": [
+    -44.5,
+    -0.8,
+    -0.3
+   ],
+   "yaw_deg": 0,
+   "flicker": {
+    "pulse_hz": 4.5,
+    "jitter_hz": 12,
+    "amount": 0.2,
+    "seed": 63
+   },
+   "up_cm": 10.0
+  },
+  {
+   "key": "hand-licks",
+   "kind": "emitter",
+   "pfx": "OWN_HAND_LICKS",
+   "position": [
+    -40.5,
+    -0.8,
+    2.7
+   ],
+   "yaw_deg": 0,
+   "up_cm": -2.0
+  },
+  {
+   "key": "hand-sparks",
+   "kind": "emitter",
+   "pfx": "OWN_TORCH_SPARKS",
+   "position": [
+    -40.5,
+    -0.8,
+    2.7
+   ],
+   "yaw_deg": 0,
+   "up_cm": 5.0
+  },
+  {
+   "key": "hand-haze",
+   "kind": "emitter",
+   "pfx": "OWN_TORCH_HAZE",
+   "position": [
+    -40.5,
+    -0.8,
+    2.7
+   ],
+   "yaw_deg": 0,
+   "up_cm": 40.0
+  },
+  {
+   "key": "hand-light",
+   "kind": "light",
+   "position": [
+    -40.5,
+    -0.8,
+    2.7
+   ],
+   "up_cm": 22.0,
+   "yaw_deg": 0,
+   "range": 1000,
+   "color": [
+    230,
+    84,
+    15
+   ],
+   "near": 8,
+   "flicker_from": "hand-flame",
+   "jitter_cm": 0.6,
+   "sway_hz": 1.5
+  }
+ ]
+}

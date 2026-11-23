@@ -43,7 +43,7 @@ layout(binding = 4, r32ui) uniform writeonly restrict uimage2D occlusionLut;
 layout(binding = 4, r32ui) uniform readonly  restrict uimage2D occlusionLut;
 #endif
 
-#if defined(VOLUMETRIC) && !defined(VIRTUAL_SHADOW) && defined(GL_COMPUTE_SHADER)
+#if defined(VOLUMETRIC) && !defined(VIRTUAL_SHADOW) && !defined(SHADOW_EMPTY) && defined(GL_COMPUTE_SHADER)
 layout(binding = 5) uniform sampler2D textureSm1;
 #endif
 
@@ -71,7 +71,12 @@ float shadowSample(in sampler2D shadowMap, vec2 shPos) {
   }
 
 bool calcShadow(vec3 shPos) {
+#if defined(SHADOW_EMPTY)
+  // the frame cleared the map and drew nothing into it (sun below Camera::minShadowY): every texel is 0
+  const float sh = 0.0;
+#else
   float sh = shadowSample(textureSm1,shPos.xy);
+#endif
   return sh < shPos.z;
   }
 
@@ -127,15 +132,25 @@ vec4 fog(vec2 uv, float z) {
 #else
   vec3  scatteredLight = vec3(0.0);
   vec4  prevVal        = vec4(0.0); //textureLod(fogLut, vec3(uv,0), 0);
+#if defined(FOG_SKY_VIS)
+  // the multiple scattering of the steps in the sun's shadow (Д4 below); read only there and only when the camera
+  // has a roof over it at all
+  const bool skyVisOn  = scene.fogSkyVis<1.0;
+  vec3  msDark         = vec3(0.0);
+  float prevDd         = 0.0;
+  float msAtDd         = 0.0;       // the last read of the LUT: at this depth, faded in
+  vec3  msAt           = vec3(0.0); // (0 at the camera: the fade-in is 0 there)
+#endif
 #endif
 
 #if defined(GL_COMPUTE_SHADER)
   imageStore(occlusionLut, ivec2(invocationID.xy), uvec4(occlusion));
   return vec4(0);
 #else
-  // every bit = one sample of shadowmap
-  const float occlusionScale = textureSize(depth,0).x/imageSize(occlusionLut).x;
-  const ivec2 coord          = ivec2(gl_FragCoord.xy/occlusionScale);
+  // every bit = one sample of shadowmap; a LUT texel covers occlusionRatio pixels (halfResAoFog)
+  const ivec2 occlusionSize  = imageSize(occlusionLut);
+  const ivec2 occlusionRatio = (textureSize(depth,0) + occlusionSize - 1)/occlusionSize;
+  const ivec2 coord          = ivec2(gl_FragCoord.xy)/occlusionRatio;
   const uint  occlusion      = imageLoad(occlusionLut, coord).r;
   [[dont_unroll]]
   for(int i=0; i<steps; i++) {
@@ -158,11 +173,37 @@ vec4 fog(vec2 uv, float z) {
     const vec4  val = textureLod(fogLut, vec3(uv,dd), 0) * min(dd*steps*2.0, 1.0);
     scatteredLight += (val.rgb-prevVal.rgb)*shadow;
     prevVal = val;
+#if defined(FOG_SKY_VIS)
+    // in the sun's shadow the air is taken as closed to the sky too (Д1); how far that holds, the sky over the camera
+    // says (below). The run's multiple scattering is the LUT's at its end minus at its start, faded in as `val`
+    if(skyVisOn && !bit) {
+      // the run's start is the end of the run before: read again only when that one was not read
+      const vec3 msStart = (prevDd==msAtDd) ? msAt : textureLod(fogLutMs, vec3(uv,prevDd), 0).rgb * min(prevDd*steps*2.0, 1.0);
+      const vec3 msEnd   = textureLod(fogLutMs, vec3(uv,dd), 0).rgb * min(dd*steps*2.0, 1.0);
+      msDark += msEnd - msStart;
+      msAtDd  = dd;
+      msAt    = msEnd;
+      }
+    prevDd = dd;
+#endif
     }
+  // A slice of the LUT holds the light scattered up to its far end: the first one, read at any depth nearer than
+  // its middle, puts the scattering of the whole slice (some 780 m of air at 50x) on a pixel a metre away, a veil of
+  // 0.002 over every daytime pixel (step-2-shade.md, «Привыкание глаза: сделано»). The multiple scattering and the
+  // transmittance fade in from the camera as the single scattering above does.
   const float d             = (distZ)/(dist);
+  const float near          = min(d*float(textureSize(fogLutMs,0).z)*2.0, 1.0);
   const vec4  ms            = textureLod(fogLutMs, vec3(uv,d), 0);
-  const float transmittance = ms.a;
-  return vec4(scatteredLight+ms.rgb, transmittance);
+  const float transmittance = mix(1.0, ms.a, near);
+#if defined(FOG_SKY_VIS)
+  // Д4 (step-2-shade.md, «Дымка в тени»): each step's multiple scattering by mix(its sun bit, 1, the sky over the
+  // camera): under the crowns and in a cave the air in the sun's shadow is closed to the sky as well, in the open it
+  // is not; 1 gives the fog as it is without this. Written through the shadowed part: ms*vis + lit*(1-vis), lit = ms - dark
+  const float vis = scene.fogSkyVis;
+  return vec4(scatteredLight + ms.rgb*near - msDark*(1.0-vis), transmittance);
+#else
+  return vec4(scatteredLight+ms.rgb*near, transmittance);
+#endif
 #endif
   }
 #else
@@ -173,7 +214,10 @@ vec4 fog(vec2 uv, float z) {
   float d    = (dZ-d0)/(d1-d0);
   // return vec4(debugColors[min(int(d*textureSize(fogLut,0).z), textureSize(fogLut,0).z-1)%MAX_DEBUG_COLORS], 0);
 
-  return textureLod(fogLut, vec3(uv,d), 0);
+  // fades in from the camera over half the first slice, as the volumetric fog
+  const float near = min(d*float(textureSize(fogLut,0).z)*2.0, 1.0);
+  const vec4  val  = textureLod(fogLut, vec3(uv,d), 0);
+  return vec4(val.rgb*near, mix(1.0, val.a, near));
   }
 #endif
 
@@ -207,13 +251,16 @@ void main_comp() {
   if(invocationID.x>=size.x || invocationID.y>=size.y)
     return;
 
-  inPos = vec2(invocationID.xy+vec2(0.5))/vec2(size);
+  // trace from the top-left depth pixel of the texel's block: the block centre lies on a pixel border
+  const ivec2 depthSize = textureSize(depth,0);
+  const ivec2 depthPix  = min(ivec2(invocationID.xy)*((depthSize + size - 1)/size), depthSize-1);
+  inPos = vec2(depthPix+vec2(0.5))/vec2(depthSize);
   inPos = inPos*2.0 - vec2(1.0);
 
   vec2  uv     = inPos*vec2(0.5)+vec2(0.5);
   vec3  view   = normalize(inverse(vec3(inPos,1.0)));
   vec3  sunDir = scene.sunDir;
-  float z      = min(textureLod(depth,uv,0).r, dFogMax);
+  float z      = min(texelFetch(depth,depthPix,0).r, dFogMax);
 
   fog(uv,z);
   }

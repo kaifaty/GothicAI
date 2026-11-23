@@ -9,6 +9,7 @@
 #include "utils/string_frm.h"
 #include "world/objects/npc.h"
 #include "gothic.h"
+#include "settings.h"
 #include "inventorymenu.h"
 #include "resources.h"
 
@@ -46,20 +47,20 @@ DialogMenu::DialogMenu(InventoryMenu &trade)
   setCursorShape(CursorShape::Hidden);
   setFocusPolicy(NoFocus);
 
-  Gothic::inst().onSettingsChanged.bind(this,&DialogMenu::setupSettings);
+  Settings::inst().onSettingsChanged.bind(this,&DialogMenu::setupSettings);
   setupSettings();
   }
 
 DialogMenu::~DialogMenu() {
-  Gothic::inst().onSettingsChanged.ubind(this,&DialogMenu::setupSettings);
+  Settings::inst().onSettingsChanged.ubind(this,&DialogMenu::setupSettings);
   }
 
 void DialogMenu::setupSettings() {
-  dlgAnimation        = Gothic::settingsGetI("GAME","animatedWindows");
-  showSubtitles       = Gothic::settingsGetI("GAME","subTitles");
-  showSubtitlesPlayer = Gothic::settingsGetI("GAME","subTitlesPlayer");
+  dlgAnimation        = Settings::getI("GAME","animatedWindows");
+  showSubtitles       = Settings::getI("GAME","subTitles");
+  showSubtitlesPlayer = Settings::getI("GAME","subTitlesPlayer");
 
-  const float volume = Gothic::settingsSoundVolume();
+  const float volume = Settings::soundVolume();
   soundDevice.setGlobalVolume(volume);
   }
 
@@ -193,6 +194,9 @@ void DialogMenu::dialogCamera(Camera& camera) {
 
       camera.setDialogDistance(l);
       camera.setSpin(PointF(0,a));
+      if(camSide!=int(curentIsPl))
+        camera.markCut();
+      camSide = int(curentIsPl);
       }
     }
   }
@@ -222,12 +226,13 @@ bool DialogMenu::aiOutput(Npc &npc, std::string_view msg) {
   if(Npc* said = &npc==pl ? other : pl; said!=nullptr && said->speechLeft()>0)
     return false;
 
+  // the one who spoke before: its hands come to rest
   if(pl==&npc) {
     if(other!=nullptr)
-      other->stopDlgAnim();
+      other->stopDlgAnim(true);
     } else {
     if(pl!=nullptr)
-      pl->stopDlgAnim();
+      pl->stopDlgAnim(true);
     }
 
   current.txt     = Gothic::inst().messageByName(msg);
@@ -236,7 +241,7 @@ bool DialogMenu::aiOutput(Npc &npc, std::string_view msg) {
   auto voice      = Resources::loadSoundBuffer(string_frm(msg,".wav"));
   currentSnd      = soundDevice.load(voice);
   curentIsPl      = (pl==&npc);
-  npc.startSpeech(voice);
+  npc.startSpeech(voice,string_frm(msg,".WAV"));  // named as WorldSound::addDlgSound names a line
 
   currentSnd.play();
   npc.setAiOutputBarrier(current.msgTime,false);
@@ -373,10 +378,10 @@ void DialogMenu::close() {
       prevPl->setInteraction(nullptr);
     }
   if(prevPl){
-    prevPl->stopDlgAnim();
+    prevPl->stopDlgAnim(true);
     }
   if(prevNpc && prevNpc!=prevPl){
-    prevNpc->stopDlgAnim();
+    prevNpc->stopDlgAnim(true);
     }
   }
 

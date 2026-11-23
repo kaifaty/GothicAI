@@ -1,0 +1,1 @@
+../../../character-tool/src/character_tool/anim/ragdoll_limits.py

@@ -11,6 +11,7 @@ import time
 from collections.abc import AsyncIterator, Collection, Sequence
 from typing import Any
 
+import httpx
 import openai
 from openai import AsyncOpenAI
 
@@ -50,6 +51,17 @@ class OpenAICompatBackend:
 
     async def aclose(self) -> None:
         await self._client.close()
+
+    async def slot_count(self) -> int | None:
+        """How many parallel slots the llama.cpp server has (its `/props`), None if it does not say."""
+        url = str(self._client.base_url).rstrip("/").removesuffix("/v1") + "/props"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(url, headers={"Authorization": f"Bearer {self._client.api_key}"})
+            count = response.json().get("total_slots") if response.is_success else None
+        except (httpx.HTTPError, ValueError, AttributeError):
+            return None
+        return count if isinstance(count, int) else None
 
     async def _create(self, **kwargs: Any) -> Any:
         slot = QUICK_SLOT.get()

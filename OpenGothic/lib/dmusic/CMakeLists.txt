@@ -30,6 +30,7 @@ list(APPEND _DM_SOURCE
         src/Dls.c
         src/Band.c
         src/Loader.c
+        src/LoaderImport.c
         src/Logger.c
         src/Memory.c
         src/Message.c

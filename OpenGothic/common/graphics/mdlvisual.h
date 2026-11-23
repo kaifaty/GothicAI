@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <Tempest/Matrix4x4>
 
 #include "asset/modeltypes.h"
@@ -10,14 +11,28 @@
 #include "graphics/mesh/lipsync.h"
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
-#include "game/constants.h"
+#include "graphics/mesh/facerig.h"
+#include "graphics/mesh/eyes.h"
+#include "graphics/mesh/gaze.h"
+#include "graphics/mesh/listenface.h"
+#include "graphics/mesh/speechbrows.h"
+#include "graphics/mesh/speechcues.h"
+#include "graphics/mesh/speechface.h"
+#include "graphics/mesh/quiver.h"
+#include "graphics/mesh/renderrig.h"
+#include "game/rpgvocabulary.h"
 #include "meshobjects.h"
 #include "effect.h"
+#include "itemview.h"
 
 class Serialize;
 class ObjVisual;
 class Npc;
+struct NpcLogicalState;
 class Item;
+class WorldView;
+struct GltfHeadMesh;
+enum class NpcFlag : uint32_t;
 namespace TestBench { bool ragdollBodyDrawable(const Npc& npc); }
 
 class MdlVisual final {
@@ -36,12 +51,18 @@ class MdlVisual final {
     void                           setVisual(const Skeleton *visual);
 
     void                           setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach = false);
+    // The owner of every part's textures (VisualObjects::Item::setTextureOwner): an NPC calls it each frame it moves,
+    // from animation threads; within the smallest reach of its parts that is one comparison without a lock.
+    float                          setTextureOwner(const Tempest::Vec3& position, bool spatial);
     bool                           minSkinnedVertex(float fatness, Tempest::Vec3& point) const;
 
     void                           setHeadRotation(float dx, float dz);
     Tempest::Vec2                  headRotation() const;
     void                           setYTranslationEnable(bool e);
     void                           setVisualBody(World& owner, MeshObjects::Mesh&& body);
+    void                           setVisualBody(WorldView& owner, MeshObjects::Mesh&& body);
+    void                           clearVisualBody();
+    size_t                         bodyNodesCount() const;
     void                           setVisualBody(Npc& npc, MeshObjects::Mesh&& h, MeshObjects::Mesh&& body, int32_t version);
     void                           syncAttaches();
     const Skeleton*                visualSkeleton() const;
@@ -55,17 +76,41 @@ class MdlVisual final {
 
     void                           setArmor      (Npc& npc, MeshObjects::Mesh&& armor);
     void                           setBody       (Npc& npc, MeshObjects::Mesh&& body, const int32_t version);
-    void                           setSword      (MeshObjects::Mesh&& sword);
-    void                           setRangedWeapon(MeshObjects::Mesh&& bow);
-    void                           setShield     (MeshObjects::Mesh&& shield);
-    void                           setAmmoItem   (MeshObjects::Mesh&& ammo, std::string_view bone);
+    // the item slots take an item's view (graphics/itemview): its mesh with its effect
+    void                           setSword      (ItemView&& sword);
+    void                           setRangedWeapon(ItemView&& bow);
+    void                           setShield     (ItemView&& shield);
+    void                           setAmmoItem   (ItemView&& ammo, std::string_view bone);
     // the arrow (the bolt) has left: not shown in the hand till the next one is placed (the slot is kept:
     // the shot leaves from there)
     void                           dropAmmo();
     bool                           hasAmmoShown() const { return !ammunition.view.isEmpty(); }
-    void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone);
-    void                           setStateItem  (MeshObjects::Mesh&& itm,  std::string_view bone);
+    void                           setSlotItem   (ItemView&& itm,  std::string_view bone);
+    void                           setStateItem  (ItemView&& itm,  std::string_view bone);
     void                           clearSlotItem (std::string_view bone);
+    // the quiver on the right hip (graphics/mesh/quiver): Npc::updateQuiver decides what it shows
+    const Quiver&                  quiver() const { return quiv; }
+    void                           setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body,
+                                             std::vector<MeshObjects::Mesh>&& arrows,
+                                             std::vector<Tempest::Matrix4x4>&& arrowLocal);
+    void                           clearQuiver();
+    void                           setQuiverTaken(int n) { quiv.setTaken(n); }
+    const ProtoMesh*               bodyProto() const { return view.protoMesh(); }
+    // the armour (or the body) and its rigid parts: in the bind pose (model space) or as drawn (world)
+    void                           quiverPoints(bool bind, std::vector<Quiver::SkinPoint>& out) const;
+    void                           quiverPoints(const Tempest::Matrix4x4* bones, size_t n,
+                                                std::vector<Quiver::SkinPoint>& out) const;
+    Quiver::Probe                  quiverProbe() const;
+    // the quiver's swing on by dt (ms): true if the attachments need a sync
+    bool                           updateQuiver(const Npc& npc, uint64_t dt);
+    float                          quiverCostUs() const { return quiverStepUs; } // the last step, µs
+    // the last step's: its CPU time on the thread (µs), the rays cast and their time (µs), how high the tube's lowest
+    // point is over the ground (cm)
+    float                          quiverCpu() const { return quiverCpuUs; }
+    int                            quiverRayCount() const { return quiverRays; }
+    float                          quiverRayCost() const { return quiverRayUs; }
+    float                          quiverClearance() const { return quiverClear; }
+    std::vector<Tempest::Vec3>     quiverSurface(int rings, int around) const; // the bench's ground probe
     bool                           setFightMode  (asset::MdsFightMode mode);
     void                           dropWeapon    (Npc& owner);
     void                           dropShield    (Npc& owner);
@@ -73,17 +118,20 @@ class MdlVisual final {
     void                           setMagicWeapon(Effect&& spell, World& owner);
     void                           setMagicWeaponKey(World& owner, SpellFxKey key, int32_t keyLvl=0);
 
-    void                           startEffect (World& owner, Effect&& pfx, int32_t slot, bool noSlot);
+    // untilStop: an animation event's looped effect, it lives until stopEffect(slot), a new effect in its slot,
+    // stopLoopedEffects or the visual's end instead of its own time
+    void                           startEffect (World& owner, Effect&& pfx, int32_t slot, bool noSlot, bool untilStop = false);
     void                           stopEffect  (const VisualFx& vfx);
     void                           stopEffect  (int32_t slot);
+    void                           stopLoopedEffects();
     // an effect of the animations' events that does not start (the native PEE while an aimed one plays)
     void                           setMutedPfx(std::string_view name) { muted = name; }
     std::string_view               mutedPfx() const { return muted; }
-    void                           setNpcEffect(World& owner, Npc& npc, std::string_view s, zenkit::NpcFlag flags);
+    void                           setNpcEffect(World& owner, Npc& npc, std::string_view s, NpcFlag flags);
     void                           setFatness  (float f);
     void                           emitBlockEffect(Npc& dst, Npc& src);
 
-    bool                           setToFightMode(const WeaponState ws);
+    bool                           setToFightMode(const WeaponState ws, bool fromAnimation=false);
     void                           updateWeaponSkeleton(const Item *sword, const Item *bow);
 
     void                           setTorch(bool t, World& owner);
@@ -97,11 +145,15 @@ class MdlVisual final {
                                                    const std::vector<size_t>& bones, float weight);
     bool                           clearPhysicalPose();
     const Tempest::Matrix4x4&       renderedBone(size_t bone) const;
+    // The body's skin as drawn, on a render skeleton of its own (graphics/mesh/renderrig, models/render-rigs.json)
+    // when it has one: its matrices and their count, else renderedBone's; the skeleton its bone indices are of.
+    const Tempest::Matrix4x4*      skinPalette(size_t& count) const;
+    const Skeleton*                skinSkeleton() const;
     struct ArrowPinProbe {
       size_t             bone=size_t(-1);
       Tempest::Matrix4x4 local, world;
       };
-    bool                           stickArrow(MeshObjects::Mesh&& arrow, size_t bone,
+    bool                           stickArrow(ItemView&& arrow, size_t bone,
                                               const Tempest::Matrix4x4& worldMatrix, std::string_view visualName={});
     void                           saveStuckArrows(Serialize& fout) const;
     bool                           loadStuckArrows(Serialize& fin, World& world);
@@ -111,6 +163,8 @@ class MdlVisual final {
     const HitZones&                hitZoneShape() const { return hitZones; }
     // the animation of that name plays k times as fast from its next start (1: as it is)
     void                           setAnimSpeed(std::string_view name, float k);
+    void                           setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now);
+    void                           hitStop(uint64_t until, float k);
     bool                           updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint64_t dt, bool force,
                                                     bool pausePose=false);
     bool                           updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedToGround);
@@ -120,12 +174,16 @@ class MdlVisual final {
     bool                           updateAim(Npc& npc, uint64_t dt);
     bool                           updateFlinch(Npc& npc, uint64_t dt);
     void                           flinch(const Npc& npc, const Flinch::Hit& hit);
+    void                           bump(const Npc& npc, const Flinch::Bump& hit);
+    bool                           updateReach(Npc& npc, uint64_t dt);
     bool                           updateGaze(Npc& npc, uint64_t dt);
     void                           processLayers  (World& world);
-    bool                           processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev);
+    bool                           processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev, NpcLogicalState* logic=nullptr);
     auto                           mapBone(const size_t boneId) const -> Tempest::Vec3;
     auto                           mapWeaponBone() const -> Tempest::Vec3;
     auto                           mapHeadBone() const -> Tempest::Vec3;
+    // its eyes as drawn (world): the centres of the own head's eyes, else EyesUp above the head bone along its up
+    auto                           mapEyes() const -> Tempest::Vec3;
     // the arrow on the string as posed: its nock, where it points
     bool                           arrowRay(Tempest::Vec3& pos, Tempest::Vec3& dir) const;
     // Rendered bow/arrow attachment bounds for the camera's test-bench visibility diagnostic.
@@ -142,6 +200,8 @@ class MdlVisual final {
     // an animation of the model (the test bench): its frames, the nodes it moves, how far it goes, which
     // way the hips face (the thighs) at a few points of it
     std::string                    animInfo(std::string_view name) const;
+    // the blade's tip at each frame of the animation (the test bench)
+    std::string                    bladePath(std::string_view name, float length) const;
     // ms the animation of that name takes (the overlays chosen), 0: none
     float                          animTime(std::string_view name) const;
     // cm the bow's string goes from rest to drawn as held in the aim (its morph), 0: not known
@@ -157,9 +217,12 @@ class MdlVisual final {
 
     bool                           hasAnim(AnimationSolver::Anim a, WeaponState st, WalkBit wlk) const;
     bool                           hasAnim(std::string_view scheme) const;
+    const Animation::Sequence*     movementSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const;
+    const Animation::Sequence*     idleSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const;
 
     const Animation::Sequence*     startAnimAndGet(std::string_view name, uint64_t tickCount, bool forceAnim = false);
-    const Animation::Sequence*     startAnimAndGet(Npc& npc, std::string_view      name, uint8_t comb, BodyState bs);
+    // force: start it even over a layer that cannot be cut now (a melee dodge out of a parade)
+    const Animation::Sequence*     startAnimAndGet(Npc& npc, std::string_view      name, uint8_t comb, BodyState bs, bool force = false);
     const Animation::Sequence*     startAnimAndGet(Npc& npc, AnimationSolver::Anim    a, uint8_t comb, WeaponState st, WalkBit wlk);
 
     bool                           startAnim      (Npc& npc, WeaponState st);
@@ -168,21 +231,47 @@ class MdlVisual final {
     bool                           startAnimDialog(Npc& npc);
     void                           startMMAnim    (Npc& npc, std::string_view anim, std::string_view node);
     void                           startFaceAnim  (Npc& npc, std::string_view anim, float intensity, uint64_t duration);
-    float                          faceWeight     (std::string_view anim) { return head.view.morphWeight(anim); }
-    void                           stopDlgAnim    (Npc& npc);
+    // how much of the face anim shows now, 0..1: the own head's FaceRig or the morphs of the original head
+    float                          faceWeight     (const Npc& npc, std::string_view anim) const;
+    // the facial gestures of the line it starts to say (say.cues): they go with its voice (SpeechCues)
+    void                           startCues      (Npc& npc, std::shared_ptr<const SpeechCues::Plan> plan, bool voiced);
+    // a gesture of the own head's profile now (the bench, the console): side 'L'/'R', 0 - by the seed; false: none
+    bool                           startCue       (Npc& npc, std::string_view name, char side);
+    float                          cueWeight      (const Npc& npc, std::string_view name) const;
+    // a leak of the own head's table now, as a line that hides a lie (with the liar's blinks); false: none
+    bool                           startLeak      (Npc& npc, std::string_view felt, bool lower);
+    float                          leakWeight     (const Npc& npc) const;
+    const GltfHeadMesh*            headMesh() const;
+    // atEase: its line is over and it stands on (the other one answers, the talk ends) - the hands of a gesture come
+    // to rest slowly; else they are needed at once (a weapon drawn, an item used)
+    void                           stopDlgAnim    (Npc& npc, bool atEase=false);
     // a voiced line: the mouth follows the voice instead of the talk loop
     void                           startSpeech    (Npc& npc, std::shared_ptr<LipSync::Track> voice);
-    void                           stopSpeech     () { mouth.stop(); }
+    void                           stopSpeech     (uint64_t now);
+    bool                           isSpeaking     (uint64_t now) const { return mouth.isSpeaking(now); }
+    // the face track of a line (say_face): the voice of that line plays it, whichever comes first (SpeechFace)
+    void                           setFaceTrack   (std::shared_ptr<const SpeechFace::Track> track, std::string_view line);
     void                           updateMouth    (Npc& npc, uint64_t dt);
     // the hands and the head while it speaks (TalkGestures)
-    void                           setTalkMood    (std::string_view mood) { gestures.setMood(TalkGestures::moodOf(mood)); }
+    // the mood of a line it starts to say (line: its id of the AI, empty: a line of the game), held until then
+    void                           setTalkMood    (std::string_view mood, std::string_view line, uint64_t holdUntil);
     void                           updateGestures (Npc& npc, uint64_t dt);
     void                           updateBlink    (Npc& npc, uint64_t dt);
+    // the own head's face (FaceRig): its eyes and weights to the deformation of the head, near only; after the pose
+    // of the frame (the eyes aim from the head as drawn), on the main thread (the upload)
+    void                           updateFace     (Npc& npc);
+    // updateFace has work for this NPC: its own head's face, or it is the eye probe's subject
+    bool                           updatesFace    (const Npc& npc) const;
     // the other one speaks to it, it thinks of an answer (TalkGestures)
-    void                           listen         (uint64_t until) { gestures.listen(until); }
+    // toward: the mood its attitude to the one speaking gives (the face it listens with, ListenFace)
+    void                           listen         (uint64_t until, TalkGestures::Mood toward) { gestures.listen(until); heardMood = toward; }
     void                           stopListening  (uint64_t now)   { gestures.stopListening(now); }
     void                           heard          (uint64_t now)   { gestures.heard(now); }
     void                           think          (uint64_t now, uint64_t until) { gestures.think(now,until); }
+    // the accents of its voice the line `line` (an id of the AI) has reached by now, for the one it says it to: found
+    // by its own speech_brows, else by the listener's (its profile); -1: not that line, or no rule to find them by
+    int32_t                        voiceAccents   (std::string_view line, const FaceProfile* listener, uint64_t now);
+    const FaceProfile*             faceProfile() const { return face.faceProfile(); }
     void                           stopAnim       (Npc& npc, std::string_view anim);
     bool                           stopItemStateAnim(Npc &npc);
     void                           stopWalkAnim   (Npc &npc);
@@ -217,6 +306,8 @@ class MdlVisual final {
       std::string_view bone;
       };
     using MeshAttach = Attach<MeshObjects::Mesh>;
+    // an item on the body: a released view (clearVisualBody) keeps the item, setVisualBody restores it
+    using ItemAttach = Attach<ItemView>;
     using PfxAttach  = Attach<Effect>;
 
     struct PfxSlot {
@@ -224,6 +315,7 @@ class MdlVisual final {
       uint64_t    timeUntil=0;
       int         id=0;
       bool        noSlot = false;
+      bool        untilStop = false;
       };
 
     struct TorchSlot {
@@ -232,7 +324,7 @@ class MdlVisual final {
       };
 
     struct ArrowPin {
-      MeshObjects::Mesh  view;
+      ItemView           view; // with the arrow's effect while it fades (graphics/itemview)
       std::string        visual;
       size_t             bone=size_t(-1);
       Tempest::Matrix4x4 local;
@@ -241,9 +333,22 @@ class MdlVisual final {
     static constexpr size_t MaxStuckArrows=64;
 
     void implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, const int32_t version);
+    // the body's rig by its mesh and the visual's skeleton, the body's view on its skeleton; true - the rig changed
+    bool bindBodyRig();
+    // the pose to the body's view, every time it changes: Gothic's final matrices (renderedPose, else the Pose's),
+    // the rig's solved from them when the body has one
+    void pushBodyPose();
+    // the body's own bone matrices for the effects that emit from its skin: the rig's palette, nullptr - the pose's
+    const std::vector<Tempest::Matrix4x4>* bodySkin() const { return bodyRig!=nullptr ? &rigPalette : nullptr; }
+    // where a thing on a Gothic node is drawn: the rig's socket over its palette (the head, the hands), else the node
+    Tempest::Matrix4x4 attachMatrix(size_t node) const;
+    // the skin's matrices from Gothic's world ones bones[n]: the rig's solved into rig, else bones; count - their count
+    const Tempest::Matrix4x4* skinOf(const Tempest::Matrix4x4* bones, size_t n, std::vector<Tempest::Matrix4x4>& rig,
+                                     size_t& count) const;
     void setSlotAttachment(MeshObjects::Mesh&& itm, std::string_view bone);
 
     void bind(MeshAttach& slot, MeshObjects::Mesh&&   itm, std::string_view bone);
+    void bind(ItemAttach& slot, ItemView&&            itm, std::string_view bone);
     void bind(PfxAttach&  slot, Effect&& itm, std::string_view bone);
 
     template<class View>
@@ -254,22 +359,89 @@ class MdlVisual final {
     template<class View>
     void rebindAttaches(Attach<View>& mesh, const Skeleton& to);
     void rebindAttaches(const Skeleton& to);
+    std::vector<Tempest::Vec3> carriedPoints(const ItemAttach& att, std::string_view slot) const;
+    // the ground under the quiver: the plane the rays found round the pelvis (where they were cast from)
+    struct QuiverGround {
+      bool           valid = false;
+      Tempest::Vec3  at, bottom; // the pelvis and the tube's bottom where the rays were cast
+      Quiver::Ground plane;
+      };
+    QuiverGround               quiverGround;
+    void                       lookForGround(const Npc& npc, const Tempest::Vec3& hip, const Tempest::Vec3& mid,
+                                             const Tempest::Vec3& bottom);
     void setupGestures();
+    void updateEyes(Npc& npc, uint64_t now);
+    // the brows on the accents of its voice (SpeechBrows): the moves found by now to the face; probing - the log
+    void updateBrows(Npc& npc, uint64_t now, bool probing);
+    // a nod of it listening started (TalkGestures): maybe a face with it (ListenFace)
+    void listenNod(Npc& npc, uint64_t now, bool speaking);
+    // a gesture of the profile from `at`: its shapes (FaceRig) and, of zone "eyes", what the eyes do (Eyes)
+    bool playCue(std::string_view name, bool mirror, float hold, uint64_t at, uint64_t now);
+    // the middle of the own head's eyes in the frame of the head bone (false: no eyes of its own, Gaze aims from the bone)
+    bool eyesInHead(Tempest::Vec3& at) const;
 
     Tempest::Matrix4x4             pos;
+    Tempest::Vec3                 textureOwnerPosition;
+    Tempest::Vec3                 textureOwnerLast;       // where the owner was at its latest call
+    float                         textureOwnerReach = 0;  // centimetres from textureOwnerPosition
+    // A part added later is placed where the owner is now: every part is placed there again first, then the part
+    template<class View>
+    void                          addTextureOwner(View& part) {
+      if(!textureOwnerKnown)
+        return;
+      if(textureOwnerSpatial && (textureOwnerLast.x!=textureOwnerPosition.x || textureOwnerLast.y!=textureOwnerPosition.y ||
+                                 textureOwnerLast.z!=textureOwnerPosition.z)) {
+        textureOwnerKnown=false;
+        setTextureOwner(textureOwnerLast,true);
+        }
+      textureOwnerReach=std::min(textureOwnerReach,part.setTextureOwner(textureOwnerPosition,textureOwnerSpatial));
+      }
+    bool                          textureOwnerKnown = false, textureOwnerSpatial = false;
     MeshObjects::Mesh              view;
+    bool                           bodyDetached = false;
 
-    MeshAttach                     head, sword, bow, shield;
+    MeshAttach                     head;
+    ItemAttach                     sword, bow, shield;
+    MeshAttach                     groom;                 // strands of an own head (characters.json "groom"), on the head's bone
     LipSync                        mouth;
     TalkGestures                   gestures;
     const Animation::Sequence*     gestureSeq = nullptr;  // the gesture started last
+    uint64_t                       gestureHead = 0;       // until then the head is held against the gesture (Gaze::Input::steady)
     uint32_t                       gestureSyl = 0;        // syllables of the voice seen so far
     EyeBlink                       blink;
     uint32_t                       blinkShift = 0;        // gaze shifts seen so far
-    MeshAttach                     ammunition, stateItm;
-    std::vector<MeshAttach>        item;
+    FaceRig                        face;                  // the own head's face anims (a profile), else none
+    Eyes                           eyes;                  // its eyeballs (an "eyes" section in the profile)
+    Gaze::Source                   lookSource = Gaze::Source::None;  // what Gaze looked at last (updateGaze)...
+    Tempest::Vec3                  lookAt;                // ...where: the eyes go there too
+    SpeechCues                     cues;                  // when the gestures of the line said now start
+    SpeechCues::Out                cueStarts;
+    SpeechBrows                    voiceBrows;            // the brows on the accents of its voice (speech_brows)
+    SpeechFace                     voiceFace;             // the face from its voice (speech_face)
+    size_t                         accentsLogged = 0;     // of voiceBrows, in the log (the watched npc)
+    std::shared_ptr<LipSync::Track> voiceNow;             // its voice now (voiceAccents)...
+    uint64_t                       voiceAt   = 0;         // ...started then
+    bool                           voiceOwnBrows = false; // ...its accents found by voiceBrows
+    SpeechBrows                    heardBrows;            // ...else here, by the listener's rule
+    std::optional<FaceProfile::Brows> heardRule;
+    ListenFace                     listenFace;            // the face it listens with (listen_face)
+    uint32_t                       listenNodsSeen = 0;    // of gestures.listenNodCount()
+    TalkGestures::Mood             lineMood  = TalkGestures::Mood::Neutral;  // of its last line...
+    uint64_t                       lineMoodUntil = 0;     // ...held until then
+    TalkGestures::Mood             heardMood = TalkGestures::Mood::Neutral;  // its attitude to the one it listens to
+    static constexpr uint64_t      ManualLeakMs = 2000;   // a leak started by hand: the line it makes, ms
+    uint32_t                       cueCount = 0;          // gestures started by hand: the seed of their side
+    float                          faceUploadUs = 0;      // the last setDeformation of the face, µs (test bench)
+    ItemAttach                     ammunition, stateItm;
+    std::vector<ItemAttach>        item;
     std::vector<MeshAttach>        attach;
     std::vector<ArrowPin>          stuckArrows;
+    Quiver                         quiv;
+    float                          quiverStepUs = 0;
+    float                          quiverCpuUs = 0, quiverRayUs = 0, quiverClear = 0;
+    int                            quiverRays = 0;
+    bool                           quiverNear = false;
+    float                          quiverHand = 0; // the right hand on the quiver as it slides (QuiverHand), 0..1
 
     std::vector<PfxSlot>           effects;
     std::string_view               muted;
@@ -291,6 +463,13 @@ class MdlVisual final {
     std::unique_ptr<Pose>          skInst;
     std::vector<Tempest::Matrix4x4> renderedPose;
     std::vector<uint8_t>           renderedMask;
+    const RenderRig*               bodyRig = nullptr;  // the body's render skeleton, its palette as last solved
+    float                          rigHold = 0, rigWorld = 0;  // its arms (RenderRig::Hands), eased towards the npc's state
+    RenderRig::Gait                rigGait, rigGaitNow;        // its legs' memory: as the last frame left it, as this one has it
+    float                          rigStep = 0;                // seconds of this frame
+    std::vector<Tempest::Matrix4x4> rigPalette;
     friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
+    friend struct MeshGltfTest;
+    friend struct NpcDefinitionContract;
   };
 

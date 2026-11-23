@@ -140,6 +140,7 @@ class DialogMenu : public Tempest::Widget {
     Entry                               current;
     Tempest::SoundEffect                currentSnd;
     bool                                curentIsPl=false;
+    int                                 camSide=-1;  // the side dialogCamera shot from last: a change is a cut
     bool                                dlgTrade=false;
     int32_t                             mobsiState=-1;
 

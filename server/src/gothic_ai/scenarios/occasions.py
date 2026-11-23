@@ -11,6 +11,10 @@ from ..game import GameLink
 from ..protocol import Session
 from .common import _logged, _save_or_fail, _until, wait_message
 
+SCENARIOS = {
+    "occasions": ("OFF", {"save": True, "timeout": 240}),
+}
+
 if TYPE_CHECKING:
     from ..occasions import Occasions
 

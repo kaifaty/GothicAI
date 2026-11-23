@@ -1,0 +1,156 @@
+# The screen ray of the lamps (../README.md, "Шаг 4"; shader/lighting/lamp_contact.glsl): the hero's face and body
+# at a torch and at a lantern at night, things by a candle. Two runs of the same shots, which repeat moment for
+# moment with the seed and the frozen light: without the ray (OPENGOTHIC_VSM_STUDY=32) and the game's.
+#   OPENGOTHIC_RT=1 OPENGOTHIC_LIGHT_FREEZE=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen \
+#     OPENGOTHIC_CONTENT=<the working content> [OPENGOTHIC_VSM_STUDY=32] scripts/bench.sh <this file> <out>
+# Sheets: tools/lamp_contact_sheets.py <run without the ray> <run with it> <sheets dir>
+# @timeout 900
+seed 73013
+cheat god
+blink off
+overlay off
+# 1. Xardas' tower, the torch
+set time 12 0
+view clean 30
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam cut
+cam face 70 0 1
+wait 2500
+shot face-front
+wait 400
+cam cut
+cam face 70 45 1
+wait 2500
+shot face-34
+wait 400
+cam cut
+cam face 40 20 1
+wait 2500
+shot face-near
+wait 400
+cam cut
+ui off
+view full
+cam lift off
+cam cut
+cam look 110
+cam world 170 130 30
+wait 300
+cam hold
+wait 2500
+shot tower-body
+wait 400
+cam look 90
+cam world 300 140 30
+wait 300
+cam hold
+wait 2500
+shot tower-wide
+wait 400
+# 2. A table of the upper city at night
+set time 22 0
+goto NW_CITY_UPTOWN_HUT_01_COOK
+clear 3000
+wait 6000
+cam at 11778 1030 -5048 11739 1000 -5112
+wait 2500
+shot table-a
+wait 400
+cam at 11815 1045 -5125 11785 1003 -5208
+wait 2500
+shot table-candle
+wait 400
+# 3. A rich house: a silver cup by a candle
+goto NW_CITY_REICH03_BED_02
+clear 3000
+wait 6000
+cam at 12515 1480 -4409 12473 1450 -4465
+wait 2500
+shot cup-a
+wait 400
+# 4. The market at night: the hero a step from a lantern, its light falls from above
+cam cut
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+watch player
+set time 22 30
+goto pos 7820 330 -4760
+wait 4000
+cam look 12
+cam world 110 30 0
+wait 300
+cam hold
+wait 2500
+shot lantern-feet
+wait 400
+cam look 110
+cam world 200 140 120
+wait 300
+cam hold
+wait 2500
+shot lantern-back
+wait 400
+cam look 110
+cam world 200 140 300
+wait 300
+cam hold
+wait 2500
+shot lantern-front
+wait 400
+cam look 60
+cam world 320 120 45
+wait 300
+cam hold
+wait 2500
+shot lantern-wide
+wait 400
+cam cut
+cam face 70 0 1
+wait 2500
+shot lantern-face-front
+wait 400
+cam cut
+cam face 70 45 1
+wait 2500
+shot lantern-face-34
+wait 400
+cam cut
+cam face 60 90 1
+wait 2500
+shot lantern-face-side
+wait 400
+cam cut
+cam face 150 30 1
+wait 2500
+shot lantern-face-far
+wait 400
+cam cut
+# 5. The traps of a screen ray, at the lantern: a drawn sword before the game's camera must not shadow the ground
+#    behind it; the hero at the frame's edge, half of him outside it
+ui off
+view full
+cam cut
+equip ItMw_1h_Vlk_Sword
+wait 500
+tap weapon
+wait 2500
+cam game
+wait 2500
+shot trap-sword-game
+wait 400
+cam look 110
+cam world 160 150 200
+wait 300
+cam hold
+wait 2500
+shot trap-sword-near
+wait 400
+cam at 8070 480 -4610 7820 430 -4960
+wait 2500
+shot trap-edge
+wait 400

@@ -1,15 +1,15 @@
 #pragma once
 
 #include "material.h"
-#include <zenkit/Boxes.hh>
+#include "math.h"
 #include <vector>
 
 namespace asset {
 
 struct VertexFeature {
-  zenkit::Vec2 texture;
+  Vec2 texture;
   uint32_t light;
-  zenkit::Vec3 normal;
+  Vec3 normal;
   };
 
 struct PolygonFlagSet {
@@ -38,9 +38,9 @@ struct PolygonList {
 // and lightmap images are consumed at the archive boundary, not by this mesh.
 struct WorldMesh {
   std::string name;
-  zenkit::AxisAlignedBoundingBox bbox {};
+  Aabb bbox {};
   std::vector<Material> materials;
-  std::vector<zenkit::Vec3> vertices;
+  std::vector<Vec3> vertices;
   std::vector<VertexFeature> features;
   PolygonList polygons;
   };

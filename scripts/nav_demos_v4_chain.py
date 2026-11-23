@@ -101,7 +101,9 @@ def submit_command(task, *, script=None, owner="nav-demos-v4", extra=()):
     command = [str(GQ), "submit", "--class", "batch", "--threads", "12",
         "--cpu-quota", "1200%", "--mem", "8G", "--max", "2h", "--name",
         owner.replace("-", " ") + " recording chain", "--", str(task / ".venv/bin/python"),
-        "-I", str(Path(script or __file__).resolve()), "--task", str(task), *extra]
+        "-I", str(Path(__file__).with_name("nav_job.py").resolve()), "--max-seconds", "7200", "--",
+        str(task / ".venv/bin/python"), "-X", "faulthandler", "-I",
+        str(Path(script or __file__).resolve()), "--task", str(task), *extra]
     return command
 
 

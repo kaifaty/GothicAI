@@ -7,7 +7,7 @@
 #include <vector>
 
 class Skeleton;
-class Npc;
+class DynamicWorld;
 
 // Aim: an archer (a crossbowman, a mage) turns the upper body so the shot leaves toward the target,
 // above or below too; the animations aim straight ahead. Runs as a post-pass over the world-space
@@ -29,6 +29,8 @@ class Aim final {
       Tempest::Vec2 sway    = {};      // radians, the manual aim (Archer): yaw, pitch (+ up) off where the
                                        // shot has to go, as it is: the chest
       Tempest::Vec2 tremor  = {};      // and the arms trembling (not smoothed: fast): the arms, not the head
+      Tempest::Vec2 shake   = {};      // cm: the arms straining, seen - both hands and the bow move together
+                                       // to the side and up, the arrow keeps its line (Archer::shake)
       bool          manual  = false;   // aimed by hand: the upper body follows the mouse faster
       bool          reload  = false;   // the reload plays: the arrow is not on the string, not measured (the
                                        // hand holds still at the quiver for a while)
@@ -75,7 +77,7 @@ class Aim final {
       float edgeDistance = 0, edgeDrop = 0, edgeHeight = 0;
       LeanLine line = LeanLine::None;
       };
-    LeanResult     leanNeeded(const Npc& npc, const Tempest::Vec3& lookDirection,
+    LeanResult     leanNeeded(const DynamicWorld* physics, const Tempest::Vec3& origin, float rotation, const Tempest::Vec3& lookDirection,
                              const Tempest::Vec3& shotDirection, float down, const LeanEdge& edge) const;
     // Predicts the head from the last pose with its actual smoothed torso rotation frozen.
     // Only the candidate hip bend changes. origin is at the feet; angle is in radians.
@@ -118,9 +120,10 @@ class Aim final {
     bool           update(const Input& in);
     void           apply(Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& origin,
                          const Tempest::Vec3& facing);
-    // Capture the final head and arrow slot after BowDraw and the remaining pose passes.
+    // Capture the final head and arrow slot after BowDraw and the remaining pose passes. seen: how far
+    // the arrow slot is moved only to be seen (BowDraw's follow through), not taken for the aim
     void           finish(const Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& origin,
-                          const Tempest::Vec3& facing);
+                          const Tempest::Vec3& facing, const Tempest::Vec3& seen = {});
     void           probe(Probe& p) const;
 
     static Probe       playerProbe;   // filled every frame for the hero
@@ -149,6 +152,7 @@ class Aim final {
     float               sideAmt = 0;  // radians, leaning out sideways, smoothed
     Tempest::Vec2       sway    = {};
     Tempest::Vec2       tremor  = {};
+    Tempest::Vec2       shake   = {};
     Tempest::Vec3       wantB   = {}; // where the shot has to go, body's frame, smoothed
     Tempest::Vec3       nockedOffsetB = {}; // release origin relative to referenceDir's origin, body's frame
     bool               nockedOrigin = false;

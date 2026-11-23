@@ -1,0 +1,18 @@
+# The server signals after the gang accepts payment. Use real keys and the ordinary game clock.
+cadence normal
+waitai broken road_walk 180000
+release all
+walkmode walk
+hold forward 1500
+wait 2500
+hold back 1500
+wait 2500
+hold forward 1500
+wait 2500
+hold back 1500
+wait 2500
+hold forward 1500
+wait 2500
+hold back 1500
+wait 2500
+release all

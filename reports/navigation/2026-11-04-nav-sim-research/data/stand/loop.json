@@ -1,0 +1,537 @@
+{
+ "status": "measured",
+ "method": "GPU half of the nav-sim stand: memory and the v5 net for N agents (task S3).\n\nEach step the CPU side (contract.CpuSide) hands over a StepBatch in pinned\nmemory; the loop copies it to the GPU without blocking, runs three memory\nupdates (gpumem kernels; the eye's rays enter at the last tick), reads the\nmemory straight into the net's input, steps the v5 net with a GRU state per\nagent and copies the actions back. The agents are split into two halves, each\nwith its own memory, CUDA stream and CPU side: while the GPU works on one half,\nthe CPU side steps the other.\n\nModes: ``fp32`` eager (parity) and ``fp16`` with a CUDA Graph per half (speed).\nHost-device copies stay outside the graph.\n\nOne command from the Mac stages everything on Ryzen, runs one gq job and writes\nthe compact report::\n\n    python3 scripts/navsim/stand/loop.py remote\n\nCommands inside the job:\n  parity  24 drive captures, one agent each from its first decision, through\n          the loop in fp32 and the engine (navsim_memory_ref + the same net,\n          each with its own GRU state): actions on every readout, readout bits\n          by hash; then fp16 + graph against fp32\n  speed   per N, in its own process: GPU part per decision (halves one by one),\n          decisions/s of the pipelined loop with the replay, and with an\n          artificial CPU cost of 200 us of thread time per decision on 24 threads",
+ "contract": "scripts/navsim/stand/contract.py",
+ "parity": {
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "raw": "/mnt/shared/gothic-ai/nav-sim-research/stand/20261104T212412Z_541a77/parity.json",
+  "agents": 24,
+  "steps": 300,
+  "journey": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "heads": [
+   "forward",
+   "strafe",
+   "turn",
+   "maneuver"
+  ],
+  "engine_seconds": 14.026548790978268,
+  "fp32": {
+   "seconds": 3.8435250039910898,
+   "state_errors": 0,
+   "readout_maps": {
+    "compared": 5653,
+    "bitwise_equal": 5653,
+    "first_mismatch": null
+   },
+   "vs_engine_first_pass": {
+    "readouts": 5653,
+    "equal": 5653,
+    "equal_fraction": 1.0,
+    "head_equal_fraction": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "vs_engine_all_steps": {
+    "readouts": 7200,
+    "equal": 7200,
+    "equal_fraction": 1.0,
+    "head_equal_fraction": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   }
+  },
+  "fp16_graph": {
+   "seconds": 1.2353105680085719,
+   "state_errors": 0,
+   "vs_fp32_first_pass": {
+    "readouts": 5653,
+    "equal": 5640,
+    "equal_fraction": 0.9977003361047232,
+    "head_equal_fraction": [
+     0.9994693083318592,
+     0.9989386166637184,
+     0.9992924111091456,
+     1.0
+    ]
+   },
+   "vs_fp32_all_steps": {
+    "readouts": 7200,
+    "equal": 7181,
+    "equal_fraction": 0.9973611111111111,
+    "head_equal_fraction": [
+     0.9990277777777777,
+     0.9988888888888889,
+     0.9994444444444445,
+     1.0
+    ]
+   },
+   "vs_engine_first_pass": {
+    "readouts": 5653,
+    "equal": 5640,
+    "equal_fraction": 0.9977003361047232,
+    "head_equal_fraction": [
+     0.9994693083318592,
+     0.9989386166637184,
+     0.9992924111091456,
+     1.0
+    ]
+   }
+  },
+  "captures": 24
+ },
+ "runs": [
+  {
+   "stamp": "20261104T205247Z_f59dd5",
+   "raw_dir": "/mnt/shared/gothic-ai/nav-sim-research/stand/20261104T205247Z_f59dd5",
+   "gpu": [
+    "NVIDIA GeForce RTX 3080",
+    "615.71.09",
+    "10240"
+   ],
+   "torch": "2.14.1+cu130",
+   "torch_cuda": "13.0",
+   "free_vram_mib_before": 8507,
+   "vram_after": "1431 MiB, 8496 MiB",
+   "gq": {
+    "host": "ryzen",
+    "cls": "quiet",
+    "threads": 26,
+    "mem_gib": 10,
+    "gpu_mem_gib": 8
+   },
+   "raw_checksums": {
+    "path": "/mnt/shared/gothic-ai/nav-sim-research/stand/20261104T205247Z_f59dd5/SHA256SUMS",
+    "sha256": "729f609ba06332cf2bcce80442b7cd37e43accb3d94a660d294a8547fe99ce70"
+   },
+   "cells": [
+    {
+     "agents": 2048,
+     "precision": "fp16",
+     "graph": true,
+     "warmup": 3,
+     "repeats": 20,
+     "fill_workers": 8,
+     "free_vram_mib_before": 8515,
+     "vram_limit_gib": 7.5,
+     "status": "ok",
+     "setup_peak_allocated_bytes": 4266249728,
+     "gpu_us_per_decision": {
+      "median": 23.193070587391652,
+      "p90": 23.24387247984608,
+      "min": 22.915008229513962,
+      "repeats": 20
+     },
+     "gpu_parts_us_per_decision": {
+      "copy_in": 2.1045286480026943,
+      "compute": 21.07978731704255,
+      "copy_out": 0.00719348955726673,
+      "total": 23.193070587391652
+     },
+     "loop_replay": {
+      "decisions_per_second": {
+       "median": 44372.465246313805,
+       "p90": 44622.047043546554,
+       "min": 44233.35964665565,
+       "repeats": 20
+      },
+      "cpu_side_ms_per_half_step": 3.3435359192662872
+     },
+     "replay_fill_ms_per_half_step": 3.3435359192662872,
+     "loop_delay": {
+      "decisions_per_second": {
+       "median": 36608.90818480397,
+       "p90": 37250.557217666676,
+       "min": 34728.788078391015,
+       "repeats": 20
+      },
+      "cpu_side_ms_per_half_step": 11.339904137906464,
+      "us_per_decision": 200.0,
+      "threads": 24
+     },
+     "peak_allocated_bytes": 4266249728,
+     "peak_reserved_bytes": 4582277120,
+     "process_vram_mib": 4662,
+     "free_vram_mib_after": 3828,
+     "state_errors": 0,
+     "step_batch_bytes_per_agent": 26912.0,
+     "replay_table_bytes": 103458572
+    },
+    {
+     "agents": 3072,
+     "precision": "fp16",
+     "graph": true,
+     "warmup": 3,
+     "repeats": 20,
+     "fill_workers": 8,
+     "free_vram_mib_before": 8495,
+     "vram_limit_gib": 7.5,
+     "status": "ok",
+     "setup_peak_allocated_bytes": 6373972992,
+     "gpu_us_per_decision": {
+      "median": 22.84231121755309,
+      "p90": 22.910473826858734,
+      "min": 22.644501965906883,
+      "repeats": 20
+     },
+     "gpu_parts_us_per_decision": {
+      "copy_in": 2.0968772574431367,
+      "compute": 20.740357362147833,
+      "copy_out": 0.005924131935191528,
+      "total": 22.84231121755309
+     },
+     "loop_replay": {
+      "decisions_per_second": {
+       "median": 44345.61188598111,
+       "p90": 44579.27932950109,
+       "min": 43983.59770839245,
+       "repeats": 20
+      },
+      "cpu_side_ms_per_half_step": 4.930925551355661
+     },
+     "replay_fill_ms_per_half_step": 4.930925551355661,
+     "loop_delay": {
+      "decisions_per_second": {
+       "median": 36162.410782626364,
+       "p90": 37086.84192000706,
+       "min": 35056.79462647801,
+       "repeats": 20
+      },
+      "cpu_side_ms_per_half_step": 16.373103814257775,
+      "us_per_decision": 200.0,
+      "threads": 24
+     },
+     "peak_allocated_bytes": 6373972992,
+     "peak_reserved_bytes": 6874464256,
+     "process_vram_mib": 6848,
+     "free_vram_mib_after": 1638,
+     "state_errors": 0,
+     "step_batch_bytes_per_agent": 26912.0,
+     "replay_table_bytes": 103458572
+    },
+    {
+     "agents": 2048,
+     "precision": "fp32",
+     "graph": false,
+     "warmup": 3,
+     "repeats": 20,
+     "fill_workers": 8,
+     "free_vram_mib_before": 8491,
+     "vram_limit_gib": 7.5,
+     "status": "ok",
+     "setup_peak_allocated_bytes": 4117308416,
+     "gpu_us_per_decision": {
+      "median": 22.82155780121684,
+      "p90": 22.863996733600896,
+      "min": 22.483673474440973,
+      "repeats": 20
+     },
+     "gpu_parts_us_per_decision": {
+      "copy_in": 2.124797407304868,
+      "compute": 20.69354481063783,
+      "copy_out": 0.0058130208212029775,
+      "total": 22.82155780121684,
+      "memory": 17.99926900615295,
+      "net": 2.69161718703496
+     },
+     "loop_replay": {
+      "decisions_per_second": {
+       "median": 46810.47622567964,
+       "p90": 47410.59941861325,
+       "min": 45622.72331891353,
+       "repeats": 20
+      },
+      "cpu_side_ms_per_half_step": 3.209678838320542
+     },
+     "replay_fill_ms_per_half_step": 3.209678838320542,
+     "loop_delay": {
+      "decisions_per_second": {
+       "median": 45358.96670674364,
+       "p90": 46062.04117116994,
+       "min": 44149.91285183962,
+       "repeats": 20
+      },
+      "cpu_side_ms_per_half_step": 12.206978148703152,
+      "us_per_decision": 200.0,
+      "threads": 24
+     },
+     "peak_allocated_bytes": 4218497024,
+     "peak_reserved_bytes": 4448059392,
+     "process_vram_mib": 4528,
+     "free_vram_mib_after": 3963,
+     "state_errors": 0,
+     "step_batch_bytes_per_agent": 26912.0,
+     "replay_table_bytes": 103458572
+    }
+   ],
+   "note": "halves computed concurrently on their two streams, before the in-turn ordering; class quiet"
+  },
+  {
+   "stamp": "20261104T212412Z_541a77",
+   "raw_dir": "/mnt/shared/gothic-ai/nav-sim-research/stand/20261104T212412Z_541a77",
+   "gpu": [
+    "NVIDIA GeForce RTX 3080",
+    "615.71.09",
+    "10240"
+   ],
+   "torch": "2.14.1+cu130",
+   "torch_cuda": "13.0",
+   "free_vram_mib_before": 8005,
+   "vram_after": "1447 MiB, 8481 MiB",
+   "gq": {
+    "host": "ryzen",
+    "cls": "quick",
+    "threads": 26,
+    "mem_gib": 6,
+    "gpu_mem_gib": 6
+   },
+   "raw_checksums": {
+    "path": "/mnt/shared/gothic-ai/nav-sim-research/stand/20261104T212412Z_541a77/SHA256SUMS",
+    "sha256": "d1b9a4a32c6d38b14a76e3c3aef89afbbad00fe3c08fa145956ded378dcc262a"
+   },
+   "cells": [
+    {
+     "agents": 2048,
+     "precision": "fp16",
+     "graph": true,
+     "warmup": 3,
+     "repeats": 20,
+     "fill_workers": 8,
+     "free_vram_mib_before": 8476,
+     "vram_limit_gib": 5.5,
+     "status": "ok",
+     "setup_peak_allocated_bytes": 4266249728,
+     "gpu_us_per_decision": {
+      "median": 23.14225054966907,
+      "p90": 23.260024543851614,
+      "min": 23.01629427820444,
+      "repeats": 20
+     },
+     "gpu_parts_us_per_decision": {
+      "copy_in": 2.1500252575303116,
+      "compute": 20.973912238453824,
+      "copy_out": 0.00800364586931816,
+      "total": 23.14225054966907
+     },
+     "loop_replay": {
+      "decisions_per_second": {
+       "median": 46871.45098858825,
+       "p90": 47212.0071730354,
+       "min": 46641.734568187414,
+       "repeats": 20
+      },
+      "cpu_side_ms_per_half_step": 3.440708858446063
+     },
+     "replay_fill_ms_per_half_step": 3.440708858446063,
+     "loop_delay": {
+      "decisions_per_second": {
+       "median": 46312.099880415575,
+       "p90": 46859.6394568479,
+       "min": 38750.52824460001,
+       "repeats": 20
+      },
+      "cpu_side_ms_per_half_step": 15.456147646667281,
+      "us_per_decision": 200.0,
+      "threads": 24
+     },
+     "peak_allocated_bytes": 4266249728,
+     "peak_reserved_bytes": 4582277120,
+     "process_vram_mib": 4662,
+     "free_vram_mib_after": 3813,
+     "state_errors": 0,
+     "step_batch_bytes_per_agent": 26912.0,
+     "replay_table_bytes": 103458572
+    }
+   ],
+   "note": "in-turn halves (current code); class quick next to a windowed game (0.6 GB VRAM) and CPU jobs"
+  },
+  {
+   "stamp": "20261104T212825Z_333720",
+   "raw_dir": "/mnt/shared/gothic-ai/nav-sim-research/stand/20261104T212825Z_333720",
+   "gpu": [
+    "NVIDIA GeForce RTX 3080",
+    "615.71.09",
+    "10240"
+   ],
+   "torch": "2.14.1+cu130",
+   "torch_cuda": "13.0",
+   "free_vram_mib_before": 8461,
+   "vram_after": "1447 MiB, 8481 MiB",
+   "gq": {
+    "host": "ryzen",
+    "cls": "quick",
+    "threads": 26,
+    "mem_gib": 6,
+    "gpu_mem_gib": 8
+   },
+   "raw_checksums": {
+    "path": "/mnt/shared/gothic-ai/nav-sim-research/stand/20261104T212825Z_333720/SHA256SUMS",
+    "sha256": "1bb03d1809c7024032d229a383fa1d13cd2b590896dc8406e2e59626713340e0"
+   },
+   "cells": [
+    {
+     "agents": 3072,
+     "precision": "fp16",
+     "graph": true,
+     "warmup": 3,
+     "repeats": 20,
+     "fill_workers": 8,
+     "free_vram_mib_before": 8461,
+     "vram_limit_gib": 7.5,
+     "status": "ok",
+     "setup_peak_allocated_bytes": 6373972992,
+     "gpu_us_per_decision": {
+      "median": 22.670146740145157,
+      "p90": 22.70695588654942,
+      "min": 22.363520165284474,
+      "repeats": 20
+     },
+     "gpu_parts_us_per_decision": {
+      "copy_in": 2.0952303803318904,
+      "compute": 20.568800376107294,
+      "copy_out": 0.0056940972374124816,
+      "total": 22.670146740145157
+     },
+     "loop_replay": {
+      "decisions_per_second": {
+       "median": 47620.79664140442,
+       "p90": 47901.745526928375,
+       "min": 47415.30015296769,
+       "repeats": 20
+      },
+      "cpu_side_ms_per_half_step": 4.516153302877986
+     },
+     "replay_fill_ms_per_half_step": 4.516153302877986,
+     "loop_delay": {
+      "decisions_per_second": {
+       "median": 47701.51330911869,
+       "p90": 47852.36002303209,
+       "min": 47411.46303700983,
+       "repeats": 20
+      },
+      "cpu_side_ms_per_half_step": 16.321644916994654,
+      "us_per_decision": 200.0,
+      "threads": 24
+     },
+     "peak_allocated_bytes": 6373972992,
+     "peak_reserved_bytes": 6874464256,
+     "process_vram_mib": 6848,
+     "free_vram_mib_after": 1628,
+     "state_errors": 0,
+     "step_batch_bytes_per_agent": 26912.0,
+     "replay_table_bytes": 103458572
+    }
+   ],
+   "note": "in-turn halves (current code); class quick, nothing else on the GPU; parity skipped (the previous run checked it on the same code)"
+  }
+ ],
+ "headline": {
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "parity_fp32_vs_engine": {
+   "readouts": 5653,
+   "equal": 5653,
+   "equal_fraction": 1.0,
+   "head_equal_fraction": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ]
+  },
+  "fp16_vs_fp32": 0.9977003361047232,
+  "speed": [
+   {
+    "agents": 2048,
+    "precision": "fp16",
+    "run": "20261104T212412Z_541a77",
+    "status": "ok",
+    "note": "in-turn halves (current code); class quick next to a windowed game (0.6 GB VRAM) and CPU jobs",
+    "gpu_us_per_decision": 23.14225054966907,
+    "gpu_parts_us_per_decision": {
+     "copy_in": 2.1500252575303116,
+     "compute": 20.973912238453824,
+     "copy_out": 0.00800364586931816,
+     "total": 23.14225054966907
+    },
+    "loop_replay_decisions_per_second": 46871.45098858825,
+    "loop_delay_decisions_per_second": 46312.099880415575,
+    "replay_ms_per_half_step": 3.440708858446063,
+    "delay_ms_per_half_step": 15.456147646667281,
+    "peak_reserved_gib": 4.267578125,
+    "process_vram_mib": 4662
+   },
+   {
+    "agents": 3072,
+    "precision": "fp16",
+    "run": "20261104T212825Z_333720",
+    "status": "ok",
+    "note": "in-turn halves (current code); class quick, nothing else on the GPU; parity skipped (the previous run checked it on the same code)",
+    "gpu_us_per_decision": 22.670146740145157,
+    "gpu_parts_us_per_decision": {
+     "copy_in": 2.0952303803318904,
+     "compute": 20.568800376107294,
+     "copy_out": 0.0056940972374124816,
+     "total": 22.670146740145157
+    },
+    "loop_replay_decisions_per_second": 47620.79664140442,
+    "loop_delay_decisions_per_second": 47701.51330911869,
+    "replay_ms_per_half_step": 4.516153302877986,
+    "delay_ms_per_half_step": 16.321644916994654,
+    "peak_reserved_gib": 6.40234375,
+    "process_vram_mib": 6848
+   },
+   {
+    "agents": 2048,
+    "precision": "fp32",
+    "run": "20261104T205247Z_f59dd5",
+    "status": "ok",
+    "note": "halves computed concurrently on their two streams, before the in-turn ordering; class quiet",
+    "gpu_us_per_decision": 22.82155780121684,
+    "gpu_parts_us_per_decision": {
+     "copy_in": 2.124797407304868,
+     "compute": 20.69354481063783,
+     "copy_out": 0.0058130208212029775,
+     "total": 22.82155780121684,
+     "memory": 17.99926900615295,
+     "net": 2.69161718703496
+    },
+    "loop_replay_decisions_per_second": 46810.47622567964,
+    "loop_delay_decisions_per_second": 45358.96670674364,
+    "replay_ms_per_half_step": 3.209678838320542,
+    "delay_ms_per_half_step": 12.206978148703152,
+    "peak_reserved_gib": 4.142578125,
+    "process_vram_mib": 4528
+   }
+  ]
+ }
+}

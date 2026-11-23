@@ -52,6 +52,19 @@ def test_successful_move_verifies_and_removes_source(archive, roots):
     assert (roots.destination / "empty").is_dir()
 
 
+def test_readonly_tree_is_removed_after_verified_move(archive, roots):
+    expected = {path.relative_to(roots.source): None if path.is_dir() else path.read_bytes()
+                for path in roots.source.rglob("*")}
+    for path in roots.source.rglob("*"):
+        path.chmod(0o555 if path.is_dir() else 0o444)
+    roots.source.chmod(0o555)
+
+    assert archive.move(roots.source) == roots.size
+    assert not roots.source.exists()
+    assert {path.relative_to(roots.destination): None if path.is_dir() else path.read_bytes()
+            for path in roots.destination.rglob("*")} == expected
+
+
 def test_missing_cifs_mount_retains_source(archive, roots):
     roots.mounts.write_text(f"/dev/disk {roots.nas} ext4 rw 0 0\n")
     with pytest.raises(archive.ArchiveError, match="not mounted as cifs") as error:
@@ -280,9 +293,9 @@ def test_verified_archive_is_sealed_before_interrupted_local_cleanup(archive, ro
     options = {"destination_relative": "archive/task-20261028", "attempt_id": "stable-token"}
     remove = archive.shutil.rmtree
 
-    def remove_then_fail(path):
+    def remove_then_fail(path, **kwargs):
         assert not (destination / archive.INCOMPLETE_MARKER).exists()
-        remove(path)
+        remove(path, **kwargs)
         raise OSError("interrupted after source removal")
 
     monkeypatch.setattr(archive.shutil, "rmtree", remove_then_fail)

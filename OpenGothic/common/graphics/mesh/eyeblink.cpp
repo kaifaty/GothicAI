@@ -101,6 +101,17 @@ bool EyeBlink::update(const Input& in, uint64_t& hold) {
     inPause = false;
     }
 
+  // the caller's blink near: none of its own comes, the next at random waits until it is past
+  reserved.erase(std::remove_if(reserved.begin(),reserved.end(),[&](uint64_t r) {
+    return r+ReserveGapMs<=in.now;
+    }),reserved.end());
+  for(auto r:reserved)
+    if(in.now+ReserveGapMs>r) {
+      next   = std::max(next,r+ReserveGapMs);
+      second = 0;
+      return false;
+      }
+
   const bool soon  = float(in.now-last)<SoonMs;
   bool       blink = false;
   if(second!=0 && in.now>=second) {
@@ -129,6 +140,10 @@ bool EyeBlink::update(const Input& in, uint64_t& hold) {
     second = in.now + uint64_t(std::max(0.f, DoubleGap + float(int(random()%81)-40)));
   ++blinks;
   return true;
+  }
+
+void EyeBlink::reserve(uint64_t at) {
+  reserved.push_back(at);
   }
 
 uint64_t EyeBlink::interval(bool speaking, float rate) {

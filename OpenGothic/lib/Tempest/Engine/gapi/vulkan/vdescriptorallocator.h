@@ -27,6 +27,7 @@ class VDescriptorAllocator {
     Allocation alloc(uint32_t num);
     Allocation alloc(const Sampler& s);
     void       free (uint32_t ptr, uint32_t num);
+    void       set(uint32_t ptr, AbstractGraphicsApi::Texture* texture, uint32_t mipLevel);
     void       flush();
 
     auto       currentMemory() const -> DSharedPtr<VDescriptorHeap*>;

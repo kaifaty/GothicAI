@@ -4,7 +4,7 @@
 
 #include "world/world.h"
 #include "world/movablevobs.h"
-#include "gothic.h"
+#include "settings.h"
 #include "utils/string_frm.h"
 
 using namespace Tempest;
@@ -21,7 +21,7 @@ StaticObj::StaticObj(Vob* parent, World& world, const asset::VirtualObject& vob,
 
   if(rule!=nullptr && visual.protoMesh()!=nullptr) {
     auto& physics = *world.physic();
-    physics.setMovableVobsEnabled(Gothic::physicsFlags().movableVobs);
+    physics.setMovableVobsEnabled(Settings::physicsFlags().movableVobs);
     movable = physics.addMovableVob(*visual.protoMesh(),scheme,transform(),rule->massMultiplier,
                                    rule->blocksWalking,rule->className,vob.cd_dynamic,vob.id);
     if(!movable.isEmpty()) {
@@ -33,17 +33,38 @@ StaticObj::StaticObj(Vob* parent, World& world, const asset::VirtualObject& vob,
       visual.setObjMatrix(transform());
       }
     }
+  // the picture of a flame inside a house goes out with the lamps at it (graphics/houselamps.h)
+  if((flags & Flags::Static)!=Flags::None && world.view()!=nullptr && vob.visual->type==asset::VisualType::DECAL &&
+     scheme.find("FIRE")==0) {
+    world.view()->houseLamps().adoptFlame(this, position(), [this](bool show) {
+      flameOut = !show;
+      visual.setObjMatrix(visualMatrix());
+      });
+    }
+  }
+
+StaticObj::~StaticObj() {
+  if(world.view()!=nullptr)
+    world.view()->houseLamps().dropFlame(this);
+  }
+
+// a flame that is out is drawn nowhere: far under the world
+Matrix4x4 StaticObj::visualMatrix() const {
+  auto m = transform();
+  if(flameOut)
+    m.set(3,1, m.at(3,1)-1.e6f);
+  return m;
   }
 
 void StaticObj::moveEvent() {
   Vob::moveEvent();
-  visual.setObjMatrix(transform());
+  visual.setObjMatrix(visualMatrix());
   if(!movable.isEmpty())
     movable.setObjMatrix(transform());
   }
 
 void StaticObj::physicsMoveEvent() {
-  visual.setObjMatrix(transform());
+  visual.setObjMatrix(visualMatrix());
   // Clamped or disabled child props keep their source collision as they follow
   // a parent; an independent dynamic body is excluded by Vob's propagation.
   movable.setAttachmentMatrix(transform());

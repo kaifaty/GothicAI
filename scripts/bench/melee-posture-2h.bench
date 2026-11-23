@@ -1,0 +1,92 @@
+# Stage 3 logic: authored player attacks at a real Onar wall; appearance is reviewed by Claude.
+# WORLD=NEWWORLD.ZEN MELEE_PHYSICS_HITS=1 MELEE_POSTURE=1 BENCH_HOST=local
+seed 73013
+cheat god
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+corner right go 0
+melee-shadow setup 2h
+wait 600
+melee-shadow target 2
+wait 600
+# Keep the old shadow fixture's two noncombat wolves outside the duel.
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+rec posture-hero-2h
+press action
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+release all
+wait 9000
+stop

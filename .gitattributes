@@ -1,0 +1,2 @@
+# cmd.exe parses batch files reliably only with CRLF line endings (Start-GothicAI.cmd and the others)
+*.cmd text eol=crlf

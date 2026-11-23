@@ -1,12 +1,19 @@
 #include "waymatrix.h"
+#include "loadprobe.h"
+#include "wayheights.h"
+#include "basestore.h"
 
 #include <Tempest/Log>
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <limits>
 
 #include "utils/dbgpainter.h"
 #include "world/objects/interactive.h"
 #include "world.h"
+#include "settings.h"
+#include "resources.h"
 
 using namespace Tempest;
 
@@ -30,11 +37,45 @@ WayMatrix::WayMatrix(World &world, const asset::WayNet& dat)
   stk[1].reserve(256);
   }
 
+const WayHeights::Profile& WayMatrix::groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                                   float stepHeight,float slopeCos) {
+  if(heightCache==nullptr) {
+    std::filesystem::path cacheRoot;
+    try { cacheRoot=BaseStore::cacheRoot(); }
+    catch(const std::exception&) { }
+    const auto inputs=Resources::wayHeightInputs(world.name());
+    const auto& flags=Settings::physicsFlags();
+    heightCache=std::make_unique<WayHeights>(cacheRoot,WayHeights::Key{inputs.baseFingerprint,
+       std::filesystem::path(world.name()).stem().string(),inputs.contentFingerprint,
+       uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)});
+    }
+  return heightCache->profile(from,to,stepHeight,slopeCos,*world.physic());
+  }
+
 void WayMatrix::buildIndex() {
+  const auto started = std::chrono::steady_clock::now();
+  stats = {};
+  std::filesystem::path cacheRoot;
+  Resources::WayHeightInputs inputs;
+  const auto* cacheEnabled = std::getenv("OPENGOTHIC_WAYHEIGHT_CACHE");
+  if(cacheEnabled==nullptr || std::string_view(cacheEnabled)!="0") {
+    try {
+      cacheRoot = BaseStore::cacheRoot();
+      }
+    catch(const std::exception&) {
+      // An unavailable derived cache must not prevent the original ray queries.
+      }
+    inputs = Resources::wayHeightInputs(world.name());
+    }
+  const auto& flags = Settings::physicsFlags();
+  WayHeights heights(cacheRoot,{inputs.baseFingerprint,std::filesystem::path(world.name()).stem().string(),
+                               inputs.contentFingerprint,uint32_t(flags.cloth) | (uint32_t(flags.movableVobs)<<1)});
+  const auto keyed = std::chrono::steady_clock::now();
   indexPoints.clear();
-  adjustWaypoints(wayPoints);
-  adjustWaypoints(freePoints);
-  adjustWaypoints(startPoints);
+  adjustWaypoints(wayPoints,heights);
+  adjustWaypoints(freePoints,heights);
+  adjustWaypoints(startPoints,heights);
+  const auto adjusted = std::chrono::steady_clock::now();
   std::sort(indexPoints.begin(),indexPoints.end(),[](const WayPoint* a,const WayPoint* b){
     return a->name<b->name;
     });
@@ -56,7 +97,17 @@ void WayMatrix::buildIndex() {
       }
     }
 
+  const auto indexed = std::chrono::steady_clock::now();
   calculateLadderPoints();
+  const auto ladders = std::chrono::steady_clock::now();
+  heights.save();
+  const auto finished = std::chrono::steady_clock::now();
+  const auto ms = [](auto a, auto b) { return std::chrono::duration<double,std::milli>(b-a).count(); };
+  stats = {indexPoints.size(),heights.hits(),heights.misses(),ms(started,keyed),ms(keyed,adjusted),
+           ms(adjusted,indexed),ms(indexed,ladders),ms(started,finished),ms(ladders,finished)};
+  Log::i("waypoints: ",world.name()," points=",stats.points," hits=",stats.hits," rays=",stats.misses,
+         " key_ms=",stats.keyMs," adjust_ms=",stats.adjustMs," index_ms=",stats.indexMs,
+         " ladders_ms=",stats.laddersMs," write_ms=",stats.writeMs," total_ms=",stats.totalMs);
   }
 
 const WayPoint *WayMatrix::findWayPoint(const Vec3& at, const std::function<bool(const WayPoint&)>& filter) const {
@@ -140,6 +191,7 @@ const WayPoint* WayMatrix::findWayPoint(std::string_view name) const {
   }
 
 const WayPoint* WayMatrix::findPoint(std::string_view name, bool inexact) const {
+  LoadProbe::Startup::Detail::Scope detail("find_point",[&]{return std::string(name);});
   if(name.empty())
     return nullptr;
   for(size_t i=0; i<startPoints.size(); ++i) {
@@ -191,16 +243,9 @@ void WayMatrix::marchPoints(DbgPainter &p) const {
     }
   }
 
-void WayMatrix::adjustWaypoints(std::vector<WayPoint> &wp) {
+void WayMatrix::adjustWaypoints(std::vector<WayPoint>& wp, WayHeights& heights) {
   for(auto& w:wp) {
-    auto ray = world.physic()->landRay(w.position());
-    if(ray.hasCol) {
-      //NOTE: what about water?
-      w.groundPos = ray.v;
-      } else {
-      // some way-point are underground
-      w.groundPos = w.pos;
-      }
+    heights.adjust(w,*world.physic());
     indexPoints.push_back(&w);
     }
   }
@@ -387,4 +432,18 @@ void WayMatrix::forEachPoint(const std::function<void(const WayPoint&)>& f) cons
     f(w);
   for(auto& w:freePoints)
     f(w);
+  }
+
+
+size_t WayMatrix::probeCpuBytes() const {
+  size_t bytes=sizeof(*this)+edges.capacity()*sizeof(edges[0])+indexPoints.capacity()*sizeof(indexPoints[0])+
+               fpInd.capacity()*sizeof(fpInd[0])+fpIndex.capacity()*sizeof(fpIndex[0]);
+  for(const auto* list:{&wayPoints,&freePoints,&startPoints}) {
+    bytes+=list->capacity()*sizeof((*list)[0]);
+    for(const auto& point:*list) bytes+=point.connections().capacity()*sizeof(point.connections()[0]);
+    }
+  for(const auto& index:fpIndex) bytes+=index.index.capacity()*sizeof(index.index[0]);
+  for(const auto& list:stk) bytes+=list.capacity()*sizeof(list[0]);
+  if(heightCache) bytes+=heightCache->probeCpuBytes();
+  return bytes;
   }

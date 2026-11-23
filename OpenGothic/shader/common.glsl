@@ -11,9 +11,76 @@ const float RClouds  = RPlanet+3000; // Clouds height in meters
 const float RAtmos   = 6460e3;       // Radius of the atmosphere in meters
 
 const float Ffresnel = 0.02;
-const float IorWater = 1.0 / 1.52; // air / water
-const float IorAir   = 1.52;       // water /air
+const float IorWater = 1.0 / 1.333; // air / water (1.52 was glass)
+const float IorAir   = 1.333;      // water / air
 const vec3  WaterAlbedo = vec3(0.8,0.9,1.0);
+// Soft particles (cm): the fade before the scene behind a sprite, and the fade next to the camera [from, to].
+// Particle emission as a share of the sun's intensity: about 1/(exposure*GSunIntensity) at noon, where the
+// exposure is 1/(2.5*1.25*the luminance of lit white) (sky_exposure.comp).
+const float EmissiveSunRatio  = 1.7;
+const float EmissiveMaxGain   = 6.0;   // about 2.6 EV over the noon look
+// A glowing mesh (materials.json "emissive"): the colour of its heat (emberColour) times up to this before that gain.
+// Its share rides in the G-buffer ORM alpha below the own-material bit: alpha 1 - EmissiveOrmCode*share keeps the
+// "own" test (> 0.5).
+const float EmissiveMeshPeak  = 0.6;
+const float EmissiveOrmCode   = 0.49;
+// Glowing charcoal by its share of heat: dull red where a block glows through (about 700 C) to orange deep in a crack
+// (about 1000 C). Albedo as the colour went white at a peak of 4 (r3) and read as lamp-lit orange paint below it (r5).
+// A window lit of an evening (materials/window_glow.glsl): bit 7 of the hint bits next to the glow's share in the ORM
+// alpha. Its light is a candle's off the walls of the room behind, not the heat of embers; the albedo stays
+const int   GBufWindowBit  = 1 << 7;
+const vec3  WindowColour   = vec3(1.0, 0.45, 0.10);
+const float WindowMeshPeak = 0.17;
+
+bool isGBufWindow(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufWindowBit)!=0;
+  }
+
+// A tree's crown (lighting/crown_light.glsl): bit 0 of the hint bits. Such a pixel keeps the shade of the crown at
+// its depth in the ORM alpha, in the code of a glow's share (1 at the outside: the alpha of any own material) - a
+// crown does not glow. Every light pass multiplies its light by it; with the foliage bit the sky and the lamps come
+// through the leaf as the sun does
+const int   GBufCrownBit = 1 << 0;
+
+bool isGBufCrown(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufCrownBit)!=0;
+  }
+
+float gbufCrownShadeCode(float shade) {
+  return 1.0 - EmissiveOrmCode*(1.0 - shade);
+  }
+
+// what the crown leaves of the light of the pixel; 1 for any other pixel. orm: the raw G-buffer ORM
+float gbufCrownShade(vec4 orm, float hint) {
+  if(orm.a<=0.5 || !isGBufCrown(hint))
+    return 1.0;
+  return clamp(1.0 - (1.0 - orm.a)/EmissiveOrmCode, 0.0, 1.0);
+  }
+
+vec3 emberColour(float share) {
+  return mix(vec3(0.5, 0.04, 0.004), vec3(1.0, 0.3, 0.04), share);
+  }
+// The glow of an own mesh by the raw G-buffer ORM of its pixel (main.frag mainGBuffer): its own luminance under the
+// exposure, as a flame's. Every pass of the ambient light adds it after the exposure - ambient_light.frag and the
+// probes' probe_ambient.frag; a pass without it leaves the embers as dark as their albedo
+vec3 emissiveMeshGlow(vec4 orm, float hint, float sunIntensity, float exposure) {
+  if(orm.a<=0.5 || orm.a>=0.999 || isGBufCrown(hint))
+    return vec3(0);
+  const float share = (1.0 - orm.a)/EmissiveOrmCode;
+  const float gain  = min(EmissiveSunRatio * sunIntensity * exposure, EmissiveMaxGain);
+  if(isGBufWindow(hint))
+    return WindowColour * (share*WindowMeshPeak) * gain;
+  return emberColour(share) * (share*EmissiveMeshPeak) * gain;
+  }
+const float SoftParticleDepth = 15.0;
+const vec2  SoftParticleNear  = vec2(30.0, 100.0);
+const float WaterF0        = 0.0204; // ((1.333-1)/(1.333+1))^2
+// Ripples finer than the wave normal, as a GGX roughness (alpha = r^2): the sea in a 5 m/s wind has a
+// mean square slope of about 0.029 (Cox and Munk), alpha ~0.24; still water in a pot about 0.06.
+const float WaterRoughness    = 0.45;
+const float PotWaterRoughness = 0.25;
 
 // in vanilla game night time attenuated as rgb{18 16 60}
 const float GMoonIntensity = 0.36;
@@ -35,6 +102,10 @@ const vec3 debugColors[] = {
   vec3(0.5,1,0),
   vec3(0,0.5,1),
   };
+
+// depth range of the fog LUT slices (fog_view_lut.comp)
+const float dFogMin = 0;
+const float dFogMax = 0.9999;
 
 float linearDepth(float d, vec3 clipInfo) {
   // z_n * z_f,  z_n - z_f, z_f
@@ -127,6 +198,54 @@ bool isGBufFlat(float v) {
 bool isGBufWater(float v) {
   int x = int(v*255+0.5);
   return (x & (1 << 3))!=0;
+  }
+
+// Hair cards (reports/content/2026-11-npc-hair): bit 4 of the hint bits. Such a pixel keeps the normal of the
+// hair's surface in gbufNormal and, in gbufOrm, r the strand's shade, g its number, b the direction of the strand
+// as an angle around that normal (hair has no metal), a = 1
+const int GBufHairBit = 1 << 4;
+
+bool isGBufHair(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufHairBit)!=0;
+  }
+
+// Eyeballs (reports/content/2026-11-hero-head/eye-shader.md): bit 5 of the hint bits. Such a pixel keeps in gbufOrm
+// r the map's AO, g the roughness of the tear film, b how much the lids leave of the light (0 under the lid's edge,
+// 1 open; an eye has no metal), a = 1. The albedo is already darkened by the lid's shade (main.frag)
+const int GBufEyeBit = 1 << 5;
+
+bool isGBufEye(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufEyeBit)!=0;
+  }
+
+// Leaves (reports/engine/2026-11-14-living-foliage): bit 6 of the hint bits. Such a pixel keeps in gbufOrm.b, in
+// place of metal (a leaf has none), the share of the sun it lets through; r, g and a = 1 as any own material. The
+// sun reads it (direct_light.frag, lighting/foliage_light.glsl); every other reader of metal takes gbufOrmMaterial
+const int GBufFoliageBit = 1 << 6;
+
+bool isGBufFoliage(float v) {
+  int x = int(v*255+0.5);
+  return (x & GBufFoliageBit)!=0;
+  }
+
+// gbufOrm as the material's AO, roughness and metal: a leaf has no metal
+vec4 gbufOrmMaterial(vec4 orm, float hint) {
+  if(orm.a>0.5 && isGBufFoliage(hint))
+    orm.b = 0.0;
+  return orm;
+  }
+
+// The lid's shade of an eyeball whose rig has none (no face rig, a head without eyes.lid_shade): the mean over the
+// open part of the test heads' eyes (0.65..0.73), not 0 and not 1
+const float EyeLidFar = 0.7;
+
+// How much light a hair gets by the share that reaches it straight through the hair over it (gbufOrm.r of hair:
+// baked per point of a strand by groom_export.py, a card's hair map). The rest is scattered on the way, and a part
+// of it arrives still
+float hairShade(float reach) {
+  return 0.22 + 0.78*reach;
   }
 
 float packHiZ(float z) {
@@ -385,6 +504,31 @@ vec3 normalFetch(in usampler2D gbufNormal, ivec2 p) {
 vec3 normalFetch(in utexture2D gbufNormal, ivec2 p) {
   const uint n = texelFetch(gbufNormal, p, 0).r;
   return decodeNormal(n);
+  }
+
+// A frame around a normal that the G-buffer and the light passes build alike (Duff et al. 2017, branchless): the
+// angle of a hair strand is counted in it. It flips where n.z changes sign, so the writer takes the normal as the
+// reader will decode it, not the one it encoded
+void hairFrame(vec3 n, out vec3 t, out vec3 b) {
+  const float sg = n.z>=0.0 ? 1.0 : -1.0;
+  const float a  = -1.0/(sg + n.z);
+  const float c  = n.x*n.y*a;
+  t = vec3(1.0 + sg*n.x*n.x*a, sg*c, -sg*n.x);
+  b = vec3(c, sg + n.y*n.y*a, -n.y);
+  }
+
+float encodeHairAngle(vec3 n, vec3 dir) {
+  vec3 t, b;
+  hairFrame(n, t, b);
+  return atan(dot(dir,b), dot(dir,t))*(0.5/M_PI) + 0.5;
+  }
+
+// the strand's direction, root to tip, in the plane of the hair's surface
+vec3 decodeHairDir(vec3 n, float angle) {
+  vec3 t, b;
+  hairFrame(n, t, b);
+  const float a = (angle - 0.5)*(2.0*M_PI);
+  return t*cos(a) + b*sin(a);
   }
 
 uint wangHash(inout uint seed) {

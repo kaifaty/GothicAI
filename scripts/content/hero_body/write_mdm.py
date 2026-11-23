@@ -1,0 +1,1 @@
+../../../character-tool/src/character_tool/body/write_mdm.py

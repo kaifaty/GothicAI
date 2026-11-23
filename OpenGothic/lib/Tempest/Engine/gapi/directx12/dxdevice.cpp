@@ -308,10 +308,10 @@ void DxDevice::getProp(DXGI_ADAPTER_DESC1& desc, ID3D12Device& dev, DxProps& pro
       }
     }
 
-  D3D12_FEATURE_DATA_D3D12_OPTIONS5 feature5 = {};
-  if(SUCCEEDED(dev.CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &feature5, sizeof(feature5)))) {
-    prop.raytracing.rayQuery = (feature5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1);
-    }
+  // Ray query stays off on DX12, whatever RaytracingTier the device reports: the top-level structure built inside
+  // a frame (Device::tlas(Uninitialized, capacity), packRtInstances, Encoder::buildTlas) exists only on Vulkan and
+  // Metal, so the engine's ray-traced scene turns off here the same way as on a GPU without ray query.
+  prop.raytracing.rayQuery = false;
 
   D3D12_FEATURE_DATA_D3D12_OPTIONS7 feature7 = {};
   if(SUCCEEDED(dev.CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &feature7, sizeof(feature7)))) {

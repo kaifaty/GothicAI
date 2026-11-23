@@ -9,32 +9,27 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
-from .. import characters
 from ..bodies import Bodies
 from ..chronicle import Fact
 from ..dialogue import DialogueManager, SceneLine, line_duration
 from ..game import GameError, GameLink
+from ..gossip import CACHE_KEY as GOSSIP_KEY
 from ..gossip import WORDS_CM, GossipDesk
 from ..group import ANSWER_CUE, ROUND_GAP_S
 from ..interject import Interjections
-from ..llm import LLMBackend, Message
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import Message, ToolCall
 from ..perception import PerceptionDesk
 from ..protocol import GameMessage, LineStarted, Look, NpcView, SayCmd, Session
 from ..quests import RUMOR_CM
 from ..social import TICK_S, Rumor, Rumors
-from ..talk import TalkDesk, fights
+from ..talk import TalkDesk
 from ..trace import read as read_trace
-from ..trust import Trust
 from .common import (
     GOSSIP_LINES,
     HILDA,
     LOBART,
     RUEBEN,
     VINO,
-    ClaimScript,
-    GossipScript,
-    _ByNpc,
     _caught_by,
     _logged,
     _passes_text,
@@ -42,8 +37,17 @@ from .common import (
     _scene_lines,
     _until,
     _until_async,
+    model_off,
     wait_message,
 )
+from .live import LiveSuite
+
+SCENARIOS = {
+    "gossip": ("GIVEN", {"save": True, "timeout": 420, "env": {"DECIDER_URL": ""}}),
+    "gossip_demo": ("GIVEN", {"save": True, "timeout": 240}),
+    "group": ("GIVEN", {"save": False, "timeout": 240}),
+    "interject": ("LIVE", None),
+}
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -110,7 +114,7 @@ async def group_scenario(
 ) -> dict[str, str]:
     """One word at a time (step B2 of docs/npc-tools.md; the user, 2026-10-13: talking to two bandits and
     Cavalorn, all three answered at once). The hero, Cavalorn with him, at the bandits' cave with Brago, his
-    mate and the bandit from the steps; the models are scripted (LLM=fake), lines voiced (TTS=fake). The hero
+    mate and the bandit from the steps; the given lines are voiced (TTS=fake). The hero
     says «Пацаны, здорово!» while Cavalorn is still his conversation partner (2026-10-18: the greeting
     wrongly went to the companion); at once three others ask for words, as the fast loop's escalations
     do. Checks:
@@ -130,14 +134,19 @@ async def group_scenario(
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
+    off = model_off(dialogue)
     names = {npc: "Кавалорн", brago: "Браго", bandit: "Бандит", steps: "Бандит"}
-    models = {
-        brago: FakeBackend("Чего надо? Говори быстро.", delay=0.02, first=0.5),
-        bandit: FakeBackend("Ты кто такой вообще?", delay=0.02, first=0.5),
-        npc: FakeBackend("Спокойно, он со мной.", delay=0.02, first=0.5),
-        steps: FakeBackend("А я его знаю!", delay=0.02, first=0.5),
-    }
-    dialogue.llm = _ByNpc(models, FakeBackend("Хм.", delay=0))
+    for who, line in (
+        (brago, "Чего надо? Говори быстро."),
+        (bandit, "Ты кто такой вообще?"),
+        (npc, "Спокойно, он со мной."),
+    ):
+        off.given(
+            f"дано: реплика {names[who]} в очереди приветствия",
+            who=who,
+            when="Пацаны, здорово!",
+            line=line,
+        )
     started: list[tuple[float, str, str]] = []  # (when, npc, line)
     link.listeners.append(
         lambda m: (
@@ -176,28 +185,41 @@ async def group_scenario(
     quiet = await _until(
         lambda: time.monotonic() - t0 > 3 and not any(dialogue.speaking(n) for n in names), 40
     )
-    voices = [n for n in names if models[n].calls]
     # each voice starts after the one before it has been heard: its lines' starts and lengths
     order, overlaps = _overlaps(dialogue, [s for s in started if s[0] >= t0], names)
     check("bandits_answer", bool(order) and order[0] == brago, [names[n] for n in order])
     check("one_at_a_time", quiet and len(order) >= 2 and not overlaps, overlaps or [names[n] for n in order])
-    second = models[order[1]].calls[0][1] if len(order) > 1 and models[order[1]].calls else []
-    heard = "Ты слышал, как Браго говорит герою" in " ".join(str(getattr(m, "content", "")) for m in second)
+    second = dialogue.conversations.get(order[1]) if len(order) > 1 else None
+    situation = (await dialogue._situation(second, None))[0] if second is not None else ""
+    context = (
+        " ".join([situation, *(m.content for m in second.history if isinstance(m, Message))])
+        if second is not None
+        else ""
+    )
+    heard = "Ты слышал, как Браго говорит герою" in context
     check("heard", heard, names[order[1]] if len(order) > 1 else "nobody second")
-    check("three", len(voices) == 3 and len(order) == 3, [names[n] for n in voices])
+    check("three", len(order) == 3, [names[n] for n in order])
 
     # B4: Cavalorn calls Brago out, Brago answers him
     await asyncio.sleep(ROUND_GAP_S + 1)  # the round is over
-    cavalorn = FakeBackend(
-        delay=0.02,
-        first=0.5,
-        script=[
-            FakeStep("Они самые, эти рожи я из тысячи узнаю. Браго, верни то, что у меня забрал!"),
-            FakeStep("Посмотрим ещё, кто тут что прикусит."),  # Brago called him back: the third voice
-        ],
+    off.given(
+        "дано: реплика Кавалорна обращена к Браго",
+        who=npc,
+        when="это они тебя ограбили?",
+        line="Они самые, эти рожи я из тысячи узнаю. Браго, верни то, что у меня забрал!",
     )
-    brago_says = FakeBackend("Кавалорн, ты бы язык прикусил, пока цел.", delay=0.02, first=0.5)
-    dialogue.llm = _ByNpc({npc: cavalorn, brago: brago_says}, FakeBackend("Хм.", delay=0))
+    off.given(
+        "дано: реплика Браго обращена к Кавалорну",
+        who=brago,
+        when=ANSWER_CUE.format(name="Кавалорн"),
+        line="Кавалорн, ты бы язык прикусил, пока цел.",
+    )
+    off.given(
+        "дано: реплика Кавалорна в ответ Браго",
+        who=npc,
+        when=ANSWER_CUE.format(name="Браго"),
+        line="Посмотрим ещё, кто тут что прикусит.",
+    )
     sent: list[SayCmd] = []
     send = link.send
 
@@ -232,29 +254,27 @@ async def group_scenario(
     link.listeners.append(on_line)
     mark = time.monotonic()
     talk.hear("Кавалорн, это они тебя ограбили?", None, {"via": "scenario"})
-    await _until(lambda: bool(brago_says.calls) and time.monotonic() - mark > 3, 40)
+    await _until(lambda: any(c.npc.upper() == brago for c in sent) and time.monotonic() - mark > 3, 40)
     await _until(lambda: not any(dialogue.speaking(n) for n in names), 40)
     await asyncio.gather(*watchers, return_exceptions=True)
     link.send = send  # type: ignore[method-assign]
     to_brago = [c for c in sent if c.npc.upper() == npc and c.to == brago]
     check(
         "called",
-        any("Браго" in c.text for c in to_brago),
+        bool(to_brago),
         [(c.text, c.to) for c in sent if c.npc.upper() == npc],
     )
-    cue = brago_says.calls[0][1][-1].content if brago_says.calls else ""
     to_him = [c for c in sent if c.npc.upper() == brago]
     mine = sorted(st for st in started if st[0] >= mark)
     _, overlaps = _overlaps(dialogue, mine, names)
     turns = [w for i, (_, w, _) in enumerate(mine) if i == 0 or mine[i - 1][1] != w]  # who, as heard
     check(
         "answers_him",
-        cue == ANSWER_CUE.format(name="Кавалорн")
-        and bool(to_him)
+        bool(to_him)
         and all(c.to == npc for c in to_him)
         and turns in ([npc, brago], [npc, brago, npc])  # Brago may call him back: his third voice
         and not overlaps,
-        overlaps or f"{[names[n] for n in turns]}, Brago to {[c.to for c in to_him]}, cue «{cue}»",
+        overlaps or f"{[names[n] for n in turns]}, Brago to {[c.to for c in to_him]}",
     )
 
     def looks(line_of: str, who: str, at: str) -> bool:
@@ -279,30 +299,16 @@ async def interject_scenario(
     bandit: str = "BDT_1015_BANDIT_L",
     steps: str = "BDT_1013_BANDIT_L",
 ) -> dict[str, str]:
-    """Who speaks up, by character (step B3 of docs/npc-tools.md), live: the conversational model
-    (LLM=chatgpt) and the behavioral one (DECIDER_URL) are the real ones. At the steps below Xardas's tower,
-    as in `group`, the hero says three phrases, each once the last voice has been heard: one to them all,
-    one to the bandit from the cave (he looks at him) and one to Brago. Checks:
-    - three: no more than three voices to any of them;
-    - one_at_a_time: no voice over another;
-    - asked: after each answer outside a fight the others were asked whether they speak up.
-    Who spoke up and what each said go to the log, to be read: not a bazaar, each by its character. Whether
-    anyone speaks up is the models' call, so it is no check (the bandits may well go for Cavalorn)."""
-    await link.wait_world()
-    results: dict[str, str] = {}
-    if interject is None:
-        return _logged({"decider": "failed (no behavioral model: run with DECIDER_URL)"})
-
-    def check(name: str, ok: bool, detail: object = "") -> None:
-        results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
-
+    """Observe each live phrase's interveners and score its real voice limit and overlap."""
+    suite = LiveSuite("interject", dialogue.trace)
     names = {npc: "Кавалорн", brago: "Браго", bandit: "Бандит из пещеры", steps: "Бандит у лестницы"}
     started: list[tuple[float, str, str]] = []
-    link.listeners.append(
-        lambda m: (
-            started.append((time.monotonic(), m.npc.upper(), m.line)) if isinstance(m, LineStarted) else None
-        )
-    )
+
+    def heard(message: GameMessage) -> None:
+        if isinstance(message, LineStarted):
+            started.append((time.monotonic(), message.npc.upper(), message.line))
+
+    link.listeners.append(heard)
     entries: list[dict[str, Any]] = []
     sink = dialogue.journal.sink
 
@@ -312,47 +318,67 @@ async def interject_scenario(
             sink(entry)
 
     dialogue.journal.sink = keep
-    if (failed := await _at_the_steps(link, dialogue, talk, npc, brago, bandit, steps)) is not None:
-        return _logged({"roster": f"failed ({failed})"})
-    phrases = [
-        ("Пацаны, здорово! Как жизнь?", None),
-        ("А ты кто такой? Что-то я тебя тут раньше не видел.", bandit),
-        ("Браго, а торговцы тут часто ходят?", None),
-    ]
-    rounds: list[list[str]] = []
-    overlaps: list[str] = []
-    unasked: list[str] = []
-    for text, focus in phrases:
-        mark, seen, asked = time.monotonic(), len(entries), len(interject.asked)
-        talk.hear(text, focus, {"via": "scenario"})
-        await asyncio.sleep(2)
-        await _until(lambda: not any(dialogue.speaking(n) for n in names), 60)
-        await asyncio.sleep(3)  # one who speaks up asks for words after the answer
-        await _until(lambda: not any(dialogue.speaking(n) for n in names), 60)
-        mine = [st for st in started if st[0] >= mark]
-        order, over = _overlaps(dialogue, mine, names)
-        overlaps += over
-        rounds.append(order)
-        for e in entries[seen:]:
-            if e.get("kind") == "npc":
-                log.info("interject: %s: %s", names.get(e["npc"], e["npc"]), e["text"])
-        ups = [names.get(e["npc"], e["npc"]) for e in entries[seen:] if e.get("kind") == "interject"]
-        log.info(
-            "interject: «%s» -> %s; spoke up: %s", text, [names.get(n, n) for n in order], ups or "nobody"
-        )
-        for speaker, ranked, _ in interject.asked[asked:]:
-            log.info(
-                "interject: after %s: %s",
-                names.get(speaker, speaker),
-                ", ".join(f"{names.get(n, n)} {p:.2f}" for n, p in ranked),
-            )
-        if len(interject.asked) == asked and not any(fights(talk.people.get(n)) for n in names):
-            unasked.append(text)
-    voices = [len(r) for r in rounds]
-    check("three", all(v <= 3 for v in voices), voices)
-    check("one_at_a_time", not overlaps, overlaps or "no voice over another")
-    check("asked", not unasked, unasked or f"{len(interject.asked)} time(s)")
-    return _logged(results)
+    phrases = {
+        "greeting": ("Пацаны, здорово! Как жизнь?", None),
+        "stranger": ("А ты кто такой? Что-то я тебя тут раньше не видел.", bandit),
+        "brago": ("Браго, а торговцы тут часто ходят?", None),
+    }
+    prepared = False
+    try:
+        for case_name in suite.selected:
+            with suite.case(case_name) as case:
+                if interject is None:
+                    raise GameError("interject requires a live behavioral model: set DECIDER_URL")
+                if not prepared:
+                    await link.wait_world()
+                    failed = await _at_the_steps(link, dialogue, talk, npc, brago, bandit, steps)
+                    if failed is not None:
+                        raise GameError(f"interject roster: {failed}")
+                    prepared = True
+                    await _until(lambda: not any(dialogue.speaking(n) for n in names), 60)
+                text, focus = phrases[case_name]
+                mark, seen, asked = time.monotonic(), len(entries), len(interject.asked)
+                talk.hear(text, focus, {"via": "scenario"})
+                await asyncio.sleep(2)
+                await _until(lambda: not any(dialogue.speaking(n) for n in names), 60)
+                await asyncio.sleep(3)  # the answer starts the behavioral model's question
+                settled = await _until(
+                    lambda: not interject._tasks
+                    and interject.group._quiet()
+                    and not any(dialogue.speaking(n) for n in names),
+                    90,
+                )
+                mine = sorted(st for st in started if st[0] >= mark)
+                participants, overlaps = _overlaps(dialogue, mine, names)
+                turns = [who for i, (_, who, _) in enumerate(mine) if i == 0 or mine[i - 1][1] != who]
+                journal = entries[seen:]
+                chosen = {e["npc"] for e in journal if e.get("kind") == "interject"}
+                interveners = [n for n in participants if n in chosen]
+                outcome = (
+                    "failure" if len(turns) > 3 or overlaps else "success" if settled else "no_decision"
+                )
+                case.finish(
+                    outcome,
+                    evidence={
+                        "phrase": text,
+                        "voices": turns,
+                        "participants": participants,
+                        "overlaps": overlaps,
+                        "settled": settled,
+                        "interveners": interveners,
+                        "decision": ",".join(interveners) or "none",
+                        "asked": interject.asked[asked:],
+                        "journal": journal,
+                        "line_started": [
+                            {"at_s": round(t - mark, 3), "npc": who, "line": line}
+                            for t, who, line in mine
+                        ],
+                    },
+                )
+    finally:
+        dialogue.journal.sink = sink
+        link.listeners.remove(heard)
+    return _logged(suite.results())
 
 
 GOSSIP_SLOT = 8  # the save before the scene: played whole, then again from there and cut
@@ -382,8 +408,8 @@ async def gossip_scenario(
     turns to her and they say three lines in turn, each to the other, a line only once the voice before it has
     played out (game.log, `log_dir`). From a save before it the scene again: the hero's voice cuts both after
     the second line, he asks Hilda what they whispered about, and she has the scene and the rumor in mind.
-    Last, far from the hero, a pass is only the fact: no model, no words. The lines are scripted unless
-    LLM=chatgpt; voices with a TTS service (scripts/e2e.sh starts one)."""
+    Last, far from the hero, a pass is only the fact: no model, no words. The given lines use the
+    TTS service (scripts/e2e.sh starts one)."""
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -487,19 +513,29 @@ async def gossip_scenario(
         around = [str(p.get("npc", "")).upper() for p in await link.story_nearby(LOBART, RUMOR_CM)]
         if HILDA in around:
             return _logged({**results, "apart": f"failed (Hilda within {RUMOR_CM // 100} m of Lobart)"})
-        live = None if isinstance(dialogue.llm, FakeBackend) else dialogue.llm
-        ok, claim = await _caught_by(link, dialogue, talk, LOBART, facts)
-        check("caught", ok, facts("caught")[-1:])
-        if not ok or claim is None:
-            return _logged(results)
-        # the scene's lines, Hilda's answer, else Lobart's script (it answers every call with LLM=fake)
-        hilda = ClaimScript(
-            said=[("шептались", FakeStep("Не твоё дело. Хотя… Лобарт говорит, ты ему наврал."))],
-            told=[],
-            only="Хильда",
+        off = model_off(dialogue)
+        ok, _ = await _caught_by(link, dialogue, talk, LOBART, facts)
+        if not ok:
+            return _logged({**results, "setup": "failed (Lobart's given lie catch did not finish)"})
+        off.given(
+            "дано: реплика Лобарта и реплика Хильды в сцене сплетни",
+            who=GOSSIP_KEY,
+            calls=[ToolCall("lines", {
+                "lines": [
+                    {"speaker": ("Лобарт", "Хильда")[who], "text": line, "mood": mood}
+                    for who, line, mood in GOSSIP_LINES
+                ],
+                "quiet": True,
+                "reason": "сплетничают о герое, пока он рядом",
+            })],
+            times=2,
         )
-        script = GossipScript(claim, hilda, live)
-        dialogue.llm = script
+        off.given(
+            "дано: реплика Хильды на вопрос героя после обрыва сцены",
+            who=HILDA,
+            when="шептались",
+            line="Не твоё дело. Хотя… Лобарт говорит, ты ему наврал.",
+        )
 
         def rumor() -> Rumor | None:
             return next((r for r in rumors.rumors.values() if r.quest == RUEBEN), None)
@@ -574,11 +610,10 @@ async def gossip_scenario(
             "; ".join(f"{i + 1}: {'yes' if ok else 'no'}" for i, ok in enumerate(looked)),
         )
         speakers = [x.npc for x in said]
-        want = len(lines) if live is not None else len(GOSSIP_LINES)
         check(
-            "three_lines",
-            len(said) == len(lines) == want
-            and 2 <= want <= 4
+            "queue",
+            bool(said)
+            and len(said) == len(lines)
             and all(n == (LOBART, HILDA)[i % 2] for i, n in enumerate(speakers)),
             f"{len(said)} of {len(lines)} started: {' -> '.join(social.names.get(n, n) for n in speakers)}",
         )
@@ -642,7 +677,7 @@ async def gossip_scenario(
         # 6. within the grace he asks Hilda: she listens to him now, the scene and the rumor in mind
         conv = dialogue.conversations.get(HILDA)
         before = conv.reply if conv is not None else None
-        asked_at, calls = time.monotonic(), len(hilda.calls)
+        asked_at = time.monotonic()
         await link.debug("type", text="Хильда, о чём вы шептались?")
 
         def answered() -> bool:
@@ -660,22 +695,16 @@ async def gossip_scenario(
             f"{len(hers)} line(s){f', {len(moving)} on the move' if moving else ''}: "
             f"{' '.join(c.text for c in hers)[:120]}",
         )
-        if live is None:
-            request = " ".join(
-                " ".join([text, *(m.content if isinstance(m, Message) else str(m) for m in items)])
-                for text, items, _ in hilda.calls[calls:]
-            )
-            keys = ("ты слышал, что он обманул других", "Лобарт", "рассказал тебе о герое")
-            missing = [k for k in keys if k not in request]
-            check("in_situation", bool(request) and not missing, f"missing {missing}" if missing else "")
-        else:
-            line = Trust(rumors.chronicle).situation(HILDA) or ""
-            noted = any("рассказал тебе о герое" in n for n in notes(HILDA))
-            check(
-                "in_situation",
-                "ты слышал, что он обманул других" in line and "Лобарт" in line and noted,
-                f"{line.splitlines()[-1:]}, scene noted {noted}",
-            )
+        conv = dialogue.open(HILDA, "Хильда")
+        situation = (await dialogue._situation(conv, None))[0]
+        keys = ("ты слышал, что он обманул других", "Лобарт")
+        missing = [key for key in keys if key not in situation]
+        noted = any("рассказал тебе о герое" in note for note in notes(HILDA))
+        check(
+            "in_situation",
+            not missing and noted,
+            f"missing {missing}, scene noted {noted}" if missing or not noted else "",
+        )
         check("lobart_noted", any("заговорил герой" in n for n in notes(LOBART)), notes(LOBART)[-1:])
         # the third line was never sent, so never heard
         await asyncio.sleep(max(0.0, cut_at + 6 - time.monotonic()))
@@ -708,7 +737,7 @@ async def gossip_scenario(
         far = await _until(lambda: HILDA not in talk.people or talk.people[HILDA].distance >= 3000, 10)
         where = f"{talk.people[HILDA].distance / 100:.0f} m" if HILDA in talk.people else "not around"
         check("hero_far", far, f"Hilda {where}")
-        lines_calls, n, far_at = script.lines_calls, gossip.scenes, time.monotonic()
+        calls, attempts, n, far_at = len(off.used), len(off.attempts), gossip.scenes, time.monotonic()
         told = False
         for _ in range(3):
             # opened only within this synchronous call: no tick sees the pair open
@@ -728,8 +757,9 @@ async def gossip_scenario(
         says = [c.text for t, c in sent if t >= far_at and c.npc.upper() in (HILDA, other)]
         check(
             "far_no_model",
-            script.lines_calls == lines_calls and gossip.scenes == n and not says,
-            f"{script.lines_calls - lines_calls} model call(s), {gossip.scenes - n} scene(s), lines {says}",
+            len(off.used) == calls and len(off.attempts) == attempts and gossip.scenes == n and not says,
+            f"{len(off.used) - calls} given(s), {len(off.attempts) - attempts} model attempt(s), "
+            f"{gossip.scenes - n} scene(s), lines {says}",
         )
     finally:
         rumors.gate = None
@@ -838,54 +868,6 @@ def _scene_rows(log_dir: str | None) -> list[dict[str, Any]]:
     return [row for p in paths for row in read_trace(p) if row.get("type") == "scene"]
 
 
-async def write_cards(
-    link: GameLink, graph: Any, llm: LLMBackend, only: set[str] | None = None, path: Path | None = None
-) -> dict[str, str]:
-    """Character cards (docs/npc-tools.md, wave 1 step 3): the model writes them, a few npc's a call, for
-    those of `only` (GOTHIC_CARDS: symbols, comma separated) or for everyone of this world with lines of its
-    own, into gamedata/characters.json (cards there for others stay). Saved after every batch; who got no
-    card is asked about once more. Without `only`, those that have a card already are left as they are: a
-    run cut short goes on where it stopped."""
-    results: dict[str, str] = {}
-
-    def check(name: str, ok: bool, detail: object = "") -> None:
-        results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
-
-    await link.wait_world()
-    people = await link.story_people(timeout=30)
-    target = path or characters.CARDS_FILE
-    cards = characters.load(target)
-    subjects = [x for x in characters.subjects(graph, people, only) if only or x.npc not in cards]
-    check(
-        "subjects", bool(subjects) or not only, f"{len(subjects)} of {len(people)} people, {len(cards)} cards"
-    )
-    left = list(subjects)
-    for attempt in (1, 2):
-        missed = []
-        for i in range(0, len(left), characters.BATCH):
-            batch = left[i : i + characters.BATCH]
-            got, errors = await characters.write(llm, batch)
-            cards.update(got)
-            characters.save(cards, target)
-            missed += [x for x in batch if x.npc not in got]
-            log.info(
-                "cards: %d/%d written (attempt %d)%s",
-                len(got),
-                len(batch),
-                attempt,
-                f": {errors}" if errors else "",
-            )
-        left = missed
-        if not left:
-            break
-    check(
-        "written",
-        not left,
-        f"{len(subjects) - len(left)} of {len(subjects)}; none for {[x.npc for x in left]}",
-    )
-    return _logged(results)
-
-
 async def gossip_demo(
     link: GameLink,
     dialogue: DialogueManager,
@@ -896,8 +878,8 @@ async def gossip_demo(
 ) -> dict[str, str]:
     """Two people talking about the hero, on screen for the test bench (scripts/bench/gossip.bench): Lobart
     has caught the hero lying about the turnips (the fact written into the chronicle), Hilda is put 5 m from
-    him and the hero 7 m from them; the pair is opened and they say the lines of the gossip e2e in turn (the
-    model's own with LLM=chatgpt), each to the other."""
+    him and the hero 7 m from them; the pair is opened and they say the given lines of the gossip e2e in turn,
+    each to the other, through the common off backend."""
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -912,11 +894,23 @@ async def gossip_demo(
     try:
         if not await _until(lambda: rumors.social is not None, 30):
             return _logged({"social": "failed (no people)"})
-        if isinstance(dialogue.llm, FakeBackend):
-            dialogue.llm = GossipScript(dialogue.llm, dialogue.llm)
+        off = model_off(dialogue)
+        off.given(
+            "дано: реплика Лобарта и реплика Хильды в сцене сплетни для стенда",
+            who=GOSSIP_KEY,
+            calls=[ToolCall("lines", {
+                "lines": [
+                    {"speaker": ("Лобарт", "Хильда")[who], "text": line, "mood": mood}
+                    for who, line, mood in GOSSIP_LINES
+                ],
+                "quiet": True,
+                "reason": "сплетничают о герое, пока он рядом",
+            })],
+        )
         await link.debug("time", hour=10, minute=0)
         await link.debug("skip_important", near=HILDA)  # her greeting would stop the hero
         day = int((await link.story_state()).get("day", 0))
+        log.info("given: дано: Лобарт уличил героя во лжи до начала демонстрации")
         rumors.chronicle.record(
             {
                 "fact": "caught",

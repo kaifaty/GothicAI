@@ -4,7 +4,7 @@
 #include <map>
 
 #include "game/deedwitness.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "game/inventory.h"
 #include "physics/dynamicworld.h"
 #include "world/objects/interactive.h"
@@ -19,30 +19,23 @@ HeroDeed::Person person(Npc& npc) {
   HeroDeed::Person p;
   if(npc.isPlayer())
     p.npc = "PLAYER"; else
-  if(auto* s = npc.world().script().findSymbol(npc.instanceSymbol()))
-    p.npc = s->name();
+    p.npc = npc.world().rules().symbolName(npc.instanceSymbol());
   p.guild = int32_t(npc.guild());
   p.npctype = int32_t(npc.handlePtr()->type);
   return p;
   }
 
 HeroDeed::Person resolveOwner(Npc& hero, std::string_view name) {
-  auto& script = hero.world().script();
-  auto* s = script.findSymbol(name);
-  if(s==nullptr)
+  auto& rules = hero.world().rules();
+  const auto id = rules.findSymbolIndex(name);
+  if(!rules.isNpcInstance(id))
     return {};
-  auto* cls = s;
-  for(size_t i=0; i<16 && cls!=nullptr && cls->type()!=zenkit::DaedalusDataType::CLASS; ++i)
-    cls = script.findSymbol(size_t(cls->parent()));
-  if(cls==nullptr || cls->name()!="C_NPC")
-    return {};
-  if(auto* npc = hero.world().findNpcByInstance(s->index()))
+  if(auto* npc = hero.world().findNpcByInstance(id))
     return person(*npc);
   // Preserve an explicit C_NPC owner even when that NPC is not in this world.
   HeroDeed::Person p;
-  p.npc = s->name();
-  if(s->is_instance_of<zenkit::INpc>()) {
-    auto instance = std::static_pointer_cast<zenkit::INpc>(s->get_instance());
+  p.npc = rules.symbolName(id);
+  if(auto instance = rules.npcRecord(id)) {
     p.guild = instance->guild;
     p.npctype = int32_t(instance->type);
     }
@@ -70,15 +63,12 @@ HeroDeed::Person resolveRoomOwner(Npc& hero, std::string_view portal) {
 }
 
 int32_t HeroDeed::constant(Npc& npc, std::string_view name, int32_t fallback) {
-  auto* s = npc.world().script().findSymbol(name);
-  if(s==nullptr || s->type()!=zenkit::DaedalusDataType::INT)
-    return fallback;
-  return s->get_int(0);
+  return npc.world().rules().intSymbol(name,fallback);
   }
 
 int32_t HeroDeed::aivar(Npc& npc, std::string_view name) {
   const auto index = constant(npc,name);
-  if(index<0 || uint32_t(index)>=zenkit::INpc::aivar_count)
+  if(index<0 || uint32_t(index)>=NpcRecord::aivar_count)
     return 0;
   return npc.handlePtr()->aivar[size_t(index)];
   }
@@ -105,7 +95,7 @@ std::shared_ptr<HeroDeed> HeroDeed::snapshot(Npc& hero, std::string_view kind, N
   auto d = std::make_shared<HeroDeed>();
   d->id = nextId++;
   auto& world = hero.world();
-  auto& script = world.script();
+  auto& rules = world.rules();
   d->kind = kind;
   d->culprit = person(hero);
   d->heroGuild = int32_t(hero.guild());
@@ -116,9 +106,16 @@ std::shared_ptr<HeroDeed> HeroDeed::snapshot(Npc& hero, std::string_view kind, N
     // A preflight happens before the actor walks there. Read the target's
     // native ground material (the same source as MoveAlgo::portalName), with
     // the BSP sector as fallback, rather than borrowing the actor's old room.
-    const auto ground = world.physic()->landRay(*ownershipPosition+Tempest::Vec3(0,50,0),500);
-    d->room = ground.hasCol && ground.sector!=nullptr && ground.sector[0]!='\0' ?
-              std::string_view(ground.sector) : world.roomAt(*ownershipPosition);
+    // A target on a table, a shelf or a chest's own mesh first meets that prop, which has no sector:
+    // the room is the world floor under it, as MoveAlgo keeps the last floor room under a standing npc.
+    const auto from = *ownershipPosition+Tempest::Vec3(0,50,0);
+    const auto hasSector = [](const DynamicWorld::RayLandResult& hit) {
+      return hit.hasCol && hit.sector!=nullptr && hit.sector[0]!='\0';
+      };
+    auto ground = world.physic()->landRay(from,500);
+    if(!hasSector(ground))
+      ground = world.physic()->floorRay(from,500);
+    d->room = hasSector(ground) ? std::string_view(ground.sector) : world.roomAt(*ownershipPosition);
     }
   d->roomGuild = world.guildOfRoom(d->room);
   d->roomOwner = resolveRoomOwner(hero,d->room);
@@ -129,13 +126,11 @@ std::shared_ptr<HeroDeed> HeroDeed::snapshot(Npc& hero, std::string_view kind, N
   d->hour = time.hour();
   d->minute = time.minute();
   if(item!=nullptr) {
-    if(auto* sym = script.findSymbol(item->handle().symbol_index()))
-      d->item = sym->name();
+    d->item = rules.symbolName(item->clsId());
     d->count = count==0 ? item->count() : count;
     d->ownerGuild = item->handle().owner_guild;
     if(item->handle().owner>0)
-      if(auto* sym = script.findSymbol(size_t(item->handle().owner)))
-        d->owner = resolveOwner(hero,sym->name());
+      d->owner = resolveOwner(hero,rules.symbolName(size_t(item->handle().owner)));
     const int32_t dropped = constant(hero,"ITEM_DROPPED",0);
     d->itemDropped = dropped!=0 && (item->itemFlag()&dropped)!=0;
     }
@@ -149,7 +144,7 @@ std::shared_ptr<HeroDeed> HeroDeed::snapshot(Npc& hero, std::string_view kind, N
     d->victimIsMonster = victim->isMonster();
     d->victimIsSheep = int32_t(victim->guild())==constant(hero,"GIL_SHEEP");
     d->victimToughGuy = aivar(*victim,"AIV_ToughGuy")!=0;
-    const auto attackState = script.findSymbolIndex("ZS_ATTACK");
+    const auto attackState = rules.findSymbolIndex("ZS_ATTACK");
     d->victimInFight = attackState!=size_t(-1) && victim->isInState(ScriptFn(attackState));
     d->victimEnemy = victim->isEnemy(hero);
     const auto reason = aivar(*victim,"AIV_ATTACKREASON");
@@ -164,8 +159,8 @@ std::shared_ptr<HeroDeed> HeroDeed::snapshot(Npc& hero, std::string_view kind, N
 std::vector<HeroDeed::InventoryItem> HeroDeed::inventory(Npc& npc) {
   std::map<std::string,size_t> counts;
   for(auto i = npc.inventory().iterator(Inventory::T_Inventory); i.isValid(); ++i)
-    if(auto* s = npc.world().script().findSymbol(i->handle().symbol_index()))
-      counts[s->name()] += i.count();
+    if(auto name = npc.world().rules().symbolName(i->clsId()); !name.empty())
+      counts[std::string(name)] += i.count();
   std::vector<InventoryItem> result;
   for(auto& [item,count]:counts)
     result.push_back({item,count});

@@ -51,6 +51,14 @@ class RtGeometry {
   RtGeometry(const VertexBuffer<V>& vbo, const IndexBuffer<I>& ibo, size_t offset, size_t count):
       vbo(&vbo),vboStride(sizeof(V)),ibo(&ibo),icls(Detail::indexCls<I>()),iboOffset(offset),iboSize(count){}
 
+  // Triangles of storage buffers (Vulkan, Metal): float3 positions at the start of every `stride` bytes of `vbo`,
+  // `count` indices of class `icls` from index `offset` of `ibo`. The buffers of a shared page of meshes hold many;
+  // a geometry addresses its vertices from the start of `vbo`, and the offset of its indices in bytes must be a
+  // multiple of 32 on Metal.
+  RtGeometry(const StorageBuffer& vbo, size_t stride, const StorageBuffer& ibo, Detail::IndexClass icls,
+             size_t offset, size_t count):
+      vbo(&vbo),vboStride(stride),ibo(&ibo),icls(icls),iboOffset(offset),iboSize(count){}
+
   const StorageBuffer* vbo       = nullptr;
   size_t               vboStride = 0;
   const StorageBuffer* ibo       = nullptr;
@@ -59,23 +67,34 @@ class RtGeometry {
   size_t               iboSize   = 0;
   };
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+// Frame-profile diagnostics: bytes of the structure's storage, 0 when empty, -1 when the backend cannot tell.
+int64_t profileByteSize(const AccelerationStructure& as);
+#endif
+
 class AccelerationStructure final {
   public:
     AccelerationStructure() = default;
-    AccelerationStructure(AccelerationStructure&&)=default;
-    ~AccelerationStructure()=default;
-    AccelerationStructure& operator=(AccelerationStructure&&)=default;
+    AccelerationStructure(AccelerationStructure&& other);
+    ~AccelerationStructure();
+    AccelerationStructure& operator=(AccelerationStructure&& other);
 
-    bool isEmpty() const;
+    bool   isEmpty() const;
+    // Instances a top-level structure of Device::tlas(Uninitialized, capacity) holds without new memory; 0 otherwise.
+    size_t capacity() const { return cap; }
 
   private:
-    AccelerationStructure(Tempest::Device& dev, AbstractGraphicsApi::PRtAs&& impl);
+    AccelerationStructure(Tempest::Device& dev, AbstractGraphicsApi::PRtAs&& impl, size_t capacity = 0);
 
     Detail::DSharedPtr<AbstractGraphicsApi::AccelerationStructure*> impl;
+    size_t                                                          cap = 0;
 
   friend class Tempest::Device;
   friend class Tempest::DescriptorSet;
   friend class Encoder<Tempest::CommandBuffer>;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  friend int64_t profileByteSize(const AccelerationStructure& as);
+#endif
   };
 
 }

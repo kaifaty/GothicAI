@@ -1,0 +1,38 @@
+#version 460
+
+// InstanceStorage history: copies ranges of the current buffer into the
+// previous-frame one at the same offsets. The list is a section of this frame's
+// patch buffer (see InstanceStorage::planCommit), one workgroup per entry.
+
+layout(local_size_x = 64) in;
+
+struct Copy {
+  uint at;
+  uint size;
+  };
+
+layout(binding = 0, std430) writeonly buffer Output {
+  uint dst[];
+  };
+
+layout(binding = 1, std430) readonly buffer Input {
+  uint src[];
+  };
+
+layout(binding = 2, std430) readonly buffer List {
+  uint list[];
+  };
+
+layout(push_constant, std430) uniform UboPush {
+  uint base;
+  };
+
+void main() {
+  Copy c;
+  c.at   = list[base + gl_WorkGroupID.x*2+0];
+  c.size = list[base + gl_WorkGroupID.x*2+1];
+
+  for(uint i=gl_LocalInvocationID.x; i<c.size; i+=gl_WorkGroupSize.x) {
+    dst[c.at + i] = src[c.at + i];
+    }
+  }

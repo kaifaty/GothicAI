@@ -10,6 +10,11 @@
 # QUALITY_PILOT_TASK=gothic-ai/harbour-hut selects harbour-hut.bench (six views, normal game FOV; original or a staging set such as hut-1).
 # QUALITY_PILOT_TASK=gothic-ai/remaster-ASSET selects ASSET.bench; a set must replace every entry of its own index.
 # QUALITY_PILOT_SCENARIO=FILE.bench overrides the scenario, e.g. the same cameras at another time of day.
+# QUALITY_PILOT_TIMEOUT=SECONDS gives the game longer than 240 s (a long scenario on a busy Ryzen).
+# QUALITY_PILOT_WAIT_MAX=SECONDS waits longer than 900 s for the window in the gq queue (a busy Ryzen).
+# QUALITY_PILOT_INI="SECTION.key=value ..." adds Gothic.ini settings, e.g. INTERNAL.halfResAoFog=0.
+# QUALITY_PILOT_TEXTURES=DIR (on Ryzen) gives the game OPENGOTHIC_TEXTURES, e.g. an own particle texture;
+#   empty by default, so HD textures never leak into a capture.
 # --compose-house CAPTURES OUTPUT writes original / pilot-3b / house-1 boards.
 # --compose-house-2 CAPTURES OUTPUT writes original / house-1 / house-2 boards.
 set -euo pipefail
@@ -26,14 +31,20 @@ SCENARIO="${QUALITY_PILOT_SCENARIO:-$SCENARIO}"
 # Remaster assets share one engine build; each keeps its own scripts, content and runs.
 BUILD_TASK="$TASK"
 [[ "$TASK" != gothic-ai/remaster-* ]] || BUILD_TASK=gothic-ai/remaster-engine
+# QUALITY_PILOT_BUILD_TASK=gothic-ai/TASK/DIR: an engine of its own (e.g. a renderer change against its base)
+BUILD_TASK="${QUALITY_PILOT_BUILD_TASK:-$BUILD_TASK}"
+[[ "$BUILD_TASK" =~ ^gothic-ai/[a-z0-9/-]+$ ]] || { echo "bad build task: $BUILD_TASK" >&2; exit 2; }
 
 if [[ "${1:-}" == --remote-prepare ]]; then
+  game_environment="$(python3 "$(dirname "$0")/ryzen_game.py")"
+  eval "$game_environment"
   task="$HOME/$BUILD_TASK"
   export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
   export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
   mkdir -p "$task/build"
+  source "$(dirname "$0")/ryzen-build.sh"
   cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "${RYZEN_CMAKE_FLAGS[@]}" \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
     >"$task/build/configure.log" 2>&1 || { tail -40 "$task/build/configure.log"; exit 1; }
   cmake --build "$task/build" --target Gothic2Notr --parallel 8 \
@@ -47,6 +58,8 @@ if [[ "${1:-}" == --remote-capture ]]; then
   [[ "$variant" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || exit 2
   [[ "$TASK" != gothic-ai/harbour-house || "$variant" == original ]] || exit 2
   task="$HOME/$TASK"
+  game_environment="$(python3 "$(dirname "$0")/ryzen_game.py")"
+  eval "$game_environment"
   out="$task/runs/$variant"
   mkdir -p "$out/run"
   cp "$task/save_slot_1.sav" "$out/run/save_slot_1.sav"
@@ -58,6 +71,26 @@ soundVolume=0
 musicVolume=0
 musicEnabled=0
 INI
+  if [[ -n "${QUALITY_PILOT_INI:-}" ]]; then
+    # SECTION.key=value items, space separated: one render setting against another in the same scenario
+    python3 - "$out/run/Gothic.ini" ${QUALITY_PILOT_INI} <<'PYINI'
+import sys
+path, items = sys.argv[1], sys.argv[2:]
+sections, order = {}, []
+for line in open(path).read().splitlines():
+    if line.startswith('['):
+        order.append(line[1:-1]); sections[order[-1]] = []
+    elif line:
+        sections[order[-1]].append(line)
+for item in items:
+    section, setting = item.split('.', 1)
+    key = setting.split('=', 1)[0]
+    if section not in sections:
+        order.append(section); sections[section] = []
+    sections[section] = [l for l in sections[section] if l.split('=', 1)[0] != key] + [setting]
+open(path, 'w').write(''.join(f'[{s}]\n' + ''.join(l + '\n' for l in sections[s]) for s in order))
+PYINI
+  fi
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
   connected=0
@@ -77,24 +110,32 @@ INI
   export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1 TEMPEST_WINDOW_SIZE=1280x720
   export TEMPEST_WINDOW_POS=100,100 GOTHIC_AI=0
   export OPENGOTHIC_CONTENT="$task/content/$variant"
-  export OPENGOTHIC_TEXTURES='' OPENGOTHIC_FRACTURE=''
+  export OPENGOTHIC_TEXTURES="${QUALITY_PILOT_TEXTURES:-}" OPENGOTHIC_FRACTURE=''
   export OPENGOTHIC_CENSUS="$out/census.json"
   export OPENGOTHIC_BENCH="$task/scripts/$SCENARIO" OPENGOTHIC_BENCH_OUT="$out"
-  game="$HOME/gothic-ai/game"
+  game="$GOTHIC_DIR"
   if [[ "$TASK" == gothic-ai/harbour-house ]]; then
-    # Keep the wide survey lens isolated from the shared installation.
+    # Keep the wide survey lens isolated from the shared settings.
     python3 - "$game" "$task/game" <<'PYGAME'
 from pathlib import Path
 import re
 import sys
 source, target = map(Path, sys.argv[1:])
+if target.is_symlink():
+    target.unlink()
 target.mkdir(exist_ok=True)
+for entry in target.iterdir():
+    if entry.is_symlink():
+        entry.unlink()
 for entry in source.iterdir():
     if entry.name.lower() != 'system' and not (target / entry.name).exists():
         (target / entry.name).symlink_to(entry)
 system = next(entry for entry in source.iterdir() if entry.name.lower() == 'system')
 local_system = target / system.name
 local_system.mkdir(exist_ok=True)
+for entry in local_system.iterdir():
+    if entry.is_symlink():
+        entry.unlink()
 for entry in system.iterdir():
     if entry.name.lower() != 'systempack.ini' and not (local_system / entry.name).exists():
         (local_system / entry.name).symlink_to(entry)
@@ -108,9 +149,11 @@ if not count:
 PYGAME
     game="$task/game"
   fi
+  GAME_BIN="$HOME/$BUILD_TASK/build/opengothic/Gothic2Notr" \
+    bash "$(dirname "$0")/base-ensure.sh" "$game"
   rc=0
-  (cd "$out/run" && timeout 240 "$HOME/$BUILD_TASK/build/opengothic/Gothic2Notr" \
-    -g "$game" -g2 -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
+  (cd "$out/run" && timeout "${QUALITY_PILOT_TIMEOUT:-240}" "$HOME/$BUILD_TASK/build/opengothic/Gothic2Notr" \
+    -g "$game" -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
   printf '%s\n' "$rc" >"$out/exit.txt"
   [[ "$rc" == 0 ]] || { tail -30 "$out/game.log"; exit "$rc"; }
   check_args=()
@@ -127,17 +170,27 @@ if [[ "${1:-}" == --compose || "${1:-}" == --compose-2 || "${1:-}" == --compose-
   exec uv run --no-project --with pillow python "$ROOT/scripts/content/capture-quality-pilot.py" "${1#--}" "${2:?captures}" "${3:?output}"
 fi
 
+if [[ "${1:-}" == --prepare || "${1:-}" == --scenario || "${1:-}" == --capture ]]; then
+  GAME_ENV=()
+  for name in OPENGOTHIC_BASE OPENGOTHIC_BASE_FINGERPRINT OPENGOTHIC_VIDEOS_FINGERPRINT OPENGOTHIC_BASE_CACHE OPENGOTHIC_BASE_STORE; do
+    [[ ! ${!name+x} ]] || GAME_ENV+=("$name=${!name}")
+  done
+  printf -v GAME_CHECK '%q ' env ${GAME_ENV[@]+"${GAME_ENV[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")" --check
+  ssh -T -o BatchMode=yes -o ConnectTimeout=10 "$HOST" "$GAME_CHECK"
+fi
+
 if [[ "${1:-}" == --prepare ]]; then
-  ssh -T "$HOST" "mkdir -p ~/$BUILD_TASK/source/OpenGothic ~/$TASK/scripts ~/$TASK/content/original/materials ~/$TASK/runs; df -h ~"
+  ssh -T "$HOST" "mkdir -p ~/$BUILD_TASK/source/OpenGothic ~/$BUILD_TASK/source/scripts ~/$TASK/scripts ~/$TASK/content/original/materials ~/$TASK/runs; df -h ~"
   rsync -a --delete --exclude=.git --exclude=build --exclude=__pycache__ \
     "$ROOT/OpenGothic/" "$HOST:$BUILD_TASK/source/OpenGothic/"
-  rsync -a "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
-    "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
+  rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$HOST:$BUILD_TASK/source/scripts/convert/"
+  rsync -a "$ROOT/scripts/ryzen-build.sh" "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
+    "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
   common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
   rsync -a "${SAVE:-$(dirname "$common")/save_slot_1.sav}" "$HOST:$TASK/save_slot_1.sav"
   GQ_OWNER="${TASK##*/}" "$ROOT/scripts/gq" --host "$HOST" run --class quick \
     --threads 8 --mem 10G --max 25m --wait-max 900 --name 'pilot engine build' -- \
-    env QUALITY_PILOT_TASK="$TASK" bash "$TASK/scripts/capture-quality-pilot.sh" --remote-prepare
+    env ${GAME_ENV[@]+"${GAME_ENV[@]}"} QUALITY_PILOT_TASK="$TASK" bash "$TASK/scripts/capture-quality-pilot.sh" --remote-prepare
   exit 0
 fi
 
@@ -147,7 +200,7 @@ if [[ "${1:-}" == --scenario ]]; then
   common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
   rsync -a "${SAVE:-$(dirname "$common")/save_slot_1.sav}" "$HOST:$TASK/save_slot_1.sav"
   rsync -a "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
-    "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
+    "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
   exit 0
 fi
 
@@ -165,12 +218,12 @@ if [[ "${1:-}" == --capture ]]; then
     ssh -T "$HOST" "printf '{}\\n' >~/$TASK/content/original/materials/materials.json"
   fi
   rsync -a "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
-    "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
+    "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
   rc=0
   GQ_OWNER="${TASK##*/}" "$ROOT/scripts/gq" --host "$HOST" run --class quick \
     --threads 4 --mem 5G --gpu-mem 4G --display --display-exclusive \
-    --max 6m --wait-max 900 --name "pilot $variant captures" -- \
-    env QUALITY_PILOT_TASK="$TASK" QUALITY_PILOT_SCENARIO="$SCENARIO" \
+    --max 6m --wait-max "${QUALITY_PILOT_WAIT_MAX:-900}" --name "pilot $variant captures" -- \
+    env ${GAME_ENV[@]+"${GAME_ENV[@]}"} QUALITY_PILOT_TASK="$TASK" QUALITY_PILOT_SCENARIO="$SCENARIO" \
     bash "$TASK/scripts/capture-quality-pilot.sh" --remote-capture "$variant" || rc=$?
   rsync -a "$HOST:$TASK/runs/$variant/" "$out/$variant/"
   exit "$rc"

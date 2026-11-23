@@ -21,6 +21,12 @@ class Pixmap final {
     Pixmap(std::u16string_view path);
     Pixmap(IDevice&            input);
 
+    // Read a DDS mip tail without reading the skipped payload. firstMip is
+    // clamped so both sides stay >= minSize (and >= 4 for BC textures).
+    // Returns empty if firstMip > 0 but no level can be skipped. No resampling.
+    // firstMip == 0 loads the complete DDS; invalid/short DDS files throw.
+    static Pixmap loadDdsMipTail(IDevice& input, uint32_t firstMip, uint32_t minSize=64);
+
     Pixmap(const Pixmap& src);
     Pixmap(Pixmap&& p);
     Pixmap& operator=(Pixmap&& p);

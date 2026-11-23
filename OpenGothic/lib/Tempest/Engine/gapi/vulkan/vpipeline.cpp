@@ -1,3 +1,4 @@
+#include "graphics/loadprobe.h"
 #if defined(TEMPEST_BUILD_VULKAN)
 
 #include "vpipeline.h"
@@ -237,7 +238,7 @@ VkPipeline VPipeline::initGraphicsPipeline(VDevice& device,
     if(nativeIsDepthFormat(frm))
       continue;
     auto& a = blendAtt[i];
-    a.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    a.colorWriteMask      = VkColorComponentFlags(st.colorWriteMask(i)); // RenderState::ColorMask bits match VK_COLOR_COMPONENT_*
     a.blendEnable         = st.hasBlend() ? VK_TRUE : VK_FALSE;
     a.dstColorBlendFactor = nativeFormat(st.blendDest());
     a.srcColorBlendFactor = nativeFormat(st.blendSource());
@@ -322,7 +323,9 @@ VkPipeline VPipeline::initGraphicsPipeline(VDevice& device,
     }
 
   VkPipeline graphicsPipeline = VK_NULL_HANDLE;
-  const auto err = vkCreateGraphicsPipelines(device.device.impl,VK_NULL_HANDLE,1,&pipelineInfo,nullptr,&graphicsPipeline);
+  TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Graphics);
+  const auto err = vkCreateGraphicsPipelines(device.device.impl,device.pipelineCache.impl,1,&pipelineInfo,nullptr,&graphicsPipeline);
+  pipelineProbe.stop();
   if(err!=VK_SUCCESS)
     throw std::system_error(Tempest::GraphicsErrc::InvalidShaderModule);
   return graphicsPipeline;
@@ -419,7 +422,9 @@ VCompPipeline::VCompPipeline(VDevice& device, const VShader& comp)
       createFlags2.pNext = info.pNext;
       info.pNext         = &createFlags2;
       }
-    const auto err = vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &info, nullptr, &impl);
+    TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Compute);
+    const auto err = vkCreateComputePipelines(dev, device.pipelineCache.impl, 1, &info, nullptr, &impl);
+    pipelineProbe.stop();
     if(err!=VK_SUCCESS)
       throw std::system_error(Tempest::GraphicsErrc::InvalidShaderModule);
 
@@ -477,7 +482,9 @@ VkPipeline VCompPipeline::instance(VkPipelineLayout pLay) {
     info.flags              = VK_PIPELINE_CREATE_DERIVATIVE_BIT;
     info.basePipelineHandle = impl;
     info.basePipelineIndex  = -1;
-    const auto err = vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &info, nullptr, &val);
+    TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Compute);
+    const auto err = vkCreateComputePipelines(dev, device.pipelineCache.impl, 1, &info, nullptr, &val);
+    pipelineProbe.stop();
     if(err!=VK_SUCCESS)
       throw std::system_error(Tempest::GraphicsErrc::InvalidShaderModule);
 

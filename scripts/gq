@@ -17,7 +17,7 @@ Commands: run, submit, status, wait, logs, cancel.
 Run scripts/gq run --help for job options.
 """
 
-PROFILES = {"ryzen"}
+PROFILES = {"ryzen", "dev-ubuntu"}
 
 
 def parse_host(argv):

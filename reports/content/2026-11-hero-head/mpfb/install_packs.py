@@ -1,0 +1,1 @@
+../../../../character-tool/src/character_tool/head/mpfb/install_packs.py

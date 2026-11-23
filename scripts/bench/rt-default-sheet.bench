@@ -1,0 +1,115 @@
+# Ray tracing by default on a PC (reports/render-features/2026-11-08-rt-revisit/step-default.md): the «было | стало»
+# stills of the views accepted without GI, in the working content. Run it twice, the same build and window, and put
+# the halves side by side; the rock, grass and foliage of the landscape pilot come from landscape-rock-material.bench:
+#   OPENGOTHIC_RT=0 OPENGOTHIC_CONTENT=~/.local/share/gothic-ai/content TEMPEST_WINDOW_SIZE=2560x1440 \
+#     BENCH_HOST=ryzen scripts/bench.sh rt-default-sheet
+#   the same without OPENGOTHIC_RT (the device rule)
+# Each view waits 10 s after the camera is set: the GI probes light and the eye adapts before the shot.
+# @timeout 900
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+
+# The "Red Lantern" torch at midnight (scripts/content/wall-torch-fire.bench): in front from 1 m, three-quarter from 3 m.
+set time 0 0
+goto pos 400 -129 -2985
+view hide animated morph
+wait 3000
+set time 0 0
+streaming wait
+cam at 305 145 -3085 405 140 -3085
+wait 10000
+shot torch-front-1m
+wait 500
+cam at 190 120 -2960 405 135 -3085
+wait 10000
+shot torch-far-3m
+wait 500
+view full
+
+# The harbour at midnight from perf-harbour-night view 1: lamp posts, braziers and the vob layer lights.
+goto pos 5391 320 -5822
+watch player
+cam look 120
+cam world 850 300 0
+streaming wait
+wait 10000
+cam hold
+shot harbour-night
+wait 500
+
+# A street of the harbour's poor quarter at midnight, the first view of gi-accept's harbour-night clip.
+goto NW_CITY_HABOUR_POOR_AREA_PATH_06
+clear 3000
+watch player
+cam look 120
+cam world 500 200 270
+wait 3000
+cam hold
+cloth camera-turn 30 1
+streaming wait
+wait 10000
+shot harbour-street-night
+wait 500
+
+# The candle- and torch-lit harbour house of perf-interior at 22:00, the first view of gi-accept's interior-night.
+set time 22 0
+goto pos 3924 -73 -6663
+clear 3000
+watch player
+cam look 110
+cam world 160 170 180
+wait 3000
+cam hold
+cloth camera-turn -20 1
+streaming wait
+wait 10000
+shot interior-night
+wait 500
+
+# The plank hut of the harbour's poor quarter at noon, the first view of gi-accept's hut-day.
+set time 12 0
+goto NW_CITY_HABOUR_POOR_AREA_HUT_01_IN
+clear 3000
+watch player
+cam look 110
+cam world 180 170 0
+wait 3000
+cam hold
+cloth camera-turn 30 1
+streaming wait
+wait 10000
+shot hut-day
+wait 500
+
+# The market at noon: perf-market view 1 and the camera of gi-accept's market-day.
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+watch player
+cam look 120
+cam world 700 280 0
+streaming wait
+wait 10000
+cam hold
+shot market-day
+wait 500
+cam at 7406 548 -4383 7406 388 -5083
+wait 10000
+shot market-day-close
+wait 500
+
+# The hero's face close up in the market at noon (perf-face views 1 and 3).
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+cam face 38 0 1
+streaming wait
+wait 10000
+shot face-front
+wait 500
+cam face 38 90 1
+wait 10000
+shot face-side
+wait 500

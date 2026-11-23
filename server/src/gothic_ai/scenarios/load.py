@@ -9,6 +9,10 @@ from ..game import GameError, GameLink
 from ..protocol import GameMessage, NpcDied, NpcViews, Session, StoryWorld, WorldLoaded
 from .common import _logged, _save, _until, wait_message
 
+SCENARIOS = {
+    "load_rewind": ("OFF", {"save": False, "timeout": 240}),
+}
+
 
 async def load_rewind(link: GameLink) -> dict[str, str]:
     """Rewind at least 20 game seconds and require bridge pushes within two seconds."""

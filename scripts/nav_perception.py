@@ -11,6 +11,7 @@ from collections import Counter
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -77,7 +78,7 @@ def prepare(task, source, data):
 
 def runner_args(task, output):
     return SimpleNamespace(output=output, runner=task / "build/opengothic/gothic-body-runner",
-        assets=task.parent / "game", save=task / "input/save.sav", cache=task / "cache",
+        assets=Path(os.environ.get("GOTHIC_DIR", Path.home() / "gothic-ai/game-settings")), save=task / "input/save.sav", cache=task / "cache",
         links=task / "input/accepted-links.txt", roads=task / "input/places.json", ini=None,
         npc="BAU_954_MALETH", seed=20102026, physics="cv", watchdog_seconds=5400)
 
@@ -164,6 +165,8 @@ def main():
     parser.add_argument("--mode", choices=MODES, action="append")
     parser.add_argument("--output", type=Path, help="Separate absolute replay output; original poses remain read-only")
     args = parser.parse_args()
+    if args.phase == "replay":
+        os.environ.update(module("ryzen_game").game_environment())
     task = args.task.resolve()
     if args.output is not None and not args.output.is_absolute():
         parser.error("Replay output must be absolute")

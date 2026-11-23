@@ -2,6 +2,8 @@
 
 #include <cstring>
 
+#include <Tempest/Log>
+
 using namespace Tempest;
 
 static Vec3 toVec3(uint32_t v) {
@@ -46,7 +48,7 @@ void LightSource::setColor(const std::vector<uint32_t>& arr, float fps, bool smo
   colorAniListFpsInv = arr.size()>0 ? uint64_t(1000.0/fps) : 0;
   }
 
-void LightSource::setColor(const std::vector<zenkit::Color>& arr, float fps, bool smooth) {
+void LightSource::setColor(const std::vector<asset::Color>& arr, float fps, bool smooth) {
   colorSmooth = smooth;
   if(arr.size()==1) {
     setColor({static_cast<float>(arr[0].r)/255.f, static_cast<float>(arr[0].g)/255.f, static_cast<float>(arr[0].b)/255.f});
@@ -104,7 +106,15 @@ void LightSource::setEnabled(bool e) {
   enable = e;
   }
 
+void LightSource::setFlicker(const PfxMotion::Flicker& f, float jitterCm, float swayHz) {
+  flicker         = f;
+  flickerJitterCm = jitterCm;
+  flickerSwayHz   = swayHz;
+  curPos          = pos;
+  }
+
 void LightSource::update(uint64_t time) {
+  const uint64_t worldTime = time;
   if(timeOff<time)
     time -= timeOff; else
     time  = 0;
@@ -117,8 +127,9 @@ void LightSource::update(uint64_t time) {
     if(!rangeSmooth)
       a = 0;
 
-    float    r0    = rangeAniScale[(frame  )%rangeAniScale.size()];
-    float    r1    = rangeAniScale[(frame+1)%rangeAniScale.size()];
+    const size_t last = rangeAniScale.size()-1;
+    float    r0    = rangeAniScale[keysOnce ? std::min(frame,  last) : (frame  )%rangeAniScale.size()];
+    float    r1    = rangeAniScale[keysOnce ? std::min(frame+1,last) : (frame+1)%rangeAniScale.size()];
     curRgn = r0+(r1-r0)*a;
     }
 
@@ -130,14 +141,24 @@ void LightSource::update(uint64_t time) {
     if(!colorSmooth)
       a = 0;
 
-    Vec3 cl0 = colorAniList[(frame  )%colorAniList.size()];
-    Vec3 cl1 = colorAniList[(frame+1)%colorAniList.size()];
+    const size_t last = colorAniList.size()-1;
+    Vec3 cl0 = colorAniList[keysOnce ? std::min(frame,  last) : (frame  )%colorAniList.size()];
+    Vec3 cl1 = colorAniList[keysOnce ? std::min(frame+1,last) : (frame+1)%colorAniList.size()];
     curClr = cl0+(cl1-cl0)*a;
+    }
+
+  if(flicker.active()) {
+    // the world time, without the light's offset: the emitter's particles read the same tick (pfxbucket.cpp)
+    const float s = PfxMotion::flicker(flicker, worldTime);
+    curClr = clr*s;
+    curPos = pos + PfxMotion::jitter(flicker, worldTime, flickerJitterCm, flickerSwayHz);
+    if(PfxMotion::logEnabled())
+      Tempest::Log::i("flicker light seed=", flicker.seed, " t=", worldTime, " s=", s);
     }
   }
 
 bool LightSource::isDynamic() const {
-  return rangeAniFPSInv!=0 || colorAniListFpsInv!=0;
+  return rangeAniFPSInv!=0 || colorAniListFpsInv!=0 || flicker.active();
   }
 
 bool LightSource::isEnabled() const {

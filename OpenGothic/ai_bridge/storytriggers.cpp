@@ -19,7 +19,7 @@
 #include <rapidjson/writer.h>
 
 using namespace Tempest;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 namespace {
 
@@ -122,7 +122,7 @@ std::string StoryTriggers::apply(const rapidjson::Value& op) {
   return {};
   }
 
-std::string StoryTriggers::check(const Trigger& t, zenkit::DaedalusVm& v) const {
+std::string StoryTriggers::check(const Trigger& t, daedalus::DaedalusVm& v) const {
   if(!t.npc.empty()) {
     auto* s = v.find_symbol_by_name(t.npc);
     if(s==nullptr || s->type()!=DaedalusDataType::INSTANCE)
@@ -138,7 +138,7 @@ std::string StoryTriggers::check(const Trigger& t, zenkit::DaedalusVm& v) const 
   return {};
   }
 
-bool StoryTriggers::ready(Trigger& t, zenkit::DaedalusVm& v) {
+bool StoryTriggers::ready(Trigger& t, daedalus::DaedalusVm& v) {
   if(t.checkedFor!=&v) {
     t.checkedFor = &v;
     t.broken     = check(t,v);

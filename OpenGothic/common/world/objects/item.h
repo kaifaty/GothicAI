@@ -1,9 +1,8 @@
 #pragma once
 
-#include <zenkit/addon/daedalus.hh>
+#include "world/records/itemrecord.h"
 
 #include "graphics/objvisual.h"
-#include "graphics/meshobjects.h"
 #include "physics/dynamicworld.h"
 #include "vob.h"
 
@@ -11,6 +10,7 @@ class World;
 class Npc;
 class Serialize;
 class WorldObjects;
+class InventoryRenderer;
 
 class Item : public Vob {
   public:
@@ -28,6 +28,8 @@ class Item : public Vob {
     Item(Item&&);
     ~Item();
     Item& operator=(Item&&)=delete;
+
+    void    drawInventory(InventoryRenderer& renderer, int x, int y, int w, int h) const;
 
     void    drawVobBox(DbgPainter& p) const;
     void    drawVobRay(DbgPainter& p, const Npc& npc) const;
@@ -48,11 +50,18 @@ class Item : public Vob {
     void    setAsEquipped(bool e);
 
     virtual void setPhysicsEnable(World& w);
+    // Mesh that setPhysicsEnable(World&) builds the body from; loads it once.
+    const ProtoMesh* physicsProto();
     void    setPhysicsDisable();
+    bool    wakePhysics();
+    bool    activatePhysics();
+    bool    isPlacedItem() const { return placedZenId!=uint32_t(-1); }
+    uint32_t placedItemZenId() const { return placedZenId; }
     bool    isDynamic() const override;
     float   physicsMass() const { return physic.mass(); }
     Tempest::Vec3 physicsVelocity() const { return physic.velocity(); } // cm/s
     bool    physicsSleeping() const { return physic.isSleeping(); }
+    uint32_t physicsBodyId() const { return physic.nativeId(); }
     bool    physicsTouchedByNpc() const { return physic.touchedByNpc(); }
     bool    addSpellImpulse(const Tempest::Vec3& impulseNs, Npc* culprit = nullptr);
 
@@ -93,30 +102,35 @@ class Item : public Vob {
     bool                checkCondUse (const Npc& other,int32_t& atr,int32_t& nv) const;
     bool                checkCondRune(const Npc& other,int32_t& cPl,int32_t& cIt) const;
 
-    const zenkit::IItem&                   handle() const { return *hitem; }
-    zenkit::IItem&                         handle() { return *hitem; }
-    const std::shared_ptr<zenkit::IItem>&  handlePtr()    { return hitem; }
-    size_t                                 clsId() const;
+    const ItemRecord&                    handle() const { return *hitem; }
+    ItemRecord&                          handle() { return *hitem; }
+    const std::shared_ptr<ItemRecord>&    handlePtr()    { return hitem; }
+    size_t                              clsId() const;
 
   protected:
     void                moveEvent() override;
-    void                setPhysicsEnable(const MeshObjects::Mesh& mesh);
     void                setPhysicsEnable(const ProtoMesh* mesh);
 
   private:
     friend class WorldObjects;
+    friend class GameScript;
+    friend struct NpcDefinitionContract;
     void                savePhysics(Serialize& fout) const;
     void                restorePhysics(const Tempest::Matrix4x4& matrix, const Tempest::Vec3& velocity,
                                        const Tempest::Vec3& angular, bool sleeping);
     void                updateMatrix();
 
-    std::shared_ptr<zenkit::IItem> hitem={};
-    Tempest::Vec3                  pos={};
+    std::shared_ptr<ItemRecord>     hitem={};
+    uint32_t                       itemInstanceSymbol=uint32_t(-1);
+    Tempest::Vec3                   pos={};
 
     uint32_t                       amount   = 0;
     uint8_t                        equipped = 0;
     uint8_t                        itSlot   = NSLOT;
+    uint32_t                       placedZenId = uint32_t(-1);
+    bool                           placedAllowed = true;
 
-    MeshObjects::Mesh              visual;
+    const ProtoMesh*               proto = nullptr;
+    ObjVisual                      visual;
     DynamicWorld::Item             physic;
   };

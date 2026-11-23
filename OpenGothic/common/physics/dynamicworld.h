@@ -1,10 +1,13 @@
 #pragma once
 
 #include "asset/worldmesh.h"
+#include "game/meleeimpact.h"
 #include "physics/physicsnoise.h"
+#include "physics/collisionworld.h"
 #include "physics/charactervirtualdiagnostics.h"
 #include "physics/navmesh.h"
 #include "physics/fracture.h"
+#include "physics/staticcollision.h"
 
 #include <Tempest/Matrix4x4>
 #include <cstdint>
@@ -22,15 +25,14 @@ class HitZones;
 class Ragdoll;
 class ProtoMesh;
 
-class World;
-class Bullet;
+class PhysicsHost;
 class Npc;
 class Item;
 class Interactive;
 class DbgPainter;
 class Serialize;
+class SaveArchive;
 
-class CollisionWorld;
 class Cloth;
 
 // Query-only melee geometry. Positions and radii are world centimetres.
@@ -46,16 +48,32 @@ struct MeleeBodyCapsule final {
   uint8_t zone = 0;
   };
 
+// A shadow body ready to publish: its capsules and their bounds in world metres.
+// boundShadowBody fills the bounds; it touches no world, so it may run on a worker.
+// A body with a non-finite capsule or a radius that is not positive is not valid:
+// publishing it throws, as publishing those capsules always did. A nonzero serial
+// names these exact capsules: a slot that holds the same serial is not copied again.
+struct MeleeShadowBody final {
+  std::vector<MeleeBodyCapsule> capsules;
+  Tempest::Vec3 boundsMin, boundsMax;
+  bool valid = false;
+  uint64_t serial = 0;
+  };
+
 struct MeleeBladeContact final {
   Npc* npc = nullptr;
   size_t bone = size_t(-1);
   uint8_t zone = 0;
   Tempest::Vec3 point;
   Tempest::Vec3 normal;
+  Tempest::Vec3 velocityCmS;
   asset::MaterialGroup material = asset::MaterialGroup::STONE;
   float bladeFraction = 0, speedCmS = 0, surfaceAngleDeg = 0;
   bool world = false;
   bool stopsSwing = false;
+  bool windup = false;     // a wall met by a blade going back or up (wind-up, follow-through): passed
+  uintptr_t movableVob = 0; // world contact with a movable vob body: its snapshot id, else zero
+  uintptr_t fragment = 0;   // world contact with a body of debris: that native body, else zero
   uint64_t step = 0;
   };
 
@@ -69,6 +87,8 @@ class DynamicWorld final {
     struct BulletsList;
     struct BBoxList;
     struct MovableVobs;
+    struct ItemHulls;
+    struct ItemTrace;
 
   public:
     static constexpr float gravityMS   = 9.8f; // meters per second^2
@@ -77,9 +97,16 @@ class DynamicWorld final {
     static constexpr float spellSpeed  = 1; // centimeters per milliseconds
     static constexpr float characterItemRange = 300.f; // centimetres around the opt-in hero
 
-    DynamicWorld(World *world, const asset::WorldMesh& mesh, const asset::WorldMesh* originalCloth = nullptr);
+    DynamicWorld(PhysicsHost *host, const asset::WorldMesh& mesh, const asset::WorldMesh* originalCloth = nullptr);
+    // Static collision from a lazy input (staticcollision.h); no cache: the game's cache of host, if any.
+    DynamicWorld(PhysicsHost *host, const StaticCollision::Input& input, const asset::WorldMesh* originalCloth,
+                 const StaticCollision::Cache* cache);
     DynamicWorld(const DynamicWorld&)=delete;
     ~DynamicWorld();
+
+    // The native world of these bodies: a program's own walking character (CollisionWorld::createVirtualCharacter)
+    // moves among them. The game's characters go through NpcItem instead.
+    CollisionWorld& collision() { return *world; }
 
     enum Category {
       C_Null      = 1,
@@ -94,16 +121,20 @@ class DynamicWorld final {
       C_MovableVob = 10,
       C_MovableQuery = 11,
       C_SmallVobQuery = 12,
-      C_Fragment = 13,
+      C_Fragment = 13, // debris a character stops at: largest extent from CollisionWorld::fragmentBlockSize
       C_Cloth = 14,
+      C_FragmentSmall = 15, // smaller debris: characters pass it, it never enters their queries
       };
+    static constexpr uint32_t fragmentMask = (1u<<C_Fragment)|(1u<<C_FragmentSmall);
+    static constexpr bool isFragment(int category) { return category==C_Fragment || category==C_FragmentSmall; }
 
     enum PtrType {
       P_Null,
       P_Item,
       P_Interactive,
       P_Editor,
-      P_MovableVob
+      P_MovableVob,
+      P_Fragment // a body of debris; the payload is its prop's BodyData
       };
 
     enum MoveCode : uint8_t {
@@ -122,6 +153,9 @@ class DynamicWorld final {
       Npc*          npc     = nullptr;
       float         npcCol  = 0;
       bool          landCol = false;
+      bool          trackBodyImpact = false;
+      Tempest::Vec3 bodyImpactVelocity = {}; // incoming cm/ms
+      float         bodyImpactSpeed = 0; // largest incoming relative normal speed, cm/ms
       };
 
     struct NpcItem {
@@ -137,8 +171,13 @@ class DynamicWorld final {
           return *this;
           }
 
-        void  setPosition(const Tempest::Vec3& pos);
+        // Graph movement can update the saved placement while its collision body is absent.
+        void  setPosition(const Tempest::Vec3& pos, bool keepSuspended = false);
         const Tempest::Vec3& position() const;
+        bool  hasBody() const;
+        bool  bodySuspended() const;
+        void  suspendBody();
+        void  resumeBody();
 
         void  setRotation(float a);
 
@@ -167,6 +206,9 @@ class DynamicWorld final {
         struct VirtualMoveResult {
           Tempest::Vec3 position = {}, velocity = {}, groundNormal = {}, groundVelocity = {};
           Tempest::Vec3 steepContactNormal = {};
+          Tempest::Vec3 obstacleNormal = {};
+          Npc* obstacleNpc = nullptr;
+          bool obstacleDynamic = false;
           CollisionTest collision;
           float advancementRatio = 1.f;
           bool grounded = false;
@@ -178,7 +220,8 @@ class DynamicWorld final {
         // Walking only: displacement in cm, dt in ms, slope in radians, mass in kg.
         VirtualMoveResult moveVirtual(const Tempest::Vec3& displacement, uint64_t dt,
                                       float stepHeight, float maxSlope, float mass, Npc* culprit = nullptr,
-                                      bool limitStairAdvance = false, bool bounceOnSteepContact = false);
+                                      bool limitStairAdvance = false, bool bounceOnSteepContact = false,
+                                      bool standing = false);
         VirtualMoveResult carryVirtual(uint64_t dt, Npc* culprit = nullptr);
         void resetVirtual();
         void setVirtualDiagnosticsEnabled(bool enabled);
@@ -194,7 +237,8 @@ class DynamicWorld final {
         void  implSetPosition(const Tempest::Vec3& pos);
         VirtualMoveResult implMoveVirtual(const Tempest::Vec3& displacement, uint64_t dt,
                                          float stepHeight, float maxSlope, float mass, Npc* culprit, bool carry,
-                                         bool limitStairAdvance = false, bool bounceOnSteepContact = false);
+                                         bool limitStairAdvance = false, bool bounceOnSteepContact = false,
+                                      bool standing = false);
 
       friend class DynamicWorld;
       };
@@ -218,6 +262,7 @@ class DynamicWorld final {
         void setInteractive(Interactive* it);
         void setPayloadPtr(void* ptr);
         bool isEmpty() const { return obj==nullptr; }
+        uint32_t nativeId() const; // Jolt index and sequence; 0xFFFFFFFF without a body
         float mass() const; // kilograms; zero for empty/static/kinematic handles
         Tempest::Matrix4x4 matrix() const;
         Tempest::Vec3 position() const;
@@ -226,6 +271,7 @@ class DynamicWorld final {
         Tempest::Vec3 velocity() const; // centimetres/second; zero without dynamics
         Tempest::Vec3 angularVelocity() const; // world radians/second; zero without dynamics
         bool isSleeping() const;
+        void retainForItemWake();
         bool touchedByNpc() const;
         // World-space newton seconds (kg * metres/second), with native wake.
         bool addImpulse(const Tempest::Vec3& impulseNs, Npc* culprit = nullptr);
@@ -238,6 +284,7 @@ class DynamicWorld final {
       private:
         DynamicWorld*       owner  = nullptr;
         BodyData*           obj    = nullptr;
+      friend class DynamicWorld;
       };
 
     struct RayLandResult {
@@ -350,6 +397,18 @@ class DynamicWorld final {
       friend class DynamicWorld;
       };
 
+    struct BulletTrace {
+      virtual ~BulletTrace()=default;
+      virtual void forget(const BulletBody& body)=0;
+      // NPC identity is opaque to physics; only the trace writer may inspect it.
+      virtual void write(const BulletBody& body, BulletCallback* callback,
+                         const char* phase, uint64_t dt, const void* npc=nullptr,
+                         bool hasHit=false, float fraction=1.f,
+                         Tempest::Vec3 hit={}, Tempest::Vec3 normal={}, unsigned material=0, unsigned category=0)=0;
+      };
+
+    void setBulletTrace(BulletTrace* trace) { bulletTrace=trace; }
+
     struct BBoxCallback {
       BBoxCallback() = default;
       virtual ~BBoxCallback()=default;
@@ -359,7 +418,7 @@ class DynamicWorld final {
     struct BBoxBody final {
       public:
         BBoxBody() = default;
-        BBoxBody(DynamicWorld* wrld, BBoxCallback* cb, const zenkit::AxisAlignedBoundingBox& bbox);
+        BBoxBody(DynamicWorld* wrld, BBoxCallback* cb, const asset::Aabb& bbox);
         BBoxBody(DynamicWorld* wrld, BBoxCallback* cb, const Tempest::Vec3& pos, float R);
         BBoxBody(BBoxBody&& other);
         ~BBoxBody();
@@ -376,11 +435,15 @@ class DynamicWorld final {
       };
 
     RayLandResult  landRay      (const Tempest::Vec3& from, float maxDy=0) const;
+    // Down through props, furniture and items to the world mesh, the only geometry with room sector materials.
+    RayLandResult  floorRay     (const Tempest::Vec3& from, float maxDy) const;
     RayLandResult  landSweep    (const Tempest::Vec3& from, float R, float maxDy) const;
     RayWaterResult waterRay     (const Tempest::Vec3& from, float stepHeight) const;
     RayCamResult   cameraRay    (const Tempest::Vec3& from, const Tempest::Vec3& to) const;
 
     RayLandResult  ray          (const Tempest::Vec3& from, const Tempest::Vec3& to) const;
+    // Landscape and static objects only, with the surface normal for both (blood decals, physics stage 8 step 4c).
+    RayLandResult  rayStatic    (const Tempest::Vec3& from, const Tempest::Vec3& to) const;
     // Bench camera only: retain world occlusion while looking past the selected
     // cloth object's own rigid attachments. Does not alter collision filters.
     RayLandResult  rayClothCamera(const Tempest::Vec3& from, const Tempest::Vec3& to,
@@ -389,7 +452,7 @@ class DynamicWorld final {
     RayLandResult  sweep        (const Tempest::Vec3& from, const Tempest::Vec3& to, float R) const;
     RayQueryResult rayNpc       (const Tempest::Vec3& from, const Tempest::Vec3& to, const Npc* except) const;
     // Physical Jolt hulls used by bodies, plus water and NPC rigs; no duplicate visual meshes.
-    NavigationRayResult navigationRay(const Tempest::Vec3& from, const Tempest::Vec3& to, const Npc* except) const;
+    NavigationRayResult navigationRay(const Tempest::Vec3& from, const Tempest::Vec3& to, const Ragdoll* ownRig) const;
     // where an arrow aimed by hand would stop flying straight from-to: the first npc 'hit' takes (it says
     // how far along, t), else the ground; v: the point
     RayQueryResult rayArrow     (const Tempest::Vec3& from, const Tempest::Vec3& to,
@@ -397,15 +460,72 @@ class DynamicWorld final {
     float          soundOclusion(const Tempest::Vec3& from, const Tempest::Vec3& to) const;
 
     NpcItem        addGhostObj  (const Skeleton* src);
+    // Fresh-start floor replay (game/gamescript_startupfloor.h): NPC bodies created after this sequence number do not collide.
+    // 0: all bodies collide.
+    void           setNpcReplaySeq(uint32_t seq);
+    float          npcMaxRadiusXZ() const;
     Item           addStaticObj (const PhysicMeshShape *src, const Tempest::Matrix4x4& m, std::string_view label = {});
     Item           addMovableObj(const PhysicMeshShape *src, const Tempest::Matrix4x4& m, std::string_view label = {});
     Item           addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bbox, asset::MaterialGroup mat);
+    Item           addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bbox, asset::MaterialGroup mat,
+                                  const ProtoMesh* proto, std::string_view visual, bool hulls = true);
+    struct ItemHull {
+      JPH::ShapeRefC shape, originalShape;
+      std::vector<Tempest::Vec3> vertices; // hull vertices in visual-local centimetres
+      std::string fallbackReason;
+      float volume = 0.f, boundsVolume = 0.f; // cubic metres, before object scale
+      float extraPaddingCm = 0.f; // collision padding beyond the base centimetre
+      };
+    const ItemHull& itemHullShape(const ProtoMesh& proto, std::string_view visual);
+    // A placed-item census cache hit creates no census bodies; this keeps the
+    // body IDs of everything created later identical to the live census path.
+    void            cycleBodyIds(size_t count);
+    struct PlacedItemCandidate {
+      const Item* body = nullptr; // read by placedItemCensus; may be empty for placedItemCensusInputs
+      bool mission = false;
+      std::string_view visual = {};
+      uint32_t zenId = uint32_t(-1);
+      size_t instance = size_t(-1);
+      // Inputs of addDynamicObj: the census key hashes these instead of a body,
+      // so a cache hit needs neither the temporary body nor its item hull.
+      const ProtoMesh* proto = nullptr;
+      Tempest::Matrix4x4 transform = Tempest::Matrix4x4::mkIdentity();
+      uint32_t material = 0; // script ItemMaterial; selects density and friction
+      };
+    struct PlacedItemCensusEntry {
+      std::string disposition;
+      float supportGapCm = std::numeric_limits<float>::infinity();
+      float staticDepthCm = 0, furnitureDepthCm = 0, itemDepthCm = 0;
+      int supportCategory = 0;
+      std::string supportLabel;
+      Tempest::Vec3 supportNormal = {};
+      Tempest::Vec3 hullLowPointCm = {}, supportFaceNormal = {};
+      float supportSlopeDeg = std::numeric_limits<float>::quiet_NaN();
+      uint32_t supportZenId = uint32_t(-1);
+      size_t supportItemIndex = size_t(-1);
+      bool enabled = false;
+      };
+    // All handles must still have their authored poses. Decisions preserve the
+    // input order and are made together, before any candidate body is removed.
+    std::vector<PlacedItemCensusEntry> placedItemCensus(const std::vector<PlacedItemCandidate>& candidates) const;
+    // Digest of everything placedItemCensus reads besides the static world:
+    // candidate identity, the inputs its body is built from (pose, material,
+    // mesh bounds and hull source vertices), and every movable vob body. It
+    // reads no candidate body: hull/body construction and census rules are
+    // covered by the build fingerprint. New builder files must be added to
+    // cmake/PlacedCensusBuilder.cmake.
+    std::string placedItemCensusInputs(const std::vector<PlacedItemCandidate>& candidates) const;
     Item           addMovableVob(const ProtoMesh& mesh, std::string_view visual, const Tempest::Matrix4x4& matrix,
                                  float massMultiplier, bool blocksWalking, std::string_view className = {},
                                  bool legacyCollision = true, uint32_t zenId = uint32_t(-1));
     void           setMovableVobsEnabled(bool enabled);
+    void           setFurniturePartsEnabled(bool enabled);
+    bool           furniturePartsEnabled() const;
     void           setDestructionEnabled(bool enabled);
     void           setBuoyancyEnabled(bool enabled);
+    void           setItemWakeEnabled(bool enabled);
+    void           setItemDeepestContactEnabled(bool enabled);
+    void           setRagdollBirthGuardEnabled(bool enabled);
     bool           buoyancyEnabled() const;
     bool           destructionEnabled() const;
     Cloth&         cloth();
@@ -419,8 +539,8 @@ class DynamicWorld final {
     void           setPhysicsNoiseEnabled(bool enabled);
     bool           physicsNoiseEnabled() const;
     void           setPhysicsNoiseCallback(std::function<void(const PhysicsNoise&)> callback);
-    void           saveMovableVobs(Serialize& fout) const;
-    void           loadMovableVobs(Serialize& fin);
+    void           saveMovableVobs(SaveArchive& fout) const;
+    void           loadMovableVobs(SaveArchive& fin);
     // Absolute game minutes. Trace creation is recorded at the physics tick,
     // independently of which NPC happens to inspect the body.
     void           setTraceTime(int64_t minutes);
@@ -430,14 +550,21 @@ class DynamicWorld final {
     std::shared_ptr<const MovableVobPose> movableVobPose(uint32_t zenId) const;
     std::shared_ptr<const MovableVobPose> rayMovableVob(const Tempest::Vec3& from, const Tempest::Vec3& to) const;
     // One animation's optimal hit frame: each first-contact body takes damage once.
+    // `struck`, when given, holds the snapshot ids this swing already struck: they are
+    // skipped, and every body struck here is appended.
     size_t         meleeMovableVobs(const Tempest::Vec3& origin, const Tempest::Vec3& forward,
                                     float rangeCm, float weaponDamage, float strength, FractureRule::Melee kind,
-                                    Npc* attacker = nullptr);
+                                    Npc* attacker = nullptr, std::vector<uintptr_t>* struck = nullptr);
+    // A blow stopped by an intact destructible movable vob: the board takes that strike at
+    // the contact point (same rule as the hit frame), once per swing per body.
+    bool           meleeStoppedMovableVob(const MeleeBladeContact& contact, float weaponDamage, float strength,
+                                          FractureRule::Melee kind, Npc* attacker, std::vector<uintptr_t>& struck);
     struct MovableVobSnapshot {
       uintptr_t          id = 0;
       uint32_t           zenId = uint32_t(-1);
       std::string        visual, className, disposition;
       bool               blocksWalking = false, legacyCollision = true, enabled = false, sleeping = true, touchedByNpc = false;
+      size_t             collisionParts = 1;
       float              mass = 0;
       float              hullVolume = 0, density = 0, massMultiplier = 1;
       asset::MaterialGroup material = asset::MaterialGroup::UNDEFINED;
@@ -462,11 +589,25 @@ class DynamicWorld final {
       Tempest::Vec3 velocity, angularVelocity;
       bool permanent = false;
       int64_t asleepSince = -1;
+      float friction = 0;
+      Tempest::Vec3 centerOfMass;
+      // Bond group of the piece: pieces of one group share one native body (its pose, motion,
+      // sleep, permanence and centre of mass). Without bonds it equals the piece.
+      uint32_t bondGroup = 0;
+      // The group's native body: MeleeBladeContact::fragment of a blow on it.
+      uintptr_t body = 0;
       };
+    // One entry per surviving piece, in piece order.
     std::vector<FragmentSnapshot> fragmentSnapshot() const;
+    // Bench-only: the deepest native contact of one piece with landscape and static objects, centimetres.
+    float fragmentGroundPenetration(uintptr_t parentId, size_t piece) const;
+    // Bench-only: the first body of debris on a segment (FragmentSnapshot::body), zero without one;
+    // `distance` gets the centimetres to it.
+    uintptr_t fragmentRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float* distance = nullptr) const;
     struct WaterBodySnapshot {
       uintptr_t id = 0, parentId = 0;
       const Ragdoll* ragdoll = nullptr;
+      const ::Item* item = nullptr;
       uint32_t bone = 0;
       float targetFraction = 0;
       uint32_t zenId = uint32_t(-1);
@@ -474,22 +615,66 @@ class DynamicWorld final {
       int category = C_Null;
       std::string visual;
       Tempest::Matrix4x4 transform;
-      Tempest::Vec3 worldBounds[2], velocity;
+      Tempest::Vec3 worldBounds[2], collisionBounds[2], velocity;
       float mass = 0, density = 0, waterY = 0, submergedFraction = 0;
       bool sleeping = true, inWater = false;
       };
     std::vector<WaterBodySnapshot> waterBodySnapshot() const;
+    struct ItemTraceContact {
+      uint64_t nativeStep = 0;
+      bool persisted = false;
+      uint32_t bodyId = uint32_t(-1), zenId = uint32_t(-1);
+      int category = C_Null;
+      std::string visual;
+      float depth = 0; // centimetres; positive means penetration
+      Tempest::Vec3 normal, point, otherPoint; // normal moves the Item out
+      bool triangle = false;
+      uint32_t nativeSubShapeId = uint32_t(-1), sourceTriangle = uint32_t(-1);
+      Tempest::Vec3 triangleNormal, triangleVertices[3];
+      float triangleEdgesCm[3] = {};
+      };
+    struct ItemTraceSweep {
+      uint64_t nativeStep = 0;
+      uint32_t itemBodyId = uint32_t(-1), bodyId = uint32_t(-1);
+      uint32_t nativeSubShapeId = uint32_t(-1), sourceTriangle = uint32_t(-1);
+      int category = C_Null;
+      bool tested = false, hit = false, triggered = false, triangle = false;
+      std::string status;
+      Tempest::Vec3 from, to, point, normal, triangleNormal, triangleVertices[3];
+      float fraction = 1.f, beforeCm = 0, afterCm = 0, triangleEdgesCm[3] = {};
+      };
+    struct ItemTraceSample {
+      uint64_t nativeStep = 0, nativeSteps = 0, index = 0;
+      uint32_t bodyId = uint32_t(-1);
+      float seconds = 0, stepSeconds = 0;
+      bool beforeStep = true, active = false, sleeping = true;
+      Tempest::Vec3 position, centerOfMass, velocity, bounds[2]; // cm and cm/s
+      std::vector<ItemTraceContact> contacts, solverContacts;
+      std::vector<ItemTraceSweep> recoverySweeps;
+      };
+    // Opt-in benchmark diagnostics at the ordinary native tick boundaries.
+    // nativeSteps reports batching; a per-step scenario must keep it <= 1.
+    bool startItemTrace(const ::Item& item);
+    std::vector<ItemTraceSample> takeItemTrace();
+    void stopItemTrace();
     void configureMeleeBench(int substeps);
     void updateMeleeBlade(const Npc* owner, const Tempest::Matrix4x4& hand, float lengthCm);
     void removeMeleeBlade(const Npc* owner);
     void measureMeleeBench(std::string path);
     void reportMeleeBench();
     void updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules);
+    void updateShadowBody(Npc* owner, const MeleeShadowBody& body, size_t* slotHint = nullptr);
+    static void boundShadowBody(MeleeShadowBody& body);
     void removeShadowBody(const Npc* owner);
+    // The published body of owner, false when it has none (the slot check, tests).
+    bool shadowBody(const Npc* owner, MeleeShadowBody& out) const;
     // Pose time and the half-open active window use absolute game milliseconds.
+    // forward: the attacker's facing; a wall met by a blade going back or up (the wind-up,
+    // the follow-through) does not stop the swing. Zero: every wall stops it.
     void updateShadowBlade(const Npc* owner, uint64_t swingId,
                            const std::vector<MeleeBladeSegment>& segments, uint64_t timeMs,
-                           double activeBeginMs, double activeEndMs, float walkableCos = .7f);
+                           double activeBeginMs, double activeEndMs, float walkableCos = .7f,
+                           Tempest::Vec3 forward = {}, MeleeImpact::Weapon weapon = MeleeImpact::Weapon::OneHand);
     std::vector<MeleeBladeContact> takeShadowBladeContacts(const Npc* owner);
     void removeShadowBlade(const Npc* owner);
     void flushShadowBlades();
@@ -558,7 +743,7 @@ class DynamicWorld final {
                                                const Tempest::Matrix4x4& objectMatrix);
 
     BulletBody*    bulletObj(BulletCallback* cb);
-    BBoxBody       bboxObj(BBoxCallback* cb, const zenkit::AxisAlignedBoundingBox& bbox);
+    BBoxBody       bboxObj(BBoxCallback* cb, const asset::Aabb& bbox);
     BBoxBody       bboxObj(BBoxCallback* cb, const Tempest::Vec3& pos, float R);
 
     void           tick(uint64_t dt);
@@ -569,9 +754,25 @@ class DynamicWorld final {
       uint64_t rays = 0;
       };
     PhysicsStats physicsStats() const;
+    // Native body digest for equivalence checks: see CollisionWorld::bodyDigest.
+    // `owners` hashes each movable vob (ZEN-ID, visual, broken) with the IDs
+    // of its body and query bodies.
+    struct BodyDigest { std::string digest, owners; size_t bodies = 0, active = 0, movables = 0; };
+    BodyDigest bodyDigest() const;
+    struct StaticCollisionStats {
+      size_t shapeBytes = 0, triangles = 0;
+      };
+    StaticCollisionStats staticCollisionStats() const;
+    using StaticCollisionLoadStats = StaticCollision::Stats;
+    const StaticCollisionLoadStats& staticCollisionLoadStats() const { return statics->stats; }
+    bool staticCollisionSplit() const { return splitStaticTriangles; }
+    uint64_t simulationStep() const;
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.
     NavMesh::Geometry navigationGeometry() const;
+    // Static and kinematic collision snapshot, in native category order.
+    std::array<size_t,4> navigationCollisionTriangles(
+        const std::function<void(const CollisionWorld::StaticTriangle&)>& output) const;
 
     void           deleteObj(BulletBody* obj);
 
@@ -588,6 +789,8 @@ class DynamicWorld final {
     std::string_view validateSectorName(std::string_view name) const;
 
   private:
+    friend struct WayHeightsContract;
+    friend struct StaticCollisionProbe;
     friend class ClothBulletBenchDriver;
     void           moveBullet(BulletBody& b, const Tempest::Vec3& dir, uint64_t dt);
     RayWaterResult implWaterRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float stepHeight,
@@ -595,24 +798,45 @@ class DynamicWorld final {
     bool           hasCollision(const NpcItem &it, CollisionTest& out);
     void           prepareMovableVobShape(BodyData& body);
     void           rebuildMovableVob(BodyData& body);
+    bool           meleeEligible(const BodyData& body) const;
+    bool           meleeStrike(BodyData& body, const Tempest::Vec3& direction, const Tempest::Vec3& point,
+                               float weaponDamage, float strength, FractureRule::Melee kind, Npc* attacker);
     void           validateMovableVobs();
     void           syncMovableVob(BodyData& body);
-    void           damageMovableVob(BodyData& body, float impulse, const Tempest::Vec3& point, bool arrow = false,
-                                    std::string_view impactCulprit = {});
+    void           damageMovableVob(BodyData& body, float impulse, const Tempest::Vec3& point,
+                                    FractureHit hit = FractureHit::Impact,
+                                    std::string_view impactCulprit = {}, const Tempest::Vec3& direction = {});
     void           breakMovableVob(BodyData& body);
+    // Remnants (dynamicworld_remnants.cpp): a blow on a group of several pieces, its break on the
+    // next tick, and the blows of a stopped blade, an arrow and a spell's force.
+    void           damageRemnant(BodyData& body, uint32_t group, float damage, float impulse, const Tempest::Vec3& point,
+                                 FractureHit hit, const Tempest::Vec3& direction);
+    void           breakRemnants(BodyData& body);
+    void           breakRemnant(BodyData& body, uint32_t group);
+    bool           meleeStoppedRemnant(const MeleeBladeContact& contact, float weaponDamage, float strength,
+                                       FractureRule::Melee kind, Npc* attacker, std::vector<uintptr_t>& struck);
+    // `fragment` is the native body (CollisionWorld::CollisionBody*): the prop and group of that live body
+    // of debris and its piece count; remnantOf only for a remnant (several pieces).
+    BodyData*      fragmentOf(uintptr_t fragment, uint32_t& group, size_t& pieces) const;
+    BodyData*      remnantOf(uintptr_t fragment, uint32_t& group) const;
+    void           arrowRemnant(uintptr_t fragment, const Tempest::Vec3& point, const Tempest::Vec3& direction, Npc* culprit);
+    size_t         spellRemnants(BodyData& body, const Tempest::Vec3& center, float radius,
+                                 const std::function<Tempest::Vec3(const Tempest::Vec3&,float)>& impulse,
+                                 Npc* culprit, const Tempest::Vec3* pointCm);
+    void           chooseLastingGroups(BodyData& body);
+    void           emitBreakNoise(const BodyData& body, const Tempest::Vec3& center);
     void           syncFragments(BodyData& body);
     void           cleanupFragments(BodyData& body);
-    void           saveDestructionVobs(Serialize& fout) const;
-    void           loadDestructionVobs(Serialize& fin);
+    void           saveDestructionVobs(SaveArchive& fout) const;
+    void           loadDestructionVobs(SaveArchive& fin);
 
     std::unique_ptr<CollisionWorld>    world;
+    std::unique_ptr<ItemTrace>         itemTrace;
     std::unique_ptr<Cloth>             clothWorld;
-    World*                            ownerWorld = nullptr;
-
-    std::vector<std::string>           sectors;
-
-    std::unique_ptr<PhysicVbo>         landMesh;
-    std::unique_ptr<PhysicVbo>         waterMesh;
+    PhysicsHost*                      host = nullptr;
+    BulletTrace*                      bulletTrace = nullptr;
+    bool                              splitStaticTriangles = true;
+    std::unique_ptr<StaticCollision>   statics;
     std::unique_ptr<PhysicVbo>         originalClothMesh;
     std::unique_ptr<WorldBodies>       bodies;
 
@@ -620,6 +844,7 @@ class DynamicWorld final {
     std::unique_ptr<BulletsList>       bulletList;
     std::unique_ptr<BBoxList>          bboxList;
     std::unique_ptr<MovableVobs>       movableVobs;
+    std::unique_ptr<ItemHulls>         itemHulls;
     int64_t                           traceTime = -1;
     Tempest::Vec3                     fragmentObserver;
     bool                              hasFragmentObserver = false;

@@ -54,6 +54,13 @@ YIELDING = (
     "Ты недавно сдался ему в бою, и он тебя пощадил. Ты помнишь, чем это могло кончиться: "
     "держишься с ним осторожнее и уступчивее, насколько позволяет твой характер."
 )
+DEFEATED = (
+    "Герой сегодня {times} сбил тебя с ног в драке. Ты знаешь, что он сильнее тебя: "
+    "держишься с ним осторожнее, насколько позволяет твой характер. Гордость можешь показать "
+    "бравадой, но угрожать ему всерьёз не станешь, пока не изменится расклад."
+)
+DEFEAT_SEEN = "Ты видел, как герой сегодня сбил с ног {name}: он опасен в драке."
+DEFEAT_BARK = "[Герой сегодня {times} сбил тебя с ног — ты знаешь, что он сильнее.]"
 SURRENDER = Tool(
     "surrender",
     "Сдаться герою и его спутникам: прекратить бой, убрать оружие и произнести words на ходу. "
@@ -95,6 +102,13 @@ def fresh_yield(chronicle: Chronicle, npc: str, ticks: int) -> Fact | None:
                  if f["npc"] == npc.upper() and f["t"] <= ticks < f["deadline"]), None)
 
 
+def defeat_times(count: int) -> str:
+    if count <= 4:
+        return {1: "один раз", 2: "дважды", 3: "три раза", 4: "четыре раза"}[count]
+    ending = "раза" if count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14} else "раз"
+    return f"{count} {ending}"
+
+
 @dataclass
 class Battle:
     last: float = float("-inf")
@@ -109,6 +123,7 @@ class HeroHold:
     members: list[str] = field(default_factory=list)
     timer: asyncio.TimerHandle | None = None
     resumed: bool = False
+    addressee: str | None = None
 
 
 class Mercy:
@@ -142,6 +157,8 @@ class Mercy:
         dialogue.surrender_hold = self.hold_surrender
         dialogue.hero_fight_held = self.held
         dialogue.surrender_context = self._fight_words.get
+        if barks is not None:
+            barks.defeat_context = self.defeat_bark
 
     def held(self, npc: str) -> bool:
         return any(npc in hold.members for hold in self.holds.values())
@@ -189,7 +206,7 @@ class Mercy:
                 self._hold_used.pop(member, None)
                 log.warning("%s: surrender hold could not resume combat: %s", member, output)
 
-    async def hold_surrender(self, conv: Conversation, request: list[Item]) -> None:
+    async def hold_surrender(self, conv: Conversation, request: list[Item]) -> bool | None:
         npc = conv.npc
         opponent = self._fight_words.get(npc, "")  # preserve the combat words preceding the plea
         if (self.dialogue.quick is None or npc in self._hold_used or self.held(npc)
@@ -216,7 +233,9 @@ class Mercy:
             return
         hold = self.holds[npc] = HeroHold()
         self._hold_turns[npc] = hold
-        hold.timer = asyncio.get_running_loop().call_later(HERO_HOLD_S, self._end_hold, npc, hold)
+        loop = asyncio.get_running_loop()
+        deadline = conv.talked_at + HERO_HOLD_S
+        hold.timer = loop.call_at(deadline, self._end_hold, npc, hold)
         assert conv.reply is not None
         talked_at = conv.talked_at
 
@@ -265,6 +284,35 @@ class Mercy:
                 log.info("%s: surrender hold failed: %s", member, output)
                 self._end_hold(npc, hold)
                 return
+        if self.holds.get(npc) is not hold or not self.parley or not self.parley.bandit(npc):
+            return
+        leader = max((member for member in hold.members if self._alive(member)),
+                     key=self.orders.talk.lead, default=npc)
+        if self.orders.talk.lead(leader) <= self.orders.talk.lead(npc):
+            return
+        assert conv.reply is not None and conv.trigger is not None
+        conv.reply.remove_done_callback(finished_turn)
+        words, addressee = conv.trigger.content, npc
+        self.accepting.discard(npc)
+        del self.holds[npc]
+        del self._hold_turns[npc]
+        hold.addressee = addressee
+        npc = leader
+        self.holds[npc] = self._hold_turns[npc] = hold
+        self.accepting.add(npc)
+        assert hold.timer is not None
+        hold.timer.cancel()
+        hold.timer = loop.call_at(deadline, self._end_hold, npc, hold)
+        person = self.orders.talk.people[npc]
+        self.dialogue.remember(addressee, self.orders.talk.people[addressee].name,
+                               f"Сдачу героя принимает {person.name}: решать ему.")
+        conv = self.dialogue.conversations[npc]
+        if self.dialogue.floor is not None:
+            self.dialogue.floor.reserve_after(npc, addressee)
+        turn = self.dialogue.say_as_player(npc, words, overlay=True)
+        talked_at = conv.talked_at
+        turn.add_done_callback(finished_turn)
+        return True
 
     def _ours(self, npc: str) -> bool:
         return npc in {"PLAYER", "PC_HERO"} or self.orders.companion(npc)
@@ -306,8 +354,62 @@ class Mercy:
             turn.add_done_callback(lambda _: self.offering.discard(npc))
         return turn
 
+    async def _defeat(self, hit: CombatHit, branch: str | None, now: int | None, ticks: int) -> None:
+        if self._loading or self.chronicle.branch != branch:
+            return
+        npc, attacker = hit.npc.upper(), hit.by.upper()
+        name = self.orders.talk.people[npc].name
+        try:
+            snap, views = await asyncio.gather(
+                self.link.snapshot(npc, fresh=True),
+                self.link.npc_view(list(self.orders.talk.people)),
+            )
+        except (GameError, TimeoutError) as error:
+            log.warning("%s: could not record defeat: %s", npc, error)
+            return
+        if self._loading or self.chronicle.branch != branch:
+            return
+        if now is None:
+            now = snap.world.day * 1440 + snap.world.hour * 60 + snap.world.minute
+        day = now // 1440
+        previous = next((f for f in reversed(self.chronicle.facts("defeated"))
+                         if f["npc"] == npc and f["day"] == day), None)
+        witnesses = {
+            v.npc: v.name for v in views
+            if v.npc != npc and v.hp > 0 and v.body not in {"dead", "down"}
+            and v.hero is not None and v.hero.distance <= v.senses_range
+            and self.orders.talk.people[v.npc].guild < BEASTS
+        }
+        point = snap.npc.nearest_waypoint or snap.npc.waypoint
+        place = self.places.of(point) if self.places else None
+        where = place.ru if place else point or snap.world.name
+        self.chronicle.record({
+            "fact": "defeated", "npc": npc, "name": name, "by": attacker,
+            "day": day, "time": now, "t": ticks, "until": (day + 2) * 1440,
+            "count": previous["count"] + 1 if previous else 1,
+            "place": place.id if place else point or snap.world.name, "place_name": where,
+            "witnesses": sorted(set(previous["witnesses"] if previous else ()) | witnesses.keys()),
+        })
+        who = "Герой" if attacker in {"PLAYER", "PC_HERO"} else "Спутник героя"
+        self.dialogue.remember(npc, name, f"{who} сбил тебя с ног в драке: у {where}.")
+        for witness, witness_name in witnesses.items():
+            self.dialogue.remember(
+                witness, witness_name, f"{who} сбил с ног {name} в драке: у {where}.",
+            )
+
+    def defeat_bark(self, npc: str) -> str | None:
+        now = self._now()
+        if now is not None:
+            fact = next((f for f in reversed(self.chronicle.facts("defeated"))
+                         if f["npc"] == npc.upper() and f["day"] == now // 1440), None)
+            if fact is not None:
+                return DEFEAT_BARK.format(times=defeat_times(fact["count"]))
+        return None
+
     def _hit(self, hit: CombatHit) -> None:
         npc, attacker = hit.npc.upper(), hit.by.upper()
+        if hit.hp > 0 and not hit.down and not hit.dead:
+            self._dead.discard(npc)
         if attacker in {"PLAYER", "PC_HERO"}:
             for recipient, hold in list(self._hold_turns.items()):
                 if npc in hold.members:
@@ -321,6 +423,8 @@ class Mercy:
         entry = self.orders.talk.people.get(npc)
         if entry is None or entry.guild >= BEASTS:
             return
+        if hit.down and not hit.dead:
+            self.dialogue._spawn(self._defeat(hit, self.chronicle.branch, self._now(), self._ticks))
         now = time.monotonic()
         battle = self.battles.setdefault(npc, Battle())
         if now - battle.last >= 20 and not self.dialogue.in_fight(npc):
@@ -425,6 +529,8 @@ class Mercy:
             self._ticks = msg.t
             if isinstance(msg, NpcRoster):
                 for person in msg.npcs:
+                    if person.activity in {"routine", "dialog", "fight"}:
+                        self._dead.discard(person.id.upper())
                     if person.state != "ZS_ATTACK" and not self.held(person.id):
                         self._fight_words.pop(person.id, None)
                     if person.id in self._hold_used and not self.held(person.id):
@@ -442,10 +548,12 @@ class Mercy:
                         self._minute = view.time
                     if view.hp <= 0 or view.body in {"dead", "down"}:
                         self._dead.add(view.npc.upper())
-                    elif view.hero and view.hero.weapon == "none":
-                        fact = self._latest(view.npc)
-                        if fact and fact.get("armed"):
-                            self._spare(view.npc.upper())
+                    else:
+                        self._dead.discard(view.npc.upper())
+                        if view.hero and view.hero.weapon == "none":
+                            fact = self._latest(view.npc)
+                            if fact and fact.get("armed"):
+                                self._spare(view.npc.upper())
             latest = {f["npc"]: f for f in self.chronicle.facts("surrender")}
             for npc, fact in latest.items():
                 if fact["status"] == "pending" and msg.t >= fact["deadline"]:
@@ -453,7 +561,8 @@ class Mercy:
 
     async def prepare(self, npc: str) -> None:
         self.accepting.discard(npc)
-        if self._hero_turn(npc) and (npc in self.holds or await self._hero_fight(npc)):
+        if (self._hero_turn(npc) and (npc in self.holds or await self._hero_fight(npc))
+                and (not self.held(npc) or npc in self.holds)):
             self.accepting.add(npc)
 
     def _hero_turn(self, npc: str) -> bool:
@@ -478,7 +587,17 @@ class Mercy:
     def situation(self, npc: str) -> str | None:
         now = self._now()
         fact = fresh_surrender(self.chronicle, npc, now) if now is not None else None
-        lines = [YIELDING] if fact and fact["status"] == "spared" else []
+        defeats: dict[str, Fact] = {}
+        for defeat in reversed(self.chronicle.facts("defeated")):
+            if now is None or not defeat["time"] <= now < defeat["until"]:
+                continue
+            if defeat["npc"] == npc or npc in defeat["witnesses"]:
+                defeats.setdefault(defeat["npc"], defeat)
+        own = defeats.pop(npc, None)
+        lines = [DEFEATED.format(times=defeat_times(own["count"]))] if own else []
+        if fact and fact["status"] == "spared":
+            lines.append(YIELDING)
+        lines.extend(DEFEAT_SEEN.format(name=f["name"]) for f in defeats.values())
         if now is not None and any(f["npc"] == npc and now < f["until"]
                                    for f in self.chronicle.facts("hero_yield")):
             lines.append(VICTOR)
@@ -488,6 +607,15 @@ class Mercy:
             elif npc in memory["witnesses"]:
                 lines.append(f"Ты помнишь, как {memory['name']} обмочил его, когда он сдался.")
         if npc in self.accepting and self._hero_turn(npc):
+            if (hold := self.holds.get(npc)) is not None and hold.addressee is not None:
+                name = self.orders.talk.people[hold.addressee].name
+                lines.append(
+                    "Ты опустил оружие и слушаешь героя. Он сдаётся вашей шайке: "
+                    f"эту фразу он сказал {name}, а решать тебе — ты здесь главный. "
+                    "Если решишь принять его сдачу, вызови accept_surrender{take, words, humiliate}; "
+                    "без вызова бой продолжится. Выкуп и решение — по твоему характеру и положению."
+                )
+                return "\n".join(lines)
             posture = ("Ты опустил оружие и слушаешь героя. Он сказал тебе эту фразу. "
                        if npc in self.holds else
                        "Сейчас ты в бою с героем, твоя цель — герой. Он сказал тебе эту фразу. ")
@@ -543,7 +671,7 @@ class Mercy:
                                        "members": truce["members"], "reason": "yield_broken"})
         return True
 
-    async def _ransom(self, npc: str, raw: object) -> tuple[list[Give], str | None, list[str]]:
+    async def _ransom(self, npc: str, raw: object) -> tuple[list[Give], str | None, list[str], bool]:
         if not isinstance(raw, list) or any(not isinstance(x, str) for x in raw):
             raise GameError("take must be a list of gold, weapons, fine or item ids")
         take = set(raw)
@@ -579,12 +707,16 @@ class Mercy:
             ["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", item]] for item in items
         ]) if items else []
         gives = []
+        no_gold = False
         for item, held in zip(items, counts, strict=True):
+            if item == GOLD and "gold" in take and "fine" not in take and type(held) is int and held == 0:
+                no_gold = True
+                continue
             wanted = held if item == GOLD and "gold" in take else fine if item == GOLD and fine else 1
             if type(held) is not int or held <= 0 or held < wanted or (item == GOLD and held < fine):
                 raise GameError(f"missing hero item: {item} (has {held}, needs {max(wanted or 0, fine)})")
             gives.append(Give(item, wanted, state.get("items", {}).get(item) or item))
-        return gives, community, cases
+        return gives, community, cases, no_gold
 
     async def _humiliate(self, conv: Conversation) -> bool:
         npc, branch = conv.npc, self.chronicle.branch
@@ -654,8 +786,16 @@ class Mercy:
             self._scene = None
         return completed
 
+    async def _refund_ransom(self, npc: str, gives: list[Give], branch: str | None) -> None:
+        if not gives or self._loading or self.chronicle.branch != branch:
+            return
+        try:
+            await self.link.story_effect(npc, [g.effect("hero") for g in gives], check=True)
+        except (GameError, TimeoutError) as error:
+            log.warning("%s: surrender ransom could not be returned: %s", npc, error)
+
     async def _accept(self, conv: Conversation, call: ToolCall, snap: Snapshot | None) -> ToolOutcome:
-        npc, now = conv.npc, self._now()
+        npc, now, branch = conv.npc, self._now(), self.chronicle.branch
         hold = self._hold_turns.get(npc)
         try:
             eligible = (npc in self.accepting and self._hero_turn(npc)
@@ -687,7 +827,7 @@ class Mercy:
                     "rejected",
                 )
         try:
-            gives, community, cases = await self._ransom(npc, call.arguments.get("take"))
+            gives, community, cases, no_gold = await self._ransom(npc, call.arguments.get("take"))
             if npc not in self.accepting:
                 return ToolOutcome("Отклонено: герой нарушил паузу боя.", "rejected")
             await self._native_outcome(npc, won=True)
@@ -713,7 +853,7 @@ class Mercy:
                 if resume := self._resuming.get(npc):
                     await resume
             return ToolOutcome(f"Отклонено: {output}", "rejected")
-        if hold is not None and hold.resumed:
+        if hold is not None and (hold.resumed or hold.addressee is not None):
             allies = list(dict.fromkeys([*allies, *hold.members]))
         for member in allies:
             if member == npc or not self._alive(member):
@@ -732,12 +872,14 @@ class Mercy:
                     self._end_hold(npc, hold, force=True)
                     if resume := self._resuming.get(npc):
                         await resume
+                await self._refund_ransom(npc, gives, branch)
                 return ToolOutcome(f"Отклонено: {output}", "rejected")
         if npc not in self.accepting:
             if resume := self._resuming.get(npc):
                 await resume
             if hold is not None:
                 await self._resume_hold(hold)
+            await self._refund_ransom(npc, gives, branch)
             return ToolOutcome("Отклонено: герой нарушил паузу боя.", "rejected")
         if hold is not None:
             self._release_hold(npc, hold)
@@ -761,6 +903,7 @@ class Mercy:
             await self.dialogue._say(conv, words.strip(), None, overlay=True)
         scene = await self._humiliate(conv) if humiliate else None
         return ToolOutcome(f"Принято: бой прекращён; герой передал тебе: {taken}."
+                           + (" Золота у героя нет." if no_gold else "")
                            + (" Долг перед законом погашен." if community else "")
                            + (" Унижение завершено." if scene else
                               " Сцена унижения отменена; сдача остаётся в силе." if humiliate else ""),

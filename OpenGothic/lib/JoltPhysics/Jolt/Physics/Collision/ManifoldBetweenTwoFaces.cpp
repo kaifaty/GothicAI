@@ -134,7 +134,7 @@ void PruneContactPoints(Vec3Arg inPenetrationAxis, ContactPoints &ioContactPoint
 	ioContactPointsOn2 = points_to_keep_on_2;
 }
 
-void ManifoldBetweenTwoFaces(Vec3Arg inContactPoint1, Vec3Arg inContactPoint2, Vec3Arg inPenetrationAxis, float inMaxContactDistance, const ConvexShape::SupportingFace &inShape1Face, const ConvexShape::SupportingFace &inShape2Face, ContactPoints &outContactPoints1, ContactPoints &outContactPoints2 JPH_IF_DEBUG_RENDERER(, RVec3Arg inCenterOfMass))
+void ManifoldBetweenTwoFaces(Vec3Arg inContactPoint1, Vec3Arg inContactPoint2, Vec3Arg inPenetrationAxis, float inMaxContactDistance, const ConvexShape::SupportingFace &inShape1Face, const ConvexShape::SupportingFace &inShape2Face, ContactPoints &outContactPoints1, ContactPoints &outContactPoints2 JPH_IF_DEBUG_RENDERER(, RVec3Arg inCenterOfMass), bool inKeepDeepestPoint)
 {
 	JPH_ASSERT(inMaxContactDistance > 0.0f);
 
@@ -265,6 +265,20 @@ void ManifoldBetweenTwoFaces(Vec3Arg inContactPoint1, Vec3Arg inContactPoint2, V
 	{
 		outContactPoints1.push_back(inContactPoint1);
 		outContactPoints2.push_back(inContactPoint2);
+	}
+	// GothicAI: The clipped face may not reach the deepest EPA contact depth.
+	else if (inKeepDeepestPoint && outContactPoints1.size() < outContactPoints1.capacity() && outContactPoints2.size() < outContactPoints2.capacity())
+	{
+		const Vec3 n = inPenetrationAxis.NormalizedOr(Vec3::sZero());
+		const float deepest = (inContactPoint1 - inContactPoint2).Dot(n);
+		float clipped = (outContactPoints1[old_size] - outContactPoints2[old_size]).Dot(n);
+		for (ContactPoints::size_type p = old_size; p < outContactPoints1.size(); ++p)
+			clipped = max(clipped, (outContactPoints1[p] - outContactPoints2[p]).Dot(n));
+		if (deepest > clipped + 1.0e-3f)
+		{
+			outContactPoints1.push_back(inContactPoint1);
+			outContactPoints2.push_back(inContactPoint2);
+		}
 	}
 }
 

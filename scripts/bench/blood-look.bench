@@ -1,0 +1,130 @@
+# Physics stage 8, step 4c: how blood looks (decals, reports/physics/2026-11-02-blood/README.md).
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local. Shots and clips for the user's eye: stains laid by hand on
+# Onar's field (earth), then a real fight, the dead bandit's pool as it spreads, an hour and half a
+# day later; the same in the harbour (stone).
+# A shot is written at the end of its frame: every shot waits before the clock or camera moves.
+seed 73015
+cheat god
+# morning, so that 10 h later is still daylight
+set time 6 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+# Laid by hand: does a decal draw at all, the right way up, on earth.
+blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 pool 55
+blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 splash 30
+hold back 900
+hold right 900
+wait 2500
+cam follow 230 250 200
+wait 1500
+shot laid-field-fresh
+wait 500
+blood_stains advance 5
+wait 4000
+shot laid-field-5min
+wait 1000
+blood_stains advance 120
+wait 4000
+shot laid-field-2h
+wait 1000
+# A real fight on the field: a paladin kills a bandit.
+turn -20
+arc PAL_255_RITTER 1 350 0
+npcequip PAL_255_RITTER ITMW_1H_COMMON_01
+stats npc PAL_255_RITTER hpmax 100000 hp 100000 str 80
+turn 40
+arc BDT_1013_BANDIT_L 1 350 0
+turn -20
+stats npc BDT_1013_BANDIT_L hpmax 120 hp 120
+watch BDT_1013_BANDIT_L
+cam follow 480 220 70
+rec field-fight
+fight PAL_255_RITTER BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L PAL_255_RITTER
+waitdown BDT_1013_BANDIT_L 60000
+stop
+# the paladin out of the frame: frozen 8 m behind the hero
+pin PAL_255_RITTER 800 180 0
+# cam follow keeps the watched npc by pointer, dead or alive (cam two/face look for a living one)
+cam follow 150 300 40
+rec field-pool
+wait 20000
+stop
+shot field-dead-20s
+blood_stains sample
+wait 1000
+blood_stains advance 5
+wait 4000
+shot field-dead-5min
+blood_stains sample
+wait 1000
+blood_stains advance 60
+wait 4000
+shot field-dead-1h
+blood_stains sample
+wait 1000
+blood_stains advance 300
+wait 4000
+shot field-dead-6h
+blood_stains sample
+wait 1000
+blood_stains advance 240
+wait 4000
+shot field-dead-10h
+blood_stains sample
+wait 1000
+# The harbour: stone.
+pin off
+set time 8 0
+goto NW_CITY_HABOUR_06_C
+wait 800
+clear 3000
+turn -20
+arc PAL_255_RITTER 1 350 0
+npcequip PAL_255_RITTER ITMW_1H_COMMON_01
+stats npc PAL_255_RITTER hpmax 100000 hp 100000 str 80
+turn 40
+arc BDT_1013_BANDIT_L 1 350 0
+turn -20
+stats npc BDT_1013_BANDIT_L hpmax 120 hp 120
+watch BDT_1013_BANDIT_L
+cam follow 480 220 70
+rec city-fight
+fight PAL_255_RITTER BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L PAL_255_RITTER
+waitdown BDT_1013_BANDIT_L 60000
+stop
+# the paladin out of the frame: frozen 8 m behind the hero
+pin PAL_255_RITTER 800 180 0
+# cam follow keeps the watched npc by pointer, dead or alive (cam two/face look for a living one)
+cam follow 200 170 40
+rec city-pool
+wait 20000
+stop
+shot city-dead-20s
+blood_stains sample
+wait 1000
+blood_stains advance 5
+wait 4000
+shot city-dead-5min
+blood_stains sample
+wait 1000
+blood_stains advance 60
+wait 4000
+shot city-dead-1h
+blood_stains sample
+wait 1000
+blood_stains advance 300
+wait 4000
+shot city-dead-6h
+blood_stains sample
+wait 1000
+blood_stains advance 240
+wait 4000
+shot city-dead-10h
+blood_stains sample
+wait 1000
+quit

@@ -47,7 +47,7 @@ float squareFalloffAttenuation(const float distance, const float lightInvRadius)
   return (smoothFactor * smoothFactor) / max(factor, 0.005);
   }
 
-//FIXME: copypaste of RTSM; duplicate if lights.frag logic
+//FIXME: duplicate of lights.frag logic
 float lightIntensity(const vec3 normal, const float distance, const vec3 ldir, const float lightRange) {
   if(distance>lightRange)
     return 0;

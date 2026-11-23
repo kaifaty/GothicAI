@@ -1,0 +1,38 @@
+# Khorinis market at noon: authored merchants and their native routines.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+watch player
+cam look 120
+cam world 700 280 0
+# Ten real seconds after the teleport for loading and native simulation.
+wait 10000
+cam hold
+perf sample perf-market/view-1
+wait 8000
+perf stop
+cam world 700 280 90
+wait 34
+cam hold
+perf sample perf-market/view-2
+wait 8000
+perf stop
+cam world 700 280 180
+wait 34
+cam hold
+perf sample perf-market/view-3
+wait 8000
+perf stop
+cam world 700 280 270
+wait 34
+cam hold
+perf sample perf-market/view-4
+wait 8000
+perf stop

@@ -1,13 +1,14 @@
 #include "baseimport.h"
-#include "baseformat.h"
-#include "sha256.h"
 #include "asset/fromzenkit.h"
 #include "basemesh.h"
 #include "fontdata.h"
 #include "modeldata.h"
-#include "worldchunks.h"
+#include "worldchunksruntime.h"
 #include "worlddata.h"
 #include "gothicglb.h"
+
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 
 #include <zenkit/Font.hh>
 #include <zenkit/Logger.hh>
@@ -37,11 +38,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <tuple>
-#include <atomic>
-#include <mutex>
-#include <exception>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -180,36 +177,6 @@ bool modelSource(const fs::path& path) {
   const auto ext=upper(path.extension().string());
   return ext==".MDH" || ext==".MDM" || ext==".MDL" || ext==".MAN" ||
          ext==".MSB" || ext==".MDS" || ext==".MMB";
-  }
-
-// Loose inputs of the not yet migrated families (P10): a superset of what any supported
-// language or OUTPUTUNITS choice can select, so the identity does not depend on settings.
-bool remainingSource(const fs::path& path) {
-  const auto ext=upper(path.extension().string());
-  return ext==".FNT" || ext==".WAV" || ext==".OGG" || ext==".BIK" || ext==".SGT" || ext==".STY" ||
-         ext==".DLS" || ext==".DAT" || ext==".BIN";
-  }
-
-// SHA-256 of every file, a few files at a time: the archives alone are gigabytes.
-std::vector<std::string> sha256Files(const std::vector<fs::path>& files) {
-  std::vector<std::string> sums(files.size());
-  std::atomic<size_t> next{0};
-  std::mutex          sync;
-  std::exception_ptr  error;
-  const auto worker=[&] {
-    for(size_t i=next++; i<files.size(); i=next++) {
-      try { sums[i]=sha256File(files[i]); }
-      catch(...) {
-        std::lock_guard<std::mutex> guard(sync);
-        if(!error) error=std::current_exception();
-        }
-      }
-    };
-  std::vector<std::thread> threads(std::clamp<size_t>(std::thread::hardware_concurrency(),1,8));
-  for(auto& t:threads) t=std::thread(worker);
-  for(auto& t:threads) t.join();
-  if(error) std::rethrow_exception(error);
-  return sums;
   }
 
 std::vector<std::byte> readHost(const fs::path& path) {
@@ -790,119 +757,16 @@ int verifyWorld(const fs::path& gothic, const std::string& name, const fs::path&
   return verifyWorld(loadWorld(gothic,name),out,overrides);
   }
 
-std::string sha256(std::string_view bytes) {
-  return Sha256::hash(bytes);
-  }
-
-std::string sha256File(const fs::path& file) {
-  std::ifstream f(file,std::ios::binary);
-  if(!f) throw std::runtime_error("cannot open "+file.string());
-  Sha256 sha;
-  char buf[1<<16];
-  while(f) {
-    f.read(buf,sizeof(buf));
-    sha.update(buf,size_t(f.gcount()));
-    }
-  require(f.eof(),"cannot read "+file.string());
-  return sha.finish();
-  }
-
-Identity identify(const fs::path& gothic, Files mounted) {
-  // The engine's mounted list in its real mount order. Archive header timestamps and the
-  // order decide which copy of a path wins, so both are part of the identity.
-  std::vector<RuntimeArchive> archives;
-  for(auto& archive:runtimeArchives(gothic)) {
-    auto found=std::find(mounted.begin(),mounted.end(),std::make_pair(archive.name,archive.size));
-    if(found==mounted.end())
-      found=std::find_if(mounted.begin(),mounted.end(),[&](const auto& m) { return m.first==archive.name; });
-    if(found==mounted.end()) continue;
-    archive.size=found->second;
-    archives.push_back(std::move(archive));
-    mounted.erase(found);
-    }
-  require(mounted.empty(),"mounted archive not found under Data: "+(mounted.empty() ? std::string() : mounted.front().first));
-  std::vector<std::pair<std::string,fs::path>> loose;
-  for(const auto& dir:fs::directory_iterator(gothic))
-    if(dir.is_directory() && upper(dir.path().filename().string())=="_WORK") {
-      for(const auto& file:fs::recursive_directory_iterator(dir.path()))
-        if(file.is_regular_file() && (upper(file.path().extension().string())==".ZEN" || modelSource(file.path()) ||
-                                      remainingSource(file.path())))
-          loose.emplace_back(file.path().lexically_relative(gothic).generic_string(),file.path());
-      break;
-      }
-  std::sort(loose.begin(),loose.end());
-  std::vector<fs::path> files;
-  for(const auto& a:archives) files.push_back(a.path);
-  for(const auto& l:loose) files.push_back(l.second);
-  const auto sums=sha256Files(files);
-  std::string archiveJson="[";
-  for(size_t i=0; i<archives.size(); ++i)
-    archiveJson+=std::string(i ? "," : "")+"\n    {\"name\":"+gothicglb::jsonString(archives[i].name)+
-                 ",\"size\":"+std::to_string(archives[i].size)+",\"timestamp\":"+std::to_string(archives[i].timestamp)+
-                 ",\"sha256\":\""+sums[i]+"\"}";
-  std::string looseJson="[";
-  for(size_t i=0; i<loose.size(); ++i)
-    looseJson+=std::string(i ? "," : "")+"\n    {\"path\":"+gothicglb::jsonString(loose[i].first)+
-               ",\"size\":"+std::to_string(fs::file_size(loose[i].second))+",\"sha256\":\""+sums[archives.size()+i]+"\"}";
-  // "archives" is in mount order; equal timestamps keep the engine's tie order.
-  const auto source="\n  \"format\":\"gothic-base\",\n  \"version\":2,\n  \"format_sha256\":\""+std::string(BaseFormatSha256)+
-                    "\",\n  \"archives\":"+archiveJson+"\n  ],\n  \"loose_files\":"+looseJson+"\n  ]\n}\n";
-  Identity identity;
-  identity.fingerprint=sha256("{"+source);
-  identity.json="{\n  \"fingerprint\":\""+identity.fingerprint+"\","+source;
-  return identity;
-  }
-
-Identity identify(const fs::path& gothic) {
-  zenkit::Vfs vfs;
-  Files mounted;
-  for(const auto& archive:mountArchives(vfs,gothic))
-    mounted.emplace_back(archive.name,archive.size);
-  return identify(gothic,std::move(mounted));
-  }
-
-void writeBaseMetadata(const fs::path& dir, const Identity& identity) {
-  const auto manifest=dir/"sources"/"sources.json";
-  require(fs::is_regular_file(manifest),"missing source manifest "+manifest.string());
-  auto json=identity.json;
-  require(json.size()>3 && json.compare(json.size()-3,3,"\n}\n")==0,"invalid identity");
-  json.replace(json.size()-3,3,",\n  \"sources\":{\"path\":\"sources/sources.json\",\"size\":"+
-               std::to_string(fs::file_size(manifest))+",\"sha256\":\""+sha256File(manifest)+"\"}\n}\n");
-  writeHost(dir/"base.json",json.data(),json.size());
-  }
-
-bool matches(const fs::path& dir, const Identity& identity) {
-  try {
-    auto actual=parseJson(dir/"base.json");
-    if(!actual.HasMember("sources") || !actual["sources"].IsObject())
-      return false;
-    const auto& sources=actual["sources"];
-    if(!sources.HasMember("path") || !sources["path"].IsString() ||
-       std::string(sources["path"].GetString())!="sources/sources.json" ||
-       !sources.HasMember("size") || !sources["size"].IsUint64() ||
-       !sources.HasMember("sha256") || !sources["sha256"].IsString())
-      return false;
-    const auto manifest=dir/"sources"/"sources.json";
-    if(!fs::is_regular_file(manifest) || fs::file_size(manifest)!=sources["size"].GetUint64() ||
-       sha256File(manifest)!=sources["sha256"].GetString())
-      return false;
-    actual.RemoveMember("sources");
-    rapidjson::Document expected;
-    expected.Parse(identity.json.c_str());
-    return actual==expected;
-    }
-  catch(const std::exception&) { return false; }
-  }
-
 void build(const fs::path& gothic, const fs::path& out, const Progress& progress) {
   const auto identity=identify(gothic);
   fs::remove(out/"base.json");
+  fs::remove(out/"base-files.json");
   for(const char* world:{"NEWWORLD","OLDWORLD","ADDONWORLD","DRAGONISLAND"}) {
     fs::remove_all(out/"worlds"/world);
     if(progress) progress(std::string("base import: ")+world);
     require(convertWorld(gothic,std::string(world)+".ZEN",out/"worlds"/world)==0,"world import failed");
     }
-  for(const char* kind:{"zen","textures","meshes","models","fonts","programs","outputunits","audio","music","sources"}) fs::remove_all(out/kind);
+  for(const char* kind:{"zen","textures","meshes","models","fonts","programs","definitions","outputunits","audio","music","sources"}) fs::remove_all(out/kind);
   if(progress) progress("base import: ZEN files");
   require(convertZen(gothic,out/"zen",false)==0,"ZEN import failed");
   if(progress) progress("base import: textures");
@@ -915,6 +779,18 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
   require(convertFonts(gothic,out/"fonts",false)==0,"font import failed");
   if(progress) progress("base import: programs");
   require(convertPrograms(gothic,out/"programs",false)==0,"program import failed");
+  if(progress) progress("base import: item definitions");
+  require(convertItemDefinitions(out)==0,"item definition import failed");
+  if(progress) progress("base import: routine definitions");
+  require(convertRoutineDefinitions(out)==0,"routine definition import failed");
+  if(progress) progress("base import: NPC definitions");
+  require(convertNpcDefinitions(out)==0,"NPC definition import failed");
+  if(progress) progress("base import: NPC helper definitions");
+  require(convertNpcHelperDefinitions(out)==0,"NPC helper definition import failed");
+  if(progress) progress("base import: placement definitions");
+  require(convertPlacementDefinitions(out)==0,"placement definition import failed");
+  if(progress) progress("base import: activity definitions");
+  require(convertActivityDefinitions(out)==0,"activity definition import failed");
   if(progress) progress("base import: dialog line library");
   require(convertOutputUnits(gothic,out/"outputunits",false)==0,"dialog line library import failed");
   if(progress) progress("base import: sounds and speech");

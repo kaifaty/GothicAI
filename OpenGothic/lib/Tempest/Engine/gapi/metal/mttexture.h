@@ -4,21 +4,24 @@
 #include <Metal/Metal.hpp>
 #include "nsptr.h"
 #include "utility/spinlock.h"
+#include <mutex>
 
 namespace Tempest {
 namespace Detail {
 
 class MtDevice;
+struct MtFence;
 
 class MtTexture : public Tempest::AbstractGraphicsApi::Texture {
   public:
     MtTexture(MtDevice &d,
               const uint32_t w, const uint32_t h, const uint32_t depth, uint32_t mips, TextureFormat frm, bool storageTex);
-    MtTexture(MtDevice &d, const Pixmap& pm, uint32_t mips, TextureFormat frm);
+    MtTexture(MtDevice &d, const Pixmap& pm, uint32_t mips, TextureFormat frm, bool wait = true);
     ~MtTexture();
 
     NonUniqResId syncId() const override { return NonUniqResId::I_None; }
     uint32_t     mipCount() const override;
+    bool         uploadReady() override;
 
     void     readPixels(Pixmap& out, TextureFormat frm,
                         const uint32_t w, const uint32_t h, uint32_t mip);
@@ -37,13 +40,15 @@ class MtTexture : public Tempest::AbstractGraphicsApi::Texture {
 
     NsPtr<MTL::Texture>  alloc(TextureFormat frm, const uint32_t w, const uint32_t h, const uint32_t d,
                                const uint32_t mips,
-                               MTL::StorageMode smode, MTL::TextureUsage umode);
+                               MTL::StorageMode smode, MTL::TextureUsage umode,
+                               std::unique_lock<std::mutex>* uploadGuard = nullptr);
 
     struct View {
       ComponentMapping    m;
       uint32_t            mip = uint32_t(0);
       NsPtr<MTL::Texture> v;
       };
+    std::shared_ptr<MtFence> uploadFence;
     Detail::SpinLock  syncViews;
     std::vector<View> extViews;
   };

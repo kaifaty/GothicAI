@@ -44,9 +44,10 @@ PfxEmitterMesh::PfxEmitterMesh(const asset::ModelMesh& library) {
 
     for(size_t i=0;i<src.indices.size();i+=3) {
       Triangle t;
-      t.id[0] = src.indices[i+0];
-      t.id[1] = src.indices[i+1];
-      t.id[2] = src.indices[i+2];
+      // the indices are the submesh's own: without the offset every submesh after the first took the first one's points
+      t.id[0] = uint32_t(vert0) + src.indices[i+0];
+      t.id[1] = uint32_t(vert0) + src.indices[i+1];
+      t.id[2] = uint32_t(vert0) + src.indices[i+2];
       triangle.push_back(t);
     }
   }
@@ -54,9 +55,11 @@ PfxEmitterMesh::PfxEmitterMesh(const asset::ModelMesh& library) {
   mkIndex();
 }
 
-Tempest::Vec3 PfxEmitterMesh::randCoord(float rnd, const Pose* pose) const {
+Tempest::Vec3 PfxEmitterMesh::randCoord(float rnd, const Pose* pose, const Tempest::Matrix4x4* skin, size_t skinCount) const {
   if(triangle.size()==0)
     return Tempest::Vec3();
+  if(vertices.size()==0 && !posed.load() && (skin!=nullptr || pose!=nullptr))
+    mkPosedIndex(pose,skin,skinCount);
 
   rnd*=triangle.back().prefix;
 
@@ -65,11 +68,11 @@ Tempest::Vec3 PfxEmitterMesh::randCoord(float rnd, const Pose* pose) const {
     });
   if(it!=triangle.begin())
     it--;
-  return randCoord(*it,rnd,pose);
+  return randCoord(*it,rnd,pose,skin,skinCount);
   }
 
 Tempest::Vec3 PfxEmitterMesh::randCoord(const PfxEmitterMesh::Triangle& t, float rnd,
-                                        const Pose* pose) const {
+                                        const Pose* pose, const Tempest::Matrix4x4* skin, size_t skinCount) const {
   rnd = (rnd-t.prefix)/t.sz;
 
   float    det = float(std::numeric_limits<uint16_t>::max());
@@ -84,6 +87,12 @@ Tempest::Vec3 PfxEmitterMesh::randCoord(const PfxEmitterMesh::Triangle& t, float
     auto& a = vertices[t.id[0]];
     auto& b = vertices[t.id[1]];
     auto& c = vertices[t.id[2]];
+    return a*(1.f-sr1) + b*(sr1*(1-r2)) + c*(r2*sr1);
+    } else if(skin!=nullptr) {
+    auto  a = animCoord(skin,skinCount,t.id[0]);
+    auto  b = animCoord(skin,skinCount,t.id[1]);
+    auto  c = animCoord(skin,skinCount,t.id[2]);
+
     return a*(1.f-sr1) + b*(sr1*(1-r2)) + c*(r2*sr1);
     } else {
     auto  a = animCoord(*pose,t.id[0]);
@@ -106,6 +115,24 @@ Tempest::Vec3 PfxEmitterMesh::animCoord(const Pose& pose, uint32_t id) const {
   return ret;//*0.1f;
   }
 
+// the vertex by the bones of the palette it has: a bone past its end is left out, none left - the first bone's place
+Tempest::Vec3 PfxEmitterMesh::animCoord(const Tempest::Matrix4x4* skin, size_t skinCount, uint32_t id) const {
+  Tempest::Vec3 ret    = {};
+  float         weight = 0;
+  auto&         v      = vertAnim[id];
+  for(size_t i=0; i<4; ++i) {
+    if(v.id[i]>=skinCount || !(v.weights[i]>0.f))
+      continue;
+    Tempest::Vec3 a = v.v[i];
+    skin[v.id[i]].project(a);
+    ret    += a*v.weights[i];
+    weight += v.weights[i];
+    }
+  if(weight>0.f)
+    return ret/weight;
+  return skinCount>0 ? Tempest::Vec3(skin[0].at(3,0),skin[0].at(3,1),skin[0].at(3,2)) : Tempest::Vec3();
+  }
+
 float PfxEmitterMesh::area(float x1, float y1, float z1,
                            float x2, float y2, float z2,
                            float x3, float y3, float z3) {
@@ -122,6 +149,22 @@ float PfxEmitterMesh::area(float x1, float y1, float z1,
   float z = x1*y2 - y1*x2;
 
   return std::sqrt(x*x + y*y + z*z); //note: omnit 0.5
+  }
+
+void PfxEmitterMesh::mkPosedIndex(const Pose* pose, const Tempest::Matrix4x4* skin, size_t skinCount) const {
+  std::lock_guard<std::mutex> guard(posedSync);
+  if(posed.load())
+    return;
+  for(auto& t:triangle) {
+    Tempest::Vec3 p[3];
+    for(int i=0; i<3; ++i)
+      p[i] = skin!=nullptr ? animCoord(skin,skinCount,t.id[i]) : animCoord(*pose,t.id[i]);
+    t.sz     = area(p[0].x,p[0].y,p[0].z, p[1].x,p[1].y,p[1].z, p[2].x,p[2].y,p[2].z);
+    t.prefix = 0;
+    }
+  for(size_t i=1;i<triangle.size();++i)
+    triangle[i].prefix = triangle[i-1].prefix + triangle[i-1].sz;
+  posed.store(true);
   }
 
 void PfxEmitterMesh::mkIndex() {

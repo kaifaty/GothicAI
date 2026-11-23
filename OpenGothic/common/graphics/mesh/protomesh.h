@@ -15,12 +15,17 @@
 
 class PackedMesh;
 class PhysicMeshShape;
+struct GltfHeadMesh;
+struct FaceProfile;
 
 class ProtoMesh {
   public:
+    size_t probeCpuBytes() const;
+
     using Vertex = Resources::VertexA;
 
-    ProtoMesh(PackedMesh&&  pm, std::string_view fname);
+    // collision=false: a mesh that is only drawn (strands of a head): no hull, no physic shape, no hit points
+    ProtoMesh(PackedMesh&&  pm, std::string_view fname, bool collision = true, const PackedMesh* visual = nullptr);
     ProtoMesh(PackedMesh&&  pm, const std::vector<asset::MorphAnimation>& aniList, std::string_view fname);
     ProtoMesh(const asset::ModelHierarchy& hierarchy, const asset::ModelMesh& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest = false);
     ProtoMesh(const asset::ModelHierarchy& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname);
@@ -60,6 +65,7 @@ class ProtoMesh {
       std::string                      name;
       bool                             hasNode=false;
       std::unique_ptr<PhysicMeshShape> shape;
+      std::vector<Tempest::Vec3>       hullVertices; // exact indexed visual vertices, centimetres
       };
 
     struct Pos {
@@ -92,15 +98,23 @@ class ProtoMesh {
                                                           // bone of their name (a golem's stones)
 
     std::string                    scheme, fname;
+    // Independent of the original MMB animations. Logical vertices plus the
+    // meshlet map are retained for CPU face deformation and eye rotation.
+    std::unique_ptr<GltfHeadMesh>   head;
+    // characters.json "face": the old face anim names as weights of the head's shapes (graphics/mesh/facerig)
+    std::unique_ptr<FaceProfile>    face;
 
     size_t                         skinedNodesCount() const;
     size_t                         findNode(std::string_view name,size_t def=size_t(-1)) const;
     const Tempest::Vec3*           bbox() const;
+    void                           appendItemVertices(std::vector<Tempest::Vec3>& vertices) const;
     // Lowest point of the exact indexed body skin, using the renderer's four
     // bone weights and fatness displacement. No GPU access or pose changes.
     bool                           minSkinnedVertex(const Tempest::Matrix4x4* worldBones, size_t count,
                                                      const Tempest::Matrix4x4& object, float fatness,
                                                      Tempest::Vec3& point) const;
+    // the exact indexed body skin (each vertex by up to four bones, in their frames): the quiver fits to it
+    const std::vector<Resources::VertexA>& skinVertexData() const { return skinVertices; }
 
   private:
     std::vector<Vertex>            skinVertices;

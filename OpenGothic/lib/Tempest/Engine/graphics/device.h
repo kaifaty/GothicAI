@@ -21,6 +21,7 @@
 
 #include "videobuffer.h"
 
+#include <filesystem>
 #include <vector>
 
 namespace Tempest {
@@ -36,6 +37,7 @@ class Color;
 class Device {
   public:
     using Props=AbstractGraphicsApi::Props;
+    using MemoryBudget=AbstractGraphicsApi::MemoryBudget;
 
     Device(AbstractGraphicsApi& api);
     Device(AbstractGraphicsApi& api, std::string_view name);
@@ -44,6 +46,19 @@ class Device {
     virtual ~Device();
 
     void                  waitIdle();
+
+    // On-disk pipeline cache (Vulkan VkPipelineCache, Metal binary archive). Set the directory before
+    // the device is created; empty (the default) keeps it off. savePipelineCache() writes it now,
+    // the device also writes it when it is destroyed.
+    static void           setPipelineCacheDirectory(const std::filesystem::path& dir);
+    // On-disk cache of the SPIR-V -> MSL translation (Metal only; other backends ignore it). Same rules as above;
+    // verify translates every cached shader again and stops the process on any difference.
+    static void           setShaderCacheDirectory(const std::filesystem::path& dir, bool verify = false);
+    void                  savePipelineCache();
+    // How much device memory this process may hold and holds now: VK_EXT_memory_budget (without it 80 % of the
+    // device-local heaps and the allocator's own bytes), Metal's recommendedMaxWorkingSetSize and currentAllocatedSize;
+    // `known` is false when nothing is readable. Call it from the thread that owns the device, not every frame.
+    MemoryBudget          memoryBudget();
 
     [[nodiscard]]
     Fence                 submit(const CommandBuffer& cmd);
@@ -122,6 +137,8 @@ class Device {
     DescriptorArray       descriptors(const Texture2d* const *tex, size_t size, const Sampler& smp);
 
     Texture2d             texture    (const Pixmap& pm, const bool mips = true);
+    // Use the texture after uploadReady() returns true.
+    Texture2d             textureAsync(const Pixmap& pm, const bool mips = true);
     Attachment            attachment (TextureFormat frm, const uint32_t w, const uint32_t h, const bool mips = false);
     ZBuffer               zbuffer    (TextureFormat frm, const uint32_t w, const uint32_t h);
     StorageImage          image2d    (TextureFormat frm, const uint32_t w, const uint32_t h, const bool mips = false);
@@ -143,6 +160,21 @@ class Device {
     AccelerationStructure tlas(std::initializer_list<RtInstance> geom);
     AccelerationStructure tlas(const std::vector<RtInstance>& geom);
     AccelerationStructure tlas(const RtInstance* geom, size_t geomSize);
+
+    // Top-level structure with its own memory for `capacity` instances (structure and scratch), built inside a frame
+    // by Encoder::buildTlas from instances packed by packRtInstances. Every build reuses that memory: a scene that
+    // outgrows it needs a new structure, while frames in flight still read the old one.
+    AccelerationStructure tlas(Uninitialized_t, size_t capacity);
+    // Bytes of one instance in the backend's layout (VkAccelerationStructureInstanceKHR on Vulkan,
+    // MTLAccelerationStructureUserIDInstanceDescriptor on Metal).
+    size_t                rtInstanceSize() const;
+    // An instance of `tlas` kept in a slot between its builds: writes `inst` into `slot`, rtInstanceSize() bytes in the
+    // backend's layout. `slot` holds zeros (an inactive instance) or what this call wrote there for `tlas` before.
+    // An instance without a BLAS or with an empty one is written inactive: the build keeps it, rays never meet it.
+    // On Metal an instance indexes its BLAS in the list of `tlas`, which its builds and the ray queries reading it use:
+    // a BLAS keeps one index while any slot holds it, so a change of one slot rewrites no other. On Vulkan an instance
+    // addresses its BLAS directly.
+    void                  packRtInstance(AccelerationStructure& tlas, const RtInstance& inst, void* slot);
 
     Pixmap                readPixels(const Texture2d&    t, uint32_t mip=0);
     Pixmap                readPixels(const Attachment&   t, uint32_t mip=0);
@@ -174,6 +206,7 @@ class Device {
     Props                           devProps;
     Tempest::Builtin                builtins;
 
+    Texture2d             implTexture(const Pixmap& pm, bool mips, bool async);
     Detail::VideoBuffer   createVideoBuffer(const void* data, size_t size, MemUsage usage, BufferHeap flg);
     RenderPipeline        implPipeline(const RenderState &st, const Shader* shaders[], Topology tp);
     template<class T>

@@ -1,0 +1,174 @@
+# The eyes of an own head under the three lights of hair-light.bench (reports/content/2026-11-hero-head/eye-shader.md,
+# "Приёмка"): a torch (Xardas' tower, the default save), the sun at noon in the Khorinis market (the face turned to it),
+# the hearth and candle of the harbour house at 22:00. Under each: two stills of the eyes close up (from the front and
+# three quarters), a walk of the camera round the face from one side to the other (the highlight on the cornea must
+# slide, not flicker or drop out) with stills of its ends and middle (<light>-left, -mid, -right: -50, 0, +50 degrees,
+# where the iris must shift against the limbus by its depth under the cornea), and the eyes at work: a blink, a glance
+# aside and a roll up, the camera still.
+# Run it with the eye shader and with OPENGOTHIC_EYE_SHADER=0 on the same content for the pair "before | after":
+#   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen OPENGOTHIC_CONTENT=<content with the head> \
+#     scripts/bench.sh scripts/bench/eye-light.bench <out>
+# Needs a head whose face profile has "eyes" and the gestures glance and roll. The camera looks at the eyes
+# (`cam look 11`: 11 cm over the head bone), not at the mouth.
+# @timeout 900
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+blink off
+# 1. A torch: Xardas' tower
+set time 12 0
+watch nearest
+freeze nearest
+wait 500
+place 110 0
+wait 800
+watch player
+cam face 30 0 1
+cam look 11
+wait 6000
+shot torch-front
+wait 300
+cam face 30 35 1
+cam look 11
+wait 2500
+shot torch-quarter
+wait 300
+cam face 34 -50 1
+cam look 11
+wait 2500
+shot torch-left
+rec torch-round
+cam face 34 -25 1
+cam look 11
+wait 1200
+cam face 34 0 1
+cam look 11
+wait 1200
+cam face 34 25 1
+cam look 11
+wait 1200
+cam face 34 50 1
+cam look 11
+wait 1200
+stop
+shot torch-right
+cam face 34 0 1
+cam look 11
+wait 1500
+shot torch-mid
+cam face 30 15 1
+cam look 11
+wait 2000
+rec torch-eyes
+wait 500
+faceanim player R_EYESBLINK 150
+wait 900
+facecue player glance R
+wait 1300
+facecue player roll R
+wait 1300
+stop
+# 2. The sun: noon in the market square, the hero turned with the face to the sun
+cam cut
+set time 12 0
+goto pos 7900 270 -4350
+watch player
+turn 180
+cam face 30 0 1
+cam look 11
+wait 10000
+shot sun-front
+wait 300
+cam face 30 35 1
+cam look 11
+wait 2500
+shot sun-quarter
+wait 300
+cam face 34 -50 1
+cam look 11
+wait 2500
+shot sun-left
+rec sun-round
+cam face 34 -25 1
+cam look 11
+wait 1200
+cam face 34 0 1
+cam look 11
+wait 1200
+cam face 34 25 1
+cam look 11
+wait 1200
+cam face 34 50 1
+cam look 11
+wait 1200
+stop
+shot sun-right
+cam face 34 0 1
+cam look 11
+wait 1500
+shot sun-mid
+cam face 30 15 1
+cam look 11
+wait 2000
+rec sun-eyes
+wait 500
+faceanim player R_EYESBLINK 150
+wait 900
+facecue player glance R
+wait 1300
+facecue player roll R
+wait 1300
+stop
+# 3. The hearth and the candle: the harbour house of perf-interior at 22:00
+cam cut
+set time 22 0
+goto pos 3924 -73 -6663
+watch player
+cam face 30 0 1
+cam look 11
+wait 10000
+shot candle-front
+wait 300
+cam face 30 35 1
+cam look 11
+wait 2500
+shot candle-quarter
+wait 300
+cam face 34 -50 1
+cam look 11
+wait 2500
+shot candle-left
+rec candle-round
+cam face 34 -25 1
+cam look 11
+wait 1200
+cam face 34 0 1
+cam look 11
+wait 1200
+cam face 34 25 1
+cam look 11
+wait 1200
+cam face 34 50 1
+cam look 11
+wait 1200
+stop
+shot candle-right
+cam face 34 0 1
+cam look 11
+wait 1500
+shot candle-mid
+cam face 30 15 1
+cam look 11
+wait 2000
+rec candle-eyes
+wait 500
+faceanim player R_EYESBLINK 150
+wait 900
+facecue player glance R
+wait 1300
+facecue player roll R
+wait 1300
+stop

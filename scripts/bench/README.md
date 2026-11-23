@@ -1,25 +1,564 @@
 # Test bench
 
-Runs a scenario inside the game and records what happens: a video with a debug overlay, per-frame
-metrics and a report that points at suspicious frames. Built so that an agent can find bugs and edge
-cases of a mechanic (foot IK first) without a person watching the game.
+## Как работает сейчас
+
+Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
+The dispatcher calls `bool <family>Command(...)` wrappers for the extracted command groups:
+`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise`, `spell`, `item_wake`, `living`, `melee`, `routine`, `aim_spots`, `npc_commands`, `world`, `camera` and `overlay`.
+Each wrapper handles its command branches in their original order and returns whether it matched.
+The dispatcher `exec` and `expandForeach` live in `common/testbench_exec.cpp`.
+The frame loop (`TestBench::tick`, `run`, waits, route/volley stepping and loopback sound) lives in `common/testbench_loop.cpp`.
+CSV/heartbeat writing, final reports and shared ragdoll formatting live in `common/testbench_report.cpp`.
+Saved-item archive observations live in `common/testbench_saved_items.cpp`.
+`Bench` is defined in `testbench_internal.h`; its single instance, dynamically initialized settings,
+reset/configuration, context builders and the remaining engine hooks stay in `testbench.cpp`.
+Healing observations, commands and checks live in `common/testbench_healing.cpp`; its `Healing` state
+in `testbench_internal.h` keeps the current use separate from walk-speed references retained across `begin`.
+Family functions take that state by reference; the dispatcher also passes the melee-shadow actors.
+
+Water and corpse-water fixtures, observations and helpers live in `common/testbench_water.cpp`.
+Their `Water` state and `WaterContext` references to shared bench fields are in `testbench_internal.h`;
+Water-film fixtures live in `testbench_water_film.cpp` and use the same shared water helpers.
+
+Hero and human NPC CharacterVirtual fixtures, observations and helpers live in `common/testbench_character.cpp`.
+Their `Character` state and `CharacterContext` references are in `testbench_internal.h`;
+shared movement samples (`CharacterMoveFrame`) and walkers (`LivingWalker`) are declared there too.
+The independent `ownMeshChest*` family lives in `common/testbench_own_mesh.cpp`.
+
+Ground-monster CharacterVirtual fixtures, observations and helpers live in `common/testbench_monster.cpp`.
+Their `MonsterCharacter` state and `MonsterCharacterContext` references are in `testbench_internal.h`.
+`TestBench::monsterCharacterCollision` stays in `testbench.cpp`; camera/follow commands and render proof live in `testbench_camera.cpp`.
+
+Destruction fixtures, observations and commands live in `common/testbench_destruction.cpp`.
+Their `Destruction` state and `DestructionContext` references are in `testbench_internal.h`.
+`TestBench::destructionTracesDebug` delegates its body there through `DestructionContext`;
+`destructionCamera`, `destructionSkinSample` and `furnitureBody` live in that family;
+the other `TestBench::destruction*` hooks stay in `testbench.cpp`.
+Shared helpers have one definition and declarations in `testbench_internal.h`.
+
+Body-impact fixtures and commands live in `common/testbench_body_impact.cpp`;
+their `BodyImpact` state and `BodyImpactContext` references are in `testbench_internal.h`.
+Physics-trace debug commands (movable tables and wall arrows) live in `common/testbench_traces.cpp`;
+`PhysicsTracesContext` references their original bench fields, and `TestBench::physicsTracesDebug` is a one-line delegate.
+P30 commands (`bodyarena`, `bodylive`, `bodyreplay`, `bodyobserve`/`bodyapi`, `bodyduel`,
+`bodyobserveprobe`, `bodyprobe`) and their animation/live helpers live in `common/testbench_body.cpp`.
+`BodyAnimation*` state types and `BodyContext` references are in `testbench_internal.h`.
+The `TestBench::body*` hooks stay in `testbench.cpp`; the `body_traces` command lives in `testbench_exec.cpp`.
+
+Movable-object, candle, physics-noise and spell fixtures and commands live in `common/testbench_movables.cpp`.
+Their `Movables` state, shared `LivingPhysics` samples and `MovablesContext` references are in `testbench_internal.h`.
+The dispatcher calls `movableCommand`, `noiseCommand` and `spellCommand` at each group's first original branch;
+shared helpers used by other families retain one definition.
+The bodies of `TestBench::physicsNoiseDebug`, `physicsNoise` and `physicsNoiseHeard` live in that family,
+with one-line delegates passing `MovablesContext` from `testbench.cpp`.
+The other `TestBench::` hooks stay in `testbench.cpp`.
+
+Item-wake fixtures, observations and commands live in `common/testbench_item_wake.cpp`.
+Living-body counts, observations and `living` / `living-seat` commands live in `common/testbench_living.cpp`.
+Their `ItemWake` / `Living` state and context references are in `testbench_internal.h`;
+`itemWakeCommand` and `livingCommand` run at their groups' first original branches.
+The shared `ragdollNumber`, `ragdollVector` and `ragdollMatrix` live in `testbench_report.cpp`.
+
+Ragdoll archives, observations, arena checks and commands live in `common/testbench_ragdoll.cpp`.
+Own-mesh physics and chest fixtures and commands live in `common/testbench_own_mesh.cpp`.
+Their `RagdollBench` / `OwnMesh` state types and context references are in `testbench_internal.h`;
+`ragdollCommand` and `ownMeshCommand` run at their groups' first original branches.
+`ragdoll frame20` lives in `testbench_exec.cpp`; shared ragdoll formatting helpers live in `testbench_report.cpp`.
+
+Archery fixtures, observations, aim helpers and commands live in `common/testbench_archery.cpp`.
+Their `ArcheryBench` state, shared `Trail` type and `ArcheryContext` references are in `testbench_internal.h`.
+`archeryCommand` is called at the first branch of each of nine command groups, guarded by that group's command names.
+`quiver` and `bowgeom` live in `testbench_exec.cpp`; `TestBench::arrowAt` and reset stay in `testbench.cpp`.
+
+Physics, world-data, cadence, waitragdoll / standup, crowd / down / push and world / performance /
+streaming / deterministic commands live in `common/testbench_world.cpp`, along with `physicsDump`.
+Their `WorldBench` state, shared waypoint `Spot` and `WorldContext` references are in `testbench_internal.h`.
+`worldCommand` runs at the first original branch of each of six groups, guarded by that group's command names.
+`traces` and `ragdoll frame20` live in `testbench_exec.cpp`; tick lives in `testbench_loop.cpp` and reset stays in `testbench.cpp`.
+
+Manual-aim spot probes (`cansee`, `slopes`/`stairs`, `ledges`, `corner`, `walls`, `perches`, `edge`, `edgedist`)
+and their private perch helpers live in `common/testbench_aim_spots.cpp`.
+`aimSpotsCommand` runs at the first branch of each of two groups, guarded by that group's command names,
+with a reference to the shared `hasPrev` field. `Spot` / `SpotKind` and shared helper declarations are in
+`testbench_internal.h`; `findSpots` lives in `testbench_aim_spots.cpp` and `expandForeach` in `testbench_exec.cpp`.
+
+Melee-shadow and melee-physics fixtures, dodge / AI-response helpers and commands live in `common/testbench_melee.cpp`.
+Routine-return and guard fixtures, observations, shared hazard-site helpers and commands live in `common/testbench_routine.cpp`.
+Their `Melee` / `Routine` state types and context references are in `testbench_internal.h`;
+`meleeCommand` and `routineCommand` run at their groups' first original branches.
+Tick lives in `testbench_loop.cpp`; reset and the other `TestBench::` hooks stay in `testbench.cpp`;
+`meleePhysicsCamera` retains the fixture's original camera setup there.
+
+Cloth fixtures and commands live in `common/testbench_cloth.cpp`; water film fixtures and commands
+live in `common/testbench_water_film.cpp`. Their `ClothBench` / `WaterFilm` state and
+`ClothContext` / `WaterFilmContext` references are in `testbench_internal.h`.
+`clothCommand` and `waterFilmCommand` run at their first original branches; tick and cold-load observation
+hooks in `testbench_loop.cpp` pass the family context; the capture hook in
+`testbench_camera.cpp` reaches the same water-film family through a context delegate.
+
+Hero and NPC inventory, placement, stats, routines, fights, aiming, hits and dodge commands live in `common/testbench_npc_commands.cpp`.
+Their `NpcCommands` state and `NpcCommandsContext` references are in `testbench_internal.h`.
+`npcCommandsCommand` runs at the first original branch of each of four groups, guarded by that group's command names;
+intervening `npcSimCommand` and `archeryCommand` calls retain their order in `exec`.
+Animation commands live in `testbench_exec.cpp`.
+
+Scenario timing, logging, routing, movement and input commands live in `common/testbench_control.cpp`.
+Conversation and AI probes live in `common/testbench_dialog.cpp`.
+Their `ControlContext` / `DialogContext` references are in `testbench_internal.h`; shared helpers have one definition.
+Each family runs at its first original branch, guarded only by its command names.
+Intervening animation commands retain their positions in `exec`; tick lives in `testbench_loop.cpp`, reset in `testbench.cpp`.
+
+Camera placement, `views`, framing/track/sight/aim telemetry and the body of `TestBench::capture` live in
+[`common/testbench_camera.cpp`](../../OpenGothic/common/testbench_camera.cpp).
+Raster overlays, exposure, hit zones, arrow trails, video piping and recording finalization live in
+[`common/testbench_overlay.cpp`](../../OpenGothic/common/testbench_overlay.cpp).
+`CameraBench` / `OverlayBench` own their original fields in `testbench_internal.h`; `Bench` inherits them
+so tick/reset and the other families keep their shared field access. `CameraContext` / `OverlayContext`
+carry references to that state and the other fields used by these families.
+`cameraCommand` and `overlayCommand` run at the first original branch of their groups; all eleven camera
+and both overlay command conditions depend only on `c`. Monster camera/follow calls retain their full
+argument guards in `exec`. `TestBench::capture` and the shared contextless camera helpers are one-line delegates.
+`Canvas` and `VideoPipe` have shared declarations and one definition per method in `testbench_overlay.cpp`.
+
+Runs a scenario through the windowed game or the headless runner and records metrics and a report.
+Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
 
 ```bash
 scripts/bench.sh smoke                      # a scenario from scripts/bench/<name>.bench, or a path
 BENCH_HOST=local NO_BUILD=1 scripts/bench.sh ik-sweep  # local, skip the incremental build
 ```
 
-`BENCH_HOST=auto` (default) runs on Ryzen through `scripts/ryzen.sh` and copies all output back.
-It falls back to this Mac with one line explaining why if SSH, setup, the lock or game startup fails.
-Once the returned output contains `game.log`, the Ryzen result is final, including a failing exit code;
-the game is not run again locally. The lock wait defaults to 120 seconds (`RYZEN_LOCK_WAIT`).
-`BENCH_HOST=ryzen` requires Ryzen, defaults to a 900-second lock wait and never falls back;
-`BENCH_HOST=local` runs on this machine. `KEEP=1`, a VideoToolbox encoder, a custom `GOTHIC_DIR`
-or other Mac-only game paths require local execution (`auto` falls back, `ryzen` exits with code 2).
-`NO_BUILD=1` only skips a local build; Ryzen always checks its engine source hash.
+`BENCH_HOST=auto` (default) tries dev-ubuntu, then Ryzen, then this Mac for headless scenarios;
+windowed scenarios try Ryzen, then Mac. Both remote hosts use `scripts/ryzen.sh` and copy all output back.
+Before remote `bench` and `e2e`, `ryzen.sh` selects Mac base/video parts matching this checkout's
+import formats, copies missing parts to the host's cache, and synchronizes both game INI files.
+Ready parts in the host cache or shared store need no copy; dev-ubuntu only uses its cache.
+When Mac has no compatible part, the host cache/store is searched for this checkout's format
+and the same installation as the host's `game-base.json`. A match reports `ready (host)` and
+passes its exact fingerprint without copying. If videos have no compatible replacement on
+either machine, the original host video fingerprint is retained.
+The run receives the exact fingerprints without changing a prepared host's `game-base.json`;
+a fresh host gets settings and that pointer automatically. `scripts/ryzen.sh setup` is optional.
+Explicit nonempty `OPENGOTHIC_BASE` or `OPENGOTHIC_BASE_FINGERPRINT` skips base selection/copy;
+an explicit `OPENGOTHIC_VIDEOS_FINGERPRINT`, including empty, does the same for videos.
+If neither Mac nor host has a compatible base, `bench`/`e2e` stop before locks or queue requests:
+start the game on Mac on this version to import it. Remote `pytest` instead prints one warning
+and continues with the host's `game-base.json`, without forcing a base fingerprint.
+`setup` still requires compatible Mac parts and does not use this host fallback.
+Each fallback prints one line explaining the SSH, base synchronization, lock, queue-wait or game-startup failure.
+Once returned output contains `game.log`, that host's result is final, including a failing exit code;
+the game is not run again elsewhere. The remote lock/queue wait defaults to 120 seconds in `auto`
+(`RYZEN_LOCK_WAIT`). `BENCH_HOST=dev-ubuntu` and `BENCH_HOST=ryzen` require that host, default to a
+900-second wait and never fall back; `BENCH_HOST=local` runs on this machine. `DEV_UBUNTU_HOST`
+overrides the dev-ubuntu SSH alias (default `dev-ubuntu`); dispatch uses
+`RYZEN_HOST="$DEV_UBUNTU_HOST" scripts/ryzen.sh bench`. A windowed scenario with
+`BENCH_HOST=dev-ubuntu`, including `BENCH_HEADLESS=0`, exits with code 2: `окна на dev-ubuntu нет`.
+`KEEP=1`, a VideoToolbox encoder, a custom `GOTHIC_DIR` or other Mac-only game paths require local
+execution (`auto` falls back, an explicit remote host exits with code 2).
+`NO_BUILD=1` only skips a local build; remote hosts always check the engine source hash.
+
+A line `# @timeout <seconds>` in the scenario sets its `TIMEOUT` default (an explicit `TIMEOUT` wins).
+A line `# @headless` in the scenario selects `gothic-body-runner --game-parity --mode lockstep`,
+without a window, GPU or sound. `BENCH_HEADLESS=1` selects this path for any scenario;
+`BENCH_HEADLESS=0` selects the window even for a marked scenario. `KEEP=1` with the headless path
+exits with code 2. The runner defaults to `gothic-body-runner` beside `GAME_BIN`; `RUNNER_BIN`
+overrides it for local runs. It uses the same `Gothic.ini`, `[GAME]` flags and `OPENGOTHIC_*` environment as the
+window; `WORLD` becomes `--world`, otherwise the copied save becomes `--save`. Window variables
+`TEMPEST_*` are not needed. A local build selects the `gothic-body-runner` target. On remote hosts,
+preparation builds both `Gothic2Notr` and the runner together; a cached engine without an executable
+runner is rebuilt and republished for a headless bench. A rebuild without the runner removes its
+old executable before publishing the new engine digest.
+
+On dev-ubuntu, preparation defaults to `gq --class quick --threads 6 --mem 10G`
+(`RYZEN_JOBS=6`); Ryzen retains its existing build request. dev-ubuntu has no shared storage:
+`RYZEN_BENCH_ARCHIVE` is rejected with code 2 before upload.
+
+The headless game request defaults to `gq --class batch --threads 4 --mem 6G`, without display or
+GPU-memory resources. `RYZEN_BENCH_CLASS` still overrides the class; a `batch` request's `--max`
+is capped at two hours. Unmarked windowed scenarios keep their existing queue settings.
+Both paths use the same completion marker, heartbeat, progress, watchdog and post-run checks below.
+The runner's final JSON status remains in `game.log`. `report.md` and `report.json` identify the run
+as `headless lockstep`, `window` or `offscreen` and include the game's wall seconds; stdout still prints
+`bench: game ran N s`.
+
+### Offscreen (`TEMPEST_OFFSCREEN`)
+
+`TEMPEST_OFFSCREEN=1` (Linux/Vulkan; macOS ignores it) runs the windowed game without a window. Tempest
+opens no X display (it runs with `DISPLAY`, `WAYLAND_DISPLAY` and `XAUTHORITY` unset), creates Vulkan
+without surface extensions, `VK_KHR_swapchain` or a present queue, and `MainWindow` draws each frame into
+its own image of `TEMPEST_WINDOW_SIZE` (default 800x600) instead of the swapchain, presenting nothing.
+Captures (`shot`, `rec`, `ui on`) are drawn as with a window, so stills, videos and `events.jsonl` match a
+windowed run. Nothing waits for the screen, so the limiter at the end of `render` holds a frame to at least
+`1000 / TEMPEST_OFFSCREEN_FPS` ms: default 200, the pace of a FIFO window on Ryzen's 199.92 Hz screen, one
+frame per game step; `0` removes the limit. `bench.sh` records the run mode `offscreen`; `rec` still needs
+`ffmpeg`. Without presenting these are meaningless: the frame profile's `Present` zone,
+`LoadProbe::presented`, `[app-cadence]` (`OPENGOTHIC_FPS_LOG=1`), FPS and low-1 %; frame timing stays
+with windowed benches. `scripts/ryzen.sh` runs benches offscreen by default; `RYZEN_BENCH_WINDOW=1` and
+the other [window conditions](../../docs/ryzen.md#как-работает-сейчас) bring the window back. Explicit `TEMPEST_OFFSCREEN=1` keeps `quiet` offscreen unless a visible window or presentation timing is requested. `metrics.csv.wall_ms` records elapsed wall time per frame; heartbeat events retain wall time and total steps every 10 s, so offscreen frame throughput can be checked without presentation FPS.
+[Note](../../reports/compute/2026-11-09-offscreen-bench/README.md).
 
 For performance comparisons (before/after or FPS), run both takes on the same machine:
-pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
+pin `BENCH_HOST=dev-ubuntu`, `BENCH_HOST=ryzen` or `BENCH_HOST=local`.
+`host.txt` and the report header identify the host, including `dev-ubuntu` when its SSH alias is overridden.
+
+`melee-stunned-strike` — короткая проверка логики: ввод уклонения вперёд в тяжёлой броне играет `T_1HROLLHEAVYF` (цена 30, окно 40–390 мс), затем один короткий прямой удар героя по оглушённому бандиту идёт обычным путём. В `bench.log` — имя переката, одно попадание, анимации и расстояния; в `body_combat` — `stun_bonus=1.5`, `backstab_mult=1`, `charge_mult=1`. `stun-drift` показывает движение корня цели. Нужен `OPENGOTHIC_CONTENT` с `anim-strikes`; запуск: `WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 MELEE_DODGE=1 MELEE_CHARGE=1 MELEE_STAGGER=1 MELEE_STAMINA=1 BENCH_HOST=ryzen scripts/bench.sh melee-stunned-strike`.
+
+`knockdown-launch` проверяет защиту рождения рэгдолла: SLD_826 с `ITMW_2H_SLD_AXE` (W2H) сбивает оглушённого SLD_815, по 20 проб в чередующихся диапазонах 30–40, 50–90 и 100–170 см, затем 5 проб оглушения без удара на контрольной точке и 5 на склоне дуэли. `RAGDOLL_BIRTH_GUARD=1|0` задаёт `[GAME] ragdoll_birth_guard` до загрузки мира. Сценарий генерирует `reports/physics/2026-11-02-knockdown-launch/generate.py`; фиксированные зёрна и подготовка одинаковы в ON/OFF. `ragdoll_birth_peak` пишет пики скоростей COM таза/спины/головы за первые 300 мс симуляции, дистанцию корней, виновника и снятие защиты; замер — после каждого ненулевого `Update`. `stun-drift <цель> <атакующий|player>` перед `stun <цель> posture` наблюдает корень каждые 100 мс от 0 до 1600 мс: проекцию к атакующему, горизонтальное смещение, высоту, анимацию, оглушение, скольжение, полёт и флаг второго такта. Отдельный `knockdown-drift` из того же генератора запускает только 5 ровных и 5 склоновых проб; источник оглушения — герой, цель перед оглушением освобождена от внешнего управления. `put-at <npc|player> <x> <y> <z>` ставит на землю по точным координатам (NPC замораживается и смотрит на героя). Анализ: `python3 reports/physics/2026-11-02-knockdown-launch/analyze.py --drift <папка>`; `summary.csv` нокдаунов не меняется. `RAGDOLL_BRACE=1|0` с `OPENGOTHIC_CONTENT`, где лежат позы `S_BRACE_*`, сравнивает падение с защитой и без: в `run/melee-posture.jsonl` у `knockdown` поле `brace`, событие `brace` пишет меры падения, когда сценарий убирает тело (подъёмов в этом сценарии нет: сцена очищается через 900 мс). `RAGDOLL_BRACE=0 OPENGOTHIC_BRACE_MEASURE=1` даёт те же меры для падения без защиты: событие `brace` с `"pose":"none"`, тело движется как при `=0`. `brace-profile <группа> <ключ> <значение>` меняет таблицу моторов защиты для следующих нокдаунов, без аргументов печатает её. Вторая поза добавляет `land enter|hold|yield|torque <число>`, `arms rest <число>` и `legs front|back|side <0|1>`; без `S_BRACELAND_*` новые числа не действуют. [Отчёт, команды и анализатор](../../reports/physics/2026-11-02-knockdown-launch/README.md).
+
+Результаты нокдаунов ON/OFF и опыта дрейфа — в отчёте; сценарий дрейфа не запускает 60 нокдаунов.
+
+`BUMP_REACTIONS=0|1` задаёт `[GAME] bump_reactions` до загрузки мира (по умолчанию 1), так же в `e2e.sh`; `ryzen.sh` передаёт переменную удалённому стенду. Сценарий шага 2: `python3 reports/physics/2026-11-15-run-bumps/was_bench.py <file.bench>`, затем `WORLD=NEWWORLD.ZEN BUMP_REACTIONS=1` и `=0`. Событие `bump` пишется в `run/melee-posture.jsonl`, рядом с `brace`: `who`, `other` (имя человека-препятствия либо `null`), `kind` (`wall`, `waist`, `person`, `pushed`), `dynamic`, `speed_cm_s` (скорость удара `u`), `avg_speed_cm_s` (принятая скорость вперёд за предыдущие 300 мс), `angle_deg`, `lost`, `strength`. Начало объяснённого контакта пишется и при нулевой силе или во время паузы; удержание контакта не повторяет реакцию, между реакциями не менее 500 мс. Другой человек получает `pushed` с силой ×0,8. При `BUMP_REACTIONS=0` нет ни сигнала, ни реакции, ни события. Высоту стены/мебели проверяют лучи на 90/130/165 см длиной «радиус капсулы + 40 см»; свободный луч на 130 см даёт `waist`.
+
+Ответ корпуса на врезание пишется в `metrics.csv` героя или наблюдаемого NPC: `b_pitch` (наклон корпуса от пружин врезания, вперёд +), `b_roll`, `b_twist`, `b_head` (голова относительно корпуса, вперёд +), `b_hits` (счётчик ответов), градусы. `bump-form <wall|waist|person|pushed> <trunk|twist|head|freq|damp|headfreq|headdamp|floor> <число>` меняет форму ответа без пересборки (`Flinch::BumpForm`). Сценарий приёмки — `python3 reports/physics/2026-11-15-run-bumps/bump_bench.py <file.bench>`: стена в лоб, под углом и шагом, человек, стол; числа по дублям печатает `bump_look.py <папка прогона>`.
+
+`WALL_REACH=0|1` задаёт `[GAME] wall_reach` до загрузки мира (по умолчанию 1): руки к стене и стойка упёршегося; `WALL_STOP=0|1` — стоп у стены `[GAME] wall_stop` (по умолчанию 1). Колонки героя в `metrics.csv`: `rc_press` (вес «упёрся», 0..1), `rc_warn` (предупреждение о стене), `rc_stop` (стоп у стены держит героя), `rc_halt` (вес показанной стойки), `rc_wl`/`rc_wr` (вес руки), `rc_pl`/`rc_pr` (ладонь стоит на своей точке), `rc_gapl`/`rc_gapr` (см от поверхности до ладони, меньше нуля — в стене), `rc_slipl`/`rc_slipr` (см сдвига ладони от точки касания), `rc_elbl`/`rc_elbr` (угол в локте), `rc_wrl`/`rc_wrr` (сгиб запястья), `rc_arm` (длина руки, см), `rc_curl0`/`rc_curl1` (сгиб пальца Gothic до и после прохода). Событие `reach` в `run/melee-posture.jsonl`: `who`, `phase` (`warn`, `press`, `free`), `time_to_hit_s`, `closing_cm_s`, `moved`, `person`. Стоп у стены пишет в начале контакта героя `wall_flat`: `flat`, `hit`, `gap`, `facing` четырёх взглядов (45 см влево, у тела слева и справа, 45 см вправо) и `radius`; когда стоп берёт и отпускает героя — `wall_stop`: `phase` (`begin`, `end`), `angle_deg` от перпендикуляра. `reach-form <guard|in|out|follow|wrist|lean|elbow|side|rise|palmflip> <число>` меняет форму рук без пересборки (`Reach::Form`); у `bump-form` появился вид `braced` — ответ корпуса, когда ладони уже на стене. Сценарий приёмки — `python3 reports/physics/2026-11-15-reach-wall/reach_bench.py <file.bench> [дубль ...]`, числа по дублям — `reach_look.py <папка> [<папка другого прогона>]`. Новое тело героя с раскрытой ладонью стенд берёт из `OPENGOTHIC_CONTENT`; без него герой в теле Gothic, у которого кисть — кулак.
+
+`ragdoll-brace-look` снимает для глаза нокдаун по стойкости в четыре стороны на ровном поле: назад, вперёд и на оба бока. Жертва всегда стоит лицом к герою, атакующий — перед ней, за ней или сбоку. Каждое падение — три дубля: сбоку от падения, в три четверти и сбоку с замедлением втрое, имена `<сторона>-<вид>[-slow]`. Сценарий пишет [`look_bench.py`](../../reports/physics/2026-11-14-fall-bracing/look_bench.py); его гоняют на игре до и после правки и сводят дубли по именам ([заметка](../../reports/physics/2026-11-14-fall-bracing/README.md)). Сценарий ждёт 4,5 с после удара, поэтому события `brace` пишутся при подъёме, с `getup_start`; пара для сравнения — `RAGDOLL_BRACE=1` и `RAGDOLL_BRACE=0 OPENGOTHIC_BRACE_MEASURE=1`.
+
+`ragdoll-brace-places` — тот же нокдаун на склоне и у стены. Склон — открытый травяной, 16,5°, над фермой Лобарта (`NW_FARM1_OUT_07`): падение вниз назад, вперёд и на бок, вверх — вперёд. Стена — дощатая хижина в порту: назад в стену с метра и вперёд в стену с полутора. Каждое падение — два дубля сбоку, второй замедлен втрое: `<место>-<падение>[-slow]`. Сценарий пишет [`places_bench.py`](../../reports/physics/2026-11-14-fall-bracing/places_bench.py); пара для сравнения — та же, что у `ragdoll-brace-look`. Лестницы в сценарии нет: поиск `stairs` ставит героя у кровати рядом с лестницей в доме, а городские ступени из `character route` на вид — травяной склон.
+
+`ragdoll-brace-death` checks early release of the protective fall (#1382), without filming.
+It runs headless with native ragdoll physics: three posture knockdowns on the flat field used by
+`ragdoll-brace-look`, in the order `death`, `unconscious`, `control`. After 165 game ms,
+the existing `down SLD_815_SOELDNER dead|ko` command calls the production `Npc::onNoHealth` path;
+the control instead waits for the ordinary get-up. No new engine command is needed.
+
+```bash
+RAGDOLL_BRACE=1 MELEE_POSTURE=1 MELEE_STAGGER=1 WORLD=NEWWORLD.ZEN \
+  OPENGOTHIC_CONTENT="$HOME/.local/share/gothic-ai/content" \
+  scripts/bench.sh ragdoll-brace-death /absolute/out
+python3 scripts/brace_death_check.py /absolute/out/run/melee-posture.jsonl
+```
+
+The content must contain `S_BRACE_*`; a knockdown without an active protective pose fails.
+`bench.sh` runs the checker automatically. The checker requires exactly one `brace` event per body/fall:
+`end=death|unconscious` within 300 ms of `fall_ms`, or an ordinary end for the control.
+Any supplied subsequent posture row for that body with `brace` other than `none` fails, including
+the end's own tick. Known limitation: the engine writes `brace` only on knockdown, with no pose or
+motor samples after the termination event. Inactive protection after that event is therefore not
+independently verified by this bench. Same-step release is inferred from the `brace` event written
+immediately after `endBrace()`. Synthetic `sample` rows test only the checker's rejection rule;
+independent verification would require engine instrumentation, outside this bench-only change.
+The checker reports this limit explicitly, and its `PASS` covers termination events.
+Run it first on dev-ubuntu (the `# @headless` default); `BENCH_HOST=ryzen` pins the fallback host.
+To verify sensitivity, temporarily remove only the `finishRagdollBrace` call in `Npc::onNoHealth`,
+rebuild and rerun in a separate output directory: both early-end cells must fail. Restore the call
+afterwards and verify `git diff origin/main -- OpenGothic/common/world` is empty.
+
+`game.log` must contain `[bench] done` for a complete scenario (including an explicit `quit`).
+Closing the window, a crash, `TIMEOUT` (default 300 seconds), or the stall watchdog before that marker
+returns code 1 and prints one reason with elapsed/limit seconds to stderr. Partial output still goes
+through `bench_report.py` and the existing scenario checks. Code 0 means completion and successful
+report/checks; code 2 covers invalid setup/options. Ryzen admission/transport codes are preserved;
+scenario interruption never returns the special codes 75 or 76. After the marker, closing or timing
+out a game left open by `KEEP=1` keeps the usual report/check exit status.
+
+With `OPENGOTHIC_BENCH_OUT`, the engine publishes `heartbeat.json` at scenario start and about every
+10 wall seconds, including long `wait` and `npcday` commands. It writes a temporary file and renames
+it over the previous pulse. Fields are `elapsed_seconds` since scenario start, `frame`, one-based
+`command_index`, `command_count`, full `command` text, and `game_time` (`day N HH:MM`). While `npcday`
+runs, `npcday_elapsed_minutes` and `npcday_target_minutes` give elapsed and requested game minutes.
+The pulse stops at completion; without the output environment variable it is not written.
+
+`BENCH_PROGRESS=300` prints one flushed stdout line every 300 wall seconds while the scenario runs,
+for example `bench: 28 min, command 5/5 npcday 1440, npcday 1060/1440 game min`. Before the first
+pulse it prints `bench: N min, starting (game.log X KB)`. The time prefix includes world loading.
+Game-minute counters in progress lines are integers; fractional minutes are omitted.
+`BENCH_PROGRESS=0` disables these lines. On Ryzen they appear during the game in `scripts/gq logs <id>`.
+
+`BENCH_STALL=600` terminates a live, unfinished game if neither the heartbeat nor any other output
+file changes for 600 wall seconds. Growing `game.log` counts as loading activity. The watchdog sends
+SIGTERM, waits up to 10 seconds, then sends SIGKILL and reaps the process; `TIMEOUT` uses the same
+bounded shutdown. `BENCH_STALL=0` disables the watchdog. The watchdog stops after `[bench] done`,
+including in `KEEP=1` mode. `BENCH_PROGRESS` and `BENCH_STALL` are forwarded to Ryzen like `TIMEOUT`.
+When it kills a stalled game, stderr says `bench: game stalled: no output or heartbeat for 600 s, killed`.
+Fake-game checks live in `scripts/tests/test_ryzen.py`; a short live bench checks the engine pulse.
+
+`streaming-flythrough` measures runtime GPU chunk streaming: a god-mode hero
+follows the existing WayMatrix path from `NW_CITY_MERCHANT_TRADE_04` through
+`NW_CITY_HABOUR_BENCH_01` to `NW_FOREST_PATH_16`. `route <speed_cm_s> <wp1> <wp2> ...`
+blocks command execution until the connected path is complete. Each frame places the hero at
+the interpolated path position, including waypoint height, using the normal simulation step.
+The two passes use 500 cm/s (run) and 2000 cm/s (fly), with ten seconds to settle before each.
+It records no video. Each pass waits for all desired Near/Far chunks before measuring;
+Outside chunks can be released along the route.
+
+`scripts/bench.sh streaming-flythrough` starts a fresh `NEWWORLD`, selects `quiet` on Ryzen,
+and enables frame profiling only for this bench's build. Output `frameprofile.csv` contains
+submitted frame intervals; `streaming.csv` contains residency update/work times, per-chunk
+publication times (semicolon-separated in a frame), counts and
+Near/Far transitions. `report.md` / `report.json` report each pass's frame p50/p99/max,
+Near/Far transitions (entering or leaving that state), peak Near count, update/work p99,
+publication p99/max (one sample per chunk), published/released counts and GPU allocation
+at the end of each pass. An empty route publication sample is `n/a`, not zero. A separate
+warmup table measures Far publications before each pass: count, per-chunk p99/max,
+maximum publications in one frame and maximum queue time. These samples begin before
+the ten-second wait and end at `streaming_ready`; they do not enter route frame or
+publication/release counts. Local execution requires `OPENGOTHIC_ENABLE_FRAME_PROFILE=ON` as
+well as `OPENGOTHIC_ENABLE_APP_CADENCE=ON`; an unsupported build exits before opening a game.
+The run fails if either route does not finish or either pass lacks metrics. Use the same
+host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`
+disables the manager and deliberately cannot produce this residency measurement.
+
+Run comparison series in alternating order (OFF, ON, OFF, ON), with at least two runs
+per side on the same host. Judge `run` and `fly` with `perf_report.py series`: it compares
+the median per-run p99 and accepts ON − OFF <= max(1 ms, OFF p99 max − min), so the
+measurement's own OFF spread sets the allowance when it exceeds the configured tolerance.
+It prints the per-run values and verdicts and writes `series.md` / `series.json` to `--out`
+(the last `--on` directory by default); exit code 0 means both passes pass, 1 means a failure,
+and 2 means invalid arguments.
+
+```bash
+python3 scripts/perf_report.py series --off /path/off-1 /path/off-2 \
+  --on /path/on-1 /path/on-2 --tolerance-ms 1.0 --out /path/series
+```
+
+`BENCH_HOST=local OPENGOTHIC_STREAMING=0 scripts/bench.sh streaming-shots` and the same
+command with `OPENGOTHIC_STREAMING=1` capture `perf-market.png`, `perf-harbour.png` and
+`perf-forest.png` from the first viewpoints of those performance scenarios. `streaming wait`
+yields a frame for camera/residency updates, then waits until the publication queue is empty
+and all desired Near/Far chunks are published (default timeout 60000 real milliseconds).
+The wait also includes static vob views. The disabled-streaming path is already ready.
+`streaming-shots` ends with `perf-market-teleport.png`: after one update beyond the city's Far
+range, it captures the first frame back in the market without waiting for Far publication.
+Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
+the resulting frames on Mac.
+
+`streaming-shots-low-sun` takes the four views of `streaming-shots` at 20:30 (the sun 12.6° high in the west) and
+the island view again at 6:00 (15° in the east), as `low-sun-*`, for the ray scene with the landscape by chunks: the
+sun's shadow ray from a hit is longer than the Far range (1 km), so a hill beyond it that shades the view goes
+missing. Run it with `OPENGOTHIC_RT=1 OPENGOTHIC_GI=1`, once with `OPENGOTHIC_STREAMING=0`, and compare the pairs
+cell by cell: `uv run scripts/gi_compare.py <root> --variants chunks --tolerance 5 <shots>` with the whole
+landscape's frames as `<root>/pt` ([step 1c](../../reports/render-features/2026-11-08-rt-revisit/step-1c.md)).
+
+`texture-owners-shots` is the same kind of still comparison for owners that get their texture level by
+distance (NPCs, items in the world, interactive vobs): `owner-npc-face`, `owner-npc-body`,
+`owner-npc-10m`, `owner-npc-15m`, `owner-chest`, `owner-sword`, `owner-bench`, and
+`owner-npc-teleport` — the first frame after a jump back to the NPC, shot without a streaming wait.
+The hero waits 20 m under the ground, so the camera alone sets the distance. Compare levels against
+the ring rule (`OPENGOTHIC_TEXTURE_SCREEN_MIPS=0`) with `shots_diff.py --shots <names>`; with
+`OPENGOTHIC_TEXTURE_TARGET_MB=0` every texture stands on its wanted level. Claude compares the frames.
+
+`streaming-shots` runs with `deterministic on`: the world stands still while `streaming wait`
+waits and four frames more once everything is loaded (also when it was loaded on arrival), then the
+TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with visibility in
+a canonical cluster order (sorted by sphere and meshlets, not by the ids streaming handed out)
+before `shot`; texture levels settle and stand still until the shot.
+With probe GI active, the wait also restarts the probe pool, its frame clock, fog sky visibility and
+eye adaptation. During the fixed steps, a probe's grid position determines its offscreen relight phase.
+Ray hits vote by cell before the renderer selects up to 512 requests. Each bounce propagates the
+source probe's use stamp from the start of the relight.
+`perf-market-teleport` captures the first frame after the return jump and still depends on loading.
+
+Compare consecutive runs on one host with one binary. For an off ↔ on render check, toggle the
+feature's own variable between runs. Each acceptance pair must report zero changed RGBA pixels
+at all four waited points in the same comparison. Set `first` and `second` to the output directories
+and use `--host mac` for Metal.
+
+```sh
+uv run --no-project --with pillow --with numpy python \
+  reports/engine/2026-11-03-streaming-optimisation/shots_diff.py \
+  --host ryzen --shots perf-market,perf-harbour,perf-forest,perf-island a="$first" b="$second"
+```
+
+On `8cfe16dc4`, one Ryzen RTX 3080 pair at 1920×1080 with VSM and probe GI and three Metal pairs
+at 800×600 matched at all four points. On `95f9dfdea`, the Ryzen pair had 0, 0, 5 and 1 changed
+RGBA pixels in market, harbour, forest and island respectively. The maximum channel differences were
+0, 0, 1 and 1. Issue #946 remains open. [Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#пара-ryzen-после-ревью).
+
+The regular VSM fog pass uses one NDC from the top-left depth pixel for both epipolar ray selection and the shadow threshold.
+It supplies zero depth for a missing ray or texel and keeps all 32 threshold comparisons.
+Replaying the FGT2 inputs on the CPU removes the divergence reproduced by contracting the old NDC expression.
+Two standard RTX 3080 runs on `01fdf2a6b` differed in 0, 62, 0 and 1 RGBA pixels respectively across the four waited shots, with a maximum channel difference of 1. [Replay and control](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#контроль-ryzen-после-исправления-тумана).
+
+`motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
+[report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
+world with a moving camera (creatures hidden, indoors), an NPC walking past a still camera, the hero running with
+`cam follow`, a tree, the forest and the town banner in the wind. With `OPENGOTHIC_MOTION_VIEW=1` they show the vectors
+(hue the direction, brightness the length, black exactly 0; `OPENGOTHIC_MOTION_VIEW_PX` the scale); with
+`OPENGOTHIC_MOTION_VECTORS=0` every such still is black. `motion-vectors-clips` records clips a–e (walk, run, fight,
+banner and tree, market turn); run it with `OPENGOTHIC_MOTION_VECTORS=0`, `=1` and `OPENGOTHIC_TAA=0` at 1920x1080 on
+Ryzen and measure with `reports/render-features/2026-11-10-motion-vectors/metrics.py`.
+
+`taa-reactive-stills` and `taa-reactive-clips` check the TAA reactive mask of particles and animated translucent
+(graphics plan 1v, [report](../../reports/render-features/2026-11-10-taa-reactive/step-1v.md)); the mask is on by
+default (the user accepted the clips on 2026-11-10). `taa-reactive-stills` takes stills of the night torch, the harbour braziers,
+a campfire by day, the waterfall below Xardas' tower, the thunderstorm rune and the shore; with
+`OPENGOTHIC_TAA_REACTIVE_VIEW=1` they show the mask (black exactly 0, red to white 0..1). `taa-reactive-clips` records
+clips 1-5 (the torch with its sparks, standing and passed by; braziers and smoke by day with the water; a fireball; the
+waterfall); run it with `OPENGOTHIC_CONTENT=<abs>/reports/content/remaster/wall-torch/particles/content` (the sparks
+layer), `OPENGOTHIC_TAA_REACTIVE=0`, `=1`, `=1` with the view and `OPENGOTHIC_TAA=0` at 1920x1080 on Ryzen with
+`WORLD=NEWWORLD.ZEN`, and measure with `reports/render-features/2026-11-10-taa-reactive/metrics.py`.
+
+`rt-default-sheet`, `rt-default-soak` and `rt-default-unload` belong to ray tracing by default on a PC
+([step-default](../../reports/render-features/2026-11-08-rt-revisit/step-default.md#сделано-1415112026)): since
+2026-11-14 the engine turns ray tracing (with the GI probes and the eye) on by itself on a discrete NVIDIA RTX on
+Vulkan, so every bench on Ryzen runs with it unless `OPENGOTHIC_RT=0` or `-rt 0`; the Mac stays without.
+`rt-default-sheet` shoots the views accepted without GI (the torch of the Red Lantern, the harbour at night, the
+harbour house, the market, the hut, the hero's face); run it with `OPENGOTHIC_RT=0` and without, the same build, and
+put the halves side by side. `rt-default-soak` (ten laps of the flythrough route) and `rt-default-unload` (eighteen
+cycles: the market, 2 km outside the world, Xardas' valley, the big farm, back to the market, so every chunk unloads
+and its landscape BLAS is freed) run as a copy named `streaming-flythrough` for the frame-profile build and its
+`render: rt landscape` lines; run `rt-default-unload` with `TEMPEST_OFFSCREEN=1`: a covered window on Ryzen drops to
+1 FPS, and its streaming waits then time out.
+
+## План и журнал
+
+- 2026-11-22: a deterministic wait starts probe GI from an empty pool and phase zero. Its fixed
+  steps give the same offscreen turn, hit request selection and use stamp under a permutation of probe slots.
+- 2026-11-11: `deterministic on` walks visibility clusters in a canonical order (sorted by sphere and meshlets,
+  not by the ids streaming handed out). On the Mac it removed the dependence on the id order; on Ryzen four
+  runs still give the discrete states of issue #946 (0–32 px), so the acceptance rule stays as it is.
+- 2026-11-11: a 1920x1080 clip records in real time on Ryzen (Vulkan): the readback of a captured frame
+  reads cached host memory (24–38 ms → 0.6 ms) through one kept staging buffer, and filming draws every
+  frame into one image instead of allocating one each step; 31–34 % → 99 % of real time.
+- 2026-11-10: a deterministic `streaming wait` holds the loaded world four frames before the reset (a still
+  had a second state by whether the wait had to wait: clouds and exposure lag a frame or two); two
+  shader fixes took the thread-order noise out of VSM, so stills are compared with VSM on again.
+- 2026-11-10: `taa-reactive-stills`, `taa-reactive-clips` (graphics plan 1v); `stats mana <n> circle <n>` lets the
+  hero cast a rune.
+- 2026-11-10: `deterministic on` also starts the SSAO history over at phase 0 of its sample cycle
+  (stills of one binary differed by 350–775 thousand pixels at 1920x1080); the exact comparison on
+  Ryzen runs with `OPENGOTHIC_VSM=0`, VSM stills take a tolerance; `shots_diff.py --all-pairs`.
+- 2026-11-09: offscreen run mode (`TEMPEST_OFFSCREEN=1`, `TEMPEST_OFFSCREEN_FPS`): the game draws into its
+  own image without a window or display; Ryzen benches use it by default.
+- 2026-11-05: `deterministic on` for `streaming-shots`: frozen world during `streaming wait`, TAA reset,
+  16 fixed steps, ordered visibility and settled texture levels before `shot`; byte-identical pairs
+  at four points on Mac in most pairs, rare single-point residue (fixed by the entry above).
+- 2026-11-02: route headless `auto` benches through dev-ubuntu → Ryzen → Mac; keep windowed
+  routing unchanged. Reuse `ryzen.sh` with dev-ubuntu build limits and setup/cleanup without NAS.
+- 2026-11-02: remove stale runners from window-only rebuilds before caching; keep `RUNNER_BIN` local.
+- 2026-11-02: add marked headless lockstep benches with game-parity simulation and a Ryzen `batch`
+  request without display/GPU resources; record the run method and game wall time in reports.
+- 2026-11-02: require the completion marker, publish the engine heartbeat, stream progress and stop
+  stalled games before the outer Ryzen job limit; preserve reports from interrupted runs.
+
+## Frame profile
+
+### Как работает сейчас
+
+Build with `cmake -S OpenGothic -B OpenGothic/build -G Ninja
+-DCMAKE_BUILD_TYPE=RelWithDebInfo -DOPENGOTHIC_ENABLE_FRAME_PROFILE=ON`, then
+`cmake --build OpenGothic/build --target Gothic2Notr`. Set
+`OPENGOTHIC_FRAME_PROFILE=/absolute/path/frames.csv` when starting the game.
+For a short existing scenario use `BENCH_HOST=ryzen
+OPENGOTHIC_FRAME_PROFILE=<absolute output>/frames.csv scripts/bench.sh cloth-on <absolute output>`;
+the Ryzen engine must also have been configured with the option ON (the runner normally builds it OFF).
+The recorder buffers up to 20,000 render attempts and writes once at shutdown. Clear the environment
+variable to disable recording; build with the option OFF (default) to remove all clocks and Metal handlers.
+
+Every attempt has a row, including fence-busy returns and captures. Existing columns retain their names.
+The complete column set is:
+
+| Columns | Units / meaning |
+|---|---|
+| `attempt`, `cmd_id` | Zero-based attempt number; reusable command slot, not a unique frame id |
+| `dt` | Simulation step, milliseconds |
+| `segment`, `frame` | Bench recording name and frame number within that recording; empty/zero outside recordings |
+| `begin_ns`, `observer_ns`, `end_ns` | Absolute `steady_clock` timestamps, nanoseconds; observer is zero when not sampled |
+| `outcome` | 0 unfinished, 1 submitted, 2 fence busy, 3 capture, 4 error |
+| `flags` | Bitmask: 1 submit completed (CPU), 2 present completed (CPU), 4 capture requested, 8 capture read completed, 16 fence busy, 32 error |
+| `overflow` | Number of attempts beyond the buffer limit, repeated in every row |
+| `<zone>_ns`, `<zone>_calls`, `<zone>_first_ns`, `<zone>_last_ns` | Elapsed sum in nanoseconds, call count, first start and last end as absolute `steady_clock` nanoseconds; all zero if unused |
+| `palette_calls`, `identical_calls`, `patch_calls`, `patch_blocks` | Counts |
+| `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
+| `draw_calls`, `dispatch_calls` | Encoded draw and compute dispatch counts; dispatch counting currently covers Metal |
+| `rt_tlas_builds`, `rt_dirty_slots` | With `-rt 1`: TLAS builds recorded into the frame (0 or 1) and slots of the ray scene written into it |
+| `gi_probes_live`, `gi_probes_traced`, `gi_probes_from_hits`, `gi_probes_freed` | With `-gi 1`: probes alive after the allocation, probes traced anew (allocated by pixels and at hits), of them allocated at the hits of other probes' rays (requests of the last frame), and probes freed (unused for longer than the expiry, or the oldest when places run out); of a frame one or two frames back (`probe_stats` writes them into a host-visible buffer of the frame slot, the CPU reads it when the slot's fence is done; no wait); `per_frame` in the report is the mean |
+| `main_clusters`, `main_meshlets`, `main_canopy_clusters`, `main_canopy_meshlets` | Clusters and meshlets of the main view that passed its culling (frustum and HiZ), and of them those of the crowns of trees (`BK_CANOPY`, `graphics/hizoccluders.h`); a landscape meshlet is a cluster of its own, an object's submesh one cluster. The pass `Visibility-stats` (`visibility_stats.comp`, 0.03–0.04 ms on the RTX 3080, profiled builds only) sums the payload into a host-visible buffer of the frame slot; the CPU reads it when the slot's fence is done, no wait; of a frame one or two frames back; `per_frame` in the report is the mean |
+| `mesh_level0`, `mesh_level1`, `mesh_level2`, `mesh_level3`, `mesh_level4` | Objects of meshes with levels of detail (`graphics/meshlevels.h`, the field `levels` of `meshes.json`) drawn at the mesh itself and at its levels 1–4 in the frame, by the choice of `VisualObjects::preFrameUpdateLevels`; an object counts once, by its first submesh (a spruce of bark and boughs is one); `per_frame` in the report is the mean. Zero without such meshes or with `OPENGOTHIC_MESH_LEVELS=0` |
+| `tree_bough_nodes`, `tree_bough_source_cards`, `tree_bough_parent_cards`, `tree_bough_triangles`, `tree_bough_height_mpx` | Main-view foliage from trees with the hierarchy enabled. The first four columns sum submissions and the height is the maximum across visible hierarchy trees in thousandths of a pixel. The readback is delayed by the frame slots, with all five values sampled from the same draw. |
+| `mesh_impostors` | Impostor cards submitted to the main G-buffer after frustum culling. Each card submits two triangles. |
+| `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of the attempt's command buffer GPU time in nanoseconds (Metal `GPUEndTime-GPUStartTime`, Vulkan a timestamp pair per buffer); 1 only when all submitted buffers have valid timing; submitted buffer count |
+
+The complete `<zone>` list (each produces all four columns above):
+`tick`, `finish_step`, `camera`, `observations`, `bench`, `fence_poll`, `recycle`, `ui`,
+`encode`, `submit`, `present`, `limiter`, `world_logic`, `prepare`, `physics`, `sync`, `world_misc`,
+`parallel_animation`, `native_export`, `forced_sync_animation`, `actor_animation_elapsed_sum`,
+`pose_elapsed_sum`, `palette_elapsed_sum`, `storage_join`, `storage_commit`, `storage_pack`,
+`storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
+`destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `npc_logic_shadow`, `encode_shadows`, `encode_main`,
+`encode_water`, `encode_post`, `encode_ui`, `animation_npc_pass`, `melee_shadow`, `melee_contacts`,
+`interactive_animation`, `logical_body_sync`, `pfx_prepare`, `upload_wait`, `rt_scene`.
+
+`animation_npc_pass`, `melee_shadow`, `melee_contacts`, `interactive_animation` and `logical_body_sync`
+split `parallel_animation`: the worker pass over NPCs (with the posing of their melee shadow bodies), then
+the serial loops after it (publishing those bodies and the blades, the blade flush with contact resolution,
+interactive objects, the logical-body sync). `melee_shadow` poses a body itself only for an NPC the worker
+pass skipped or whose bones moved since (a script, a sync on read).
+`pfx_prepare` is `PfxObjects::preFrameUpdate` inside the frame encode. `upload_wait` is the CPU wait of a
+synchronous buffer upload on Metal (`MtBuffer::update` of a device-memory buffer): inside a frame it lasts
+until the GPU finishes what was committed before, so a nonzero value there is a stall.
+`rt_scene` is `WorldView::updateRtScene` (only with `-rt 1`): the objects marked since the last frame (moved, shown,
+hidden, created, freed) into their slots of the ray scene, and in a frame with changes the patch of the changed slots
+and the TLAS build recorded into it (pass `RT-TLAS`); a frame without changes records nothing. The two merged landscape
+BLAS are built once, and the descriptor arrays of the buckets anew only when a bucket is new. Only these heavy events
+log a line in a frame-profile build,
+`render: rt scene reason=<landscape|bucket> instances=<N> blas=<N> triangles=<N> tlas_bytes=<N> blas_bytes=<N> build_ms=<ms> slots=<N> buckets=<N>`:
+instances that rays meet (the merged landscape and the visible slots), unique BLAS among them, triangles summed over
+them (index ranges / 3), the TLAS storage, the sum over the unique BLAS storage, the CPU time of that frame's
+`RtScene::commit`, the slots given out and the buckets. The bytes are the Vulkan acceleration-structure sizes
+(`accelerationStructureSize`); Metal keeps none and writes `-1`.
+
+`npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
+tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The
+amounts `npc_full`, `npc_simplified` and `npc_tier_transitions` count NPCs per tier and tier changes.
+
+`OPENGOTHIC_NPC_LOGIC_AUDIT=1` enables the logical-body shadow audit (default 0). `npc_logic_shadow`
+measures clock advancement and mutation-input processing. Audit compares the previous forecast before
+applying the tick's inputs. `npc_logic_samples`, `npc_logic_body_samples`, `npc_logic_weapon_samples`,
+`npc_logic_body_mismatch` and `npc_logic_weapon_mismatch` count scalar comparisons after excluding fields
+changed by explicit inputs. Unknown natural-next observations are compared before their re-anchor and are
+not reported as lifecycle matches.
+`npc_logic_early`/`npc_logic_late` observe real layer removals; `npc_logic_wait_early`/`npc_logic_wait_late`
+observe native wait releases independently. `npc_logic_reanchored` counts executor inputs by kind in JSON.
+`npc_logic_events` and `npc_logic_event_mismatch` count events, with a mismatch only beyond one world step.
+Full event schedules are audit-only; the default state retains the minimal weapon-event clock. During `npcday`,
+timing also runs with the audit disabled so the default path can be measured separately. The `npcday` summary
+adds `logic_audit`, including action/animation breakdowns and prediction-error percentiles; the parity comparer reads its named gameplay fields and ignores these diagnostics.
+
+`bodynet` sums the full local P30 policy step over active NPCs; service policies do not enter it.
+`cloth` covers main-thread preparation and the 30 Hz solver/finish; `water` sums main-thread buoyancy
+preparation/finish and the synchronous Jolt step listener, which may run on a worker.
+`destruction` covers deferred fracture, movable/fragment synchronization and cleanup; fragment dynamics
+remain inside `physics`. `ai_bridge` measures the inbound queue and message parsing/dispatch on main;
+`sound` measures the main-thread listener/effects update, including its mutex wait, not the audio mixer.
+The five `encode_*` zones measure sequential CPU command recording, not GPU execution.
+Zones can nest; worker elapsed sums (including storage uploads) must not be added to enclosing wall time.
+Actor/pose/palette zones only cover the actors selected by the bench.
+
+Metal captures the exact attempt record at command submission and updates atomic counters from that
+buffer's completed handler, including presentation, uploads/readback and acceleration-structure builds
+submitted during the attempt. Slot reuse cannot redirect a late completion to a later attempt.
+There are no added waits. Missing/failed/incomplete timing gives `gpu_done=0,gpu_ns=0`;
+`gpu_buffers` still counts captured submissions.
+Vulkan (frame-profile build) writes a timestamp query at the start and at the end of each command buffer
+(`BOTTOM_OF_PIPE`, so the start waits for the queue's earlier work) and reads them, without waiting, when the
+buffer's fence is seen signalled, like the pipeline statistics of `triangles`. Ticks become nanoseconds by
+`timestampPeriod`; a graphics queue with `timestampValidBits=0` gives `gpu_done=0`. Buffers submitted
+outside `VDevice::submit` (uploads, acceleration-structure builds of the data manager) are not counted.
+Pending completions at CSV flush are left incomplete. This is diagnostic timing, not a performance stand.
+
+On Metal, `OPENGOTHIC_GPU_PASSES=1` additionally samples native encoder stage boundaries and writes
+`<frames.csv>.gpu.csv`: attempt, slot, segment, frame, encoder index/type, joined pass labels,
+GPU/vertex/fragment nanoseconds, draw/dispatch counts and validity. Passes sharing an encoder stay
+joined; intervals may overlap and must not be summed into total GPU time. Unsupported or invalid
+samples have `valid=0`. Detailed counters have measurable overhead: leave them off for the GPU
+acceptance runs, then enable them separately when a pass breakdown is needed.
+
+On Vulkan, `OPENGOTHIC_GPU_PASSES=1` writes the same `.gpu.csv` columns with one row per
+`setDebugMarker` region (from the marker to the next marker or the buffer's end): `labels` is the marker,
+`type` is `render` when the region issued draws and `compute` otherwise, `vertex_ns`/`fragment_ns` are 0.
+Each region is a pair of `BOTTOM_OF_PIPE` timestamps, so a row runs from the end of the earlier work to the
+end of its own: work running without a barrier overlaps, rows must not be added into `gpu_ns`.
+Up to 255 regions per command buffer are timed, later ones get `valid=0`. Without the variable no region
+queries are written. `scripts/perf_report.py run` sums a label's valid rows per frame into `gpu_passes`
+(`{"frames", "mean_ms", "p95_ms"}` per label) and a table in `report.md`; no `.gpu.csv`, no key.
+
+### План и журнал
+
+- 2026-10-28: Metal completion timing and buffer counts; P30, cloth, water, fracture, inbound bridge,
+  sound and major render encoding zones. Validation: Mac/Linux builds and the existing Ryzen cloth bench.
 
 `own-mesh-barrel` frames the complete authored `NW_HARBOUR_BARREL_01` cargo barrel
 in Khorinis harbour at noon, writes `own-mesh-barrel.png`, then measures thirty
@@ -75,6 +614,73 @@ Run through `BENCH_HOST=ryzen scripts/bench.sh own-mesh-fracture <absolute outpu
 [the report](../../reports/content/2026-10-own-meshes-fracture/README.md) records
 source identity, piece volume, native hits and original resource opens.
 
+`own-content-fracture` breaks the barrel and then the crate of a content set the same way,
+with before/after screenshots and a checkpoint of the pieces each. Run it with
+`WORLD=NEWWORLD.ZEN MOVABLE_VOBS=1 DESTRUCTION=1 GOTHIC_AI=0 OPENGOTHIC_TEXTURES=`,
+`OPENGOTHIC_CONTENT=<a copy of the working content>` and, for the originals,
+`OPENGOTHIC_CONTENT= OPENGOTHIC_FRACTURE=~/.local/share/gothic-ai/fracture`. Each
+`destruction2_melee_complete` event gives hits and pieces, `destruction_checkpoint` the
+`max_displacement_cm` of every piece: how far the prop fell apart.
+`own-wood-fracture-clip` is the acceptance take of the same pair for the
+[wood fracture](../../reports/content/2026-11-wood-fracture/README.md#клип-было--стало-и-ограждения):
+per prop a close `<prop>-close-before|after.png` pair, a take `<prop>-side.mp4` from the blow
+until the pieces sleep (the hero strikes towards +z; both cameras stand at an angle on the struck
++x/-z side, the close one 2.9 m off, the take 3.8 m) and
+`destruction2 view <camera xyz> <target xyz>` places the held camera in centimetres from the centre
+of the prop. The lunge leaves the hero inside the prop, so after the take `destruction2 stand` puts
+him back where he stood before the blow (`destruction2_stand` gives the distance) and the close
+"pieces" frame shows the breach. The scenario declares `# @timeout 600`. Each break writes `destruction2_pieces` 0.5, 1, 2, 5, 13 and 15 s after it: per piece
+the centre's travel, the angle of a flat piece's face and long axis from vertical, sleep, speed and
+`fell` (centre below the floor), its `bond_group`, and per break the bond groups (`groups`,
+`largest_group_volume_fraction`, `single_pieces`) and their bodies now present, asleep and through the
+ground (`bodies`, `bodies_sleeping`, `bodies_fell`: pieces of one group share one body; without
+bonds a group is a piece); at 15 s the native hull penetration into a floor plane, into the
+real ground (`native_floor_penetration_cm`, Jolt `CollideShape` against landscape and static objects)
+and into the other pieces (pairs the break's hoop filter never collides — a group of METAL only against a
+group with WOOD — and pieces of one bond group are skipped),
+the visible (vertex) penetration below that plane and below the ground under each vertex
+(`visible_terrain_penetration_cm`), hoops on the ground (`metal_on_ground`) and the 13→15 s jitter. Every break also
+writes `destruction2_start` (each piece's centre over the ground and native hull depth at birth) and,
+frame by frame for 5 s, `destruction2_fell` for the first frame a piece's centre is under the ground or
+over no ground, with its previous frame; a fallen piece's row adds the static surface above and under
+it and water at it. `destruction_sleep15` and `destruction_checkpoint` give each piece its
+`center_cm`, `in_water` (water at most 50 cm under the centre of mass) and `under_ground` (a static
+surface within 20 m above). `destruction_fragment_retired` logs each sleeping piece that
+`cleanupFragments` removes (`expired` or `distant`, over 30 m from the hero).
+A bond group retires whole, one event per piece. `destruction_compare.py` does not count such a piece as
+lost; a piece missing without one fails, and so does a bond group that is only partly present. Its
+15 s sleep gate counts bodies (`bond_group`; without it, pieces) and requires every body on land asleep; a piece in water passes when it is not under
+the ground, and the result line reports whether it sleeps at the final checkpoint. Run with the
+`own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
+varies the version 3 piece motion, `OPENGOTHIC_FRACTURE_BONDS` the bond rule. Inside a `movable measure` window the pieces are not sampled: the
+timed frames stay free of bench work.
+
+`own-wood-remnant-clip` takes the [repeat blows on remnants](../../reports/physics/2026-11-destruction-bonds/README.md#клип-повторных-ударов)
+with the same place, seed, noon and cameras: per prop one take `<prop>-remnant.mp4` from the accepted
+one-handed blow through three more breaks to a walk over the pieces, and a close frame
+`<prop>-close-break1..4.png` after each break (`destruction2 stand` first). `destruction2 remnant <n>`
+strikes the largest bond group of the broken fixture prop with the native forward attack, at most `n`
+swings, until the prop has more bodies. Before each swing it places the hero by where that attack's
+blade comes down: 126 cm forward and 28 cm right of the feet (`melee-blade-shadow.jsonl`, top contacts).
+From the first blow's side by 30 degree steps, rays straight down along the line to the group's centre of
+mass find the first point of the group's own body no lower than 30 cm under its top (the floor of an open
+crate is out of the blade's reach); a side with a loose piece found first, or higher within 20 cm of that
+point (rays every 4 cm), is skipped. Events: `destruction2_remnant_attempt` per swing (side, landing),
+`destruction2_remnant_complete` with `broken`, `swings`, bodies and the largest group before and after,
+and every group's pieces. `destruction2 walk <cm>` then walks the hero, holding forward (4 s at most a
+pass), along a straight line through the centre of the loose pieces, clear of the largest group by its
+radius plus 40 cm, there and back. The line must pass within 10 cm of the hull of a loose piece from 0.5 m
+(one the hero pushes; smaller ones it walks through); failing that, lines through each such piece; with
+none the scenario aborts. `destruction2_walk` gives `pieces_on_path`, per pass the progress, the feet over
+and under the ground and the pieces moved, and over the walk `moved_pieces` and `counted` (true only if a
+piece moved). Every break, the first and each remnant's, writes `destruction_break` (with
+`remnant`) and `destruction2_start` / `destruction2_pieces` under its own case: `<case>-remnant-<n>` for
+the n-th remnant break, sampled from its own moment; `hero_debris_penetration_cm`,
+`hero_piece_penetration_cm` and `hero_light_piece_penetration_cm` give the depth of the hero's capsule (its
+controller's radius, `hero_radius_cm`) in remnants, in single pieces from 0.5 m and 10 kg, and in lighter ones,
+which are no floor: the feet pass into their tops by design.
+`reports/physics/2026-11-destruction-bonds/clip_groups.py` names the groups. The scenario declares `# @timeout 900`.
+
 Corpse water: `water-bodies` records a real harbour WindFist throw, a dead wolf and a
 sinking skeleton, then saves `session-water-bodies.sav` and tries normal corpse loot
 from dry ground and while swimming. `water-bodies-shallow` observes a corpse on the
@@ -85,6 +691,15 @@ over a 30-second normal-cadence window without recording video.
 `python3 scripts/water_bodies_compare.py deep DIR`, `shallow DIR`,
 `reload SAVED_DIR LOADED_DIR` and `perf ON_DIR OFF_DIR` check the native parts,
 immersion, sleep, 30-second stability and the 2 ms physics p95 budget.
+
+`p18b-base` checks a selected base through the native world transition path:
+`NEWWORLD` → `ADDONWORLD` → `OLDWORLD` → `DRAGONISLAND` → `NEWWORLD`, then native
+`playvideo LOGO2`. Run with `WORLD=NEWWORLD.ZEN`, `MUSIC=1`, the task base/cache/store,
+and an absolute census/output path. `world <ZEN> [waypoint]` requests the existing
+`World::triggerChangeWorld` transition and waits for native loading;
+`world-check <ZEN>` fails unless that world is current. Both commands use only indexed worlds.
+Successful benchmark music selection logs `Dx8 music: <SGT>` after the mixer accepts it.
+A normal startup logs `Main menu ready: <id>` after menu initialization; no keyboard driver is needed.
 
 A run takes the game start (~10 s from a save) plus the scenario time. On Mac the game window is minimized,
 does not take the focus and plays no sound, so it can run while someone works on the same machine.
@@ -119,8 +734,8 @@ uses `OPENGOTHIC_STUCK_LOG`, and can resume a measured series. `summarize` write
 coverage/walk tables and two top-down PNGs using only the Python standard library.
 
 A line `off: <command>` or `on: <command>` runs in that take only: `OPENGOTHIC_BENCH_TAKE=off|on`, set by
-`shorts/compare/film.sh` (without it the take is `on`). `OPENGOTHIC_MANUALAIM=0|1` and `OPENGOTHIC_NPCAIM=0|1`
-set the hero's and the npc archers' manual aim over Gothic.ini.
+`compare/film.sh` in gothic-shorts (without it the take is `on`). `OPENGOTHIC_NPCAIM=0|1`
+sets the NPC archers' manual aim over Gothic.ini.
 
 Scenarios for foot IK: `ik-sweep` (12 slopes all over the world: run up, run down, walk across; ~2 min),
 `ik-stairs` (8 stairs: walk up and down, run up), `ik-moves` (stand, turn on the spot, strafe, walk
@@ -153,11 +768,28 @@ struck standing and while aiming a bow, where the game has no stumble; a wolf: t
 Lip sync: `lips` (Xardas says a voiced line of the game, the camera at his face; then the same line
 with the old talk loop), `lips-dialog` (the hero talks to Xardas through the dialog window and picks
 the first choice: the lines of both are played the way the game plays them).
+The hero's head: `hero-head` (his face close up - still, the moods of the AI lines, a voiced dialog line, the eyes:
+he listens to Xardas, thinks, Xardas stands around him, he looks down and up - and running from behind in the market; the clips of the original and of the new head, side by side,
+[step 0](../../reports/content/2026-11-hero-head/test-head.md)).
+
+The head of an NPC against its concept: `npc-head-look` takes stills of the hero's face from the front, three quarters
+and the side and close on the eyes, in the torch light of Xardas' tower and in the noon sun of the market (first
+with the sun above and behind, then at an open spot with the sun in the face, where the head's skin and the body's
+neck are under one light: [skin-sun.md](../../reports/content/2026-11-npc-hair/skin-sun.md)); nobody blinks, and the overlay is off: a shot is the
+game's frame (until 2026-11-13 the scenario left the overlay on, and its `bright` stretched every still). Run it with the content root of a head built by `scripts/content/npc/build_head.py`
+(`OPENGOTHIC_CONTENT=<work>/content`, `TEMPEST_WINDOW_SIZE=1920x1080`, `BENCH_HOST=ryzen`); to see what a map adds,
+run it again with a copy of the root in which that map is replaced
+([likeness.md](../../reports/content/2026-11-npc-pipeline/likeness.md), "В игре").
+Its stills are taken from 38 cm, where the game's lens narrows a face by 15 %: they show the skin, not the likeness.
+`npc-head-sheet` takes the head as its likeness sheet frames it, front and profile from 120 cm under the torch and
+with the sun in the face, then the same front from 70 and 38 cm; the head is small there, so the window is
+`TEMPEST_WINDOW_SIZE=3840x2160` (the same note, "Blender и игра").
 Faces: `faces` (the face animations of a head one after another, then two of them while Xardas speaks),
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
-fading face), `mood-ai` (lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm fake
+fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
 --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL=ws://127.0.0.1:<port>`; with a TTS
-service instead of `--no-tts` the lines are voiced in their mood). Columns `face_neutral`, `face_friendly`,
+service instead of `--no-tts` the lines are voiced in their mood). Gestures and a lie of an own head in the game, close up with
+sound: `face-cues-clip` ([below](#face-cues-clip)). Columns `face_neutral`, `face_friendly`,
 `face_angry`, `face_hostile`, `face_afraid`, `face_pain` of `metrics.csv`: how much of each face of the
 watched npc shows, 0..1.
 Wolves: `wolf` (docs/beasts.md, no server: the bridge's `ai beast listen|sit|calm|flee|attack|resume` on the
@@ -184,10 +816,10 @@ line is being said), `ge_id` (the gesture playing, 1 is `T_DIALOGGESTURE_01`), `
 Listening: `listen` (Xardas' face close up: quiet, the hero speaks to him 6 s, he thinks 2.5 s, he answers;
 with `gestures off` on top of a copy he stands still, as before).
 Deals: `deal` (the deal window of an AI server, the interface in the frames: start `gothic-ai serve
---scenario deal_demo --llm fake --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL`;
+--scenario deal_demo --llm off --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL`;
 Xardas offers a thing he has for 50 gold the hero lacks, then for 30, and the hero accepts).
 Two people talking: `gossip` (Lobart and Hilda talk about the hero's lie at Lobart's farm, each line said to
-the other: start `gothic-ai serve --scenario gossip_demo --llm fake --no-tts` on a port of your own and run
+the other: start `gothic-ai serve --scenario gossip_demo --llm off --no-tts` on a port of your own and run
 the bench with `GOTHIC_AI_URL`; the server puts Hilda 5 m from Lobart and the hero 7 m from them; `nearby`,
 `pair` and `where` every second: during each line both look at each other, `look=talk at=<the other>`).
 
@@ -314,6 +946,9 @@ blow. `gaze_jerk` is not counted for a second after a blow: it throws the head o
 `blinks /min` counts the blinks seen (the eyes going half shut), with those in a pause of the voice and
 at a shift of the eyes; people blink some 15-25 times a minute, more while they speak. Flag `blink_shut`:
 a blink keeps the eyes shut longer than 7 frames.
+`g_animroll` and `g_froll` are the tilt of the head to a side as its animation gives it and as it is shown (a dialog
+gesture tilts it up to 32 degrees), `g_steady` how much the head is held against a gesture's animation (0..1); the
+flag `gaze_jerk` counts the tilt of a frame too.
 `gestures talk / listen %` is how much of the time the watched one speaks a gesture plays, and how much
 of the time it is quiet again (a second after its voice), then the gestures started, started over one
 that played and stopped before their end (the voice is over), and the nods on stressed syllables. The head
@@ -333,30 +968,44 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 |---|---|
 | `playvideo <name>` | Marvin command calling the game video player; case-insensitive name, optional `.bik`. Explicitly requests the player even with `-nointro`; the first request starts lazy preparation and is skipped while the part is not ready. Negative `scaleVideos` still disables playback. The scenario pauses during playback and resumes afterwards; `pos` records position, world tick and world time in `events.jsonl`. |
 | `wait <ms>` | game time |
+| `wait real <ms>` | wall time; the game keeps ticking while scenario commands wait |
 | `waitarrive [timeout ms]` | until the player has walked where it was sent |
 | `goto <waypoint>`, `goto pos <x> <y> <z>` | teleport (`pos`: where no waypoint is, a roof, a rock) |
 | `walkto <waypoint>` | walk there (AI path) |
 | `walkmode walk\|run\|sneak` | |
+| `hero-mob <SCHEME>`, `hero-mob leave` | the hero takes the nearest free mob of that scheme (`BENCH`, `CHAIR`, `CAULDRON`, `BSANVIL`, `LAB`, ...) as when the player uses it, event `hero_mob` with `used`; `leave` gets up |
 | `face uphill\|downhill\|across\|<yaw deg>`, `face wp <waypoint>`, `face rel <deg>`, `turn <deg>` | turn the player at once; `rel`: the watched npc's facing turned by that much (the angles of `place`) |
-| `press\|release\|tap <key>`, `hold <key> <ms>`, `release all` | player input; keys: `forward back left right turnl turnr jump walk sneak weapon melee bow spell action parade breath` (`left`/`right` strafe; aiming a bow: hold `action`, a shot: `tap forward` while holding it; in the manual aim holding `action` draws, releasing shoots, `parade` lowers the bow, `breath` (= walk) holds the breath) |
+| `press\|release\|tap <key>`, `hold <key> <ms>`, `release all` | player input; keys: `forward back left right turnl turnr jump walk sneak weapon melee bow spell action parade breath dodge` (`dodge`: the melee dodge's own key, the way from the movement keys held at the press; `left`/`right` strafe; aiming a bow: hold `action`, a shot: `tap forward` while holding it; in the manual aim holding `action` draws, releasing shoots, `parade` lowers the bow, `breath` (= walk) holds the breath) |
 | `aimwalk on\|off` | the legs stepping under the aim (graphics/mesh/aimwalk); off: forward and back do nothing while aiming |
 | `animinfo <name>...` | the hero's animations of those names: layer, frames, the nodes they move (when not all), the root's way and speed, the hips' turn at a few frames |
+| `bladepath <name>\|<overlay.MDS>...` | the tip of the hero's weapon at each frame of those animations, with the grip, the root bone (the game keeps its x, z at the actor) and the speed, in the model's frame (+z ahead); the frames of the fight tags; an overlay (`HUMANS_1HST2.MDS`) is put on for the names after it |
 | `wheel <delta>` | the mouse wheel as the window gets it (-1 down, 1 up): aiming a bow by hand, down cants it for a quick shot, up straightens it |
 | `cam auto [dist] [height]` | follow the player from the side that sees the feet; switches sides if the feet stay hidden |
 | `cam follow <dist> <height> <angle>` | follow, `angle` from the facing: 0 in front, 90 on the left |
 | `cam lift on\|off` | `follow` and `world` keep the camera above the ground under it (on, the default); off: where it is put, so a floor above it (a gallery, a hall's ceiling) does not lift it there |
 | `cam front <dist> <height>`, `cam world <dist> <height> <yaw>`, `cam fixed`, `cam hold`, `cam look <height>`, `cam game` | `fixed` stays where it is and turns after the player; `hold` keeps the frame as it is (a scene the player may fall out of); `game` is the game's camera as the player has it, without the clip of `view clean` |
+| `cam at <x y z> <tx ty tz>` | from a point of the world at another, then held like `cam hold` (a cut: TAA starts over); the hero can stand elsewhere, `goto` him near it first so the world around is loaded |
+| `cam fly <x y z> <tx ty tz> <ms>` | from where `cam at` or the last `cam fly` left the camera, along straight lines to a point and the point it looks at, in that many ms of game time, then held; no cut, so TAA keeps its history and a clip of the way has no jump. Chain several for a path of straight pieces |
 | `cam arrow [dist 600] [height 40] [side 1\|-1] [ahead 80]` | from the side of the newest arrow's way (`overlay trail` records it), `ahead` cm in front of it, kept 1.2 m over the ground; from the hero until an arrow flies. The arrow's drop reads only from the side |
 | `slowmo <k>` | the game runs k times slower than the video (1: normal, up to 20): a smaller game step per recorded frame. The game's sound is recorded as silence while slowed, so it stays in step with the picture |
 | `track <npc[,npc...]\|off> [head\|body]` | each recorded frame, where each named npc is on the picture: `events.jsonl` kind `track` with `npc`, `x y` (the head, or the trunk with `body`), `hx hy`, `bx by`, `lx ly` (the head, the trunk, the legs: the limb capsules below the knees) in pixels of the frame, and `w h`. Comma-separated names share the recording; each keeps its own track. For labels that follow the npc in a cut |
 | `bodylive on\|off` | opt-in instrumentation of ordinary realtime body control (off by default): `body_live_control` wraps controller events, `body_live_sample` records each tracked npc's HP and target HP per captured frame. Does not acquire a lease or start a policy; requires body arena/replay off |
 | `bodylive wait /absolute/file [timeout ms]` | pause scenario commands until the file exists while the normal bridge keeps running; default timeout 120000 ms. Used to finish NPC preparation before recording |
 | `view clean [margin]\|nopfx\|full` | `clean` clips away everything closer to the camera than the subject minus `margin` (default 100 cm): trees and bushes in between; particles are hidden. The ground right in front of the camera is clipped too (white) |
-| `view hide static movable morph pfx animated` | hide draw types (debugging only: static and movable objects share draw commands, hiding them hides parts of creatures too) |
+| `view hide static movable morph pfx animated` | hide draw types (debugging only: static and movable objects share draw commands, hiding them hides parts of creatures too); `pfx` here hides the particles and sprites of `PfxObjects` too (fires, lamp flames; `view clean` and `nopfx` keep them). A `shot` is written with the next frame drawn: change the view a frame after it (`wait 200`), or the shot shows the change |
+| `vsm sides 1\|2\|3\|0` | the sides a lamp's cube face keeps from the next frame: `1` the side away from the light alone (before 2026-11-10), `2` both sides of the world mesh alone (2026-11-10), `3` both sides of objects too (the default since 2026-11-11, [report](../../reports/render-features/2026-11-11-lamp-objects-two-sided/README.md)), `0` as `[INTERNAL] vsmLampSides` says; A/B shots of one frame. Without mesh shaders (`-ms 0`, `OPENGOTHIC_MS=0`, Metal) always `1` ([report](../../reports/render-features/2026-11-10-lamp-one-sided/README.md)) |
+| `vsm study <bits>` | the shadow test on a mesh's facets from the next frame, for shots of one view ([report](../../reports/render-features/2026-11-11-facet-shards/README.md)); bits add up: `1` the sun reads the facet's plane over one pixel and `2` the lamps keep the facet's plane on facets edge-on to them — both as before 2026-11-11; `4` instead of the light, the facets by the cosine of their plane to the light (red turned away, yellow steeper than 84°, blue-grey the rest; dark where the shadow test answers shadowed); `8` instead of the sun's light, where the plane over a shadow texel's footprint changes the sun's shadow against the plane over a pixel (magenta darker, green lighter; bright by more than a tenth of the sun, dim by more than a fiftieth); `0` the game's. The same bits from the environment — `OPENGOTHIC_VSM_STUDY=<bits>`, read once at startup — hold for a whole run, so `scripts/perf.sh` measures the cost of the test with one binary ([numbers](../../reports/render-features/2026-11-11-facet-shards/README.md#цена-в-кадре)) |
+| `ssao study <bits>` | the screen-space occlusion from the next frame, for shots of one view ([report](../../reports/engine/2026-11-13-ssao-behind-camera/README.md)); bits add up: `1` a sample behind the camera is read off the screen as before 2026-11-13 (at the pixel mirrored through the frame's centre, as an occluder), `2` the frame is the blurred occlusion alone, in the red channel (255 open, the sky 0); `0` the game's. The same bits from the environment — `OPENGOTHIC_SSAO_STUDY=<bits>`, read once at startup — hold for a whole run |
 | `overlay on\|off`, `overlay zoom on\|off`, `overlay bright on\|off` | `bright` stretches dark images (forests, interiors) |
 | `overlay trail [off] [keep ms] [line]` | the arrows' ways in gold (with the zones of `showzones`), no legs, no text; turns the overlay on. A way stays `keep` ms (1500) after its arrow stops; `line`: also the straight line the arrow left along (where the bow pointed), dashed white, as far as the arrow has flown: the drop is the gap between them |
-| `rec <name> [novideo]`, `stop` | record a segment (video and metrics, or metrics only) |
+| `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
+| `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
+| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer resets TAA, SSAO and active probe GI, then 16 fixed steps run before the next command, and visibility appends clusters in a canonical order (sorted on the CPU by sphere and meshlets; one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
+| `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
+| `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
+| `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |
+| `npcday <game minutes> [period 5] [shared] [probe] [trace=id,name]` | Journal every NPC over continuous game time ([NPC day parity](#npc-day-parity)); the scenario waits until the time has passed. Every NPC gets a private script random stream from the last `seed`; `shared` keeps the game's one shared stream. |
 | `ui on\|off` | the interface in the captured frames, as the player sees it: subtitles, the input line, the deal window (off by default: only the world) |
 | `label <text>` | text on the overlay |
 | `ik on\|off`, `ik param <name> <value>`, `ik params` | foot IK and its parameters, without rebuilding; `ik off` on a four-legged creature brings back the old whole-body tilt |
@@ -366,36 +1015,38 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `talk <npc\|nearest> <ms>` | the npc and the hero talk to each other that long (no words): they look at each other |
 | `freeze <npc\|nearest> [off]` | the npc leaves what it does and stands still, like a body the AI server attaches |
 | `ani <npc\|nearest\|player> <name>` | it plays that animation, as `play_ani` does (`T_STAND_2_PEE` goes on to its loop `S_PEE`) |
-| `heropose kneel\|none` | the hero kneels as after a surrender (`player_pose`), or gets up |
+| `heropose kneel\|none\|check` | the hero kneels as after a surrender (`player_pose`), or gets up. After `heropose kneel` and `wait 2500`, `check` exercises actual mouse rotation through a movement tick (keeps kneeling and turns 15 degrees), then `ptt_start` (keeps kneeling), then `Forward` (ends kneeling). Success writes `heropose check passed` and the engine writes `[ai] hero pose kneel ends: key Forward` to `game.log`; the bridge must be enabled, no server connection is needed |
 | `place <dist> <angle>`, `orbit <deg> <ms>` | the hero stands around the watched npc (angle from its facing, 0 in front) or goes around it; not where no ground is found (inside a rock: it would fall through the world) |
+| `place <dist> <angle> <npc\|nearest>` | that npc stands so around the hero (angle from the hero's facing), facing him; the hero stays |
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |
-| `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side` |
+| `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side`, `blow` (the longest switch into a blow of a weapon body, s) |
+| `sample on\|off` | clips with few keys (under 16 a second: the dialog gestures, the stances with a weapon, sitting, dances) on a cubic curve through the keys (`AnimSample`, on by default) or on straight lines between them as before (`OPENGOTHIC_ANIM_SMOOTH=0`) |
 | `flinch on\|off` | the upper body giving way to blows |
 | `hit <npc\|player> <angle> [strength] [height] [twist]` | a blow from that side of it (angle from its facing, 0 in front, as `place`) to the flinch only: no damage, no stumble; strength 0..1 (1), height 0 the hips .. 1 the head (0.6), twist -1..1 about up (0) |
 | `strike <victim\|player> [attacker\|player]` | the attacker's blow lands as the game deals it (the stumble, the damage, the flinch); the victim gets its hit points back below a third |
 | `clear [radius]` | the npcs around the hero (2500 cm) leave the world, not the watched one: rats, wolves that would join in |
 | `aim on\|off` | the upper body turning to the target with a bow, a crossbow, a spell; leaning over an edge (and the focus seeing from there) |
-| `manual on\|off` | the manual aim (`game/archery`, `GAME/manualAim` in Gothic.ini, on by default; `aim.bench` turns it off to test the game's aim): the hero aims a bow by hand, no dice: the arrow hits where it flies (bones), the sway comes from the skill, strength, dexterity |
 | `bowdraw on\|off` | the hand draws the string as far as the bow is drawn by hand (`graphics/mesh/bowdraw`): the bow held as an archer holds it (up in the hand, the arrow on the hand at the bow's middle, the string drawn straight back: the `S_DRAWN` morph), the nock straight along the arrow as far as the arm reaches, the string with it; the hand follows through after the shot; in the reload the upper body holds the aim and the hand goes round the head to the quiver and back to the string. `bow-draw.bench` films it close by. CSV `bd_w bd_draw bd_span bd_travel bd_miss bd_follow bd_fit bd_offset bd_angle` (the string against the arrow), `hd_hand hd_fore hd_arrow` (cm from the head's capsule, < 0 in it), `bd_hold bd_nock` (the reload: held; 0..1 to the quiver, 1..2 to the string), `rh_x rh_y rh_z` (the drawing hand in the body's frame), `bd_held bd_overgrip bd_atmiddle bd_nockgap bd_square bd_cant bd_bowmove bd_bowmiss` (the archer's pose, `docs/manual-aim.md`: held so 0..1, cm the arrow is over the grip and over the bow's middle, cm from the nock to the string, degrees between the arrow and the limbs, degrees the bow leans, cm the bow hand raises the bow and does not reach; `bd_nockgap` -1: no arrow nocked) |
 | `bowgeom` | the bow and the bow hand of the hero in the arrow's frame (x along it from its slot, y up, z to the side), cm: the bow's box, the grip, the string's middle at rest and drawn by `S_READY` and `S_DRAWN`, the bow hand's bones, the head |
 | `animspeed <anim> <k>` | the hero's animation of that name plays k times as fast from its next start (`Pose::setAnimSpeed`: a layer keeps its speed, the next one starts at 1). The manual aim sets `T_BOWRELOAD` from dexterity (`stats` prints it: `reload x`); this overrides it until dexterity changes. The hero's animation events go to bench.log (`anim event <type> <item> <slot>`, `anim morph <anim> <slot>`): at any tempo each once, in the same order |
 | `sfx <name>...` | the files a sound effect plays (its variants `_A1`..), `(missing)` if the game's data has no such file. The hero's sounds go to bench.log (`sound <name>`) |
-| `stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; prints what the manual aim makes of them (sway, draw, hold, arrow speed). `talent`: the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say); with it or `npc` also `stats of <npc>: talent, reload ms, hp, point protection` |
+| `stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [mana <n>] [circle <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; `mana` sets mana and its maximum, `circle` the magic circle (a rune's spell then casts); prints what the manual aim makes of them (sway, draw, hold, arrow speed). Arguments apply left to right. `talent` sets the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say), and the 1H/2H animation level only when that weapon's hit chance is explicit in the same command; with it or `npc` also `stats of <npc>: melee hit chances and animation levels, archery talent, reload ms, hp, point protection` |
 | `seed <n>` | the random numbers start over: the scripts' (the dice, the release cone), the bench's (`volley` jitter), the hero's sway |
 | `npcequip <npc> <item> [count]` | into the npc's inventory, the first put on |
 | `arc <npc> <count> <dist> <step deg>` | that many of the npc stand that far in front of the hero, a step apart round it, facing it: the crew of `fight all` (a new arc replaces it, `clear` takes the gone out) |
 | `wander [radius cm 3000] [walk\|run]`, `wander stats` | the npcs of `arc` are held (as the AI server holds a body) and walk by the waynet to a random waypoint within the radius of the hero, then to another: a crowd for the speed probe of docs/navigation.md; `stats`: how many walk, how many ways they went |
 | `stuck begin <label> [radius cm 3000]`, `stuck end` | measure native routine walks around the hero's position at `begin`, without controlling NPCs; requires `OPENGOTHIC_STUCK_LOG=<absolute JSONL path>`. Default observation radius is 30 m. `end` writes the observation summary to `<path>.summary.json` and closes ongoing episodes as censored (`observation_end`). |
-| `fight <npc\|all> <target\|player>` | it attacks as the game starts a fight (`ZS_ATTACK`, attack reason to kill: archers keep the bow beyond 9 m) |
-| `waitdown <npc\|player> [ms]` | the scenario waits till it is down: `fight over: <npc> down after <ms>`, else `waitdown: timeout` |
+| `fight <npc\|all> <target\|player> [deed]` | it attacks as the game starts a fight (`ZS_ATTACK`, attack reason to kill: archers keep the bow beyond 9 m); `deed` uses the nonlethal native `npc_act fight{deed:true}` start for a standing human NPC target |
+| `waitdown <npc\|player> [ms] [other npc]` | waits till either participant is down, or times out; writes `waitdown_end` with outcome, elapsed time and HP |
 | `npcaim on [second\|arrow] \| off \| sigma <deg\|off> \| lead on\|off` | npc archers aim by hand (game/archerai, `[GAME] npcManualAim`, on by default: `npcaim off` for the dice): as many hits a second as G2's dice (`second`) or as sure an arrow (`arrow`); an error forced, degrees per axis (0: the bow's own spread only); the lead on a runner. Each release logs `arrow aim: at, true <the point meant>, err <right up> deg, sigma, pv <dice %> p <target %> rho, lead, hold, disturb, settled\|waited, by <npc>` |
 | `archer <npc\|all> at <npc\|player> [dice] \| archer off` | the archers stand where they are and shoot at the target every time they can, by hand (npcaim on) or by the dice: no fight AI, no perception's wait, arrows topped up (the aim's calibration) |
 | `still <npc\|player> [off]` | hit, it neither stumbles nor flinches: a target that keeps its pose (as its zones were dumped) |
+| `dodge [<npc>] back\|left\|right\|forward\|none [before <attacker> <ms>]` | the melee dodge (`[GAME] melee_dodge`, `Npc::meleeDodge`) that way relative to its facing, now, or as the attacker's next blow comes within `<ms>` of its contact (`Pose::nextMeleeContact`, 8 s at most); `bench.log`: `melee dodge <npc>: <way>, armour <class>, <move> <animation> [(no <missing>)], cost <n>, window <a>-<b> ms` or why there is none, and `... hit by <npc> at <ms> ms of <move> <a>-<b> ms: did not pass` for a blow, arrow or spell inside the window. `melee-dodge.bench`: the four ways by the dodge key, then by the jump key (the default binding; with the strafe and the turn key), one under the bandit's blow, medium and heavy armour; the same file with `MELEE_DODGE=0` checks the flag off (`tap jump` jumps: `anims` logs `bs=8`) |
 | `aimat <npc\|nearest> [head\|body\|limb\|leg] [raw]`, `aimat <x> <y> <z>`, `aimat ahead [dist] [height]`, `aimat off` | the manual aim aims at the middle of that zone of the npc (every frame) or at a point, instead of the mouse; the hero faces it. Over it by the drop of the arrow at full draw, as an archer holds over (`raw`: right at it). `limb` is the middle of all the limbs, which lies inside the trunk; `leg`: the limb capsules below the knees. A last word `mouse`: as the player does, the game's camera turns so that the center of the screen falls on it, the hero turned with the camera, and the shot goes from the center of the screen (the game's own aim: what the camera sees, the lean by where the hero looks) |
 | `open [dist cm]` | how far it is open around the hero at head height and at the knees every 15 degrees from the facing: where to put a target |
-| `volley <shots> [hold ms] [draw 0..1] [jitter ms]` | shots by hand in a row: press `action`, draw that far (1: full), hold (up to `jitter` longer at random: the sway is a function of time), release, wait for the next arrow; every arrow is in the log (`arrow shot: ..., by <npc>`, `arrow hit <npc>: <zone>, hp a -> b, draw, flew, at, by <npc>` or `arrow missed: ..., by <npc>`) |
-| *(log)* | the dice of npc shots: `dice shot: by <npc> at <target>`, `arrow dice <victim>: dist <cm> path <cm> talent <%> chance <%> roll <0..99>, hit\|miss, by <npc>`; every blow: `damage <victim>: raw <n> zone <z> k <x> prot <n> net <n> hit 0\|1, hp <n>, precise\|dice\|melee\|spell, by <npc>`; every note also in `events.jsonl` (`kind: note`, with the time) |
+| `volley <shots> [hold ms] [draw 0..1] [jitter ms]` | shots by hand in a row: press `action`, draw that far (1: full), hold (up to `jitter` longer at random: the sway is a function of time), release, wait for the next arrow; every arrow is in the log (`arrow shot: ..., by <npc>`, `arrow hit <npc>: <zone>, hp a -> b, draw, flew, at, by <npc>` or `arrow missed: ..., by <npc>`). With an NPC aim target, `aim zone ... hero ... target ...` records the aim point and both root positions in cm at each release. `volley phase` notes add press, draw-limit, release and reload-end positions and animation names; `shot pose` records the real projectile release. |
+| *(log)* | the dice of npc shots: `dice shot: by <npc> at <target>`, `arrow dice <victim>: dist <cm> path <cm> talent <%> chance <%> roll <0..99>, hit\|miss, by <npc>`; every blow: `damage <victim>: raw <n> zone <z> k <x> prot <n> net <n> hit 0\|1, hp <n>, precise\|dice\|melee\|spell, by <npc> stun_bonus <x>`; every note also in `events.jsonl` (`kind: note`, with the time) |
 | `immortal <npc\|nearest> [off]` | arrows hit it, it does not die: counting hits |
 | `zones <npc\|nearest\|player>` | the hit zones of the npc now (`graphics/mesh/hitzones`): each capsule (radius, the guess by the bone's name) and how well they cover its body: of each zone, the points of the body in it / only in another zone / in none, and the body's mesh. The report sums them up (`Hit zones`) |
 | `zones fit on\|off` | the hit zones as thick as the body's mesh (on, the default) or guessed by the bone names and the creature's size; the hero refitted at once, the others when they change their body (`transform`) |
@@ -406,16 +1057,44 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `archery-smoke.bench` | the stage 4 tools: who shot, the dice and the damage lines, `seed` twice the same, `volley` with jitter, an npc's `stats`/`talent`, `arc`, `fight` (by the dice), `waitdown` |
 | `npc-today.bench` | npc archers by the dice as the game had them (`npcaim off`): 4 bandits with bows, addon bandits with crossbows, paladins, at 11 / 13.5 / 16 m set out (the fight AI moves them), the hero immortal and still; the Dice table checks the throw against G2's formula |
 | `npc-mech.bench` | npc archers aiming by hand where they stand (`archer`): the bow's own spread (`npcaim sigma 0`), with G2's dice as aim, by the dice; a fight; one archer filmed close up |
-| `hero-balance.bench` | the hero by hand against G2's dice: four tiers as G2 has them (talent 10/30/60/100 with its bow, strength and dexterity, the trained animations), a farmer at 10, 20 and 30 m, body and head, 30 shots a cell with a random hold and a seed each; the Archery accuracy table gives the hits and shots a minute |
+| `hero-balance.bench` | the hero by hand against G2's dice: four tiers as G2 has them (talent 10/30/60/100 with its bow, strength and dexterity, the trained animations), a farmer at 10, 20 and 30 m, body and head, 30 shots a cell with a random hold and a seed each; the player root is pinned and NPCs within 200 m are cleared before inserting the target; the Archery accuracy table gives the hits and shots a minute |
 | `npc-lead.bench` | npc archers at a runner: the hero runs sideways to and fro 12 m in front of a bandit and a paladin, by hand with the lead, without it, by the dice |
 | `npc-fight.bench` | fights with 4 npc archers of a kind (bandit bow, addon crossbow, paladin): the dice, by hand per second, per arrow; damage a minute and the time to kill from the Damage table; bandits set out at 25 m running in; a real duel at the end |
 | `aim-walk.bench` | steps with the bow drawn (forward and back while aiming by hand): the legs sneak under the aim, the hero moves as they step; on open grass from the side (no overlay), in front, behind, the game's camera with shots on the way, crouched; the hits at 10 m standing and stepping. CSV `m_walk aw_w aw_speed aw_twist aw_chest aw_drop` |
 | `aim-cant.bench` | the bow canted for a quick shot (the mouse wheel, `wheel <delta>`: down cants, up straightens): round the arrow, the top limb toward the drawing hand; from the side, in front, as the target sees it, behind, the game's camera, aimed up and down; the hits upright and canted at 8 and 25 m. CSV `m_cant bd_cant` |
 | `crossbow.bench` | the crossbow by hand: a weak and a strong shooter (`stats ... reload x`: the reload by strength), lowered loaded and raised, lowered right after a shot; the bolt lies in the left hand, the aim lines it up (`bowgeom` prints where it lies) |
 | `humiliate-look.bench` | the humiliation after a surrender staged without the AI server: the hero kneels, Lobart 100 cm in front plays `T_STAND_2_PEE` and the aimed stream `PFX_GAI_PEE` arcs to the hero's chest; stills round them and a 2 s video from the side. Judge it at `TEMPEST_WINDOW_SIZE=1600x1000`: at 800x600 the stream is a few pixels |
+| `gi-clips.bench` | reflected light (`-gi 0/1/2`): shots and clips of the places where it shows, for step 2 of the ray-tracing revisit — the harbour house by candle and torch at night, the plank hut of the poor quarter at noon and at night (and the clip `hut-response`, 22:00 → 12:00), Onar's stable and Lobart's house at noon, a harbour street at midnight, the forest at noon, the bandit cave at noon and at night, the market at noon. Every shot `X` is taken twice: as the player sees it and `X-bare` without the hero, the npc and the particles (`view hide animated morph pfx`; the ray scene and so the reference lack them). The views `leak-*` test light through thin plank walls (thinner than a probe cell of lod 0): `leak-lamp-night` (a lamp inside hut 1 behind its north wall, the camera outside), `leak-fire-night` (the fireplace of hut 3 behind its north wall, the camera in the alley), `leak-sun-day` (the west wall of hut 6 in the noon sun, the camera inside). `uv run scripts/gi_compare.py <root> --variants gi,bare <shots>` compares them with `gi-reference.bench` cell by cell ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md#2б-2-сделано)) |
+| `gi-reference.bench` | the path-traced reference of the shots of `gi-clips.bench` (the same views, leaks included; 12 s to accumulate each; `OPENGOTHIC_RT=1 OPENGOTHIC_GI=0`): change both together. Its shadow rays skip the back faces of triangles (`rayQueryProceedShadow`): a one-sided surface that faces a lamp lets the lamp's light through in the reference too ([report](../../reports/render-features/2026-11-10-lamp-one-sided/README.md)); alpha-tested triangles skip their back faces in `rayQueryProceedAlphaTest` besides, and the reflected light lights places a lamp does not reach: judge lamp shadows against direct light alone ([report](../../reports/render-features/2026-11-11-lamp-objects-two-sided/README.md)) |
+| `gi-turn.bench` | reflected light (`-gi 1`) through a turn of the camera: the plank hut of `gi-clips` at noon (view `hut-day-2`), clip `hut-turn` — the camera stands 1 s, turns 180° round the hero at once (`cam cut`, `cam world` at +180°), stands 3 s, turns back, stands 2 s. `uv run scripts/gi_compare.py --turn <out>/hut-turn.mp4` prints the largest and the median cell change between the frame before the turn and the first frame after the return (8×4 cells without the two middle columns). Run it with `OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md)) |
+| `landscape-rock-material.bench` | the rock material of the landscape pilot (step В3): the views of the layers probe — the wall and the boulder by the road south of Akil's farm (`road-1`…`road-4` at noon, `eve-1`, `eve-3` at 17:30), a ledge from afar (`ledge`, a held camera) and the grass band at the top of its lower wall from 5 m (`ledge-near`), the rock arch at the bandit camp (`arch`), the clip `walk-rock` along the wall; the clips of living foliage: `ledge-wind` (5 m, timed to the world's own gust), `ledge-steady` (14 m, between gusts), `walk-ledge` (a walk west under the band, not timed), `eve-backlit` at 20:15 with a still, timed to a gust — pair a run with `OPENGOTHIC_FOLIAGE=0` and one without ([note](../../reports/engine/2026-11-14-living-foliage/README.md#клипы)). Run it with `OPENGOTHIC_CONTENT=<set>` and with `OPENGOTHIC_CONTENT=` for the original, `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen`; 10 s before the stills lets reflected light settle when it is on ([note](../../reports/content/2026-11-landscape-pilot/b3-rock-material.md)) |
+| `landscape-meadow.bench` | the meadow east of the tavern under the grass system (step В5): the four `meadow-1`…`meadow-4` views of `landscape-pilot.bench`, the meadow from 12 m above and 40 m away where the ring's end could show (`far`), the ground at the hero's feet (`feet`), a stone in the grass from 70 cm (`stone`), the game's camera behind the hero standing still in three places of the meadow (`game-turn`, `game-bare`, `game-short`), the border with the road across the track and along it (`game-verge-across`, `game-verge-along`), a spot of bare earth from 80 cm (`bare-low`), the low sun behind the grass (`eve`, 19:30) and the night (`night-2`); the clips `meadow-walk` (the cart track, the game's camera), `meadow-verge` (back along the track's edge, a low camera; each walk ends with `waitarrive`), `meadow-turn` (a full circle from behind the hero), `meadow-gust` (22 s, timed to the world's own gust at the camera's place; the front crosses the frame from right to left) and `meadow-eve`. Run it twice in the same window, with `OPENGOTHIC_GRASS=0` and without, and put the halves side by side; `OPENGOTHIC_GRASS=ground` leaves the ground's look without the blades. Needs `OPENGOTHIC_CONTENT=<a set whose ground record has "grass">`, `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen`. Every view waits for the ring with `grass wait`, so the shots of two runs are not at the same game time: compare frames bit by bit only with a scenario without it. `perf-meadow.bench` is its place `meadow` of `scripts/perf.sh` ([note](../../reports/engine/2026-11-14-grass-system/README.md#что-вышло)); its `view-5` stands on the cart track, and the samples `view-1-noroad`, `view-3-noroad`, `view-5-noroad` repeat those views with the road as its `verge` alone (`grass parts 16384`), so the track's own material is read by difference within one run. |
+| `tree-wind-probe.bench` | the tree's wind on a probe: six rough spruces of 12 m on the meadow east of the tavern, built by `scripts/content/tree_wind_probe.py` (`OPENGOTHIC_CONTENT=<that set>`). Stills only, each timed with `foliage wait-gust`: `far` from 26 m at the peak of a gust and `far-lull` in the calm after it, `shade` from the east back at the spruces for their shadows on the slope, `near` from 5 m up into the lower tiers. Run it twice, with `OPENGOTHIC_FOLIAGE=0` and without, and put the halves side by side: the tops lean down the wind (+Z) and the shadows with them. `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen`; the cameras stand by `SPOTS` of the script ([note](../../reports/engine/2026-11-16-modern-trees/tree-wind.md#кадры-пробы)) |
+| `fir-probe.bench` | the modern spruce A on a probe: five spruces of 14 to 22 m along the north edge of the meadow east of the tavern, beside the original's firs, built by `scripts/content/fir_set.py probe` (`OPENGOTHIC_CONTENT=<that set>`). Stills only, at noon, each in the calm after a gust (`foliage wait-lull`): `row` and `far` from the meadow's south-west corner (`far` is 30 m from the 18 m spruce), `near` 5 m from its lower boughs, `close` 2 m from the skirt up into the lower tiers. The noon sun stands in the west, so the cameras look north-east; they stand by `PROBE` of the script. `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([note](../../reports/content/2026-11-trees/fir/README.md#модель)) |
+| `fir-wind.bench` | the wind on the modern spruce A, on the probe of `fir-probe.bench` (`OPENGOTHIC_CONTENT=<that set>`), at noon. Clips, not stills: three of 20 s, each from 3 s before the peak of a gust (`foliage wait-gust 3000 0`) through the gust and the calm after it: `wind-far` 30 m from the 18 m spruce, `wind-near` 5 m from its lower boughs, `wind-bough` 3 m from a bough in the sun. The world's wind blows along +Z, away from the cameras and to their left, so the windward side of the spruce is on the right. A motion is judged on the clip, two runs side by side. `TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-16-modern-trees/tree-wind.md#клипы-было-и-стало)) |
+| `fir-wind-fade.bench` | the fade of a tree's wind with the distance, on the modern spruce A of the probe of `fir-probe.bench` (`OPENGOTHIC_CONTENT=<that set>`), at noon. Six standing clips of 20 s on one line of sight, each from 3 s before the peak of a gust: `fade-15`, `fade-26`, `fade-45`, `fade-100`, `fade-140`, `fade-190` — the name is the camera's distance to the spruce's root in metres. At 1920x1080 the needles of this spruce fade from 20 to 32 m, its boughs from 76 to 127 m, its trunk from 110 to 175 m. Run it twice, with `OPENGOTHIC_TREE_WIND_FADE=0` and without: the gusts are the same tick for tick, so the clips go side by side. `TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-16-modern-trees/tree-wind.md#клипы-выключено-и-включено)) |
+| `fir-lod.bench` | the levels of detail of the modern spruce A (`fir_set.py probe <set> --levels`, `OPENGOTHIC_CONTENT=<that set>`), at noon: one 48 s clip `lod-fly`. The camera flies from 25 to about 400 m from the centre of spruce A. At 1920x1080 the spruce crosses the 400, 200, 100 and 50 px thresholds and ends below 40 px. Run once with `OPENGOTHIC_MESH_LEVELS=1 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen`. [Clip and calculated transition frames](../../reports/engine/2026-11-16-modern-trees/tree-lod.md#клип-шага-2а) |
+| `fir-eye-threshold.bench` | one 1920×1080 noon recording on `fir_set.py eye-threshold <set>` (`OPENGOTHIC_CONTENT=<that set>`). The camera backs away from the four spruces (control, k=4, k=8, k=16 from left to right) to their impostors and returns along the same line. Use `WORLD=NEWWORLD.ZEN BENCH_HOST=ryzen RYZEN_BENCH_WINDOW=1 TEMPEST_WINDOW_SIZE=1920x1080 OPENGOTHIC_MESH_LEVELS=1 OPENGOTHIC_IMPOSTORS=1`. Write the frame CSV with `python3 scripts/content/fir_eye_frames.py <set> <bench output> <csv>`. [Setup and measurements](../../reports/engine/2026-11-16-modern-trees/tree-bough-lod.md#проба-порога-глаза) |
+| `fir-bough-lod.bench` | one 1920×1080 noon recording on `trees-fir/bough-x4/content`, with a hierarchy spruce on the left and the current levels on the right. The camera repeats the `fir-eye-threshold` round trip to their impostors. Run the [command in the scenario](fir-bough-lod.bench) once on Ryzen. The output includes `fir-bough-lod.mp4` and `frameprofile.csv` with the hierarchy spruce's screen height and foliage submission counts. A row of hierarchies from `fir_set.py bough --labels` (or `--k 4 8 16`) takes the same places; write its per-frame heights, impostor joint stages and counters with `python3 scripts/content/fir_bough_frames.py <set> <bench output> <csv> --visuals <names left to right>` ([staggered merges](../../reports/engine/2026-11-16-modern-trees/tree-bough-lod.md#разнесённые-слияния)). `scripts/content/fir_bough_pops.py` with the same arguments finds the one-frame jumps of each spruce ([smooth wood and shadow](../../reports/engine/2026-11-16-modern-trees/tree-bough-lod.md#плавная-смена-древесины-и-тени)). |
+| `fir-bough-near.bench` | one 1920×1080 noon recording of the first two spruces of a `fir_set.py bough --labels` row (`trees-fir/bough-early/content`: the S122 control and variant Б). The camera backs away and returns on the view line of `fir-bough-lod.bench`: 905 → 540 → 905 px of height for the second spruce, 3.7 to 3.9 % of height a second. Above 810 px the frame cuts the tips of the crowns; the third spruce is cut by the right edge. Run the [command in the scenario](fir-bough-near.bench) once on Ryzen; `fir_bough_frames.py` and `fir_bough_pops.py` take `--name fir-bough-near` ([near approach of Б](../../reports/engine/2026-11-16-modern-trees/tree-bough-lod.md#приёмка-б-ближний-подлёт-и-цена-в-лесу)). |
+| `fir-level-pop.bench` | the 400 px level switch of the `bough-stagger` row, out and back twice in one game: with the usual shadow scale, then with `shadow levels full`. Two 1920×1080 segments, `level-pop-normal` and `level-pop-full`; run the [command in the scenario](fir-level-pop.bench) once on Ryzen ([cause of the jump](../../reports/engine/2026-11-16-modern-trees/tree-bough-lod.md#причина)). |
+| `fir-impostor.bench` | spruce A with a baked impostor, at noon. `lone-100px` and `lone-50px` capture the mesh. `lone-100px-on` and `lone-50px-on` force the impostor from the same cameras. Those four stills include object ID masks. `forest-fly` retreats from the edge of the forest to about 400 m with normal level selection. `forest-300-off` and `forest-300-on` capture stills and count frame triangles at the same 300 m view. Run at 1920×1080 with `OPENGOTHIC_CONTENT` pointing to the baked set and `OPENGOTHIC_FRAME_PROFILE` pointing inside the output directory. [Setup and results](../../reports/engine/2026-11-16-modern-trees/tree-impostor.md) |
+| `crown-light.bench` | the light of a tree's crown away from the noon sun, on the probe of `fir-probe.bench` (set `fir-probe-4`): `dusk-far`, `dusk-near`, `dusk-close` at 21:15 with that scenario's cameras (the sun 2 degrees high behind the spruces, the sky lights the side the cameras see), then at night by a fire `lamp-far`, `lamp-near` (the lit boughs and the depth) and `lamp-through` (the boughs between the eye and the flame). The fire is one more file of the item layer: copy the set and put `reports/engine/2026-11-16-modern-trees/crown-light-lamp.json` into its `worlds/NEWWORLD/vobs.d/` (`OPENGOTHIC_CONTENT=<that copy>`). Pair a run with `OPENGOTHIC_CROWN_LIGHT=0`; the noon pair is `fir-probe.bench` run the same way, and `OPENGOTHIC_CROWN_LIGHT=mask` at noon paints the crown by its openness (the mask is wrong at dusk and at night). `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-16-modern-trees/crown-light.md#как-повторить)) |
+| `perf-trees.bench` | the cost of a forest of the modern spruce A, place `trees` of `scripts/perf.sh`: sets of `scripts/content/fir_set.py forest` (64, 256 or 1 024 spruces 6.6 m apart in the basin of Akil's farm, full or thinned; `--count 0` is the control), `PERF_ENV='OPENGOTHIC_CONTENT=<path on the host> OPENGOTHIC_GPU_PASSES=1'`. Five samples at noon: `view-1` inside the block of 64, `view-2` 30 m from the edge (from the rock hill), `view-3` 100 m, `view-4` 300 m (70 m over the ground), `view-5` the hero runs 9 s through the forest; the views look over the basin's obstacles. All variants in one quiet job: `reports/engine/2026-11-16-modern-trees/tree-cost/run.sh` ([note](../../reports/engine/2026-11-16-modern-trees/tree-cost.md)) |
+| `tree-cost.bench` | spruce A alone on the top of the rock hill west of the forest of `perf-trees.bench` (`LONE` of `fir_set.py`), from the west at the height of the middle of its crown, from 24, 48, 97, 194 and 388 m: 800 to 50 px high at 2560x1440; each still in the calm after a gust. Run once per set of `fir_set.py forest` (the lone spruce is thinned with its set) and put the halves side by side. `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-16-modern-trees/tree-cost.md#полная-или-упрощённая-силуэт)) |
+| `tree-shadow-flicker.bench` | the sun's shadow over a forest of the modern spruce: view `near-30` of `perf-trees.bench` at noon, a still and a 25 s clip, then a still of view `inside`. Run with a set of `scripts/content/fir_set.py forest` (`--count 0` is the control) and `OPENGOTHIC_VSM_STATS=1` (the meshlet-page pairs and the `spilled` ones every 5 s); `OPENGOTHIC_VSM_PAIRS=<n>` sets another cap of the pairs (`4194304`: the demand without the cap). `reports/engine/2026-11-16-modern-trees/shadow_flicker.py <out>/near-30.mp4 [--ref <clip>]` counts the frames whose slope under the camera falls more than a third below the reference. `TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-16-modern-trees/shadow-flicker.md)) |
+| `landscape-meadow-parts.bench` | the look of the meadow's grass by measure, in still air (`cloth wind calm`), from the camera spots of `landscape-meadow.bench`: the meadow's ground painted (`mask-<view>`, `grass parts 193`) — the area whose tone `scripts/grass_look.py tone` reads; the view `meadow-2` and the meadow from afar with the parts of the look switched off one at a time (`near-<mask>`, `far-<mask>`: 0 is the look, 63 all six off); `calm`, 3 s of the view `meadow-2` in still air, for the frame-to-frame difference (`grass_look.py still`); from the game's camera in two patches, the blades red over the ground in bands of the distance and the bands alone (`cover-<place>-paint`, `-bands`, for `grass_look.py cover`); the frames without blades (`near-ground`, `far-ground`, `cover-<place>-ground`, for `grass_look.py blades`); the view `meadow-3` plain and with the meadow's own ground painted by its cover (`road-0`, `road-cover`, `grass parts 256`: the road past the verge's strip). `landscape-meadow-variety.bench` is its companion for `grass_look.py variety`: five views, each with the ground painted (`mask-<view>`), its squares of 0.5 m and 5 m painted (`cells-<view>`, `grass parts 8385`) and the frame (`<view>-0`), on three of them also with the ground's own layers shown as a painted ground (`<view>-4096`); `OPENGOTHIC_GRASS_FINE=0` gives the short sward its broad blades back ([note](../../reports/engine/2026-11-14-meadow-ground/README.md#что-отняло-жизнь)); `OPENGOTHIC_GRASS_BROAD=<percent>` (0..100) forces the share of the broad blades that stand among the fine ones ([the probe](../../reports/engine/2026-11-14-meadow-ground/README.md#проба)). `OPENGOTHIC_GRASS_PATCH=22000` makes the whole meadow short grass, `36000` the main one. Needs `OPENGOTHIC_CONTENT=<a set whose ground record has "grass">`, `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-14-grass-system/README.md#круг-правки-вида)) |
+| `landscape-meadow-road.bench` | the cart track through the meadow under its own material (the `track` field, step В3), in still air at noon: standing on the track with the game's camera along it (`track-along`), 70 cm over a rut (`track-low`), the views of `landscape-meadow.bench` where the road's tone is measured (`game-verge-across`, `meadow-2`, `far`), the T-cross, its end piece and another T-cross from 2.5 m above (`track-cross`, `track-end`, `track-cross-2`), the footpath `PATH_05` up to its turn into the track (`track-path05`), the same road texture outside the meadow (`track-rock`, `track-sweet`), and the low sun of 19:30 behind the camera, against it and on a rut (`track-along-eve`, `track-down-eve`, `track-low-eve`). `cover-<view>` is the ground painted by its cover (`grass parts 256`: the road's crust blue, its loose earth cyan, the verge's strip magenta to orange, the meadow's sward green and earth red) — the mask the road's tone is read by; `<view>-16384` on the five measured views is the road as with its `verge` alone. Run it for «было» and «стало» with the same scenario, `OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen`; `reports/engine/2026-11-15-meadow-road/road_look.py` counts the tables `tone`, `colour`, `bands`, `guards`, `away`, `same` ([note](../../reports/engine/2026-11-15-meadow-road/README.md#что-вышло)) |
+| `own-glb-probe.bench` | how the engine draws a card of an own GLB with an alpha mask: panels of 40 cm over the meadow of the `ledge` view of `landscape-rock-material.bench`, shot from the front and from behind at noon (`front`, `back`) and from the front at 17:30 (`front-eve`). The upper row differs only by its vertex normals, the lower one by its winding, the two flags by the layer's `rotation`. A second group over the meadow east of the tavern shows the sides of a material (`"two_sided"` of its record): a row of cards over a grey plate — one copy, a pair, the two-sided `same` and `flip`, wound to the noon sun and away from it — shot from the sun's side (`sides-sun`), from the lee side (`sides-lee`) and from the lee side low toward the sun (`sides-through`). The set is built by `scripts/content/own_glb_probe.py`; run it with `OPENGOTHIC_CONTENT=<that set>`, `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([note](../../reports/engine/2026-11-13-grass/README.md#4-что-умеет-движок), [two-sided materials](../../reports/engine/2026-11-16-modern-trees/two-sided.md#проба-сторон)) |
+| `gi-accept.bench` | the acceptance clips of reflected light (step 2 of the ray-tracing revisit): the user judges «без GI \| GI» by eye, so the scenario records clips only, no shots. The places and camera set-ups of `gi-clips.bench`; each clip is a slow turn of the held camera, 1 s still, 9 s turn (`cloth camera-turn`), 1 s still, after a turn of 1 ms that sets the first view and 10 s for the probes to light: `interior-night` (the harbour house at 22:00, cabinet → candle and lit wall → shelves in the dark corner), `hut-day` (the plank hut at noon, sunlit wall → dark corner), `harbour-night` (the street with lamp posts at midnight), `forest-day` (rock → sunlit valley → slope in the shade), `cave-day` and `cave-night` (the bandit cave: the mouth → the fire). `harbour-night-walk` follows the hero 5 m behind down the same street (`route 120` PATH_04 → PATH_06, 9 s; the hero and the npcs hidden, he would slide without steps; `route` lifts him 50 cm to the waypoint on its first step, so the camera jumps at 1.0 s and the side-by-side starts at frame 31): probes are placed by the distance to the camera, so light popping in shows there. The fixed step makes both runs frame for frame alike. The clips of the eye's adaptation under GI ([step 2](../../reports/render-features/2026-11-08-rt-revisit/step-2-shade.md#привыкание-глаза-сделано-12112026)): `forest-walk` (the hero runs from the open slope at `NW_FOREST_PATH_67` under the crowns to `PATH_66` and back, the camera following), `cave-walk` (from the path outside the bandit cave to the fire and out), `cave-mouth-turn` and `forest-turn` (360° in 12 s at the cave's mouth and under the crowns), `market-day` (the open sun, the control). Run it with `OPENGOTHIC_RT=0`, with `OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 OPENGOTHIC_EYE=0` and with `OPENGOTHIC_RT=1 OPENGOTHIC_GI=1` (the eye on), `TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen`, and put the thirds side by side («без GI \| GI \| GI + привыкание») |
+| `gi-decay.bench` | how the light of `-gi 1` dies out in the chains of probes: the plank hut and the bandit cave of `gi-clips` (views `hut-night-1`, `cave-night-1`), clips `hut-decay` and `cave-decay` — 1 s of noon, then `set time 22 0` and 14 s of night, the camera still. A jump of the time of day relights the probes from nothing; `OPENGOTHIC_GI_JUMP_RESET=0` turns that off, and the clip shows the day's light dying out as after a fire put out. `uv run scripts/gi_compare.py --decay <out>/hut-decay.mp4` prints how many times brighter than its end (night) the brightest and the median cell are 0.5, 1 and 2 s after the change, and when every cell is within 10% of it; cells that flicker at the end by more than 10% (flames) are left out, each cell is the median of 15 frames (sparks). Run it with `OPENGOTHIC_GI_JUMP_RESET=0 OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen` ([step 2b](../../reports/render-features/2026-11-08-rt-revisit/step-2b.md#2б-1-пересмотр)) |
+| `facet-shards.bench` | the shadow test on a dense mesh's facets ([report](../../reports/render-features/2026-11-11-facet-shards/README.md)): the hero's own head (`OPENGOTHIC_CONTENT` with it) close to the camera under the noon sun of the market and the candle of the harbour house, then the market and the harbour at a low sun and the lamps at night; every view as stills of one camera — `-old` (`vsm study 1` or `2`), `-new`, `-old2`, `-class`, for the sun `-diff`. Run with `OPENGOTHIC_LIGHT_FREEZE=1`; `reports/render-features/2026-11-11-facet-shards/tools/pairs.py <out>` counts the changed pixels against the noise of the two old shots |
+| `ssao-behind-camera.bench` | SSAO samples behind the camera ([report](../../reports/engine/2026-11-13-ssao-behind-camera/README.md)): the hero's face in its own shade under the noon sun of the market, close (38 cm), three quarters and at a talk's distance, then the views the fix must not change — the game's camera, the market from afar and near the ground, the harbour house inside; every view as stills of one camera — `-old` (`ssao study 1`), `-new`, `-old2`, and the occlusion alone `-ao-old`, `-ao-new`, `-ao-old2`. With or without `OPENGOTHIC_CONTENT` (our head or the original one); `reports/engine/2026-11-13-ssao-behind-camera/tools/pairs.py <out> [<sheets>]` counts the changed pixels against the noise of the two old shots |
 | `give <item> [count]`, `equip <item>` | into the hero's inventory; `equip` puts it on whatever the strength (`ItRw_Bow_L_01`, `ItRw_Arrow`, `ItRw_Crossbow_L_01`, `ItRw_Bolt`, `ItRu_FireBolt`) |
 | `put <npc\|nearest> <dist> <angle>` | the npc stands there on the ground from the hero (angle from the hero's facing), frozen |
-| `pin <npc\|nearest> <dist> <angle> <height>`, `pin off` | the npc hangs there from the hero, `height` above the hero's feet, every frame: a target above or below |
+| `item put <instance> <dist> <angle> [height]` | the item lies in the world by the hero as a thrown one (physics on): `dist` cm away, `angle` from the hero's facing (0 in front, as `put`), dropped from `height` cm (30) over the ground; the log names its effect ([item effects](../../reports/engine/2026-11-19-item-effects/README.md#как-работает-сейчас)) |
+| `itemfx` | `itemfx alive <n> near <m>` in `bench.log`: the live effects of items (`graphics/itemview`) and how many of them are nearer the camera than the particles' range (`PfxObjects::viewRage`, 40 m); `(itemEffects 0)` when switched off |
+| `pin <npc\|nearest\|player> <dist> <angle> <height>`, `pin off` | hold the root at the computed point every frame; NPCs face the hero, while `pin player 0 0 0` keeps normal player input, animation and aiming |
 | `anims` | what the watched one (or the hero) plays, its body state, weapon and target |
 | `cansee <npc>` | can the hero see it: from the head, leaning over an edge (the aim's lean); what the rays hit; the bow's focus range |
 | `sight <npc\|off> [fan cm]` | each recorded frame and `shot`, the hero's lines of sight to it on the picture: `events.jsonl` kind `sight` (`shot` names the still), points `[x, y]` in pixels of the frame (null behind the camera): `h0` the head when `sight` was given (upright) and `c0` where its ray to the npc's centre hits (null: nothing; `c0d` cm of `d0`); `e` the head leaned over an edge as the focus puts it (`room`), `ec` where its ray hits; `h` the head now, `c` where its ray hits (`cd` of `d`, `down` degrees); `t` the npc's centre; the bow's focus fan from `h0`: `f` level, `g` at `FOCUS_RANGED`'s `elevdo` down (`elev`), `fan` cm long; `seen`, `over`: the focus sees it from the head, over the edge. For lines drawn over a cut |
@@ -425,6 +1104,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `perches [radius 3000] [count 15] [min drop 250] [max drop 1000]` | like `walls` on any top around the hero, waypoint or not (a roof, a rock, a wall's top): a grid of the highest surfaces you can stand on (slope up to 35 degrees, 1.9 m free above) at an edge with the foot 1 m out hidden from the head, seen leaning over, the sky above it; one a 2 m cell, the nearest first, as `goto pos <x y z>`, `face <yaw>` |
 | `npcgo <npc\|nearest> <waypoint> [walk\|run]` | the npc goes there by the AI path, running by default (`freeze` it first so its routine does not take it back) |
 | `lookat <npc\|nearest> <npc\|player\|off>` | as the script `AI_LookAtNpc` / `AI_StopLookAt` |
+| `gazeat <npc\|nearest\|player> <yaw> <pitch> <ms> [dist]` | it looks at a point that many degrees aside and up from its facing, `dist` cm (100) from its eyes (`mapEyes`), for `ms`, before anything else it would look at |
 | `nearby [radius]` | the npcs around the hero to `bench.log`: distance, where the hero is from their facing, where they look and why |
 | `pair <a> <b>` | how two npcs stand to each other, to `bench.log`: the distance; for each, where it faces (`at_other`, 0: right at the other), where it looks and why (`look`, `at`), its script state and for how long (`state`, `t` ms), body state, whether it uses a mob, how much of its AI runs (`ai`: `normal`, `far` beyond 30 m from the hero, `far2` beyond 60 m) |
 | `where <npc> [waypoint]` | where it is, how far from the hero (and from the waypoint), its state, whether its queue is busy (walking there), how much of its AI runs |
@@ -435,11 +1115,14 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `dialog <npc\|nearest>` | the hero talks to it, as with the action key: the dialog window opens |
 | `choose <n>` | runs the n-th choice (from 1) of the dialog with the watched npc, as if the player picked it |
 | `faceanim <npc\|nearest\|player> <anim> [ms] [intensity]` | a face animation of the head (`S_ANGRY`, `S_FRIENDLY`, `T_HURT`...) |
+| `gestures pick [<n> ...]`, `gestures head on\|off` | `pick 6 3`: the next dialog gestures are `T_DIALOGGESTURE_06`, `03`, `06`... instead of ones at random (whatever the mood and the line left), `pick` alone: at random again; `head off`: the head goes with the gesture's animation and a gesture whose voice is over is cut in 0.3 s, as before (`OPENGOTHIC_GESTURE_HEAD=0`) |
+| `facecue <npc\|nearest\|player> <gesture> [L\|R]` | a facial gesture of its own head (`flash`, `doubt`, `smirk`...: the `cues` of its face profile); a one-sided one without a side goes on a side by the seed; columns `cue_*` show the gestures |
+| `faceleak <npc\|nearest\|player> <felt> <upper\|lower>` | a leak of the felt emotion (`friendly`, `angry`, `hostile`, `afraid`, `pain`) on half of its own head's face (the `leaks` of its face profile) now, as a line that hides a lie: with the liar's two blinks in the 2 s after it; column `cue_leak` shows its strongest weight |
 | `lips on\|off`, `lips param <name> <value>`, `lips params` | lip sync (off: the old talk loop) and its parameters |
-| `gestures on\|off`, `gestures param <name> <value>`, `gestures params` | the hands while one speaks (`TalkGestures`; off: a random gesture when a line starts) and its parameters: `Tail`, `Wait`, `MinLeft`, `Slack` (ms), `Long`, `RestScale`; the head: `Nod` (degrees), `NodHz`, `Stress`, `NodGap` (ms), `SwayYaw`, `SwayRoll` (degrees), `SwayTime`, `SwayLag` (ms); listening and thinking: `ListenSway`, `ListenNod` (degrees), `ListenHz`, `ListenGap` (ms), `ListenProb`, `DoubleNod`, `ThinkDelay` (ms), `ThinkYaw`, `ThinkPitch`, `ThinkTilt` (degrees), `AsideTime` (ms) |
+| `gestures on\|off`, `gestures param <name> <value>`, `gestures params` | the hands while one speaks (`TalkGestures`; off: a random gesture when a line starts) and its parameters: `Tail`, `Wait`, `MinLeft`, `Slack` (ms), `Long`, `RestScale`; the head: `Nod` (degrees; 0 by default: the speaker does not nod, the user's choice of 2026-11-13), `NodWeak` (of `Nod` on a just stressed syllable), `Stress`, `StressTop` (dB over the syllables before), `NodGap`, `NodDown`, `LiveDown`, `NodBack` (ms), `SwayYaw`, `SwayRoll` (degrees), `SwayTime`, `SwayLag` (ms); listening and thinking: `ListenSway`, `ListenNod` (degrees), `ListenDown`, `ListenBack`, `ListenGap` (ms), `ListenProb`, `DoubleNod`, `ThinkDelay` (ms), `ThinkYaw`, `ThinkPitch`, `ThinkTilt` (degrees), `AsideTime` (ms) |
 | `blink on\|off`, `blink param <name> <value>`, `blink params` | blinking (`EyeBlink`; off: nobody blinks) and its parameters: `MinGap`, `RestMean`, `SpeakMean`, `MaxGap`, `Hold`, `PauseMs`, `SoonMs`, `DoubleGap` (ms), `PauseProb`, `ShiftProb`, `DoubleProb` |
-| `hear <npc\|nearest> <ms> [every ms]` | the hero speaks to it that long, his words come every so often (600 ms), as the bridge passes the partial transcripts of his voice: it listens, nods now and then |
-| `think <npc\|nearest> <ms>` | it thinks of an answer that long, as on the AI server's `thinking` status |
+| `hear <npc\|nearest\|player> <ms> [every ms]` | the hero speaks to it that long, his words come every so often (600 ms), as the bridge passes the partial transcripts of his voice: it listens, nods now and then; `player`: the hero listens to the nearest npc |
+| `think <npc\|nearest\|player> <ms>` | it thinks of an answer that long, as on the AI server's `thinking` status; `player`: the hero, of an answer to the nearest npc |
 | `ani <npc\|nearest\|player> <anim>` | it plays an animation of its model script (`T_YES`, `T_DIALOGGESTURE_03`) |
 | `foreach slope <min deg> <max deg> <count>` ... `end` | the body runs on that many slopes all over the world, after a teleport; `$I`, `$NAME`, `$ANGLE` are replaced |
 | `foreach stairs <count>`, `foreach wp <name part> <count>` | the same for stairs and named waypoints |
@@ -448,7 +1131,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `ledges [min drop] [max drop] [count] [steep]` | waypoints at an edge with open ground that much lower 1.5..14 m away, seen from there (a target below): the yaw to `face`, the distance, the drop, the angle down; nearest first or the steepest |
 | `say <text>`, `quit` | |
 
-Talking, for shorts (`shorts/`; needs the AI server, see `shorts/README.md`):
+Talking (needs the AI server; the video tool lives in the private `kaifaty/gothic-shorts` repository):
 
 | Command | |
 |---|---|
@@ -457,8 +1140,8 @@ Talking, for shorts (`shorts/`; needs the AI server, see `shorts/README.md`):
 | `waitai <key> <stage> [timeout ms]` | until a thing of the AI bridge has got that far: `waitai necro fallen` (the necromancer's answer: cast, fallen, raise, risen, card; `ai necro <npc> [spell] [picture]` starts it without the server) |
 | `near <npc> [dist] [deg]`, `approach <npc>`, `face npc <npc>` | the hero in front of an npc (teleport), walks up to it, turns to it |
 | `cam shoulder\|face\|two <npc> [dist] [height] [side\|deg]`, `cam cut`, `cam smooth <k>` | shots of the hero and an npc; they glide from one to the next unless `cut`. `cam face` with an npc's name is this shot, with a number the close-up above. `cam two arena`: the two participants of a body arena, a yellow dot over the primary (`bodyreplay`, `scripts/body_replay_film.py`) |
-| `caption <text>`, `mark <text>` | events for the cut of a short |
-| `ai <...>` | the AI bridge's console: `ai attach <npc>`, `ai ptt start [<wav>]\|stop\|cancel` |
+| `caption <text>`, `mark <text>` | events for the cut of a short; `mark stream_warm` and `mark stream_warm_5s` also record load-probe memory after landscape warmup and five real seconds later |
+| `ai <...>` | the AI bridge's console: `ai attach <npc>`, `ai skip <npc>` (its important dialogs count as told: it does not stop the hero), `ai ptt start [<wav>]\|stop\|cancel` |
 
 Every talking command writes `events.jsonl` (what was said when, in frames of the recording). A line of the
 AI is `npc line <npc>: <text>` in `bench.log`, `npc line <npc> -> <to>: <text>` when it is said to another npc
@@ -468,21 +1151,371 @@ AI is `npc line <npc>: <text>` in `bench.log`, `npc line <npc> -> <to>: <text>` 
 by its distance to the hero: such a line is never heard), and an `output` event.
 
 Environment of `scripts/bench.sh`: `GOTHIC_DIR`, `SAVE` (default: `save_slot_1.sav` of the main
-checkout), `NO_BUILD=1`, `TIMEOUT` (seconds, default 300), `KEEP=1`, `OPENGOTHIC_TEXTURES` (sharper
+checkout), `WORLD` (a fresh game in that world instead), `GOTHIC_INTRO=1` (the game starts with
+`-nointro` by default, as in e2e: no new-game intro and no script videos; Marvin `playvideo` still
+plays), `NO_BUILD=1`, `TIMEOUT` (seconds, default 300), `KEEP=1`, `OPENGOTHIC_TEXTURES` (sharper
 textures; by default those of `scripts/hd-textures.sh` when they have been made, as the launcher does;
 empty: the game's own), `SOUND` and `MUSIC` (volumes 0..1, default 0; with `TEMPEST_AUDIO_LOOPBACK=48000` a
 segment's sound goes into `<segment>.wav`).
+
+## Face cues clip
+
+The acceptance clip of the facial gestures and the leak of a lie in the game
+([face-cues.md](../../reports/content/2026-11-hero-head/face-cues.md), "Приёмка", "В игре"): Vino with an own head
+says four lines with gesture tags and one lie through the real path — the server's parsing (`MoodTags`,
+`say.cues`, `say.leak`), the voice of `tts-service` with its word times (`say_audio.words`), the bridge's
+`LineCues`. The server's scenario `face_cues_demo` (`server/src/gothic_ai/scenarios/face_cues.py`) puts Vino on open
+ground in Lobart's yard (`NW_FARM1_PATH_01`, out of the field's crops) at noon, takes him over, puts the hero
+2 m in front of him and asks him 8 s later; `face-cues-clip.bench` films his face
+close up without the overlay (`overlay off`: its text would be in the clip) from 5.5 s on until he has been
+quiet 3 s. The leak is the server's trial (`p` at most 0.6); for a sure
+one the server runs with the debug flag `--debug-leak [upper|lower]` (every `[felt:…]` leaks, on that half).
+
+Vino needs an own head with `cues` and `leaks` in its face profile: a content copy whose `characters.json` lists
+`BAU_952_VINO` (e.g. the hero head of `hero-head-2` with the sections of
+[`test-head.face.json`](../../reports/content/2026-11-hero-head/mpfb/test-head.face.json)). On the Mac, from the
+repository root (Ryzen gets the server through the bench's tunnel):
+
+```bash
+W=/tmp/face-cues-clip; mkdir -p $W
+(cd tts-service && uv run gothic-tts serve --port 47920 --provider inworld --fallback none) > $W/tts.log 2>&1 &
+(cd server && uv run gothic-ai serve --port 47921 --scenario face_cues_demo --llm off --exit-after --no-console \
+  --no-voice --no-brain --no-quick --tts-url ws://127.0.0.1:47920 --debug-leak upper \
+  --memory-db $W/memory.sqlite3 --trace-dir $W/traces) > $W/server.log 2>&1 &
+GOTHIC_AI_URL=ws://127.0.0.1:47921 OPENGOTHIC_CONTENT=<content root> TEMPEST_WINDOW_SIZE=1280x720 \
+  OPENGOTHIC_BENCH_REALTIME=1 TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen \
+  scripts/bench.sh scripts/bench/face-cues-clip.bench
+uv run --with pillow python reports/content/2026-11-hero-head/cues/ingame_clip.py .bench/face-cues-clip-<time> <out>
+```
+
+The gestures of the eyes (glance, roll) take the same bench with `--scenario face_eyes_demo` (four lines with
+`glance`, `roll`, `doubt`, `frown`, no lie, no `--debug-leak`) and a face profile with `eyes`.
+`--provider inworld` spends four paid Inworld requests a take; `--provider fake` (a tone with word times) checks
+the staging for free. `ingame_clip.py` writes into `<out>`:
+- `clip.mp4` — the recording with its sound and "Реплика N" over each line;
+- `key.txt` — for each line its text and mood, each gesture with its word, start, apex and the weight of its
+  `cue_*` column at the apex, the lie with its felt mood, half and `cue_leak`, the liar's blinks (eyes shut by
+  `R_EYESBLINK` while `bk_n`, the ordinary blinks, stays);
+- `sheet.jpg` — the frame before and the apex of each gesture and of the leak.
+The gestures of each line come from its `[ai] cues` line in `game.log`, the times from `metrics.csv`.
+
+## Face brows clip
+
+The acceptance clip of the brows on the accents of the voice
+([eyes.md](../../reports/content/2026-11-hero-head/eyes.md), "План: брови по тону"): Vino with an own head says three
+lines of the AI server through the real voice path (`face_brows_demo` in
+`server/src/gothic_ai/scenarios/face_cues.py`: the Russian yes-no question «Ты его видел вчера?», a long statement, an
+angry line; no gesture tags), then `face-brows-clip.bench` has him say two long lines of his original voice
+(`DIA_Vino_HALLO_05_02`, `DIA_Vino_PERM_05_04`); the scenario holds him 30 s after his answer for them. Staging as in
+[Face cues clip](#face-cues-clip); the face profile needs `speech_brows` (e.g. the hero head of `hero-head-2` with the
+sections of [`test-head.face.json`](../../reports/content/2026-11-hero-head/mpfb/test-head.face.json)). The same
+commands with `--scenario face_brows_demo`, without `--debug-leak`, and the bench `face-brows-clip`;
+`OPENGOTHIC_SPEECH_BROWS=0` films the same without the layer. `--provider inworld` spends three paid requests a take.
+`reports/content/2026-11-hero-head/cues/brows_clip.py <bench out> <out>` writes `clip.mp4`, `key.txt` (each line's
+text and voice, each accent with its time, the word it falls on — an estimate by characters — the rise of the tone and
+up, down or no move, the start and apex of `br_w`) and `sheet.jpg` (before and apex of the strongest moves); with
+`--off` only `clip-off.mp4`. The accents come from the `[face] accent` lines of `game.log`, the times from `lip_t` and
+`br_w` of `metrics.csv`.
+
+## Face listen clip
+
+The acceptance clip of the face of the one listening
+([eyes.md](../../reports/content/2026-11-hero-head/eyes.md), "План: брови по тону и лицо слушающего", item 3): Vino with
+an own head listens. First Lobart says two lines to him through the real voice path (`face_listen_demo` in
+`server/src/gothic_ai/scenarios/face_cues.py`: Vino on open ground, the hero 2 m and Lobart 1.5 m in front of him;
+Vino nods on the accents of Lobart's voice, his face goes by his attitude to Lobart), then `face-listen-clip.bench`
+has the hero speak to him as the bridge does with his voice (`hear BAU_952_VINO 16000 600 friendly`, then `angry`:
+the last word sets his attitude to the hero); the scenario holds him 45 s after Lobart's lines. Staging as in
+[Face cues clip](#face-cues-clip); the face profile needs `speech_brows` and `listen_face` (the sections of
+[`test-head.face.json`](../../reports/content/2026-11-hero-head/mpfb/test-head.face.json)). The same commands with
+`--scenario face_listen_demo`, without `--debug-leak`, and the bench `face-listen-clip`; `OPENGOTHIC_LISTEN_FACE=0`
+films the same without the layer (the nods stay). `--provider inworld` spends two paid requests a take.
+`reports/content/2026-11-hero-head/cues/listen_clip.py <bench out> <out>` writes `clip.mp4`, `key.txt` (the parts,
+Lobart's lines and the accents Vino heard, each nod with its time and the face that came with it or none, the apex of
+`ls_w`) and `sheet.jpg` (before and apex of the faces); with `--off` only `clip-off.mp4`. The faces come from the
+`[face] listen` lines of `game.log`, the nods from `ge_lnods` of `metrics.csv`, the accents heard from
+`[ai] ... hears accent`.
+
+## Gesture head clip
+
+The head of one whose hands gesture as it speaks
+([gesture-head.md](../../reports/content/2026-11-hero-head/gesture-head.md)): the hero with an own head says lines of
+his original voice to Xardas in the tower of the default save, close up (`cam face 38`), each take with one dialog
+gesture the bench names (`gestures pick 3`: takes `g3`, `g6`, `g8`, `g9`); the nod and the sway of the voice are off,
+so the gesture alone moves the head. In `g6` and `g9` the line ends while the gesture plays and it is stopped half a
+second later. Take `wide` shows that stop whole from the front, take `npc` Xardas saying a line with gesture 06. No AI
+server. `OPENGOTHIC_GESTURE_HEAD=0` films "было" (the head goes with the gesture's animation, the gesture is cut in
+0.3 s):
+
+```bash
+OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_BENCH_REALTIME=1 \
+  TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen [OPENGOTHIC_GESTURE_HEAD=0] \
+  scripts/bench.sh scripts/bench/gesture-head-clip.bench <out>
+uv run --with opencv-python-headless --with numpy python reports/content/2026-11-hero-head/gesture/track.py <out> g3 g6 g8 g9 npc
+uv run --with pillow --with numpy --with matplotlib python reports/content/2026-11-hero-head/gesture/clip.py <before out> <after out> <clip dir>
+```
+
+`track.py` writes `track-<take>.csv`: per frame the median optical flow of the face (brows, eyes, nose bridge) and of
+the wall behind, and prints the largest and the 95th percentile of the face against the wall, px a frame (the camera
+follows the head bone: a move of the whole head moves the wall, a turn or a tilt of it the face). `clip.py` writes
+`clip.mp4` ("было | стало" side by side, take by take), `key.txt` (the table of both runs: the screen, the tilt
+`g_froll`, the gaze error) and `steps.png` (the face against the wall over time).
+
+## Anim smooth clip
+
+Clips with sparse keys on a curve through their keys
+([research and result](../../reports/engine/2026-11-13-smooth-sampling/README.md)): every take twice in one run, first
+on straight lines between the keys as before (`sample off`, takes `*-line`), then on the curve (`sample on`, takes
+`*-curve`). The hero says lines of his original voice to Xardas with one dialog gesture the bench names
+(`T_DIALOGGESTURE_03`, `08`, `09`, `06`: ten keys a second), seen whole from the front, so the arms and the trunk are
+judged and the head as the trunk carries it; then clips of the whole body from the side, for the feet, each played to
+its end before the next take: standing with a sword drawn (the stance `S_1HRUN`), looking the sword over
+(`T_1HSINSPECT`), sitting down and getting up, a dance (`T_DANCE_01`, fifteen keys a second). No AI server:
+
+```bash
+OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_BENCH_REALTIME=1 \
+  TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/anim-smooth-clip.bench <out>
+uv run --with pillow --with numpy --with matplotlib python reports/engine/2026-11-13-smooth-sampling/tools/steps.py <out> <clip dir>
+```
+
+`metrics.csv` has, for the watched one or the hero, `an_hand`, `an_head`, `an_chest`: how much the step of the hands
+(the larger of the two), the head and the chest changes between two frames, cm, in the model's space before the
+post-passes (the head as the animation carries it, not as the gaze holds it); `an_hand_v`, `an_head_v`: their speed,
+cm/s; `sm_on`: the curve is on. `steps.py` prints the table of both ways per take: the largest change of a step and
+its 95th percentile, and the ladder - how much more the step changes on the frames at a key (one frame in three for a
+clip keyed ten times a second) than on the others: over 6 on the lines, at most 2.5 on the curve, which is the
+threshold for the gestures; for the takes of the whole body, the slide of a planted foot. It writes `clip.mp4` ("было
+| стало" side by side), `key.txt` and `steps.png`, and exits 1 when a gesture is over the threshold.
+
+## Speech face clip
+
+The acceptance clip of the face from the voice ([engine-plan.md](../../reports/content/2026-11-hero-head/engine-plan.md),
+step 10, "FaceRig"): Vino with an own head says four lines of his original voice, each with a face track of Audio2Face
+v3.0 lying next to the head as `<sound>.face.json` - first `DIA_Vino_SEEKWORK_05_04` and `DIA_Vino_PERM45UND6_05_03`
+(the lip sounds м, п, б and у), then the two long lines of [Face brows clip](#face-brows-clip) over `S_ANGRY` (the
+bench's `faceanim`). No AI server: the bench puts the hero on `NW_FARM1_PATH_01` at noon and Vino 2 m in front of him,
+frozen, and films his face close up. The face profile needs `speech_face` (the section of
+[`test-head.face.json`](../../reports/content/2026-11-hero-head/mpfb/test-head.face.json); the hero head of
+`hero-head-2` at `BAU_952_VINO` as for the other face clips). The tracks:
+[`a2f/face_track.py`](../../reports/content/2026-11-hero-head/a2f/face_track.py) `wav` takes the lines out of the
+game's speech VDFs at 16 kHz, `a2f-weights` (`audio2face.md`) solves them on `dev-ubuntu` (`diffusion
+gen/v3/model.json 2`, Mark; the last argument `anger=0.8` for the angry take), `face_track.py json` writes the tracks.
+Three takes on three content copies: neutral tracks for all four lines; the same with the tracks of `anger:0.8` for the
+two lines over `S_ANGRY` (the expression must give way to the track then; with the neutral ones it shows over it); and
+the neutral content with `OPENGOTHIC_SPEECH_FACE=0` ("было": the mouth by loudness, the brows on the accents):
+
+```bash
+OPENGOTHIC_CONTENT=<content with neutral tracks> TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_BENCH_REALTIME=1 \
+  TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/speech-face-clip.bench <out>
+uv run --with pillow --with numpy python reports/content/2026-11-hero-head/a2f/speech_clip.py \
+  <neutral out> <anger out> <off out> <tracks dir with neutral/ and anger/> <head.glb> <clip dir>
+```
+
+`speech_clip.py` writes `clip.mp4` (the neutral take, then lines 3-4 of the angry one), `clip-off.mp4`, `sheet.jpg`
+(moments picked on the tracks - the lips shut, the most rounded lips, the apex of the brows - "стало | было" at the same
+time of the voice) and `key.txt` (the lines, their tracks and emotions, the moments, the blinks, `vf_w`, `face_angry`,
+and the lip gap of each take by [`a2f/lip_gap_game.py`](../../reports/content/2026-11-hero-head/a2f/lip_gap_game.py) on
+its `face.csv`). The bench writes `face.csv` for any watched own head: per frame the weights its deformation shows; the
+columns `vf_w` (how far the face from the voice shows) and `vf_emo` (its track has an emotion) are in `metrics.csv`.
+
+## Player voice clip
+
+The acceptance clip of the hero's face under the player's live voice
+([player-voice-face.md](../../reports/content/2026-11-hero-head/player-voice-face.md), step 1): the hero with an own
+head says four recordings of the user's microphone through the AI server as the microphone (`ptt <wav>`: the server's
+`--voice-files` plays the file in real time, streams it back as `ptt_audio` v64, the bridge's live track drives
+`VISEME` and `SpeechBrows`), close up in Xardas' tower of the default save; then Xardas' line plays in the game while the
+microphone hears it (`npc-mix.wav`: his voice 12 dB below the hero's, the hero's phrase over it from 5 s on), once with
+`lips param LiveDuck 0` and once as it is; last the hero says two lines of his original voice (the mouth of a recorded
+voice on the same head). The recordings lie in `/tmp/player-voice/` on the Mac and on Ryzen (16 kHz mono 16-bit, not in
+git). The server runs on the Mac without a model or TTS, the ASR service with `--provider fake`; `--no-player-face`
+films "было" (the mouth still):
+
+```bash
+(cd asr-service && uv run gothic-asr serve --port 47930 --provider fake --fallback none --no-laughter) > $W/asr.log 2>&1 &
+(cd server && uv run gothic-ai serve --port 47931 --llm off --no-console --no-tts --a2f off --no-brain --no-quick \
+  --no-director --no-showrunner --no-embeddings --voice-files --asr-url ws://127.0.0.1:47930 \
+  --memory-db $W/memory.sqlite3 --trace-dir $W/traces [--no-player-face]) > $W/server.log 2>&1 &
+GOTHIC_AI_URL=ws://127.0.0.1:47931 OPENGOTHIC_CONTENT=<content with the hero's own head> TEMPEST_WINDOW_SIZE=1280x720 \
+  OPENGOTHIC_BENCH_REALTIME=1 TEMPEST_AUDIO_LOOPBACK=48000 SOUND=1 MUSIC=0 BENCH_HOST=ryzen \
+  scripts/bench.sh scripts/bench/player-voice-clip.bench <out>
+uv run --with pillow --with numpy python reports/content/2026-11-hero-head/a2f/player_voice_clip.py \
+  <now out> <before out> <MPFB head.glb> <head.glb> <clip dir> --clock-ms <game clock - server clock>
+```
+
+[`a2f/live_lag.py`](../../reports/content/2026-11-hero-head/a2f/live_lag.py) measures a run: per phrase the lag of the
+mouth (the gap between the lips from the weights of `face.csv` on the head's mesh) behind the voice by the peak of
+their cross-correlation, the voice starting where the server played its first chunk (`first_ms` and
+`first_delivery_us` of the bridge's `[ai] ptt_audio` line, the clocks corrected by `--clock-ms`); `lip_open` in the
+pauses of 150 ms and more, before the first word and while only Xardas' voice is in the microphone; the brow moves;
+and the bridge's times from the server's chunk to the bridge and to the tick that shows it (median and p95).
+`player_voice_clip.py` writes `clip.mp4` ("было | стало" side by side, then "без приглушения | с приглушением"; the
+sound is what the microphone heard, not shifted), `sheet.jpg` (pairs of frames on «п», «б», «у», a loud vowel, a
+pause and Xardas' voice) and `key.txt` (the parts, the frames and the measures).
+[`a2f/nod_clip.py`](../../reports/content/2026-11-hero-head/a2f/nod_clip.py) `<before out> <after out> <dir>` compares
+the hero's nod of two runs (segments `voice` and `own`): `clip.mp4` "было | стало", `nod.png` (`ge_pitch` over time with
+the syllables) and `key.txt` (nods, the largest step of a frame, the first frame of a nod, size, ms down and back).
+
+## Native NPC calibration duels
+
+### Как работает сейчас
+
+`npcduel <attacker instance> <defender instance> <seed> [timeout_ms]` creates two fresh
+script NPCs, 3 m apart and 12 m in front of the stationary immortal observer, as in
+`bodyduel`. Only these two copies retain `AiNormal`, the near-hero contact rig and
+character controller (respecting the physics flags), including swing magnetism, at any
+distance from the observer via `NavDemos::fullSimulation` / `forceCharacterVirtual`.
+Constructors keep their attributes, talents, tactics,
+weapons and armour; only immortality is removed and its original value is recorded.
+The attacker starts the same `ZS_ATTACK` / `AR_NONE` / `setNonlethalFight` path as
+`npc_act fight{deed:true}`. The defender responds through native perceptions.
+The command waits for the first `isDown()` or the timeout (default 180000 game ms),
+writes one `kind: npc_duel` row in `events.jsonl`, then removes the copies and their
+dropped items. `bodyduel` retains its separate mortal, normalized reference setup.
+
+Each row contains `seed`, `duration_ms`, `winner`/`loser` instance names or `timeout:true`,
+and `attacker`/`defender` objects. Those retain raw script `DAMAGE[8]`, `PROTECTION[8]`,
+`DAMAGETYPE`, `HITCHANCE` (fist/1H/2H), all 22 talent skills/values, level, STR/DEX,
+HP before/after/max, guild/tactic, melee weapon instance/two-handedness and original
+immortality. `weapon_damage[8]`, `weapon_damage_total` and `weapon_damagetype` are the separate equipped-item
+script fields: consumers can use the same inputs as `story_eval`, without a precombined
+NPC/weapon damage array. `hits` counts this side's positive HP-loss combat callbacks;
+`damage_dealt` sums actual lost HP (including the final clamp to 1), with no frame sampling.
+`hp_one`, `unconscious` (`ZS_UNCONSCIOUS`) and `weapon_dropped` retain the terminal
+body state. Drop detection requires a dynamic world item with the NPC's owner and
+original weapon instance. An unarmed loser has `weapon_dropped:false`.
+
+Each positive HP-loss hit is also stored in `hit_log`: `time_ms` since duel start,
+`attacker`/`victim` instance names, `hp_before`/`hp_after`, `base_damage` from
+`DamageCalculator::damageValue` (after its minimum of 5, before impact multipliers),
+`critical` from the original damage roll, `melee_scale`, `stun_bonus` (1 or 1.5),
+`backstab_mult` (1 or 3) and actual `hp_loss`, including the nonlethal HP clamp.
+No damage formula is repeated in the bench. Each side records `swings` at native
+attack-window start, `blocked` for completed parried/guarded swings and `misses`
+for completed windows without a hit or block (including evades, walls and interrupted
+swings). Counters use the selected hit path: physical outcomes or native legacy
+results (`applied` is a hit), and both paths share the HP-loss hit logger. An active
+window at duel end is counted as a swing, without inventing an outcome. `defender_first_swing_ms` is null until the defender starts its first swing;
+the first HP-loss response is available separately from `hit_log`.
+
+The [15 pairs](../../data/npc/far-fight-pairs.json) cover Lobart's equal peasants,
+peasant/militia, militia/Onar mercenary, unarmed/armed, level disparity and 1H/2H.
+All are ambient humans from save 1's world. The 12 v1 pairs are training, including
+the three already used v1 holdouts. Three new pairs use six instances absent from v1:
+
+| New holdout | Native weapons | Talent tiers |
+|---|---|---|
+| `SLD_818_SOELDNER` / `SLD_827_SOELDNER` | 2H axe / 2H axe | 1 / 1 |
+| `BAU_901_BAUER` / `MIL_323_MILIZ` | 1H axe / 1H sword | 0 / 1 |
+| `SLD_817_SOELDNER` / `MIL_326_MILIZ` | 1H axe / 1H sword | 1 / 1 |
+
+Names, `type=0` (ambient), `guild < 16`, equipment and talent skills were checked
+by executing the base's original `GOTHIC.DAT` constructors through ZenKit;
+`STARTUP_NEWWORLD` inserts all six at `BIGFARM` or `NW_CITY_ENTRANCE_01`. Equal
+peasants retain their different native mace/axe. No talents or equipment are normalized.
+
+```bash
+# Only the smoke suite runs here: 2 pairs × both roles × seeds 17,18 = 8 duels.
+python3 scripts/far_fight_duels.py smoke
+# Prepare the full party without running it: 15 × 2 × 10 = 300 duels, 120 s each.
+python3 scripts/far_fight_duels.py plan --out .bench/far-fight-plan
+# The lead runs this after merging:
+python3 scripts/far_fight_duels.py run .bench/far-fight-plan --out .bench/far-fight-run
+python3 scripts/far_fight_duels.py report .bench/far-fight-run/duels-* --out .bench/far-fight-summary
+```
+
+`plan` budgets each duel's full timeout plus one second, and 60 seconds per chunk;
+by default at most 59 duels (120 s timeout) fit a two-hour batch request. `run` calls
+`BENCH_HOST=ryzen scripts/bench.sh` per chunk, which builds there through `gq quick`
+and launches through `gq batch` (`smoke`: `quick`). It reads the prepared base directly
+from the cache or NAS via `OPENGOTHIC_BASE`. It uses absolute paths, including
+base cache/store below `~/gothic-ai/far-fight/`. Bench's existing output is collected
+back to the supplied output directory. `RYZEN_BENCH_ARCHIVE` gives the game request
+an `--archive` source at `~/gothic-ai/far-fight/<output-name>/<chunk>`; before finishing,
+it copies its result there. `gq` verifies and moves it to
+`/mnt/shared/gothic-ai/far-fight/<output-name>/<chunk>`. Use a fresh output name per run.
+The queue's `--archive` argument is the **local source**, not the NAS destination.
+Full batches are never started by `plan`, `smoke` or the test suite.
+
+`smoke` rejects missing/extra/duplicate duels, incomplete fields, and resolved losers
+without 1 HP and `ZS_UNCONSCIOUS`. It requires the hit log and counters, while the reader still accepts v1 records
+without them. A timeout remains a timeout. `report` writes
+`far-fight.json` and `far-fight.md` and prints the table: n, attacker wins divided by
+all duels (timeouts stay in the denominator), timeout count, median resolved winner
+HP loss, median duration across all duels, and HP-loss hits per full duel second
+pooled by weapon type, own talent tier and opponent tier. The same buckets include
+swings, blocked swings and misses per second. Missing legacy counters are `n/a`,
+with their exposure reported separately. By weapon type, `hit_multipliers` contains
+the full empirical distribution of `hp_loss / base_damage` plus min/median/max,
+stun and backstab fractions; terminal clamping is retained in that ratio. Response
+tables give the median first defender swing and first HP-loss hit since duel start,
+with observed/responding counts (no response is null, not zero). These are empirical
+observations for the separate v2 model task; no coefficient fitting happens here.
+
+The v1 fitting tool [`far_fight_fit.py`](../far_fight_fit.py),
+[weapon table](../../data/npc/far-fight-weapons.json) and
+[rejected calibration report](../../reports/Дальний%20бой%20NPC%20—%20калибровка.md)
+are retained. `gamedata/far_fight.json` stays `uncalibrated`.
+
+### План и журнал
+
+- 2026-11-02: v2 bench keeps only its two copies in full simulation at any observer
+  distance; records native hit factors and swing outcomes; adds three fresh holdouts
+  and a 300-duel default plan. Full calibration is a separate task. The eight v1
+  zero-hit replays on Mac before #751 produced hits in 3/8 duels and five zero-hit timeouts:
+  unarmed attacker seeds 17–20 (281 swings total), 2H attacker seed 18 (29 swings).
+  The attacker retained `AiNormal`. The replay's `run/melee-blade-shadow.jsonl`
+  shows 245/281 unarmed swings using `T_FISTATTACKMOVE`. Across all 281 swings,
+  median starting distance is 233 cm (112–316); the running punch reaches about
+  58 cm. The target moves away only 8 cm per swing (median); 244 swings stop with
+  `no_preview`.
+  Legacy reports `applied` for 68/281, but physical HP-loss hits are zero. The
+  unarmed initiator attacks from too far away while its target has not responded;
+  the physical punch falls short and the magnet usually has no contact plan.
+  This does not establish that the target is leaving on its routine.
+  For 2H seed 18, 29 swings comprise 22 `S_2HATTACK`, four `T_2HATTACKL` and three
+  `T_2HATTACKR`. Median starting distance is 201 cm (195–346), versus median reach
+  125 cm (125–143); target retreat is 21 cm (14–80). All 29 swings have a preview
+  and stop at `predicted`; median forward magnet feed is 11.7 cm. Legacy reports
+  `applied` for 24/29, but there are no physical HP-loss hits; minimum blade/body
+  clearance is 4.9 cm. Unlike the running punch, this magnet engages, yet the
+  actual strike still falls short. The lead accepted the bench with these five
+  empty duels; native reach, magnetism and AI attack choice belong to a separate
+  melee fix. The defender's native behaviour stays unchanged.
+  Before #751, the eight Mac smoke cases yielded 135 HP-loss hits; this is
+  historical data, not validation of the #751 integration.
+- 2026-11-02, after merging #751 (`54d65a79d`): replayed the same eight commands
+  from `.bench/far-fight-v2-zero-hit-replay/duels-000.bench` on Ryzen, with absolute
+  output `.bench/far-fight-v2-zero-hit-replay-ryzen-p751-20261102-141051` under the
+  worktree. All eight records validated: **4/8 duels with hits, 28 HP-loss hits,
+  four zero-hit timeouts and zero deaths**, versus **3/8, 12 hits and five zero-hit
+  timeouts** on Mac before #751. All four 2H duels now have hits: seeds 17/18/19/20
+  have 9/1/6/12 hits respectively; seed 18 no longer times out. The four unarmed
+  initiator duels still have zero hits (70/79/66/72 swings). Host and code revision
+  both differ, so this is a new measurement, not an isolated effect estimate for #751.
+  All 352 shadow windows selected physical hits; their applied damage agrees with
+  the 28 hit-log entries (2067 HP total). Results were archived through `gq`.
+  A separate one-duel check with existing `NPC_CHARACTER_VIRTUAL=0` exercised the
+  fallback: three legacy windows, two HP-loss hits (159 HP); the attacker has two
+  swings, zero misses, and the defender one swing, one miss. This confirms that
+  native `applied` is not counted as a miss and both hit paths use the same logger.
+  The complete saved check then passed (exit 0): 71 server and 58 tool tests,
+  Ruff, Linux and Mac `Gothic2Notr` builds, and CLI smoke on Ryzen. Smoke validated
+  eight unique records with 100 HP-loss hits, one timeout and zero deaths; it keeps
+  timeouts in the data rather than treating them as invalid records.
+- 2026-11-01: added the native nonlethal calibration bench and plan/run/smoke/report
+  tools for user decision Б3 in [Дальний бой NPC](../../reports/Дальний%20бой%20NPC.md).
 
 ## Live P30 capture on Mac
 
 `scripts/body_live_capture.py` starts a local game with the production `GameServer` and
 `BodyPilot`, using `[llm].body_url` from the usual launcher settings. It uses the existing
-remote P30 service without starting or changing it. `LLM`, `ASR` and `TTS` must be `fake`;
+remote P30 service without starting or changing it. `LLM` must be `off`; `ASR` and `TTS` must be `fake`;
 no clients for these models are created. Build the engine first. Each capture checks
 `pgrep -fl Gothic2Notr` immediately before launch and refuses to share the Mac with another game.
 
 ```bash
-LLM=fake ASR=fake TTS=fake uv run --project server python scripts/body_live_capture.py \
+LLM=off ASR=fake TTS=fake uv run --project server python scripts/body_live_capture.py \
   live-takeover --output "$HOME/.local/share/gothic-ai/explain/combat-ai/footage/live-takeover"
 ```
 
@@ -537,6 +1570,98 @@ Frame timing sums public physics work across worker threads, so it can exceed el
 For a hotspot diagnostic, `--method-breakdown` additionally writes per-method inclusive and outer
 work to `OPENGOTHIC_PHYSICS_TRACE_METHODS`. Keep this extra instrumentation out of formal timing runs.
 
+`body-impact.bench` checks body impact damage: knockdown falls from 2/5/10 m
+require actual torso contact speed within 10% of `sqrt(2gh)`. Ragdoll and
+animated-fall HP loss of the same guild are recorded as references, without an
+HP parity threshold; ragdoll damping stays 0.12. It also checks knockdown-ragdoll
+wall impacts at 6/10/14 m/s, a real hero WindFist into a wall through the animated
+capsule path, and unconscious, dead and immortal controls. Ragdolls count only
+pelvis, spine and head contacts with landscape, static objects or movable furniture. Spell
+capsule wall impacts and their existing landing damage share one 300 ms maximum
+speed window per NPC. Damage uses the unchanged guild fall formula; fatal
+impacts retain the attacker or caster, including the hero's kill attribution.
+Two NPC-culprit controls use the same 14 m/s wall impact: a nonlethal pair must
+enter native unconsciousness at 1 HP, drop its weapon, notify a witness of defeat,
+leave no murder or death trace, and recover through `AI_StandUp`; a lethal pair
+must die with murder attribution and a death trace. `body-impact standup` runs
+the unconscious End hook and queues native standup; `body-impact recovered`
+checks the completed handoff. With damage disabled it checks posture recovery.
+
+Run `scripts/bench.sh body-impact <absolute-output-directory>` and repeat with
+`BODY_IMPACT_DAMAGE=0`; the disabled run retains the previous animated landing
+behavior and adds no body impact damage. `[GAME] body_impact_damage` defaults to
+1; Marvin `toggle body_impact_damage` changes it during play. The native contract
+is `gothic-physics-contract`. Acceptance numbers and the ON/OFF duel and Mac
+physics timing comparison belong in the [body impact report](../../reports/physics/2026-11-01-body-impact/README.md).
+
+`body-traces.bench` checks bodies as physical traces (stage 8, step 4b) on a fresh
+`WORLD=NEWWORLD.ZEN` in the Xardas valley. The native fixture `body_traces`
+(`common/game/bodytracesbench.cpp`) spawns and kills, by the hero's hand, a person,
+a wolf and three people the lifetime rule keeps (an `ITM_MISSION` key, `IMMORTAL`,
+`NPCTYPE_MAIN`), and parks a living observer with perceptions off. `view` reads the
+production `npc_view` through the bridge's writer (`Bench::npcView`): the person
+is a `body` trace with `npc`, `age` and a stable id, the wolf is none; OFF there are
+no body rows. `advance <minutes>` moves the clock alone; `sleep <hours>` sleeps like
+a bed (`World::setDayTime`); `hero near|far-visible|far-hidden` places the hero
+within 30 m, beyond 30 m with an open ray from his eyes to a body sight point, or
+beyond 30 m with none; `check <label>` fails the run on the first unmet rule.
+`save created` writes `session-created.sav`. A complete run ends with the
+`check sleep-far` sample: `scripts/bench.sh` does not fail a game killed by `TIMEOUT`.
+
+```bash
+WORLD=NEWWORLD.ZEN scripts/bench.sh body-traces /abs/out/on
+WORLD=NEWWORLD.ZEN BODY_TRACES=0 scripts/bench.sh body-traces /abs/out/off
+SAVE=/abs/out/on/session-created.sav scripts/bench.sh body-traces-reload /abs/out/reload
+python3 scripts/body_traces_compare.py /abs/out/on /abs/out/reload
+```
+
+`body-traces-legacy-make.bench` uses only generic commands: run it with a build of
+main from before body traces to get `session-legacy.sav` (a dead person and a wolf);
+`SAVE=<that>/session-legacy.sav scripts/bench.sh body-traces-legacy` loads it with
+the current build: old bodies get an id, `age: null`, and a lifetime from the load.
+
+`blood-stains.bench` checks blood stains as records and `blood` traces (stage 8, step 4c)
+on a fresh `WORLD=NEWWORLD.ZEN` in the Xardas valley. The native fixture `blood_stains`
+(`common/game/bloodstainsbench.cpp`) kills a person 7 m ahead of the hero and lays his
+pool with a splash beside it, two splashes 1.2 m apart, one 9 m away, a meatbug's yellow
+stain with a golem's stone chips 1 m from it, and a splash recorded indoors. `check
+<label>` reads `World::physicsTraces` and fails the run on the first unmet rule: the pair
+is one trace named by its older stain, placed at its larger and aged by its fresher; the
+body's blood and the stone chips are no trace; `body gone` removes the body, and its pool
+leaves with it while the splash beside it becomes a trace; `advance <minutes>` moves the
+clock alone: after a game day only the indoor stain is left, after three days none. OFF
+(`BLOOD=0`) there are no stains and no traces. `save created` writes `session-created.sav`;
+`blood-stains-reload.bench` loads it in a fresh process, and
+`scripts/blood_stains_compare.py` checks the same ids, positions, birth times, trace ids
+and an age that continues from the saved clock. Marvin `blood <waypoint> [pool|splash]
+[radius_cm]` lays a stain by hand; `[GAME] blood` defaults to 1, Marvin `toggle blood`
+changes it during play.
+
+```bash
+WORLD=NEWWORLD.ZEN scripts/bench.sh blood-stains /abs/out/on
+WORLD=NEWWORLD.ZEN BLOOD=0 scripts/bench.sh blood-stains /abs/out/off
+SAVE=/abs/out/on/session-created.sav scripts/bench.sh blood-stains-reload /abs/out/reload
+python3 scripts/blood_stains_compare.py /abs/out/on /abs/out/reload
+```
+
+How blood looks: `blood-probe.bench` lays a pool by hand on Onar's field at 06:00 and shoots it at
+noon and at 18:00 (does a decal draw, and how it dries). `blood-look.bench` lays a pool and a splash on
+the field, then a paladin kills a bandit there and on the harbour pier: a clip of each fight, a clip of
+the pool spreading (`cam follow` keeps the dead bandit by pointer; `cam two`/`cam face` look for a
+living npc of that name and lose him), stills 5 min, 1 h, 6 h and 10 h later in daylight. A `shot`
+is written at the end of its frame, so each one waits before the clock moves. `blood-cost.bench` lays
+256 stains (`blood_stains fill 256 125`, a 20 m grid round the hero) and measures 30 s of normal app
+cadence (`blood_stains measure` starts the window); it needs a build with
+`OPENGOTHIC_ENABLE_APP_CADENCE=ON`, and `OPENGOTHIC_GPU_PASSES=1` on a frame-profile build gives the
+"Blood decals" pass alone.
+
+```bash
+WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-look /abs/out/look
+GAME_BIN=OpenGothic/build-profile-on/opengothic/Gothic2Notr BLOOD=1 WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-cost /abs/out/on
+GAME_BIN=OpenGothic/build-profile-on/opengothic/Gothic2Notr BLOOD=0 WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-cost /abs/out/off
+python3 scripts/blood_cost_read.py /abs/out/on -- /abs/out/off
+```
+
 For stage 2, `ragdoll.bench` exercises death, sleeping/wake, controlled unconscious recovery,
 slopes, stairs, a cliff and the human/Wolf/Scavenger/Molerat/Orc models. Run it with
 `OPENGOTHIC_RAGDOLL_TRACE=1` to append `ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep`
@@ -560,6 +1685,7 @@ the native physics step; observer wall throughput is informative and is not ordi
 |---|---|
 | `ragdoll on\|off` | Set the same `GAME/ragdoll` switch as the Marvin toggle. Enabled by default; set `[GAME] ragdoll=0` or use Marvin `toggle ragdoll` to disable it. |
 | `down <npc> dead\|ko` | Invoke the normal NPC down lifecycle and prepare its body. |
+| `brace-profile [<group> <key> <value>]` | Edit the protective fall's `RagdollBrace::Profile` for the next knockdowns; bare, print it. Keys: `arms enter\|hold\|drop\|level\|rest\|yield\|torque\|stiff`, `neck enter\|hold\|yield\|torque`, `spine enter`, `legs enter\|front\|back\|side`, `land enter\|hold\|yield\|torque`. Leg switches accept only 0 or 1. Defaults: arms drop 0.25 s, level 0.70, rest 0.10 s, yield 0.20 s, torque 90 N·m/kg, stiff 25 Hz; land enter 0.18 s, hold 0.12 s, yield 0.30 s, torque 10 N·m/kg; legs front/back/side 1/1/1. Arm springs use 6 Hz until their own contact, then stiff (at least 1 Hz); the other arm, neck, spine and legs stay at 6 Hz. Without `S_BRACELAND_*`, only land values, arms rest and leg switches have no effect; the old profile with arms yield 0.4 and stiff 6 preserves the single-pose fall bit for bit. Event `brace_profile`; unknown, negative or nonfinite values abort the scenario; arms level is 0..1. With `RAGDOLL_BRACE=0 OPENGOTHIC_BRACE_MEASURE=1`, event `brace` measures the unchanged unprotected fall with `"pose":"none"`. |
 | `push <npc> <x> <y> <z> <impulse>` | Apply an impulse in Newton seconds along a finite nonzero direction. Requires a physical body. |
 | `waitragdoll <npc> sleep\|recovery\|getup [timeout ms]` | Wait for the actual body/animation state; a bounded timeout is an explicit command error. |
 | `standup <npc>` | End the controlled unconscious state and queue the normal AI stand-up action. The test controls the state end; this does not measure the natural script loop's timing. |
@@ -722,12 +1848,418 @@ clock and draws only the captured frame; `TEMPEST_AUDIO_LOOPBACK=48000` records 
 `<segment>.wav` instead of playing it; `TEMPEST_WINDOW_SIZE=<w>x<h>` (points) sets the frame;
 `OPENGOTHIC_BENCH_ENCODER` replaces the x264 options (e.g. `-c:v h264_videotoolbox -b:v 24M`).
 
+Recording in real time on Ryzen (clips that judge loading and streaming at the player's pace):
+`OPENGOTHIC_BENCH_REALTIME=1 TEMPEST_WINDOW_SIZE=1920x1080 "OPENGOTHIC_BENCH_ENCODER=-c:v h264_nvenc -preset p4 -b:v 24M"
+BENCH_HOST=ryzen scripts/bench.sh <scenario> <out>`. Read `[bench] rec stop … speed=` and `[bench] realtime:`
+in `game.log`: a take that kept pace says `speed=` 95 % or more and `kept to the wall clock` (or a lag under
+1000 ms). A 127 s city run on the x4 texture set gave 99 % and a 0.6–0.7 s lag three times in a row with
+NVENC, 96 % and 4 s with the default x264. A frame of the capture costs about 8 ms (the picture 4.5 ms,
+reading it back 1.7 ms, the bench 1 ms) out of the step's 33 ms; filming draws every frame into one image
+and reads it through one cached staging buffer. [Measurements](../../reports/engine/2026-11-11-realtime-capture/README.md).
+
 Good spots near the default save (Xardas' tower): `NW_XARDAS_TOWER_VALLEY_05` (27 degree slope in a
 forest), `NW_XARDAS_TOWER_IN1_*` (ramp inside the tower), `NW_XARDAS_STAIRS_01`..`_04`.
 
+## NPC day parity
+
+`npc-day-parity` (world streaming, step 1, item 6) runs one continuous game day from a fresh `NEWWORLD`
+(day 0, 08:00) and journals every NPC every 5 game minutes. No `set time`: it calls
+`resetPositionToTA` and teleports everyone. The hero stands, immortal, on open ground below Xardas'
+tower (the valley's rats and bloodflies attack him all day). Start it once per NPC simulation tier and
+compare two runs:
+
+```sh
+OPENGOTHIC_NPC_SIM_TIER=full BENCH_HOST=dev-ubuntu \
+  scripts/bench.sh npc-day-parity /absolute/out/full-1
+OPENGOTHIC_NPC_SIM_TIER=simplified BENCH_HOST=dev-ubuntu \
+  scripts/bench.sh npc-day-parity /absolute/out/simplified-1
+scripts/npc_day_parity.py /absolute/out/full-1 /absolute/out/simplified-1 --label-a full --label-b simplified \
+  --tolerances scripts/bench/npc-day-parity.tolerances-6c.json --out /absolute/out/report.md --json /absolute/out/report.json
+```
+
+The scenario carries `# @headless`: it defaults to `WORLD=NEWWORLD.ZEN`, `TIMEOUT=3600` and
+`RYZEN_MAX=75m`, with a `batch` request and no window or GPU reservation. `--game-parity` supplies
+the AI bridge and the window's 40 m effect radius around the camera, and disables body traces by
+default. With `BENCH_HOST=auto`, the host order is dev-ubuntu → Ryzen → Mac; pin
+`BENCH_HOST=dev-ubuntu` to keep a comparison there. `DEV_UBUNTU_HOST` changes its SSH alias.
+`BENCH_HEADLESS=0` restores the window for a same-build comparison on Ryzen or Mac;
+`BENCH_HOST=dev-ubuntu` then exits with code 2 because that host has no window.
+
+The [headless measurements](../../reports/compute/2026-11-02-headless-bench/README.md) on Ryzen
+show that a day through `scripts/bench.sh npc-day-parity` took 1553 s (25,9 min) without a window,
+as a `batch` request (`gq`: `4t 6G gpu=0G окно=0`); windowed days took 38–43 min.
+The window and `--game-parity` runner days from the same build and environment passed
+the historical numeric bench tolerances (exit 0): position differences 0 m,
+ZS/TA/HP/inventory matches 100%, and `npc-day-events.csv` byte-identical. Only `queue`/`head`
+differ for Lester (`PC_PSIONIC`) when he approaches the hero to talk: `AI_ProcessInfo` is handled
+by the dialogue menu in the window; the runner has no menu. The current exact-journal control
+also checks those fields, so window/runner comparisons need to report this difference explicitly.
+Compare only runs from the same build,
+base and environment. Days of one build are byte-identical on a host and between dev-ubuntu and Ryzen, so a difference is a real change, not noise; nothing in the simulation may depend on heap addresses ([why](../../docs/world-streaming.md#почему-сутки-перестали-повторяться-фаза-lod-анимации-2026-11-07)). A day writes about 55 MB.
+With `OPENGOTHIC_NPC_LOGIC_AUDIT=1`, `npc-day-heights.csv` compares sampled Simplified positions with a ground ray; movement itself does not cast these verification rays. The comparer splits position errors into `stationary_both` and `moving_either` from the existing body-state column, and accepts final-HP, matched-death and stationary-p95 guards.
+
+Use `npc-day-parity.tolerances.json` for Full and `OPENGOTHIC_NPC_SIMPLE_MOVE=0` controls against
+the current-main noise floor. It requires identical nonhero sample fields except `tier` and all
+nonhero events, including the final post-sample tick. Active Simplified/auto use
+`npc-day-parity.tolerances-6c.json`: TA ≥99.5%, ZS and standard start coverage ≥99%, stationary
+position p95 ≤1 m and mutual-nearest start shift p95 ≤8 game seconds. Deaths, final HP and NPC
+presence remain strict. At most three NPCs may have different final inventory, and every case
+needs an exact attested script-created/random-item hash pair; unexplained differences fail.
+Moving positions and standard greedy offsets are report-only. The
+[acceptance decision and measurements](../../docs/world-streaming.md#шаг-1-пункт-6в--графовое-движение-и-повороты)
+explain the bounds and remaining combat/body work. `npcday` files:
+
+| File | Contents |
+|---|---|
+| `npc-day.json` | Tier mode, seed, private random streams, period, start time and hero; at the end the sample/event counts, wall time and the NPC tick time per tier |
+| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag; appended `fp,fp_x,fp_y,fp_z,on_fp,aivar_19,fp_available,on_routine_wp` |
+| `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
+| `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
+| `npc-day-script.json` | Opt-in `probe`: deterministic script calls by symbol/family, per-state engine Init/Loop/End entries, nested calls, inclusive VM instruction counts, externals and RNG sources. Header records `npc` or `shared` random streams. |
+| `npc-day-activity.jsonl` | Opt-in `trace=ID,SYMBOL,display-name`: phase entry/result, queue commands, RNG, FP and MOB occupancy, and body changes. `activity_transition` records the wake reasons, stages, place, owner NPC ID and queue head after the step. `physics_noise` identifies the culprit and whether the quiet-sound reaction entered the VM. Numeric IDs are world-array NPC IDs; symbols select all matching instances. |
+| `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
+
+The society stand's core is checked against the same journal: `scripts/society_parity.py` compares its marks
+with `npc-day.csv` and the `ta` events of `npc-day-events.csv` (people only; [how](../../docs/society-sim.md#проверка-самого-стенда)).
+
+Every NPC gets a private script random stream (`GameScript::isolateRandom`, seed from `seed`, stream from
+the key), so one NPC's extra `Hlp_Random` or dice roll does not shift every later NPC's numbers; `shared`
+keeps the game's single stream. The journal drops exactly the streams it registered when it finishes or
+stops, so commands after `npcday` use the shared stream again. Do not combine `npcday` with the body arena
+in one scenario: the arena isolates its actors and clears all streams on reset. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
+States that start and end within one world tick are not seen by the event poll.
+
+`trace=...` records selected NPCs independently of the Daedalus observer. Its JSONL header carries
+`trace_version: 2`, with RNG sources labeled
+`engine` or `script`. Add `probe` for the VM counters and detailed RNG attribution. Both options
+apply only during the journal interval and are off by default.
+The instruction metric includes helpers and reentrant script work during the engine phase; it is
+not wall time. `engine` counts entries through `invokeState`, while `nested` excludes that entry.
+`records` counts the entries that ran from an activity record (D4.1) instead of the script; such a phase has no
+script entry, so its deferred perception helper counts as nested.
+Family counts classify called symbols; per-state nested costs additionally attribute helpers to
+the executing phase. Summing families equals `calls`; summing `random_sources` equals `random`.
+Human routine membership and row counts come from the selected base's `routines.json`.
+Native draws with an actor are combat (all current native actor call sites are in fight tactics,
+damage, melee or ranged combat); actorless native draws are `native_other`. `std::rand` is a different
+stream and is not counted. Body state is a derived value: the trace observes it at phase boundaries,
+MOB changes and every journal tick. Occupancy and queue events are observed at the engine mutation.
+Queue `action` uses the `Action` enum in `game/rpgvocabulary.h`; `i0/i1/i2/s0/s1` retain its full arguments
+(wait duration in ms, animation or MOB scheme in `s0`, item symbol in `i0` for item-use actions).
+
+`npcday-save <npc> [minutes 60] [period 5] [shared]` waits up to one game day for an executed
+`ZS_SMITH_ANVIL_LOOP` on an occupied `BSANVIL` (by events, E1: for the activity's hold of the occupied
+`BSANVIL`, as no Loop runs), writes `session-activity.sav`, then journals
+and traces the next hour. It leaves the actor's routine and position untouched. Load that save in a
+fresh process with a scenario with `cheat god` followed by `npcday 60 5 shared probe trace=<symbol>`.
+With explicit `SAVE=` and no `WORLD`, an opening `cheat god` followed immediately by `npcday`
+restores god mode and starts the journal at `dt=0`, before the first positive loaded-world step.
+This applies with measurement enabled or disabled. Fresh-world journals retain the normal command
+boundary after the first step. The trace header retains each scenario's last explicit `seed` as metadata;
+exclude only that header field when comparing a load, without reseeding the shared stream, and
+require equal start times and all other header fields. Use the same stream mode
+and compare the complete activity trace and strict sample/event files. A current-game save/load
+mismatch is reported as the first differing record, never corrected by this measuring step.
+The current checkpoint control verifies equal initial `world_ms`/native ticks before comparing
+records. It exposes a 1 ms trace shift from the restarted 30 FPS bench cadence and a recalculated
+transient NPC simulation tier; state timers and the game-time remainder are saved. The current
+boundaries, first differences and source analysis are in the
+[D4 baseline](../../reports/engine/2026-11-14-npc-data/d4-baseline.md#харад-и-загрузка-на-занятии).
+`npc-day-smith-save.bench` and `npc-day-smith-reload.bench` provide this fixture for Harad.
+`gothic-npc-day-contract` checks nested VM calls, random ownership, totals, repeated JSON bytes and
+actual engine queue observation on a synthetic program, without game data. The synthetic fixture of
+`gothic-placed-items-contract` additionally exercises `invokeState` through the real `Hlp_Random`,
+`GameScript::rand` and measurement probe, and verifies JSONL commands from both regular and overlay
+`Npc::aiPush` queues. The day contract also checks that merged `LookAtNpc` commands are both traced.
+At the end of each interval the probe removes its call observer and releases its collector.
+Call observers must leave the VM's call-observer list unchanged during notification.
+The day contract runs two intervals on one VM and checks that other call observers still run in registration order.
+
+
+`scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out, with his events
+(`--min-hero-distance <m>` also leaves out NPCs near him). Completeness gates come first, because the metrics
+only see the samples both runs share: `require_done` (both `end_reason` are `done`), `require_full_length`
+(both reach their requested minutes and end at the same time), `max_only_samples` (samples present in one run
+only) and `max_missing_end` (an NPC at the end of one run and not the other; such an NPC also counts for the
+end-of-run alive and inventory checks). It reports the share of NPC-samples in the same
+ZS state and routine entry, HP and inventory, the position error (p50/p95/max, straight line, metres),
+matched ZS starts and their offset (greedy, same state, `--window` game minutes), deaths, alive and
+inventory differences at the end, the same split by run B's tier and by game hour, and the NPCs that
+diverge most. Tolerances come from `--tolerances` (JSON) or `--min-same-zs` and similar options
+(`--require-done false` turns a gate off); a failed check exits with 1. Twin monsters that spawn at the same point keep their order of the start array.
+
+Activity acceptance uses `npc-day-parity.tolerances-activity.json`, a **draft** calibrated against
+shared-stream seed 73106/73107 days ([E0 measurements and margins](../../reports/engine/2026-11-14-npc-data/e0-tolerance.md)).
+It keeps the four completeness checks from 6c and adds activity bounds; it does not inherit 6c's
+same-seed state, position, inventory or event guards. Keep the strict profile for exact controls,
+6c for active Simplified/auto movement comparisons, and the activity profile for event-executor
+work where changing the number of shared random draws shifts the whole journal. Final activity
+thresholds require the lead's acceptance.
+
+The activity profile requires **zero stuck NPCs** and bounds both arrival p95 and the
+**maximum signed arrival delay** at 5 game minutes (one journal step).
+`--max-activity-arrival-max` checks the maximum B−A delay over all segments in the selected
+activity summary. It catches a single late arrival even when p95 and the same-MOB share pass;
+missing arrivals fail the stuck-NPC check instead. The 15-minute archive mutation exercises
+this case without a new game run.
+
+Activity metrics use matched nonhero samples where **A's `ta` is not `-`**, grouped by **A's `zs`**:
+
+| Metric | Definition |
+|---|---|
+| Samples / same ZS / same WP | Sample count and shares with identical `zs` / `wp` in B (including `-` waypoint values) |
+| Same MOB | Among A's occupied samples (`mob != -`), share with the same MOB **scheme** in B |
+| Extra MOB | Among A's unoccupied samples, share where B occupies a MOB |
+| MOB time B/A | B occupied samples / A occupied samples, over the same reference-state samples |
+| Arrival p50 / p95 / max | Signed first occupied sample time in B minus A, in game minutes, within each continuous A-`ta` segment; independent of B's TA and MOB scheme |
+| Stuck | Unique NPCs with occupied samples in an A-TA segment and none in B's corresponding segment; the full list includes key, reference state, TA and segment times |
+
+TA-segment bounds come from A alone, including partial segments at the day edges. Arrival statistics
+include only segments with a MOB sample in both runs, grouped by A's ZS at its first occupied sample;
+missing arrivals are counted separately as stuck. Resolution is the journal step, **5 game minutes**,
+not exact engine arrival time. The Markdown and JSON reports contain the full state table, pooled
+totals, stuck segments and individual later arrivals. An undefined ratio/percentile is `null` in JSON,
+shown as `—` in Markdown, and fails an enabled numeric bound.
+
+`--activity-states ZS_READ_BOOKSTAND,ZS_SMITH_SHARP` limits activity **totals and checks** to those
+reference states; the state table and diagnostic lists always include all states. It does not filter
+the older metrics or completeness checks. Global percentiles and ratios can hide a rare NPC's
+regression; use the states relevant to the changed executor and inspect the named segment diagnostics.
+These metrics see schemes rather than individual objects and have no reservation-health counters;
+those require E1 engine changes.
+The draft thresholds are calibrated over all states; recheck their margins on the archived seed pair
+when changing `--activity-states`, since a subset has different denominators and noise rates.
+
+```sh
+python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
+  --activity-states ZS_READ_BOOKSTAND,ZS_SMITH_SHARP \
+  --tolerances scripts/bench/npc-day-parity.tolerances-activity.json \
+  --out /absolute/activity.md --json /absolute/activity.json
+```
+
+Point activities use `npc-day-parity.tolerances-points.json`. The lead accepted E2.1 preparation
+for strict E2.2 acceptance against control 73106 **with the same seed 73106**. All thresholds stay
+unchanged: the candidate must have **zero missed shifts and zero stuck NPCs**, with no NPC-specific exceptions.
+The complete shared-stream days 73106 and 73107 were recalculated with the verified HUMANS center
+offset and active-TA waypoint; all eight combinations of three rounded boundary bits give identical metrics.
+The current result is 31585 samples, 341 arrivals, p95 0 / maximum 5 game minutes, no collisions,
+but three missing fallback-only shifts of PAL_227 on SHIP_DECK_29 (one NPC in the tool's stuck counter).
+This is a cross-seed observation of the original, not an allowance of three or proof of an actual hang
+between samples. Both self-comparisons pass 12/12 (341 arrivals for 73106, 342 for 73107).
+The unchanged zero limits fail on the cross-seed pair:
+pooled and guarding checks pass 10/12; the other four forms pass 12/12. Historical 12/12 on
+`bd6391ddc` does not validate the corrected metric. Replay evidence is in `npc-events-e2/review-f1-f4/`.
+The cancelled prefix is excluded. The profile covers the five measured forms, pooled and individually:
+held FP agreement >=94%, pose time 0.99..1.01, arrival p95 <=5 / maximum <=10 game minutes,
+zero missed segments, stuck NPCs and double occupancy. The FP allowance reflects two seated campfire
+NPCs exchanging points. Use `--activity-states` for the states being changed and inspect their margins.
+[Measurements, causes and headroom](../../reports/engine/2026-11-14-npc-data/e2-tolerance.md).
+
+The derived controls are `/mnt/shared/gothic-ai/npc-events-e2/accepted-calibration/seed-73106/`
+and `seed-73107/`; primary CSVs and their SHA-256 hashes are unchanged. The folder also contains
+the reproduction recipe, three rounded boundary bits, and unknown visibility lookups.
+Guarding has no metric-sensitive unknowns (fallback A/B 5084/5080). Four ARMSCROSSED visibility
+bits per seed remain unknown; the 256-pair proof of identical gated values applies to `bd6391ddc`. Before comparing
+a future candidate across all five forms, run the archived `variants.py REPO CANDIDATE` to retain
+all 16 alternatives of control 73106. Archive-pair invariance does not prove candidate invariance.
+
+```sh
+python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
+  --activity-states ZS_STAND_GUARDING \
+  --tolerances scripts/bench/npc-day-parity.tolerances-points.json \
+  --out /absolute/points.md --json /absolute/points.json
+```
+
+The new sample columns follow every old column, in its original order:
+
+| Column | Meaning |
+|---|---|
+| `fp`, `fp_x`, `fp_y`, `fp_z` | Held free point name and coordinates in cm (`-`, zeros without one); repeated names do not identify a point |
+| `on_fp` | `Npc_IsOnFP(self, held_name)`: current point is free, its name matches, and it is close by `MoveAlgo::isClose(..., MAX_AI_USE_DISTANCE)`; the comparer also checks its activity name |
+| `aivar_19` | Raw script stage; 2 walking, 1 ready to enter, 0 pose for guarding, arms crossed, STAND_WP and PEE |
+| `fp_available` | The script's point lookup for STAND / CAMPFIRE / PEE finds a point (1) or none (0); -1 outside these four forms |
+| `on_routine_wp` | Distance <=500 cm to the active TA row's waypoint, using the existing `Npc_GetDistToWP` engine call; independent of the nearest waypoint and the lagging `self.wp` |
+
+`points.total` and `points.by_state` report held-coordinate agreement (raw and with legal fallback in either run
+excluded), pose sample time B/A, signed first arrival p95/max, missed reference TA segments and
+double occupancy in B. Point samples use the scheduled TA state; the activity table keeps actual active-ZS
+counts. A state present only in TA has an empty active-ZS row (undefined ratios), while its point misses
+still contribute to per-state and total stuck counts. The collision search includes occupants outside the state filter. Campfire
+pose uses body state 11 (`BS_SIT`); the other four forms require standing body state 0 and `aivar_19 == 0`. Physical arrival
+does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
+the reference ZS or this transient empty ZS, but not a known different ZS. Physical arrival at any
+FP, STAND_WP arrival and legal fallback require the row's target waypoint to match A's.
+STAND_WP has no held free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
+When TA changes the target waypoint, the initial uninterrupted hold of the previous free point
+outside the new approach radius is excluded from arrivals, independently in A and B. A newly acquired
+hold near the preceding target waypoint is also excluded. A suitable
+point already in that radius fulfils the new routine without leaving and reclaiming it.
+
+A legal fallback is a standing NPC near its routine waypoint with no suitable available free point.
+It has a separate A/B row. Raw pose time is reported (waiting for a campfire is not sitting); acceptance
+excludes a legal wait from both pose populations and held-point agreement only if the other run
+is also in the activity pose or legally waiting. An inactive candidate cannot hide behind A's wait.
+Observed legal B waiting intervals are subtracted from a later arrival's delay.
+An entirely waiting segment is allowed only if **every reference on-point sample** has legal fallback
+in B. Waiting once cannot hide losing an otherwise empty point for the rest of the segment.
+If A's entire shift has only legal waiting, B must fulfil it at least once (on-point or legal wait);
+otherwise it counts as a missing segment, with no invented physical arrival time for A.
+Missing point columns fail enabled point checks and never add point misses to legacy stuck counts.
+MOB checks are **not applicable** when the selected reference samples have no objects; Extra MOB
+still reports objects added only in B. An empty state selection still fails numeric checks. The shared
+`max_activity_stuck` gate includes unique NPCs from missed point segments as well as missing MOBs.
+TA-only point samples also make MOB checks inapplicable. Pose time 0/0 is inapplicable, while losing
+an observed reference pose gives ratio 0. Nonempty TA strings must have the four fields of `routineText`.
+
 ## Engine side
 
-`OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+### Placed world Items (physics stage 8, step 5)
+
+`placed-items-census` checks the immutable authored-geometry census and wakes
+every admitted Item for five seconds, in 12 m sections. Each section advances
+at least 300 real fixed native steps synchronously, sampling after every tick;
+rendering and game-clock time do not pace the physical interval. All admitted
+neighbouring supports within 22 m are installed asleep before the section wakes.
+It never captures images.
+Run all four fresh worlds through Ryzen's queue:
+
+```bash
+WORLD=NEWWORLD.ZEN PLACED_ITEMS=1 RYZEN_CLEAN_IDLE_HOURS=0 \
+  RYZEN_LOCK_WAIT=1200 TIMEOUT=3600 RYZEN_MAX=75m \
+  scripts/bench.sh placed-items-census "$PWD/.bench/placed-items-NEWWORLD"
+# Repeat with OLDWORLD.ZEN, ADDONWORLD.ZEN and DRAGONISLAND.ZEN.
+python3 scripts/placed_items_report.py \
+  .bench/placed-items-{NEWWORLD,OLDWORLD,ADDONWORLD,DRAGONISLAND} \
+  --known-exceptions reports/physics/2026-10-31-placed-items/known-exceptions.csv
+```
+
+`placed-items-census.jsonl` records each ZEN-ID, original pose, instance, visual,
+exclusive exclusion reason, support gap and penetration depths. The census event
+adds classification time, admitted gap buckets (0–1, 1–2, 2–4 cm) and the densest
+20 m neighbourhood among all source Items (ties prefer more admitted Items).
+After the original geometric reasons, `rooted` excludes `ItPl_*` on landscape or
+`C_Object`; `slope` excludes static supports steeper than 15°. Its normal comes
+from a downward ray at the collision shape's lowest point, rather than the
+nearest overlap contact. `irregular` rejects static support when this ray misses
+a face; it follows `slope`. `no_ground` then rejects Items on static objects or
+movable furniture when a downward COM ray, excluding that support, finds no
+landscape or other static object within 5 m below the hull bottom. Penetration
+into static geometry, furniture or another Item is limited to 2 cm; the support
+gap remains 4 cm. `on_excluded` propagates rejected Item supports through
+whole stacks. Plants on furniture or admitted Items use the ordinary rules.
+`placed-items-probe.jsonl` records maximum and final travel
+for every admitted Item. The reader requires at least 95% of the combined sample
+to move less than 5 cm, maximum travel at most 100 cm, and zero `item recovered`
+messages. Every displacement over 10 cm remains in the output with its original
+contact measurements. These limits are fixed; a failed 95% gate requires a decision.
+For linked recoveries the reader also measures the logged pre-reset pose, so a
+reset inside a native tick cannot hide an excursion from the regular samples.
+Pass the previous four run directories with `--previous-runs` to include the
+new facet-slope distributions of their >10 cm outliers, alongside admitted Items,
+in 5° bins. A missing facet normal is counted separately. Recovery messages name
+the ZEN-ID whenever the recovered Item has an authored link.
+`--known-exceptions` reads `world,zen_id,reason` CSV rows and prints those Items
+separately. They still count toward the 95% fraction, but are omitted from the
+maximum-travel and recovery gates. Raw maximum/recovery totals remain visible
+beside `gate_max_shift_cm` and `gate_recovered`. The agreed file contains exactly
+NEWWORLD 18261 (the rolling flask); every other excess still fails.
+
+`placed-items diagnose <ZEN-ID> [control]` advances that Item's original 12 m
+section for 300 native steps and writes `placed-items-diagnose.jsonl`. Each step
+records center, velocity, nearby native contacts, triangle indices, normals and
+edge lengths, plus the recovery ray result. `solver_contacts` records the real
+`OnContactAdded`/`Persisted` manifold separately from geometric snapshots. `control` removes other Items and
+movable furniture while retaining landscape and static objects. The command
+requires an authored Item and uses `tick(16)` to prevent batched native steps.
+For an excluded Item it records the verdict and verifies that neither wake nor
+activation can create a body, without attempting to simulate that Item.
+
+`placed-items-diagnose-1644` / `placed-items-diagnose-1644-control` use
+`WORLD=OLDWORLD.ZEN`; `placed-items-diagnose-6863` /
+`placed-items-diagnose-6863-control` use `WORLD=ADDONWORLD.ZEN`. Set
+`PLACED_ITEMS=1 ITEM_DEEPEST_CONTACT=1` for the fixed manifold or
+`ITEM_DEEPEST_CONTACT=0` for the upstream control, for example:
+
+```bash
+WORLD=OLDWORLD.ZEN PLACED_ITEMS=1 ITEM_DEEPEST_CONTACT=1 \
+  scripts/bench.sh placed-items-diagnose-1644 "$PWD/.bench/thin-blades/1644-on"
+```
+
+`[GAME] item_deepest_contact=1` retains the EPA pair in manifolds involving
+`C_Item` when it is more than 1 mm deeper than every clipped pair; coplanar
+face contacts keep their original support corners. Marvin
+`toggle item_deepest_contact` applies on the next
+native step. OFF uses Jolt's original clipping. See the
+[thin-blade results](../../reports/physics/2026-10-31-thin-blades/README.md).
+
+`PLACED_ITEMS=0` selects the existing body-creation paths. `[GAME] placed_items`
+defaults to 1; Marvin `toggle placed_items` changes it during play. The census is
+computed even when the feature starts disabled, so enabling it later uses the
+same original geometry. Dropped Items retain their existing physics path.
+In OFF, the existing CharacterVirtual path creates bodies within its nearby Item
+radius and can push them; the walk check records this observed behavior.
+
+`placed-items` runs the native hero passage, arrow, tavern-table and owned pickup
+checks in NEWWORLD with `PLACED_ITEMS=1` and `=0`. Both modes choose the same
+authored floor food and supported lane; nearby NPCs are removed using the
+`item-wake` fixture pattern. The arrow aims at native collision bounds. The
+Dead Harpy table tests admitted Items; `owned-table` also selects a real mixed
+table with excluded Items and native private-room ownership for the theft check.
+Ownership fields are never rewritten. Failed result events preserve the final
+FAIL while allowing later independent checks to run. It snapshots ownership before
+the checks and saves after pickup (including removal/reordering of world Items):
+`session-placed-items.sav` and `placed-items-saved.jsonl` describe the same Items.
+Start `placed-items-reload` in two successive new processes, using the preceding
+process's archive as `SAVE` each time (leave `WORLD` unset). Its first command
+captures every Item before the first native step, then saves again. Verify both
+cycles with:
+
+```bash
+python3 scripts/placed_items_report.py --save-chain \
+  .bench/placed-items-on .bench/placed-items-reload-1 .bench/placed-items-reload-2
+```
+
+The reader checks saved poses within 0.01 cm, ZEN linkage, instance, owner,
+flags and count; linked native bodies must enter asleep and excluded Items must
+have no body. Also load an actual main save with no `placed-items` entry through
+`placed-items-reload`: only unchanged instance/pose matches acquire a link.
+
+`placed-items-performance` selects the densest source-Item 20 m neighbourhood from
+the census, measures entry frames and ten steady seconds after two seconds of
+warmup. Run three fresh processes per mode on the M1 Pro with `BENCH_HOST=local`,
+`WORLD=NEWWORLD.ZEN`, `RYZEN_CLEAN_IDLE_HOURS=0` and `PLACED_ITEMS=0`/`1`.
+Before each pair, record `uptime` and `pgrep -fl '[G]othic2Notr' || echo absent`.
+Wait up to 30 minutes for load average to fall to 12 or below, and always wait
+for any existing game. If physics p95 exceeds 2 ms in both modes, repeat the
+pair in the same scene on a clean `origin/main`. ON–OFF is the main comparison
+under high background load. `placed-items-performance.csv` contains native physics
+time, frame time, total/placed body counts and `proximity_created`. The latter
+counts only the new proximity budget; the existing `item_wake` budget is separate.
+Acceptance is physics p95 ≤2 ms and ON–OFF ≤0.2 ms. The report also records the
+worst entry frame, body counts and complete world loading time including census.
+Compare complete NEWWORLD loading time using the median of three runs per mode.
+
+[Recorded results](../../reports/physics/2026-10-31-placed-items/README.md): after
+the 2 cm penetration limit and `no_ground`, the four-world probe reached
+636/660 (96.363636%) below 5 cm, maximum 123.417038 cm and two recoveries.
+The three agreed exceptions preserve that fraction and raw evidence; with the
+CSV the reader passes, with a gated maximum of 74.7259445 cm and zero other
+recoveries. The two swords remain admitted; their thin-body support crossing
+will be investigated separately.
+The corrected functional ON/OFF passes all five result checks per mode. Mac
+ON p95 is 1.394707/1.581916/1.402624 ms; each pair is below OFF and within budget.
+Both cold cycles now pass on Ryzen with all 2330 saved links after pickup,
+including authored Item 2839 below mover 2838. The load-time catalogue retains
+all 2331 authored Items independently of inherited trigger flags. The old main
+save restores all 2331 links with no duplicate Items; maximum cold pose error is
+0.00007079 cm. Version 55 and placement-entry schema 1 remain unchanged.
+The native placed-Item contract also moves the mover-child Item before saving
+and checks its identity and exact matrix on reload. Linux builds and all four
+physics contracts pass after explicit signed Guild comparisons in the fixture.
+
+`OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
+`testbench_healing.cpp`, cloth in `testbench_cloth.cpp`, water film in `testbench_water_film.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
+CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, physics-trace debug commands in `testbench_traces.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`, item wake in `testbench_item_wake.cpp` and living bodies in `testbench_living.cpp`, ragdolls in `testbench_ragdoll.cpp` and own meshes / chests in `testbench_own_mesh.cpp`, archery in `testbench_archery.cpp`, melee in `testbench_melee.cpp` and routine return / guard in `testbench_routine.cpp`, manual-aim spot probes in `testbench_aim_spots.cpp`, hero / NPC commands in `testbench_npc_commands.cpp`, physics / world / time in `testbench_world.cpp`, scenario control in `testbench_control.cpp` and conversation / AI probes in `testbench_dialog.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's
@@ -1104,6 +2636,10 @@ to start when its build lacks this option, including after an automatic fallback
 | `cloth camera-turn <degrees> <duration_ms>` | Smoothly turn a held camera in place, retaining its pitch, then hold the new view. `cloth-visibility` records an authored flag leaving and returning to the camera; checkpoints include `visible` and `simulation_steps` to verify that hidden time is frozen. |
 | `cloth camera-range <cm>` | Move a held cloth camera horizontally to the requested distance from the selected cloth, retain its height and clear side, and verify the whole cloth is unobstructed and framed. Run before recording the turn. |
 | `cloth wind calm\|natural\|gust` | Smoothly set the common world wind scale to 0, 1 or 2. |
+| `foliage wait-gust\|wait-lull [lead_ms] [z_cm]` | Wait until the peak of the world's next gust (or the middle of the calm between two) is `lead_ms` ahead (4000) at the place `z_cm` (the camera of the last frame): the gust travels along +Z at 5 m/s, so a place hears it 2 ms per cm of `z` later. Changes nothing in the world, writes the event `foliage_wait` with `front_delay_ms`. |
+| `grass wait [timeout_ms]` | Hold the scenario in real time until the grass ring of the camera's place is built (20000); returns at once without a grass field, takes at least 90 ms with one. Writes the event `grass_ready` with the counts of `grass stats`; a timeout aborts the run. |
+| `grass stats` | Write the event `grass_stats` with the last frame's counts: `cells`, `blades_stored`, `blades_drawn`, `triangles`, `buffer_bytes`, `cells_waiting`, `draws`. With `OPENGOTHIC_GRASS_WASTE=1` also `draw_us` (the mean CPU time of the field's draw, microseconds) and `waste`: of the submitted blades those the vertex shader drops (`gone`), those out of the view (`out`), and what cells cut into squares of 4, 2 and 1 m would submit (`squares`); counted once in 30 frames. |
+| `grass parts <mask>` | Switch parts of the grass's look off, to weigh what each does to the tone (`Grass::Part`, `common/graphics/grass/grassdiag.h`): 1 the ground's shade between the blades, 2 the ground's look of the grass from afar, 4 the tips' tint, 8 the blade's darker root, 16 the ambient shade at the root, 32 the blade's own normal; 64 paints the blades red and the ground in bands of the distance from the camera (2, 3.5, 5 and 10 m), 128 hides the blades. `193` paints the ground of the grass material alone (the mask of `scripts/grass_look.py`); `16384` draws a road with `track` as with its `verge` alone, the painted road and the strip; `32768` takes the blades through their whole vertex stage and then off the screen, so nothing of them is rasterised (`perf-grass.bench`: the blades' cost by parts); `0` gives the look back. |
 | `cloth checkpoint <label>` | Record physical/rendered vertex counts, anchor error, current and lifetime maximum vertex speed, recovery count, projectile counters and the selected cloth's rendered vertices in cm. |
 | `cloth arrow-npc behind\|ahead` | Invoke one synchronous production `moveBullet` segment with a native precise arrow and a fixture NPC behind or ahead of the selected authored banner. Verify the native bone hit and cloth arrow-pass delta 1 or 0. |
 | `cloth shoot fireball\|wind\|arrow` | Launch a real production Bullet at an exposed cloth face. The fixture does not inject a synthetic impulse or introduce an NPC target. |

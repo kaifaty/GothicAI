@@ -20,6 +20,7 @@
 #include "gapi/vulkan/vpsolayoutcache.h"
 #include "gapi/vulkan/vdescriptorallocator.h"
 #include "gapi/vulkan/vsamplercache.h"
+#include "gapi/vulkan/vpipelinecache.h"
 #include "gapi/uploadengine.h"
 #include "exceptions/exception.h"
 #include "utility/compiller_hints.h"
@@ -106,6 +107,8 @@ inline VkFormat nativeFormat(TextureFormat f) {
       return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     case TextureFormat::RGBA16F:
       return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case TextureFormat::RG16F:
+      return VK_FORMAT_R16G16_SFLOAT;
     }
   return VK_FORMAT_UNDEFINED;
   }
@@ -363,6 +366,7 @@ class VDevice : public AbstractGraphicsApi::Device {
       bool     hasMaintenance1    = false;
       bool     hasMaintenance5    = false;
       bool     hasDescriptorHeap  = false;
+      bool     hasMemoryBudget    = false; // VK_EXT_memory_budget
       };
 
     struct Queue final {
@@ -389,6 +393,8 @@ class VDevice : public AbstractGraphicsApi::Device {
       };
 
     void                    waitIdle() override;
+    void                    savePipelineCache() override;
+    AbstractGraphicsApi::MemoryBudget memoryBudget() override;
     std::shared_ptr<VFence> submit(VCommandBuffer& cmd);
 
     static std::vector<VkExtensionProperties> extensionsList(VkPhysicalDevice dev);
@@ -399,6 +405,10 @@ class VDevice : public AbstractGraphicsApi::Device {
 
     SwapChainSupport        querySwapChainSupport(VkSurfaceKHR surface) const { return querySwapChainSupport(physicalDevice,surface); }
     MemIndex                memoryTypeIndex(uint32_t typeBits, VkMemoryPropertyFlags props, VkImageTiling tiling) const;
+    // the heap of memory type `typeId`, uint32_t(-1) for none
+    uint32_t                memoryHeapOf(uint32_t typeId) const {
+      return typeId<memoryProperties.memoryTypeCount ? memoryProperties.memoryTypes[typeId].heapIndex : uint32_t(-1);
+      }
 
     using DataMgr = UploadEngine<VDevice,VCommandBuffer,VBuffer>;
     DataMgr&                dataMgr() const { return *data; }
@@ -434,8 +444,16 @@ class VDevice : public AbstractGraphicsApi::Device {
 
     VDescriptorAllocator    descAlloc;
     VSamplerCache           samplers;
+    VPipelineCache          pipelineCache;
 
     VkProps                 props = {};
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    bool                    profilePipelineStatistics=false;
+    uint32_t                profileTimestampBits=0;   // timestampValidBits of the graphics queue family
+    double                  profileTimestampPeriod=0; // nanoseconds per timestamp tick
+#endif
+
+    PFN_vkGetPhysicalDeviceMemoryProperties2KHR vkGetPhysicalDeviceMemoryProperties2 = nullptr;
 
     PFN_vkGetBufferMemoryRequirements2KHR vkGetBufferMemoryRequirements2 = nullptr;
     PFN_vkGetImageMemoryRequirements2KHR  vkGetImageMemoryRequirements2  = nullptr;
@@ -475,6 +493,13 @@ class VDevice : public AbstractGraphicsApi::Device {
 
     std::mutex              syncSsbo;
     VBuffer                 dummySsboVal;
+
+  public:
+    // Staging memory of readPixels, kept between calls: a video capture reads a frame every step.
+    std::mutex              syncReadback;
+    VBuffer                 readbackStage;
+
+  private:
 
     void                    createLogicalDevice(VkPhysicalDevice pdev);
 

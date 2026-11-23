@@ -198,7 +198,7 @@ def assert_private_trace_fields_absent(path: Path) -> int:
             for key, value in row.items():
                 if key == "traces" and isinstance(value, list):
                     for trace in value:
-                        assert set(trace) <= {"id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age"}, trace
+                        assert set(trace) <= {"id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age", "npc"}, trace
                         count += 1
                 inspect(value)
         elif isinstance(row, list):
@@ -213,6 +213,8 @@ async def process(args, phase: str, save: Path, exercise) -> dict[str, Any]:
     existing = subprocess.run(["pgrep", "-fl", "Gothic2Notr"], text=True, capture_output=True)
     if existing.returncode == 0:
         raise RuntimeError(f"another game owns the machine; wait for it:\n{existing.stdout.strip()}")
+    subprocess.run(["bash", str(Path(__file__).with_name("base-ensure.sh")), str(args.gothic_dir)],
+                   env=dict(os.environ, GAME_BIN=str(args.game_bin)), check=True)
     directory = args.output / phase
     runtime = directory / "run"
     runtime.mkdir(parents=True)

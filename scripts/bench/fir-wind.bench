@@ -1,0 +1,46 @@
+# The wind on the modern spruce A (reports/content/2026-11-trees/fir/README.md): the set and the places of
+# fir-probe.bench (scripts/content/fir_set.py probe; run with OPENGOTHIC_CONTENT=<that set>), at noon. Clips, not
+# stills: a motion is judged by the eye on a clip. Each clip starts 3 s before the peak of a gust and runs 20 s,
+# through the gust and the calm after it. The world's wind blows along +Z, away from the cameras and to their left.
+#   wind-far    30 m from spruce A (18 m), the eye 1.7 m over the ground;
+#   wind-near   5 m from its lower boughs;
+#   wind-bough  3 m from a bough in the sun, from the side.
+#   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen scripts/bench.sh fir-wind
+# @timeout 900
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+set time 12 0
+
+goto pos 39400 3790 -2000
+clear 3000
+streaming wait
+grass wait
+cam at 39550 3946 -1820 41250 4210 650
+wait 5000
+foliage wait-gust 3000 0
+rec wind-far
+wait 20000
+stop
+wait 500
+
+goto pos 40550 3420 -350
+streaming wait
+grass wait
+cam at 40710 3580 -130 41250 3725 650
+wait 4000
+foliage wait-gust 3000 0
+rec wind-near
+wait 20000
+stop
+wait 500
+
+cam at 40840 3495 380 40870 3524 680
+wait 2000
+foliage wait-gust 3000 0
+rec wind-bough
+wait 20000
+stop
+wait 500

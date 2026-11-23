@@ -1,0 +1,206 @@
+# Functional beast-poise smoke; run the same scenario with MELEE_BEAST_POISE=1 and 0.
+# BENCH_HOST=local WORLD=NEWWORLD.ZEN MELEE_POSTURE=1 MELEE_STAGGER=1 OPENGOTHIC_BODY_TRACE=1
+# Scale filling uses the ordinary melee damage path (`strike`); the bonus swing and snapper bite are native hits.
+seed 73013
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+stats hp 100000 hpmax 100000
+wait 600
+melee-shadow clear
+turn 180
+insert Wolf
+put WOLF 140 0
+stats npc WOLF hp 100000 hpmax 100000
+watch WOLF
+wait 600
+rec wolf-posture novideo
+mark wolf-fill
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+wait 34
+strike WOLF
+mark wolf-bonus-swing
+pin WOLF 125 0 0
+press action
+tap left
+wait 600
+release all
+pin off
+wait 2000
+stop
+
+# Native monster combat chooses the bite; the short series catches its wind-up when ON.
+# High hero HP, without god mode, leaves actual bite damage measurable in body-events.
+watch player
+clear 3000
+insert Snapper
+put SNAPPER 140 0
+stats npc SNAPPER hp 100000 hpmax 100000
+watch SNAPPER
+wait 600
+rec snapper-attack novideo
+# Set the target, then discard the human state and its queued weapon removal.
+fight SNAPPER player
+wait 200
+freeze SNAPPER
+freeze SNAPPER
+state SNAPPER ZS_MM_ATTACK NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+freeze SNAPPER off
+wait 500
+mark snapper-hit-during-attack
+strike SNAPPER
+wait 67
+strike SNAPPER
+wait 67
+strike SNAPPER
+wait 67
+strike SNAPPER
+wait 67
+strike SNAPPER
+wait 67
+strike SNAPPER
+wait 1500
+mark snapper-native-resume
+stun SNAPPER posture
+wait 100
+strike SNAPPER
+wait 5500
+hp SNAPPER
+stop
+
+# The huge target never accumulates posture or enters either stun or knockdown.
+freeze SNAPPER
+watch player
+clear 3000
+insert Troll
+put TROLL 250 0
+stats npc TROLL hp 100000 hpmax 100000
+watch TROLL
+wait 600
+rec troll-series novideo
+mark troll-fill
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 34
+strike TROLL
+wait 1800
+stun TROLL posture
+wait 1800
+hp TROLL
+stop
+
+# Beast hits fill human posture by mass; the shadowbeast's capped 60 Ns is a heavy hit.
+# Start beyond the snapper stun and recovery cap. The stock hero keeps light armour and its existing melee hit chance.
+freeze TROLL
+watch player
+clear 3000
+wait 8000
+release all
+disarm
+stats hp 100000 hpmax 100000
+insert Wolf
+put WOLF 140 0
+stats npc WOLF hp 100000 hpmax 100000
+insert Shadowbeast
+put SHADOWBEAST 450 90
+stats npc SHADOWBEAST hp 100000 hpmax 100000
+watch player
+wait 600
+rec beast-hits-human novideo
+mark wolf-native-bite
+fight WOLF player
+wait 200
+freeze WOLF
+freeze WOLF
+state WOLF ZS_MM_ATTACK NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+freeze WOLF off
+wait 1700
+freeze WOLF
+freeze WOLF
+put WOLF 140 0
+mark wolf-fill-human
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+mark shadow-heavy-on-staggered
+strike player SHADOWBEAST
+wait 8000
+stats
+stop

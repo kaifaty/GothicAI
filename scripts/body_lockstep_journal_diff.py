@@ -6,7 +6,8 @@ import json
 import os
 import re
 
-VOLATILE = re.compile(r"wall|epoch|monotonic|heartbeat|_us$|_ns$|^t$|elapsed_real|pid")
+# Generation and episode counters belong to the fork template: they follow which episodes it served.
+VOLATILE = re.compile(r"wall|epoch|monotonic|heartbeat|_us$|_ns$|^t$|elapsed_real|pid|generation|episode_id")
 FILES = ("observations.jsonl", "events.jsonl", "arena-events.jsonl", "body-control-events.jsonl")
 
 

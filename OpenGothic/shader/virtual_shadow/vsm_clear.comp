@@ -27,10 +27,25 @@ void main() {
   imageStore(pageTblDepth, at, uvec4(0xFFFFFFFF));
 
   if(at==ivec3(0)) {
+    header.pairSpill    = 0;
     header.pageCount    = 0;
     header.meshletCount = 0;
     header.counterM     = 0;
     header.counterV     = 0;
+    header.pageListCount     = 0;
+    header.pagePlaced        = 0;
+    header.omniTileOverflow  = 0;
+    header.omniTileLightsMax = 0;
+    header.candidateCount    = 0;
+    header.clusterPairs      = 0;
+    }
+
+  if(gl_WorkGroupID==uvec3(0)) {
+    const uint lane = gl_LocalInvocationIndex;
+    for(uint i=lane; i<VSM_PAIR_BINS; i+=gl_WorkGroupSize.x*gl_WorkGroupSize.y)
+      header.pairDemand[i] = 0;
+    if(lane<VSM_BIN_WORDS)
+      header.admitPrevBits[lane] = header.admitBits[lane];
     }
 
   if(gl_LocalInvocationIndex<16) {

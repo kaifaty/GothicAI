@@ -1,0 +1,142 @@
+# Melee dodge (melee_dodge, step 6.2 of the NRFTW port): the hero with a one-hander, in front of the fixture's
+# bandit in Onar's open field, dodges by its own key (`tap dodge`; the way from the movement keys held at the press)
+# back, left, right and forward, and forward-left (forward wins); then by the jump key itself, the default binding
+# (`tap jump`: back, with the strafe key left, with the turn key left); then back under the bandit's blow (`dodge ...
+# before`: as the blow is 100 ms from its contact, so the contact comes inside the dash's window, 40-360 ms, before
+# the hero is out of reach); last, in medium and heavy armour (the roll and the slow roll fall back to the dash while
+# their animations are not made). After each jump-key take `anims` logs what the hero plays: `bs=27` and the dash,
+# or nothing new where there is no dodge that way.
+# The flag off is the same file with MELEE_DODGE=0: the `tap jump` takes jump (`anims ... bs=8 ...: S_JUMP`, or a
+# climb), `tap dodge` does nothing (no `melee dodge` line), `dodge ... before` logs `refused, disabled`, and the
+# blow under it hits.
+# Every dodge writes `melee dodge PC_HERO: <way>, armour <class>, <move> <animation> [(no <missing names>)], cost <n>,
+# window <a>-<b> ms` in bench.log, or why there is none: `no dodge this way (no ...)`, `the original jump back`,
+# `refused, <reason>`. The blow inside the window writes `melee hit by BDT_1013_BANDIT_L at <ms> ms of dash 40-360 ms:
+# did not pass`. OPENGOTHIC_BODY_TRACE=1 adds the `dodge*` events to body_combat. Our animations come from the content
+# (scripts/content/anim/content_pack.py: T_1HDASHB for HUMANS, HUMANS_1HST1, HUMANS_1HST2 so far); the look is judged
+# from the clips by the one who made them.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local OPENGOTHIC_CONTENT=/abs/content
+seed 73013
+cheat god
+set time 12 0
+release all
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+# The fixture's signpost stands between them at the wall: turn into the open field.
+turn 180
+pin BDT_1013_BANDIT_L 320 0 0
+wait 300
+pin off
+immortal BDT_1013_BANDIT_L on
+watch player
+cam two BDT_1013_BANDIT_L 320 10 1
+# After a goto the hero takes a move about 2 s later
+wait 2000
+shot start
+
+rec dodge-back
+tap dodge
+wait 1200
+stop
+
+rec dodge-left
+press left
+tap dodge
+wait 34
+release left
+wait 1200
+stop
+
+rec dodge-right
+press right
+tap dodge
+wait 34
+release right
+wait 1200
+stop
+
+rec dodge-forward
+press forward
+tap dodge
+wait 34
+release forward
+wait 1200
+stop
+
+rec dodge-forward-left
+press forward
+press left
+tap dodge
+wait 34
+release all
+wait 1200
+stop
+
+# The jump key is the dodge's default key while a melee weapon is drawn
+rec jump-key-back
+tap jump
+wait 100
+anims
+wait 1100
+stop
+
+rec jump-key-left
+press left
+tap jump
+wait 34
+release left
+wait 66
+anims
+wait 1100
+stop
+
+# No strafe key held: the keys that turn the hero give the side (the arrows of the preset)
+rec turn-key-left
+press turnl
+tap jump
+wait 34
+release turnl
+wait 66
+anims
+wait 1100
+stop
+
+rec under-blow
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+pin off
+fight BDT_1013_BANDIT_L player
+dodge player back before BDT_1013_BANDIT_L 100
+wait 3000
+stop
+
+# Armour: medium rolls, heavy rolls slowly; until those animations exist the dash plays, at its own cost and window
+freeze BDT_1013_BANDIT_L
+pin BDT_1013_BANDIT_L 320 0 0
+wait 300
+pin off
+rec dodge-medium
+equip ITAR_MIL_M
+wait 300
+tap dodge
+wait 1200
+stop
+
+rec dodge-heavy
+equip ITAR_PAL_H
+wait 300
+tap dodge
+wait 1200
+stop

@@ -1,0 +1,225 @@
+#include "itemview.h"
+
+#include <Tempest/Log>
+
+#include <cctype>
+#include <cstdlib>
+#include <mutex>
+#include <string>
+#include <string_view>
+#include <unordered_set>
+
+#include "gameservices.h"
+#include "resources.h"
+#include "settings.h"
+#include "graphics/worldview.h"
+#include "world/records/itemrecord.h"
+#include "world/world.h"
+
+namespace {
+
+// the views with a live effect, for ItemView::census (the bench's itemfx)
+struct Live {
+  std::mutex                         sync;
+  std::unordered_set<const ItemView*> views;
+  // effect names Gothic does not know: looked up (and logged by it) once each
+  std::unordered_set<std::string>    unknown;
+  };
+
+Live& live() {
+  static Live l;
+  return l;
+  }
+
+const VisualFx* effectOf(std::string_view name) {
+  if(name.empty() || !ItemView::enabled())
+    return nullptr;
+  auto& l = live();
+  // the VM finds a symbol whatever its case: so does the list of the unknown ones
+  std::string key(name);
+  for(auto& c:key)
+    c = char(std::toupper(uint8_t(c)));
+  {
+    std::lock_guard<std::mutex> guard(l.sync);
+    if(l.unknown.find(key)!=l.unknown.end())
+      return nullptr;
+  }
+  // an unknown name is one line in the log: VisualFxDefinitions writes it, the second lookup does not happen
+  auto* fx = GameServices::inst().loadVisualFx(name);
+  if(fx==nullptr) {
+    std::lock_guard<std::mutex> guard(l.sync);
+    l.unknown.emplace(std::move(key));
+    }
+  return fx;
+  }
+
+}
+
+ItemView::ItemView(World& owner, const ItemRecord& item, bool shown)
+  :world(&owner), material(item.material), fx(effectOf(item.effect)) {
+  if(!shown) {
+    proto = Resources::loadMesh(item.visual);
+    return;
+    }
+  mesh  = owner.addView(item);
+  proto = mesh.protoMesh();
+  startEffect();
+  }
+
+ItemView::ItemView(MeshObjects::Mesh&& m)
+  :ItemView(m.protoMesh(),0,std::move(m)) {
+  }
+
+ItemView::ItemView(const ProtoMesh* p, int32_t mat, MeshObjects::Mesh&& m)
+  :proto(p), material(mat), mesh(std::move(m)) {
+  }
+
+ItemView::ItemView(ItemView&& other) noexcept {
+  moveFrom(other);
+  }
+
+ItemView& ItemView::operator=(ItemView&& other) noexcept {
+  if(this!=&other) {
+    stopEffect();
+    moveFrom(other);
+    }
+  return *this;
+  }
+
+ItemView::~ItemView() {
+  stopEffect();
+  }
+
+void ItemView::moveFrom(ItemView& other) {
+  world    = other.world;
+  proto    = other.proto;
+  material = other.material;
+  fx       = other.fx;
+  keyLevel = other.keyLevel;
+  fadeAt   = other.fadeAt;
+  pos      = other.pos;
+  mesh     = std::move(other.mesh);
+  if(!other.hasEffect()) {
+    effect = Effect();
+    return;
+    }
+  {
+    auto& l = live();
+    std::lock_guard<std::mutex> guard(l.sync);
+    l.views.erase(&other);
+    l.views.insert(this);
+  }
+  effect = std::move(other.effect);
+  other.effect = Effect();
+  // the particles are born on this mesh now, not on the moved-from one
+  effect.setMesh(&mesh);
+  }
+
+bool ItemView::enabled() {
+  static const bool envOff = [] {
+    const char* env = std::getenv("OPENGOTHIC_ITEM_EFFECTS");
+    return env!=nullptr && std::string_view(env)=="0";
+    }();
+  if(envOff)
+    return false;
+  return !Settings::exists() || Settings::getI("GAME","itemEffects")!=0;
+  }
+
+ItemView::Census ItemView::census(const World& owner) {
+  Census ret;
+  auto& l = live();
+  std::lock_guard<std::mutex> guard(l.sync);
+  for(auto* v:l.views) {
+    if(v->world!=&owner)
+      continue;
+    ++ret.alive;
+    if(owner.isInPfxRange(v->effect.position()))
+      ++ret.near;
+    }
+  return ret;
+  }
+
+bool ItemView::effectPosition(Tempest::Vec3& out) const {
+  return hasEffect() && effect.emitterPosition(out);
+  }
+
+void ItemView::setObjMatrix(const Tempest::Matrix4x4& m) {
+  pos = m;
+  mesh.setObjMatrix(m);
+  if(hasEffect())
+    effect.setObjMatrix(m);
+  }
+
+float ItemView::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
+  return mesh.setTextureOwner(position,spatial);
+  }
+
+void ItemView::setLevel(int32_t lvl) {
+  keyLevel = lvl;
+  if(!hasEffect())
+    return;
+  // a new key makes the effect's particles and light again: on the same mesh, where the view is
+  effect.setKey(*world,SpellFxKey::Invest,lvl);
+  effect.setMesh(&mesh);
+  effect.setObjMatrix(pos);
+  }
+
+void ItemView::fadeEffectIn(uint64_t ms) {
+  if(fx==nullptr || world==nullptr)
+    return;
+  fadeAt = world->tickCount()+ms;
+  }
+
+void ItemView::tick(uint64_t dt) {
+  if(fadeAt!=0 && world!=nullptr && world->tickCount()>=fadeAt) {
+    // gone for good: restore() makes the mesh alone
+    stopEffect();
+    fx     = nullptr;
+    fadeAt = 0;
+    }
+  if(hasEffect())
+    effect.tick(dt);
+  }
+
+void ItemView::release() {
+  stopEffect();
+  mesh = MeshObjects::Mesh();
+  }
+
+void ItemView::restore(WorldView& view) {
+  if(!mesh.isEmpty() || proto==nullptr)
+    return;
+  mesh = view.addView(proto,material);
+  mesh.setObjMatrix(pos);
+  startEffect();
+  }
+
+void ItemView::startEffect() {
+  // the switch is read again: a view made with it on and restored after it was turned off stays without one
+  if(fx==nullptr || world==nullptr || mesh.isEmpty() || !enabled())
+    return;
+  // as MdlVisual::setNpcEffect: active, looped, the particles born on the item's own mesh
+  effect = Effect(*fx,*world,Tempest::Vec3(pos.at(3,0),pos.at(3,1),pos.at(3,2)),SpellFxKey::Count);
+  effect.setPhysicsDisable();
+  effect.setActive(true);
+  effect.setLooped(true);
+  if(keyLevel>0)
+    effect.setKey(*world,SpellFxKey::Invest,keyLevel);
+  effect.setMesh(&mesh);
+  effect.setObjMatrix(pos);
+  auto& l = live();
+  std::lock_guard<std::mutex> guard(l.sync);
+  l.views.insert(this);
+  }
+
+void ItemView::stopEffect() {
+  if(!hasEffect())
+    return;
+  {
+    auto& l = live();
+    std::lock_guard<std::mutex> guard(l.sync);
+    l.views.erase(this);
+  }
+  effect.setActive(false);
+  effect = Effect();
+  }

@@ -7,7 +7,6 @@ view clean
 goto NW_XARDAS_TOWER_VALLEY_01
 turn 225
 wait 500
-manual on
 equip ItRw_Crossbow_L_01
 give ItRw_Bolt 100
 insert BAU_904_BAUER

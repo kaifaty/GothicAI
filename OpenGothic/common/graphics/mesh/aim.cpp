@@ -10,8 +10,7 @@
 #include "ikmath.h"
 #include "aimframe.h"
 #include "skeleton.h"
-#include "world/objects/npc.h"
-#include "world/world.h"
+#include "physics/dynamicworld.h"
 
 using namespace Tempest;
 using namespace IkMath;
@@ -210,7 +209,7 @@ Vec3 Aim::appliedDirection() const {
   return poseLeanDirection;
   }
 
-Aim::LeanResult Aim::leanNeeded(const Npc& npc, const Vec3& lookDirection,
+Aim::LeanResult Aim::leanNeeded(const DynamicWorld* physics, const Tempest::Vec3& origin, float rotation, const Vec3& lookDirection,
                                 const Vec3& shotDirection, float down, const LeanEdge& edge) const {
   LeanResult out;
   out.edgeDistance = edge.distance;
@@ -218,12 +217,11 @@ Aim::LeanResult Aim::leanNeeded(const Npc& npc, const Vec3& lookDirection,
   out.edgeHeight = edge.supportY;
   if(!valid || !enabled)
     return out;
-  const Vec3 origin = npc.position();
-  const float a = npc.rotationRad();
+  const float a = rotation;
   const Vec3 facing(std::cos(a),0,std::sin(a));
   const Vec3 look = length(lookDirection)>0.5f ? normalize(lookDirection) : facing;
   const Vec3 shot = length(shotDirection)>0.5f ? normalize(shotDirection) : look;
-  const auto* world = npc.world().physic();
+  const auto* world = physics;
   out.edge = edge.found && edge.distance<=100.f && edge.drop>100.f && down>LeanStart*Deg;
 
   struct Clearance final {
@@ -475,6 +473,10 @@ bool Aim::update(const Input& in) {
   if(tm.x!=tremor.x || tm.y!=tremor.y)
     changed = true;
   tremor = tm;
+  const Tempest::Vec2 sk = on ? in.shake : Tempest::Vec2();
+  if(sk.x!=shake.x || sk.y!=shake.y)
+    changed = true;
+  shake = sk;
   if(ready)
     approach(rot,goal,1.f - std::exp(-BodyRate*fast*dt),MaxBody*fast*dt,changed);
 
@@ -573,16 +575,27 @@ void Aim::apply(Matrix4x4* tr, size_t numBones, const Vec3& origin, const Vec3& 
     const Mat3 rt = mul(axisAngle(Up,tremor.x*weight),axisAngle(side,tremor.y*weight));
     rotateAbout(tr,armsTree.empty() ? chestTree : armsTree,rt,position(tr[chest]));
     }
+  // straining past their strength the arms shake where it is seen: both hands, the bow and the arrow move
+  // together, across the arrow (the arrow keeps its line: the aim's error is the tremor)
+  if((shake.x!=0.f || shake.y!=0.f) && !armsTree.empty()) {
+    const Vec3 up = normalize(cross(side,want));
+    const Vec3 d  = (side*shake.x + up*shake.y)*weight;
+    for(auto i:armsTree) {
+      tr[i].set(3,0,tr[i].at(3,0)+d.x);
+      tr[i].set(3,1,tr[i].at(3,1)+d.y);
+      tr[i].set(3,2,tr[i].at(3,2)+d.z);
+      }
+    }
   }
 
-void Aim::finish(const Matrix4x4* tr, size_t numBones, const Vec3& origin, const Vec3& facing) {
+void Aim::finish(const Matrix4x4* tr, size_t numBones, const Vec3& origin, const Vec3& facing, const Vec3& seen) {
   const size_t s = arrowSlot!=size_t(-1) ? arrowSlot : slot;
   if(!valid || head>=numBones || s>=numBones)
     return;
   // BowDraw may slide the nock along the arrow. Bring the final points back through exactly
   // the shared transform, so every prospective angle starts from that same animated pose.
   baseHead = pointAt(position(tr[head]),origin,facing,poseLeanDirection,poseLean,false,true);
-  baseSlot = pointAt(position(tr[s]),origin,facing,poseLeanDirection,poseLean,true,true);
+  baseSlot = pointAt(position(tr[s])-seen,origin,facing,poseLeanDirection,poseLean,true,true);
   }
 
 void Aim::probe(Probe& p) const {

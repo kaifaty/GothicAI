@@ -1,0 +1,293 @@
+{
+ "note": "MediaPipe Face Mesh index -> template (MPFB) vertex id, from the template render in the landmark frame",
+ "points": {
+  "61": {
+   "group": "lip_upper_outer",
+   "vertex": 424
+  },
+  "185": {
+   "group": "lip_upper_outer",
+   "vertex": 412
+  },
+  "40": {
+   "group": "lip_upper_outer",
+   "vertex": 447
+  },
+  "39": {
+   "group": "lip_upper_outer",
+   "vertex": 5354
+  },
+  "37": {
+   "group": "lip_upper_outer",
+   "vertex": 355
+  },
+  "0": {
+   "group": "lip_upper_outer",
+   "vertex": 466
+  },
+  "267": {
+   "group": "lip_upper_outer",
+   "vertex": 7215
+  },
+  "269": {
+   "group": "lip_upper_outer",
+   "vertex": 11956
+  },
+  "270": {
+   "group": "lip_upper_outer",
+   "vertex": 7171
+  },
+  "409": {
+   "group": "lip_upper_outer",
+   "vertex": 7168
+  },
+  "291": {
+   "group": "lip_upper_outer",
+   "vertex": 7128
+  },
+  "146": {
+   "group": "lip_lower_outer",
+   "vertex": 502
+  },
+  "91": {
+   "group": "lip_lower_outer",
+   "vertex": 478
+  },
+  "181": {
+   "group": "lip_lower_outer",
+   "vertex": 480
+  },
+  "84": {
+   "group": "lip_lower_outer",
+   "vertex": 486
+  },
+  "17": {
+   "group": "lip_lower_outer",
+   "vertex": 492
+  },
+  "314": {
+   "group": "lip_lower_outer",
+   "vertex": 7241
+  },
+  "405": {
+   "group": "lip_lower_outer",
+   "vertex": 7235
+  },
+  "321": {
+   "group": "lip_lower_outer",
+   "vertex": 7233
+  },
+  "375": {
+   "group": "lip_lower_outer",
+   "vertex": 7202
+  },
+  "33": {
+   "group": "eye_r_upper",
+   "vertex": 4852
+  },
+  "246": {
+   "group": "eye_r_upper",
+   "vertex": 12
+  },
+  "161": {
+   "group": "eye_r_upper",
+   "vertex": 6761
+  },
+  "160": {
+   "group": "eye_r_upper",
+   "vertex": 4849
+  },
+  "159": {
+   "group": "eye_r_upper",
+   "vertex": 4848
+  },
+  "158": {
+   "group": "eye_r_upper",
+   "vertex": 1073
+  },
+  "157": {
+   "group": "eye_r_upper",
+   "vertex": 57
+  },
+  "173": {
+   "group": "eye_r_upper",
+   "vertex": 6769
+  },
+  "133": {
+   "group": "eye_r_upper",
+   "vertex": 4871
+  },
+  "7": {
+   "group": "eye_r_lower",
+   "vertex": 6778
+  },
+  "163": {
+   "group": "eye_r_lower",
+   "vertex": 36
+  },
+  "144": {
+   "group": "eye_r_lower",
+   "vertex": 4860
+  },
+  "145": {
+   "group": "eye_r_lower",
+   "vertex": 4861
+  },
+  "153": {
+   "group": "eye_r_lower",
+   "vertex": 4862
+  },
+  "154": {
+   "group": "eye_r_lower",
+   "vertex": 5128
+  },
+  "155": {
+   "group": "eye_r_lower",
+   "vertex": 72
+  },
+  "263": {
+   "group": "eye_l_upper",
+   "vertex": 11470
+  },
+  "466": {
+   "group": "eye_l_upper",
+   "vertex": 11469
+  },
+  "388": {
+   "group": "eye_l_upper",
+   "vertex": 11468
+  },
+  "387": {
+   "group": "eye_l_upper",
+   "vertex": 6791
+  },
+  "386": {
+   "group": "eye_l_upper",
+   "vertex": 11466
+  },
+  "385": {
+   "group": "eye_l_upper",
+   "vertex": 6838
+  },
+  "384": {
+   "group": "eye_l_upper",
+   "vertex": 6841
+  },
+  "398": {
+   "group": "eye_l_upper",
+   "vertex": 13363
+  },
+  "362": {
+   "group": "eye_l_upper",
+   "vertex": 6856
+  },
+  "249": {
+   "group": "eye_l_lower",
+   "vertex": 13374
+  },
+  "390": {
+   "group": "eye_l_lower",
+   "vertex": 7758
+  },
+  "373": {
+   "group": "eye_l_lower",
+   "vertex": 6825
+  },
+  "374": {
+   "group": "eye_l_lower",
+   "vertex": 11479
+  },
+  "380": {
+   "group": "eye_l_lower",
+   "vertex": 11480
+  },
+  "381": {
+   "group": "eye_l_lower",
+   "vertex": 11695
+  },
+  "382": {
+   "group": "eye_l_lower",
+   "vertex": 11482
+  },
+  "70": {
+   "group": "brow_r",
+   "vertex": 212
+  },
+  "63": {
+   "group": "brow_r",
+   "vertex": 207
+  },
+  "105": {
+   "group": "brow_r",
+   "vertex": 224
+  },
+  "66": {
+   "group": "brow_r",
+   "vertex": 223
+  },
+  "107": {
+   "group": "brow_r",
+   "vertex": 208
+  },
+  "300": {
+   "group": "brow_l",
+   "vertex": 6987
+  },
+  "293": {
+   "group": "brow_l",
+   "vertex": 6982
+  },
+  "334": {
+   "group": "brow_l",
+   "vertex": 6998
+  },
+  "296": {
+   "group": "brow_l",
+   "vertex": 6997
+  },
+  "336": {
+   "group": "brow_l",
+   "vertex": 6983
+  },
+  "1": {
+   "group": "nose",
+   "vertex": 297
+  },
+  "2": {
+   "group": "nose",
+   "vertex": 307
+  },
+  "4": {
+   "group": "nose",
+   "vertex": 5134
+  },
+  "5": {
+   "group": "nose",
+   "vertex": 201
+  },
+  "6": {
+   "group": "nose",
+   "vertex": 134
+  },
+  "168": {
+   "group": "nose",
+   "vertex": 136
+  },
+  "98": {
+   "group": "nose",
+   "vertex": 347
+  },
+  "327": {
+   "group": "nose",
+   "vertex": 7080
+  },
+  "129": {
+   "group": "nose",
+   "vertex": 5095
+  },
+  "358": {
+   "group": "nose",
+   "vertex": 7098
+  }
+ }
+}

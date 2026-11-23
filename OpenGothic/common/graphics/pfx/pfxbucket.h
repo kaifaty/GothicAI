@@ -3,10 +3,15 @@
 #include <Tempest/VertexBuffer>
 #include <vector>
 #include <random>
+#include <map>
+#include <unordered_set>
 
+#include "graphics/pfx/pfxslot.h"
 #include "graphics/pfx/pfxobjects.h"
+#include "graphics/pfx/pfxmotion.h"
 #include "resources.h"
 
+class ParticleTarget;
 class ParticleFx;
 class VisualObjects;
 
@@ -27,18 +32,41 @@ class PfxBucket {
     struct ImplEmitter final {
       AllocState    st           = S_Free;
       size_t        block        = size_t(-1);
+      bool          textureDemand = false;
+      std::pair<int32_t,int32_t> textureChunk;
 
       Tempest::Vec3 pos          = {};
+      Tempest::Vec3 steadyAt     = {}; // where the emitter was when its particles were last carried
+      bool          carried      = false; // steadyAt is set
+      Tempest::Vec3 trail        = {}; // the emitter's way in this tick: particles of a tail are born along it
+      // the air that passes the emitter, cm/ms: minus its own motion, through a spring (particles.d "lean")
+      Tempest::Vec3 air          = {};
+      Tempest::Vec3 airRate      = {};
+      float         grownMs      = 0;  // how long the emitter has burnt (particles.d "lean.grow")
+      // the world's wind at the emitter this frame, cm/ms (particles.d "wind"), and how open its place is to it:
+      // asked where the emitter first burns and again when it has gone a metre (PfxObjects::shelter)
+      Tempest::Vec3 wind         = {};
+      float         open         = 1.f;
+      float         openTo       = 1.f;
+      Tempest::Vec3 openAt       = {};
+      uint64_t      openTime     = 0;
+      bool          openAsked    = false;
       Tempest::Vec3 direction[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
       bool          isLoop       = false;
+      bool          spent        = false; // was looped and is not any more (a bolt that hit): its steady flame goes
 
-      const Npc*    targetNpc    = nullptr;
+      const ParticleTarget* targetNpc    = nullptr;
 
       const PfxEmitterMesh* mesh = nullptr;
       const Pose*           pose = nullptr;
+      // the mesh's own bone matrices (a render rig's palette), read at each emission; nullptr - the pose's
+      const std::vector<Tempest::Matrix4x4>* skin = nullptr;
 
       uint64_t      waitforNext = 0;
-      std::unique_ptr<PfxEmitter> next;
+      std::unique_ptr<PfxSlot> next;
+      uint64_t      born        = 0; // the world's time it was born (PfxSlot::setBorn): a looped pulse counts from it
+
+      PfxMotion::Flicker flicker;  // a layer emitter's flame signal (vobs.d "flicker"): the particles' brightness
       };
 
     struct PfxState {
@@ -52,14 +80,27 @@ class PfxBucket {
 
     const ParticleFx&           decl;
     PfxObjects&                 parent;
+    // the push data of main_pfx_f/_e (main.frag PushPfx); of a haze (main_pfx_x) hdrFrom is its shift and hdrInvRange
+    // one over its cell, cm
+    struct Push {
+      float reactive    = 0; // ParticleFx::taaReactive (graphics plan 1v)
+      float hdrFrom     = 0; // particles.d "hdr": the night's gain over a texel's brightness
+      float hdrInvRange = 0; // 1/(to - from); 0: off
+      float hdrEdge     = 1;
+      };
+    const Push                  push;
 
     bool                        isEmpty() const;
     void                        invalidateDecal();
 
     void                        preFrameUpdate(const SceneGlobals& scene, uint8_t fId);
-    void                        drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
+    void                        drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene,
+                                                uint8_t fId, bool historyOwner);
     void                        drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId, int layer);
+    void                        drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
     void                        drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
+    void                        drawHaze       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
+    bool                        hasHaze        (uint8_t fId) const;
 
     size_t                      allocEmitter();
     void                        freeEmitter(size_t& id);
@@ -85,6 +126,11 @@ class PfxBucket {
       L_Morph    = 11,
       L_SceneClr = 12,
       L_GDepth   = 13,
+      L_VsmPageTbl   = 19, // materials_common.glsl
+      L_VsmPageAtlas = 20,
+      L_FogLut   = 17,
+      L_FogLutMs = 18,
+      L_FogOcc   = 22, // materials_common.glsl: the sun's bits along the fog's ray
       };
 
     struct Block final {
@@ -95,6 +141,9 @@ class PfxBucket {
       size_t        count     = 0;
 
       Tempest::Vec3 pos       = {};
+      float         flicker   = 1.f;  // the emitter's brightness this frame (ImplEmitter::flicker)
+      Tempest::Vec3 lean      = {0,1,0}; // a leaning card's lower edge to its upper, in card heights (pfx.vert)
+      float         grow      = 1.f;     // the share of its size a new emitter's card has grown to ("lean.grow")
       };
 
     struct Trail final {
@@ -105,6 +154,7 @@ class PfxBucket {
     struct ParState final {
       uint16_t      life=0, maxLife=1;
       Tempest::Vec3 pos, dir;
+      bool          landed = false; // met the ground (particles.d "land"): stays, no sprite, its trail draws in
 
       std::vector<Trail> trail;
 
@@ -122,10 +172,12 @@ class PfxBucket {
       };
 
     void                        drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, const Draw& itm,
-                                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl);
+                                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl, bool historyOwner = false);
 
     void                        tickEmit(Block& p, ImplEmitter& emitter, uint64_t emited);
     bool                        shrink();
+    void                        updateTextureDemand(size_t id);
+    void                        setTextureDemand(ImplEmitter& emitter, bool active);
 
     size_t                      allocBlock();
     void                        freeBlock(size_t& s);
@@ -134,7 +186,7 @@ class PfxBucket {
     static float                randf(float base, float var);
 
     Block&                      getBlock(ImplEmitter& emitter);
-    Block&                      getBlock(PfxEmitter&  emitter);
+    Block&                      getBlock(PfxSlot&     emitter);
 
     void                        init     (Block& block, ImplEmitter& emitter, size_t particle);
     void                        finalize (size_t particle);
@@ -151,6 +203,9 @@ class PfxBucket {
     uint32_t                    mkTrailColor(float clA) const;
 
     VisualObjects&              visual;
+    ChunkResidency*             textureResidency = nullptr;
+    uint64_t                    textureSubscription = 0;
+    std::map<std::pair<int32_t,int32_t>,std::unordered_set<size_t>> textureChunks;
 
     Draw                        item  [Resources::MaxFramesInFlight];
     std::vector<PfxState>       pfxCpu;
@@ -168,6 +223,6 @@ class PfxBucket {
 
     static std::mt19937         rndEngine;
 
-    friend class PfxEmitter;
+    friend class PfxSlot;
   };
 

@@ -45,6 +45,8 @@ class Necromancy final {
     // a load or a new world: what runs belongs to the old one
     void clear();
     std::string status() const;
+    // the card's key: what ends the game after it (the final card); empty: the main menu at once
+    std::function<void()> onEnd;
 
   private:
     enum class Stage : uint8_t { Idle, Cast, Fallen, Raise, Risen, Card };

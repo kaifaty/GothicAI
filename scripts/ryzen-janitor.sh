@@ -3,10 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SSH=(ssh -T -o BatchMode=yes -o ConnectTimeout=10 ryzen)
+SSH=(ssh -T -o BatchMode=yes -o ConnectTimeout=10 "${RYZEN_HOST:-ryzen}")
 
 usage() {
-  echo 'Usage: scripts/ryzen-janitor.sh install|uninstall|status|run [--dry-run]' >&2
+  echo 'Usage: scripts/ryzen-janitor.sh install|uninstall|status|run [--dry-run]|du' >&2
   exit 2
 }
 
@@ -18,6 +18,23 @@ if [[ "$action" == run ]]; then
 else
   [[ $# == 0 ]] || usage
 fi
+
+preview() {
+  # Execute this checkout, keeping installed scripts and service state untouched.
+  local option=$1 remote
+  remote=$(cat <<'REMOTE'
+set -eu
+stage=$(mktemp -d)
+trap 'rm -rf -- "$stage"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' HUP TERM
+tar -xf - -C "$stage"
+/usr/bin/python3 -B "$stage/ryzen_janitor.py" __JANITOR_PREVIEW_OPTION__
+REMOTE
+)
+  remote=${remote/__JANITOR_PREVIEW_OPTION__/$option}
+  tar -C "$ROOT/scripts" -cf - ryzen_janitor.py nas_archive.py | "${SSH[@]}" "$remote"
+}
 
 case "$action" in
   install)
@@ -45,10 +62,10 @@ IOSchedulingClass=idle
 EOF
 cat > "$timer" <<EOF
 [Unit]
-Description=Run the Gothic disk janitor every six hours
+Description=Check the Gothic disks every hour
 
 [Timer]
-OnCalendar=*-*-* 00,06,12,18:00:00
+OnCalendar=hourly
 Persistent=true
 
 [Install]
@@ -83,9 +100,12 @@ else
 fi
 exit "$result"'
     ;;
+  du)
+    preview --du
+    ;;
   run)
     if [[ $# == 1 ]]; then
-      "${SSH[@]}" 'exec /usr/bin/python3 "$HOME/gothic-ai/lib/ryzen_janitor.py" --dry-run'
+      preview --dry-run
     else
       "${SSH[@]}" 'set -eu
 result=0

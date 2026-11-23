@@ -7,6 +7,9 @@
     service -> client  {"type":"start","id":"7","sample_rate":48000,"provider":"voxcpm"}
     service -> client  binary frames: 16-bit little-endian mono PCM, as it is generated
                        (at the loudness of the game's own dialogue, see loudness.py)
+                       or, with word timings from the line's start:
+                       {"type":"audio","id":"7","data":"<base64 PCM>","words":[["Hello",0.0,0.3]]}
+                       (`data` is empty for late timestamps, including after the final PCM chunk)
     service -> client  {"type":"done","id":"7","audio_s":2.1,"first_chunk_s":0.06,"latency_s":1.1}
     service -> client  {"type":"error","id":"7","detail":"..."}
 
@@ -21,9 +24,12 @@ before starting the game.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import replace
 from http import HTTPStatus
@@ -35,6 +41,7 @@ from websockets.http11 import Request, Response
 
 from . import originals
 from .providers import TtsError, TtsProvider, Voice
+from .providers.base import WordTiming
 from .providers.inworld import InworldTTS, _UnknownVoice
 from .synthesizer import Synthesizer
 
@@ -43,6 +50,9 @@ log = logging.getLogger(__name__)
 MAX_TEXT = 1000
 MAX_STYLE = 300
 DEFAULT_ORIGINAL_VOICES = Path.home() / ".local/share/gothic-ai/voices/original"
+ORIGINAL_SAMPLES = json.loads(Path(__file__).with_name("original_samples.json").read_text())
+ORIGINAL_LOOKUP_TIMEOUT_S = 15.0
+LOCAL_ORIGINS = [None, re.compile(r"ws://(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]+)?")]
 
 
 def load_original_voices(directory: str | Path = DEFAULT_ORIGINAL_VOICES) -> dict[str, Voice]:
@@ -91,8 +101,10 @@ class TtsService:
         self.original_voices: dict[str, Voice] = {}
 
     async def serve_forever(self, started=None) -> None:
+        await self._publish_originals()
         async with serve(
-            self._handler, self.host, self.port, max_size=2**20, process_request=self._health
+            self._handler, self.host, self.port, max_size=2**20, process_request=self._health,
+            origins=LOCAL_ORIGINS,
         ) as server:
             self.port = server.sockets[0].getsockname()[1]
             log.info("listening on ws://%s:%d", self.host, self.port)
@@ -109,6 +121,33 @@ class TtsService:
                     preparation.cancel()
                     await asyncio.gather(preparation, return_exceptions=True)
 
+    async def _publish_originals(self) -> None:
+        """Resolve known snapshots before accepting connections, without needing their WAVs."""
+        provider = self.synthesizer.primary
+        if (
+            self.original_voices_dir is None or not isinstance(provider, InworldTTS)
+            or not os.environ.get(provider.api_key_env)
+        ):
+            return
+        try:
+            async with asyncio.timeout(ORIGINAL_LOOKUP_TIMEOUT_S):
+                for cid, (_, _, aliases) in originals.CHARACTERS.items():
+                    voice = Voice(f"{cid}@original")
+                    digest = ORIGINAL_SAMPLES[cid]
+                    voice_id = provider.cached_clone(voice, digest)
+                    if voice_id is None:
+                        voice_id = await provider.workspace_clone(voice, digest)
+                    if voice_id is not None:
+                        prepared = replace(voice, preset=voice_id, sample="")
+                        self.original_voices.update(
+                            (alias.casefold(), prepared) for alias in (cid, *aliases)
+                        )
+        except Exception as err:
+            log.warning(
+                "original voice startup lookup unavailable: %s",
+                " ".join(str(err).split()) or type(err).__name__,
+            )
+
     async def _prepare_originals(self) -> None:
         """Publish each cloned voice only after it is ready; game requests never create clones."""
         if self.original_voices_dir is None:
@@ -116,12 +155,12 @@ class TtsService:
         started = time.monotonic()
         provider = self.synthesizer.primary
         manifest = self.original_voices_dir / "manifest.json"
-        previous_manifest = None
         if isinstance(provider, InworldTTS) and os.environ.get(provider.api_key_env) and manifest.is_file():
             try:
-                previous_manifest = manifest.read_bytes()
                 snapshots = load_original_voices(self.original_voices_dir)
                 for voice in {voice.id: voice for voice in snapshots.values()}.values():
+                    if any(ready.id == voice.id for ready in self.original_voices.values()):
+                        continue  # keep the expected snapshot's clone until preparation verifies it
                     if voice_id := await asyncio.to_thread(provider.cached_clone, voice):
                         prepared = replace(voice, preset=voice_id, sample="")
                         self.original_voices.update(
@@ -141,8 +180,6 @@ class TtsService:
                     originals.prepare, self.game_dir, self.original_voices_dir, progress=progress
                 )
             snapshots = load_original_voices(self.original_voices_dir)
-            if previous_manifest is not None and manifest.read_bytes() != previous_manifest:
-                self.original_voices.clear()
         except Exception as err:
             log.warning(
                 "original voice preparation unavailable: %s", " ".join(str(err).split())
@@ -155,19 +192,39 @@ class TtsService:
             )
             return
         voices = {voice.id: voice for voice in snapshots.values()}
+        self.original_voices = {
+            alias: ready for alias, ready in self.original_voices.items() if ready.id in voices
+        }
         ready = 0
         for done, voice in enumerate(voices.values(), 1):
             cid = voice.id.removesuffix("@original")
             try:
-                voice_id = await provider.clone(voice)
+                audio = await asyncio.to_thread(Path(voice.sample).read_bytes)
+                digest = hashlib.sha1(audio).hexdigest()[:16]
+                expected = ORIGINAL_SAMPLES.get(cid)
+                if expected is not None and digest != expected:
+                    log.warning(
+                        "original voices: %s: sample hash %s differs from expected %s; "
+                        "update original_samples.json", cid, digest, expected,
+                    )
+                voice_id = provider.cached_clone(voice, digest)
+                if voice_id is None:
+                    voice_id = await provider.clone(voice)
             except Exception as err:
+                self.original_voices = {
+                    alias: ready for alias, ready in self.original_voices.items() if ready.id != voice.id
+                }
                 log.warning("original voices: %s: %s", cid, " ".join(str(err).split()))
             else:
                 # A preset bypasses the provider's sample/clone path, including its retry on a deleted
                 # library voice. A request can only use a clone which this background task prepared.
                 prepared = replace(voice, preset=voice_id, sample="")
+                aliases = {alias for alias, ready in self.original_voices.items() if ready.id == voice.id}
+                aliases.update(alias for alias, sample in snapshots.items() if sample.id == voice.id)
+                if cid in originals.CHARACTERS:
+                    aliases.update(alias.casefold() for alias in (cid, *originals.CHARACTERS[cid][2]))
                 self.original_voices.update(
-                    (alias, prepared) for alias, sample in snapshots.items() if sample.id == voice.id
+                    (alias, prepared) for alias in aliases
                 )
                 ready += 1
             log.info("original voices: clones %d/%d", done, len(voices))
@@ -222,16 +279,30 @@ class TtsService:
             await _send(conn, {"type": "error", "id": req, "detail": "empty text"})
             return
         current: list[TtsProvider] = []
+        pending_words: list[WordTiming] = []
+
+        async def words(timings: list[WordTiming]) -> None:
+            pending_words.extend(timings)
+            if current:
+                await _send(conn, {"type": "audio", "id": req, "data": "", "words": pending_words})
+                pending_words.clear()
 
         async def chunk(pcm: bytes, p: TtsProvider) -> None:
             if not current:
                 current.append(p)
                 await _send(conn, {"type": "start", "id": req, "sample_rate": p.rate, "provider": p.name})
-            await conn.send(pcm)
+            if pending_words:
+                await _send(conn, {
+                    "type": "audio", "id": req, "data": base64.b64encode(pcm).decode(),
+                    "words": pending_words,
+                })
+                pending_words.clear()
+            else:
+                await conn.send(pcm)
 
         try:
             try:
-                s = await self.synthesizer.speak(text, voice, chunk, original_voice=original)
+                s = await self.synthesizer.speak(text, voice, chunk, original_voice=original, on_words=words)
             except _UnknownVoice:
                 if original is None or current:
                     raise
@@ -239,7 +310,7 @@ class TtsService:
                     alias: ready for alias, ready in self.original_voices.items() if ready.id != original.id
                 }
                 log.warning("original voice %s is gone; using designed voice until restart", original.id)
-                s = await self.synthesizer.speak(text, voice, chunk)
+                s = await self.synthesizer.speak(text, voice, chunk, on_words=words)
         except TtsError as err:
             await _send(conn, {"type": "error", "id": req, "detail": str(err)})
             return

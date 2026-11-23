@@ -1,18 +1,25 @@
 #include "worldcloth.h"
 
 #include "clothworlddata.h"
+#include "worldchunkbinary.h"
+#include "worldchunksruntime.h"
+#include "worldclothbundle.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <numeric>
 #include <sstream>
+#include <string_view>
 #include <unordered_map>
 
 namespace {
+
+std::atomic<uint8_t> latest {uint8_t(WorldCloth::Path::None)};
 
 struct Rule {
   std::string material, geometry, attachment, filter;
@@ -169,7 +176,30 @@ std::vector<uint32_t> attachment(const asset::WorldMesh& mesh,const Rule& rule) 
 
 }
 
-WorldCloth::Extracted WorldCloth::extract(asset::WorldMesh& landscape) {
+WorldCloth::Extracted WorldCloth::extract(asset::WorldMesh& landscape, ChunkTable* chunks) {
+  if(chunks!=nullptr) {
+    if(auto cooked=takeClothBundle(landscape,*chunks)) {
+      latest=uint8_t(Path::Bundle);
+      return std::move(*cooked);
+      }
+    }
+  latest=uint8_t(Path::Search);
+  return searchIslands(landscape,chunks);
+  }
+
+WorldCloth::Path WorldCloth::lastPath() {
+  return Path(latest.load());
+  }
+
+const std::array<uint8_t,32>& WorldCloth::rulesSha256() {
+  static const auto hash=[] {
+    const std::string_view text(ClothWorldData);
+    return sha256Bytes({reinterpret_cast<const uint8_t*>(text.data()),text.size()});
+    }();
+  return hash;
+  }
+
+WorldCloth::Extracted WorldCloth::searchIslands(asset::WorldMesh& landscape, ChunkTable* chunks) {
   Extracted result;
   const auto faceCount=landscape.polygons.material_indices.size();
   std::vector<bool> selected(faceCount,false);
@@ -234,24 +264,13 @@ WorldCloth::Extracted WorldCloth::extract(asset::WorldMesh& landscape) {
   if(clothFaces.empty())
     return result;
   result.original=subset(landscape,clothFaces);
-  asset::PolygonList remaining;
-  const auto remainingCount=faceCount-clothFaces.size();
-  remaining.material_indices.reserve(remainingCount);
-  remaining.lightmap_indices.reserve(remainingCount);
-  remaining.flags.reserve(remainingCount);
-  remaining.vertex_indices.reserve(remainingCount*3);
-  remaining.feature_indices.reserve(remainingCount*3);
+  std::vector<uint32_t> remaining;
+  remaining.reserve(faceCount-clothFaces.size());
   for(size_t i=0;i<faceCount;++i) {
     if(selected[i])
       continue;
-    remaining.material_indices.push_back(landscape.polygons.material_indices[i]);
-    remaining.lightmap_indices.push_back(landscape.polygons.lightmap_indices[i]);
-    remaining.flags.push_back(landscape.polygons.flags[i]);
-    for(size_t c=0;c<3;++c) {
-      remaining.vertex_indices.push_back(landscape.polygons.vertex_indices[3*i+c]);
-      remaining.feature_indices.push_back(landscape.polygons.feature_indices[3*i+c]);
-      }
+    remaining.push_back(uint32_t(i));
     }
-  landscape.polygons=std::move(remaining);
+  retainWorldTriangles(landscape,remaining,chunks);
   return result;
   }

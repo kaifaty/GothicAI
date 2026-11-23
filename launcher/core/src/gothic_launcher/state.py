@@ -4,20 +4,26 @@ While a session runs, `launcher.json` in the state directory is locked (flock) a
 groups the session started. The lock goes away with the launcher, even on SIGKILL. The next launcher then
 finds the list of a session that never stopped its processes and stops them: only groups with a process
 started before the list was last written, so a reused process id is never hit.
+
+On Windows the lock is a byte-range lock (msvcrt.locking) far past the list, so a second launcher can still
+read who holds it; it too goes away with the launcher. There is nothing to stop afterwards: every process
+tree ran in a job object that Windows ended when the launcher went (winproc.py).
 """
 
 from __future__ import annotations
 
 import contextlib
-import fcntl
+import errno
 import json
 import os
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 STATE_DIR = Path.home() / ".local" / "share" / "gothic-ai"
+WINDOWS_LOCK_AT = 1 << 30  # Windows locks forbid reading the locked bytes: lock one well past the list
 
 
 class AlreadyRunning(Exception):
@@ -39,10 +45,13 @@ class SessionFile:
     def acquire(self) -> dict[str, int]:
         """Locks the file; returns the groups of a killed launcher that it stopped. Raises AlreadyRunning."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o644)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            locked = _try_lock(fd)
+        except BaseException:
+            os.close(fd)
+            raise
+        if not locked:
             pid = _read(fd).get("pid")
             os.close(fd)
             raise AlreadyRunning(pid if isinstance(pid, int) else None) from None
@@ -51,7 +60,7 @@ class SessionFile:
         stopped = {
             name: pgid
             for name, pgid in (old.get("groups") or {}).items()
-            if _stop_group_started_before(pgid, float(old.get("written", 0)))
+            if sys.platform != "win32" and _stop_group_started_before(pgid, float(old.get("written", 0)))
         }
         self._write()
         return stopped
@@ -70,6 +79,7 @@ class SessionFile:
             return
         self.groups.clear()
         os.ftruncate(self._fd, 0)
+        _unlock(self._fd)
         os.close(self._fd)  # closing drops the lock
         self._fd = None
 
@@ -78,11 +88,45 @@ class SessionFile:
             return
         data = json.dumps({"pid": os.getpid(), "written": time.time(), "groups": self.groups}).encode()
         os.ftruncate(self._fd, 0)
-        os.pwrite(self._fd, data, 0)
+        os.lseek(self._fd, 0, os.SEEK_SET)
+        os.write(self._fd, data)
+
+
+def _try_lock(fd: int) -> bool:
+    """Exclusive and without waiting; held until the file is closed or the process ends."""
+    if sys.platform == "win32":
+        import msvcrt
+
+        os.lseek(fd, WINDOWS_LOCK_AT, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError as err:
+            if err.errno not in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)):
+                raise
+            return False
+        return True
+    import fcntl
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
+def _unlock(fd: int) -> None:
+    """Windows asks for an explicit unlock before closing; flock goes with the close."""
+    if sys.platform == "win32":
+        import msvcrt
+
+        os.lseek(fd, WINDOWS_LOCK_AT, os.SEEK_SET)
+        with contextlib.suppress(OSError):
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
 
 def _read(fd: int) -> dict:
-    raw = os.pread(fd, 1 << 16, 0)
+    os.lseek(fd, 0, os.SEEK_SET)
+    raw = os.read(fd, 1 << 16)
     try:
         data = json.loads(raw) if raw.strip() else {}
     except ValueError:

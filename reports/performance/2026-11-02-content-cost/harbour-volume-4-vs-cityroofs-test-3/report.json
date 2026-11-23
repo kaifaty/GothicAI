@@ -1,0 +1,164 @@
+{
+  "metadata": {
+    "a": "harbour-volume-4",
+    "b": "cityroofs-test-3",
+    "places": [
+      "harbour",
+      "market"
+    ],
+    "order": [
+      "A",
+      "B",
+      "B",
+      "A"
+    ],
+    "git_commit": "6bbce67f79359f640bb28a58286243036589ebb1",
+    "dirty_files": 12,
+    "content_sha256": {
+      "cityroofs-test-3": "62510b954612091b6d7f358ccffd1bf5c9279511dbbfc1cbe8a9f1adee8059f7",
+      "harbour-volume-4": "12c8085672b139e573e28584507fce61f725902cf3283a3e463f1ab778594e4f"
+    },
+    "archive": "/mnt/shared/gothic-ai/perf-content-worktrees/runs/perf-content-20261102T080802Z-82039",
+    "settings": {
+      "PERF_WINDOW": "1728x1117",
+      "PERF_VID_RES": "0",
+      "PERF_ARGS": "",
+      "PERF_ENV": "",
+      "PERF_INI": ""
+    }
+  },
+  "noise_p95_pct": 2.0,
+  "threshold_p95_pct": 5.0,
+  "drawable": [
+    1728,
+    1117
+  ],
+  "timing": "Frame intervals are differences between consecutive submitted attempt begin_ns timestamps in the same contiguous perf-PLACE/view-N or streaming-flythrough/PASS segment. Intervening FenceBusy attempts count toward elapsed time and zone costs, never as rendered frames. Partial time before the first and after the last submitted attempt of each segment is omitted. FPS is interval count / measured wall time; percentiles use linear interpolation. appcadence.csv is retained as a clock diagnostic, not used for these statistics.",
+  "noise_method": "Absolute p95 delta <= calibrated noise band in percent. Repeat max-min spread is descriptive only. Percentiles pool frame intervals from both repeats.",
+  "places": {
+    "harbour": {
+      "p50": {
+        "a": 11.615463,
+        "b": 11.593768,
+        "delta": -0.021694999999999354,
+        "delta_pct": -0.18677688526061642,
+        "spread_a_ms": 0.15605200000000075,
+        "spread_b_ms": 0.14921450000000114
+      },
+      "p95": {
+        "a": 12.977167999999999,
+        "b": 12.719543199999997,
+        "delta": -0.2576248000000021,
+        "delta_pct": -1.9852158806913967,
+        "spread_a_ms": 0.3063019000000011,
+        "spread_b_ms": 0.2736011499999993
+      },
+      "within_threshold": true,
+      "p95_verdict": "в шуме",
+      "counters": {
+        "A": {
+          "triangles": 1021380.4278104336,
+          "draw_calls": 73.05969875091844,
+          "completed_frames": 5444,
+          "submitted_frames": 5444
+        },
+        "B": {
+          "triangles": 1082402.192075954,
+          "draw_calls": 73.06572941391272,
+          "completed_frames": 5477,
+          "submitted_frames": 5477
+        }
+      },
+      "repeats": {
+        "A": [
+          {
+            "p50_ms": 11.543424,
+            "p95_ms": 12.7777701,
+            "frames": 2735
+          },
+          {
+            "p50_ms": 11.699476,
+            "p95_ms": 13.084072,
+            "frames": 2701
+          }
+        ],
+        "B": [
+          {
+            "p50_ms": 11.5177205,
+            "p95_ms": 12.58796165,
+            "frames": 2754
+          },
+          {
+            "p50_ms": 11.666935,
+            "p95_ms": 12.8615628,
+            "frames": 2715
+          }
+        ]
+      }
+    },
+    "market": {
+      "p50": {
+        "a": 11.855963,
+        "b": 11.832831500000001,
+        "delta": -0.023131499999998084,
+        "delta_pct": -0.19510435381755228,
+        "spread_a_ms": 0.0018980000000006214,
+        "spread_b_ms": 0.019147000000000247
+      },
+      "p95": {
+        "a": 13.09861465,
+        "b": 13.069349500000001,
+        "delta": -0.02926514999999874,
+        "delta_pct": -0.2234217188761923,
+        "spread_a_ms": 0.14933560000000057,
+        "spread_b_ms": 0.08018860000000139
+      },
+      "within_threshold": true,
+      "p95_verdict": "в шуме",
+      "counters": {
+        "A": {
+          "triangles": 957166.2129525943,
+          "draw_calls": 71.33818589025756,
+          "completed_frames": 5358,
+          "submitted_frames": 5358
+        },
+        "B": {
+          "triangles": 1001869.6931522144,
+          "draw_calls": 71.33736509117975,
+          "completed_frames": 5374,
+          "submitted_frames": 5374
+        }
+      },
+      "repeats": {
+        "A": [
+          {
+            "p50_ms": 11.857383,
+            "p95_ms": 13.1705804,
+            "frames": 2673
+          },
+          {
+            "p50_ms": 11.855485,
+            "p95_ms": 13.0212448,
+            "frames": 2677
+          }
+        ],
+        "B": [
+          {
+            "p50_ms": 11.821555,
+            "p95_ms": 13.027791599999999,
+            "frames": 2687
+          },
+          {
+            "p50_ms": 11.840702,
+            "p95_ms": 13.1079802,
+            "frames": 2679
+          }
+        ]
+      }
+    }
+  },
+  "conclusions": [
+    "harbour: +61 тыс. треугольников (+6.0%) и +0.0 вызова отрисовки на кадр; время кадра — в шуме (Δ p95 -1.99%).",
+    "market: +45 тыс. треугольников (+4.7%) и -0.0 вызова отрисовки на кадр; время кадра — в шуме (Δ p95 -0.22%)."
+  ]
+}

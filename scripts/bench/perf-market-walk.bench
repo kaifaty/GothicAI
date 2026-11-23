@@ -1,0 +1,38 @@
+# Khorinis market at noon on the move: the hero walks to and fro and the camera follows (the route of the first clip
+# of upscale-clips.bench). The other places hold the camera still; what costs only in motion (the temporal upscale's
+# enlarged frame) shows here.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+walkmode walk
+cam look 120
+cam follow 380 170 160
+# Ten real seconds after the teleport for loading and native simulation.
+wait 10000
+walkto NW_CITY_MERCHANT_PATH_09
+wait 500
+perf sample perf-market-walk/view-1
+wait 8000
+perf stop
+walkto NW_CITY_MERCHANT_TRADE_04
+wait 500
+perf sample perf-market-walk/view-2
+wait 8000
+perf stop
+walkto NW_CITY_MERCHANT_PATH_09
+wait 500
+perf sample perf-market-walk/view-3
+wait 8000
+perf stop
+walkto NW_CITY_MERCHANT_TRADE_04
+wait 500
+perf sample perf-market-walk/view-4
+wait 8000
+perf stop

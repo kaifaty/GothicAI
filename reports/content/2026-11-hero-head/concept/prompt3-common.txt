@@ -1,0 +1,18 @@
+Character concept turnaround sheet for a dark medieval fantasy game: the head, neck and top of the shoulders of one man, shown four times side by side on a plain mid-grey background (#7a7c80): front view, three-quarter view (facing left), left profile, and back of the head. Same man, same expression, same scale and eye height in all four views. Soft even studio light from the upper front-left, no rim light. Rendered like a high-end realistic 3D game character sculpt (real skin, real hair strands), not a painting and not a photo of a real person. Wide landscape image, about 3:1.
+
+Two reference images:
+- man.png — the previous concept sheet of this character. Keep its layout and four views, his bone structure (broad face, wide cheekbones, strong jaw, heavy brow ridge, broad straight nose), his muted grey-blue eyes, the realism of his skin and the shirt collar.
+- original.png — the face texture of the original 2002 game character (an unwrapped face: it looks wider than it is, and the hair on both sides wraps around to the back of the head). He must read as this man at first glance: check the calm face, the brows, the eyes, the nose, the beard and the hair colour against it. Do not copy its flatness or its width.
+
+Change these things in man.png, so that he reads as the original hero:
+1. Hair: neatly slicked straight back, flat and close to the skull from the forehead to the crown, combed with grease so it lies in smooth even lines with a dull sheen. No loose strands, no flyaways, no strands on the forehead or over the ears; the ears are fully visible. Dark olive-brown with lighter sun-bleached strands, as in original.png (crown #5c4b2d, temples #463825), not blond and not golden. Tied at the nape into a short ponytail, about 10 cm, with a thin leather thong.
+2. Expression: calm and composed, as in original.png. The eyes slightly narrowed in a steady, watchful look, a hint of dry irony at one mouth corner. No frown, no knitted brows, no scowl, no deep vertical lines between the brows.
+3. Age: about 33. Two faint horizontal lines on the forehead and fine creases at the eye corners only. The skin is tanned and weather-beaten, but not old: no deep folds on the cheeks.
+4. No scars and no scratches on the face.
+5. The face is slightly uneven, not mirrored: the left eyebrow a little higher, one mouth corner a little lower.
+
+Who he is: a former prisoner of a penal mining colony, early thirties. Cynical, laconic, practical, distrustful, but self-assured: a man who has survived everything and expects to survive this too. Not a noble, not a pretty hero, not a grizzled veteran, not an angry brute.
+
+Colours as the eye sees them: skin forehead #c09679, cheek #b28767, reddish on the cheeks and nose, darker around the eyes, a little grime in the creases and at the hairline; lips #724e44; beard #7e5c4a, moustache #5e4535. Clothing only as a hint: the collar of a coarse undyed linen shirt, dull grey-brown.
+
+Avoid: a frown, an angry or brooding scowl, loose or messy hair, wet stringy strands, flyaways, a handsome fantasy hero, a young clean face, smooth model skin, salon hairstyle, barbershop stubble, grey hair, scars, tattoos, earrings, a modern haircut (shaved sides, undercut, parting), long hair below the shoulders, a long ponytail, bright blue eyes, white even teeth, glossy wet skin, waxy skin, ginger or golden hair, orange or golden colour cast, painterly brush strokes.

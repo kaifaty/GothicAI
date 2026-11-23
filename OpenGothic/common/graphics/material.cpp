@@ -1,11 +1,15 @@
 #include "material.h"
+#include "graphics/eyeshader.h"
 
 #include "utils/parser.h"
 #include "resources.h"
 
+#include <algorithm>
+#include <cmath>
+
 using namespace Tempest;
 
-static Tempest::Color toColor(zenkit::Color v) {
+static Tempest::Color toColor(asset::Color v) {
   Tempest::Color c(float(v.r)/255.f, float(v.g)/255.f, float(v.b)/255.f, float(v.a)/255.f);
   return c;
   }
@@ -17,7 +21,8 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
   loadFrames(m);
 
   Resources::MaterialMaps maps;
-  if(m.group!=asset::MaterialGroup::WATER && !hasFrameAnimation() &&
+  // Water reads its maps too: our pot water has an albedo and a turbidity of its own.
+  if(!hasFrameAnimation() &&
      m.wave_mode==asset::WaveMode::NONE &&
      (m.texture_anim_map_mode==asset::AnimationMapping::NONE ||
       (m.texture_anim_map_dir.x==0.f && m.texture_anim_map_dir.y==0.f))) {
@@ -29,10 +34,10 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
       }
     }
   if(tex==nullptr)
-    tex = Resources::loadTexture(m.texture);
+    tex = Resources::loadTexture(m.texture,false,false);
   if(tex==nullptr) {
     if(!m.texture.empty()) {
-      tex = Resources::loadTexture("DEFAULT.TGA");
+      tex = Resources::loadDefaultTexture();
       } else {
       tex = Resources::loadTexture(toColor(m.color));
       alphaTestEnabled &= (m.color.a!=255);
@@ -56,6 +61,10 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
 
   if(m.wave_mode!=asset::WaveMode::NONE)
     waveMaxAmplitude = m.wave_max_amplitude;
+  if(alpha==Water) {
+    turbidity      = maps.turbidity;
+    turbidityDepth = maps.turbidityDepth;
+    }
 
   if(m.environment_mapping!=0)
     ; // envMapping = m.environment_mapping_strength;
@@ -64,20 +73,46 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
      !hasFrameAnimation() && !hasUvAnimation() && m.wave_mode==asset::WaveMode::NONE) {
     if(!maps.present)
       maps = Resources::loadMaterialMaps(m.texture);
+    // Projection by world position is for opaque surfaces: a texture with alpha (anything but DXT1) rejects the record
+    // whole, whatever the zen material using it, and the material takes the original texture as if there were none
+    if(maps.projectionTile>0 && tex!=nullptr && Resources::textureFormat(tex)!=Tempest::TextureFormat::DXT1) {
+      Resources::rejectMaterialMaps(m.texture,"projection on an alpha-tested texture");
+      maps = {};
+      tex  = Resources::loadTexture(m.texture,false,false);
+      if(tex==nullptr)
+        tex = Resources::loadDefaultTexture();
+      alpha = loadAlphaFunc(sourceAlphaFunc,sourceMaterialGroup,sourceColorAlpha,tex,alphaTestEnabled,alphaTestRequired);
+      classifiedAlpha = alpha;
+      }
     normal  = maps.normal;
     orm     = maps.orm;
     uvScale = maps.scale;
     antitileCell = maps.antitileCell;
     antitile = maps.antitile;
+    projectionTile = maps.projectionTile;
+    fringe = maps.fringe;
+    emissive = maps.orm!=nullptr ? maps.emissive : 0.f;
+    hair = maps.hair || maps.strand;
+    strand = maps.strand;
+    eye = maps.eye;
+    foliage = maps.foliage;
+    twoSided = maps.twoSided;
+    grass = maps.grass;
+    layers = maps.layers;
+    window = emissive>0.f ? maps.window : WindowGlow::Params();
+    // OPENGOTHIC_EYE_SHADER=0: the eye as before the eye shader, Lambert of its colour; its roughness map is the
+    // eye shader's
+    if(eye && !eyeShaderEnabled())
+      orm = nullptr;
     materialMaps = maps.present;
     }
   }
 
 Material::Material(const asset::VisualDecal& decal)
   :alphaTestEnabled(true), sourceAlphaFunc(static_cast<asset::AlphaFunction>(decal.alpha_func)), sourceColorAlpha(decal.alpha_weight) {
-  tex = Resources::loadTexture(decal.name);
+  tex = Resources::loadTexture(decal.name,false,false);
   if(tex==nullptr && !decal.name.empty())
-    tex = Resources::loadTexture("DEFAULT.TGA");
+    tex = Resources::loadDefaultTexture();
   loadFrames(decal.name, decal.texture_anim_fps);
 
   alpha        = loadAlphaFunc(sourceAlphaFunc, sourceMaterialGroup, sourceColorAlpha, tex, alphaTestEnabled);
@@ -86,7 +121,8 @@ Material::Material(const asset::VisualDecal& decal)
   }
 
 Material::Material(const Def::ParticleEffect& src) {
-  tex = Resources::loadTexture(src.vis_name_s);
+  // content/materials first, as for a mesh: an own particle texture comes with the content
+  tex = Resources::loadMaterialAlbedo(src.vis_name_s);
   loadFrames(src.vis_name_s, src.vis_tex_ani_fps);
 
   //TODO: visTexAniIsLooping
@@ -100,6 +136,8 @@ bool Material::operator ==(const Material& other) const {
          uvScale==other.uvScale &&
          antitileCell==other.antitileCell &&
          antitile==other.antitile &&
+         projectionTile==other.projectionTile &&
+         fringe==other.fringe &&
          materialMaps==other.materialMaps &&
          frames==other.frames &&
          alpha==other.alpha &&
@@ -114,7 +152,43 @@ bool Material::operator ==(const Material& other) const {
          texAniFPSInv==other.texAniFPSInv &&
          isGhost==other.isGhost &&
          waveMaxAmplitude==other.waveMaxAmplitude &&
+         turbidity==other.turbidity &&
+         turbidityDepth==other.turbidityDepth &&
+         emissive==other.emissive &&
+         hair==other.hair &&
+         strand==other.strand &&
+         eye==other.eye &&
+         foliage==other.foliage &&
+         twoSided==other.twoSided &&
+         grass==other.grass &&
+         layers==other.layers &&
+         window==other.window &&
          envMapping==other.envMapping;
+  }
+
+float Material::projectionUvScale() const {
+  return hasProjection() && alpha==Solid ? 1.f/(projectionTile*100.f) : 0.f;
+  }
+
+float Material::textureUvPerMetre(float meshUvPerMetre, bool morph) const {
+  if(meshUvPerMetre<=0)
+    return meshUvPerMetre; // no usable triangle: the whole chain, as without a material
+  // by world position the density is the same on every face: one repeat per projectionTile metres
+  if(const float k = projectionUvScale(); k>0 && !morph)
+    return k*100.f;
+  const float density = meshUvPerMetre*std::abs(uvScale);
+  // the ground's two layers lie by world position, a repeat per tile: their maps are asked with the ground's own
+  // texture, so no coarser than the finer of the two needs
+  float tile = 1e9f;
+  if(layers.present())
+    tile = std::min(layers.ground.swardTile,layers.ground.earthTile);
+  if(layers.hasBorder())
+    tile = std::min(tile,layers.borderTile);
+  if(layers.hasTrack())
+    tile = std::min({tile,layers.track.crustTile,layers.track.looseTile});
+  if(tile<1e9f && !morph)
+    return std::max(density, 1.f/tile);
+  return density;
   }
 
 bool Material::isSolid() const {
@@ -138,13 +212,19 @@ bool Material::isSceneInfoRequired(AlphaFunc alpha) {
   }
 
 bool Material::isShadowmapRequired(AlphaFunc alpha) {
+  // Water samples the sun's shadow for a turbid surface (pot water).
   return isForwardShading(alpha) &&
-         alpha!=Material::AdditiveLight && alpha!=Material::Multiply && alpha!=Material::Multiply2 &&
-         alpha!=Material::Water;
+         alpha!=Material::AdditiveLight && alpha!=Material::Multiply && alpha!=Material::Multiply2;
   }
 
 bool Material::isTextureInShadowPass(AlphaFunc alpha) {
   return (alpha==Material::AlphaTest);
+  }
+
+bool Material::isFogRequired(AlphaFunc alpha) {
+  // drawn after the fog pass: they take the fog of their own depth.
+  // Multiply stays under the fog pass: blending can't add the haze in front of it.
+  return alpha==Material::Transparent || alpha==Material::AdditiveLight || alpha==Material::Ghost;
   }
 
 bool Material::isTesselated(AlphaFunc alpha) {
@@ -191,7 +271,7 @@ Material::AlphaFunc Material::loadAlphaFunc(asset::AlphaFunction zenAlpha,
     }
 
   if((alpha==Material::AlphaFunc::AlphaTest && !requireAlphaTest) || alpha==Material::AlphaFunc::Transparent) {
-    if(tex!=nullptr && tex->format()==Tempest::TextureFormat::DXT1 && clrAlpha==255) {
+    if(tex!=nullptr && Resources::textureFormat(tex)==Tempest::TextureFormat::DXT1 && clrAlpha==255) {
       alpha = Material::AlphaFunc::Solid;
       }
     }
@@ -214,7 +294,7 @@ void Material::loadFrames(const asset::Material& m) {
   }
 
 void Material::loadFrames(const std::string_view fr, float fps) {
-  frames = Resources::loadTextureAnim(fr);
+  frames = Resources::loadTextureAnim(fr,false);
   if(frames.empty())
     return;
   if(fps > 0)

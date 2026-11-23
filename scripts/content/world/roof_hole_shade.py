@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The shade and the sides of a real roof hole (roof_holes.py): OWN_ROOF_HOLE_SHADE and OWN_ROOF_HOLE_WALL.
+"""The shade, the sides and the closed bottom of a real roof hole (roof_holes.py): OWN_ROOF_HOLE_SHADE,
+OWN_ROOF_HOLE_WALL and OWN_ROOF_HOLE_DARK.
 
 A roof hole shows the hut's interior, which the engine lights warm and bright; in Gothic the painted hole
 is dark. The user (2026-10-26): dim it, not black, since a fire burns inside. The face at the bottom of
@@ -11,8 +12,12 @@ SHADE of the interior's light; from inside the face is culled and the sky shows.
 The sides of a hole are the cavity under the shingles. In the roof's own light timber the interior's fire
 lit them as bright as a wall; they take the timber darkened to WALL_DARK of its linear colour.
 
+A hole with no inside skin under it (a house the player does not enter, city_roof_holes.py) is closed at the
+bottom: the dark of the attic, as dark as the black roofs-8 paints in its holes (linear Y 0.0019, warm: the
+median of the five painted holes of roofs-8's albedo, 2026-11-02), opaque and lit like any surface.
+
     uv run --no-project --with numpy --with pillow python scripts/content/world/roof_hole_shade.py <content dir> \
-        [--shade 0.18] [--wall-dark 0.3] [--wood <timber albedo.png>]
+        [--shade 0.18] [--wall-dark 0.3] [--wood <timber albedo.png>] [--dark 0.0019]
 """
 import argparse
 import importlib.util
@@ -25,6 +30,9 @@ NAME = 'OWN_ROOF_HOLE_SHADE.TGA'
 FOLDER = 'own-roof-hole-shade'
 WALL = 'OWN_ROOF_HOLE_WALL.TGA'
 WALL_FOLDER = 'own-roof-hole-wall'
+DARK = 'OWN_ROOF_HOLE_DARK.TGA'
+DARK_FOLDER = 'own-roof-hole-dark'
+DARK_TINT = (1.25, 1.0, 0.7)   # linear R, G, B over Y of the painted holes' black: warm, as in roofs-8
 WOOD = Path.home() / '.local/share/gothic-ai/content-staging/city-timber-sources/timber-7/timber-7-nw-city-woodbeam-02/albedo.png'
 
 
@@ -44,7 +52,7 @@ def encode(linear):
     return np.where(linear <= .0031308, linear * 12.92, 1.055 * np.power(linear, 1 / 2.4) - .055)
 
 
-def main(content, shade, wall_dark, wood):
+def main(content, shade, wall_dark, wood, dark):
     spec = importlib.util.spec_from_file_location('test_material', Path(__file__).resolve().parents[1] / 'test-material.py')
     tm = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tm)
@@ -63,11 +71,19 @@ def main(content, shade, wall_dark, wood):
     flat = np.dstack([np.zeros((512, 512)), np.zeros((512, 512)), np.ones((512, 512))]).astype(np.float32)
     tm.write_dds(folder_w / 'normal.dds', flat, normal=True)
     tm.write_dds(folder_w / 'orm.dds', np.dstack([np.ones((512, 512)), np.full((512, 512), .9), np.zeros((512, 512))]).astype(np.float32))
+    folder_d = Path(content) / 'materials' / DARK_FOLDER
+    folder_d.mkdir(parents=True, exist_ok=True)
+    black = np.ones((size, size, 3), np.float32) * encode(np.array([dark * t for t in DARK_TINT])).astype(np.float32)
+    tm.write_dds(folder_d / 'albedo.dds', black)
+    tm.write_dds(folder_d / 'normal.dds', np.dstack([np.zeros((size, size)), np.zeros((size, size)), np.ones((size, size))]).astype(np.float32), normal=True)
+    tm.write_dds(folder_d / 'orm.dds', np.dstack([np.ones((size, size)), np.ones((size, size)), np.zeros((size, size))]).astype(np.float32))
     index_path = Path(content) / 'materials' / 'materials.json'
     index = json.loads(index_path.read_text()) if index_path.exists() else {}
     index[NAME] = {'albedo': f'{FOLDER}/albedo.dds', 'normal': f'{FOLDER}/normal.dds', 'orm': f'{FOLDER}/orm.dds',
                    'scale': 1.0, 'antitile': 'off', 'antitile_cell': 1.0}
     index[WALL] = {'albedo': f'{WALL_FOLDER}/albedo.dds', 'normal': f'{WALL_FOLDER}/normal.dds', 'orm': f'{WALL_FOLDER}/orm.dds',
+                   'scale': 1.0, 'antitile': 'off', 'antitile_cell': 1.0}
+    index[DARK] = {'albedo': f'{DARK_FOLDER}/albedo.dds', 'normal': f'{DARK_FOLDER}/normal.dds', 'orm': f'{DARK_FOLDER}/orm.dds',
                    'scale': 1.0, 'antitile': 'off', 'antitile_cell': 1.0}
     index_path.write_text(json.dumps(index, indent=2) + '\n')
     print(f'{NAME}: grey {srgb(aces(shade / 6)):.3f} sRGB, keeps {shade:.0%} of the light behind it')
@@ -79,5 +95,6 @@ if __name__ == '__main__':
     ap.add_argument('--shade', type=float, default=.18)
     ap.add_argument('--wall-dark', type=float, default=.3)
     ap.add_argument('--wood', default=str(WOOD))
+    ap.add_argument('--dark', type=float, default=.0019)
     a = ap.parse_args()
-    main(a.content, a.shade, a.wall_dark, a.wood)
+    main(a.content, a.shade, a.wall_dark, a.wood, a.dark)

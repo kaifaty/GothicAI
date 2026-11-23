@@ -1,0 +1,93 @@
+# Hit stop (melee_hitstop): the hero's 1h and 2h blows at a standing bandit in Onar's open field, OFF then ON from
+# the side, then ON with the game's camera for its nod. The look is judged by Claude from the frames.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local
+seed 73013
+cheat god
+set time 12 0
+release all
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+# The fixture's signpost stands between them at the wall: turn into the open field.
+turn 180
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+still BDT_1013_BANDIT_L on
+immortal BDT_1013_BANDIT_L on
+watch player
+cam follow 280 125 -70
+cam look 115
+toggle melee_hitstop
+rec off-1h
+press action
+tap forward
+wait 800
+tap forward
+wait 800
+tap left
+wait 800
+tap right
+wait 1200
+release all
+stop
+toggle melee_hitstop
+hp BDT_1013_BANDIT_L full
+wait 3000
+
+rec on-1h
+press action
+tap forward
+wait 800
+tap forward
+wait 800
+tap left
+wait 800
+tap right
+wait 1200
+release all
+stop
+hp BDT_1013_BANDIT_L full
+wait 3000
+
+melee-shadow weapon 2h
+wait 1500
+pin BDT_1013_BANDIT_L 190 0 0
+wait 300
+rec on-2h
+press action
+tap forward
+wait 1000
+tap forward
+wait 1000
+tap left
+wait 1000
+tap right
+wait 1400
+release all
+stop
+hp BDT_1013_BANDIT_L full
+wait 3000
+
+cam game
+wait 500
+rec on-2h-game
+press action
+tap forward
+wait 1000
+tap forward
+wait 1000
+tap left
+wait 1400
+release all
+stop

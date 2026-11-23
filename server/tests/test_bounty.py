@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -8,12 +9,14 @@ from gothic_ai.chronicle import Chronicle
 from gothic_ai.contracts import GOLD, Give
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.executor import Intent
+from gothic_ai.face_cues import choose_leak
 from gothic_ai.game import GameError
 from gothic_ai.llm import FakeBackend, ToolCall
 from gothic_ai.memory import MemoryStore
 from gothic_ai.people_knowledge import PeopleKnowledge
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import Detached, HeroDeed, NpcEvent, Perception, Session, Snapshot
+from gothic_ai.scenarios.common import wait_message
 from gothic_ai.social import Rumors, Social
 from tests.fake_game import FakeGame, connected
 
@@ -33,8 +36,12 @@ async def world():
         dialogue = DialogueManager(link, FakeBackend(delay=0), PersonaProvider(None), memory=store)
         dialogue.guild_of = lambda npc: 3 if npc == CITIZEN else 9
         chronicle = Chronicle(link, store)
+        # The attach sends its own snapshot after the result. A fresh request on top of it
+        # could be answered late, with full health over a test's injured snapshot.
+        snapped = asyncio.create_task(wait_message(link, Snapshot, lambda m: m.npc.id == BRAGO, 5))
+        await asyncio.sleep(0)
         await link.attach(BRAGO)
-        await link.snapshot(BRAGO, fresh=True)
+        await snapped
         for npc in (LURE, MATE, ROAD, CITIZEN):
             link.snapshots[npc] = Snapshot.model_validate(fake.snapshot(npc))
         bounty = Bounty(link, dialogue, chronicle)
@@ -103,6 +110,17 @@ async def test_only_khorinis_bandits_have_bounty_knowledge():
         link.world = "OLDWORLD.ZEN"
         for npc in (MATE, LURE, BRAGO, ROAD):
             assert bounty.situation(npc) is None and bounty.tools(npc) == []
+
+
+async def test_felt_leaks_need_an_unrevealed_bounty_secret_and_use_the_bandit_default():
+    async with world() as (_, _, dialogue, chronicle, _):
+        dialogue.personas.cards = {}
+        leaks = [choose_leak(dialogue, BRAGO, str(i), "afraid", 0) for i in range(1000)]
+        assert abs(sum(leak is not None for leak in leaks) / 1000 - 0.3) <= 0.05
+        assert all(choose_leak(dialogue, MATE, str(i), "afraid", 0) is None for i in range(1000))
+        for secret in ("client_name", "client_place"):
+            chronicle.record({"fact": "bounty_secret", "npc": BRAGO, "secret": secret})
+        assert all(choose_leak(dialogue, BRAGO, str(i), "afraid", 0) is None for i in range(1000))
 
 
 async def test_unpaid_and_unknown_secrets_are_rejected_without_effects():

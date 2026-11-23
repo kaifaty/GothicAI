@@ -3,12 +3,13 @@
 #include "api/windowsapi.h"
 #include "api/x11api.h"
 #include "api/macosapi.h"
-#include "api/iosapi.h"
-#include "api/androidapi.h"
 #include "eventdispatcher.h"
 
 #include <Tempest/Event>
 #include <Tempest/Window>
+
+#include <cstdlib>
+#include <cstring>
 
 using namespace Tempest;
 
@@ -53,12 +54,10 @@ void SystemApi::setupKeyTranslate(const TranslateKeyPair k[], uint16_t funcCount
       m.keys.push_back( k[i] );
     }
 
-#ifndef __ANDROID__
   m.keys.shrink_to_fit();
   m.a. shrink_to_fit();
   m.k0.shrink_to_fit();
   m.f1.shrink_to_fit();
-#endif
   }
 
 void SystemApi::addOverlay(UiOverlay* ui) {
@@ -102,16 +101,24 @@ uint16_t SystemApi::translateKey(uint64_t scancode) {
 SystemApi& SystemApi::inst() {
  #ifdef __WINDOWS__
   static WindowsApi api;
-#elif defined(__ANDROID__)
-  static AndroidApi api;
 #elif defined(__UNIX__)
   static X11Api api;
 #elif defined(__OSX__)
   static MacOSApi api;
-#elif defined(__IOS__)
-  static iOSApi api;
 #endif
   return api;
+  }
+
+bool SystemApi::isOffscreen() {
+#if defined(__UNIX__)
+  static const bool offscreen = [] {
+    const char* v = std::getenv("TEMPEST_OFFSCREEN");
+    return v!=nullptr && std::strcmp(v,"1")==0;
+    }();
+  return offscreen;
+#else
+  return false;
+#endif
   }
 
 void SystemApi::dispatchOverlayRender(Tempest::Window &w, PaintEvent& e) {

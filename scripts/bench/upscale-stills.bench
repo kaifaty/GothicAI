@@ -1,0 +1,53 @@
+# Still frames of the temporal upscale (graphics plan 1г, reports/render-features/2026-11-05-upscale): perf-shot's
+# market and interior views. A view gets a still after ten seconds of a camera that stands (`<view>`); then a cut
+# starts the history over at the same spot, and stills follow as it fills again (`<view>-cut-<ms>`).
+# `ui on` routes each shot through the swapchain-sized frame, so a reduced resolution is upscaled.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui on
+view full
+cam lift off
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+watch player
+cam look 120
+cam world 700 280 90
+wait 10000
+cam hold
+shot market
+wait 500
+cam cut
+cam world 700 280 90
+wait 34
+cam hold
+shot market-cut-0
+wait 100
+shot market-cut-100
+wait 400
+shot market-cut-500
+wait 1500
+shot market-cut-2000
+wait 500
+set time 22 0
+goto pos 3924 -73 -6663
+watch player
+cam look 110
+cam world 160 170 0
+wait 10000
+cam hold
+shot interior
+wait 500
+cam cut
+cam world 160 170 0
+wait 34
+cam hold
+shot interior-cut-0
+wait 100
+shot interior-cut-100
+wait 400
+shot interior-cut-500
+wait 1500
+shot interior-cut-2000
+wait 500

@@ -5,7 +5,6 @@
 cheat god
 set time 12 0
 view clean
-manual on
 equip ItRw_Bow_L_01
 give ItRw_Arrow 200
 stats str 60 dex 60 bow 60

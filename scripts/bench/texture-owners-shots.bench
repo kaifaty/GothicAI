@@ -1,0 +1,80 @@
+# Look of textures on owners that get their level by distance (step 2 of the texture work,
+# reports/engine/2026-11-10-texture-mips): an NPC's face and body, NPCs at 10 and 15 m, a chest,
+# a sword on the grass, a bench, and the first frame after a jump back to the NPC.
+# The hero waits 20 m under the ground, so the camera alone sets the distance.
+# Compare two runs of one binary (levels / OPENGOTHIC_TEXTURE_SCREEN_MIPS=0 / OPENGOTHIC_TEXTURE_MIPS=0),
+# with OPENGOTHIC_TEXTURE_TARGET_MB=0 to put every texture on its wanted level:
+#   shots_diff.py --shots owner-npc-face,owner-npc-body,owner-npc-10m,owner-npc-15m,owner-chest,owner-sword,owner-bench,owner-npc-teleport off=<dir> on=<dir>
+seed 73013
+deterministic on
+cheat god
+world-check NEWWORLD.ZEN
+set time 12 0
+overlay off
+ui off
+view full
+cam lift off
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+wait 1000
+goto pos 7406 -1680 -5067
+watch PAL_203_LOTHAR
+cam face 70 20
+wait 3000
+cam hold
+streaming wait
+shot owner-npc-face
+wait 34
+cam face 250 25
+wait 1000
+cam hold
+streaming wait
+shot owner-npc-body
+wait 34
+cam face 1000 25
+wait 1000
+cam hold
+streaming wait
+shot owner-npc-10m
+wait 34
+cam face 1500 210
+wait 1000
+cam hold
+streaming wait
+shot owner-npc-15m
+wait 34
+watch player
+goto pos 5660 -1738 -5692
+cam look 2040
+cam world 250 2110 180
+wait 3000
+cam hold
+streaming wait
+shot owner-chest
+wait 34
+goto pos 10465 -1660 -6885
+cam look 2000
+cam world 130 2070 180
+wait 3000
+cam hold
+streaming wait
+shot owner-sword
+wait 34
+goto pos 2982 -2121 -5631
+cam look 2030
+cam world 330 2180 145
+wait 3000
+cam hold
+streaming wait
+shot owner-bench
+wait 34
+# One update far away, then the first frame back at the NPC: no streaming wait before the shot.
+goto pos 200000 10000 200000
+cam look 120
+cam world 700 280 0
+wait 34
+goto pos 7406 -1680 -5067
+watch PAL_203_LOTHAR
+cam face 250 25
+shot owner-npc-teleport
+wait 34

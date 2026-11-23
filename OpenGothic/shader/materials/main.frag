@@ -8,15 +8,44 @@
 #endif
 
 #include "materials_common.glsl"
+#include "foliage_wind.glsl"
+#include "window_glow.glsl"
+// FLAT_NORMAL: the landscape's variants (a fragment shader is not told MESH_TYPE)
+#if defined(GBUFFER) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
+#include "grass/grass_ground.glsl"
+#if defined(BINDLESS) && !defined(HISTORY_DEPTH) && !defined(ATEST)
+#define GRASS_PAINT_PROBE
+#endif
+#endif
 #include "water/gerstner_wave.glsl"
 #include "lighting/shadow_sampling.glsl"
 #include "lighting/tonemapping.glsl"
-
-#if defined(MAT_VARYINGS)
-layout(location = 0) in flat uint bucketId;
-layout(location = 1) in Varyings  shInp;
+#include "lighting/material_brdf.glsl"
+#include "lighting/crown_light.glsl"
+#if defined(MAT_SUN_SHADOW)
+#include "virtual_shadow/vsm_sun_shadow.glsl"
 #endif
 
+#if defined(MAT_MOTION) || defined(MAT_CLUSTER_LEVEL)
+layout(location = 0) in flat uint materialRef;
+uint bucketId;
+#elif defined(MAT_VARYINGS)
+layout(location = 0) in flat uint bucketId;
+#endif
+#if defined(MAT_VARYINGS)
+layout(location = 1) in Varyings  shInp;
+#endif
+#if defined(TREE_BOUGH_CARDS) || defined(TREE_BOUGH_JOINT)
+#include "tree_bough_dissolve.glsl"
+#endif
+#if defined(TREE_BOUGH_CARDS)
+layout(location = 7) in flat uvec3 boughFadeIn;
+layout(location = 8) in flat vec3 boughMaskIn;
+#endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+layout(location = 9) in vec2 boughBandCellIn;
+layout(location = 10) in flat uvec2 boughBandIn;
+#endif
 #if defined(VIRTUAL_SHADOW)
 layout(location = 3) in flat uint vsmMipId;
 #endif
@@ -25,11 +54,24 @@ layout(location = 3) in flat uint vsmMipId;
 layout(location = DEBUG_DRAW_LOC) in flat uint debugId;
 #endif
 
-#if defined(GBUFFER)
+#if defined(HISTORY_DEPTH)
+#if defined(HISTORY_OWNER)
+layout(location = 0) out uint outHistoryOwner;
+#endif
+#elif defined(GBUFFER)
 layout(location = 0) out vec4 outDiffuse;
 layout(location = 1) out uint outNormal;
 #if defined(MATERIAL_MAPS)
 layout(location = 2) out vec4 outOrm;
+layout(location = 3) out vec2 outMotion; // Renderer::gbufMotion: after the material maps
+#if defined(HISTORY_OWNER)
+layout(location = 4) out uint outHistoryOwner;
+#endif
+#else
+layout(location = 2) out vec2 outMotion;
+#if defined(HISTORY_OWNER)
+layout(location = 3) out uint outHistoryOwner;
+#endif
 #endif
 #elif defined(WATER)
 layout(location = 0) out vec4 outColor;
@@ -37,6 +79,23 @@ layout(location = 1) out vec4 outDiffuse;
 layout(location = 2) out uint outNormal;
 #elif !defined(DEPTH_ONLY)
 layout(location = 0) out vec4 outColor;
+#endif
+
+// The TAA reactive mask (graphics plan 1v, Renderer::taa.reactive): the second attachment of the translucent pass,
+// R8. The pass blends it as the colour: the alpha of this output weighs it (Shaders::materialPipeline)
+#if (defined(FORWARD) || (defined(EMISSIVE) && !defined(MULTIPLY)) || defined(GHOST)) && !defined(DEPTH_ONLY) && \
+    !defined(GBUFFER) && !defined(WATER)
+#define TAA_REACTIVE
+layout(location = 1) out vec4 outReactive;
+#if (MESH_TYPE==T_PFX)
+layout(push_constant, std430) uniform PushPfx {
+  float reactive;    // ParticleFx::taaReactive: 1 for particles, 0 for rain and snow
+  float hdrFrom;     // particles.d "hdr" (mainEmissive): the night's gain over a texel's brightness
+                     // of a haze (GHOST, mainHaze): its largest shift, cm
+  float hdrInvRange; // 1/(to - from); 0: off. Of a haze: one over its noise cell, 1/cm
+  float hdrEdge;
+  } pushPfx;
+#endif
 #endif
 
 #if defined(VIRTUAL_SHADOW)
@@ -90,6 +149,18 @@ float encodeHintBits() {
   }
 
 #if defined(GBUFFER)
+// The vertex normal of the side the pixel shows. A material of two sides (materials.json "two_sided": "flip") turns
+// it to the eye on the side away from the winding: Tempest's front face is clockwise and the pipelines cull it, so
+// the side every material shows is the back one, and the other side is gl_FrontFacing. A fragment shader is not told
+// MESH_TYPE: the bit is set for objects' meshes alone (DrawBuckets::commit)
+vec3 sideNormal() {
+#if (MESH_TYPE!=T_PFX)
+  if(gl_FrontFacing && (bucket[bucketId].flags & BK_TWO_SIDED_FLIP)!=0u)
+    return -shInp.normal;
+#endif
+  return shInp.normal;
+  }
+
 vec3 flatNormal() {
 #if defined(FLAT_NORMAL)
   vec3 pos   = shInp.pos;
@@ -99,6 +170,27 @@ vec3 flatNormal() {
 #else
   return shInp.normal;
 #endif
+  }
+#endif
+
+#if defined(MAT_SUN_SHADOW)
+// The sun's shadow for the forward pass: from the virtual shadow map under VSM (the deferred sun's test), else
+// from the two cascades. Forward geometry marks no pages: vsmSunShadow takes the next coarser mip that has one.
+float sunShadow(const vec3 pos, const vec3 normal) {
+  const vec3 dpdx = dFdx(pos);
+  const vec3 dpdy = dFdy(pos);
+  if(textureSize(vsmPageTbl, 0).z==VSM_PAGE_MIPS) {
+    const mat4 m      = scene.viewVirtualShadow;
+    const vec4 sh0    = m*vec4(pos, 1);
+    const vec4 sh1    = m*vec4(pos + dpdx, 1);
+    const vec4 sh2    = m*vec4(pos + dpdy, 1);
+    vec3       planeN = cross(dpdx, dpdy);
+    planeN = dot(planeN,planeN)>1e-12 ? normalize(planeN) : normal;
+    if(dot(planeN, normal)<0)
+      planeN = -planeN;
+    return vsmSunShadow(sh0.xyz/sh0.w, sh1.xy/sh1.w, sh2.xy/sh2.w, m, planeN, 0.25, vsmPageTbl, vsmPageAtlas);
+    }
+  return calcShadow(vec4(pos,1), 0, scene, textureSm0, textureSm1);
   }
 #endif
 
@@ -122,7 +214,7 @@ vec3 diffuseLight(float a) {
 #else
   float light  = lambert(norm);
 #endif
-  float shadow = calcShadow(vec4(shInp.pos,1), 0, scene, textureSm0, textureSm1);
+  float shadow = sunShadow(shInp.pos, norm);
 
   vec3  lcolor  = scene.sunColor * light * shadow;
   vec3  ambient = scene.ambient + (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert;
@@ -140,6 +232,7 @@ vec4 dbgLambert() {
 
 #if defined(MATERIAL_MAPS) && defined(MAT_UV) && (MESH_TYPE!=T_PFX) && !defined(WATER)
 #define ANTITILE_MATERIAL 1
+#include "material_projection.glsl"
 
 // Mikkelsen, Practical Real-Time Hex-Tiling (JCGT 2022), section 2:
 // https://jcgt.org/published/0011/03/05/
@@ -159,6 +252,7 @@ struct MaterialSampling {
   AntitileCell a, b, c;
   vec3 weights;
   bool antitile;
+  Projection proj;
   };
 
 vec3 antitileRandom(ivec2 cell) {
@@ -219,9 +313,9 @@ vec4 antitileDiffuse(inout MaterialSampling maps, uint tId) {
 #else
   const uint texId = 0;
 #endif
-  vec4 a = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.a.uv, maps.a.duvdx, maps.a.duvdy);
-  vec4 b = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.b.uv, maps.b.duvdx, maps.b.duvdy);
-  vec4 c = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.c.uv, maps.c.duvdx, maps.c.duvdy);
+  vec4 a = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.a.uv, maps.a.duvdx*scene.mipGradScale, maps.a.duvdy*scene.mipGradScale);
+  vec4 b = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.b.uv, maps.b.duvdx*scene.mipGradScale, maps.b.duvdy*scene.mipGradScale);
+  vec4 c = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.c.uv, maps.c.duvdx*scene.mipGradScale, maps.c.duvdy*scene.mipGradScale);
   const vec3 luminance = vec3(0.299, 0.587, 0.114);
   vec3 brightness = vec3(dot(a.rgb,luminance), dot(b.rgb,luminance), dot(c.rgb,luminance));
   // The exponent limits ghosting, while luminance breaks up straight seams.
@@ -234,9 +328,32 @@ vec4 antitileDiffuse(inout MaterialSampling maps, uint tId) {
   }
 #endif
 
+#if defined(MAT_UV) && (MESH_TYPE!=T_PFX)
+// A strand's ribbon (strandRibbon, vertex_process.glsl): its colour is looked up in the hair's ramp by the strand's
+// tint, its alpha is the hair's share of the ribbon's width
+vec4 strandTexel() {
+  const float tint  = floor(shInp.uv.y);
+  const float cover = clamp((shInp.uv.y - tint)/0.98, 0.0, 1.0);
+#if defined(DEPTH_ONLY)
+  return vec4(0,0,0,cover);
+#else
+#if defined(BINDLESS)
+  nonuniformEXT uint tId = bucketId;
+#else
+  const         uint tId = 0;
+#endif
+  return vec4(textureLod(sampler2D(textureMain[tId], samplerMain), vec2((tint+0.5)/256.0, 0.5), 0.0).rgb, cover);
+#endif
+  }
+#endif
+
 #if defined(MAT_UV)
 #if defined(ANTITILE_MATERIAL)
-vec4 diffuseTex(out MaterialSampling maps) {
+vec4 diffuseTex(out MaterialSampling maps
+#if defined(GRASS_PAINT_PROBE)
+                , bool probePaint, bool skipPaint
+#endif
+                ) {
 #else
 vec4 diffuseTex() {
 #endif
@@ -248,6 +365,11 @@ vec4 diffuseTex() {
 #if defined(GBUFFER)
   maps.dpdx = dFdx(shInp.pos);
   maps.dpdy = dFdy(shInp.pos);
+#endif
+  projectionPlanes(maps.proj);
+#if defined(GRASS_PAINT_PROBE)
+  if(skipPaint)
+    return vec4(0);
 #endif
 #endif
 #if !defined(SIMPLE_MAT) && (MESH_TYPE!=T_PFX)
@@ -288,6 +410,9 @@ vec4 diffuseTex() {
 
 #if defined(BINDLESS)
   nonuniformEXT uint tId = bucketId;
+  if(bucket[bucketId].frameCount!=0)
+    tId = bucket[bucketId].diffuseFrames +
+          (scene.tickCount32 / bucket[bucketId].frameDuration) % bucket[bucketId].frameCount;
 #else
   const         uint tId = 0;
 #endif
@@ -296,11 +421,24 @@ vec4 diffuseTex() {
   vec4 tex;
   if(maps.antitile)
     tex = antitileDiffuse(maps, tId);
+  else if(maps.proj.on)
+    tex = projectionAlbedo(maps.proj, tId);
+#if defined(GRASS_PAINT_PROBE)
+  else if(probePaint) {
+    // At a partial layer, the skip can differ across a quad. Use the gradients taken above.
+    tex = textureGrad(sampler2D(textureMain[tId], samplerMain), uv,
+                      maps.duvdx*scene.mipGradScale, maps.duvdy*scene.mipGradScale);
+    }
+#endif
   else
     // The material flag is uniform within the primitive (flat bucketId).
-    tex = texture(sampler2D(textureMain[tId], samplerMain),uv);
+    tex = texture(sampler2D(textureMain[tId], samplerMain),uv,scene.mipBias);
 #else
-  vec4 tex = texture(sampler2D(textureMain[tId], samplerMain),uv);
+  vec4 tex = texture(sampler2D(textureMain[tId], samplerMain),uv,scene.mipBias);
+#endif
+#if (MESH_TYPE==T_PFX)
+  if(shInp.flip.z>=0.0)
+    tex = mix(tex, texture(sampler2D(textureMain[tId], samplerMain), shInp.flip.xy, scene.mipBias), shInp.flip.z);
 #endif
 
 #if !defined(SIMPLE_MAT)
@@ -312,7 +450,7 @@ vec4 diffuseTex() {
   }
 #endif
 
-#if defined(GBUFFER)
+#if defined(GBUFFER) && !defined(HISTORY_DEPTH)
 #if defined(MATERIAL_MAPS) && (MESH_TYPE!=T_PFX)
 vec3 mappedNormal(vec3 normal, vec3 dpdx, vec3 dpdy, vec2 duvdx, vec2 duvdy, vec3 tangentNormal) {
   // Cotangent frame: Gothic meshes have no stored tangents. This also follows
@@ -340,7 +478,7 @@ vec2 antitileSlope(uint tId, AntitileCell cell) {
 #else
   const uint texId = 0;
 #endif
-  vec4 nm = textureGrad(sampler2D(textureNormal[texId], samplerMain), cell.uv, cell.duvdx, cell.duvdy);
+  vec4 nm = textureGrad(sampler2D(textureNormal[texId], samplerMain), cell.uv, cell.duvdx*scene.mipGradScale, cell.duvdy*scene.mipGradScale);
   vec2 xy = nm.ag * 2.0 - 1.0;
   float z = sqrt(max(0.0, 1.0 - dot(xy,xy)));
   // q = R * uv: the height gradient (and normal XY) returns with R^T.
@@ -355,18 +493,42 @@ vec3 antitileOrm(uint tId, AntitileCell cell) {
 #else
   const uint texId = 0;
 #endif
-  return textureGrad(sampler2D(textureOrm[texId], samplerMain), cell.uv, cell.duvdx, cell.duvdy).rgb;
+  return textureGrad(sampler2D(textureOrm[texId], samplerMain), cell.uv, cell.duvdx*scene.mipGradScale, cell.duvdy*scene.mipGradScale).rgb;
   }
 #endif
 
+#if defined(MATERIAL_MAPS) && (MESH_TYPE!=T_PFX)
+// Embers do not flicker like flames: heat creeps over them in patches of about 20-40 cm over seconds, 0.55..1.
+// The clock wraps at 20 pi seconds, where every term here completes whole periods.
+float emberBreath(vec3 pos) {
+  const float t = float(scene.tickCount32 % 62832u)*0.001;
+  const float a = sin(pos.x*0.23 + t*1.1) * sin(pos.z*0.19 - t*0.7);
+  const float b = sin((pos.x - pos.z)*0.11 + pos.y*0.3 + t*1.9);
+  return 0.775 + 0.225*(0.6*a + 0.4*b);
+  }
+#endif
+
+#if defined(BINDLESS) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
+#include "grass/grass_track.glsl"
+#endif
+
 #if defined(ANTITILE_MATERIAL)
-void mainGBuffer(vec4 t, MaterialSampling maps) {
+void mainGBuffer(vec4 t, MaterialSampling maps
+#if defined(GRASS_PAINT_PROBE)
+                 , bool skipPaint
+#endif
+                 ) {
 #else
 void mainGBuffer(vec4 t) {
 #endif
-  outDiffuse.rgb = t.rgb;
   outDiffuse.a   = encodeHintBits();
-  outNormal      = encodeNormal(shInp.normal);
+#if defined(GRASS_PAINT_PROBE)
+  if(skipPaint)
+    return; // The layer writes every other material channel.
+#endif
+  outDiffuse.rgb = t.rgb;
+  const vec3 normal = sideNormal();
+  outNormal      = encodeNormal(normal);
 #if defined(MATERIAL_MAPS)
   outOrm = vec4(1,1,0,0);
 #if (MESH_TYPE!=T_PFX)
@@ -415,23 +577,214 @@ void mainGBuffer(vec4 t) {
               weights.z * antitileOrm(tId, maps.c);
       }
     if(hasNormal)
-      outNormal = encodeNormal(mappedNormal(shInp.normal, dpdx, dpdy, duvdx, duvdy,
+      outNormal = encodeNormal(mappedNormal(normal, dpdx, dpdy, duvdx, duvdy,
                                            vec3(slope,1)));
     if(hasOrm)
       outOrm.rgb = orm;
+    } else if(maps.proj.on) {
+    projectionMaps(maps.proj, tId, outNormal, outOrm.rgb);
     } else {
     if((bucket[bucketId].flags & BK_NORMAL)!=0) {
-      vec4 nm = textureGrad(sampler2D(textureNormal[tId], samplerMain), uv, duvdx, duvdy);
-      outNormal = encodeNormal(mappedNormal(shInp.normal, dpdx, dpdy, duvdx, duvdy, nm));
+      vec4 nm = textureGrad(sampler2D(textureNormal[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale);
+      outNormal = encodeNormal(mappedNormal(normal, dpdx, dpdy, duvdx, duvdy, nm));
       }
     if((bucket[bucketId].flags & BK_ORM)!=0)
-      outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx, duvdy).rgb;
+      outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).rgb;
+    }
+  if((bucket[bucketId].flags & BK_HAIR)!=0) {
+    // Hair cards. The strands run along v, the root at v=0, so the strand's direction on the surface is where v
+    // grows: the cotangent frame's b, as in mappedNormal(). It goes into the G-buffer as an angle around the
+    // normal, in the channel of metal, which hair has none of; the normal there is the one the light passes will
+    // decode. r and g stay the hair map's shade and strand number
+    const vec3 n  = normalize(shInp.normal);
+    const vec3 py = cross(dpdy, n);
+    const vec3 px = cross(n, dpdx);
+    vec3 dir = py*duvdx.y + px*duvdy.y;
+    // the cotangent frame turns over where the vertex normal looks away from the face the eye sees: a card that
+    // stands off the hair's surface near its horizon
+    if(dot(n, cross(dpdx, dpdy))<0.0)
+      dir = -dir;
+    if((bucket[bucketId].flags & BK_STRAND)!=0) {
+      // A strand's ribbon. Its direction is the one along which uv.x, -1..1 across the ribbon, stays the same;
+      // the ribbon turns the same way to every eye, so the sign holds. The normal carries the baked light in
+      // its length (strandRibbon); the strand's number for the highlight comes from its tint
+      dir          = dpdy*duvdx.x - dpdx*duvdy.x;
+      outNormal    = encodeNormal(n);
+      outOrm.r     = clamp(length(shInp.normal)*2.0 - 1.0, 0.0, 1.0);
+      outOrm.g     = fract(floor(shInp.uv.y)*0.61803399);
+      }
+    const vec3 nq = decodeNormal(outNormal);
+    dir -= nq*dot(nq, dir);
+    if(dot(dir,dir)>1e-20) {
+      outOrm.b     = encodeHairAngle(nq, dir);
+      outOrm.a     = 1.0;
+      outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufHairBit)/255.0;
+      } else {
+      outOrm.b = 0.0; // a degenerate UV: plain Lambert, not a strand of unknown direction
+      }
+    }
+  if((bucket[bucketId].flags & BK_EYE)!=0u) {
+    // An eyeball (eye_brdf.glsl): the lids' shade comes in the length of the normal (vertex_process.glsl). It darkens
+    // the albedo down to EyeLidAlbedo, as The Heretic's eyes do, and goes to the light passes in the channel of metal
+    // (an eye has none). Without an ORM map the tear film's roughness is EyeRoughness. The roughness grows by how
+    // fast the normal turns over the pixel (Kaplanyan and Tokuyoshi's specular antialiasing): a highlight of a pixel
+    // or two on the cornea flickers under TAA as the head turns otherwise
+    const float EyeLidAlbedo  = 0.65;
+    const float EyeRoughness  = 0.08;
+    const float EyeIrisDepth  = 0.5;          // cm at b = 1 (eye_cornea.py, DEPTH_MAX_CM)
+    const float EyeEta        = 1.0/1.336;    // air to the aqueous humour (the tear film and the cornea add little)
+    const float lid = clamp(length(shInp.normal)*2.0 - 1.0, 0.0, 1.0);
+    const vec3  n   = normalize(shInp.normal);
+    const vec3  dn  = dFdx(n), dm = dFdy(n);
+    const float kernel = min(0.5*(dot(dn,dn) + dot(dm,dm)), 0.18);
+    const float r0  = (bucket[bucketId].flags & BK_ORM)!=0 ? outOrm.g : EyeRoughness;
+    const float a2  = clamp(r0*r0*r0*r0 + kernel, 0.0, 1.0);
+    // The iris in its depth under the cornea (eye-shader.md, "Способ" 5; Jimenez 2012): the ORM's b is how deep the
+    // iris lies under this point of the dome (scripts/content/npc/eye_cornea.py), 0 off the iris and in older maps. The
+    // eye sees it along the ray the cornea bends, so the colour comes from where that ray meets the iris: the map is
+    // read that far along the ray's run over the surface. The run goes into the map by the surface gradients of u
+    // and v (the cotangent frame of mappedNormal): the two eyes share the map mirrored, the gradients carry the sign
+    const float depth = (bucket[bucketId].flags & BK_ORM)!=0 ? outOrm.b*EyeIrisDepth : 0.0;
+    // The limit: a ray that comes in through the cornea bends to at most 48.5 degrees off the normal, its run over the
+    // surface is at most 1.13 of the depth. Where the interpolated normal looks aside or away from the eye (the dome's
+    // edge under a lid, a grazing look at the limbus) the bent ray has no meaning: the shift fades out by the cosine
+    // of the view to the normal, 0.25 down to 0
+    const vec3  view = normalize(scene.camPos - shInp.pos);
+    const float noV  = dot(n, view);
+    if(depth>0.0 && noV>0.0) {
+      const vec3  ray  = refract(-view, n, EyeEta);
+      const vec3  run  = ray * (depth/dot(n, -ray)) * smoothstep(0.0, 0.25, noV);
+      const float det  = dot(n, cross(dpdx, dpdy));
+      if(abs(det)>1e-20) {
+        const vec3 gu = cross(dpdy, n)*duvdx.x + cross(n, dpdx)*duvdy.x;
+        const vec3 gv = cross(dpdy, n)*duvdx.y + cross(n, dpdx)*duvdy.y;
+        const vec2 shift = vec2(dot(gu, run), dot(gv, run))/det;
+        vec3 iris = textureGrad(sampler2D(textureMain[tId], samplerMain), uv + shift,
+                                duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).rgb;
+#if defined(MAT_COLOR)
+        iris *= shInp.color.rgb;
+#endif
+        outDiffuse.rgb = iris;
+        }
+      }
+    outOrm.g        = sqrt(sqrt(a2));
+    outOrm.b        = lid;
+    outOrm.a        = 1.0;
+    outDiffuse.rgb *= mix(EyeLidAlbedo, 1.0, lid);
+    outDiffuse.a    = float(int(outDiffuse.a*255.0 + 0.5) | GBufEyeBit)/255.0;
+    }
+  if((bucket[bucketId].flags & BK_FOLIAGE)!=0u) {
+    // Leaves (foliage_light.glsl): the share of the sun a leaf lets through goes to the sun's pass in the channel
+    // of metal, which a leaf has none of, under the foliage bit. With that half switched off (the share is 0) the
+    // pixel is any own material's
+    const float through = foliageTranslucency(bucket[bucketId].foliage);
+    if(through>0.0) {
+      outOrm.b     = through;
+      outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufFoliageBit)/255.0;
+      }
+    }
+  if((bucket[bucketId].flags & BK_CROWN)!=0u) {
+    // A tree's crown (crown_light.glsl): the shade of its depth goes to the light passes in the ORM alpha, under the
+    // crown bit (common.glsl, gbufCrownShade); a material without its own maps has no such alpha and no crown
+    const float openness = crownOpenness(shInp.normal);
+    if((scene.viewFlags & VF_CROWN_MASK)!=0u) {
+      outDiffuse.rgb = crownMask(openness, outOrm.b);
+      }
+    else if(outOrm.a>0.5) {
+      outOrm.a     = gbufCrownShadeCode(crownShade(openness));
+      outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufCrownBit)/255.0;
+      }
+    }
+  const float glow = bucket[bucketId].emissive;
+  if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {
+    // the ORM alpha marks the glowing texels (cracks of a burning log, the ember bed); they breathe slowly. Glowing
+    // charcoal is black under its own light: a lamp must not paint the heat as orange wood (r5), so the albedo goes
+    // dark by the share and the ambient pass adds the glow in the colour of its heat (emberColour, common.glsl)
+    const float mask = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).a;
+    if((bucket[bucketId].flags & BK_WINDOW)!=0) {
+      // a window lit of an evening (window_glow.glsl): the candle behind it, by the hour and the window's own
+      // numbers; the shutters and the frame keep their albedo
+      // only the texels the mask marks ask for the window's numbers
+      float light = 0.0;
+      if(mask>0.004)
+        light = windowLight(bucket[bucketId].foliage, uv, shInp.pos, duvdx, duvdy, dpdx, dpdy,
+                            scene.dayHour, scene.tickCount32);
+      const float share = clamp(glow*mask*light, 0.0, 1.0);
+      if(share>0.0) {
+        outOrm.a     = 1.0 - EmissiveOrmCode*share;
+        outDiffuse.a = float(int(outDiffuse.a*255.0 + 0.5) | GBufWindowBit)/255.0;
+        }
+      } else {
+      const float share = clamp(glow*mask*emberBreath(shInp.pos), 0.0, 1.0);
+      outOrm.a = 1.0 - EmissiveOrmCode*share;
+      outDiffuse.rgb *= 1.0 - share;
+      }
     }
 #endif
 #endif
   // outNormal      = vec4(flatNormal()*0.5 + vec3(0.5), 1.0);
 #if DEBUG_DRAW
   outDiffuse.rgb *= debugColors[debugId%debugColors.length()];
+#endif
+  }
+#endif
+
+#if defined(MAT_FOG)
+// Translucent surfaces don't write depth, so the fog pass, drawn before them, fogs what lies behind.
+// Here they take the fog of their own depth: in-scattered light (rgb) and transmittance (a).
+vec4 fogOwnDepth() {
+  if(scene.fogQuality==0 || scene.underWater!=0)
+    return vec4(0,0,0,1);
+
+  const vec2  uv = gl_FragCoord.xy*scene.screenResInv;
+  const float dZ = linearDepth(gl_FragCoord.z, scene.clipInfo);
+  const float d0 = linearDepth(dFogMin,        scene.clipInfo);
+  const float d1 = linearDepth(dFogMax,        scene.clipInfo);
+  const float d  = (dZ-d0)/(d1-d0);
+
+  // as fog.frag: the scattering and the transmittance fade in from the camera over half the LUT's first slice
+  const float near = min(d*float(textureSize(fogLut,0).z)*2.0, 1.0);
+  vec4 val = textureLod(fogLut, vec3(uv,d), 0);
+  if(scene.fogQuality==2) {
+    // as fog.frag (VOLUMETRIC), without the shadow occlusion of single scattering.
+    // Under GI the multiple scattering as fog.frag (FOG_SKY_VIS) lets it: by mix(the sun's bit, 1, the sky over the
+    // camera) along the ray. The bits are those of the fog pass for this pixel (32 steps to the opaque surface behind);
+    // their lit share stands in for the lit share of the scattering up to this surface (step-2-shade.md, «Дымка
+    // прозрачного»). Exactly 1 without GI: the bits are not read
+    const vec4 ms = textureLod(fogLutMs, vec3(uv,d), 0);
+    float k = 1.0;
+    if(scene.fogSkyVis<1.0) {
+      const ivec2 occSize  = imageSize(fogOcclusion);
+      const ivec2 occRatio = (scene.screenRes + occSize - 1)/occSize;
+      const uint  bits     = imageLoad(fogOcclusion, min(ivec2(gl_FragCoord.xy)/occRatio, occSize-1)).r;
+      const float lit      = float(bitCount(bits))/32.0;
+      k = scene.fogSkyVis + (1.0-scene.fogSkyVis)*lit;
+      }
+    val = vec4(val.rgb + ms.rgb*k, ms.a);
+    }
+  return vec4(val.rgb*near*scene.GSunIntensity*scene.exposure, mix(1.0, val.a, near));
+  }
+#endif
+
+#if defined(SOFT_PARTICLE)
+// A sprite fades over the last cm before the opaque scene behind it (a flame against a pot, a log, the ground)
+// and next to the camera, so no straight seam shows where its quad cuts through geometry.
+float softParticle() {
+  const float behind = linearDepth(texelFetch(gbufferDepth, ivec2(gl_FragCoord.xy), 0).r, scene.clipInfo);
+  const float own    = linearDepth(gl_FragCoord.z, scene.clipInfo);
+  const float touch  = clamp((behind-own)/SoftParticleDepth, 0.0, 1.0);
+  const float near   = clamp((own-SoftParticleNear.x)/(SoftParticleNear.y-SoftParticleNear.x), 0.0, 1.0);
+  return touch*touch*(3.0-2.0*touch) * near;
+  }
+#endif
+
+#if defined(TAA_REACTIVE) && !defined(GHOST)
+// the material's weight: particles by their effect, meshes by a texture animation (Material::taaReactive)
+float reactiveWeight() {
+#if (MESH_TYPE==T_PFX)
+  return pushPfx.reactive;
+#else
+  return bucket[bucketId].reactive;
 #endif
   }
 #endif
@@ -445,22 +798,123 @@ void mainForward(vec4 t) {
   alpha = (alpha-0.5)*2.0;
 #endif
 
-  color = textureAlbedo(color.rgb);
-  color *= diffuseLight(alpha);
-  color *= scene.exposure;
+  const vec3 albedo = textureAlbedo(color.rgb);
+  color = albedo * diffuseLight(alpha) * scene.exposure;
+#if (MESH_TYPE==T_PFX)
+  // smoke and steam lit by the fires next to them, as light.frag lights a surface
+  color += albedo * shInp.pointLight * max(1.0, scene.exposure) * Fd_Lambert * 0.25;
+#endif
 
+  const vec4 fog = fogOwnDepth();
+  color = color*fog.a + fog.rgb;
+
+#if defined(SOFT_PARTICLE)
+  alpha *= softParticle();
+#endif
   outColor = vec4(color,alpha);
+#if defined(TAA_REACTIVE)
+  // SrcAlpha, 1-SrcAlpha: mask = w*a + mask*(1-a), the opacity of the reactive; a still surface in front hides it
+  outReactive = vec4(reactiveWeight(), 0, 0, alpha);
+#endif
   }
 #endif
 
 #if defined(EMISSIVE)
 void mainEmissive(vec4 t) {
   vec3 color = textureEmmisive(t.rgb);
-  outColor = vec4(color,t.a);
+#if (MESH_TYPE==T_PFX) && !defined(MULTIPLY)
+  // A flame keeps its own luminance, so it reads brighter than the scene as the exposure rises at dusk and at
+  // night; the factor leaves it as it was under the noon sun (EmissiveSunRatio, common.glsl). The exposure does
+  // not see the fire itself, and the night's is hundreds of times the noon's: the gain stops at EmissiveMaxGain,
+  // as an eye that adapts to the fire it looks at.
+  float gain = min(EmissiveSunRatio * scene.GSunIntensity * scene.exposure, EmissiveMaxGain);
+#if defined(TAA_REACTIVE)
+  // particles.d "hdr": the tone curve works by channel, so a gain over the whole sprite turns the orange of a
+  // flame into a flat yellow. The dim texels (its edges) take only the share hdrEdge of the gain and keep their
+  // hue; the bright ones (its core) take all of it and go to white. At noon the gain is 1 and nothing changes.
+  if(pushPfx.hdrInvRange>0.0) {
+    const float peak = max(color.r, max(color.g, color.b));
+    const float k    = clamp((peak-pushPfx.hdrFrom)*pushPfx.hdrInvRange, 0.0, 1.0);
+    gain = 1.0 + (gain-1.0)*mix(pushPfx.hdrEdge, 1.0, k*k*(3.0-2.0*k));
+    }
+#endif
+  color *= gain;
+#endif
+#if defined(MAT_FOG)
+  color *= fogOwnDepth().a;
+#endif
+  float alpha = t.a;
+#if defined(SOFT_PARTICLE)
+  alpha *= softParticle();  // additive with SrcAlpha: the alpha weighs the added light
+#endif
+  outColor = vec4(color,alpha);
+#if defined(TAA_REACTIVE)
+  // SrcAlpha, One: mask += w*e*a, the added light in shares of Lref (on screen, after the exposure)
+  const float e = clamp(dot(color, vec3(0.25, 0.5, 0.25))*scene.reactiveLrefInv, 0.0, 1.0);
+  outReactive = vec4(reactiveWeight()*e, 0, 0, alpha);
+#endif
   }
 #endif
 
-#if defined(GHOST)
+#if defined(GHOST) && (MESH_TYPE==T_PFX)
+// The shimmer of hot air over a fire (particles.d "haze"). The sprite has no colour: it shows the finished frame
+// behind it (sceneColor is the copy Renderer::drawHaze makes after everything translucent) shifted by a noise that
+// rises and changes. The shift is in cm of the world at the sprite's distance, so it shrinks with distance as the
+// real one does; it fades to the sprite's rim and with the particle's alpha. A sample that would land on something
+// in front of the sprite (a man before the fire) is not shifted, or his outline would smear into the air.
+float hazeHash(vec3 p) {
+  p = fract(p*vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.x + p.y)*p.z);
+  }
+
+float hazeNoise(vec3 p) {
+  const vec3 i = floor(p);
+  vec3       f = fract(p);
+  f = f*f*(3.0-2.0*f);
+  const float a = mix(mix(hazeHash(i),               hazeHash(i+vec3(1,0,0)), f.x),
+                      mix(hazeHash(i+vec3(0,1,0)),   hazeHash(i+vec3(1,1,0)), f.x), f.y);
+  const float b = mix(mix(hazeHash(i+vec3(0,0,1)),   hazeHash(i+vec3(1,0,1)), f.x),
+                      mix(hazeHash(i+vec3(0,1,1)),   hazeHash(i+vec3(1,1,1)), f.x), f.y);
+  return mix(a, b, f.z);
+  }
+
+void mainGhost(vec4 t) {
+  const vec2  uv   = gl_FragCoord.xy*scene.screenResInv;
+  const vec2  c    = shInp.uv*2.0 - vec2(1.0);
+  const float rim  = clamp(1.0 - dot(c,c), 0.0, 1.0);
+  const float k    = rim*rim*shInp.color.a;
+
+  const float own  = linearDepth(gl_FragCoord.z, scene.clipInfo);
+  vec4        wpos = scene.viewProjectInv*vec4(uv*2.0-vec2(1.0), gl_FragCoord.z, 1.0);
+  wpos.xyz /= wpos.w;
+
+  // hot air rises at about 1 m/s and its cells live for a fraction of a second
+  const float time = float(scene.tickCount32 % 1000000u)*0.001;
+  vec3        q    = wpos.xyz*pushPfx.hdrInvRange;
+  q.y -= time*100.0*pushPfx.hdrInvRange;
+  const vec3  morph = vec3(0.0, 0.0, time*1.7);
+  // two octaves; the shift is mostly sideways, as of rising streams
+  vec2 n = vec2(hazeNoise(q + morph), hazeNoise(q.zyx + vec3(17.3, 5.1, 9.7) - morph)) - vec2(0.5);
+  n     += (vec2(hazeNoise(q*2.3 - morph), hazeNoise(q.zyx*2.3 + vec3(3.1, 11.9, 1.3) + morph)) - vec2(0.5))*0.5;
+  n     *= vec2(1.0, 0.6);
+
+  // cm of the world to the screen by the size of a pixel at the sprite
+  const float cmPerPx = max(length(dFdx(wpos.xyz)), 1e-3);
+  vec2 shift = n*(2.0*k*pushPfx.hdrFrom/cmPerPx)*scene.screenResInv;
+  const float behind = linearDepth(textureLod(gbufferDepth, uv+shift, 0).r, scene.clipInfo);
+  if(behind<own)
+    shift = vec2(0.0);
+
+  outColor = vec4(textureLod(sceneColor, uv+shift, 0).rgb, 1.0);
+#if defined(TAA_REACTIVE)
+  // The frame under a haze changes every frame with no motion vector: the temporal resolve would average the shimmer
+  // into a blur with a stipple, so the mask goes up with the shift. Blended over the mask of the flames and smoke
+  // under it, which stays where the haze is weak
+  outReactive = vec4(1.0, 0, 0, smoothstep(0.0, 0.25, k));
+#endif
+  }
+#elif defined(GHOST)
 void mainGhost(vec4 t) {
   vec3  color  = textureAlbedo(t.rgb) * 5.0;
   vec3  normal = normalize(shInp.normal);
@@ -472,7 +926,12 @@ void mainGhost(vec4 t) {
 
   vec4 back = textureLod(sceneColor, (fragCoord*0.5+0.5), 0);
 
-  outColor = vec4(mix(back.rgb * color, back.rgb, vec3(0.6)), t.a);
+  // sceneColor is stashed before the fog pass
+  const vec4 fog = fogOwnDepth();
+  outColor = vec4(mix(back.rgb * color, back.rgb, vec3(0.6))*fog.a + fog.rgb, t.a);
+#if defined(TAA_REACTIVE)
+  outReactive = vec4(0); // no blending: the refracted scene behind is not reactive
+#endif
   }
 #endif
 
@@ -548,36 +1007,180 @@ vec4 waterShading(vec4 t, const vec3 normal) {
 
 void mainWater(vec4 t) {
   const float waveMaxAmplitude = bucket[bucketId].waveMaxAmplitude;
+  const float turbidity        = bucket[bucketId].turbidity;
+  const float turbidityDepth   = bucket[bucketId].turbidityDepth;
+  // Water in a pot (it has a turbidity) ripples at the pot's scale: the sea's waves, 25 times smaller and slower.
+  const float rippleScale      = turbidity>0.0 ? 25.0 : 1.0;
 
   vec3 lx = dFdx(shInp.pos), ly = dFdy(shInp.pos);
   float minLength = max(length(lx),length(ly));
 
-  Wave wx = wave(shInp.pos, minLength, waveIterationsHigh, waveAmplitude(waveMaxAmplitude));
+  Wave wx = wave(shInp.pos*rippleScale, minLength*rippleScale, waveIterationsHigh, waveAmplitude(waveMaxAmplitude));
 
   if(gl_FrontFacing) {
     // BROKEN: water mesh is two sided
     wx.normal = -wx.normal;
     }
 
-  outColor       = waterShading(t,wx.normal);
+  outColor = waterShading(t,wx.normal);
+  const float shadow = scene.underWater==0 ? sunShadow(shInp.pos, normalize(shInp.normal)) : 0.0;
+  if(turbidity>0.0) {
+    // Water in a pot clouded with ash and fat, or a stew: the material's colour, lit like a surface, over the clear water.
+    // With a depth (cm) the cloud thickens with the liquid it is seen through (Beer-Lambert): a stew is clearer at the wall.
+    float cloud = turbidity;
+    if(turbidityDepth>0.0)
+      cloud *= 1.0 - exp(-underWaterColorDepth(wx.normal).a/turbidityDepth);
+    const vec3  n   = normalize(shInp.normal);
+    const vec3  sun = scene.sunColor * clamp(dot(scene.sunDir,n), 0.0, 1.0) * shadow * Fd_Lambert; // as direct_light.frag
+    const vec3  amb = scene.ambient + (n.y*0.25+0.75) * NightAmbient * Fd_Lambert; // x2 below stands for the sky irradiance
+    outColor.rgb = mix(outColor.rgb, textureAlbedo(t.rgb) * (sun + 2.0*amb) * scene.exposure, cloud);
+    }
+  if(scene.underWater==0) {
+    // Sun glint: the sun reflected by the rippled surface, not in shadow (water_reflection.frag adds only the sky).
+    // A sharp GGX lobe over the sun's irradiance: in life it is the brightest thing on the water.
+    const vec3 view = normalize(scene.camPos - shInp.pos);
+    const vec3 n    = wx.normal.y<0.0 ? -wx.normal : wx.normal;
+    const vec3 spec = materialSpecular(n, view, scene.sunDir, vec3(WaterF0), turbidity>0.0 ? PotWaterRoughness : WaterRoughness);
+    outColor.rgb += spec * scene.sunColor * max(dot(n, scene.sunDir), 0.0) * shadow * scene.exposure;
+    }
   outDiffuse.rgb = t.rgb;
   outDiffuse.a   = encodeHintBits();
   outNormal      = encodeNormal(wx.normal);
   }
 #endif
 
+#if defined(GBUFFER)
+// Motion vectors of objects (graphics plan 1b): where the point was a frame ago minus where it would be had it stood
+// still, texture coordinates, current -> previous (Taa::motionResidual). Landscape and particles: 0
+vec2 motionResidual() {
+#if defined(MAT_MOTION)
+  if(scene.motionVectors==0u)
+    return vec2(0);
+  const vec3  s  = shInp.prevStatic;
+  const vec3  d  = shInp.prevDelta;
+  const float w0 = s.z;
+  const float w1 = s.z + d.z;
+  if(w0<=0.0 || w1<=0.0)
+    return vec2(0); // behind the previous camera: no history to point at
+  // ((s.xy + d.xy)/w1 - s.xy/w0)*0.5 over one denominator: exactly 0 for d=0, also by the near plane, where the two
+  // divisions of the plain form round apart by up to pixels
+  return (d.xy*w0 - s.xy*d.z)/(w0*w1)*0.5;
+#else
+  return vec2(0);
+#endif
+  }
+#endif
+
+// The alpha test's threshold. Our glTF MASK (BK_HASHED_ALPHA: brows, lashes, hair cards) under TAA takes a threshold
+// of its own per pixel and frame (reports/content/2026-11-npc-hair): from the pixel's interleaved gradient noise it
+// steps by the golden ratio each TAA frame, so a texel of alpha 0.3 stays in 30% of the frames, and the history
+// averages the edge to the texel's coverage without sorting. Neighbours differ, so the resolve's 3x3 box takes the
+// spread as legit. A hash of the texture cell under the pixel shifts the start: two cards over one pixel take
+// different thresholds and their coverages add up, where one threshold would let the front card hide the back.
+// The occluders drawn into the main depth ahead of the G-buffer (Renderer::drawHiZ) keep only what no threshold
+// drops, else the G-buffer would find the card's depth in front of the skin it lets through. Shadows and frames
+// without TAA keep 0.5
+float alphaThreshold() {
+#if defined(ATEST) && defined(MAT_UV) && (MESH_TYPE!=T_PFX)
+  if((scene.viewFlags & VF_TAA)==0u || (bucket[bucketId].flags & BK_HASHED_ALPHA)==0u)
+    return 0.5;
+#if defined(GBUFFER)
+  const uvec2 cell  = uvec2(ivec2(floor(shInp.uv*256.0)) & 0xFFFF);
+  const float layer = float(pcgHash(cell.x | (cell.y << 16)) >> 8) * (1.0/16777216.0);
+  const float step  = float(scene.taaFrame % 64u) * 0.61803399;
+  return max(fract(interleavedGradientNoise(gl_FragCoord.xy) + layer + step), 0.5/255.0);
+#elif defined(DEPTH_ONLY) && !defined(VIRTUAL_SHADOW)
+  return (scene.viewFlags & VF_HIZ)!=0u ? 1.0 - 0.5/255.0 : 0.5;
+#else
+  return 0.5;
+#endif
+#else
+  return 0.5;
+#endif
+  }
+
 void main() {
-#if defined(MAT_UV)
+#if defined(GBUFFER) && !defined(HISTORY_DEPTH)
+  const bool treeProbe = (scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u;
+#endif
+#if defined(TREE_BOUGH_JOINT) && defined(GBUFFER)
+  const bool treeJoint = (materialRef & BoughJointTag)!=0u;
+  const uint taskRef = materialRef & ~BoughJointTag;
+#endif
+#if defined(TREE_BOUGH_CARDS)
+  bucketId = materialRef;
+#elif defined(HISTORY_PAYLOAD)
+#if defined(TREE_BOUGH_JOINT)
+  const uvec4 historyTask = payload[taskRef];
+#else
+  const uvec4 historyTask = payload[materialRef];
+#endif
+  const uint historyOwner = historyTask.w & 0x00FFFFFFu;
+  bucketId = historyTask.z;
+  uint clusterLevel = historyTask.w >> 24u;
+#elif defined(MAT_CLUSTER_LEVEL)
+  bucketId = materialRef & 0xffffu;
+  uint clusterLevel = materialRef >> 16u;
+#elif defined(MAT_MOTION)
+  bucketId = materialRef;
+#endif
+#if defined(GBUFFER) && defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_PAYLOAD) && !defined(TREE_BOUGH_CARDS)
+  uint probeCluster = 0u;
+#if defined(TREE_BOUGH_JOINT)
+  if(treeProbe || treeJoint) {
+    const uvec4 task = payload[taskRef];
+#else
+  if(treeProbe) {
+    const uvec4 task = payload[materialRef];
+#endif
+    bucketId = task.z;
+    const bool historyReference = (scene.viewFlags & VF_HIZ_HISTORY_REFERENCE)!=0u;
+    probeCluster = historyReference ? ((task.w & 0x00FFFFFFu) - 1u) : task.w;
+    clusterLevel = 0u;
+    }
+#endif
+
+#if defined(GBUFFER) && defined(MATERIAL_MAPS) && defined(FLAT_NORMAL) && defined(BINDLESS) && !defined(HISTORY_DEPTH)
+  const Bucket material = bucket[bucketId];
+  GrassLayer layer;
+  float sward = -1.0, strip = 0.0;
+#endif
+#if defined(GRASS_PAINT_PROBE)
+  // Keep the base path when coverage or G-buffer hints can depend on the painted material.
+  const uint extraHints = BK_HAIR | BK_STRAND | BK_EYE | BK_FOLIAGE | BK_CROWN | BK_PROJECTION;
+  const bool probePaint = (scene.viewFlags & GrassPartGroundPaint)!=0u &&
+                         (material.flags & (BK_GROUND | BK_VERGE))!=0u &&
+                         (material.flags & extraHints)==0u && material.emissive<=0.0;
+  const vec3 grassDpdx = dFdx(shInp.pos), grassDpdy = dFdy(shInp.pos);
+  if(probePaint)
+    sward = grassOwnLayers(material, shInp.pos, shInp.normal, grassDpdx, grassDpdy, layer, strip);
+  const bool skipPaint = probePaint && sward>=0.0 && layer.share==1.0;
+#endif
+
+#if defined(MAT_UV) && (!defined(HISTORY_DEPTH) || defined(ATEST))
 #if defined(ANTITILE_MATERIAL)
   MaterialSampling maps;
-  vec4 t = diffuseTex(maps);
+  vec4 t = diffuseTex(maps
+#if defined(GRASS_PAINT_PROBE)
+                      , probePaint, skipPaint
+#endif
+                      );
 #else
   vec4 t = diffuseTex();
 #endif
+#  if (MESH_TYPE!=T_PFX)
+  if((bucket[bucketId].flags & BK_STRAND)!=0u)
+    t = strandTexel();
+#  endif
 #  if defined(ATEST) && !(defined(GBUFFER) && defined(MATERIAL_MAPS))
-  if(t.a<0.5)
+  if(t.a<alphaThreshold())
     discard;
 #  endif
+#endif
+
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+  if(!boughBandCovers(boughBandIn.x, true, uvec2(ivec2(floor(boughBandCellIn))), boughBandIn.y))
+    discard;
 #endif
 
 #if defined(ATEST) && defined(GBUFFER) && defined(MATERIAL_MAPS)
@@ -588,14 +1191,80 @@ void main() {
 #endif
 
 #if defined(GBUFFER)
+#if !defined(HISTORY_DEPTH)
 #if defined(ANTITILE_MATERIAL)
-  mainGBuffer(t, maps);
+  mainGBuffer(t, maps
+#if defined(GRASS_PAINT_PROBE)
+              , skipPaint
+#endif
+              );
 #else
   mainGBuffer(t);
 #endif
+  outMotion = motionResidual();
+#if defined(MATERIAL_MAPS) && defined(FLAT_NORMAL)
+  {
+  const uint ground = bucket[bucketId].flags;
+#if defined(BINDLESS)
+  if((ground & (BK_GROUND | BK_VERGE | BK_TRACK))!=0u) {
+#if defined(GRASS_PAINT_PROBE)
+    if(!probePaint)
+#endif
+      sward = grassOwnLayers(material, shInp.pos, shInp.normal, maps.dpdx, maps.dpdy, layer, strip);
+    grassOwnGround(material, sward, layer, strip, shInp.uv*material.uvScale, maps.duvdx, maps.duvdy,
+                   shInp.pos, shInp.normal, maps.dpdx, maps.dpdy, outDiffuse, outNormal, outOrm);
+    }
+#else
+  const float sward = -1.0;
+#endif
+  if(sward>-1.5 && ((ground & BK_GRASS)!=0u || sward>0.0))
+    grassGround(bucket[bucketId].foliage, shInp.pos, shInp.normal, sward, outDiffuse, outNormal, outOrm);
+  }
+#endif
+#endif
 #if defined(ATEST) && defined(MATERIAL_MAPS)
-  if(alphaTest<0.5)
+  // The history depth pass uses exactly the G-buffer coverage, including hashed TAA alpha.
+  if(alphaTest<alphaThreshold())
     discard;
+#endif
+#if defined(TREE_BOUGH_CARDS)
+  const uint joint = boughFadeIn.z;
+  const vec3 mask = joint!=0u ? boughMaskCoordinates(boughMaskIn, scene) : boughMaskIn;
+  const vec2 boughSample = boughSampleOffset(gl_FragCoord.xy, mask);
+  if(joint!=0u && !boughCovers(joint ^ BoughFadeChild, boughJointSeed(boughMaskIn), boughSample))
+    discard;
+  if(!boughCovers(boughFadeIn.x, boughFadeIn.y, boughSample))
+    discard;
+#elif defined(TREE_BOUGH_JOINT)
+  if(treeJoint) {
+    // the impostor joint's 3D side, then the side of a level band, at independent ranks of the same sample
+    const Instance instance = pullInstance(payload[taskRef].x);
+    const uint fade = boughJointFade(instance.animPtr) ^ BoughFadeChild;
+    const uint seed = boughJointSeed(instance.mat[3]);
+    const vec2 sampleOffset = boughSampleOffset(gl_FragCoord.xy, boughMaskCoordinates(instance.mat[3], scene));
+    if(!boughCovers(fade, seed, sampleOffset) ||
+       !boughBandCovers(boughBandWord(instance), false, uvec2(ivec2(floor(sampleOffset))), seed))
+      discard;
+    }
+#endif
+#if !defined(HISTORY_DEPTH)
+  if(treeProbe) {
+#if defined(HISTORY_PAYLOAD)
+    outNormal = historyOwner == 0u ? 0u : (0x80000000u | (historyOwner - 1u));
+#elif defined(MAT_CLUSTER_LEVEL) && !defined(TREE_BOUGH_CARDS)
+    outNormal = 0x80000000u | probeCluster;
+#else
+    outNormal = 0u;
+#endif
+    }
+#endif
+#if defined(HISTORY_OWNER)
+#if defined(HISTORY_PAYLOAD)
+  outHistoryOwner = historyOwner;
+#else
+  // Opaque particles can win the pixel after a mesh and must clear its owner.
+  outHistoryOwner = 0u;
+#endif
 #endif
 #elif defined(WATER)
   mainWater(t);
@@ -607,16 +1276,21 @@ void main() {
   mainGhost(t);
 #endif
 
+#if defined(MAT_CLUSTER_LEVEL) && !defined(HISTORY_DEPTH) && !defined(TREE_BOUGH_CARDS)
+  if(clusterLevel != 0u) {
+    const vec3 color = debugColors[(clusterLevel - 1u) % uint(debugColors.length())];
+#if defined(GBUFFER)
+    outDiffuse.rgb = color;
+#else
+    outColor.rgb = color * scene.exposure;
+#if defined(WATER)
+    outDiffuse.rgb = color;
+#endif
+#endif
+    }
+#endif
+
 #if DEBUG_DRAW && !defined(GBUFFER) && !defined(DEPTH_ONLY)
   outColor   = vec4(debugColors[debugId%debugColors.length()],1.0);
 #endif
-
-  //outColor = vec4(inZ.xyz/inZ.w,1.0);
-  //outColor = vec4(vec3(inPos.xyz)/1000.0,1.0);
-  //outColor = vec4(vec3(shMap),1.0);
-  //outColor = vec4(vec3(calcLight()),1.0);
-  //outColor = vec4(vec3(calcShadow()),1.0);
-  //vec3 shPos0  = (shInp.shadowPos[0].xyz)/shInp.shadowPos[0].w;
-  //outColor   = vec4(vec3(shPos0.xy,0),1.0);
-  //outColor = dbgLambert();
   }

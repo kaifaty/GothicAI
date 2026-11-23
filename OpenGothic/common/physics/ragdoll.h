@@ -3,6 +3,8 @@
 #include <Tempest/Matrix4x4>
 #include <Tempest/Vec>
 
+#include "ragdoll_brace.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -68,10 +70,17 @@ class Ragdoll final {
     // not a velocity. strength is the visual/motor response in (0, 1].
     // A living pelvis hit reacts through the nearest spine; a limp hit always
     // addresses the supplied physical bone. No native world calls happen here.
+    // stiffness >= 1 scales the living motors' spring frequency (torque with its
+    // square): a blade's reaction rides a fast authored stumble, an arrow's does not.
     bool queueHit(size_t bone, const Tempest::Vec3& pointCm,
-                  const Tempest::Vec3& impulseNs, float strength, Npc* culprit = nullptr);
+                  const Tempest::Vec3& impulseNs, float strength, Npc* culprit = nullptr,
+                  float stiffness = 1.f);
     void setNpc(Npc* npc);
     void setNoiseCulprit(Npc* culprit);
+    Npc* impactCulprit() const;
+    bool impactBone(size_t bone) const;
+    // Largest incoming torso normal speed since the previous read, in cm/ms.
+    float takeImpactSpeed();
     float reactionWeight() const;
     const std::vector<size_t>& reactionBones() const;
     enum class BenchMode : uint8_t { Full, Chain };
@@ -112,6 +121,21 @@ class Ragdoll final {
     void setAllowSleeping(bool allow);
     // Total impulse, distributed by mass over the parts (newton seconds).
     void addImpulse(const Tempest::Vec3& impulse, Npc* culprit = nullptr);
+    // A living body knocked off its feet: the trunk is thrown along the blow while the
+    // feet stay, so it topples over them; the legs hold a moment longer than in death.
+    void knockOff(const Tempest::Vec3& direction, float impulseNs, Npc* culprit = nullptr);
+    // A protective fall (ragdoll_brace.h). braceKind picks the pose by the throw's direction
+    // in the body's frame; None for a body without human anatomy. brace accepts the pose,
+    // a skeleton-indexed model-space animation frame, only on a fresh limp body that still
+    // has its muscles; Kind::None with no pose only measures the fall. endBrace returns the
+    // motors to the ordinary fade from the next step. Optional landPose is the same
+    // model's landing frame, indexed by the same skeleton and sampled at its first frame.
+    RagdollBrace::Kind braceKind(const Tempest::Vec3& throwDirection) const;
+    bool brace(RagdollBrace::Kind kind, const Tempest::Matrix4x4* modelPose, size_t numBones,
+               const RagdollBrace::Profile& profile, const Tempest::Matrix4x4* landPose = nullptr);
+    bool braceReport(RagdollBrace::Report& report) const;
+    void endBrace();
+    std::vector<RagdollBrace::MotorProbe> motorProbes() const;
     State state() const;
     // Rejects incompatible, nonfinite or malformed states without changing bodies.
     bool restore(const State& state);
@@ -140,8 +164,10 @@ class Ragdoll final {
             bool kinematic = false);
     void prepareKinematicStep(float deltaSeconds, float targetFraction = 1.f);
     void finishKinematicStep();
+    void sampleBirth(float deltaSeconds);
     size_t boneForBodyId(uint32_t id) const;
     std::vector<uint32_t> diagnosticBodyIds() const;
+    void recordImpactSpeed(float speed);
     Npc* noiseNpc() const;
     Npc* noiseCulprit() const;
     bool acceptNoise(uint64_t step);

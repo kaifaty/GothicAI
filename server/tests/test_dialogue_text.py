@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 import subprocess
@@ -17,7 +18,9 @@ from gothic_ai.dialogue import (
     to_game_text,
     tool_leak,
 )
-from gothic_ai.gamedata import ou
+from gothic_ai.dialogue_state import TurnState
+from gothic_ai.dialogue_text import _CUE_ALIASES, _MOOD_ALIASES, CueTag, FeltTag
+from gothic_ai.gamedata import base, ou
 from gothic_ai.gamedata.ou import lines_from_messages, npc_dialog_key, npc_lines
 from gothic_ai.persona import pick_samples, render_instructions
 
@@ -135,6 +138,44 @@ def test_mood_tag_synonyms_and_stage_directions():
     assert _run(MoodTags(), "[смеётся] Ха!") == [" Ха!"]
 
 
+@pytest.mark.parametrize(("cue", "russian"), [
+    ("flash", "вспышка бровей"), ("doubt", "сомнение"), ("smirk", "ухмылка"),
+    ("press", "поджатые губы"), ("disgust", "брезгливость"), ("squint", "прищур"),
+    ("frown", "хмурится"), ("chin", "подбородок"), ("wince", "поморщился"),
+    ("glance", "взгляд в сторону"), ("glance", "отвёл взгляд"), ("roll", "закатил глаза"),
+])
+def test_face_cue_tags_have_a_closed_bilingual_dictionary(cue, russian):
+    assert _run(MoodTags(), f"[{cue}] [{russian}]") == [CueTag(cue), " ", CueTag(cue)]
+    assert _CUE_ALIASES.keys().isdisjoint(_MOOD_ALIASES)
+
+
+def test_face_tags_stream_without_stage_directions_and_moods_win(monkeypatch):
+    assert _run(MoodTags(), "[dou", "bt] Да [felt:ис", "пуг] нет.") == [
+        CueTag("doubt"), " Да ", FeltTag("afraid"), " нет.",
+    ]
+    assert _run(MoodTags(), "[gaze][eyeroll][unknown][felt:neutral][felt:calm][felt:unknown] Да.") == [" Да."]
+    monkeypatch.setitem(_CUE_ALIASES, "smile", "smirk")
+    assert _run(MoodTags(), "[smile]") == [MoodTag("friendly")]
+
+
+@pytest.mark.parametrize("tag", ["doubt", "felt:afraid"])
+def test_ready_line_is_sent_immediately_and_face_tags_need_following_words(tag, caplog):
+    s = TurnState(reply="r", splitter=SentenceSplitter(), started=0)
+    assert list(s.lines(s.spoken(s.moods.feed(
+        "[neutral] Подожди здесь, я сейчас схожу за ним. ",
+    ), set(), "X"))) == ["Подожди здесь, я сейчас схожу за ним."]
+    assert list(s.lines(s.spoken(s.moods.feed(f"[{tag}]"), set(), "X"))) == []
+    assert list(s.lines(s.spoken(s.moods.feed(
+        "[angry] Теперь можешь идти дальше. ",
+    ), set(), "X"))) == ["Теперь можешь идти дальше."]
+    assert [cue.model_dump() for cue in s.cues] == ([{"cue": "doubt", "word": 0}] if tag == "doubt" else [])
+    assert s.felt == (("afraid", 0) if tag == "felt:afraid" else None)
+    caplog.set_level("DEBUG", logger="gothic_ai.dialogue")
+    assert list(s.lines(s.spoken(s.moods.feed(f"[{tag}]"), set(), "X"), flush=True)) == []
+    assert not s.face_tags
+    assert "discarded face tags without following words" in caplog.text
+
+
 def test_long_brackets_and_unclosed_ones_are_text():
     long = "[" + "очень длинная ремарка, совсем не метка" + "]"
     assert "".join(p for p in _run(MoodTags(), long + " да") if isinstance(p, str)) == long + " да"
@@ -230,14 +271,78 @@ def _ou_export(messages):
     }
 
 
+def _ready_base(tmp_path, monkeypatch, files=None, fingerprint="a" * 64):
+    directory = tmp_path / "base"
+    directory.mkdir(exist_ok=True)
+    entries = []
+    for name, raw in (files or {"test.txt": b"payload"}).items():
+        file = directory / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(raw)
+        entries.append({"path": name, "size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+    manifest = json.dumps({"format": "gothic-base-files", "version": 1, "files": entries}).encode()
+    (directory / "base-files.json").write_bytes(manifest)
+    (directory / "base.json").write_text(json.dumps({
+        "format": "gothic-base", "version": 2, "fingerprint": fingerprint,
+        "manifest": {"path": "base-files.json", "size": len(manifest),
+                     "sha256": hashlib.sha256(manifest).hexdigest()},
+    }))
+    monkeypatch.setenv("OPENGOTHIC_BASE", str(directory))
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(tmp_path / "cache"))
+    return directory
+
+
+@pytest.mark.parametrize("failure", ["missing", "foreign", "manifest", "size", "sha"])
+def test_ready_base_contract_rejects_missing_foreign_or_corrupt_data(tmp_path, monkeypatch, failure):
+    directory = _ready_base(tmp_path, monkeypatch)
+    game = tmp_path / "game"
+    game.mkdir()
+    if failure in ("missing", "foreign"):
+        monkeypatch.setenv("OPENGOTHIC_BASE", "")
+        if failure == "foreign":
+            pointer = tmp_path / "cache/current" / f"{hashlib.sha256(str(game).encode()).hexdigest()}.json"
+            pointer.parent.mkdir(parents=True)
+            pointer.write_text(json.dumps({
+                "version": 1, "gothic": str(tmp_path / "other-game"),
+                "base": {"path": str(directory), "fingerprint": "a" * 64},
+            }))
+    elif failure == "manifest":
+        manifest = directory / "base-files.json"
+        manifest.write_bytes(manifest.read_bytes().replace(b'"version": 1', b'"version": 2'))
+    else:
+        (directory / "test.txt").write_bytes(b"short" if failure == "size" else b"changed")
+    with pytest.raises(RuntimeError, match="base"):
+        with base.resolve(game) as selected:
+            selected.read("test.txt")
+
+
+def test_ready_base_pointer_works_without_installation_and_explicit_base_wins(tmp_path, monkeypatch):
+    directory = _ready_base(tmp_path, monkeypatch)
+    game = tmp_path / "game"
+    game.mkdir()
+    pointer = tmp_path / "cache/current" / f"{hashlib.sha256(str(game).encode()).hexdigest()}.json"
+    pointer.parent.mkdir(parents=True)
+    pointer.write_text(json.dumps({
+        "version": 1, "gothic": str(game),
+        "base": {"path": str(directory), "fingerprint": "a" * 64},
+    }))
+    monkeypatch.setenv("OPENGOTHIC_BASE", "")
+    with base.resolve(game) as selected:
+        assert selected.path == directory and selected.fingerprint == "a" * 64
+        assert selected.read("test.txt") == b"payload"
+    pointer.write_text("invalid")
+    monkeypatch.setenv("OPENGOTHIC_BASE", str(directory))
+    with base.resolve(game) as selected:
+        assert selected.read("test.txt") == b"payload"
+
+
 @pytest.fixture
 def native_ou(tmp_path, monkeypatch):
     tool = tmp_path / "storygraph"
     tool.touch()
     monkeypatch.setenv("STORYGRAPH_TOOL", str(tool))
-    source = tmp_path / "game" / "_work" / "Data" / "Scripts" / "CONTENT" / "CUTSCENE" / "oU.bIn"
-    source.parent.mkdir(parents=True)
-    source.touch()
+    _ready_base(tmp_path, monkeypatch)
+    (tmp_path / "game").mkdir()
     return tmp_path / "game", tool
 
 
@@ -247,8 +352,9 @@ def test_native_ou_boundary_preserves_raw_bytes_and_empty_source(native_ou, monk
     exports = [_ou_export([["DIA_X_14_01.WAV", raw.decode("latin1")]]), _ou_export([])]
 
     def read(cmd, **kwargs):
-        assert cmd == [str(tool), str(game), "--ou-messages"]
-        assert kwargs == {"check": True, "capture_output": True, "timeout": 1800}
+        assert cmd == [str(tool), str(game.parent / "base"), "--ou-messages"]
+        assert kwargs["env"]["OPENGOTHIC_BASE"] == str(game.parent / "base")
+        assert kwargs["check"] and kwargs["capture_output"] and kwargs["timeout"] == 1800
         return subprocess.CompletedProcess(cmd, 0, json.dumps(exports.pop(0)).encode(), b"progress on stderr")
 
     monkeypatch.setattr(ou.subprocess, "run", read)
@@ -256,13 +362,10 @@ def test_native_ou_boundary_preserves_raw_bytes_and_empty_source(native_ou, monk
     assert ou.load_npc_lines(game, "NONE_100_XARDAS") == []
 
 
-def test_native_ou_absent_source_skips_tool_but_present_source_requires_it(tmp_path, monkeypatch):
+def test_native_ou_requires_ready_base_and_tool(tmp_path, monkeypatch):
     tool = tmp_path / "missing-storygraph"
     monkeypatch.setenv("STORYGRAPH_TOOL", str(tool))
-    assert ou.load_npc_lines(tmp_path, "NONE_100_XARDAS") == []
-    source = tmp_path / "_work" / "Data" / "Scripts" / "CONTENT" / "CUTSCENE" / "OU.BIN"
-    source.parent.mkdir(parents=True)
-    source.touch()
+    _ready_base(tmp_path, monkeypatch)
     with pytest.raises(RuntimeError, match="cmake --build.*STORYGRAPH_TOOL"):
         ou.load_npc_lines(tmp_path, "NONE_100_XARDAS")
 

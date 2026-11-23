@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import sys
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
@@ -14,8 +15,15 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ..bodypilot import BodyFight, BodyPilot, FightSummary, PolicyClient
-from ..game import GameLink
+from ..bodypilot import (
+    BODY_ACTIONS,
+    TRANSIENT_ACTION_REJECTIONS,
+    BodyFight,
+    BodyPilot,
+    FightSummary,
+    PolicyClient,
+)
+from ..game import GameError, GameLink
 from ..protocol import (
     ActionResult,
     BodyLease,
@@ -26,6 +34,7 @@ from ..protocol import (
     RoutineInfo,
     Snapshot,
 )
+from .memprobe import _darwin_status
 
 WAIT_200 = 10
 # Native soak2 control, final 20 minutes; user decision 2026-10-19.
@@ -61,10 +70,12 @@ def percentile(values: list[float], fraction: float) -> float | None:
 
 
 def rss_bytes(pid: int) -> int | None:
-    """Resident pages in Linux procfs; do not start an extra monitoring process."""
+    """Resident memory from procfs or macOS native counters, without a monitoring process."""
     try:
+        if sys.platform == "darwin":
+            return _darwin_status(pid)["VmRSS"]
         return int(Path(f"/proc/{pid}/statm").read_text().split()[1]) * os.sysconf("SC_PAGE_SIZE")
-    except (OSError, ValueError, IndexError):
+    except (OSError, ValueError, IndexError, GameError):
         return None
 
 
@@ -309,8 +320,11 @@ class SoakMetrics:
                 self._finish_started.setdefault(scope, finish_at)
                 self._release_started[scope] = finish_at
         client = self._clients_by_scope.get(scope)
-        actions = self.actions_by_client.get(client, Counter())
+        actions = (Counter({BODY_ACTIONS.index(name): count for name, count in summary.selected_actions})
+                   if summary.policy == "engine" else self.actions_by_client.get(client, Counter()))
         decisions = sum(actions.values())
+        selected = dict(summary.selected_actions)
+        accepted = dict(summary.accepted_actions)
         latency = self.latencies_by_client.get(client, [])
         record = {
             "summary": asdict(summary),
@@ -319,10 +333,15 @@ class SoakMetrics:
             "policy_decisions": decisions, "accepted_commands": summary.decisions,
             "accepted_fraction": summary.decisions / decisions if decisions else None,
             "actions": {str(key): value for key, value in sorted(actions.items())},
+            "accepted_actions": accepted,
+            "accepted_action_fractions": {
+                name: accepted.get(name, 0) / count if count else None for name, count in selected.items()
+            },
             "wait_200_fraction": actions[WAIT_200] / decisions if decisions else None,
             "service_calls": len(latency), "observed_service_p95_ms": percentile(latency, 0.95),
             "observed_service_p99_ms": percentile(latency, 0.99),
-            "policy_fallback_reasons": dict(self.fallbacks_by_client.get(client, {})),
+            "policy_fallback_reasons": (dict(summary.policy_fallbacks) if summary.policy == "engine"
+                                        else dict(self.fallbacks_by_client.get(client, {}))),
         }
         self.fight_records.append(record)
         self.event("fight_end", **record)
@@ -451,7 +470,9 @@ class SoakMetrics:
         self.sample(force=True)
         release_issues = release_issues or []
         accepted = sum(summary.decisions for summary in self.summaries)
-        decisions = sum(sum(actions.values()) for actions in self.actions_by_client.values())
+        engine_summaries = [summary for summary in self.summaries if summary.policy == "engine"]
+        decisions = (sum(sum(actions.values()) for actions in self.actions_by_client.values())
+                     + sum(count for summary in engine_summaries for _, count in summary.selected_actions))
         fault_ends: Counter[str] = Counter()
         for summary in self.summaries:
             # Cleanup may replace the outcome with finish_deadline. A later
@@ -487,7 +508,10 @@ class SoakMetrics:
                 })
         timeouts = sum(summary.policy_timeouts for summary in self.summaries)
         faulty_fallbacks: Counter[str] = Counter()
-        for fallbacks in self.fallbacks_by_client.values():
+        engine_fallbacks = [dict((reason, count) for reason, count in summary.policy_fallbacks
+                                if reason not in TRANSIENT_ACTION_REJECTIONS)
+                            for summary in engine_summaries]
+        for fallbacks in [*self.fallbacks_by_client.values(), *engine_fallbacks]:
             faulty_fallbacks.update({reason: count for reason, count in fallbacks.items()
                                     if reason != "observation_too_old"})
         game_rss = game_rss_window(self.samples, (extra or {}).get("loads", []))
@@ -532,8 +556,16 @@ class SoakMetrics:
               f"window_seconds={server_rss.get('observed_seconds')}, "
               f"short_window={server_rss['short_window']}")
         if self.pilot is not None:
-            check("service_latency", p95 is not None and p99 is not None and p95 <= 20 and p99 <= 20,
-                  f"p95_ms={p95}, p99_ms={p99}, limit=20ms, calls={len(self._latencies)}")
+            if getattr(self.pilot, "policy", "service") == "engine":
+                engine_p99 = max((summary.engine_p99_us for summary in engine_summaries
+                                  if summary.engine_steps and summary.engine_p99_us is not None),
+                                 default=None)
+                check("engine_latency", engine_p99 is not None and engine_p99 <= 20_000,
+                      f"p99_us={engine_p99}, limit=20000us, "
+                      f"steps={sum(summary.engine_steps for summary in engine_summaries)}")
+            else:
+                check("service_latency", p95 is not None and p99 is not None and p95 <= 20 and p99 <= 20,
+                      f"p95_ms={p95}, p99_ms={p99}, limit=20ms, calls={len(self._latencies)}")
         check("server_log", not log_errors, f"errors={log_errors}, log=server.log")
         checks.update(extra_checks or {})
         self.data = {

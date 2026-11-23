@@ -12,6 +12,7 @@
 #include "graphics/sky/sky.h"
 #include "lightsource.h"
 #include "lightgroup.h"
+#include "houselamps.h"
 #include "sceneglobals.h"
 #include "visualobjects.h"
 
@@ -19,12 +20,36 @@ class World;
 class Camera;
 class ParticleFx;
 class PackedMesh;
-class gtime;
+class ChunkResidency;
+class StreamedVisual;
+class GrassField;
+struct ChunkId;
+namespace asset { struct WorldMesh; }
 
 class WorldView {
   public:
+    void probeMemory(std::string_view stage) const;
+
     WorldView(const PackedMesh& wmesh, std::string_view skyPreset);
+    WorldView(std::pair<Tempest::Vec3,Tempest::Vec3> bounds, std::string_view skyPreset);
     ~WorldView();
+
+    void startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs);
+    void startVobStreaming(ChunkResidency& residency);
+    void addVob(StreamedVisual& visual, ChunkId id);
+    void removeVob(StreamedVisual& visual, bool release = true);
+    void moveVob(StreamedVisual& visual, ChunkId id);
+    void replaceVob(StreamedVisual& previous, StreamedVisual& next);
+    void setTextureResidency(ChunkResidency* residency) { visuals.setTextureResidency(residency); }
+    // every owner's distance demand due now, before the first frame's synchronous texture loading
+    void flushTextureDemand() { visuals.updateTextureView(true); }
+    void dumpTextureOwners(const std::filesystem::path& file) const { visuals.dumpTextureOwners(file); }
+    void prepareLandscapeWork();
+    void finishLandscapeUpdate();
+    bool landscapeReady() const;
+    // the grass round the camera (graphics/grass/grassfield.h); nullptr: no streamed landscape, or switched off
+    GrassField* grassField() const { return grass.get(); }
+    std::string landscapeWaitState() const;
 
     const LightSource&        mainLight() const;
     const Tempest::Vec3&      ambientLight() const;
@@ -47,29 +72,54 @@ class WorldView {
                              const Tempest::StorageBuffer& pageList);
     void setHiZ(const Tempest::Texture2d& hiZ);
     void setSceneImages(const Tempest::Texture2d& clr, const Tempest::Texture2d& depthAux, const Tempest::ZBuffer& depthNative);
+    // TAA: the sub-pixel shift of the main projection for the next preFrameUpdate (nullptr: none)
+    void setJitter(const Tempest::Matrix4x4* jitter) { sGlobal.setJitter(jitter); }
+    void setMipBias(float bias) { sGlobal.setMipBias(bias); }
+    void setTaaFrame(bool taa, bool lampTaa, uint32_t frame) { sGlobal.setTaaFrame(taa, lampTaa, frame); }
+    void setLandscapeMask(bool enabled) { sGlobal.setLandscapeMask(enabled); }
+    // motion vectors of objects (graphics plan 1b): the previous copy of the instance buffer and the scene's part;
+    // before preFrameUpdate, so that this frame's commit already keeps the history
+    void setMotionVectors(bool enabled, const Tempest::Matrix4x4& reprojectClip, const Tempest::Matrix4x4& viewProjectPrev);
+    void setTaaReactiveLref(float lref);
+    void setVsmLampNear(float cm) { sGlobal.setVsmLampNear(cm); }
+    void setLampNearKnee(float knee) { sGlobal.setLampNearKnee(knee); }
+    void setVsmLampSides(uint32_t sides) { sGlobal.setVsmLampSides(sides); }
+    void setVsmStudy(uint32_t bits) { sGlobal.setVsmStudy(bits); }
     void setWindEnabled(bool enabled, uint64_t period);
+    void setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs);
+    void setFogOcclusion(const Tempest::StorageImage* occlusion) { sGlobal.setFogOcclusion(occlusion); }
     void setClothWind(bool enabled, float scale);
     void setOriginalClothMesh(const PackedMesh& mesh);
     void setOriginalClothVisible(bool visible);
 
     void dbgLights      (DbgPainter& p) const;
 
-    bool updateLights(const gtime gameTime);
-    bool updateRtScene();
+    bool updateLights(int64_t gameTime);
+    void updateRtScene(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
     void updateFrustrum (const Frustrum fr[]);
-    void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
-    void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history = false);
+    DrawCommands& treeHistoryCommands() { return visuals.treeHistoryCommands(); }
+    void visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::StorageBuffer* geometryStats);
 
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId, uint8_t layer);
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
+    void prepareGrass   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId,
+                         const Tempest::Texture2d& hiZ, float depthRoundoff = 0.f);
+    void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId, bool landscapeOnly,
+                         DrawCommands::HistoryDraw history = DrawCommands::HistoryDraw::Off);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
+    // the shimmer of hot air (particles.d "haze"): drawn last, over a copy of the frame
+    bool hasHaze        (uint8_t frameId) const;
+    void setHazeImage   (const Tempest::Texture2d& frame);
+    void drawHaze       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
 
     MeshObjects::Mesh   addView      (std::string_view visual, int32_t headTex, int32_t teethTex, int32_t bodyColor);
-    MeshObjects::Mesh   addView      (const ProtoMesh* visual);
+    MeshObjects::Mesh   addView      (const ProtoMesh* visual, int32_t material = 0);
     MeshObjects::Mesh   addItmView   (std::string_view visual, int32_t material);
     MeshObjects::Mesh   addAtachView (const ProtoMesh::Attach& visual, const int32_t version);
     MeshObjects::Mesh   addStaticView(const ProtoMesh* visual, bool staticDraw = false);
@@ -77,29 +127,41 @@ class WorldView {
     MeshObjects::Mesh   addDecalView (const asset::VisualDecal& vob);
     LightGroup::Light   addLight     (const asset::VLight& vob, const uint64_t timeOffset);
     LightGroup::Light   addLight     (std::string_view preset, const uint64_t timeOffset);
+    LightGroup::Light   addLight     (const asset::LightPreset& preset, const uint64_t timeOffset);
 
     void                dbgClusters(Tempest::Painter& p, Tempest::Vec2 wsz);
 
+    void setTreeOcclusionProbe(bool verify) { sGlobal.setTreeOcclusionProbe(verify); }
+    void writeTreeOcclusionProbe(std::ostream& out, std::ostream& decisions) { visuals.writeTreeOcclusionProbe(out, decisions); }
+    void logVsmShadowProbe(uint64_t frameNo) const { visuals.logVsmShadowProbe(frameNo); }
+
+    SceneGlobals&       sceneGlobals()       { return sGlobal; }
     const SceneGlobals& sceneGlobals() const { return sGlobal; }
     const Sky&          sky() const { return gSky; }
-    const Landscape&    landscape() const { return land; }
     const LightGroup&   lights() const { return gLights; }
+    // the lamps of the world's houses, which go out before the house's bedtime (graphics/houselamps.h)
+    HouseLamps&         houseLamps() { return houses; }
     const DrawClusters& clusters() const;
-    const DrawCommands& drawCommands() const;
     const DrawBuckets&  drawBuckets() const;
-    auto                instanceSsbo() const -> const Tempest::StorageBuffer&;
 
   private:
     std::pair<Tempest::Vec3, Tempest::Vec3> aabb;
     SceneGlobals  sGlobal;
     Sky           gSky;
     LightGroup    gLights;
+    HouseLamps    houses;
     VisualObjects visuals;
 
     MeshObjects   objGroup;
     PfxObjects    pfxGroup;
-    Landscape     land;
+    std::unique_ptr<Landscape> land;
     std::unique_ptr<Landscape> originalCloth;
+    std::filesystem::path       worldContent; // of the content's world: the ground it gives to the grass
+    std::unique_ptr<GrassField> grass; // before `streaming`: the packing gives it the chunks
+    struct LandscapeStreaming;
+    std::unique_ptr<LandscapeStreaming> streaming;
+    struct VobStreaming;
+    std::shared_ptr<VobStreaming> vobStreaming;
 
     bool needToUpdateCmd(uint8_t frameId) const;
     void invalidateCmd();
@@ -107,4 +169,5 @@ class WorldView {
   friend class LightGroup::Light;
   friend class PfxEmitter;
   friend class TrlObjects;
+  friend struct MeshGltfTest;
   };

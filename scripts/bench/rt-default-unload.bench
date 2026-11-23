@@ -1,0 +1,428 @@
+# Ray tracing by default, a long run that unloads (reports/render-features/2026-11-08-rt-revisit/step-default.md,
+# «Сделано»): rt-default-soak's route stays within the city's Far range (1 km), so after its first lap no chunk left
+# and no landscape BLAS was freed. Here each cycle leaves the market for 2 km outside the world (everything unloads),
+# visits Xardas' valley and the big farm with the same trip out between them, and comes back to the same view of
+# the market, where it settles 15 s and ends a perf segment `streaming-flythrough/cycle-N`: its `streaming_end` event
+# carries the probe's GPU bytes, and the last `render: rt scene` / `render: rt landscape` lines before the mark give
+# the ray scene in the market. Those lines and events exist only in the frame-profile build, which scripts/ryzen.sh
+# makes for a scenario named streaming-flythrough; so run a copy under that name (its own report then fails, it wants
+# the passes run and fly):
+#   mkdir -p /tmp/unload && cp scripts/bench/rt-default-unload.bench /tmp/unload/streaming-flythrough.bench
+#   BENCH_HOST=ryzen RYZEN_MAX=60m scripts/bench.sh /tmp/unload/streaming-flythrough.bench
+# and sample the video memory of the process (its cwd is under the worktree's e2e folder; its thread is "Main thread",
+# so pgrep -x misses it) with nvidia-smi --query-compute-apps alongside. 18 cycles, about 20 min.
+# @timeout 3600
+seed 73030
+cheat god
+world-check NEWWORLD.ZEN
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+watch player
+cam look 120
+cam world 700 280 180
+goto NW_CITY_MERCHANT_TRADE_04
+# the waits allow 300 s: with other games on the stand the return to the market took longer than the default 60 s
+wait 20000
+streaming wait 300000
+wait 15000
+mark cycle-0
+perf sample streaming-flythrough/cycle-1
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-1
+perf sample streaming-flythrough/cycle-2
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-2
+perf sample streaming-flythrough/cycle-3
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-3
+perf sample streaming-flythrough/cycle-4
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-4
+perf sample streaming-flythrough/cycle-5
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-5
+perf sample streaming-flythrough/cycle-6
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-6
+perf sample streaming-flythrough/cycle-7
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-7
+perf sample streaming-flythrough/cycle-8
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-8
+perf sample streaming-flythrough/cycle-9
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-9
+perf sample streaming-flythrough/cycle-10
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-10
+perf sample streaming-flythrough/cycle-11
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-11
+perf sample streaming-flythrough/cycle-12
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-12
+perf sample streaming-flythrough/cycle-13
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-13
+perf sample streaming-flythrough/cycle-14
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-14
+perf sample streaming-flythrough/cycle-15
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-15
+perf sample streaming-flythrough/cycle-16
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-16
+perf sample streaming-flythrough/cycle-17
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-17
+perf sample streaming-flythrough/cycle-18
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_XARDAS_TOWER_VALLEY_091
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+streaming wait 300000
+wait 10000
+goto pos 200000 10000 200000
+wait 5000
+streaming wait 300000
+goto NW_CITY_MERCHANT_TRADE_04
+streaming wait 300000
+wait 10000
+wait 5000
+perf stop
+mark cycle-18

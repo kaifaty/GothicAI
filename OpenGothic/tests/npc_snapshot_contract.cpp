@@ -1,0 +1,1715 @@
+#include "npcsnapshot.h"
+#include "npc_definition_fixture.h"
+#include "daedalus/classes.h"
+#include "daedalus/vm.h"
+#include "programdata.h"
+#include "itemdefinitions.h"
+#include "npcdefinitions.h"
+#include "npchelperdefinitions.h"
+#include "game/npchelperruntime.h"
+#include "placementdefinitions.h"
+#include "activitydefinitions.h"
+#include "game/npcdefinitionruntime.h"
+#include "game/placementdefinitionruntime.h"
+#include "game/itemdefinitionruntime.h"
+#include "routinedefinitions.h"
+#include "game/routinedefinitionruntime.h"
+#include "world/objects/npcroutinetable.h"
+#include "world/waypoint.h"
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
+#include <chrono>
+#include <bit>
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <optional>
+#include <set>
+#include <stdexcept>
+
+namespace fs=std::filesystem;
+using namespace daedalus;
+using Op=DaedalusOpcode;
+using Type=DaedalusDataType;
+namespace Flag=DaedalusSymbolFlag;
+namespace {
+int assertions=0;
+void check(bool ok,const std::string& why) { ++assertions; if(!ok) throw std::runtime_error(why); }
+struct Fixture {
+  asset::ProgramRecord p;
+  Fixture() { p.version=50; p.bytecode.push_back(std::byte{60}); }
+  uint32_t symbol(std::string name,Type type,uint32_t count=1,uint32_t flags=0,int32_t parent=-1) {
+    auto id=uint32_t(p.symbols.size());
+    asset::ProgramSymbol s;
+    s.name=std::move(name); s.type=uint32_t(type); s.count=count; s.flags=flags; s.parent=parent;
+    if(!(flags&Flag::MEMBER)) {
+      if(type==Type::INT) s.int_values.resize(count);
+      if(type==Type::FLOAT) s.float_bits.resize(count);
+      if(type==Type::STRING) s.string_values.resize(count);
+      }
+    p.symbols.push_back(std::move(s)); return id;
+    }
+  template<class T> uint32_t cls(const char* name) {
+    auto id=symbol(name,Type::CLASS); p.symbols[id].class_size=sizeof(T);
+    T t{};
+    snapshotFields(t,[&](const char*,auto& value,bool function,const char* script) {
+      using V=std::remove_all_extents_t<std::remove_reference_t<decltype(value)>>;
+      auto type=std::is_same_v<V,std::string> ? Type::STRING : function ? Type::FUNCTION : Type::INT;
+      auto count=std::is_array_v<std::remove_reference_t<decltype(value)>> ? uint32_t(std::extent_v<std::remove_reference_t<decltype(value)>>) : 1u;
+      if(script[0]) symbol(script,type,count,Flag::MEMBER,int32_t(id));
+      });
+    return id;
+    }
+  uint32_t find(const char* name) const {
+    for(uint32_t i=0;i<p.symbols.size();++i) if(p.symbols[i].name==name) return i;
+    throw std::runtime_error(std::string("fixture missing ")+name);
+    }
+  uint32_t fn(const char* name,std::initializer_list<Type> params={},bool external=false,Type result=Type::VOID) {
+    auto id=symbol(name,Type::FUNCTION,uint32_t(params.size()),Flag::CONST|(external?Flag::EXTERNAL:0)|(result!=Type::VOID?Flag::RETURN:0));
+    p.symbols[id].return_type=uint32_t(result);
+    int n=0;
+    for(auto t:params) symbol(std::string(name)+".P"+std::to_string(n++),t);
+    return id;
+    }
+  void begin(uint32_t id) { p.symbols[id].address=int32_t(p.bytecode.size()); }
+  void op(Op op) { p.bytecode.push_back(std::byte(op)); }
+  void op(Op op,uint32_t value) { this->op(op); for(int i=0;i<4;++i) p.bytecode.push_back(std::byte((value>>(8*i))&255)); }
+  void set(uint32_t field,int value) { op(Op::PUSHI,uint32_t(value)); op(Op::PUSHV,field); op(Op::MOVI); }
+  void call(uint32_t id) { op(Op::BL,uint32_t(p.symbols[id].address)); }
+  NpcSnapshot::Program make() {
+    auto npcClass=cls<INpc>("C_NPC"),itemClass=cls<IItem>("C_ITEM");
+    auto self=symbol("SELF",Type::INSTANCE,1,0,int32_t(npcClass));
+    auto global=symbol("CHAPTER",Type::INT);
+    auto point=symbol("POINT",Type::STRING,1,Flag::CONST); p.symbols[point].string_values[0]="TEST_WP";
+    auto random=fn("HLP_RANDOM",{Type::INT},true,Type::INT);
+    auto visual=fn("MDL_SETVISUAL",{Type::INSTANCE,Type::STRING},true);
+    auto fatness=fn("MDL_SETMODELFATNESS",{Type::INSTANCE,Type::FLOAT},true);
+    auto equip=fn("EQUIPITEM",{Type::INSTANCE,Type::INT},true);
+    auto ta=fn("TA_MIN",{Type::INSTANCE,Type::INT,Type::INT,Type::INT,Type::INT,Type::INT,Type::STRING},true);
+    auto insert=fn("WLD_INSERTNPC",{Type::INT,Type::STRING},true);
+    auto insertItem=fn("WLD_INSERTITEM",{Type::INT,Type::STRING},true);
+    auto guild=fn("WLD_ASSIGNROOMTOGUILD",{Type::STRING,Type::INT},true);
+    auto mob=fn("WLD_SETMOBROUTINE",{Type::INT,Type::INT,Type::STRING,Type::INT},true);
+    auto state=fn("ZS_TEST"); begin(state); op(Op::RSR);
+    auto randomLeaf=fn("RANDOM_LEAF"); begin(randomLeaf); op(Op::PUSHI,100); op(Op::BE,random); op(Op::RSR);
+    auto ambient=fn("AMBIENT",{Type::INSTANCE}); begin(ambient);
+    op(Op::PUSHV,ambient+1); op(Op::MOVVI); call(randomLeaf); op(Op::RSR);
+    auto helper=fn("HELPER"); begin(helper); set(find("C_NPC.ATTRIBUTE"),42); op(Op::RSR);
+    auto dependent=fn("DEPENDENT"); begin(dependent);
+    op(Op::PUSHV,global); op(Op::PUSHV,find("C_NPC.LEVEL")); op(Op::MOVI); op(Op::RSR);
+    auto prototype=symbol("NPC_BASE",Type::PROTOTYPE,0,Flag::CONST,int32_t(npcClass)); begin(prototype);
+    set(find("C_NPC.ID"),123); call(helper); op(Op::RSR);
+    auto item=symbol("IT_TEST",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass)); begin(item);
+    set(find("C_ITEM.VALUE"),9); set(find("C_ITEM.ON_EQUIP"),int(state)); op(Op::RSR);
+    auto routine=fn("RTN_START_123"); begin(routine);
+    for(int start:{8,20}) {
+      op(Op::PUSHV,self); op(Op::PUSHI,uint32_t(start)); op(Op::PUSHI,5);
+      op(Op::PUSHI,uint32_t(start==8?20:8)); op(Op::PUSHI,10); op(Op::PUSHI,state); op(Op::PUSHV,point); op(Op::BE,ta);
+      }
+    op(Op::RSR);
+    auto npc=symbol("NPC_TEST",Type::INSTANCE,0,Flag::CONST,int32_t(prototype)); begin(npc);
+    call(prototype); set(find("C_NPC.DAILY_ROUTINE"),int(routine));
+    op(Op::PUSHV,self); op(Op::PUSHV,point); op(Op::BE,visual);
+    op(Op::PUSHV,self); op(Op::PUSHI,item); op(Op::BE,equip);
+    op(Op::PUSHV,self); op(Op::PUSHI,std::bit_cast<uint32_t>(1.2f)); op(Op::BE,fatness);
+    op(Op::PUSHV,self); call(ambient); op(Op::RSR);
+    auto bad=symbol("NPC_STATE",Type::INSTANCE,0,Flag::CONST,int32_t(prototype)); begin(bad); call(prototype); call(dependent); op(Op::RSR);
+    auto startup=fn("STARTUP_TEST"); begin(startup);
+    op(Op::PUSHI,npc); op(Op::PUSHV,point); op(Op::BE,insert);
+    op(Op::PUSHI,item); op(Op::PUSHV,point); op(Op::BE,insertItem);
+    op(Op::PUSHV,point); op(Op::PUSHI,3); op(Op::BE,guild);
+    op(Op::PUSHI,8); op(Op::PUSHI,0); op(Op::PUSHV,point); op(Op::PUSHI,1); op(Op::BE,mob); op(Op::RSR);
+    auto computed=fn("INIT_COMPUTED_STATE"); begin(computed);
+    op(Op::PUSHI,npc); op(Op::PUSHV,point); op(Op::BE,insert);
+    op(Op::PUSHV,global); op(Op::PUSHI,0); op(Op::EQ);
+    op(Op::BZ,uint32_t(p.bytecode.size()+6)); op(Op::RSR); op(Op::RSR);
+    auto init=fn("INIT_STATE"); begin(init);
+    op(Op::PUSHI,npc); op(Op::PUSHV,point); op(Op::BE,insert);
+    op(Op::PUSHV,global); op(Op::BZ,uint32_t(p.bytecode.size()+6)); op(Op::RSR); op(Op::RSR);
+    auto encoded=ProgramData::encodeProgram(p);
+    return {std::move(p),encoded.name,encoded.sha256};
+    }
+  };
+rapidjson::Document read(const fs::path& path) {
+  std::ifstream f(path); std::string s{std::istreambuf_iterator<char>(f),{}};
+  rapidjson::Document j; j.Parse<rapidjson::kParseFullPrecisionFlag>(s.c_str()); check(!j.HasParseError(),"valid fixture JSON"); return j;
+  }
+void write(const fs::path& path,const rapidjson::Document& j) {
+  rapidjson::StringBuffer bytes;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(bytes);
+  check(j.Accept(writer),"encode fixture JSON");
+  std::ofstream f(path,std::ios::binary);
+  f.write(bytes.GetString(),std::streamsize(bytes.GetSize()));
+  check(bool(f),"write fixture JSON");
+  }
+NpcSnapshot::Program itemProgram() {
+  Fixture f;
+  auto npcClass=f.cls<INpc>("C_NPC"),itemClass=f.cls<IItem>("C_ITEM");
+  f.symbol("SELF",Type::INSTANCE,1,0,int32_t(npcClass));
+  f.symbol("ITEM",Type::INSTANCE,1,0,int32_t(itemClass));
+  auto chapter=f.symbol("CHAPTER",Type::INT);
+  auto globalString=f.symbol("GLOBAL_STRING",Type::STRING);
+  auto globalFloat=f.symbol("GLOBAL_FLOAT",Type::FLOAT);
+  auto globalInstance=f.symbol("GLOBAL_INSTANCE",Type::INSTANCE,1,0,int32_t(npcClass));
+  auto text=f.symbol("GLOBAL_TEXT",Type::STRING,1,Flag::CONST);
+  f.p.symbols[text].string_values[0]="written by constructor";
+  auto owner=f.symbol("ITEM_OWNER",Type::INSTANCE,0,Flag::CONST,int32_t(npcClass));
+  f.begin(owner); f.op(Op::RSR);
+  std::vector<uint32_t> callbacks;
+  for(unsigned i=0;i<7;++i) {
+    auto callback=f.fn(("ITEM_CALLBACK_"+std::to_string(i)).c_str());
+    f.begin(callback); f.op(Op::RSR); callbacks.push_back(callback);
+    }
+  auto item=f.symbol("IT_RECORD_TEST",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(item);
+  unsigned number=100,callback=0;
+  IItem fields{};
+  snapshotFields(fields,[&](const char* name,auto& field,bool function,const char* binding) {
+    const auto member=f.find(binding);
+    auto assign=[&](auto& value,unsigned index) {
+      using T=std::remove_reference_t<decltype(value)>;
+      if constexpr(std::is_same_v<T,std::string>) {
+        auto constant=f.symbol("TEXT_"+std::to_string(number++),Type::STRING,1,Flag::CONST);
+        f.p.symbols[constant].string_values[0]=std::string(name)+std::to_string(index)+std::string("\0\x80\xff",3);
+        f.op(Op::PUSHV,constant);
+        }
+      else {
+        auto n=function ? (std::string_view(name)=="owner" ? owner : callbacks.at(callback++)) : number++;
+        f.op(Op::PUSHI,n);
+        }
+      f.op(Op::PUSHVV,member); f.p.bytecode.push_back(std::byte(index));
+      f.op(std::is_same_v<T,std::string> ? Op::MOVS : Op::MOVI);
+      };
+    if constexpr(std::is_array_v<std::remove_reference_t<decltype(field)>>) {
+      for(unsigned i=0;i<std::extent_v<std::remove_reference_t<decltype(field)>>;++i) assign(field[i],i);
+      }
+    else assign(field,0);
+    });
+  f.op(Op::RSR);
+  auto dependent=f.symbol("IT_RECORD_STATE",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(dependent);
+  f.op(Op::PUSHV,chapter); f.op(Op::PUSHV,f.find("C_ITEM.VALUE")); f.op(Op::MOVI); f.op(Op::RSR);
+  auto writer=f.symbol("IT_RECORD_WRITE",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(writer); f.set(chapter,7); f.op(Op::RSR);
+  auto stringWriter=f.symbol("IT_RECORD_WRITE_STRING",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(stringWriter);
+  f.op(Op::PUSHV,text); f.op(Op::PUSHV,globalString); f.op(Op::MOVS); f.op(Op::RSR);
+  auto floatWriter=f.symbol("IT_RECORD_WRITE_FLOAT",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(floatWriter);
+  f.op(Op::PUSHI,std::bit_cast<uint32_t>(1.25f)); f.op(Op::PUSHV,globalFloat); f.op(Op::MOVF); f.op(Op::RSR);
+  auto instanceWriter=f.symbol("IT_RECORD_WRITE_INSTANCE",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+  f.begin(instanceWriter);
+  f.op(Op::PUSHV,owner); f.op(Op::PUSHV,globalInstance); f.op(Op::MOVVI); f.op(Op::RSR);
+  for(int value:{0,-1}) {
+    auto sentinel=f.symbol(value==0 ? "IT_RECORD_NULL" : "IT_RECORD_MINUS1",Type::INSTANCE,0,Flag::CONST,int32_t(itemClass));
+    f.begin(sentinel);
+    for(const char* field:{"C_ITEM.MAGIC","C_ITEM.ON_EQUIP","C_ITEM.ON_UNEQUIP","C_ITEM.OWNER"})
+      f.set(f.find(field),value);
+    for(unsigned i=0;i<ItemRecord::state_count;++i) {
+      f.op(Op::PUSHI,uint32_t(value)); f.op(Op::PUSHVV,f.find("C_ITEM.ON_STATE"));
+      f.p.bytecode.push_back(std::byte(i)); f.op(Op::MOVI);
+      }
+    f.op(Op::RSR);
+    }
+  auto encoded=ProgramData::encodeProgram(f.p);
+  return {std::move(f.p),encoded.name,encoded.sha256};
+  }
+NpcSnapshot::Program routineProgram() {
+  Fixture f;
+  const auto npcClass=f.cls<INpc>("C_NPC");
+  const auto self=f.symbol("SELF",Type::INSTANCE,1,0,int32_t(npcClass));
+  const auto global=f.symbol("CHAPTER",Type::INT);
+  const auto known=f.symbol("KNOWN_POINT",Type::STRING,1,Flag::CONST);
+  const auto unknown=f.symbol("UNKNOWN_POINT",Type::STRING,1,Flag::CONST);
+  f.p.symbols[known].string_values[0]="TEST_WP";
+  f.p.symbols[unknown].string_values[0]=std::string("UNKNOWN_WP\x80\xff",12);
+  const auto ta=f.fn("TA_MIN",{Type::INSTANCE,Type::INT,Type::INT,Type::INT,Type::INT,Type::INT,Type::STRING},true);
+  const auto state=f.fn("ZS_ROUTINE"); f.begin(state); f.op(Op::RSR);
+  const auto wrapper=f.fn("TA_RECORD",{Type::INSTANCE,Type::INT,Type::INT,Type::INT,Type::INT,Type::STRING});
+  f.begin(wrapper);
+  for(int parameter=6;parameter>0;--parameter) {
+    f.op(Op::PUSHV,wrapper+uint32_t(parameter));
+    f.op(parameter==6 ? Op::MOVS : parameter==1 ? Op::MOVVI : Op::MOVI);
+    }
+  for(unsigned parameter=1;parameter<=5;++parameter) f.op(Op::PUSHV,wrapper+parameter);
+  f.op(Op::PUSHI,state); f.op(Op::PUSHV,wrapper+6); f.op(Op::BE,ta); f.op(Op::RSR);
+  const auto routine=f.fn("RTN_START_123"); f.begin(routine);
+  // Adjacent pairs share starts; interleaved starts distinguish std::sort from stable_sort.
+  // End minutes identify input order independently of either table-building path.
+  for(unsigned row=0;row<48;++row) {
+    f.op(Op::PUSHV,self); f.op(Op::PUSHI,row%4<2 ? 20 : 8); f.op(Op::PUSHI,5);
+    f.op(Op::PUSHI,23); f.op(Op::PUSHI,row); f.op(Op::PUSHV,row%3==0 ? unknown : known);
+    f.call(wrapper);
+    }
+  f.op(Op::RSR);
+  const auto read=f.fn("RTN_READ_123");
+  const auto local=f.symbol("RTN_READ_123.VALUE",Type::INT);
+  f.begin(read); f.op(Op::PUSHV,global); f.op(Op::PUSHV,local); f.op(Op::MOVI); f.op(Op::RSR);
+  const auto write=f.fn("RTN_WRITE_123"); f.begin(write); f.set(global,9); f.op(Op::RSR);
+  const auto helper=f.fn("OTHER_HELPER"); f.begin(helper); f.op(Op::RSR);
+  const auto unsupported=f.fn("RTN_HELPER_123"); f.begin(unsupported); f.call(helper); f.op(Op::RSR);
+  const auto encoded=ProgramData::encodeProgram(f.p);
+  return {std::move(f.p),encoded.name,encoded.sha256};
+  }
+
+void routineDefinitions(const fs::path& dir) {
+  const auto p=routineProgram();
+  const auto base=dir/"routine-definitions";
+  const auto file=base/"definitions"/p.sha256/"routines.json";
+  const auto counts=NpcSnapshot::writeRoutines(p,file);
+  check(counts.total==4 && counts.captured==1,"only the pure routine is captured");
+  check(NpcSnapshot::verifyRoutines(p,file)==0,"routine definitions verify from disk");
+  const auto library=RoutineDefinitions::read(base,p.sha256);
+  for(const char* name:{"RTN_READ_123","RTN_WRITE_123","RTN_HELPER_123"})
+    check(library.uncaptured.contains(name),std::string(name)+": unsafe routine retains its refusal");
+  const auto& source=library.routines.at("RTN_START_123");
+  check(source.size()==48,"all routine calls retain their order in the section");
+  for(size_t row=0;row<source.size();++row)
+    check(source[row].endMinute==int(row),"section rows follow TA_Min call order");
+
+  WayPoint known;
+  known.name="TEST_WP";
+  std::vector<NpcRoutineTable::Row> actual,expected;
+  auto append=[&](auto& table,int sh,int sm,int eh,int em,uint32_t state,std::string_view point) {
+    NpcRoutineTable::add(table,gtime(sh,sm),gtime(eh,em),state,point==known.name ? &known : nullptr,point);
+    };
+  auto script=DaedalusScript::from_program(p.data);
+  INpc::register_(script);
+  auto definitions=RoutineDefinitionRuntime::load(base,script,p.sha256);
+  DaedalusVm vm(std::move(script));
+  auto self=vm.allocate_instance<INpc>(vm.global_self());
+  vm.unsafe_set_gi(self);
+  vm.push_int(0x12345678);
+  const auto pc=vm.pc();
+  vm.register_external("TA_MIN",[&](std::shared_ptr<INpc> npc,int sh,int sm,int eh,int em,int state,std::string_view point) {
+    check(npc==self,"VM routine rows belong to the same NPC");
+    append(expected,sh,sm,eh,em,uint32_t(state),point);
+    });
+  auto* function=vm.find_symbol_by_name("RTN_START_123");
+  size_t callIndex=0;
+  RoutineDefinitionRuntime::initialize(vm,function,definitions,[&](const RoutineDefinitionRuntime::Row& row) {
+    check(row.endMinute==int(callIndex++),"record fill follows TA_Min input order before sorting");
+    append(actual,row.startHour,row.startMinute,row.endHour,row.endMinute,row.state,row.waypoint);
+    });
+  check(expected.empty(),"captured routine does not execute TA_Min in the VM");
+  vm.call_function<void>(function);
+  check(actual.size()==48 && actual.size()==expected.size(),"record and VM tables have every row");
+  for(size_t index=0;index<actual.size();++index) {
+    const auto& row=actual[index];
+    const auto& original=expected[index];
+    const auto call=unsigned(index<24 ? (index/2)*4+2+index%2 : ((index-24)/2)*4+(index-24)%2);
+    check(row.start==gtime(call%4<2 ? 20 : 8,5) && row.end==gtime(23,int(call)),
+          "tied rows retain their original TA_Min call order");
+    check(row.start==original.start && row.end==original.end && row.callback==original.callback &&
+          row.point==original.point && row.fallbackName==original.fallbackName && row.wayPointName()==original.wayPointName(),
+          "record and VM tables have identical times, state, point identity and fallback name");
+    check(row.point==(call%3==0 ? nullptr : &known),"known points resolve to their original pointer");
+    check(row.fallbackName==(call%3==0 ? std::string("UNKNOWN_WP\x80\xff",12) : ""),
+          "unknown points retain every fallback byte");
+    }
+  check(vm.global_self()->get_instance()==self && vm.unsafe_get_gi()==self && vm.pc()==pc,
+        "routine paths preserve SELF, VM context and program counter");
+  check(vm.pop_int()==0x12345678,"routine paths preserve the caller's stack");
+  RoutineDefinitionRuntime::initialize(vm,vm.find_symbol_by_name("RTN_WRITE_123"),definitions,
+                                       [](const RoutineDefinitionRuntime::Row&) {});
+  check(vm.find_symbol_by_name("CHAPTER")->get_int()==9,"uncaptured routine keeps its VM side effect");
+
+  auto changed=read(file);
+  for(auto& record:changed["records"].GetArray())
+    if(std::string_view(record["symbol"].GetString())=="RTN_START_123")
+      record["rows"][0]["start"][1].SetInt(6);
+  write(file,changed);
+  check(NpcSnapshot::verifyRoutines(p,file)>0,"routine verification rejects a changed time with its row");
+  NpcSnapshot::writeRoutines(p,file);
+  const auto otherFile=dir/"routines-again.json";
+  NpcSnapshot::writeRoutines(p,otherFile);
+  std::ifstream first(file,std::ios::binary),second(otherFile,std::ios::binary);
+  check(std::string(std::istreambuf_iterator<char>(first),{})==std::string(std::istreambuf_iterator<char>(second),{}),
+        "routine sections are byte-identical across repeated captures");
+  std::cout<<"Routine runtime equality: 48 rows, adjacent equal starts, 24 tied rows per start, known and unknown points; VM state preserved\n";
+  }
+
+void routineSelection(const fs::path& dir) {
+  const auto base=dir/"routine-selection";
+  auto selected=routineProgram(),other=selected;
+  for(auto& symbol:other.data.symbols)
+    if(symbol.name=="KNOWN_POINT") symbol.string_values[0]="OTHER_WP";
+  const auto encoded=ProgramData::encodeProgram(other.data);
+  other.name=encoded.name; other.sha256=encoded.sha256;
+  for(const auto* p:{&selected,&other})
+    NpcSnapshot::writeRoutines(*p,base/"definitions"/p->sha256/"routines.json");
+  auto program=DaedalusScript::from_program(selected.data);
+  auto another=DaedalusScript::from_program(other.data);
+  const auto symbol=program.find_symbol_by_name("RTN_START_123")->index();
+  const char* previous=std::getenv("OPENGOTHIC_ROUTINE_RECORDS");
+  const bool hadPrevious=previous!=nullptr;
+  const std::string saved=previous ? previous : "";
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_ROUTINE_RECORDS",value ? value : "")==0,"set routine records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_ROUTINE_RECORDS",value,1) : unsetenv("OPENGOTHIC_ROUTINE_RECORDS"))==0,
+          "set routine records environment");
+#endif
+    };
+  try {
+    environment(nullptr);
+    check(RoutineDefinitionRuntime::load(base,program,selected.sha256).routines.at(symbol)[1].waypoint=="TEST_WP",
+          "routine records are enabled by default and use the loaded program section");
+    environment("0");
+    check(RoutineDefinitionRuntime::load(base/"absent",program,selected.sha256).routines.empty(),
+          "zero disables routine records without reading the base");
+    environment("1");
+    check(RoutineDefinitionRuntime::load(base,program,selected.sha256).routines.contains(symbol),
+          "nonzero enables routine records");
+    check(RoutineDefinitionRuntime::load(base,another,other.sha256).routines.at(symbol)[1].waypoint=="OTHER_WP",
+          "changing the loaded program changes the routine section");
+    }
+  catch(...) { environment(hadPrevious ? saved.c_str() : nullptr); throw; }
+  environment(hadPrevious ? saved.c_str() : nullptr);
+  }
+template<class T> bool sameValue(const T& a,const T& b) {
+  if constexpr(std::is_array_v<T>) {
+    for(size_t i=0;i<std::extent_v<T>;++i) if(!sameValue(a[i],b[i])) return false;
+    return true;
+    }
+  else return a==b;
+  }
+void sameItem(IItem& expected,IItem& actual,const std::string& symbol) {
+  snapshotFields(expected,[&](const char* name,auto& value,bool,const char*) {
+    bool equal=false;
+    snapshotFields(actual,[&](const char* other,auto& result,bool,const char*) {
+      if constexpr(std::is_same_v<std::remove_reference_t<decltype(value)>,std::remove_reference_t<decltype(result)>>)
+        if(std::string_view(name)==other) equal=sameValue(value,result);
+      });
+    check(equal,symbol+"."+name+": runtime definition differs from constructor");
+    });
+  }
+std::unique_ptr<DaedalusVm> itemVm(const NpcSnapshot::Program& p) {
+  auto script=DaedalusScript::from_program(p.data);
+  IItem::register_(script);
+  return std::make_unique<DaedalusVm>(std::move(script));
+  }
+void runtimeItems(const NpcSnapshot::Program& p,const fs::path& base) {
+  auto library=ItemDefinitions::read(base,p.sha256);
+  auto script=DaedalusScript::from_program(p.data);
+  auto definitions=ItemDefinitionRuntime::load(base,script,p.sha256);
+  IItem::register_(script);
+  auto records=std::make_unique<DaedalusVm>(std::move(script));
+  size_t captured=0,fallback=0;
+  for(auto& symbol:records->symbols()) {
+    if(symbol.type()!=Type::INSTANCE || !symbol.is_const()) continue;
+    auto* parent=records->find_symbol_by_index(symbol.parent());
+    while(parent && parent->type()!=Type::CLASS) parent=records->find_symbol_by_index(parent->parent());
+    if(!parent || parent->name()!="C_ITEM") continue;
+    auto original=itemVm(p);
+    auto self=std::make_shared<INpc>();
+    auto previousItem=std::make_shared<IItem>();
+    auto prepare=[&](DaedalusVm& vm) {
+      if(vm.global_self()) vm.global_self()->set_instance(self);
+      if(vm.global_item()) vm.global_item()->set_instance(previousItem);
+      vm.unsafe_set_gi(self);
+      vm.push_int(0x12345678);
+      };
+    prepare(*records); prepare(*original);
+    const auto recordPc=records->pc(),originalPc=original->pc();
+    auto actual=std::make_shared<IItem>();
+    actual->user_ptr=&fallback;
+    auto* boundSymbol=records->find_symbol_by_index(symbol.index());
+    const bool usedRecord=ItemDefinitionRuntime::initialize(*records,actual,boundSymbol,definitions);
+    auto expected=original->init_instance<IItem>(original->find_symbol_by_index(symbol.index()));
+    sameItem(*expected,*actual,symbol.name());
+    check(usedRecord==library.items.contains(symbol.name()),symbol.name()+": captured item uses runtime definition");
+    check(actual->symbol_index()==expected->symbol_index(),symbol.name()+": symbol binding is preserved");
+    check(boundSymbol->get_instance()==actual,symbol.name()+": VM symbol points to the new item");
+    check(actual->user_ptr==&fallback,symbol.name()+": native owner is preserved");
+    auto state=[&](DaedalusVm& vm,uint32_t pc) {
+      check(!vm.global_self() || vm.global_self()->get_instance()==self,symbol.name()+": SELF is restored");
+      check(!vm.global_item() || vm.global_item()->get_instance()==previousItem,symbol.name()+": ITEM is preserved");
+      check(vm.unsafe_get_gi()==self,symbol.name()+": VM context is restored");
+      check(vm.pc()==pc,symbol.name()+": VM program counter is restored");
+      check(vm.pop_int()==0x12345678,symbol.name()+": VM stack is preserved");
+      };
+    state(*records,recordPc); state(*original,originalPc);
+    if(usedRecord) ++captured; else ++fallback;
+    }
+  check(captured==library.items.size(),"every captured definition was compared in the runtime");
+  check(fallback==library.uncaptured.size(),"every uncaptured item used its constructor");
+  std::cout<<"Item runtime equality: "<<captured<<" captured, "<<fallback<<" VM fallback; every ItemRecord field and VM state match\n";
+  }
+void npcDefinitions(const fs::path& dir) {
+  const auto program=NpcDefinitionFixture::program();
+  const auto base=dir/"npc-definitions",file=base/"definitions"/program.sha256/"npcs.json";
+  const auto counts=NpcSnapshot::writeNpcs(program,file);
+  NpcSnapshot::writeHelpers(program,file.parent_path()/"helpers.json",file);
+  check(counts.total==8,"all eight fixture NPC definitions are imported");
+  check(NpcSnapshot::verifyNpcs(program,file)==0,"NPC definitions verify independently from disk");
+  const auto library=NpcDefinitions::read(base,program.sha256);
+  for(const auto* refused:{"NPC_GLOBAL","NPC_WRITER","NPC_UNKNOWN"})
+    check(library.uncaptured.contains(refused),std::string(refused)+": refuses unsafe constructor");
+  check(library.uncaptured.contains("NPC_BAD_ITEM"),"NPC_BAD_ITEM: invalid item prototype retains its VM script error");
+  check(library.uncaptured.contains("NPC_ENGINE_READ") &&
+        library.uncaptured.at("NPC_ENGINE_READ").starts_with("engine_state_read: C_NPC.ATTRIBUTE[0]"),
+        "a constructor-body read after equipment has no safe helper boundary");
+  check(library.uncaptured.contains("NPC_INITIAL_READ") &&
+        library.uncaptured.at("NPC_INITIAL_READ")=="engine_state_read: C_NPC.ID[0] before assignment",
+        "a constructor reading the engine's initial field retains the VM fallback");
+  check(counts.captured==2 && library.uncaptured.size()==6,"two fixture NPCs are captured and six retain the VM fallback");
+  const auto& steps=library.npcs.at("NPC_NO_ID").steps;
+  check(std::any_of(steps.begin(),steps.end(),[](const auto& step) {
+    const auto* field=std::get_if<NpcDefinitions::Field>(&step);
+    return field && field->binding=="C_NPC.EXP_NEXT" && field->index==0 && field->value.integer==0;
+    }),"a constructor reading an untouched AIVAR element is captured with its zero default");
+  check(std::any_of(steps.begin(),steps.end(),[](const auto& step) {
+    const auto* call=std::get_if<NpcDefinitions::Call>(&step);
+    return call && call->function=="ADD_AFTER_EQUIP" && call->deferred;
+    }),"a helper reading an engine-modified field is deferred independently of its name");
+  auto invalid=read(file);
+  for(auto& record:invalid["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="NPC_BAD_ITEM") continue;
+    check(std::string_view(record["reason"].GetString())=="script_error","item allocation errors use the generic script_error reason");
+    check(std::string_view(record["detail"].GetString())=="Cannot init IT_NPC_PROTOTYPE: not an instance",
+          "item allocation preserves the original VM exception message");
+    record["status"].SetString("captured",invalid.GetAllocator());
+    record.RemoveMember("reason"); record.RemoveMember("detail");
+    }
+  write(file,invalid);
+  check(NpcSnapshot::verifyNpcs(program,file)>0,"verification independently rejects a captured NPC with an invalid item prototype");
+  NpcSnapshot::writeNpcs(program,file);
+  const auto second=dir/"npc-identical.json";
+  NpcSnapshot::writeNpcs(program,second);
+  std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);
+  check(std::string(std::istreambuf_iterator<char>(a),{})==std::string(std::istreambuf_iterator<char>(b),{}),
+        "NPC definitions are byte-identical across fresh imports");
+  {
+    auto script=DaedalusScript::from_program(program.data);
+    INpc::register_(script); IItem::register_(script);
+    DaedalusVm vm(std::move(script));
+    const auto definitions=NpcDefinitionRuntime::resolve(library,vm);
+    auto npc=std::make_shared<INpc>();
+    check(!NpcDefinitionRuntime::initialize(vm,npc,vm.find_symbol_by_name("NPC_WRITER"),definitions),
+          "uncaptured NPC uses the same VM fallback as the game");
+    check(vm.find_symbol_by_name("CHAPTER")->get_int()==9,"fallback preserves constructor side effects");
+    }
+  auto changed=read(file);
+  for(auto& record:changed["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="NPC_NO_ID") continue;
+    for(auto& step:record["steps"].GetArray())
+      if(step.HasMember("field") && std::string_view(step["field"].GetString())=="C_NPC.ATTRIBUTE" &&
+         step["value"]["value"].GetInt()==10) step["value"]["value"].SetInt(999);
+    }
+  write(file,changed);
+  check(NpcSnapshot::verifyNpcs(program,file)>0,"fresh import verification rejects a changed NPC field on disk");
+  NpcSnapshot::writeNpcs(program,file);
+
+  auto instruction=[&](NpcSnapshot::Program& value,uint32_t pc,Op op,uint32_t operand) {
+    check(size_t(pc)+5<=value.data.bytecode.size(),"NPC fixture instruction is within bytecode");
+    value.data.bytecode[pc]=std::byte(op);
+    for(uint32_t i=0;i<4;++i) value.data.bytecode[pc+1+i]=std::byte((operand>>(8*i))&255);
+    };
+  auto encode=[](NpcSnapshot::Program& value) {
+    const auto encoded=ProgramData::encodeProgram(value.data);
+    value.name=encoded.name; value.sha256=encoded.sha256;
+    };
+  {
+    auto randomGlobal=program;
+    auto script=DaedalusScript::from_program(program.data);
+    const auto* helper=script.find_symbol_by_name("B_CREATEAMBIENTINV");
+    const auto* random=script.find_symbol_by_name("HLP_RANDOM");
+    const auto* global=script.find_symbol_by_name("CHAPTER");
+    bool changedBound=false;
+    for(auto pc=helper->address();;) {
+      const auto op=script.instruction_at(pc);
+      if(op.op==Op::RSR) break;
+      if(op.op==Op::PUSHI && op.immediate==7) {
+        const auto next=script.instruction_at(pc+op.size);
+        if(next.op==Op::BE && next.symbol==random->index()) {
+          instruction(randomGlobal,pc,Op::PUSHV,global->index());
+          changedBound=true; break;
+          }
+        }
+      pc+=op.size;
+      }
+    check(changedBound,"random helper fixture contains the expected random bound");
+    encode(randomGlobal);
+    const auto unsafeBase=dir/"npc-random-global";
+    NpcSnapshot::writeNpcs(randomGlobal,unsafeBase/"definitions"/randomGlobal.sha256/"npcs.json");
+    const auto unsafe=NpcDefinitions::read(unsafeBase,randomGlobal.sha256);
+    check(unsafe.uncaptured.contains("NPC_NO_ID") && unsafe.uncaptured.at("NPC_NO_ID")=="game_state: CHAPTER",
+          "a deferred random helper must not hide a mutable global read");
+    check(unsafe.npcs.contains("NPC_WITH_ID"),"an unreachable unsafe random helper does not reject another NPC");
+    }
+  {
+    auto malformed=program;
+    auto script=DaedalusScript::from_program(program.data);
+    auto pc=script.find_symbol_by_name("NPC_WITH_ID")->address();
+    pc+=script.instruction_at(pc).size; // The inherited constructor remains valid.
+    const auto field=pc+script.instruction_at(pc).size;
+    check(script.instruction_at(pc).op==Op::PUSHI && script.instruction_at(field).op==Op::PUSHV,
+          "NPC fixture contains its direct field assignment");
+    instruction(malformed,pc,Op::PUSHI,0x7fffffff);
+    instruction(malformed,field,Op::PUSHV,script.find_symbol_by_name("C_NPC.DAILY_ROUTINE")->index());
+    encode(malformed);
+    const auto broken=dir/"npc-invalid-reference.json";
+    std::string error;
+    try { NpcSnapshot::writeNpcs(malformed,broken); }
+    catch(const std::runtime_error& failure) { error=failure.what(); }
+    check(error=="NPC definitions: NPC_WITH_ID: invalid symbol reference 2147483647",
+          "a snapshot invariant aborts import with the NPC name instead of recording execution_error");
+    check(!fs::exists(broken),"an invariant failure does not publish a partial NPC section");
+    }
+
+  const auto* setting=std::getenv("OPENGOTHIC_NPC_RECORDS");
+  const bool present=setting!=nullptr;
+  const std::string previous=setting ? setting : "";
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_NPC_RECORDS",value ? value : "")==0,"set NPC records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_NPC_RECORDS",value,1) : unsetenv("OPENGOTHIC_NPC_RECORDS"))==0,"set NPC records environment");
+#endif
+    };
+  try {
+    auto script=DaedalusScript::from_program(program.data);
+    environment(nullptr);
+    check(NpcDefinitionRuntime::enabled() && NpcDefinitionRuntime::load(base,script,program.sha256).npcs.size()==2,
+          "NPC records are enabled by default through the game's shared switch");
+    environment("0");
+    check(!NpcDefinitionRuntime::enabled() && NpcDefinitionRuntime::load(base/"absent",script,program.sha256).npcs.empty(),
+          "zero disables NPC records without reading the base");
+    environment("1");
+    check(NpcDefinitionRuntime::enabled() && NpcDefinitionRuntime::load(base,script,program.sha256).npcs.size()==2,
+          "nonzero enables NPC records");
+    }
+  catch(...) { environment(present ? previous.c_str() : nullptr); throw; }
+  environment(present ? previous.c_str() : nullptr);
+  }
+
+void helperDefinitions(const fs::path& dir) {
+  const auto program=NpcDefinitionFixture::program();
+  const auto base=dir/"helper-definitions",definitions=base/"definitions"/program.sha256;
+  const auto npcs=definitions/"npcs.json",file=definitions/"helpers.json";
+  NpcSnapshot::writeNpcs(program,npcs);
+  const auto counts=NpcSnapshot::writeHelpers(program,file,npcs);
+  check(counts.captured==6 && counts.total==8 && counts.situations>0,
+        "all six helper forms are recognized; two independent helpers retain VM fallbacks");
+  check(NpcSnapshot::verifyHelpers(program,file,npcs)==0,"helper records verify through the game's strict reader");
+  const auto library=NpcHelperDefinitions::read(base,program.sha256);
+  for(const char* name:{"B_SETFIGHTSKILLS","B_SETNPCVISUAL","B_CREATEAMBIENTINV","B_ADDFIGHTSKILL",
+                        "B_SETVISUALS_SKELETON_LORD","B_SETATTRIBUTESTOCHAPTER"})
+    check(library.helpers.contains(name),std::string(name)+": template recognized");
+  check(library.uncaptured.contains("ADD_AFTER_EQUIP") && library.uncaptured.contains("DRAW_BEFORE_AMBIENT"),
+        "unsupported helper bodies retain the explicit VM fallback");
+  const auto second=dir/"helpers-identical.json";
+  NpcSnapshot::writeHelpers(program,second,npcs);
+  std::ifstream x(file,std::ios::binary),y(second,std::ios::binary);
+  const std::string original{std::istreambuf_iterator<char>(x),{}};
+  check(original==std::string(std::istreambuf_iterator<char>(y),{}),"fresh helper imports are byte-identical");
+  auto rejects=[&](const std::string& why) {
+    bool rejected=false;
+    try { rejected=NpcSnapshot::verifyHelpers(program,file,npcs)!=0; }
+    catch(const std::runtime_error&) { rejected=true; }
+    check(rejected,why);
+    std::ofstream(file,std::ios::binary)<<original;
+    };
+  auto changed=read(file);
+  for(auto& record:changed["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="B_ADDFIGHTSKILL") continue;
+    record["parameters"]["talents"][0]["thresholds"][0]["skill"].SetInt(2);
+    }
+  write(file,changed);
+  rejects("changed skill table number in a ready base fails fresh VM verification");
+  changed=read(file);
+  for(auto& record:changed["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="B_CREATEAMBIENTINV") continue;
+    auto& items=record["parameters"]["fallback"]["rolls"][0];
+    check(items.IsArray() && items.Size()==2,"the synthetic ambient table has two ordered items");
+    items[0].Swap(items[1]);
+    }
+  write(file,changed);
+  rejects("reversed ambient item table in a ready base fails fresh VM verification");
+  auto repeated=original;
+  const auto version=repeated.find("\"version\"");
+  check(version!=std::string::npos,"helper envelope contains its version");
+  repeated.insert(version,"\"version\": 1,\n    ");
+  std::ofstream(file,std::ios::binary)<<repeated;
+  rejects("a repeated helper key fails the same strict reader used by the game");
+  auto fractional=original;
+  const auto integer=fractional.find('1',fractional.find(':',version));
+  check(integer!=std::string::npos,"helper version is an integer token");
+  fractional.replace(integer,1,"1.0");
+  std::ofstream(file,std::ios::binary)<<fractional;
+  rejects("1.0 is rejected where the helper reader requires an integer");
+  changed=read(file);
+  changed["records"][0].AddMember("unexpected",true,changed.GetAllocator());
+  write(file,changed);
+  rejects("unexpected helper fields fail the same strict reader used by the game");
+  const auto* setting=std::getenv("OPENGOTHIC_NPC_HELPER_RECORDS");
+  const std::optional<std::string> saved=setting ? std::optional<std::string>(setting) : std::nullopt;
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_NPC_HELPER_RECORDS",value ? value : "")==0,"set NPC helper records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_NPC_HELPER_RECORDS",value,1) : unsetenv("OPENGOTHIC_NPC_HELPER_RECORDS"))==0,
+          "set NPC helper records environment");
+#endif
+    };
+  try {
+    environment(nullptr); check(NpcHelperRuntime::enabled(),"helper records are enabled by default by the game's shared switch");
+    environment("0"); check(!NpcHelperRuntime::enabled(),"zero selects the VM path for all helpers");
+    environment("1"); check(NpcHelperRuntime::enabled(),"nonzero selects helper records");
+    }
+  catch(...) { environment(saved ? saved->c_str() : nullptr); throw; }
+  environment(saved ? saved->c_str() : nullptr);
+  }
+
+void placementDefinitions(const fs::path& dir) {
+  const auto program=NpcDefinitionFixture::program();
+  const auto base=dir/"placement-definitions",file=base/"definitions"/program.sha256/"placement.json";
+  const auto worlds=base/"worlds";
+  for(const char* name:{"TEST","ERROR_HELPER","MUTABLE_ROOT","STATE_ROOT","QUERY_ROOT","ERROR_ROOT"}) fs::create_directories(worlds/name);
+  const auto counts=NpcSnapshot::writePlacements(program,file,worlds);
+  check(counts.total==7 && counts.captured==4,"placement corpus preserves captured and refused startup functions");
+  check(NpcSnapshot::verifyPlacements(program,file,worlds)==0,"every placement verifies from disk against a fresh VM");
+  const auto library=PlacementDefinitions::read(base,program.sha256);
+  check(!library.placements.contains("STARTUP_TEST_PART_1") && !library.uncaptured.contains("STARTUP_TEST_PART_1"),
+        "a nested STARTUP helper without its own world is expanded only in its caller");
+  check(library.placements.at("STARTUP_GLOBAL").steps.size()==1 &&
+        std::get<PlacementDefinitions::Call>(library.placements.at("STARTUP_GLOBAL").steps[0]).function=="GAME_INITGERMAN",
+        "an ignored external result at the void function boundary is captured");
+  const auto& mutableSteps=library.placements.at("STARTUP_MUTABLE_ROOT").steps;
+  check(mutableSteps.size()==6 && std::get<PlacementDefinitions::Call>(mutableSteps[0]).function=="GAME_INITGERMAN",
+        "an ignored external result before constant assignments is captured");
+  const auto& integerWrite=std::get<PlacementDefinitions::GlobalWrite>(mutableSteps[1]);
+  const auto& stringWrite=std::get<PlacementDefinitions::GlobalWrite>(mutableSteps[2]);
+  check(integerWrite.symbol=="CHAPTER" && integerWrite.index==0 &&
+        integerWrite.value.kind==PlacementDefinitions::Value::Kind::Int && integerWrite.value.integer==9,
+        "a constant root assignment records its global symbol, element and value");
+  check(stringWrite.symbol=="PLACEMENT_TEXT" && stringWrite.index==0 &&
+        stringWrite.value.kind==PlacementDefinitions::Value::Kind::String && stringWrite.value.text==std::string("NPC\0\x80\xff",6),
+        "a constant string assignment preserves every original byte");
+  const auto& indexedWrite=std::get<PlacementDefinitions::GlobalWrite>(mutableSteps[3]);
+  const auto& floatWrite=std::get<PlacementDefinitions::GlobalWrite>(mutableSteps[4]);
+  check(indexedWrite.symbol=="PLACEMENT_LIMITS" && indexedWrite.index==1 &&
+        indexedWrite.value.kind==PlacementDefinitions::Value::Kind::Int && indexedWrite.value.integer==27,
+        "a constant array assignment records its nonzero element");
+  check(floatWrite.symbol=="PLACEMENT_SCALE" && floatWrite.index==0 &&
+        floatWrite.value.kind==PlacementDefinitions::Value::Kind::Float && floatWrite.value.real==1.25f,
+        "a constant float assignment records its fractional value");
+  check(std::get<PlacementDefinitions::Call>(mutableSteps[5]).function=="PLACE_DEPENDENT" &&
+        std::get<PlacementDefinitions::Call>(mutableSteps[5]).deferred,
+        "the global-dependent engine helper remains after the assignments");
+  check(library.uncaptured.at("STARTUP_STATE_ROOT").starts_with("game_state: CHAPTER at pc="),
+        "a root assignment depending on mutable state retains the complete VM path");
+  check(library.uncaptured.at("STARTUP_QUERY_ROOT").starts_with("external_query: GAME_INITGERMAN at pc="),
+        "an external result consumed by a global assignment is not treated as discarded");
+  check(library.uncaptured.at("STARTUP_ERROR_ROOT").starts_with("script_error:"),
+        "a suppressed script error in the startup root retains the complete VM path");
+  const auto& steps=library.placements.at("STARTUP_TEST").steps;
+  check(steps.size()==6,"nested placement is expanded in its original call order");
+  check(std::get<PlacementDefinitions::Call>(steps[0]).function=="WLD_INSERTNPC" &&
+        std::get<PlacementDefinitions::Call>(steps[1]).function=="WLD_INSERTITEM",
+        "nested insertion precedes the state-dependent helper");
+  check(std::get<PlacementDefinitions::Call>(steps[2]).function=="PLACE_DEPENDENT" &&
+        std::get<PlacementDefinitions::Call>(steps[2]).deferred,
+        "mutable-global helper is deferred at its original position");
+  check(std::get<PlacementDefinitions::Call>(steps[3]).function=="WLD_SETGUILDATTITUDE" &&
+        !std::get<PlacementDefinitions::Call>(steps[3]).deferred && std::get<PlacementDefinitions::Call>(steps[3]).args[1].integer==2,
+        "the order-dependent step remains after the deferred helper");
+  check(std::get<PlacementDefinitions::Call>(steps[0]).args[0].kind==PlacementDefinitions::Value::Kind::Symbol &&
+        std::get<PlacementDefinitions::Call>(steps[0]).args[0].text=="NPC_NO_ID",
+        "placement arguments name program symbols rather than VM indices");
+  const auto& errorSteps=library.placements.at("STARTUP_ERROR_HELPER").steps;
+  check(errorSteps.size()==3 && std::get<PlacementDefinitions::Call>(errorSteps[1]).function=="PLACE_SCRIPT_ERROR" &&
+        std::get<PlacementDefinitions::Call>(errorSteps[1]).deferred,
+        "a lenient VM script error defers the helper without dropping adjacent calls");
+  const auto second=dir/"placement-identical.json";
+  NpcSnapshot::writePlacements(program,second,worlds);
+  std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);
+  check(std::string(std::istreambuf_iterator<char>(a),{})==std::string(std::istreambuf_iterator<char>(b),{}),
+        "two placement imports are byte-identical");
+  auto other=program;
+  for(auto& symbol:other.data.symbols)
+    if(symbol.name=="POINT") symbol.string_values[0]="OTHER_WP";
+  const auto encoded=ProgramData::encodeProgram(other.data);
+  other.name=encoded.name; other.sha256=encoded.sha256;
+  NpcSnapshot::writePlacements(other,base/"definitions"/other.sha256/"placement.json",worlds);
+
+  const auto* setting=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
+  const bool present=setting!=nullptr;
+  const std::string previous=setting ? setting : "";
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_PLACEMENT_RECORDS",value ? value : "")==0,"set placement records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_PLACEMENT_RECORDS",value,1) : unsetenv("OPENGOTHIC_PLACEMENT_RECORDS"))==0,
+          "set placement records environment");
+#endif
+    };
+  try {
+    const auto script=DaedalusScript::from_program(program.data);
+    environment(nullptr);
+    check(PlacementDefinitionRuntime::enabled() && PlacementDefinitionRuntime::load(base,script,program.sha256).placements.size()==4,
+          "placement records are enabled by default through the game's shared choice");
+    environment("0");
+    check(!PlacementDefinitionRuntime::enabled() && PlacementDefinitionRuntime::load(base/"absent",script,program.sha256).placements.empty(),
+          "zero disables placement records without reading the base");
+    environment("1");
+    DaedalusVm vm(DaedalusScript::from_program(program.data));
+    const auto definitions=PlacementDefinitionRuntime::load(base,vm,program.sha256);
+    check(PlacementDefinitionRuntime::enabled() && definitions.placements.size()==4,
+          "nonzero enables placement records");
+    vm.register_external("GAME_INITGERMAN",[] { return int32_t(0); });
+    vm.register_external("WLD_SETGUILDATTITUDE",[](int32_t,int32_t,int32_t) {});
+    check(PlacementDefinitionRuntime::execute(vm,vm.find_symbol_by_name("STARTUP_MUTABLE_ROOT"),definitions),
+          "placement runtime replays the captured global assignments");
+    const auto* limits=vm.find_symbol_by_name("PLACEMENT_LIMITS");
+    check(limits->get_int(0)==4 && limits->get_int(1)==27,"placement replay writes array element 1 only");
+    check(vm.find_symbol_by_name("PLACEMENT_SCALE")->get_float(0)==1.25f,"placement replay writes the fractional float");
+    const auto otherScript=DaedalusScript::from_program(other.data);
+    const auto selected=PlacementDefinitionRuntime::load(base,otherScript,other.sha256);
+    const auto startup=otherScript.find_symbol_by_name("STARTUP_TEST")->index();
+    const auto& argument=std::get<PlacementDefinitionRuntime::Call>(selected.placements.at(startup).front()).args[1];
+    check(otherScript.find_symbol_by_index(argument.literal)->get_string(argument.literalIndex)=="OTHER_WP",
+          "placement selection follows the loaded program SHA");
+    }
+  catch(...) { environment(present ? previous.c_str() : nullptr); throw; }
+  environment(present ? previous.c_str() : nullptr);
+  }
+
+void itemDefinitions(const fs::path& dir) {
+  auto p=itemProgram();
+  const auto base=dir/"definitions-fixture";
+  const auto file=base/"definitions"/p.sha256/"items.json";
+  NpcSnapshot::writeItems(p,file);
+  check(NpcSnapshot::verifyItems(p,file)==0,"item definitions verify from disk");
+  auto snapshot=read(file);
+  for(const auto& [name,global]:std::initializer_list<std::pair<const char*,const char*>>{
+        {"IT_RECORD_WRITE","CHAPTER"},{"IT_RECORD_WRITE_STRING","GLOBAL_STRING"},
+        {"IT_RECORD_WRITE_FLOAT","GLOBAL_FLOAT"},{"IT_RECORD_WRITE_INSTANCE","GLOBAL_INSTANCE"}}) {
+    bool foundWriter=false;
+    for(const auto& record:snapshot["records"].GetArray()) {
+      if(std::string_view(record["symbol"].GetString())!=name) continue;
+      foundWriter=true;
+      check(std::string_view(record["status"].GetString())=="uncaptured",std::string(name)+": global-writing item is not captured");
+      check(std::string_view(record["reason"].GetString())=="game_state_write",std::string(name)+": names the refusal reason");
+      check(std::string_view(record["detail"].GetString())==global,std::string(name)+": names the changed variable");
+      check(!record.HasMember("fields"),std::string(name)+": has no captured fields");
+      }
+    check(foundWriter,std::string(name)+": global-writing item remains in definitions");
+    }
+  const auto library=ItemDefinitions::read(base,p.sha256);
+  auto vm=itemVm(p);
+  auto definitions=ItemDefinitionRuntime::resolve(library,*vm);
+  check(!ItemDefinitionRuntime::initialize(*vm,std::make_shared<IItem>(),vm->find_symbol_by_name("IT_RECORD_WRITE"),definitions),
+        "global-writing item uses the VM constructor");
+  check(vm->find_symbol_by_name("CHAPTER")->get_int()==7,"VM fallback preserves the constructor's global write");
+  for(int value:{0,-1}) {
+    const std::string name=value==0 ? "IT_RECORD_NULL" : "IT_RECORD_MINUS1";
+    const auto& definition=library.items.at(name);
+    const auto& record=definition.record;
+    check(record.magic==value && record.on_equip==value && record.on_unequip==value && record.owner==value,
+          name+": function and owner sentinels decode to "+std::to_string(value));
+    for(auto state:record.on_state) check(state==value,name+".on_state: sentinel is preserved");
+    for(const auto& [field,names]:definition.symbols)
+      for(const auto& symbol:names) check(symbol.empty(),name+"."+field+": sentinel has no symbol name to resolve");
+    }
+  runtimeItems(p,base);
+  auto changed=read(file);
+  for(auto& record:changed["records"].GetArray()) {
+    if(std::string_view(record["symbol"].GetString())!="IT_RECORD_NULL") continue;
+    auto& function=record["fields"]["on_equip"];
+    check(function.IsNull(),"zero function sentinel is written as JSON null");
+    function.SetString("",changed.GetAllocator());
+    write(file,changed);
+    bool rejected=false;
+    try { ItemDefinitions::read(base,p.sha256); }
+    catch(const std::runtime_error& e) {
+      rejected=std::string(e.what()).find("IT_RECORD_NULL: on_equip: empty symbol name")!=std::string::npos;
+      }
+    check(rejected,"empty JSON function name is rejected with its item and field");
+    function.SetNull();
+    }
+  for(auto& record:changed["records"].GetArray())
+    if(record.HasMember("fields")) record["fields"]["value"].SetInt(1234567);
+  write(file,changed);
+  bool rejected=false;
+  try { runtimeItems(p,base); }
+  catch(const std::runtime_error& e) {
+    rejected=std::string(e.what()).find("IT_RECORD_TEST.value")!=std::string::npos;
+    }
+  check(rejected,"runtime equality rejects a changed item number with its symbol and field");
+  }
+void npcLayout(const NpcSnapshot::Program& program) {
+  auto script=DaedalusScript::from_program(program.data);
+  INpc::register_(script); IItem::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto npc=vm.allocate_instance<INpc>("NPC_TEST");
+  auto item=vm.allocate_instance<IItem>("IT_TEST");
+  auto& record=static_cast<NpcRecord&>(*npc);
+  const auto begin=reinterpret_cast<uintptr_t>(npc.get());
+  const auto recordBegin=reinterpret_cast<uintptr_t>(&record);
+  check(recordBegin>=begin && recordBegin+sizeof(record)<=begin+sizeof(*npc),"whole NpcRecord lies within INpc");
+  check(reinterpret_cast<uintptr_t>(static_cast<DaedalusInstance*>(npc.get()))==begin,"VM data starts at INpc");
+  std::string signature;
+  unsigned fields=0;
+  snapshotFields(*npc,[&](const char* name,auto& field,bool,const char* binding) {
+    ++fields;
+    signature+=std::string(name)+":"+binding+" ";
+    auto* symbol=vm.find_symbol_by_name(binding);
+    check(symbol!=nullptr,std::string("bound NPC field ")+name);
+    check(symbol->registered_to()==typeid(INpc),std::string("INpc context for ")+name);
+    const auto address=reinterpret_cast<uintptr_t>(&field);
+    check(symbol->offset_as_member()==address-begin,std::string("VM offset for ")+name);
+    check(address>=recordBegin && address+sizeof(field)<=recordBegin+sizeof(record),std::string("record owns ")+name);
+    auto value=[&](auto& element,uint16_t index) {
+      using T=std::remove_reference_t<decltype(element)>;
+      if constexpr(std::is_same_v<T,std::string>) {
+        symbol->set_string("from VM",index,npc.get());
+        check(element=="from VM",std::string("VM writes record ")+name);
+        element="from record";
+        check(symbol->get_string(index,npc.get())=="from record",std::string("VM reads record ")+name);
+        }
+      else {
+        symbol->set_int(1000+index,index,npc.get());
+        check(int32_t(element)==1000+index,std::string("VM writes record ")+name);
+        element=T(2000+index);
+        check(symbol->get_int(index,npc.get())==2000+index,std::string("VM reads record ")+name);
+        }
+      };
+    if constexpr(std::is_array_v<std::remove_reference_t<decltype(field)>>) {
+      for(uint16_t i=0;i<std::extent_v<std::remove_reference_t<decltype(field)>>;++i) value(field[i],i);
+      }
+    else value(field,0);
+    });
+  check(fields==32,"all 32 NPC fields checked");
+  // Independent of the generated visitor: changing declaration order or a binding must fail.
+  check(signature==
+    "id:C_NPC.ID name:C_NPC.NAME slot:C_NPC.SLOT effect:C_NPC.EFFECT type:C_NPC.NPCTYPE flags:C_NPC.FLAGS "
+    "attribute:C_NPC.ATTRIBUTE hitchance:C_NPC.HITCHANCE protection:C_NPC.PROTECTION damage:C_NPC.DAMAGE "
+    "damage_type:C_NPC.DAMAGETYPE guild:C_NPC.GUILD level:C_NPC.LEVEL mission:C_NPC.MISSION "
+    "fight_tactic:C_NPC.FIGHT_TACTIC weapon:C_NPC.WEAPON voice:C_NPC.VOICE voice_pitch:C_NPC.VOICEPITCH "
+    "body_mass:C_NPC.BODYMASS daily_routine:C_NPC.DAILY_ROUTINE start_aistate:C_NPC.START_AISTATE "
+    "spawnpoint:C_NPC.SPAWNPOINT spawn_delay:C_NPC.SPAWNDELAY senses:C_NPC.SENSES senses_range:C_NPC.SENSES_RANGE "
+    "aivar:C_NPC.AIVAR wp:C_NPC.WP exp:C_NPC.EXP exp_next:C_NPC.EXP_NEXT lp:C_NPC.LP "
+    "bodystate_interruptable_override:C_NPC.BODYSTATEINTERRUPTABLEOVERRIDE no_focus:C_NPC.NOFOCUS ",
+    "original NPC field order and bindings");
+  check(std::extent_v<decltype(record.name)> == 5,"original NPC name array size");
+  check(std::extent_v<decltype(record.attribute)> == 8,"original NPC attribute array size");
+  check(std::extent_v<decltype(record.hitchance)> == 5,"original NPC hitchance array size");
+  check(std::extent_v<decltype(record.protection)> == 8,"original NPC protection array size");
+  check(std::extent_v<decltype(record.damage)> == 8,"original NPC damage array size");
+  check(std::extent_v<decltype(record.mission)> == 5,"original NPC mission array size");
+  check(std::extent_v<decltype(record.aivar)> == 100,"original NPC aivar array size");
+  bool rejected=false;
+  try { vm.find_symbol_by_name("C_NPC.ID")->set_int(1,0,item.get()); }
+  catch(const DaedalusIllegalContextType&) { rejected=true; }
+  check(rejected,"NPC member rejects an item context");
+  std::cout<<"NPC layout: "<<fields<<" fields, sizeof(INpc)="<<sizeof(INpc)
+           <<", sizeof(NpcRecord)="<<sizeof(NpcRecord)<<", record offset="<<recordBegin-begin<<'\n';
+  }
+template<class F> void focusFields(IFocus& v,F f) {
+#define FOCUS_FIELD(name,script) f(#name,v.name,false,"C_FOCUS." script)
+  FOCUS_FIELD(npc_longrange,"NPC_LONGRANGE");
+  FOCUS_FIELD(npc_range1,"NPC_RANGE1"); FOCUS_FIELD(npc_range2,"NPC_RANGE2");
+  FOCUS_FIELD(npc_azi,"NPC_AZI"); FOCUS_FIELD(npc_elevdo,"NPC_ELEVDO"); FOCUS_FIELD(npc_elevup,"NPC_ELEVUP");
+  FOCUS_FIELD(npc_prio,"NPC_PRIO");
+  FOCUS_FIELD(item_range1,"ITEM_RANGE1"); FOCUS_FIELD(item_range2,"ITEM_RANGE2");
+  FOCUS_FIELD(item_azi,"ITEM_AZI"); FOCUS_FIELD(item_elevdo,"ITEM_ELEVDO"); FOCUS_FIELD(item_elevup,"ITEM_ELEVUP");
+  FOCUS_FIELD(item_prio,"ITEM_PRIO");
+  FOCUS_FIELD(mob_range1,"MOB_RANGE1"); FOCUS_FIELD(mob_range2,"MOB_RANGE2");
+  FOCUS_FIELD(mob_azi,"MOB_AZI"); FOCUS_FIELD(mob_elevdo,"MOB_ELEVDO"); FOCUS_FIELD(mob_elevup,"MOB_ELEVUP");
+  FOCUS_FIELD(mob_prio,"MOB_PRIO");
+#undef FOCUS_FIELD
+  }
+template<class Instance,class Record,class Visit>
+std::string recordLayout(Instance& instance,Record& record,DaedalusVm& vm,Visit visit,unsigned expected) {
+  const auto begin=reinterpret_cast<uintptr_t>(&instance);
+  const auto recordBegin=reinterpret_cast<uintptr_t>(&record);
+  check(reinterpret_cast<uintptr_t>(static_cast<DaedalusInstance*>(&instance))==begin,"VM base comes first");
+  check(recordBegin>begin && recordBegin+sizeof(record)<=begin+sizeof(instance),"record base follows VM base within instance");
+  auto previousEnd=recordBegin;
+  unsigned fields=0;
+  std::string signature;
+  visit(instance,[&](const char* name,auto& field,bool,const char* binding) {
+    ++fields;
+    signature+=std::string(name)+":"+binding+" ";
+    auto* symbol=vm.find_symbol_by_name(binding);
+    check(symbol!=nullptr,std::string("bound record field ")+name);
+    check(symbol->registered_to()==typeid(Instance),std::string("concrete VM context for ")+name);
+    const auto address=reinterpret_cast<uintptr_t>(&field);
+    check(symbol->offset_as_member()==address-begin,std::string("VM offset for ")+name);
+    check(address>=previousEnd && address+sizeof(field)<=recordBegin+sizeof(record),std::string("record field order and ownership for ")+name);
+    previousEnd=address+sizeof(field);
+    auto value=[&](auto& element,uint16_t index) {
+      using T=std::remove_reference_t<decltype(element)>;
+      if constexpr(std::is_same_v<T,std::string>) {
+        symbol->set_string("from VM",index,&instance);
+        check(element=="from VM",std::string("VM writes record ")+name);
+        element="from record";
+        check(symbol->get_string(index,&instance)=="from record",std::string("VM reads record ")+name);
+        }
+      else if constexpr(std::is_same_v<T,float>) {
+        symbol->set_float(1.25f,index,&instance);
+        check(element==1.25f,std::string("VM writes record ")+name);
+        element=2.5f;
+        check(symbol->get_float(index,&instance)==2.5f,std::string("VM reads record ")+name);
+        }
+      else {
+        symbol->set_int(1000+index,index,&instance);
+        check(int32_t(element)==1000+index,std::string("VM writes record ")+name);
+        element=T(2000+index);
+        check(symbol->get_int(index,&instance)==2000+index,std::string("VM reads record ")+name);
+        }
+      };
+    if constexpr(std::is_array_v<std::remove_reference_t<decltype(field)>>) {
+      for(uint16_t i=0;i<std::extent_v<std::remove_reference_t<decltype(field)>>;++i) value(field[i],i);
+      }
+    else value(field,0);
+    });
+  check(fields==expected,"all record fields checked");
+  std::cout<<"Record layout: "<<fields<<" fields, instance size="<<sizeof(instance)
+           <<", record size="<<sizeof(record)<<", record offset="<<recordBegin-begin<<'\n';
+  return signature;
+  }
+void itemLayout(const NpcSnapshot::Program& program) {
+  auto script=DaedalusScript::from_program(program.data);
+  IItem::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto item=vm.allocate_instance<IItem>("IT_TEST");
+  auto& record=static_cast<ItemRecord&>(*item);
+  auto signature=recordLayout(*item,record,vm,[](auto& v,auto f) { snapshotFields(v,f); },44);
+  check(signature==
+    "id:C_ITEM.ID name:C_ITEM.NAME name_id:C_ITEM.NAMEID hp:C_ITEM.HP hp_max:C_ITEM.HP_MAX "
+    "main_flag:C_ITEM.MAINFLAG flags:C_ITEM.FLAGS weight:C_ITEM.WEIGHT value:C_ITEM.VALUE "
+    "damage_type:C_ITEM.DAMAGETYPE damage_total:C_ITEM.DAMAGETOTAL damage:C_ITEM.DAMAGE wear:C_ITEM.WEAR "
+    "protection:C_ITEM.PROTECTION nutrition:C_ITEM.NUTRITION cond_atr:C_ITEM.COND_ATR cond_value:C_ITEM.COND_VALUE "
+    "change_atr:C_ITEM.CHANGE_ATR change_value:C_ITEM.CHANGE_VALUE magic:C_ITEM.MAGIC on_equip:C_ITEM.ON_EQUIP "
+    "on_unequip:C_ITEM.ON_UNEQUIP on_state:C_ITEM.ON_STATE owner:C_ITEM.OWNER owner_guild:C_ITEM.OWNERGUILD "
+    "disguise_guild:C_ITEM.DISGUISEGUILD visual:C_ITEM.VISUAL visual_change:C_ITEM.VISUAL_CHANGE effect:C_ITEM.EFFECT "
+    "visual_skin:C_ITEM.VISUAL_SKIN scheme_name:C_ITEM.SCEMENAME material:C_ITEM.MATERIAL munition:C_ITEM.MUNITION "
+    "spell:C_ITEM.SPELL range:C_ITEM.RANGE mag_circle:C_ITEM.MAG_CIRCLE description:C_ITEM.DESCRIPTION "
+    "text:C_ITEM.TEXT count:C_ITEM.COUNT inv_zbias:C_ITEM.INV_ZBIAS inv_rot_x:C_ITEM.INV_ROTX "
+    "inv_rot_y:C_ITEM.INV_ROTY inv_rot_z:C_ITEM.INV_ROTZ inv_animate:C_ITEM.INV_ANIMATE ",
+    "original item field order and bindings");
+  check(std::extent_v<decltype(record.damage)> == 8,"original item damage array size");
+  check(std::extent_v<decltype(record.protection)> == 8,"original item protection array size");
+  check(std::extent_v<decltype(record.cond_atr)> == 3,"original item condition attribute array size");
+  check(std::extent_v<decltype(record.cond_value)> == 3,"original item condition value array size");
+  check(std::extent_v<decltype(record.change_atr)> == 3,"original item change attribute array size");
+  check(std::extent_v<decltype(record.change_value)> == 3,"original item change value array size");
+  check(std::extent_v<decltype(record.on_state)> == 4,"original item state array size");
+  check(std::extent_v<decltype(record.text)> == 6,"original item text array size");
+  check(std::extent_v<decltype(record.count)> == 6,"original item count array size");
+  }
+void focusLayout() {
+  check(sizeof(FocusRecord)==76,"original focus record size");
+  Fixture f;
+  auto cls=f.symbol("C_FOCUS",Type::CLASS);
+  f.p.symbols[cls].class_size=sizeof(IFocus);
+  IFocus focus{};
+  focusFields(focus,[&](const char*,auto& value,bool,const char* binding) {
+    auto type=std::is_same_v<std::remove_reference_t<decltype(value)>,float> ? Type::FLOAT : Type::INT;
+    f.symbol(binding,type,1,Flag::MEMBER,int32_t(cls));
+    });
+  f.symbol("FOCUS_TEST",Type::INSTANCE,0,Flag::CONST,int32_t(cls));
+  auto script=DaedalusScript::from_program(std::move(f.p));
+  IFocus::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto instance=vm.allocate_instance<IFocus>("FOCUS_TEST");
+  recordLayout(*instance,static_cast<FocusRecord&>(*instance),vm,[](auto& v,auto f) { focusFields(v,f); },19);
+  }
+template<class F> void guildFields(IGuildValues& v,F f) {
+  const auto begin=reinterpret_cast<uintptr_t>(static_cast<GuildRecord*>(&v));
+#ifdef __APPLE__
+  constexpr unsigned textureOffset=8976,turnOffset=10560;
+#else
+  constexpr unsigned textureOffset=9504,turnOffset=11616;
+#endif
+#define GUILD_FIELD(name,script,offset) \
+  check(reinterpret_cast<uintptr_t>(&v.name)-begin==offset,"original guild offset for " #name); \
+  check(std::extent_v<decltype(v.name)> == 66,"original guild array size for " #name); \
+  f(#name,v.name,false,"C_GILVALUES." script)
+  GUILD_FIELD(water_depth_knee,"WATER_DEPTH_KNEE",0);
+  GUILD_FIELD(water_depth_chest,"WATER_DEPTH_CHEST",264);
+  GUILD_FIELD(jumpup_height,"JUMPUP_HEIGHT",528);
+  GUILD_FIELD(swim_time,"SWIM_TIME",792);
+  GUILD_FIELD(dive_time,"DIVE_TIME",1056);
+  GUILD_FIELD(step_height,"STEP_HEIGHT",1320);
+  GUILD_FIELD(jumplow_height,"JUMPLOW_HEIGHT",1584);
+  GUILD_FIELD(jumpmid_height,"JUMPMID_HEIGHT",1848);
+  GUILD_FIELD(slide_angle,"SLIDE_ANGLE",2112);
+  GUILD_FIELD(slide_angle2,"SLIDE_ANGLE2",2376);
+  GUILD_FIELD(disable_autoroll,"DISABLE_AUTOROLL",2640);
+  GUILD_FIELD(surface_align,"SURFACE_ALIGN",2904);
+  GUILD_FIELD(climb_heading_angle,"CLIMB_HEADING_ANGLE",3168);
+  GUILD_FIELD(climb_horiz_angle,"CLIMB_HORIZ_ANGLE",3432);
+  GUILD_FIELD(climb_ground_angle,"CLIMB_GROUND_ANGLE",3696);
+  GUILD_FIELD(fight_range_base,"FIGHT_RANGE_BASE",3960);
+  GUILD_FIELD(fight_range_fist,"FIGHT_RANGE_FIST",4224);
+  GUILD_FIELD(fight_range_g,"FIGHT_RANGE_G",4488);
+  GUILD_FIELD(fight_range_1hs,"FIGHT_RANGE_1HS",4752);
+  GUILD_FIELD(fight_range_1ha,"FIGHT_RANGE_1HA",5016);
+  GUILD_FIELD(fight_range_2hs,"FIGHT_RANGE_2HS",5280);
+  GUILD_FIELD(fight_range_2ha,"FIGHT_RANGE_2HA",5544);
+  GUILD_FIELD(falldown_height,"FALLDOWN_HEIGHT",5808);
+  GUILD_FIELD(falldown_damage,"FALLDOWN_DAMAGE",6072);
+  GUILD_FIELD(blood_disabled,"BLOOD_DISABLED",6336);
+  GUILD_FIELD(blood_max_distance,"BLOOD_MAX_DISTANCE",6600);
+  GUILD_FIELD(blood_amount,"BLOOD_AMOUNT",6864);
+  GUILD_FIELD(blood_flow,"BLOOD_FLOW",7128);
+  GUILD_FIELD(blood_emitter,"BLOOD_EMITTER",7392);
+  GUILD_FIELD(blood_texture,"BLOOD_TEXTURE",textureOffset);
+  GUILD_FIELD(turn_speed,"TURN_SPEED",turnOffset);
+#undef GUILD_FIELD
+  }
+void guildLayout() {
+#ifdef __APPLE__
+  check(sizeof(GuildRecord)==10824 && sizeof(IGuildValues)==10856,"original Mac guild sizes");
+#else
+  check(sizeof(GuildRecord)==11880 && sizeof(IGuildValues)==11912,"original Linux guild sizes");
+#endif
+  check(GuildRecord::count==66,"original guild count");
+  Fixture f;
+  auto cls=f.symbol("C_GILVALUES",Type::CLASS);
+  f.p.symbols[cls].class_size=sizeof(IGuildValues);
+  IGuildValues value{};
+  guildFields(value,[&](const char*,auto& field,bool,const char* binding) {
+    using T=std::remove_all_extents_t<std::remove_reference_t<decltype(field)>>;
+    f.symbol(binding,std::is_same_v<T,std::string> ? Type::STRING : Type::INT,66,Flag::MEMBER,int32_t(cls));
+    });
+  f.symbol("GUILD_TEST",Type::INSTANCE,0,Flag::CONST,int32_t(cls));
+  auto script=DaedalusScript::from_program(std::move(f.p));
+  IGuildValues::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto instance=vm.allocate_instance<IGuildValues>("GUILD_TEST");
+  auto& record=static_cast<GuildRecord&>(*instance);
+  check(reinterpret_cast<uintptr_t>(&record)-reinterpret_cast<uintptr_t>(instance.get())==32,"original guild record base offset");
+  recordLayout(*instance,record,vm,[](auto& v,auto f) { guildFields(v,f); },31);
+  }
+template<class F> void spellFields(ISpell& v,F f) {
+  const auto begin=reinterpret_cast<uintptr_t>(static_cast<SpellRecord*>(&v));
+#define SPELL_FIELD(name,script,offset) \
+  check(reinterpret_cast<uintptr_t>(&v.name)-begin==offset,"original spell offset for " #name); \
+  f(#name,v.name,false,"C_SPELL." script)
+  SPELL_FIELD(time_per_mana,"TIME_PER_MANA",0);
+  SPELL_FIELD(damage_per_level,"DAMAGE_PER_LEVEL",4);
+  SPELL_FIELD(damage_type,"DAMAGETYPE",8);
+  SPELL_FIELD(spell_type,"SPELLTYPE",12);
+  SPELL_FIELD(can_turn_during_invest,"CANTURNDURINGINVEST",16);
+  SPELL_FIELD(can_change_target_during_invest,"CANCHANGETARGETDURINGINVEST",20);
+  SPELL_FIELD(is_multi_effect,"ISMULTIEFFECT",24);
+  SPELL_FIELD(target_collect_algo,"TARGETCOLLECTALGO",28);
+  SPELL_FIELD(target_collect_type,"TARGETCOLLECTTYPE",32);
+  SPELL_FIELD(target_collect_range,"TARGETCOLLECTRANGE",36);
+  SPELL_FIELD(target_collect_azi,"TARGETCOLLECTAZI",40);
+  SPELL_FIELD(target_collect_elev,"TARGETCOLLECTELEV",44);
+#undef SPELL_FIELD
+  }
+void spellLayout() {
+  check(sizeof(SpellRecord)==48 && sizeof(ISpell)==80,"original spell sizes");
+  Fixture f;
+  auto cls=f.symbol("C_SPELL",Type::CLASS);
+  f.p.symbols[cls].class_size=sizeof(ISpell);
+  ISpell value{};
+  spellFields(value,[&](const char*,auto& field,bool,const char* binding) {
+    auto type=std::is_same_v<std::remove_reference_t<decltype(field)>,float> ? Type::FLOAT : Type::INT;
+    f.symbol(binding,type,1,Flag::MEMBER,int32_t(cls));
+    });
+  f.symbol("SPELL_TEST",Type::INSTANCE,0,Flag::CONST,int32_t(cls));
+  auto script=DaedalusScript::from_program(std::move(f.p));
+  ISpell::register_(script);
+  DaedalusVm vm(std::move(script));
+  auto instance=vm.allocate_instance<ISpell>("SPELL_TEST");
+  auto& record=static_cast<SpellRecord&>(*instance);
+  check(reinterpret_cast<uintptr_t>(&record)-reinterpret_cast<uintptr_t>(instance.get())==32,"original spell record base offset");
+  recordLayout(*instance,record,vm,[](auto& v,auto f) { spellFields(v,f); },12);
+  }
+void itemSelection(const fs::path& dir) {
+  const auto base=dir/"selection-fixture";
+  auto selected=itemProgram(),other=selected;
+  bool changed=false;
+  for(auto& symbol:other.data.symbols)
+    if(!symbol.string_values.empty() && symbol.string_values[0].starts_with("name0")) {
+      symbol.string_values[0]="another program";
+      changed=true;
+      }
+  check(changed,"selection fixture has distinct program names");
+  auto encoded=ProgramData::encodeProgram(other.data);
+  other.name=encoded.name; other.sha256=encoded.sha256;
+  check(other.sha256!=selected.sha256,"selection programs have different identities");
+  const auto programs=base/"programs";
+  fs::create_directories(programs);
+  for(const auto* program:{&selected,&other}) {
+    ProgramData::writeProgram(program->data,programs);
+    NpcSnapshot::writeItems(*program,base/"definitions"/program->sha256/"items.json");
+    }
+  std::string selectedSha,otherSha;
+  auto program=DaedalusScript::from_program(ProgramData::readProgram(programs/(selected.name+".json"),&selectedSha));
+  auto otherProgram=DaedalusScript::from_program(ProgramData::readProgram(programs/(other.name+".json"),&otherSha));
+  check(selectedSha==selected.sha256 && otherSha==other.sha256,"selection uses the verified loaded record identities");
+  const auto symbol=program.find_symbol_by_name("IT_RECORD_TEST")->index();
+  const auto expected=ItemDefinitions::read(base,selected.sha256).items.at("IT_RECORD_TEST").record.name;
+  const char* previous=std::getenv("OPENGOTHIC_ITEM_RECORDS");
+  const bool hadPrevious=previous!=nullptr;
+  const std::string saved=previous ? previous : "";
+  auto environment=[](const char* value) {
+#ifdef _WIN32
+    check(_putenv_s("OPENGOTHIC_ITEM_RECORDS",value ? value : "")==0,"set item records environment");
+#else
+    check((value ? setenv("OPENGOTHIC_ITEM_RECORDS",value,1) : unsetenv("OPENGOTHIC_ITEM_RECORDS"))==0,
+          "set item records environment");
+#endif
+    };
+  try {
+    environment(nullptr);
+    auto defaults=ItemDefinitionRuntime::load(base,program,selectedSha);
+    check(defaults.items.contains(symbol),"item records enabled by default");
+    check(defaults.items.at(symbol).name==expected,"default section uses the loaded program SHA");
+    environment("0");
+    check(ItemDefinitionRuntime::load(base/"absent",program,selectedSha).items.empty(),"zero disables records without reading the base");
+    environment("1");
+    auto enabled=ItemDefinitionRuntime::load(base,program,selectedSha);
+    check(enabled.items.contains(symbol),"nonzero enables item records");
+    check(enabled.items.at(symbol).name==expected,"enabled section uses the loaded program SHA");
+    check(ItemDefinitionRuntime::load(base,otherProgram,otherSha).items.at(symbol).name=="another program",
+          "changing the loaded program changes the selected section");
+    }
+  catch(...) { environment(hadPrevious ? saved.c_str() : nullptr); throw; }
+  environment(hadPrevious ? saved.c_str() : nullptr);
+  }
+
+// D4.1: the activity template in the synthetic program, the comparison with a fresh VM from disk,
+// and a tampered ready base.
+void activityDefinitions(const fs::path& dir) {
+  const auto program=NpcDefinitionFixture::program();
+  const auto base=dir/"activity-definitions",definitions=base/"definitions"/program.sha256;
+  const auto routines=definitions/"routines.json",file=definitions/"activities.json";
+  NpcSnapshot::writeRoutines(program,routines);
+  const auto counts=NpcSnapshot::writeActivities(program,file,routines);
+  check(counts.total==5 && counts.captured==3,"activity corpus: three template states captured, ZS_SMITH_SWAPPED and ZS_TEST refused");
+  check(NpcSnapshot::verifyActivities(program,file,routines)==0,"every activity verifies from disk against a fresh VM");
+  const auto library=ActivityDefinitions::read(base,program.sha256);
+  const auto& anvil=library.activities.at("ZS_SMITH_ANVIL");
+  check(anvil.perceptions=="PERCEPTION_SET_NORMAL" && anvil.walkMode==1 &&
+        anvil.approach==ActivityDefinitions::Approach::NearestWaypoint && anvil.scheme=="BSANVIL" &&
+        anvil.busyBodyState==32784 && anvil.useState==1 && anvil.leaveState==-1 && anvil.loopResult==0,
+        "the anvil record holds the parameters its script passes");
+  check(library.activities.at("ZS_TEST_ROAST").scheme=="BARBQ","the same template captures another object");
+  const auto& pipe=library.activities.at("ZS_SMOKE_WATERPIPE");
+  check(pipe.scheme=="SMOKE" && pipe.approach==ActivityDefinitions::Approach::Distance && pipe.approachDistance==500,
+        "the distance approach is captured with its threshold");
+  check(library.uncaptured.at("ZS_TEST").starts_with("missing_phase: ZS_TEST_LOOP"),"a state without Loop keeps its reason");
+  check(library.uncaptured.at("ZS_SMITH_SWAPPED").starts_with("template_mismatch: ZS_SMITH_SWAPPED with ") &&
+        library.uncaptured.at("ZS_SMITH_SWAPPED").find("call 2 VM AI_SETWALKMODE(self,1), template NPC_GETLOOKATTARGET")!=std::string::npos,
+        "a state with correct phases and a call out of order is refused at that call");
+  const auto second=dir/"activities-identical.json";
+  NpcSnapshot::writeActivities(program,second,routines);
+  std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);
+  check(std::string(std::istreambuf_iterator<char>(a),{})==std::string(std::istreambuf_iterator<char>(b),{}),
+        "two activity imports are byte-identical");
+  std::ifstream input(file,std::ios::binary);
+  const std::string original{std::istreambuf_iterator<char>(input),{}};
+  auto tampered=original;
+  const auto at=tampered.find("\"BSANVIL\"");
+  check(at!=std::string::npos,"the anvil scheme is in the file");
+  tampered.replace(at,9,"\"BSFIRE\"");
+  {
+    std::ofstream out(file,std::ios::binary);
+    out<<tampered;
+  }
+  std::cerr<<"expected activity difference follows:\n";
+  check(NpcSnapshot::verifyActivities(program,file,routines)!=0,"a changed object scheme in a ready base fails the comparison");
+  auto repeated=original;
+  repeated.insert(at+9,",\n                \"scheme\": \"BSFIRE\"");
+  {
+    std::ofstream out(file,std::ios::binary);
+    out<<repeated;
+  }
+  std::cerr<<"expected activity difference follows:\n";
+  check(NpcSnapshot::verifyActivities(program,file,routines)!=0,"a repeated parameter key in a ready base fails the comparison");
+  std::ofstream(file,std::ios::binary)<<original;
+
+  // A point activity in an invented program, with a name unrelated to the installed guard.
+  NpcDefinitionFixture::Fixture f;
+  f.p=program.data;
+  using Op=DaedalusOpcode;
+  const auto self=f.find("SELF"),wp=f.find("C_NPC.WP"),aivar=f.find("C_NPC.AIVAR");
+  auto text=[&](const char* value) {
+    const auto id=f.symbol("$POINT_"+std::to_string(f.p.symbols.size()),Type::STRING,1,DaedalusSymbolFlag::CONST);
+    f.p.symbols[id].string_values[0]=value; return id;
+    };
+  auto jump=[&](Op op) { f.op(op,0u); return f.p.bytecode.size()-4; };
+  auto land=[&](size_t at) {
+    for(size_t i=0;i<4;++i) f.p.bytecode[at+i]=std::byte((uint32_t(f.p.bytecode.size())>>(8*i))&255);
+    };
+  auto stage=[&] { f.op(Op::GMOVI,self); f.op(Op::PUSHVV,aivar); f.p.bytecode.push_back(std::byte{19}); };
+  auto assign=[&](uint32_t value) { f.op(Op::PUSHI,value); stage(); f.op(Op::MOVI); };
+  auto question=[&](uint32_t value) { f.op(Op::PUSHI,value); stage(); f.op(Op::EQ); };
+  const auto isOn=f.fn("NPC_ISONFP",{Type::INSTANCE,Type::STRING},true,Type::INT);
+  const auto free=f.fn("WLD_ISFPAVAILABLE",{Type::INSTANCE,Type::STRING},true,Type::INT);
+  const auto go=f.fn("AI_GOTOFP",{Type::INSTANCE,Type::STRING},true);
+  const auto stand=f.fn("AI_STANDUP",{Type::INSTANCE},true);
+  const auto align=f.fn("AI_ALIGNTOFP",{Type::INSTANCE},true);
+  const auto alignWp=f.fn("AI_ALIGNTOWP",{Type::INSTANCE},true);
+  const auto play=f.fn("AI_PLAYANI",{Type::INSTANCE,Type::STRING},true);
+  const auto seconds=f.fn("NPC_GETSTATETIME",{Type::INSTANCE},true,Type::INT);
+  const auto reset=f.fn("NPC_SETSTATETIME",{Type::INSTANCE,Type::INT},true);
+  const auto random=f.find("HLP_RANDOM");
+  const auto point=text("STAND"),enter=text("T_STAND_2_HGUARD"),leave=text("T_HGUARD_2_STAND"),gesture=text("T_HGUARD_LOOKAROUND");
+  auto call=[&](uint32_t external) { f.op(Op::PUSHVI,self); f.op(Op::BE,external); };
+  auto named=[&](uint32_t external,uint32_t value) { f.op(Op::PUSHVI,self); f.op(Op::PUSHV,value); f.op(Op::BE,external); };
+  const auto init=f.fn("ZS_POINT_FIXTURE"); f.begin(init);
+  f.call(f.find("PERCEPTION_SET_NORMAL")); f.op(Op::PUSHVI,self); f.call(f.find("B_RESETALL"));
+  f.op(Op::PUSHVI,self); f.op(Op::PUSHI,1u); f.op(Op::BE,f.find("AI_SETWALKMODE"));
+  f.op(Op::PUSHI,500u); f.op(Op::PUSHVI,self); f.op(Op::GMOVI,self); f.op(Op::PUSHV,wp);
+  f.op(Op::BE,f.find("NPC_GETDISTTOWP")); f.op(Op::GT); const auto near=jump(Op::BZ);
+  f.op(Op::PUSHVI,self); f.op(Op::GMOVI,self); f.op(Op::PUSHV,wp); f.op(Op::BE,f.find("AI_GOTOWP"));
+  land(near); assign(1); f.op(Op::RSR);
+  const auto loop=f.fn("ZS_POINT_FIXTURE_LOOP",{},false,Type::INT); f.begin(loop);
+  named(isOn,point); const auto notOn=jump(Op::BZ);
+  call(align); question(2); const auto already=jump(Op::BZ); assign(1); land(already);
+  const auto doneOn=jump(Op::B); land(notOn);
+  named(free,point); const auto occupied=jump(Op::BZ);
+  named(go,point); call(stand); call(align); assign(2);
+  const auto doneFree=jump(Op::B); land(occupied);
+  call(alignWp); question(2); const auto waiting=jump(Op::BZ); assign(1); land(waiting);
+  land(doneOn); land(doneFree);
+  question(1); const auto posed=jump(Op::BZ); named(play,enter); assign(0); land(posed);
+  question(0); f.op(Op::PUSHI,5u); call(seconds); f.op(Op::GT); f.op(Op::AND); const auto early=jump(Op::BZ);
+  f.op(Op::PUSHI,0u); f.op(Op::PUSHI,10u); f.op(Op::BE,random); f.op(Op::EQ); const auto noGesture=jump(Op::BZ);
+  named(play,gesture); land(noGesture); f.op(Op::PUSHVI,self); f.op(Op::PUSHI,0u); f.op(Op::BE,reset);
+  land(early); f.op(Op::PUSHI,0u); f.op(Op::RSR);
+  const auto end=f.fn("ZS_POINT_FIXTURE_END"); f.begin(end); named(play,leave); f.op(Op::RSR);
+  NpcSnapshot::Program points;
+  points.data=std::move(f.p);
+  const auto encoded=ProgramData::encodeProgram(points.data); points.name=encoded.name; points.sha256=encoded.sha256;
+  const auto pointBase=dir/"point-activity",pointDir=pointBase/"definitions"/points.sha256;
+  fs::create_directories(pointDir);
+  std::ofstream(pointDir/"routines.json")<<"{\"program_sha256\":\""<<points.sha256
+    <<"\",\"records\":[{\"status\":\"captured\",\"rows\":[{\"state\":\"ZS_POINT_FIXTURE\"}]}]}";
+  const auto pointCounts=NpcSnapshot::writeActivities(points,pointDir/"activities.json",pointDir/"routines.json");
+  check(pointCounts.captured==1,"a point template is recognized without a state-name special case");
+  check(NpcSnapshot::verifyActivities(points,pointDir/"activities.json",pointDir/"routines.json")==0,"point phase streams verify");
+  const auto pointLibrary=ActivityDefinitions::read(pointBase,points.sha256);
+  const auto& guard=pointLibrary.points.at("ZS_POINT_FIXTURE");
+  check(guard.point=="STAND" && guard.enterAnimation=="T_STAND_2_HGUARD" && guard.leaveAnimation=="T_HGUARD_2_STAND" &&
+        guard.approachDistance==500 && guard.timerSeconds==5 && guard.rollRange==10 && guard.gestures.size()==10 &&
+        guard.initialStage==1 && guard.walkingStage==2 && guard.arrivedStage==1 && guard.poseStage==0,"point activity parameters");
+  for(size_t i=0;i<guard.gestures.size();++i)
+    check(guard.gestures[i].animation==(i==0 ? "T_HGUARD_LOOKAROUND" : "") && guard.gestures[i].resetTimer,"every draw outcome");
+
+  auto legacy=read(pointDir/"activities.json");
+  legacy["version"].SetInt(2);
+  legacy["records"][0]["parameters"].RemoveMember("form");
+  write(pointDir/"activities.json",legacy);
+  check(ActivityDefinitions::read(pointBase,points.sha256).points.at("ZS_POINT_FIXTURE")==guard,
+        "the session reader still loads the v2 guard");
+  }
+
+// Change the installed code, then import and verify those phases under their new program identity.
+void pointMutations(const NpcSnapshot::Program& program,const fs::path& dir,bool addon) {
+  const auto script=DaedalusScript::from_program(program.data);
+  constexpr auto arms="ZS_STAND_ARMSCROSSED";
+  constexpr auto loop="ZS_STAND_ARMSCROSSED_LOOP";
+  const auto* gesture=script.find_symbol_by_name("ZS_STAND_ARMSCROSSED_LOOP.RANDOM");
+  check(gesture!=nullptr,"the installed arms loop has a saved gesture local");
+  auto locate=[&](const char* phase,const auto& match) {
+    for(auto pc=script.find_symbol_by_name(phase)->address();;) {
+      const auto op=script.instruction_at(pc);
+      if(op.op==Op::RSR) throw std::runtime_error(std::string("missing instruction in ")+phase);
+      if(match(op,script.instruction_at(pc+op.size))) return pc;
+      pc+=op.size;
+      }
+    };
+  auto changed=program;
+  auto import=[&](std::initializer_list<const char*> states) {
+    const auto encoded=ProgramData::encodeProgram(changed.data);
+    changed.name=encoded.name; changed.sha256=encoded.sha256;
+    const auto base=dir/"point-mutations",defs=base/"definitions"/changed.sha256;
+    fs::create_directories(defs);
+    const auto routines=defs/"routines.json",file=defs/"activities.json";
+    std::ofstream rows(routines);
+    rows<<"{\"program_sha256\":\""<<changed.sha256<<"\",\"records\":[{\"status\":\"captured\",\"rows\":[";
+    for(auto state=states.begin();state!=states.end();++state)
+      rows<<(state!=states.begin() ? "," : "")<<"{\"state\":\""<<*state<<"\"}";
+    rows<<"]}]}"; rows.close();
+    NpcSnapshot::writeActivities(changed,file,routines);
+    check(NpcSnapshot::verifyActivities(changed,file,routines)==0,"mutated activities agree with a fresh VM");
+    return ActivityDefinitions::read(base,changed.sha256);
+    };
+  const auto* wpRoll=script.find_symbol_by_name("ZS_STAND_WP_LOOP.RANDOM");
+  check(wpRoll!=nullptr,"the installed waypoint loop has a saved gesture local");
+  auto& wpName=changed.data.symbols.at(wpRoll->index()).name;
+  wpName+="_SCRATCH";
+  check(import({"ZS_STAND_WP"}).uncaptured.at("ZS_STAND_WP").find("template RANDOM=0")!=std::string::npos,
+        "a waypoint gesture that writes another saved local stays in the VM");
+  wpName=program.data.symbols.at(wpRoll->index()).name;
+  auto operand=[&](size_t pc,uint32_t value) {
+    for(size_t i=0;i<4;++i) changed.data.bytecode[pc+1+i]=std::byte((value>>(8*i))&255);
+    };
+  auto replaceLocal=[&](uint32_t from,uint32_t to,bool swap=false) {
+    for(auto pc=script.find_symbol_by_name(loop)->address();;) {
+      const auto op=script.instruction_at(pc);
+      if(op.op==Op::RSR) break;
+      if(op.op==Op::PUSHV && op.symbol==from) operand(pc,to);
+      else if(swap && op.op==Op::PUSHV && op.symbol==to) operand(pc,from);
+      pc+=op.size;
+      }
+    };
+  if(!addon) {
+    // Keep the gesture and its reads, but use a different local for the result.
+    auto scratch=changed.data.symbols.at(gesture->index());
+    scratch.name+="_SCRATCH";
+    const auto scratchIndex=uint32_t(changed.data.symbols.size());
+    changed.data.symbols.push_back(std::move(scratch));
+    replaceLocal(gesture->index(),scratchIndex);
+    check(import({arms}).uncaptured.at(arms).find("template RANDOM=0")!=std::string::npos,
+          "Classic that no longer writes the saved gesture local stays in the VM");
+    return;
+    }
+
+  const auto* world=script.find_symbol_by_name("CURRENTLEVEL");
+  const auto* addonWorld=script.find_symbol_by_name("ADDONWORLD_ZEN");
+  const auto* roll=script.find_symbol_by_name("ZS_STAND_ARMSCROSSED_LOOP.EVENTRANDY");
+  const auto* portal=script.find_symbol_by_name("B_EVENT_PORTAL_EARTHQUAKE");
+  check(world && addonWorld && roll && portal,"the addon program has the portal condition and helper");
+
+  // Widen the world gate to 1..4 with a single CURRENTLEVEL read. The old test worlds 0, 4 and
+  // INT_MAX still give the original result; at a real world 1..3 the extra call exposes the change.
+  const auto pushAddon=locate(loop,[&](auto op,auto next) {
+    return op.op==Op::PUSHV && op.symbol==addonWorld->index() && next.op==Op::PUSHV && next.symbol==world->index();
+    });
+  const auto pushWorld=locate(loop,[&](auto op,auto next) {
+    return op.op==Op::PUSHV && op.symbol==world->index() && next.op==Op::EQ;
+    });
+  const auto afterWorld=pushWorld+script.instruction_at(pushWorld).size+1;
+  Fixture widerGate;
+  widerGate.p.bytecode.clear();
+  widerGate.op(Op::PUSHI,2); widerGate.op(Op::PUSHI,1); widerGate.op(Op::PUSHV,world->index());
+  widerGate.op(Op::SUB); widerGate.op(Op::LSR); widerGate.op(Op::NOT); widerGate.op(Op::B,afterWorld);
+  changed.data.bytecode[pushAddon]=std::byte(Op::B);
+  operand(pushAddon,uint32_t(changed.data.bytecode.size()));
+  changed.data.bytecode.insert(changed.data.bytecode.end(),widerGate.p.bytecode.begin(),widerGate.p.bytecode.end());
+  for(const auto* phase:{"ZS_SIT_CAMPFIRE_LOOP","ZS_PEE_LOOP"}) {
+    const auto both=locate(phase,[](auto op,auto) { return op.op==Op::AND; });
+    changed.data.bytecode[both]=std::byte(Op::ORR);
+    }
+  const auto* align=script.find_symbol_by_name("AI_ALIGNTOWP");
+  const auto alignWp=locate("ZS_STAND_WP",[&](auto op,auto next) {
+    return op.op==Op::PUSHVI && next.op==Op::BE && next.symbol==align->index();
+    });
+  const auto argument=script.instruction_at(alignWp).size;
+  std::fill_n(changed.data.bytecode.begin()+alignWp,argument+script.instruction_at(alignWp+argument).size,std::byte(Op::NOP));
+  auto rejected=import({arms,"ZS_SIT_CAMPFIRE","ZS_PEE","ZS_STAND_WP"});
+  check(rejected.uncaptured.size()==4 && rejected.points.empty(),"four changed point behaviours stay in the VM");
+  const auto& worldReason=rejected.uncaptured.at(arms);
+  check(worldReason.find("portal_roll=1 guild=0 raven_dead=0 world=1:")!=std::string::npos &&
+        worldReason.find("VM deferred B_EVENT_PORTAL_EARTHQUAKE")!=std::string::npos,
+        "the mismatching world exposes the spurious story call before the reset");
+
+  changed.data.bytecode=program.data.bytecode;
+  const auto call=locate(loop,[&](auto op,auto) { return op.op==Op::BL && op.address==portal->address(); });
+  std::fill_n(changed.data.bytecode.begin()+call,script.instruction_at(call).size,std::byte(Op::NOP));
+  check(import({arms}).uncaptured.at(arms).find("missing portal call")!=std::string::npos,
+        "the matching world, guild, Raven and draw distinguish a missing story call");
+
+  const auto portalDraw=locate(loop,[](auto op,auto next) {
+    return op.op==Op::PUSHI && op.immediate==200 && next.op==Op::BE;
+    });
+  std::fill(changed.data.bytecode.begin()+portalDraw,changed.data.bytecode.begin()+call+script.instruction_at(call).size,std::byte(Op::NOP));
+  check(import({arms}).uncaptured.at(arms).find("portal draw")!=std::string::npos,
+        "removing the entire portal branch from the addon cannot select Classic");
+
+  changed.data.bytecode=program.data.bytecode;
+  const auto trigger=locate(loop,[&](auto op,auto next) {
+    return op.op==Op::PUSHI && op.immediate==1 && next.op==Op::PUSHV && next.symbol==roll->index();
+    });
+  changed.data.bytecode[trigger+1]=std::byte{3};
+  check(import({arms}).points.at(arms).portal.value().triggerRoll==3,"the story outcome follows the changed bytecode");
+
+  changed.data.bytecode=program.data.bytecode;
+  // Swapping reads as well as writes preserves the gesture and portal branches.
+  replaceLocal(gesture->index(),roll->index(),true);
+  check(import({arms}).uncaptured.at(arms).find("VM EVENTRANDY=0, template RANDOM=0")!=std::string::npos,
+        "swapped saved locals stay in the VM even when the branches still agree");
+  }
+
+void realActivities(const NpcSnapshot::Program& program,const fs::path& base,const fs::path& dir,bool addon) {
+  const auto routines=base/"definitions"/program.sha256/"routines.json";
+  const auto fresh=dir/"activity-base",file=fresh/"definitions"/program.sha256/"activities.json";
+  const auto start=std::chrono::steady_clock::now();
+  const auto counts=NpcSnapshot::writeActivities(program,file,routines);
+  const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();
+  check(NpcSnapshot::verifyActivities(program,file,routines)==0,"real activities verify from disk against a fresh VM");
+  const auto library=ActivityDefinitions::read(fresh,program.sha256);
+  // The states come from the game's own routine reader, not from the import's corpus.
+  std::set<std::string> states;
+  for(const auto& [name,rows]:RoutineDefinitions::read(base,program.sha256).routines)
+    for(const auto& row:rows) states.insert(row.state);
+  auto symbols=[](const ActivityDefinitions::Library& records) {
+    std::set<std::string> result;
+    for(const auto& [name,activity]:records.activities) result.insert(name);
+    for(const auto& [name,reason]:records.uncaptured) result.insert(name);
+    for(const auto& [name,activity]:records.points) result.insert(name);
+    return result;
+    };
+  check(states.size()==counts.total && symbols(library)==states,"every state of the base's routines has one activity record");
+  check(library.activities.contains("ZS_SMITH_ANVIL"),"the real ZS_SMITH_ANVIL is captured by the template");
+  const auto& guard=library.points.at("ZS_STAND_GUARDING");
+  using Form=ActivityDefinitions::PointActivity::Form;
+  check(library.points.size()==5 && guard.form==Form::Guard,"five point forms still import");
+  if(addon) {
+    for(const auto& [state,scheme,range]:{std::tuple{"ZS_SIT_BENCH","BENCH",8},std::tuple{"ZS_SIT_CHAIR","CHAIR",10}}) {
+      const auto& mob=library.activities.at(state);
+      const auto& timer=mob.timer.value();
+      check(mob.scheme==scheme && mob.busyBodyState==65547 && mob.useState==1 && mob.leaveState==-1 &&
+            mob.skipApproachWhenBusy && timer.timerSeconds==5 && timer.rollRange==range && timer.rollVariable==".RANDOM" &&
+            timer.gestures==std::vector<ActivityDefinitions::MobActivity::Timer::Gesture>{
+              {"R_CHAIR_RANDOM_1",0},{"R_CHAIR_RANDOM_2",1},{"R_CHAIR_RANDOM_3",2},{"R_CHAIR_RANDOM_4",3}},
+            std::string(state)+" matches the original seat and ordered gesture limits");
+      }
+    const auto& throne=library.activities.at("ZS_SIT_THRONE");
+    check(throne.scheme=="THRONE" && throne.busyBodyState==65547 && throne.skipApproachWhenBusy && !throne.timer,
+          "throne keeps the same Init body guard without a timer");
+    for(const auto& [state,scheme,seconds]:{std::tuple{"ZS_SAW","BAUMSAEGE",15},std::tuple{"ZS_PRAY_INNOS","INNOS",5}}) {
+      const auto& mob=library.activities.at(state);
+      check(mob.scheme==scheme && mob.busyBodyState==32784 && !mob.skipApproachWhenBusy &&
+            mob.timer==ActivityDefinitions::MobActivity::Timer{.timerSeconds=seconds},
+            std::string(state)+" matches the original silent timer reset");
+      }
+    const auto& repair=library.activities.at("ZS_REPAIR_HUT");
+    check(repair.scheme=="REPAIR" && repair.busyBodyState==32784 &&
+          repair.timer==ActivityDefinitions::MobActivity::Timer{5,100,".ZUFALL",{{"T_REPAIR_RANDOM_1",49}}},
+          "repair loops draw one saved roll, with a strict 50/100 gesture cutoff");
+    }
+  if(addon) {
+    using End=ActivityDefinitions::MobActivity::Item::End;
+    const auto script=daedalus::DaedalusScript::from_program(program.data);
+    for(const auto& [state,scheme,required,equip,end,endItem] : {
+        std::tuple{"ZS_COOK_CAULDRON","CAULDRON","ITMI_SCOOP",false,End::None,""},
+        std::tuple{"ZS_COOK_PAN","PAN","ITFOMUTTONRAW",false,End::Use,"ITFOMUTTON"},
+        std::tuple{"ZS_COOK_STOVE","STOVE","ITFOMUTTONRAW",false,End::Remove,"ITFOMUTTON"},
+        std::tuple{"ZS_PICK_ORE","ORE","ITMW_2H_AXE_L_01",true,End::None,""},
+        std::tuple{"ZS_POTION_ALCHEMY","LAB","ITMI_FLASK",false,End::None,""}}) {
+      const auto& mob=library.activities.at(state);
+      const auto& item=mob.item.value();
+      const auto* startSymbol=script.find_symbol_by_name(required);
+      const auto* endSymbol=script.find_symbol_by_name(endItem);
+      check(startSymbol && mob.scheme==scheme && item.required==int32_t(startSymbol->index()) &&
+            item.equip==equip && item.endAction==end && item.endItem==(endSymbol ? int32_t(endSymbol->index()) : 0),
+            std::string(state)+" retains its entrance and exit inventory effects");
+      }
+    }
+  if(addon) check(library.uncaptured.contains("ZS_WASH_FP"),"the similar WASH free point stays outside the PEE form");
+  check(guard.point=="STAND" && guard.enterAnimation=="T_STAND_2_HGUARD" && guard.leaveAnimation=="T_HGUARD_2_STAND" &&
+        guard.timerSeconds==5 && guard.rollRange==10 && guard.gestures[0].animation=="T_HGUARD_LOOKAROUND" &&
+        guard.gestures[0].resetTimer,"real guard parameters match the bytecode study");
+  const auto& sit=library.points.at("ZS_SIT_CAMPFIRE");
+  const auto& pee=library.points.at("ZS_PEE");
+  const auto& wp=library.points.at("ZS_STAND_WP");
+  const auto& arms=library.points.at("ZS_STAND_ARMSCROSSED");
+  check(sit.form==Form::Campfire && sit.point=="CAMPFIRE" && sit.occupied()=="wait" && sit.approachDistance==500 &&
+        sit.enterAnimation=="T_STAND_2_SIT" && sit.enterBodyState==65547 && sit.leaveAnimation=="T_SIT_2_STAND" &&
+        sit.leaveBodyState==98304 && !sit.timed(),"campfire uses BS_SIT and BS_STAND and waits when occupied");
+  check(pee.form==Form::Pee && pee.point=="PEE" && pee.occupied()=="align_waypoint" && !pee.timed() &&
+        pee.enterAnimation=="T_STAND_2_PEE" && pee.leaveAnimation=="T_PEE_2_STAND","pee enters only on its FP");
+  check(wp.form==Form::Waypoint && wp.point.empty() && wp.initialStage==1 && wp.poseStage==0 && wp.rollRange==10,
+        "waypoint Init aligns unconditionally and the pose has no FP approach");
+  check(arms.form==Form::ArmsCrossed && arms.point=="STAND" && arms.rollRange==7,"arms draws one of seven gestures");
+  if(addon)
+    check(arms.portal && arms.portal->rollRange==200 && arms.portal->triggerRoll==1 && arms.portal->world==4 &&
+          arms.portal->ravenDead==0 && arms.portal->excludedGuild==13 && arms.portal->function=="B_EVENT_PORTAL_EARTHQUAKE",
+          "addon arms has a separate portal draw");
+  else check(!arms.portal,"Classic arms goes directly from the gesture to the timer reset");
+  for(const auto* a:{&arms,&pee})
+    check(a->initialStage==1 && a->walkingStage==2 && a->arrivedStage==1 && a->poseStage==0 && a->approachDistance==500,
+          "staged FP activities retain the original stage assignments");
+  for(const auto* a:{&arms,&wp}) {
+    check(a->enterAnimation=="T_STAND_2_LGUARD" && a->leaveAnimation=="T_LGUARD_2_STAND" && a->timerSeconds==5,
+          "light guard animations and strict five-second threshold");
+    constexpr std::array gestures={"T_LGUARD_SCRATCH","T_LGUARD_STRETCH","T_LGUARD_CHANGELEG"};
+    for(size_t i=0;i<a->gestures.size();++i)
+      check(a->gestures[i].animation==(i<gestures.size() ? gestures[i] : "") && a->gestures[i].resetTimer,
+            "distinct gestures in draw order, a timer reset also on silent outcomes");
+    }
+  const auto& anvil=library.activities.at("ZS_SMITH_ANVIL");
+  check(anvil.scheme=="BSANVIL" && anvil.perceptions=="PERCEPTION_SET_NORMAL" && anvil.walkMode==1 && anvil.useState==1 &&
+        anvil.leaveState==-1 && anvil.busyBodyState==32784,"the real anvil parameters");
+  std::string captured;
+  for(const auto& [name,activity]:library.activities) captured+=(captured.empty() ? "" : ", ")+name+" ("+activity.scheme+")";
+  for(const auto& [name,activity]:library.points) captured+=", "+name+" (point "+activity.point+")";
+  std::cout<<"Real activities: "<<counts.total<<" states, "<<counts.captured<<" captured, "<<counts.situations
+           <<" compared situations, "<<ms<<" ms: "<<captured<<"\n"
+           <<"Real activities SHA-256: "<<BaseImport::sha256File(file)<<"\n";
+  for(const auto& [name,reason]:library.uncaptured) std::cout<<"  VM: "<<name<<": "<<reason<<"\n";
+  const auto section=base/"definitions"/program.sha256/"activities.json";
+  if(fs::exists(section)) {
+    const auto ready=ActivityDefinitions::read(base,program.sha256);
+    const auto version=read(section)["version"].GetInt();
+    if(version<ActivityDefinitions::FormatVersion) {
+      check(fs::is_regular_file(base/"base-files.json"),"an archived section requires its payload manifest");
+      const auto manifest=read(base/"base-files.json");
+      const auto files=manifest["files"].GetArray();
+      const auto path=section.lexically_relative(base).generic_string();
+      const auto entry=std::find_if(files.begin(),files.end(),[&](const auto& f) { return f["path"].GetString()==path; });
+      check(entry!=files.end() && (*entry)["sha256"].GetString()==BaseImport::sha256File(section),
+            "the archived section matches its payload manifest");
+      check(symbols(ready)==states,"the archived section covers the installed routines");
+      auto historical=library.activities;
+      for(auto name:{"ZS_SIT_THRONE","ZS_SAW","ZS_REPAIR_HUT","ZS_PRAY_INNOS"})
+        historical.erase(name);
+      std::erase_if(historical,[](const auto& entry) { return entry.second.item.has_value(); });
+      if(version<4) {
+        historical.erase("ZS_SIT_BENCH");
+        historical.erase("ZS_SIT_CHAIR");
+        }
+      check(ready.activities==historical,"archived sections retain their original mob records");
+      if(version==2) {
+        check(ready.points.size()==1 && ready.points.at("ZS_STAND_GUARDING")==guard,"v2 retains the guard");
+        for(auto name:{"ZS_SIT_CAMPFIRE","ZS_PEE","ZS_STAND_ARMSCROSSED","ZS_STAND_WP"})
+          check(ready.uncaptured.contains(name),"v2 keeps the original fallback for "+std::string(name));
+        }
+      else check(ready.points==library.points,"v3 retains all point forms");
+      std::cout<<"Ready v"<<version<<": "<<states.size()<<" routine state symbols, "<<ready.activities.size()
+               <<" mobs, "<<ready.points.size()<<" point forms, "<<ready.uncaptured.size()<<" on the VM\n";
+      }
+    else {
+      std::ifstream x(section,std::ios::binary),y(file,std::ios::binary);
+      check(std::string(std::istreambuf_iterator<char>(x),{})==std::string(std::istreambuf_iterator<char>(y),{}),
+            "the ready base's activities.json equals a fresh import");
+      }
+    }
+  }
+
+void realHelpers(const NpcSnapshot::Program& program,const fs::path& base) {
+  const auto helpers=NpcHelperDefinitions::read(base,program.sha256);
+  check(helpers.helpers.size()==6 && helpers.uncaptured.empty(),"the installed corpus captures all six helper forms");
+  std::map<std::string,size_t> calls;
+  for(const auto& [name,npc]:NpcDefinitions::read(base,program.sha256).npcs) {
+    (void)name;
+    for(const auto& step:npc.steps)
+      if(const auto* call=std::get_if<NpcDefinitions::Call>(&step); call && call->deferred) {
+        ++calls[call->function];
+        }
+    }
+  size_t total=0;
+  for(const auto& [name,count]:calls) {
+    check(helpers.helpers.contains(name),"every deferred helper of the installed NPC corpus is captured");
+    std::cout<<"Real helper "<<name<<": "<<count<<" deferred calls\n";
+    total+=count;
+    }
+  std::cout<<"Real helpers: "<<helpers.helpers.size()<<" captured, "<<helpers.uncaptured.size()<<" VM fallbacks; "<<total<<" deferred calls removed\n";
+  }
+
+void fixture(const fs::path& dir) {
+  auto p=Fixture().make();
+  npcLayout(p);
+  itemLayout(p);
+  focusLayout();
+  guildLayout();
+  spellLayout();
+  itemDefinitions(dir);
+  npcDefinitions(dir);
+  helperDefinitions(dir);
+  placementDefinitions(dir);
+  activityDefinitions(dir);
+  itemSelection(dir);
+  routineDefinitions(dir);
+  routineSelection(dir);
+  auto a=dir/"a",b=dir/"b";
+  NpcSnapshot::write(p,a); check(NpcSnapshot::verify(p,a)==0,"fixture verifies");
+  NpcSnapshot::write(p,b);
+  for(auto name:{"npcs.json","items.json","routines.json","population.json","report.json"}) {
+    std::ifstream x(a/name,std::ios::binary),y(b/name,std::ios::binary);
+    check(std::string(std::istreambuf_iterator<char>(x),{})==std::string(std::istreambuf_iterator<char>(y),{}),"byte-identical snapshots");
+    }
+  auto npc=read(a/"npcs.json"); auto& records=npc["records"];
+  check(records.Size()==2,"two NPCs");
+  check(std::string(records[0]["reason"].GetString())=="game_state","global dependency refused");
+  check(std::string(records[0]["detail"].GetString())=="CHAPTER","global dependency names the variable");
+  auto& good=records[1];
+  check(good["fields"]["id"].GetInt()==123 && good["fields"]["attribute"][0].GetInt()==42,"prototype and helper executed");
+  check(std::string(good["fields"]["daily_routine"].GetString())=="RTN_START_123","function field uses symbol name");
+  check(good["calls"].Size()==4 && good["calls"][3]["deferred"].GetBool(),"random helper is deferred transitively");
+  check(std::string(good["calls"][3]["arguments"][0].GetString())=="self","deferred arguments retained");
+  auto items=read(a/"items.json"); check(items["records"][0]["fields"]["value"].GetInt()==9,"item fields");
+  auto routines=read(a/"routines.json"); check(routines["records"][0]["rows"].Size()==2,"two routine rows");
+  check(std::string(routines["records"][0]["rows"][0]["state"].GetString())=="ZS_TEST","routine state symbol");
+  auto population=read(a/"population.json");
+  for(unsigned i=0;i<2;++i) {
+    check(population["records"][i]["calls"].Size()==1 && population["records"][i].HasMember("reason"),"safe startup prefix before state branch");
+    check(std::string(population["records"][i]["detail"].GetString())=="CHAPTER before state branch","startup stops at the state branch");
+    }
+  check(population["records"][2]["calls"].Size()==4,"all four population APIs");
+  auto report=read(a/"report.json");
+  check(report["deferred_calls"]["AMBIENT"].GetInt()==1 && report["uncaptured"].Size()==3,"report reasons and deferred counts");
+
+  good["fields"]["attribute"][0].SetInt(43);
+  write(b/"npcs.json",npc);
+  check(NpcSnapshot::verify(p,b)>0,"verification rejects a changed attribute");
+  good["fields"]["attribute"][0].SetInt(42);
+  good["calls"][0].Swap(good["calls"][1]);
+  write(b/"npcs.json",npc);
+  check(NpcSnapshot::verify(p,b)>0,"verification rejects reordered constructor calls");
+  good["calls"][0].Swap(good["calls"][1]);
+  write(b/"npcs.json",npc);
+  check(NpcSnapshot::verify(p,b)==0,"restored snapshot verifies");
+  routines["records"][0]["rows"].PopBack();
+  write(b/"routines.json",routines);
+  check(NpcSnapshot::verify(p,b)>0,"verification rejects a missing routine row");
+  }
+fs::path readyBase() {
+  if(auto* p=std::getenv("OPENGOTHIC_BASE"); p && *p) return p;
+  fs::path cache;
+  if(auto* p=std::getenv("OPENGOTHIC_BASE_CACHE"); p && *p) cache=p;
+  else if(auto* p=std::getenv("HOME")) cache=fs::path(p)/".cache/gothic-ai/base";
+  auto* fingerprint=std::getenv("OPENGOTHIC_BASE_FINGERPRINT");
+  if(fingerprint && *fingerprint) return cache/fingerprint;
+  // Match BaseStore's installation-specific pointer; unrelated fixture pointers are irrelevant.
+  const auto* game=std::getenv("GOTHIC_DIR");
+  if(!game || !*game) return {};
+  const auto gothic=fs::weakly_canonical(game).generic_string();
+  const auto file=cache/"current"/(BaseImport::sha256(gothic)+".json");
+  if(!fs::is_regular_file(file)) return {};
+  auto pointer=read(file);
+  if(!pointer.IsObject() || !pointer.HasMember("version") || pointer["version"]!=1 ||
+     !pointer.HasMember("gothic") || !pointer["gothic"].IsString() || pointer["gothic"].GetString()!=gothic ||
+     !pointer.HasMember("base") || !pointer["base"].IsObject()) return {};
+  const auto& base=pointer["base"];
+  if(base.HasMember("path") && base["path"].IsString()) {
+    fs::path path=base["path"].GetString();
+    if(path.is_absolute() && fs::is_regular_file(path/"programs/programs.json")) return path;
+    }
+  return {};
+  }
+}
+int main(int argc,char** argv) {
+  auto dir=fs::temp_directory_path()/("gothic-npc-snapshot-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  try {
+    if(argc>2) throw std::runtime_error("usage: gothic-npc-snapshot-contract [classic-program-base]");
+    fs::create_directories(dir);
+    fixture(dir);
+    auto base=readyBase();
+    if(base.empty()) std::cout<<"SKIP real corpus: no ready base selected (OPENGOTHIC_BASE or the GOTHIC_DIR current-base pointer)\n";
+    else {
+      auto program=NpcSnapshot::load(base);
+      NpcSnapshot::write(program,dir/"real");
+      check(NpcSnapshot::verify(program,dir/"real")==0,"real corpus verifies");
+      runtimeItems(program,base);
+      realActivities(program,base,dir,true);
+      pointMutations(program,dir,true);
+      realHelpers(program,base);
+      }
+    if(argc==2) {
+      const auto classic=NpcSnapshot::load(argv[1]);
+      realActivities(classic,argv[1],dir,false);
+      pointMutations(classic,dir,false);
+      }
+    fs::remove_all(dir);
+    std::cout<<"NPC snapshot contract passed: "<<assertions<<" assertions\n";
+    return 0;
+    }
+  catch(const std::exception& e) { fs::remove_all(dir); std::cerr<<"NPC snapshot contract: "<<e.what()<<'\n'; return 1; }
+  }

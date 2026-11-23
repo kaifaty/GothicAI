@@ -1,6 +1,9 @@
 #include "savegameheader.h"
 #include "serialize.h"
 
+#include <cstring>
+#include <stdexcept>
+
 const char SaveGameHeader::tag[]="OpenGothic/Save";
 
 struct tm36 {

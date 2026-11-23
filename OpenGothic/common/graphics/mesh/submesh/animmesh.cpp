@@ -1,4 +1,5 @@
 #include "animmesh.h"
+#include "loadprobe.h"
 #include "packedmesh.h"
 
 #include <Tempest/Log>
@@ -19,6 +20,7 @@ static size_t countBones(const Resources::VertexA* v, size_t n) {
 AnimMesh::AnimMesh(const PackedMesh& mesh)
   : bonesCount(countBones(mesh.verticesA.data(),mesh.verticesA.size())) {
   if(Resources::hasGraphicsDevice()) {
+    LoadProbe::Vobs::Scope probe("mesh_gpu");
     vbo  = Resources::vbo (mesh.verticesA.data(),mesh.verticesA.size());
     ibo  = Resources::ibo (mesh.indices.data(),  mesh.indices.size());
     ibo8 = Resources::ssbo(mesh.indices8.data(), mesh.indices8.size());
@@ -30,6 +32,7 @@ AnimMesh::AnimMesh(const PackedMesh& mesh)
     sub[i].material  = Resources::loadMaterial(mesh.subMeshes[i].material,true);
     sub[i].iboOffset = mesh.subMeshes[i].iboOffset;
     sub[i].iboSize   = mesh.subMeshes[i].iboLength;
+    sub[i].texel     = mesh.subMeshes[i].texel;
     }
 
   // compact similar sub-meshes. not a big deal, but helps in graphics debugging
@@ -41,6 +44,7 @@ AnimMesh::AnimMesh(const PackedMesh& mesh)
        a.texName==b.texName &&
        a.material==b.material) {
       a.iboSize += b.iboSize;
+      a.texel    = a.texel.merged(b.texel);
       } else {
       sub[cnt] = b;
       ++cnt;

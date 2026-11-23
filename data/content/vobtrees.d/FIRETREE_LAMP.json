@@ -1,0 +1,10 @@
+{
+ "format": 1,
+ "add": [
+  {"key": "lamp-candle", "kind": "emitter", "pfx": "OWN_LAMP_CANDLE", "position": [0, -1.5, 0], "yaw_deg": 0},
+  {"key": "lamp-glow", "kind": "emitter", "pfx": "OWN_LAMP_GLOW", "position": [0, -0.5, 0], "yaw_deg": 0},
+  {"key": "lamp-light", "kind": "light", "position": [0, -0.5, 0], "yaw_deg": 0, "range": 650, "color": [255, 150, 72],
+   "color_ani": [[255, 150, 72], [255, 144, 66], [255, 152, 75], [252, 140, 62], [255, 150, 72], [255, 147, 70]],
+   "range_ani": [1.0, 0.97, 1.01, 0.95, 1.0, 0.98], "ani_fps": 6, "cookie": "OWN_LAMP_COOKIE.TGA"}
+ ]
+}

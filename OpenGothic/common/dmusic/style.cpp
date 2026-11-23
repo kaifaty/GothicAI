@@ -42,10 +42,3 @@ void Style::implRead(Riff &input) {
       parts.emplace_back(Part(input));
     }
   }
-
-const Style::Part* Style::findPart(const GUID &guid) const {
-  for(auto& i:parts)
-    if(i.header.guidPartID==guid)
-      return &i;
-  return nullptr;
-  }

@@ -1,9 +1,11 @@
 #include "particlefx.h"
+#include "gameservices.h"
 
 #include "utils/parser.h"
-#include "gothic.h"
 #include "resources.h"
 #include "utils/string_frm.h"
+
+#include <cctype>
 
 using namespace Tempest;
 
@@ -43,7 +45,7 @@ ParticleFx::ParticleFx(const Def::ParticleEffect& src, std::string_view name)
   ppsIsLooping        = src.pps_is_looping!=0;
   ppsIsSmooth         = src.pps_is_smooth!=0;
   ppsFPS              = src.pps_fps>0 ? src.pps_fps : 1.f;
-  ppsCreateEm         = Gothic::inst().loadParticleFx(src.pps_create_em_s);
+  ppsCreateEm         = GameServices::inst().loadParticleFx(src.pps_create_em_s);
   ppsCreateEmDelay    = uint64_t(src.pps_create_em_delay);
 
   shpType             = loadEmitType(src.shp_type_s);
@@ -148,6 +150,22 @@ bool ParticleFx::isDecal() const {
   return ppsValue<0;
   }
 
+float ParticleFx::taaReactive() const {
+  if(isDecal())
+    return visMaterial.taaReactive();
+  return isPrecipitation(dbgName) ? 0.f : 1.f;
+  }
+
+bool ParticleFx::isPrecipitation(std::string_view name) {
+  // G2's are MFX_THUNDERSTORM_RAIN and SNOW; MFX_FIRERAIN_* is falling fire, which stays reactive
+  std::string up(name);
+  for(auto& c:up)
+    c = char(std::toupper(static_cast<unsigned char>(c)));
+  if(up.find("SNOW")!=std::string::npos)
+    return true;
+  return up.find("RAIN")!=std::string::npos && up.find("FIRE")==std::string::npos;
+  }
+
 bool ParticleFx::hasTrails() const {
   return trlTexture!=nullptr && trlWidth!=0.f && trlFadeSpeed>0;
   }
@@ -160,6 +178,8 @@ uint64_t ParticleFx::effectPrefferedTime() const {
   auto v0   = prefferedTime;
   auto v1   = ppsCreateEm==nullptr ? 0 : ppsCreateEmDelay+ppsCreateEm->effectPrefferedTime();
   auto time = std::max(v0,v1);
+  for(const auto* other:with)
+    time = std::max(time,other->effectPrefferedTime());
 
   time = std::max<uint64_t>(1,time); // sleep spell has pfx burst effect with zero life span
   return time;
@@ -190,6 +210,16 @@ float ParticleFx::ppsScale(uint64_t time) const {
   return v;
   }
 
+std::pair<uint64_t,uint64_t> ParticleFx::keySpan(bool looped, uint64_t born, uint64_t now, uint64_t dt, uint64_t blockTime) const {
+  if(!looped || !ppsIsLooping || prefferedTime==0)
+    return {blockTime, blockTime+dt};
+  // born within the step: its keys start at 0, the step is shorter
+  const uint64_t to   = now>born ? now-born : 0;
+  const uint64_t from = to>dt ? to-dt : 0;
+  const uint64_t base = from/prefferedTime*prefferedTime;
+  return {from-base, to-base};
+  }
+
 uint64_t ParticleFx::calcPrefferedTimeSingle() const {
   uint64_t ret = calcPrefferedTimeSingle(ppsScaleKeys,ppsFPS);
   //ret = std::max<uint64_t>(1,ret);
@@ -209,7 +239,8 @@ uint64_t ParticleFx::calcPrefferedTimeSingle(const KeyList& k, float fps) {
   }
 
 const Tempest::Texture2d* ParticleFx::loadTexture(std::string_view src) {
-  auto view = Resources::loadTexture(src);
+  // a trail and a mark find an own texture of the content as the sprite does (Material)
+  auto view = Resources::loadMaterialAlbedo(src);
   if(view==nullptr)
     view = &Resources::fallbackBlack();
   return view;

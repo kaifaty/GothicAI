@@ -5,6 +5,18 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 stage="${1:?Usage: nav-teacher-v3b-remote.sh build|measure|retry}"
 [[ ( "$stage" == build || "$stage" == measure || "$stage" == retry ) && $# == 1 ]] || { echo "Expected build, measure or retry" >&2; exit 2; }
 export GQ_OWNER=nav-teacher-v3b
+# Validate the shared settings before creating task directories or queue jobs.
+game_env=()
+for key in OPENGOTHIC_VIDEOS_FINGERPRINT ${!OPENGOTHIC_BASE@}; do
+  [[ -z "${!key+x}" ]] || game_env+=("$key=${!key}")
+done
+printf -v game_command '%q ' env ${game_env[@]+"${game_env[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")"
+game_settings="$(ssh -o ConnectTimeout=10 ryzen "$game_command")"
+eval "$game_settings"
+game_env=()
+for key in OPENGOTHIC_VIDEOS_FINGERPRINT ${!OPENGOTHIC_BASE@}; do
+  [[ -z "${!key+x}" ]] || game_env+=("$key=${!key}")
+done
 task="$(ssh -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-teacher-v3b" "$HOME"')"
 results=/mnt/shared/gothic-ai/nav-teacher-v3b
 input_source="$(dirname "$task")/nav-memory-v4"
@@ -75,6 +87,8 @@ ssh ryzen "cat > '$task/phase.sh'" <<'PHASE'
 #!/usr/bin/env bash
 set -euo pipefail
 task="$(cd "$(dirname "$0")" && pwd)"
+game_settings="$(python3 "$task/source/scripts/ryzen_game.py")"
+eval "$game_settings"
 results="${1:?result storage}"
 shift
 phase="${1:?phase}"
@@ -90,11 +104,11 @@ cd "$task/source"
 if [[ "$phase" == mode ]]; then
   test -f "$results/build-passed"
   mode="${1:?memory mode}"
-  timeout 108m "$task/.venv/bin/python" -I scripts/nav_teacher_v3b.py evaluate \
-    --task "$results" --runtime "$task" --assets "$HOME/gothic-ai/game" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3b.py evaluate \
+    --task "$results" --runtime "$task" --assets "$GOTHIC_DIR" \
     --mode "$mode" --parallel 3 --budget-seconds 6300
-  timeout 10m "$task/.venv/bin/python" -I scripts/nav_teacher_v3b.py safety \
-    --task "$results" --runtime "$task" --assets "$HOME/gothic-ai/game" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3b.py safety \
+    --task "$results" --runtime "$task" --assets "$GOTHIC_DIR" \
     --mode "$mode" --budget-seconds 540
   exit 0
 fi
@@ -102,10 +116,17 @@ if [[ "$phase" == cost ]]; then
   test -f "$results/build-passed"
   # The offline replay below uses only actual eye/pose streams recorded by the
   # predeclared cases; neither teacher nor game is run again for this phase.
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3b.py cost \
-    --task "$results" --runtime "$task" --assets "$HOME/gothic-ai/game"
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3b.py cost \
+    --task "$results" --runtime "$task" --assets "$GOTHIC_DIR"
   exit 0
 fi
+[[ "$phase" == build || "$phase" == retry-build ]] || { echo "Unknown phase: $phase" >&2; exit 2; }
+source "$task/source/scripts/ryzen-build.sh"
+cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+  "${RYZEN_CMAKE_FLAGS[@]}" \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+  -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
+  -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
 if [[ "$phase" == retry-build ]]; then
   # Only the familiar hazard price changed. Journey and memory/cache checks
   # already passed; retain their first-round measurements as controls.
@@ -113,13 +134,8 @@ if [[ "$phase" == retry-build ]]; then
   touch "$results/build-passed"
   exit 0
 fi
-[[ "$phase" == build ]] || { echo "Unknown phase: $phase" >&2; exit 2; }
 if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv "$task/.venv"; fi
 uv pip install --python "$task/.venv/bin/python" numpy pytest
-cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-  -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
-  -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
 cmake --build "$task/build" --target gothic-body-runner \
   check-navigation-memory check-navmemoryteacher --parallel 3
 cxx_args=(-std=c++20 -O3 -DNDEBUG -Wall -Wconversion -Werror
@@ -137,7 +153,7 @@ PHASE
 build_phase=build
 [[ "$stage" != retry ]] || build_phase=retry-build
 identifier=$("$ROOT/scripts/gq" submit --class batch --threads 16 --mem 8G --max 2h --cpu-quota 1200% \
-  --name "nav teacher v3b $build_phase" -- bash "$task/phase.sh" "$results" "$build_phase")
+  --name "nav teacher v3b $build_phase" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$results" "$build_phase")
 printf 'build %s\n' "$identifier"
 if [[ "$stage" == measure || "$stage" == retry ]]; then
   # Sixteen declared threads serialize these phases on the 28-thread host. Each
@@ -146,12 +162,12 @@ if [[ "$stage" == measure || "$stage" == retry ]]; then
   [[ "$stage" != retry ]] || modes=(familiar-local familiar-stranger)
   for mode in "${modes[@]}"; do
     identifier=$("$ROOT/scripts/gq" submit --class batch --threads 16 --mem 8G --max 2h --cpu-quota 1200% \
-      --name "nav teacher v3b $stage $mode" -- bash "$task/phase.sh" "$results" mode "$mode")
+      --name "nav teacher v3b $stage $mode" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$results" mode "$mode")
     printf '%s %s\n' "$mode" "$identifier"
   done
 fi
 if [[ "$stage" == measure ]]; then
   identifier=$("$ROOT/scripts/gq" submit --class batch --threads 28 --mem 8G --max 2h --cpu-quota 1200% \
-    --name "nav teacher v3b paired cost" -- bash "$task/phase.sh" "$results" cost)
+    --name "nav teacher v3b paired cost" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$results" cost)
   printf 'paired-cost %s\n' "$identifier"
 fi

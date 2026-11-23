@@ -15,6 +15,41 @@ const int VSM_FOG_MIP       = 5;
 const int VSM_PAGE_PER_ROW  = 8192/VSM_PAGE_SIZE;
 const int VSM_MAX_PAGES     = VSM_PAGE_PER_ROW * VSM_PAGE_PER_ROW; // 1024;
 const int VSM_CLIPMAP_SIZE  = VSM_PAGE_SIZE * VSM_PAGE_TBL_SIZE;
+// Meshlet-page pairs the shadow pages may draw a frame (peak 18.6k at 1280x720 on Ryzen, 2026-11-04); the buffers of
+// pairs and of candidates are sized to it (DrawCommands::VsmMaxMeshlets; OPENGOTHIC_VSM_PAIRS sets another cap for a
+// study, DrawCommands::vsmPairCap). The visibility pass lists a cluster for each page entry its sphere touches; the
+// meshlets' pass (vsm_cull_meshlets.comp) keeps an object's meshlets whose own spheres touch the entry. The pairs go by
+// bins: when the frame asks more than the cap, the last bins in their order are left out whole, the same ones in every
+// frame (vsm_cull_meshlets.comp) - reports/engine/2026-11-16-modern-trees/shadow-flicker.md, «Второй круг»
+const uint VSM_MAX_MESHLETS = 512u*1024u;
+// A slot the meshlets' pass reserved and found no meshlet for (it never should): the packing skips it, so the slot does
+// not keep an older frame's pair (vsm_cull_meshlets.comp, vsm_pack_draws.comp)
+const uint VSM_PAIR_SKIP = 0xFFFFFFFFu;
+// The bins of pairs in the order they are drawn when the pairs are short: the lamps' faces by the lamp's distance from
+// the camera, then the sun's pages by mip from the finest and in a mip by the ring of the page table, from the centre
+// out. A ring is VSM_RING_WIDTH pages wide, so a mip uses VSM_RING_BINS/VSM_RING_WIDTH of its bins
+const int  VSM_LAMP_BINS = 16;
+const int  VSM_RING_BINS = VSM_PAGE_TBL_SIZE/2;
+// The layout of the sun's entries (vsm_clump_pages.comp, vsm_merge_pages.comp) is a function of the marked pages on the
+// grid of the page table alone: quads of 2x2 pages at even x and y, stripes of them that end at the next ring and at
+// each VSM_STRIPE_PAGES-th column. The table's centre is even, so a quad of the grid and a stripe lie in one ring of
+// VSM_RING_WIDTH pages, and an entry's bin is the bin of each of its pages, whatever else is marked and whatever bins
+// the frame before drew. Before, quads took the grid from the first marked page of a stripe of rows and stripes ran
+// across rings: a page's bin followed the marks of TAA's jittered frame, and, split by the cut, the demand followed the
+// cut (reports/engine/2026-11-16-modern-trees/shadow-flicker.md, «Третий круг»)
+const int  VSM_RING_WIDTH   = 2;
+const int  VSM_STRIPE_PAGES = 8;
+const int  VSM_PAIR_BINS = VSM_LAMP_BINS + VSM_PAGE_MIPS*VSM_RING_BINS;
+const int  VSM_BIN_WORDS = (VSM_PAIR_BINS+31)/32;
+// Geometry statistics order: other, visual spruce GLB and coarse spruce GLB, for each sun mip then for all lamps.
+// In the diagnostic cull/pack variants only, the high bits of the intermediate entry carry Cluster.shadowCommandId's
+// class (bits 16–17) and whether the probe selects a different GLB (bit 18). The raster payload carries just the entry.
+const uint VSM_GEOMETRY_CLASSES = 3u;
+const uint VSM_GEOMETRY_ROWS    = VSM_GEOMETRY_CLASSES*(VSM_PAGE_MIPS+1);
+const uint VSM_GEOMETRY_MASK    = 0x70000u;
+const uint VSM_GEOMETRY_PROBE   = 0x40000u;
+// No sphere of an object's meshlets (Bucket::meshletSpheres): its cluster is taken whole
+const uint VSM_NO_SPHERES = 0xFFFFFFFFu;
 // const int VSM_CUBE_TBL_SIZE = 2;
 
 struct VsmHeader {
@@ -25,7 +60,39 @@ struct VsmHeader {
   uint  pagePerMip[VSM_PAGE_MIPS];
   ivec4 pageBbox[VSM_PAGE_MIPS];
   uint  pageOmniCount;
+  // statistics for OPENGOTHIC_VSM_STATS (Renderer::vsmStats), filled every frame
+  uint  pageListCount;     // entries listed for the allocator: sun pages and light faces
+  uint  pagePlaced;        // entries the allocator placed in the pool
+  uint  omniTileOverflow;  // 16x16 screen tiles with more shadowed lights than a tile holds
+  uint  omniTileLightsMax; // most shadowed lights in one tile
+  uint  pairSpill;         // pairs the packing put past their draw's range (vsm_pack_draws.comp): 0 unless broken
+  uint  candidateCount;    // cluster-entry candidates of the visibility pass; past the cap of pairs they are lost
+  uint  clusterPairs;      // pairs the candidates' clusters ask whole: the demand before the meshlets' test
+  uint  admitBits[VSM_BIN_WORDS];     // the bins drawn this frame, a bit each (vsm_cull_meshlets.comp)...
+  uint  admitPrevBits[VSM_BIN_WORDS]; // ...and the frame before: vsm_clear.comp moves the one into the other
+  uint  pairDemand[VSM_PAIR_BINS];    // pairs of each bin after the meshlets' test
   };
+
+// The final word of a packed meshlet's 8-bit index list encodes both counts when its first two indices are equal.
+uvec2 vsmMeshletCounts(uint lastIndexWord, uint maxVertices, uint maxPrimitives) {
+  if(bitfieldExtract(lastIndexWord, 0, 8)==bitfieldExtract(lastIndexWord, 8, 8))
+    return uvec2(bitfieldExtract(lastIndexWord, 24, 8), bitfieldExtract(lastIndexWord, 16, 8));
+  return uvec2(maxVertices, maxPrimitives);
+  }
+
+// A lamp's bin by its distance from the camera, cm: under 2.56 m the first, each next twice as far
+uint vsmLampBin(float dist) {
+  return uint(clamp(findMSB(uint(dist/256.0))+1, 0, VSM_LAMP_BINS-1));
+  }
+
+// A sun's entry's bin: its mip, then the ring of the mip's page table its farthest page is in, from the centre out;
+// an entry holds one ring (VSM_RING_WIDTH)
+uint vsmSunBin(const ivec3 page, const ivec2 sz) {
+  const int c  = VSM_PAGE_TBL_SIZE/2;
+  const int rx = max(page.x+sz.x-1-c, c-1-page.x);
+  const int ry = max(page.y+sz.y-1-c, c-1-page.y);
+  return uint(VSM_LAMP_BINS + page.z*VSM_RING_BINS + clamp(max(rx, ry)/VSM_RING_WIDTH, 0, VSM_RING_BINS-1));
+  }
 
 uint packVsmPageInfo(ivec3 at, ivec2 size) {
   // 1 : 8 : 8 : 7 : 4 : 4

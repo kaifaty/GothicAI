@@ -1,4 +1,6 @@
 import json
+import struct
+import zlib
 
 import numpy as np
 import pytest
@@ -130,16 +132,77 @@ def test_compose_joins_parts_and_rejects_shared_texture(tmp_path, monkeypatch):
         building_set.compose('hut-4-review', ['roofs-1', 'hut-4'])
 
 
+def test_compose_carries_the_maps_of_a_records_layers(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    folder = tmp_path / 'content-staging/meadow-1/materials'
+    maps = lambda stem: {k: f'{stem}/{k}.dds' for k in ('albedo', 'normal', 'orm')}
+    for stem in ('sward', 'earth', 'rock', 'tufts'):
+        (folder / stem).mkdir(parents=True)
+        for path in maps(stem).values():
+            (folder / path).write_bytes(f'meadow-1/{path}'.encode())
+    index = {'MEADOW.TGA': {'grass': {'fine': 1}, 'ground': {'sward': maps('sward') | {'tile_m': 4.},
+                                                            'earth': maps('earth') | {'tile_m': 2.}, 'far': 5.3}},
+             'PATH.TGA': {'verge': {'of': 'MEADOW.TGA', 'reach': 90, 'margin': 50}},
+             'STEIN.TGA': maps('rock') | {'projection': {'tile_m': 5.75}, 'fringe': maps('tufts') | {'tile_m': 4.}}}
+    (folder / 'materials.json').write_text(json.dumps(index))
+    result = building_set.compose('working-2', ['roofs-1', 'meadow-1'])
+    assert result['parts'] == {'roofs-1': 1, 'meadow-1': 3}
+    out = tmp_path / 'content-staging/working-2'
+    assert json.loads((out / 'materials/materials.json').read_text()) | index == json.loads(
+        (out / 'materials/materials.json').read_text())
+    for stem in ('sward', 'earth', 'rock', 'tufts'):
+        for path in maps(stem).values():
+            assert (out / 'materials' / path).read_bytes() == f'meadow-1/{path}'.encode()
+    digests = json.loads((out / 'composition.json').read_text())['dds_sha256']
+    assert {'sward/albedo.dds', 'earth/orm.dds', 'tufts/normal.dds'} <= set(digests)
+
+
+def test_compose_carries_the_maps_of_a_road_and_of_the_meadows_border(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    folder = tmp_path / 'content-staging/road-1/materials'
+    maps = lambda stem, keys=('albedo', 'normal', 'orm'): {k: f'{stem}/{k}.dds' for k in keys}
+    ribbon = maps('ribbon', ('tint', 'normal', 'mask'))
+    layers = [maps(stem) for stem in ('sward', 'earth', 'crust', 'loose')] + [ribbon]
+    for layer in layers:
+        for path in layer.values():
+            (folder / path).parent.mkdir(parents=True, exist_ok=True)
+            (folder / path).write_bytes(f'road-1/{path}'.encode())
+    index = {'MEADOW.TGA': {'grass': {'fine': 1}, 'ground': {'sward': maps('sward'), 'earth': maps('earth'),
+                                                            'border': maps('loose') | {'tile_m': 3.}}},
+             'PATH.TGA': {'verge': {'of': 'MEADOW.TGA', 'reach': 120, 'margin': 100},
+                          'track': {'crust': maps('crust') | {'tile_m': 4.}, 'loose': maps('loose') | {'tile_m': 3.},
+                                    'ribbon': ribbon, 'wander': 14.}}}
+    (folder / 'materials.json').write_text(json.dumps(index))
+    building_set.compose('working-2', ['roofs-1', 'road-1'])
+    out = tmp_path / 'content-staging/working-2'
+    assert json.loads((out / 'materials/materials.json').read_text()) | index == json.loads(
+        (out / 'materials/materials.json').read_text())
+    for layer in layers:
+        for path in layer.values():
+            assert (out / 'materials' / path).read_bytes() == f'road-1/{path}'.encode()
+    digests = json.loads((out / 'composition.json').read_text())['dds_sha256']
+    assert {'crust/albedo.dds', 'loose/orm.dds', 'ribbon/tint.dds', 'ribbon/mask.dds'} <= set(digests)
+
+
 def staged_prop(root, name, prefix='OWN'):
-    """A prop like the barrel: two materials on one atlas and a GLB."""
+    """A prop like the barrel: two materials on one atlas and a GLB with its fresh pieces."""
     staged(root, name, {f'{prefix}_WOOD.TGA': name})
     folder = root / 'content-staging' / name
     index = json.loads((folder / 'materials/materials.json').read_text())
     index[f'{prefix}_IRON.TGA'] = dict(index[f'{prefix}_WOOD.TGA'])
     (folder / 'materials/materials.json').write_text(json.dumps(index))
     (folder / 'meshes' / name).mkdir(parents=True)
-    (folder / 'meshes' / name / 'model.glb').write_bytes(b'glb ' + name.encode())
+    glb = b'glb ' + name.encode()
+    (folder / 'meshes' / name / 'model.glb').write_bytes(glb)
+    (folder / 'meshes' / name / 'model.fracture').write_text(fracture(glb))
     (folder / 'meshes/meshes.json').write_text(json.dumps({'NW_HARBOUR_BARREL_01': {'glb': f'{name}/model.glb'}}))
+
+
+def fracture(glb, version=2):
+    """The head of a source-bound `.fracture` cut from these GLB bytes (scripts/fracture.sh content)."""
+    return f'GOTHIC_FRACTURE {version}\nsource {len(glb)} {zlib.crc32(glb):08x}\npieces 12\n'
 
 
 def test_compose_brings_a_props_meshes_and_shared_atlas(tmp_path, monkeypatch):
@@ -152,17 +215,45 @@ def test_compose_brings_a_props_meshes_and_shared_atlas(tmp_path, monkeypatch):
     assert json.loads((out / 'meshes/meshes.json').read_text()) == {'NW_HARBOUR_BARREL_01': {'glb': 'barrel-1/model.glb'}}
     assert (out / 'meshes/barrel-1/model.glb').read_bytes() == b'glb barrel-1'
     composition = json.loads((out / 'composition.json').read_text())
-    assert list(composition['glb_sha256']) == ['barrel-1/model.glb']
+    assert list(composition['glb_sha256']) == ['barrel-1/model.glb', 'barrel-1/model.fracture']
+    debris = tmp_path / 'content-staging/barrel-1/meshes/barrel-1/model.debris.glb'
+    debris.write_bytes(b'debris barrel-1')       # its pieces as parts travel with the GLB
+    building_set.compose('city-3', ['roofs-1', 'barrel-1'])
+    composed = tmp_path / 'content-staging/city-3'
+    assert (composed / 'meshes/barrel-1/model.debris.glb').read_bytes() == b'debris barrel-1'
+    assert list(json.loads((composed / 'composition.json').read_text())['glb_sha256']) == [
+        'barrel-1/model.glb', 'barrel-1/model.fracture', 'barrel-1/model.debris.glb']
+    assert (out / 'meshes/barrel-1/model.fracture').read_text() == fracture(b'glb barrel-1')
     assert composition['parts']['barrel-1'] == ['OWN_IRON.TGA', 'OWN_WOOD.TGA', 'NW_HARBOUR_BARREL_01']
     staged_prop(tmp_path, 'barrel-2', prefix='OTHER')
     with pytest.raises(ValueError, match='visual NW_HARBOUR_BARREL_01: in both barrel-1 and barrel-2'):
         building_set.compose('two-barrels', ['barrel-1', 'roofs-1', 'barrel-2'])
 
 
+def test_compose_carries_a_parts_licences_once(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    for name, prefix in (('chairs-1', 'CHAIR'), ('beds-1', 'BED')):
+        staged(tmp_path, name, {f'{prefix}.TGA': name})
+        terms = tmp_path / 'content-staging' / name / 'licences/omni'
+        terms.mkdir(parents=True)
+        (terms / 'License.txt').write_text('terms')
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    building_set.compose('city-1', ['roofs-1', 'chairs-1', 'beds-1'])
+    assert (tmp_path / 'content-staging/city-1/licences/omni/License.txt').read_text() == 'terms'
+    (tmp_path / 'content-staging/beds-1/licences/omni/License.txt').write_text('other terms')
+    with pytest.raises(ValueError, match='licences/omni/License.txt: differs between parts'):
+        building_set.compose('city-2', ['chairs-1', 'beds-1'])
+
+
 def test_enable_replaces_only_materials_and_meshes(tmp_path, monkeypatch):
     monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
     staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
     staged_prop(tmp_path, 'barrel-1')
+    glb = b'glb barrel-1'
+    payload = bytes(36)
+    clod = struct.pack('<4s11I', b'GCLD', 2, 1, 1, len(glb), zlib.crc32(glb), zlib.crc32(payload),
+                       1, 0, 0, 0, 0) + payload
+    (tmp_path / 'content-staging/barrel-1/meshes/barrel-1/model.clod').write_bytes(clod)
     building_set.compose('city-1', ['roofs-1', 'barrel-1'])
     live = tmp_path / 'content'
     (live / 'bakeoff').mkdir(parents=True)
@@ -172,13 +263,92 @@ def test_enable_replaces_only_materials_and_meshes(tmp_path, monkeypatch):
     assert record['set'] == 'city-1' and record['materials'] == 3 and record['meshes'] == 1
     assert record['parts']['roofs-1'] == ['ROOF_01.TGA']
     assert not (live / 'materials/old.dds').exists() and (live / 'bakeoff').is_dir()
-    assert (live / 'meshes/barrel-1/model.glb').read_bytes() == b'glb barrel-1'
+    assert (live / 'meshes/barrel-1/model.glb').read_bytes() == glb
+    assert (live / 'meshes/barrel-1/model.clod').read_bytes() == clod
     assert json.loads((live / 'enabled.json').read_text())['set'] == 'city-1'
     assert not (live / '.enable').exists()
+    staged_glb = tmp_path / 'content-staging/city-1/meshes/barrel-1/model.glb'
+    staged_glb.write_bytes(b'glb barrel-2')
+    staged_glb.with_suffix('.fracture').write_text(fracture(b'glb barrel-2'))
+    with pytest.raises(ValueError, match=r'no fresh \.clod for NW_HARBOUR_BARREL_01; run content-convert cook-mesh-lod'):
+        building_set.enable('city-1')
+    assert (live / 'meshes/barrel-1/model.clod').read_bytes() == clod
     building_set.enable('roofs-1')                       # a set without meshes takes the old ones away
     assert not (live / 'meshes').exists() and (live / 'materials/roofs-1-roof-01/albedo.dds').is_file()
     with pytest.raises(ValueError, match='no materials'):
         building_set.enable('missing')
+
+
+def test_enable_needs_fresh_convex_parts_for_tables_and_cupboards(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    staged_prop(tmp_path, 'table-1')
+    part = tmp_path / 'content-staging/table-1/meshes'
+    (part / 'meshes.json').write_text(json.dumps({'NW_CITY_TABLE_NORMAL_01': {'glb': 'table-1/model.glb'},
+                                                  'CHAIR_NW_NORMAL_01': {'glb': 'table-1/model.glb'}}))
+    building_set.compose('city-1', ['roofs-1', 'table-1'])
+    with pytest.raises(ValueError, match=r'city-1: no fresh \.convex-parts for NW_CITY_TABLE_NORMAL_01; '
+                                         r'run scripts/convex-parts.sh content .*/content-staging/city-1'):
+        building_set.enable('city-1')
+    assert not (tmp_path / 'content').exists()
+    glb = (part / 'table-1/model.glb').read_bytes()
+    (part / 'table-1/model.convex-parts').write_text(f'GOTHIC_CONVEX_PARTS 1\nsource {len(glb)} {zlib.crc32(glb):08x}\n')
+    (part / 'table-1/model.fracture').write_text('fracture')
+    building_set.compose('city-2', ['roofs-1', 'table-1'])   # the caches travel with their GLB
+    out = tmp_path / 'content-staging/city-2/meshes/table-1'
+    assert (out / 'model.fracture').read_text() == 'fracture'
+    building_set.enable('city-2')
+    assert (tmp_path / 'content/meshes/table-1/model.convex-parts').read_bytes() == (out / 'model.convex-parts').read_bytes()
+    (out / 'model.convex-parts').write_text('GOTHIC_CONVEX_PARTS 1\nsource 3 00000000\n')
+    with pytest.raises(ValueError, match='no fresh .convex-parts for NW_CITY_TABLE_NORMAL_01'):
+        building_set.enable('city-2')
+
+
+@pytest.mark.parametrize('version', [2, 3])
+def test_enable_needs_fresh_fracture_for_destructibles(tmp_path, monkeypatch, version):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    staged_prop(tmp_path, 'crate-1')
+    part = tmp_path / 'content-staging/crate-1/meshes'
+    (part / 'meshes.json').write_text(json.dumps({'NW_HARBOUR_CRATE_01': {'glb': 'crate-1/model.glb'},
+                                                  'NW_HARBOUR_CRATEPILE_01': {'glb': 'crate-1/model.glb'}}))
+    (part / 'crate-1/model.fracture').unlink()
+    building_set.compose('city-1', ['roofs-1', 'crate-1'])
+    with pytest.raises(ValueError, match=r'city-1: no fresh \.fracture for NW_HARBOUR_CRATE_01; '
+                                         r'run scripts/fracture.sh content .*/content-staging/city-1$'):
+        building_set.enable('city-1')
+    assert not (tmp_path / 'content').exists()
+    out = tmp_path / 'content-staging/city-1/meshes/crate-1'
+    (out / 'model.fracture').write_text(fracture(b'glb crate-2', version))  # cut from other bytes of the same size
+    with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
+        building_set.enable('city-1')
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', 1))  # the originals' version
+    with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
+        building_set.enable('city-1')
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', version))
+    building_set.enable('city-1')
+    assert (tmp_path / 'content/meshes/crate-1/model.fracture').read_text() == fracture(b'glb crate-1', version)
+    (out / 'model.debris.glb').write_bytes(b'debris')          # with debris beside it, only version 3 is fresh
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', 2))
+    with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
+        building_set.enable('city-1')
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1', 3))
+    building_set.enable('city-1')
+    assert (tmp_path / 'content/meshes/crate-1/model.debris.glb').read_bytes() == b'debris'
+
+
+def test_enable_names_every_missing_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    staged_prop(tmp_path, 'harbour-1')
+    part = tmp_path / 'content-staging/harbour-1/meshes'
+    (part / 'harbour-1/model.fracture').unlink()
+    (part / 'meshes.json').write_text(json.dumps({'NW_HARBOUR_BARREL_01': {'glb': 'harbour-1/model.glb'},
+                                                  'NW_CITY_TABLE_NORMAL_01': {'glb': 'harbour-1/model.glb'}}))
+    building_set.compose('city-1', ['roofs-1', 'harbour-1'])
+    with pytest.raises(ValueError, match=r'no fresh \.convex-parts for NW_CITY_TABLE_NORMAL_01; run scripts/convex-parts.sh '
+                                         r'content \S+; no fresh \.fracture for NW_HARBOUR_BARREL_01; run scripts/fracture.sh'):
+        building_set.enable('city-1')
 
 
 def staged_chunk(root, name, chunk='1_-1'):
@@ -208,8 +378,146 @@ def test_compose_and_enable_carry_world_chunks(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='chunk NEWWORLD/CHUNKS/1_-1.GLB: in both stairs-1 and stairs-2'):
         building_set.compose('two-stairs', ['stairs-1', 'roofs-1', 'stairs-2'])
     (tmp_path / 'content-staging/empty').mkdir()
-    with pytest.raises(ValueError, match='empty: no materials, meshes or world chunks'):
+    with pytest.raises(ValueError, match='empty: no materials, meshes, world chunks, particle descriptions or vob trees'):
         building_set.compose('none', ['roofs-1', 'empty'])
+
+
+def test_compose_and_enable_carry_a_vob_layer(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    layer = tmp_path / 'content-staging/life-1/worlds/NEWWORLD/vobs.d/harbour-life.json'
+    layer.parent.mkdir(parents=True)
+    layer.write_text('{"format": 1, "add": []}\n')
+    (layer.parent / 'notes.txt').write_text('not a layer')
+    result = building_set.compose('city-1', ['roofs-1', 'life-1'])
+    assert result['chunks'] == 1 and result['parts'] == {'roofs-1': 1, 'life-1': 1}
+    out = tmp_path / 'content-staging/city-1/worlds/NEWWORLD/vobs.d'
+    assert sorted(p.name for p in out.iterdir()) == ['harbour-life.json']
+    building_set.enable('city-1')
+    assert (tmp_path / 'content/worlds/NEWWORLD/vobs.d/harbour-life.json').read_text() == layer.read_text()
+
+    # the houses a part rebuilt come along like its vob layer (worlds/<WORLD>/houses.d)
+    houses = tmp_path / 'content-staging/market-2/worlds/NEWWORLD/houses.d/market-house.json'
+    houses.parent.mkdir(parents=True)
+    houses.write_text('{"format": 1, "houses": []}\n')
+    result = building_set.compose('city-2', ['city-1', 'market-2'])
+    assert result['parts'] == {'city-1': 2, 'market-2': 1}
+    composition = json.loads((tmp_path / 'content-staging/city-2/composition.json').read_text())
+    assert composition['parts']['market-2'] == ['worlds/NEWWORLD/houses.d/market-house.json']
+    building_set.enable('city-2')
+    assert (tmp_path / 'content/worlds/NEWWORLD/houses.d/market-house.json').read_text() == houses.read_text()
+    with pytest.raises(ValueError, match='chunk NEWWORLD/HOUSES.D/MARKET-HOUSE.JSON: in both city-2 and market-2'):
+        building_set.compose('twice', ['city-2', 'market-2'])
+
+    # so do a part's patches of ground for the grass system (worlds/<WORLD>/grass.d): the rye of a crop field
+    patches = tmp_path / 'content-staging/crops-1/worlds/NEWWORLD/grass.d/crop-field.json'
+    patches.parent.mkdir(parents=True)
+    patches.write_text('{"format": 1, "patches": []}\n')
+    result = building_set.compose('city-3', ['city-2', 'crops-1'])
+    assert result['parts'] == {'city-2': 3, 'crops-1': 1}
+    composition = json.loads((tmp_path / 'content-staging/city-3/composition.json').read_text())
+    assert composition['parts']['crops-1'] == ['worlds/NEWWORLD/grass.d/crop-field.json']
+    building_set.enable('city-3')
+    assert (tmp_path / 'content/worlds/NEWWORLD/grass.d/crop-field.json').read_text() == patches.read_text()
+    building_set.enable('city-2')
+
+    particles = tmp_path / 'content-staging/smoke-1/particles.d/smoke.json'
+    particles.parent.mkdir(parents=True)
+    particles.write_text(json.dumps({'format': 1, 'effects': [
+        {'name': 'OWN_SMOKE', 'base': 'FIRE_SMOKE', 'set': {'visTexColorStart_S': '80 80 80'}},
+    ]}) + '\n')
+    (particles.parent / 'notes.txt').write_text('not a description')
+    result = building_set.compose('city-smoke', ['life-1', 'smoke-1'])
+    assert result['particles'] == 1 and result['parts'] == {'life-1': 1, 'smoke-1': 1}
+    composed = tmp_path / 'content-staging/city-smoke'
+    assert (composed / 'particles.d/smoke.json').read_text() == particles.read_text()
+    assert sorted(p.name for p in (composed / 'particles.d').iterdir()) == ['smoke.json']
+    composition = json.loads((composed / 'composition.json').read_text())
+    assert composition['parts']['smoke-1'] == ['particles.d/smoke.json']
+    assert list(composition['particles_sha256']) == ['smoke.json']
+    building_set.enable('city-smoke')
+    assert (tmp_path / 'content/particles.d/smoke.json').read_text() == particles.read_text()
+    building_set.enable('city-1')
+    assert not (tmp_path / 'content/particles.d').exists()
+    sprite = tmp_path / 'content-staging/smoke-1/materials'
+    (sprite / 'own-smoke').mkdir(parents=True)
+    (sprite / 'own-smoke/albedo.dds').write_bytes(b'smoke sprite')
+    (sprite / 'materials.json').write_text(json.dumps({'OWN_SMOKE.TGA': {'albedo': 'own-smoke/albedo.dds'}}))
+    building_set.compose('city-sprite', ['life-1', 'smoke-1'])
+    composed = tmp_path / 'content-staging/city-sprite/materials'
+    assert json.loads((composed / 'materials.json').read_text()) == {'OWN_SMOKE.TGA': {'albedo': 'own-smoke/albedo.dds'}}
+    assert (composed / 'own-smoke/albedo.dds').read_bytes() == b'smoke sprite'
+    duplicate = tmp_path / 'content-staging/smoke-2/particles.d/smoke.json'
+    duplicate.parent.mkdir(parents=True)
+    duplicate.write_text(particles.read_text())
+    with pytest.raises(ValueError, match='particle file smoke.json: in both smoke-1 and smoke-2'):
+        building_set.compose('duplicate-file', ['smoke-1', 'smoke-2'])
+    duplicate.rename(duplicate.with_name('other.json'))
+    with pytest.raises(ValueError, match='particle effect OWN_SMOKE: in both smoke-1 and smoke-2'):
+        building_set.compose('duplicate-effect', ['smoke-1', 'smoke-2'])
+
+    tree = tmp_path / 'content-staging/lamps-1/vobtrees.d/FIRETREE_LAMP.json'
+    tree.parent.mkdir(parents=True)
+    tree.write_text('{"format": 1, "add": []}\n')
+    (tree.parent / 'notes.txt').write_text('not a tree')
+    result = building_set.compose('city-lamps', ['life-1', 'lamps-1'])
+    assert result['vobtrees'] == 1 and result['parts'] == {'life-1': 1, 'lamps-1': 1}
+    composed = tmp_path / 'content-staging/city-lamps'
+    assert (composed / 'vobtrees.d/FIRETREE_LAMP.json').read_text() == tree.read_text()
+    assert sorted(p.name for p in (composed / 'vobtrees.d').iterdir()) == ['FIRETREE_LAMP.json']
+    composition = json.loads((composed / 'composition.json').read_text())
+    assert composition['parts']['lamps-1'] == ['vobtrees.d/FIRETREE_LAMP.json']
+    assert list(composition['vobtrees_sha256']) == ['FIRETREE_LAMP.json']
+    building_set.enable('city-lamps')
+    assert (tmp_path / 'content/vobtrees.d/FIRETREE_LAMP.json').read_text() == tree.read_text()
+    building_set.enable('city-1')
+    assert not (tmp_path / 'content/vobtrees.d').exists()
+    duplicate = tmp_path / 'content-staging/lamps-2/vobtrees.d/firetree_lamp.json'
+    duplicate.parent.mkdir(parents=True)
+    duplicate.write_text(tree.read_text())
+    with pytest.raises(ValueError, match='vob tree file FIRETREE_LAMP.JSON: in both lamps-1 and lamps-2'):
+        building_set.compose('duplicate-tree', ['lamps-1', 'lamps-2'])
+
+
+def test_compose_takes_a_composed_set_as_a_part_and_keeps_its_parts(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    layer = tmp_path / 'content-staging/life-1/worlds/NEWWORLD/vobs.d/harbour-life.json'
+    layer.parent.mkdir(parents=True)
+    layer.write_text('{"format": 1, "add": []}\n')
+    building_set.compose('working-1', ['roofs-1', 'life-1'])
+    staged(tmp_path, 'torch-1', {'OWN_TORCH_FLAME.TGA': 'own-torch-flame'})
+    result = building_set.compose('working-2', ['working-1', 'torch-1'])
+    assert result['parts'] == {'working-1': 2, 'torch-1': 1}
+    out = tmp_path / 'content-staging/working-2'
+    assert json.loads((out / 'composition.json').read_text())['parts'] == {
+        'roofs-1': ['ROOF_01.TGA'], 'life-1': ['worlds/NEWWORLD/vobs.d/harbour-life.json'],
+        'torch-1': ['OWN_TORCH_FLAME.TGA']}
+    assert (out / 'materials/roofs-1-roof-01/orm.dds').read_bytes() == b'roofs-1/roofs-1-roof-01/orm'
+    assert (out / 'worlds/NEWWORLD/vobs.d/harbour-life.json').read_text() == layer.read_text()
+    # a part already inside the composed set cannot join once more
+    staged(tmp_path, 'smoke-1', {'OWN_SMOKE.TGA': 'own-smoke'})
+    (tmp_path / 'content-staging/life-1/worlds/NEWWORLD/vobs.d/harbour-life.json').rename(layer.with_name('other.json'))
+    with pytest.raises(ValueError, match='life-1: a part twice'):
+        building_set.compose('working-3', ['working-2', 'smoke-1', 'life-1'])
+    # a new part takes the place of an old one of the composed set
+    staged(tmp_path, 'roofs-2', {'ROOF_01.TGA': 'roofs-2-roof-01'})
+    with pytest.raises(ValueError, match='ROOF_01.TGA: in both working-2 and roofs-2'):
+        building_set.compose('working-5', ['working-2', 'roofs-2'])
+    with pytest.raises(ValueError, match='roofs-9: no such part in a composed set to leave behind'):
+        building_set.compose('working-5', ['working-2', 'roofs-2'], without=('roofs-9',))
+    result = building_set.compose('working-5', ['working-2', 'roofs-2'], without=('roofs-1',))
+    assert result['parts'] == {'working-2': 2, 'roofs-2': 1}
+    swapped = tmp_path / 'content-staging/working-5'
+    assert json.loads((swapped / 'composition.json').read_text())['parts'] == {
+        'life-1': ['worlds/NEWWORLD/vobs.d/harbour-life.json'], 'torch-1': ['OWN_TORCH_FLAME.TGA'],
+        'roofs-2': ['ROOF_01.TGA']}
+    assert (swapped / 'materials/roofs-2-roof-01/orm.dds').read_bytes() == b'roofs-2/roofs-2-roof-01/orm'
+    assert not (swapped / 'materials/roofs-1-roof-01').exists()
+    # a set changed after it was composed is refused
+    (out / 'materials/materials.json').write_text(json.dumps({'ROOF_01.TGA': {'albedo': 'roofs-1-roof-01/albedo.dds'}}))
+    with pytest.raises(ValueError, match='working-2: composition.json does not list what the set holds'):
+        building_set.compose('working-4', ['working-2', 'smoke-1'])
 
 
 def test_crop_band_drops_grey_margins():

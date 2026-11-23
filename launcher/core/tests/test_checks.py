@@ -1,4 +1,6 @@
+import hashlib
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -7,6 +9,123 @@ from gothic_launcher import checks
 from gothic_launcher.settings import Config, Secrets, Settings
 
 NO_CREDITS = "You have no credits remaining. Please add credits to continue using the service."
+
+
+def _ready_base(tmp_path, monkeypatch, text="Привет, герой!", explicit=False):
+    game = tmp_path / "game-settings"
+    (game / "system").mkdir(parents=True)
+    (game / "system/Gothic.ini").write_text("[GAME]\n")
+    directory = tmp_path / "base"
+    directory.mkdir()
+    library = json.dumps({
+        "format": 1, "kind": "cutscene_library", "blocks": [{
+            "object_id": 0, "class": "zCCSBlock", "name": "TEST", "block": {
+                "object_id": 1, "class": "zCCSAtomicBlock", "message": {
+                    "object_id": 2, "class": "oCMsgConversation",
+                    "name": "DIA_TEST_14_00.WAV", "text": text.encode("cp1251").decode("latin1"),
+                },
+            },
+        }],
+    }).encode()
+    record = hashlib.sha256(library).hexdigest()
+    files = {
+        f"outputunits/{record}.json": library,
+        "outputunits/outputunits.json": json.dumps({
+            "format": "gothic-outputunits", "version": 1,
+            "server": {"ou_py": 0}, "sources": [{"record": record}], "records": {record: record},
+        }).encode(),
+        "unread-payload.bin": b"payload",
+    }
+    for name, raw in files.items():
+        path = directory / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+    manifest = json.dumps({
+        "format": "gothic-base-files", "version": 1,
+        "files": [{"path": name, "size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+                  for name, raw in files.items()],
+    }).encode()
+    (directory / "base-files.json").write_bytes(manifest)
+    (directory / "base.json").write_text(json.dumps({
+        "format": "gothic-base", "version": 2, "fingerprint": "a" * 64,
+        "manifest": {"path": "base-files.json", "size": len(manifest),
+                     "sha256": hashlib.sha256(manifest).hexdigest()},
+    }))
+    cache = tmp_path / "cache"
+    pointer = cache / "current" / f"{hashlib.sha256(str(game.resolve()).encode()).hexdigest()}.json"
+    pointer.parent.mkdir(parents=True)
+    pointer.write_text(json.dumps({
+        "version": 1, "gothic": str(game.resolve()),
+        "base": {"path": str(directory.resolve()), "fingerprint": "a" * 64},
+    }))
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(cache))
+    monkeypatch.setenv("OPENGOTHIC_BASE", str(directory) if explicit else "")
+    return game, directory, pointer
+
+
+def test_base_helper_matches_server_contract():
+    root = Path(__file__).resolve().parents[3]
+    assert (root / "server/src/gothic_ai/gamedata/base.py").read_bytes() == (
+        root / "launcher/core/src/gothic_launcher/base.py"
+    ).read_bytes()
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("text,russian", [("Привет, герой!", True), ("Hello, hero!", False)])
+def test_ready_base_without_installation_checks_ou_and_never_opens_game_files(
+    tmp_path, monkeypatch, explicit, text, russian,
+):
+    game, directory, _ = _ready_base(tmp_path, monkeypatch, text, explicit)
+    original = Path.open
+
+    def guarded(path, *args, **kwargs):
+        assert not path.is_relative_to(game)
+        assert path != directory / "unread-payload.bin"
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded)
+    items = checks.game_folder(game)
+    assert [item.id for item in items] == ["base", "russian"]
+    assert items[0].ok and items[0].title == "База игры готова" and items[0].detail == "a" * 64
+    assert items[1].ok is russian
+
+
+def test_installation_without_base_promises_first_launch_import(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENGOTHIC_BASE", "")
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(tmp_path / "cache"))
+    game = tmp_path / "game"
+    (game / "Data").mkdir(parents=True)
+    (game / "Data/Worlds.vdf").touch()
+    (game / "Data/Addon.vdf").touch()
+    ou = game / checks.OU_PATH
+    ou.parent.mkdir(parents=True)
+    ou.write_bytes("Привет, герой!".encode("cp1251"))
+    items = checks.game_folder(game)
+    assert all(item.ok for item in items)
+    assert items[0].title == "Лаунчер подготовит базу перед запуском (несколько минут)"
+
+
+def test_missing_installation_or_foreign_pointer_requests_one_time_installation(tmp_path, monkeypatch):
+    game, _, pointer = _ready_base(tmp_path, monkeypatch)
+    current = json.loads(pointer.read_text())
+    current["gothic"] = str(tmp_path / "other-game")
+    pointer.write_text(json.dumps(current))
+    [foreign] = checks.game_folder(game)
+    assert not foreign.ok and "foreign" in foreign.detail
+    pointer.unlink()
+    [missing] = checks.game_folder(game)
+    assert not missing.ok and "Укажите папку установленной Gothic II один раз" in missing.detail
+
+
+def test_check_command_checks_an_explicit_directory_without_config(tmp_path, monkeypatch, capsys):
+    from gothic_launcher import cli
+
+    game, _, _ = _ready_base(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli.sys, "argv", ["gothic-launcher", "check", str(game)])
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+    assert error.value.code == 0
+    assert [item["id"] for item in json.loads(capsys.readouterr().out)] == ["base", "russian"]
 
 
 class Inworld:
@@ -132,3 +251,31 @@ async def test_voxtral_checks_health_at_the_configured_address(tmp_path):
     [request] = requests
     assert request.method == "GET"
     assert str(request.url) == "http://gpu:47830/health"
+
+
+def test_linux_finds_gothic_in_steam_flatpak_and_a_second_library(tmp_path, monkeypatch):
+    monkeypatch.setattr(checks.sys, "platform", "linux")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    def gothic(steam: Path, name: str = "Gothic II") -> Path:
+        folder = steam / "steamapps" / "common" / name
+        (folder / "Data").mkdir(parents=True)
+        return folder
+
+    native = tmp_path / ".local/share/Steam"
+    found_native = gothic(native)
+    (tmp_path / ".steam").mkdir()
+    (tmp_path / ".steam/steam").symlink_to(native)  # Steam's own link: the same game, found once
+    flatpak = tmp_path / ".var/app/com.valvesoftware.Steam/.local/share/Steam"
+    found_flatpak = gothic(flatpak, "Gothic 2 Gold")
+    library = tmp_path / "disk/SteamLibrary"
+    found_library = gothic(library, "Gothic II Gold")
+    (flatpak / "steamapps/libraryfolders.vdf").write_text(
+        f'"libraryfolders"\n{{\n\t"1"\n\t{{\n\t\t"path"\t\t"{library}"\n\t}}\n}}\n', encoding="utf-8"
+    )
+
+    found = checks.find_games()
+
+    assert sorted(p.resolve() for p in found) == sorted(
+        p.resolve() for p in (found_native, found_flatpak, found_library)
+    )

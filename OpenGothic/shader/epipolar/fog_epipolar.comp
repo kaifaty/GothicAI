@@ -60,8 +60,12 @@ void trace(const vec2 src, const vec2 dst) {
   const int  steps = int(max(avec.x, avec.y));
 
   if(lane==0) {
-    tMinUint = 0xFFFFFFFF;
-    tMaxUint = floatBitsToUint(0);
+    tMinUint   = 0xFFFFFFFF;
+    tMaxUint   = floatBitsToUint(0);
+    // shared memory is not cleared: without this the slice's depth was the minimum with whatever another
+    // workgroup had left there
+    dBeginUint = 0xFFFFFFFF;
+    dEndUint   = 0xFFFFFFFF;
 
     const vec2 inPos  = src*2.0-1.0;
     const vec3 camPos = wrldToShadow(scene.camPos);

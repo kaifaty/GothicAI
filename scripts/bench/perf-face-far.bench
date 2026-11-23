@@ -1,0 +1,45 @@
+# The hero's head from a distance at noon in the Khorinis market (hair as strands,
+# reports/content/2026-11-npc-hair/strands.md): what the strands cost when the head is small in the frame, for the
+# levels of detail by distance. The same place and content switches as perf-face.bench; a still after each sample
+# shows what was in the frame.
+#   BENCH_HOST=ryzen PERF_ENV='OPENGOTHIC_CONTENT=<content>' scripts/perf.sh face-far
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+cam face 120 40 1
+# Ten real seconds after the teleport for loading and native simulation.
+wait 10000
+perf sample perf-face-far/view-1
+wait 8000
+perf stop
+shot far-120
+wait 300
+cam face 300 40 1
+wait 1500
+perf sample perf-face-far/view-2
+wait 8000
+perf stop
+shot far-300
+wait 300
+cam face 700 40 1
+wait 1500
+perf sample perf-face-far/view-3
+wait 8000
+perf stop
+shot far-700
+wait 300
+# from behind: at 40 degrees a wall stands 10 m away
+cam face 1500 220 1
+wait 1500
+perf sample perf-face-far/view-4
+wait 8000
+perf stop
+shot far-1500
+wait 300

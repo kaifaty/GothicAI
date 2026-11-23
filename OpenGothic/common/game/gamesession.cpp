@@ -11,17 +11,40 @@
 #include "worldstatestorage.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
+#include "world/chunkresidency.h"
 #include "sound/soundfx.h"
 #include "serialize.h"
 #include "camera.h"
 #include "gothic.h"
+#include "settings.h"
 #include "resources.h"
+#include "loadprobe.h"
 
 using namespace Tempest;
 
 // rate 14.5 to 1
 const uint64_t GameSession::multTime=14500;
 const uint64_t GameSession::divTime =1000;
+
+static void saveCamera(Serialize& s, const Camera& camera) {
+  auto saved = camera.saveState();
+  s.write(saved.range, saved.spin, saved.target);
+  s.write(saved.interTarget, saved.rotOffset);
+  s.write(saved.origin,saved.angles,saved.veloTrans);
+  s.write(saved.userRange);
+  }
+
+static void loadCamera(Serialize& s, Camera& camera, const CameraTarget* pl) {
+  camera.reset(pl);
+  if(s.version()<55)
+    return;
+  auto saved = camera.saveState();
+  s.read(saved.range, saved.spin, saved.target);
+  s.read(saved.interTarget, saved.rotOffset);
+  s.read(saved.origin,saved.angles,saved.veloTrans);
+  s.read(saved.userRange);
+  camera.setSaveState(saved);
+  }
 
 void GameSession::HeroStorage::save(Npc& npc) {
   storage.clear();
@@ -77,14 +100,23 @@ GameSession::GameSession(std::string file) {
   setupSettings();
   setTime(gtime(8,0));
 
+  if(LoadProbe::enabled())
+    LoadProbe::mark("session_begin");
+  LoadProbe::Requests::begin();
+  auto probeT = LoadProbe::now();
   vm.reset(new GameScript(*this));
   initPerceptions();
+  if(LoadProbe::enabled())
+    LoadProbe::mark("scripts_vm",LoadProbe::msSince(probeT));
 
-  setWorld(std::unique_ptr<World>(new World(*this,std::move(file),true,[&](int v){
+  setWorld(std::unique_ptr<World>(new World(*this,*vm,std::move(file),true,[&](int v){
     Gothic::inst().setLoadingProgress(int(v*0.55));
     })));
 
+  probeT = LoadProbe::now();
   vm->initDialogs();
+  if(LoadProbe::enabled())
+    LoadProbe::mark("dialogs",LoadProbe::msSince(probeT));
   Gothic::inst().setLoadingProgress(70);
 
   const bool testMode=false;
@@ -107,17 +139,47 @@ GameSession::GameSession(std::string file) {
   //std::string_view hero = "Bloodfly";
   //std::string_view hero = "Gobbo_Skeleton";
   //std::string_view hero = "Swampshark";
+  probeT = LoadProbe::now();
   if(!Gothic::inst().isBenchmarkMode())
     wrld->createPlayer(hero);
   wrld->postInit();
+  if(LoadProbe::enabled())
+    LoadProbe::mark("player_postinit",LoadProbe::msSince(probeT));
 
+  probeT = LoadProbe::now();
   if(!testMode)
     initScripts(true);
+  if(LoadProbe::enabled())
+    LoadProbe::mark("scripts_startup",LoadProbe::msSince(probeT),
+                    "npcs="+std::to_string(wrld->npcCount()));
+  probeT = LoadProbe::now();
   wrld->triggerOnStart(true);
+  if(LoadProbe::enabled())
+    LoadProbe::mark("trigger_start",LoadProbe::msSince(probeT));
   cam->reset(wrld->player());
+  wrld->updateLandscape(*cam);
+  wrld->updateNpcSimTiers();
   Gothic::inst().setLoadingProgress(96);
   ticks = 1;
   // wrld->setDayTime(8,0);
+  if(LoadProbe::enabled()) {
+    std::string pages;
+    if(auto* chunks=wrld->chunkResidency()) {
+      const auto& s=chunks->stats();
+      pages="landscape_used_bytes="+std::to_string(s.landscapePageUsedBytes)+
+            " landscape_free_bytes="+std::to_string(s.landscapePageFreeBytes)+
+            " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
+      pages+=" "+s.vobProbeFields();
+      }
+    pages+=(pages.empty() ? "" : " ")+wrld->npcSimTierStats().probeFields();
+    pages+=" "+NpcLogicAudit::stats().probeFields();
+    wrld->probeMemory("session_end");
+    LoadProbe::Requests::end();
+    LoadProbe::mark("session_end",-1,pages);
+    LoadProbe::loaded();
+    if(wrld->chunkResidency()==nullptr)
+      LoadProbe::mark("stream_warm");
+    }
   if(auto& fn = Gothic::inst().sessionStartFn)
     fn(nullptr);
   }
@@ -155,7 +217,7 @@ GameSession::GameSession(Serialize &fin) {
     vm->ownSymbols().load(fin);
 
   if(true) {
-    setWorld(std::unique_ptr<World>(new World(*this,wname,false,[&](int v){
+    setWorld(std::unique_ptr<World>(new World(*this,*vm,wname,false,[&](int v){
       Gothic::inst().setLoadingProgress(int(v*0.55));
       })));
     wrld->load(fin);
@@ -177,7 +239,9 @@ GameSession::GameSession(Serialize &fin) {
     vm->setInstanceNPC("HERO",*hero);
 
   fin.setEntry("game/camera");
-  cam->load(fin,wrld->player());
+  loadCamera(fin,*cam,wrld->player());
+  wrld->updateLandscape(*cam);
+  wrld->updateNpcSimTiers();
   Gothic::inst().setLoadingProgress(96);
   if(auto& fn = Gothic::inst().sessionStartFn)
     fn(&fin);
@@ -199,7 +263,7 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   }
   hdr.wrldTime  = wrldTime;
   hdr.playTime  = ticks;
-  hdr.isGothic2 = Gothic::inst().version().game;
+  hdr.isGothic2 = 2;
 
   fout.setEntry("header");
   fout.write(hdr);
@@ -220,7 +284,7 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   vm->ownSymbols().save(fout);
 
   fout.setEntry("game/camera");
-  cam->save(fout);
+  saveCamera(fout,*cam);
   Gothic::inst().setLoadingProgress(5);
 
   for(auto& i:visitedWorlds) {
@@ -246,7 +310,7 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   }
 
 void GameSession::setupSettings() {
-  const float soundVolume = Gothic::settingsSoundVolume();
+  const float soundVolume = Settings::soundVolume();
   if(sound)
     sound->setGlobalVolume(soundVolume);
   }
@@ -277,10 +341,6 @@ void GameSession::changeWorld(std::string_view world, std::string_view wayPoint)
 
 void GameSession::exitSession() {
   exitSessionFlg=true;
-  }
-
-const VersionInfo& GameSession::version() const {
-  return Gothic::inst().version();
   }
 
 WorldView *GameSession::view() const {
@@ -385,7 +445,7 @@ void GameSession::tick(uint64_t dt) {
 
     const char *w = (beg!=std::string::npos) ? (chWorld.zen.c_str()+beg+1) : chWorld.zen.c_str();
 
-    if(Resources::hasFile(w)) {
+    if(Resources::hasWorld(w)) {
       string_frm name("LOADING_",wname,".TGA"); // format load-screen name, like "LOADING_OLDWORLD.TGA"
 
       Gothic::inst().startLoad(name,[this](std::unique_ptr<GameSession>&& game){
@@ -408,15 +468,24 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
   if(cut!=std::string::npos)
     w = world.substr(cut+1);
 
-  if(!Resources::hasFile(w)) {
+  if(!Resources::hasWorld(w)) {
     Log::i("World not found[",world,"]");
     return std::move(game);
     }
 
+  if(LoadProbe::enabled())
+    LoadProbe::mark("change_begin",-1,"to="+std::string(w));
+  auto probeT = LoadProbe::now();
   HeroStorage hdata;
   if(auto hero = wrld->player())
     hdata.save(*hero);
   clearWorld();
+  if(LoadProbe::enabled()) {
+    size_t stored = 0;
+    for(auto& i:visitedWorlds)
+      stored += i.storage.size();
+    LoadProbe::mark("change_store_old",LoadProbe::msSince(probeT),"stored_bytes="+std::to_string(stored));
+    }
 
   vm->resetVarPointers();
 
@@ -430,14 +499,17 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
     };
 
   initPerceptions();
-  std::unique_ptr<World> ret = std::unique_ptr<World>(new World(*this,w,wss.isEmpty(),loadProgress));
+  std::unique_ptr<World> ret = std::unique_ptr<World>(new World(*this,*vm,w,wss.isEmpty(),loadProgress));
   setWorld(std::move(ret));
 
+  probeT = LoadProbe::now();
   if(!wss.isEmpty()) {
     Tempest::MemReader rd {wss.storage.data(),wss.storage.size()};
     Serialize          fin{rd};
     wrld->load(fin);
     }
+  if(LoadProbe::enabled())
+    LoadProbe::mark("change_restore_state",LoadProbe::msSince(probeT),"bytes="+std::to_string(wss.storage.size()));
 
   if(1) {
     // put hero to world
@@ -446,8 +518,15 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
   if(auto hero = wrld->player())
     vm->setInstanceNPC("HERO",*hero);
 
+  probeT = LoadProbe::now();
   initScripts(wss.isEmpty());
+  if(LoadProbe::enabled())
+    LoadProbe::mark("scripts_startup",LoadProbe::msSince(probeT),
+                    "first="+std::to_string(wss.isEmpty())+" npcs="+std::to_string(wrld->npcCount()));
+  probeT = LoadProbe::now();
   wrld->triggerOnStart(wss.isEmpty());
+  if(LoadProbe::enabled())
+    LoadProbe::mark("trigger_start",LoadProbe::msSince(probeT));
 
   for(auto& i:visitedWorlds)
     if(i.compareName(wrld->name())){
@@ -457,6 +536,10 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
       }
 
   cam->reset(wrld->player());
+  wrld->updateLandscape(*cam);
+  wrld->updateNpcSimTiers();
+  if(LoadProbe::enabled())
+    LoadProbe::mark("change_end");
   Log::i("Done loading world[",world,"]");
   return std::move(game);
   }
@@ -528,25 +611,44 @@ void GameSession::initPerceptions() {
   }
 
 void GameSession::initScripts(bool firstTime) {
+  LoadProbe::Startup::Scope probe(LoadProbe::Startup::Script,true);
+  LoadProbe::Startup::Detail::Scope script("script_phase");
   auto wname = wrld->name();
   auto dot   = wname.rfind('.');
   auto name  = (dot==std::string::npos ? wname : wname.substr(0,dot));
 
   if(firstTime) {
-    if(vm->hasSymbolName("startup_global"))
-      vm->getVm().call_function("startup_global");
+    // Fresh start: Wld_InsertNpc leaves the floor fix to the final placement below (game/gamescript_startupfloor.h).
+    vm->startupFloor().begin();
+    if(vm->hasSymbolName("startup_global")) {
+      LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("STARTUP_GLOBAL");});
+      vm->runStartup("startup_global");
+      }
 
     string_frm startup("startup_", name);
-    if(vm->hasSymbolName(startup))
-      vm->getVm().call_function(startup);
+    if(vm->hasSymbolName(startup)) {
+      LoadProbe::Startup::Detail::Scope call("script_function",[&]{return std::string(std::string_view(startup));});
+      vm->runStartup(startup);
+      }
     }
 
-  if(vm->hasSymbolName("init_global"))
+  if(vm->hasSymbolName("init_global")) {
+    LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("INIT_GLOBAL");});
     vm->getVm().call_function("init_global");
+    }
 
   string_frm init("init_",name);
-  if(vm->hasSymbolName(init))
+  if(vm->hasSymbolName(init)) {
+    LoadProbe::Startup::Detail::Scope call("script_function",[&]{return std::string(std::string_view(init));});
     vm->getVm().call_function(init);
+    }
 
+  script.stop();
+  LoadProbe::Startup::Scope placementProbe(LoadProbe::Startup::NpcPlacement);
+  LoadProbe::Startup::Detail::Scope placement("placement_phase");
   wrld->resetPositionToTA();
+  placement.stop();
+  vm->startupFloor().end();
+  if(firstTime && LoadProbe::enabled())
+    wrld->logStartupFloorDigest();
   }

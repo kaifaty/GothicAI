@@ -1,0 +1,284 @@
+#pragma once
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+// Routine activities as data (reports/engine/2026-11-14-npc-data/README.md, step D4). The import
+// recognises a template in the three script phases of a routine state; the game runs the same
+// template walk below instead of the script. Both sides share this file, so the call stream the
+// import compares with the VM is the stream the game issues.
+namespace ActivityDefinitions {
+inline constexpr int FormatVersion = 5;
+enum class Phase : uint8_t { Init, Loop, End };
+enum class Approach : uint8_t { NearestWaypoint, Distance };
+
+inline bool mobInitChecksBody(std::string_view state) {
+  return state=="ZS_SIT_BENCH" || state=="ZS_SIT_CHAIR" || state=="ZS_SIT_THRONE";
+  }
+
+inline bool timedMobState(std::string_view state) {
+  return state=="ZS_SIT_BENCH" || state=="ZS_SIT_CHAIR" || state=="ZS_SAW" ||
+         state=="ZS_REPAIR_HUT" || state=="ZS_PRAY_INNOS";
+  }
+
+// "An activity at a world object": approach the routine point, use the named object whenever it
+// is free and the body is not already busy with it, leave the object at the end. The perception
+// set stays a script helper executed by the VM at its place (reactions are step D5).
+struct MobActivity {
+  struct Timer {
+    struct Gesture {
+      std::string animation;
+      int32_t throughRoll = 0; // inclusive upper limit, using the same draw for the whole queue
+      bool operator==(const Gesture&) const = default;
+      };
+    int32_t timerSeconds = 0;
+    int32_t rollRange = 0; // zero: only reset the timer
+    std::string rollVariable;
+    std::vector<Gesture> gestures;
+    bool operator==(const Timer&) const = default;
+    };
+  struct Item {
+    enum class End { None, Use, Remove };
+    int32_t required = 0;
+    bool equip = false; // equip on entry, including when already present
+    End endAction = End::None;
+    int32_t endItem = 0;
+    bool operator==(const Item&) const = default;
+    };
+  std::optional<Item> item;
+  std::string perceptions;          // deferred helper without arguments, first in Init
+  int32_t     walkMode = 0;         // AI_SetWalkMode argument
+  Approach    approach = Approach::NearestWaypoint;
+  int32_t     approachDistance = 0; // Distance: walk to the point when farther than this
+  std::string scheme;               // object scheme: availability, use in Loop and leave in End
+  int32_t     busyBodyState = 0;    // no new use while C_BodyStateContains(self, this)
+  int32_t     useState = 0;         // AI_UseMob state in Loop
+  int32_t     leaveState = 0;       // AI_UseMob state in End
+  int32_t     loopResult = 0;       // Loop result
+  bool skipApproachWhenBusy = false;
+  std::optional<Timer> timer;
+  bool operator==(const MobActivity&) const = default;
+  };
+
+// The form fixes the order and conditions of the three phases.
+struct PointActivity {
+  enum class Form { Guard, Campfire, ArmsCrossed, Waypoint, Pee };
+  static constexpr std::array<std::string_view,5> FormNames={"guard","campfire","arms_crossed","waypoint","pee"};
+  struct Gesture {
+    std::string animation; // empty: no gesture for this outcome
+    bool resetTimer = false;
+    bool operator==(const Gesture&) const = default;
+    };
+  struct PortalEvent {
+    std::string function; // deferred script helper, after the gesture and before the timer reset
+    int32_t rollRange = 0, triggerRoll = 0;
+    int32_t world = 0, ravenDead = 0, excludedGuild = 0;
+    bool operator==(const PortalEvent&) const = default;
+    };
+  Form form = Form::Guard;
+  std::string perceptions;
+  int32_t walkMode = 1;
+  int32_t approachDistance = 500;
+  std::string point;
+  std::string enterAnimation, leaveAnimation;
+  int32_t enterBodyState = 0, leaveBodyState = 0; // Campfire: AI_PlayAniBS, also the sitting test
+  int32_t timerSeconds = 5;
+  int32_t rollRange = 10;
+  std::vector<Gesture> gestures; // indexed by the random outcome, [0, rollRange)
+  int32_t initialStage = 1, walkingStage = 2, arrivedStage = 1, poseStage = 0; // aivar[19]
+  int32_t loopResult = 0;
+  std::optional<PortalEvent> portal; // ArmsCrossed in the addon; Classic goes straight to the timer reset
+  bool timed() const { return form==Form::Guard || form==Form::ArmsCrossed || form==Form::Waypoint; }
+  std::string_view occupied() const { return form==Form::Campfire ? "wait" : "align_waypoint"; }
+  bool operator==(const PointActivity&) const = default;
+  };
+
+struct Library {
+  std::map<std::string,MobActivity> activities; // by the Init symbol of the state
+  std::map<std::string,PointActivity> points;
+  std::map<std::string,std::string> uncaptured; // state -> reason: detail
+  };
+
+// The engine as the template sees it: each method is one script external with SELF as its NPC.
+class Host {
+  public:
+    virtual ~Host() = default;
+    virtual void        deferred(std::string_view helper) = 0;              // script helper in the VM
+    virtual const void* lookAtTarget() = 0;                                 // NPC_GETLOOKATTARGET(self)
+    virtual bool        isValidNpc(const void* npc) = 0;                    // HLP_ISVALIDNPC(npc)
+    virtual void        stopLookAt() = 0;                                   // AI_STOPLOOKAT(self)
+    virtual void        removeWeapon() = 0;                                 // AI_REMOVEWEAPON(self)
+    virtual void        setWalkMode(int32_t mode) = 0;                      // AI_SETWALKMODE(self,mode)
+    virtual std::string waypoint() = 0;                                     // self.wp, a field read
+    virtual std::string nearestWaypoint() = 0;                              // NPC_GETNEARESTWP(self)
+    virtual bool        stringsEqual(std::string_view a, std::string_view b) = 0; // HLP_STRCMP(a,b)
+    virtual int32_t     distanceToWaypoint(std::string_view waypoint) = 0;  // NPC_GETDISTTOWP(self,wp)
+    virtual void        gotoWaypoint(std::string_view waypoint) = 0;        // AI_GOTOWP(self,wp)
+    virtual bool        isMobAvailable(std::string_view scheme) = 0;        // WLD_ISMOBAVAILABLE(self,scheme)
+    virtual int32_t     bodyState() = 0;                                    // NPC_GETBODYSTATE(self)
+    virtual void        useMob(std::string_view scheme, int32_t state) = 0; // AI_USEMOB(self,scheme,state)
+    virtual int32_t     itemCount(int32_t item) = 0;
+    virtual void        createItem(int32_t item) = 0;
+    virtual void        equipItem(int32_t item) = 0;
+    virtual void        useItem(int32_t item) = 0;
+    virtual void        removeItem(int32_t item) = 0;
+  };
+
+// Writes every call of a host as text, in the form the import gives the script's own calls:
+// NAME(args)->result, SELF as `self`, another NPC as `npc`. The deferred helper is `deferred NAME`.
+class Recorder final : public Host {
+  public:
+    using Sink = std::function<void(std::string)>;
+    Recorder(Host& host, Sink sink):host(host),sink(std::move(sink)) {}
+    static std::string text(std::string_view value) { return "\""+std::string(value)+"\""; }
+    void deferred(std::string_view helper) override {
+      sink("deferred "+std::string(helper));
+      host.deferred(helper);
+      }
+    const void* lookAtTarget() override {
+      const auto* npc = host.lookAtTarget();
+      sink(std::string("NPC_GETLOOKATTARGET(self)->")+(npc ? "npc" : "null"));
+      return npc;
+      }
+    bool isValidNpc(const void* npc) override {
+      const bool valid = host.isValidNpc(npc);
+      sink(std::string("HLP_ISVALIDNPC(")+(npc ? "npc" : "null")+")->"+(valid ? "1" : "0"));
+      return valid;
+      }
+    void stopLookAt() override { sink("AI_STOPLOOKAT(self)"); host.stopLookAt(); }
+    void removeWeapon() override { sink("AI_REMOVEWEAPON(self)"); host.removeWeapon(); }
+    void setWalkMode(int32_t mode) override {
+      sink("AI_SETWALKMODE(self,"+std::to_string(mode)+")");
+      host.setWalkMode(mode);
+      }
+    std::string waypoint() override { return host.waypoint(); }
+    std::string nearestWaypoint() override {
+      auto name = host.nearestWaypoint();
+      sink("NPC_GETNEARESTWP(self)->"+text(name));
+      return name;
+      }
+    bool stringsEqual(std::string_view a, std::string_view b) override {
+      const bool equal = host.stringsEqual(a,b);
+      sink("HLP_STRCMP("+text(a)+","+text(b)+")->"+(equal ? "1" : "0"));
+      return equal;
+      }
+    int32_t distanceToWaypoint(std::string_view waypoint) override {
+      const auto distance = host.distanceToWaypoint(waypoint);
+      sink("NPC_GETDISTTOWP(self,"+text(waypoint)+")->"+std::to_string(distance));
+      return distance;
+      }
+    void gotoWaypoint(std::string_view waypoint) override {
+      sink("AI_GOTOWP(self,"+text(waypoint)+")");
+      host.gotoWaypoint(waypoint);
+      }
+    bool isMobAvailable(std::string_view scheme) override {
+      const bool available = host.isMobAvailable(scheme);
+      sink("WLD_ISMOBAVAILABLE(self,"+text(scheme)+")->"+(available ? "1" : "0"));
+      return available;
+      }
+    int32_t bodyState() override {
+      const auto state = host.bodyState();
+      sink("NPC_GETBODYSTATE(self)->"+std::to_string(state));
+      return state;
+      }
+    void useMob(std::string_view scheme, int32_t state) override {
+      // The external returns an int the script discards; the game always returns 0.
+      sink("AI_USEMOB(self,"+text(scheme)+","+std::to_string(state)+")->0");
+      host.useMob(scheme,state);
+      }
+
+    int32_t itemCount(int32_t item) override {
+      const auto count=host.itemCount(item);
+      sink("NPC_HASITEMS(self,"+std::to_string(item)+")->"+std::to_string(count));
+      return count;
+      }
+    void createItem(int32_t item) override {
+      sink("CREATEINVITEM(self,"+std::to_string(item)+")");
+      host.createItem(item);
+      }
+    void equipItem(int32_t item) override {
+      sink("EQUIPITEM(self,"+std::to_string(item)+")");
+      host.equipItem(item);
+      }
+    void useItem(int32_t item) override {
+      sink("AI_USEITEM(self,"+std::to_string(item)+")");
+      host.useItem(item);
+      }
+    void removeItem(int32_t item) override {
+      sink("NPC_REMOVEINVITEMS(self,"+std::to_string(item)+",1)->0");
+      host.removeItem(item);
+      }
+
+  private:
+    Host& host;
+    Sink  sink;
+  };
+
+// C_BodyStateContains of Gothic 2: the same state number and the same free-hands and
+// interruptable flags (BS_MAX | BS_FLAG_INTERRUPTABLE | BS_FLAG_FREEHANDS).
+inline constexpr int32_t BodyStateMask = 0x1f | 0x8000 | 0x10000;
+inline bool bodyStateContains(int32_t bodyState, int32_t wanted) {
+  return (bodyState & BodyStateMask)==(wanted & BodyStateMask);
+  }
+
+inline void resetForActivity(Host& host, std::string_view perceptions) {
+  host.deferred(perceptions);
+  if(host.isValidNpc(host.lookAtTarget()))
+    host.stopLookAt();
+  host.removeWeapon();
+  }
+
+// One phase of the template. Evaluation order follows the script: both operands of a condition
+// are asked even when the first one already decides it, as Daedalus does not short-circuit.
+inline int run(const MobActivity& activity, Phase phase, Host& host) {
+  switch(phase) {
+    case Phase::Init: {
+      resetForActivity(host,activity.perceptions);
+      if(activity.skipApproachWhenBusy && bodyStateContains(host.bodyState(),activity.busyBodyState))
+        return 0;
+      host.setWalkMode(activity.walkMode);
+      bool away = false;
+      if(activity.approach==Approach::NearestWaypoint) {
+        const auto nearest = host.nearestWaypoint();
+        away = !host.stringsEqual(nearest,host.waypoint());
+        } else {
+        away = host.distanceToWaypoint(host.waypoint())>activity.approachDistance;
+        }
+      if(away)
+        host.gotoWaypoint(host.waypoint());
+      if(const auto& item=activity.item) {
+        if(host.itemCount(item->required)==0)
+          host.createItem(item->required);
+        if(item->equip)
+          host.equipItem(item->required);
+        }
+      return 0;
+      }
+    case Phase::Loop: {
+      const bool available = host.isMobAvailable(activity.scheme);
+      const bool busy      = bodyStateContains(host.bodyState(),activity.busyBodyState);
+      if(available && !busy)
+        host.useMob(activity.scheme,activity.useState);
+      return activity.loopResult;
+      }
+    case Phase::End:
+      host.useMob(activity.scheme,activity.leaveState);
+      if(const auto& item=activity.item) {
+        if(item->endAction==MobActivity::Item::End::Use)
+          host.useItem(item->endItem);
+        if(item->endAction==MobActivity::Item::End::Remove && host.itemCount(item->endItem)>=1)
+          host.removeItem(item->endItem);
+        }
+      return 0;
+    }
+  return 0;
+  }
+}

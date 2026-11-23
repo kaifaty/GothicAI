@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 Role = Literal["user", "assistant", "developer"]
-ToolChoice = Literal["auto", "none"]
+ToolChoice = Literal["auto", "none", "required"]
 
 # A quick-model request's llama.cpp slot; scoped to its coroutine, including test backends.
 QUICK_SLOT: ContextVar[int | None] = ContextVar("quick_slot", default=None)

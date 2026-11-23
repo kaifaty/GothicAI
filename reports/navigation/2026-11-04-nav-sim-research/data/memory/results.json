@@ -1,0 +1,1163 @@
+{
+  "status": "done",
+  "raw_root": "/mnt/shared/gothic-ai/nav-sim-research/memory",
+  "population_model_note": "HD format 3 is the requested proxy for v5: same HD maps and CNN/GRU, no pace input and one extra walk head.",
+  "weights": {
+    "hd": {
+      "path": "/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-run/policy.navbc",
+      "sha256": "304ea6c6574e3836139da72b5a299a28217a263fac3648d792b458327d251a6b",
+      "format": 3,
+      "macs": 2915104,
+      "inputs": {
+        "near": [
+          10,
+          64,
+          64
+        ],
+        "far": [
+          10,
+          50,
+          100
+        ],
+        "vector": [
+          2166
+        ],
+        "dtype": "float32",
+        "map_layout": "CHW"
+      },
+      "memory_version": 3
+    },
+    "v5": {
+      "path": "/mnt/shared/gothic-ai/nav-pace-v5/run/policy.navbc",
+      "sha256": "b70d3185c320af0e3c519adc9fd471d5f5df4abf3844bde7cbb39d96ccd351dc",
+      "format": 5,
+      "macs": 2914720,
+      "inputs": {
+        "near": [
+          10,
+          64,
+          64
+        ],
+        "far": [
+          10,
+          50,
+          100
+        ],
+        "vector": [
+          2167
+        ],
+        "dtype": "float32",
+        "map_layout": "CHW"
+      },
+      "memory_version": 3
+    }
+  },
+  "hardware": {
+    "cpu": "AMD Ryzen 9 3950X 16-Core Processor",
+    "gpu": "NVIDIA GeForce RTX 3080 10 GiB; unused",
+    "compiler": "g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+    "benchmark_compile_flags": "-O2 -g1 -DNDEBUG -std=gnu++20 -fPIE; no explicit -march/SIMD/FP-contract flags, like navpolicy-contract",
+    "runner_navpolicy_compile_flags": "-O2 -g1 -DNDEBUG -std=gnu++20 -fPIC -mavx2 -mbmi -mpopcnt -mlzcnt -mf16c -mfpmath=sse -pthread -ffp-contract=off; no explicit -march",
+    "runner_compile_command": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/runner-navpolicy-compile.txt",
+    "compile_commands": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/compile-commands.txt"
+  },
+  "population": [
+    {
+      "N": 50,
+      "runners": 1,
+      "gq_threads": 1,
+      "gq_class": "quick",
+      "cpu_affinity": "14",
+      "repeats": 3,
+      "warmup": "Each runner excludes the initial N decisions and startup from C++ collection/profile counters; world/navmesh preparation excluded.",
+      "run_ms": 20000,
+      "physics": "cv",
+      "action_mode": "sample",
+      "record": false,
+      "weight": "hd",
+      "decisions_per_second": {
+        "median": 170.2462675090738,
+        "p90": 172.4964765830695,
+        "repeats": 3
+      },
+      "decisions_per_second_including_resets": {
+        "median": 156.6798140113359,
+        "p90": 158.26994039852144,
+        "repeats": 3
+      },
+      "profile_us": {
+        "eye": {
+          "median": 538.830800301356,
+          "p90": 544.3602964741335,
+          "repeats": 3
+        },
+        "memory": {
+          "median": 722.0694951280764,
+          "p90": 751.7284439176293,
+          "repeats": 3
+        },
+        "roads_teacher": {
+          "median": 31.43166037167253,
+          "p90": 33.291820130587645,
+          "repeats": 3
+        },
+        "encode": {
+          "median": 229.89136162732294,
+          "p90": 231.07744460070316,
+          "repeats": 3
+        },
+        "policy": {
+          "median": 2354.412770467102,
+          "p90": 2357.756248116524,
+          "repeats": 3
+        },
+        "reward": {
+          "median": 45.36117016574586,
+          "p90": 52.171311160220995,
+          "repeats": 3
+        },
+        "record": {
+          "median": 0.5618387744851833,
+          "p90": 0.6755013761928679,
+          "repeats": 3
+        },
+        "world_and_other": {
+          "median": 1951.2848036162732,
+          "p90": 2022.850615369161,
+          "repeats": 3
+        }
+      },
+      "rounds": [
+        {
+          "repeat": 0,
+          "decisions": 9955,
+          "total_decisions": 10005,
+          "warmed_decisions_per_second": 170.2462675090738,
+          "decisions_per_second_including_resets": 156.6798140113359,
+          "profile_us": {
+            "eye": 538.830800301356,
+            "memory": 722.0694951280764,
+            "roads_teacher": 31.43166037167253,
+            "encode": 229.89136162732294,
+            "policy": 2354.412770467102,
+            "reward": 45.36117016574586,
+            "record": 0.5618387744851833,
+            "world_and_other": 1951.2848036162732
+          },
+          "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/population-n50-r1-repeat0/throughput-n50-r1.json",
+          "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n95f08f4917b2 ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤1s median=1s\n690444aaa5f8 claude-navsim-ra quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤1800s\n9744a68782a6 nav-roads-carrot batch  queued     16t 11G gpu=0G окно=0 слот=—    —        7200s ≤5400s\n958d3668d7fe nav-roads-carrot quick  running    12t 5G gpu=4G окно=1 слот=0     14:42:10 3540s ≤12600s\n5316ce9cb34d navsim-rays-engi quick  running    1t 4G gpu=0G окно=0 слот=—      14:48:08 3600s ≤16140s\n13522ad7cdfc claude-navsim-me quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤19740s\nc595687bcb65 claude-navsim-in quick  running    8t 6G gpu=6G окно=0 слот=—      14:49:22 3600s ≤23340s\n6814958cf3ca navsim-memory    quick  queued     16t 12G gpu=0G окно=0 слот=—    —        1800s ≤26940s\n2f9b17b3707d claude-quiver-mo quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤28850s median=110s\n1b0a8a17cc7d navsim-memory    quick  running    1t 3G gpu=0G окно=0 слот=—      14:53:09 1800s ≤32340s\nd7fa9e1c636e navsim-motion    batch  queued     1t 2G gpu=0G окно=0 слот=—      —        1800s ≤34535s median=395s\n0912c9d2f006 nav-follow-trail quick  queued     4t 6G gpu=0G окно=0 слот=—      —        2400s ≤35940s\nDisk /home/kaifaty/gothic-ai: free 117.7G; minimum 20G\nDisk /: free 117.7G; minimum 20G\n"
+        },
+        {
+          "repeat": 1,
+          "decisions": 9955,
+          "total_decisions": 10005,
+          "warmed_decisions_per_second": 166.00462288806693,
+          "decisions_per_second_including_resets": 153.19823494499045,
+          "profile_us": {
+            "eye": 545.742670517328,
+            "memory": 759.1431811150176,
+            "roads_teacher": 33.75686007031643,
+            "encode": 231.37396534404823,
+            "policy": 2358.59211752888,
+            "reward": 53.873846408839775,
+            "record": 0.703917026619789,
+            "world_and_other": 2040.742068307383
+          },
+          "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/population-n50-r1-repeat1/throughput-n50-r1.json",
+          "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n95f08f4917b2 ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤1s median=1s\n690444aaa5f8 claude-navsim-ra quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤1800s\n9744a68782a6 nav-roads-carrot batch  queued     16t 11G gpu=0G окно=0 слот=—    —        7200s ≤5400s\n5316ce9cb34d navsim-rays-engi quick  running    1t 4G gpu=0G окно=0 слот=—      14:48:08 3600s ≤12600s\n13522ad7cdfc claude-navsim-me quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤16200s\nc595687bcb65 claude-navsim-in quick  running    8t 6G gpu=6G окно=0 слот=—      14:49:22 3600s ≤19800s\n6814958cf3ca navsim-memory    quick  queued     16t 12G gpu=0G окно=0 слот=—    —        1800s ≤23400s\n2f9b17b3707d claude-quiver-mo quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤25310s median=110s\n1b0a8a17cc7d navsim-memory    quick  running    1t 3G gpu=0G окно=0 слот=—      14:53:09 1800s ≤28800s\nd7fa9e1c636e navsim-motion    batch  queued     1t 2G gpu=0G окно=0 слот=—      —        1800s ≤30995s median=395s\n0912c9d2f006 nav-follow-trail quick  running    4t 6G gpu=0G окно=0 слот=—      14:54:45 2400s ≤32400s\na1509c1bf00e nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤34800s\n6a3bdcda2f4d nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤42000s\n66cba5e2d9a2 nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤49200s\n3f2db28cff7a nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤56400s\n727f868a569d nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤63600s\ne8390f840a73 nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤67200s\naa7fa95116a3 navsim-rays-engi quick  queued     1t 3G gpu=0G окно=0 слот=—      —        1800s ≤70800s\nDisk /home/kaifaty/gothic-ai: free 118.4G; minimum 20G\nDisk /: free 118.4G; minimum 20G\n"
+        },
+        {
+          "repeat": 2,
+          "decisions": 9955,
+          "total_decisions": 10005,
+          "warmed_decisions_per_second": 173.05902885156843,
+          "decisions_per_second_including_resets": 158.66747199531784,
+          "profile_us": {
+            "eye": 534.1643839276745,
+            "memory": 706.750288598694,
+            "roads_teacher": 31.071342340532393,
+            "encode": 227.78620783525866,
+            "policy": 2337.71955901557,
+            "reward": 43.68819989954797,
+            "record": 0.4983504771471622,
+            "world_and_other": 1896.696864892014
+          },
+          "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/population-n50-r1-repeat2/throughput-n50-r1.json",
+          "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n95f08f4917b2 ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤1s median=1s\n9744a68782a6 nav-roads-carrot batch  queued     16t 11G gpu=0G окно=0 слот=—    —        7200s ≤1800s\n5316ce9cb34d navsim-rays-engi quick  running    1t 4G gpu=0G окно=0 слот=—      14:48:08 3600s ≤9000s\n13522ad7cdfc claude-navsim-me quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤12600s\nc595687bcb65 claude-navsim-in quick  running    8t 6G gpu=6G окно=0 слот=—      14:49:22 3600s ≤16200s\n6814958cf3ca navsim-memory    quick  queued     16t 12G gpu=0G окно=0 слот=—    —        1800s ≤19800s\n2f9b17b3707d claude-quiver-mo quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤21710s median=110s\n1b0a8a17cc7d navsim-memory    quick  running    1t 3G gpu=0G окно=0 слот=—      14:53:09 1800s ≤25200s\nd7fa9e1c636e navsim-motion    batch  queued     1t 2G gpu=0G окно=0 слот=—      —        1800s ≤27395s median=395s\n0912c9d2f006 nav-follow-trail quick  running    4t 6G gpu=0G окно=0 слот=—      14:54:45 2400s ≤28800s\na1509c1bf00e nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤31200s\n6a3bdcda2f4d nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤38400s\n66cba5e2d9a2 nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤45600s\n3f2db28cff7a nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤52800s\n727f868a569d nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤60000s\ne8390f840a73 nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤63600s\naa7fa95116a3 navsim-rays-engi quick  queued     1t 3G gpu=0G окно=0 слот=—      —        1800s ≤67200s\nDisk /home/kaifaty/gothic-ai: free 117.7G; minimum 20G\nDisk /: free 117.7G; minimum 20G\n"
+        }
+      ]
+    },
+    {
+      "N": 100,
+      "runners": 1,
+      "gq_threads": 1,
+      "gq_class": "quick",
+      "cpu_affinity": "14",
+      "repeats": 3,
+      "warmup": "Each runner excludes the initial N decisions and startup from C++ collection/profile counters; world/navmesh preparation excluded.",
+      "run_ms": 20000,
+      "physics": "cv",
+      "action_mode": "sample",
+      "record": false,
+      "weight": "hd",
+      "decisions_per_second": {
+        "median": 196.35796938806675,
+        "p90": 199.17895027996917,
+        "repeats": 3
+      },
+      "decisions_per_second_including_resets": {
+        "median": 185.46217831579415,
+        "p90": 187.75313674678094,
+        "repeats": 3
+      },
+      "profile_us": {
+        "eye": {
+          "median": 549.0607685352621,
+          "p90": 559.1566680731364,
+          "repeats": 3
+        },
+        "memory": {
+          "median": 709.7475000000001,
+          "p90": 710.5381461723931,
+          "repeats": 3
+        },
+        "roads_teacher": {
+          "median": 31.82073874824191,
+          "p90": 32.31027232268435,
+          "repeats": 3
+        },
+        "encode": {
+          "median": 232.63865657022302,
+          "p90": 239.48812448262004,
+          "repeats": 3
+        },
+        "policy": {
+          "median": 2389.175741410488,
+          "p90": 2428.446902350814,
+          "repeats": 3
+        },
+        "reward": {
+          "median": 49.58716576250753,
+          "p90": 50.65446964034559,
+          "repeats": 3
+        },
+        "record": {
+          "median": 0.6109503717098653,
+          "p90": 0.6470025316455696,
+          "repeats": 3
+        },
+        "world_and_other": {
+          "median": 1128.756809825196,
+          "p90": 1131.476786919831,
+          "repeats": 3
+        }
+      },
+      "rounds": [
+        {
+          "repeat": 0,
+          "decisions": 19908,
+          "total_decisions": 20008,
+          "warmed_decisions_per_second": 196.35796938806675,
+          "decisions_per_second_including_resets": 185.46217831579415,
+          "profile_us": {
+            "eye": 549.0607685352621,
+            "memory": 709.7475000000001,
+            "roads_teacher": 31.82073874824191,
+            "encode": 232.60069841269842,
+            "policy": 2389.175741410488,
+            "reward": 50.92129560980511,
+            "record": 0.6560155716294958,
+            "world_and_other": 1128.756809825196
+          },
+          "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/population-n100-r1-repeat0/throughput-n100-r1.json",
+          "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n95f08f4917b2 ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤1s median=1s\n9744a68782a6 nav-roads-carrot batch  queued     16t 11G gpu=0G окно=0 слот=—    —        7200s ≤1800s\n5316ce9cb34d navsim-rays-engi quick  running    1t 4G gpu=0G окно=0 слот=—      14:48:08 3600s ≤9000s\n6814958cf3ca navsim-memory    quick  queued     16t 12G gpu=0G окно=0 слот=—    —        1800s ≤12600s\n1b0a8a17cc7d navsim-memory    quick  running    1t 3G gpu=0G окно=0 слот=—      14:53:09 1800s ≤14400s\nd7fa9e1c636e navsim-motion    batch  queued     1t 2G gpu=0G окно=0 слот=—      —        1800s ≤16595s median=395s\n0912c9d2f006 nav-follow-trail quick  running    4t 6G gpu=0G окно=0 слот=—      14:54:45 2400s ≤18000s\na1509c1bf00e nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤20400s\n6a3bdcda2f4d nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤27600s\n66cba5e2d9a2 nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤34800s\n3f2db28cff7a nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤42000s\n727f868a569d nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤49200s\ne8390f840a73 nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤52800s\nDisk /home/kaifaty/gothic-ai: free 117.6G; minimum 20G\nDisk /: free 117.6G; minimum 20G\n"
+        },
+        {
+          "repeat": 1,
+          "decisions": 19908,
+          "total_decisions": 20008,
+          "warmed_decisions_per_second": 193.5482926352419,
+          "decisions_per_second_including_resets": 179.4514881160014,
+          "profile_us": {
+            "eye": 561.680642957605,
+            "memory": 710.7358077154913,
+            "roads_teacher": 32.43265571629496,
+            "encode": 241.2004914607193,
+            "policy": 2438.2646925858953,
+            "reward": 49.58716576250753,
+            "record": 0.6109503717098653,
+            "world_and_other": 1132.15678119349
+          },
+          "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/population-n100-r1-repeat1/throughput-n100-r1.json",
+          "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n95f08f4917b2 ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤1s median=1s\n9744a68782a6 nav-roads-carrot batch  queued     16t 11G gpu=0G окно=0 слот=—    —        7200s ≤1800s\n5316ce9cb34d navsim-rays-engi quick  running    1t 4G gpu=0G окно=0 слот=—      14:48:08 3600s ≤9000s\n6814958cf3ca navsim-memory    quick  queued     16t 12G gpu=0G окно=0 слот=—    —        1800s ≤12600s\n1b0a8a17cc7d navsim-memory    quick  running    1t 3G gpu=0G окно=0 слот=—      14:53:09 1800s ≤14400s\nd7fa9e1c636e navsim-motion    batch  queued     1t 2G gpu=0G окно=0 слот=—      —        1800s ≤16595s median=395s\n0912c9d2f006 nav-follow-trail quick  running    4t 6G gpu=0G окно=0 слот=—      14:54:45 2400s ≤18000s\na1509c1bf00e nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤20400s\n6a3bdcda2f4d nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤27600s\n66cba5e2d9a2 nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤34800s\n3f2db28cff7a nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤42000s\n727f868a569d nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤49200s\ne8390f840a73 nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤52800s\n816caa83f664 claude-navsim-me quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤56400s\nb6b860e24f6f navsim-rays-engi quick  running    1t 3G gpu=0G окно=0 слот=—      15:00:23 1800s ≤60000s\nDisk /home/kaifaty/gothic-ai: free 117.2G; minimum 20G\nDisk /: free 117.2G; minimum 20G\n"
+        },
+        {
+          "repeat": 2,
+          "decisions": 19908,
+          "total_decisions": 20008,
+          "warmed_decisions_per_second": 199.88419550294478,
+          "decisions_per_second_including_resets": 188.32587635452762,
+          "profile_us": {
+            "eye": 547.3416531042798,
+            "memory": 684.1840636929877,
+            "roads_teacher": 31.123520393811532,
+            "encode": 232.63865657022302,
+            "policy": 2365.879349005425,
+            "reward": 46.02911101064899,
+            "record": 0.5439346493871811,
+            "world_and_other": 1095.1565009041592
+          },
+          "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/population-n100-r1-repeat2/throughput-n100-r1.json",
+          "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n95f08f4917b2 ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤1s median=1s\n9744a68782a6 nav-roads-carrot batch  queued     16t 11G gpu=0G окно=0 слот=—    —        7200s ≤1800s\n5316ce9cb34d navsim-rays-engi quick  running    1t 4G gpu=0G окно=0 слот=—      14:48:08 3600s ≤9000s\n6814958cf3ca navsim-memory    quick  queued     16t 12G gpu=0G окно=0 слот=—    —        1800s ≤12600s\n1b0a8a17cc7d navsim-memory    quick  running    1t 3G gpu=0G окно=0 слот=—      14:53:09 1800s ≤14400s\nd7fa9e1c636e navsim-motion    batch  queued     1t 2G gpu=0G окно=0 слот=—      —        1800s ≤16595s median=395s\n0912c9d2f006 nav-follow-trail quick  running    4t 6G gpu=0G окно=0 слот=—      14:54:45 2400s ≤18000s\na1509c1bf00e nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤20400s\n6a3bdcda2f4d nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤27600s\n66cba5e2d9a2 nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤34800s\n3f2db28cff7a nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤42000s\n727f868a569d nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤49200s\ne8390f840a73 nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤52800s\n816caa83f664 claude-navsim-me quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤56400s\nb6b860e24f6f navsim-rays-engi quick  running    1t 3G gpu=0G окно=0 слот=—      15:00:23 1800s ≤60000s\n5799b984afe7 claude-navsim-in quick  queued     8t 6G gpu=6G окно=0 слот=—      —        3600s ≤61800s\nDisk /home/kaifaty/gothic-ai: free 116.9G; minimum 20G\nDisk /: free 116.9G; minimum 20G\n"
+        }
+      ]
+    }
+  ],
+  "traces": [
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/approach/approach-02a5cadf948f7065/seed-18102027/memory-cost.bin",
+      "sha256": "3e9cae4f51fd0a88ae01da58ad5f84f04aeafd7f3faf921a7e629a2a9c92d9c6",
+      "bytes": 10746176,
+      "family": "approach",
+      "region": "onar",
+      "scenario_id": "approach-02a5cadf948f7065",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/approach/approach-08cf453931e3afc7/seed-18102027/memory-cost.bin",
+      "sha256": "e034be37391e899af9f3e8badaf555e02833db5d628d1319dad0d01ffc74c65a",
+      "bytes": 10702476,
+      "family": "approach",
+      "region": "onar",
+      "scenario_id": "approach-08cf453931e3afc7",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/approach/approach-0cc25c54d9314c3d/seed-18102027/memory-cost.bin",
+      "sha256": "57d3f78037ed037a7a3f47f9761a531e0d507b09c621ab6e8b8163653f4911d2",
+      "bytes": 11124664,
+      "family": "approach",
+      "region": "onar",
+      "scenario_id": "approach-0cc25c54d9314c3d",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/approach/approach-0ce6039d4c2d6b75/seed-18102027/memory-cost.bin",
+      "sha256": "bf5065c30cced87278366d5a6df5c7f48e0b8345032f11a315c834c395f3818d",
+      "bytes": 12361788,
+      "family": "approach",
+      "region": "onar",
+      "scenario_id": "approach-0ce6039d4c2d6b75",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/approach/approach-0ff7dca5c06442e3/seed-18102027/memory-cost.bin",
+      "sha256": "5f5102a0722bbcef836e981fde5ca402117810dcaa1ee886ff4fd3aa01bfe460",
+      "bytes": 2253612,
+      "family": "approach",
+      "region": "onar",
+      "scenario_id": "approach-0ff7dca5c06442e3",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 6600,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 198,
+      "decisions": 66
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/approach/approach-11ec9d74d6b3bd69/seed-18102027/memory-cost.bin",
+      "sha256": "4a1ab72c584697fa94f2615aad4188b1c24e10ea5747dc17835c8e9caf078fe1",
+      "bytes": 2495115,
+      "family": "approach",
+      "region": "onar",
+      "scenario_id": "approach-11ec9d74d6b3bd69",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 6067,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 182,
+      "decisions": 61
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/follow_below_gate/follow-011aabe15f5d9cd6/seed-18102027/memory-cost.bin",
+      "sha256": "73fa6ca679c937d221764141cc315edb3a66c16371a4ea42117b42e303f64b81",
+      "bytes": 10062340,
+      "family": "follow_below_gate",
+      "region": "onar",
+      "scenario_id": "follow-011aabe15f5d9cd6",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/follow_below_gate/follow-011fdbc7ef100f95/seed-18102027/memory-cost.bin",
+      "sha256": "fc935637fa422e089299720b91ccf87857c8ce1ded7eb4afc5002775b38d7d1c",
+      "bytes": 10105304,
+      "family": "follow_below_gate",
+      "region": "onar",
+      "scenario_id": "follow-011fdbc7ef100f95",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/follow_below_gate/follow-04c9a05468751d9e/seed-18102027/memory-cost.bin",
+      "sha256": "d5e53e338eb77664a426f4890ea0db3ba52b955be2a77f838707f98d6fa6b9b8",
+      "bytes": 10091504,
+      "family": "follow_below_gate",
+      "region": "onar",
+      "scenario_id": "follow-04c9a05468751d9e",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/follow_below_gate/follow-05959f69a1597da6/seed-18102027/memory-cost.bin",
+      "sha256": "bd39babbd369c0df78972f18dc4cc07c554bd0782d48262caea6b6cb87683645",
+      "bytes": 11294588,
+      "family": "follow_below_gate",
+      "region": "onar",
+      "scenario_id": "follow-05959f69a1597da6",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/follow_below_gate/follow-05fb207a10085368/seed-18102027/memory-cost.bin",
+      "sha256": "0b2954d25b081ee90c8a97da857588bfcc98e4c9fd0a4f9372776a89a4d59072",
+      "bytes": 10015972,
+      "family": "follow_below_gate",
+      "region": "onar",
+      "scenario_id": "follow-05fb207a10085368",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/follow_below_gate/follow-0972a72503d0025a/seed-18102027/memory-cost.bin",
+      "sha256": "10c33232d6827489c18826a795f3a7620a697fecb81b876d84568ae3ce3b5d3e",
+      "bytes": 10185528,
+      "family": "follow_below_gate",
+      "region": "onar",
+      "scenario_id": "follow-0972a72503d0025a",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/object/object-01cd744bcfa8a579/seed-18102027/memory-cost.bin",
+      "sha256": "0a4c1d0c0ffe5900571a5337abbb88740eb8b543173a31528364c3149cfebf77",
+      "bytes": 3722039,
+      "family": "object",
+      "region": "lobart",
+      "scenario_id": "object-01cd744bcfa8a579",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 12867,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 386,
+      "decisions": 129
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/object/object-03244f3125b33495/seed-18102027/memory-cost.bin",
+      "sha256": "bae4e16ec76902dc983a5bc2f33d050508e0cb52aedc879dbf39242d794bd2cd",
+      "bytes": 9753128,
+      "family": "object",
+      "region": "market",
+      "scenario_id": "object-03244f3125b33495",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/object/object-0660a66f2682208a/seed-18102027/memory-cost.bin",
+      "sha256": "f04aacc10824c316084edf62f448abf9964b4b5d8b8fa45ee1986823ce0741bd",
+      "bytes": 4313915,
+      "family": "object",
+      "region": "onar",
+      "scenario_id": "object-0660a66f2682208a",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 11767,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 353,
+      "decisions": 118
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/object/object-0892042198580a44/seed-18102027/memory-cost.bin",
+      "sha256": "d200c40be47d1228c842c8cca6eb5ffcd45c793256ca41915732a58be24815e0",
+      "bytes": 1843806,
+      "family": "object",
+      "region": "upper_streets",
+      "scenario_id": "object-0892042198580a44",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 5133,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 154,
+      "decisions": 52
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/object/object-0e5fe6dca43a9dd7/seed-18102027/memory-cost.bin",
+      "sha256": "d17222d30c612ddb03a5178e5c8464aaca7043a543d34fb43fdbbcf78bdd894c",
+      "bytes": 11622660,
+      "family": "object",
+      "region": "onar",
+      "scenario_id": "object-0e5fe6dca43a9dd7",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/object/object-0fabb79826c18334/seed-18102027/memory-cost.bin",
+      "sha256": "6e2b5c3a3ac3eb93a6ec97943d1cf259852c8461609785693b9c104e38ff18d9",
+      "bytes": 10288936,
+      "family": "object",
+      "region": "lobart",
+      "scenario_id": "object-0fabb79826c18334",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/point/point-6529b3747b9a4361/seed-18102027/memory-cost.bin",
+      "sha256": "796f815fffe4e6089e5e3027a72d00d58c18ec74b59948b22907289e530ea10b",
+      "bytes": 7961395,
+      "family": "point",
+      "region": "market",
+      "scenario_id": "point-6529b3747b9a4361",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 22867,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 686,
+      "decisions": 229
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/point/point-7e35226690f76270/seed-18102027/memory-cost.bin",
+      "sha256": "7fa5788bf9ad0dff7533732a36949c1497443fc5ee722fd289a561e5dac29c73",
+      "bytes": 10650220,
+      "family": "point",
+      "region": "port_streets",
+      "scenario_id": "point-7e35226690f76270",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/point/point-92f1060b68f7db80/seed-18102027/memory-cost.bin",
+      "sha256": "1403a918cbcc47dd1d93bc8e3f67bcf9c6cc99eacb63dec9c2a46354fc672caf",
+      "bytes": 6348816,
+      "family": "point",
+      "region": "lobart",
+      "scenario_id": "point-92f1060b68f7db80",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 18800,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 564,
+      "decisions": 188
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/point/point-9330472d07b2f47a/seed-18102027/memory-cost.bin",
+      "sha256": "21c40e4cf46b1c0e60fcc2a7205e4f5a9a167919d365cf6f9fa889f0d5489639",
+      "bytes": 10527768,
+      "family": "point",
+      "region": "upper_streets",
+      "scenario_id": "point-9330472d07b2f47a",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 30000,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 900,
+      "decisions": 300
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/point/point-ae977669805b27e2/seed-18102027/memory-cost.bin",
+      "sha256": "91ab4dc176d534e951a1ccbc00e278e9eb8f9ab3296c178af298af5f1326ba28",
+      "bytes": 2727350,
+      "family": "point",
+      "region": "onar",
+      "scenario_id": "point-ae977669805b27e2",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 7633,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 229,
+      "decisions": 77
+    },
+    {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/drive/validation/point/point-be2bd196a33cf315/seed-18102027/memory-cost.bin",
+      "sha256": "e98b50a9b78f372a24f774cb2ccfbd15a4d742866f34beb5d5e2067dc79c7613",
+      "bytes": 8215635,
+      "family": "point",
+      "region": "harbour",
+      "scenario_id": "point-be2bd196a33cf315",
+      "action_seed": 18102027,
+      "force_pace": "run",
+      "physics": "cv",
+      "elapsed_ms": 23267,
+      "limit_ms": 30000,
+      "weight": "v5",
+      "updates": 698,
+      "decisions": 233
+    }
+  ],
+  "bench": {
+    "weights": "/mnt/shared/gothic-ai/nav-pace-v5/run/policy.navbc",
+    "warmup_passes_per_capture": 1,
+    "repetitions": 6,
+    "vector_context": "captured eye and feet height; roads/body Snapshot defaults; forced run",
+    "us_per_decision": {
+      "update": {
+        "median": 245.3160378,
+        "p90": 250.4751742,
+        "repeats": 6
+      },
+      "view_near": {
+        "median": 299.3308004,
+        "p90": 351.8792777,
+        "repeats": 6
+      },
+      "view_far": {
+        "median": 306.2220001,
+        "p90": 416.7303463,
+        "repeats": 6
+      },
+      "encode_near": {
+        "median": 140.3155866,
+        "p90": 140.7518888,
+        "repeats": 6
+      },
+      "encode_far": {
+        "median": 148.6071889,
+        "p90": 148.8131167,
+        "repeats": 6
+      },
+      "encode_vector": {
+        "median": 4.508377145,
+        "p90": 4.922939855,
+        "repeats": 6
+      },
+      "encode_full": {
+        "median": 337.2723399,
+        "p90": 339.1325897,
+        "repeats": 6
+      },
+      "policy_scalar_cpp": {
+        "median": 1521.813868,
+        "p90": 1528.455629,
+        "repeats": 6
+      },
+      "fused_float32_near": {
+        "median": 370.4837208,
+        "p90": 421.4915762,
+        "repeats": 6
+      },
+      "fused_float32_far": {
+        "median": 231.6126018,
+        "p90": 334.2487961,
+        "repeats": 6
+      },
+      "fused_uint8_fp16_near": {
+        "median": 381.4880768,
+        "p90": 433.1012836,
+        "repeats": 6
+      },
+      "fused_uint8_fp16_far": {
+        "median": 238.9281962,
+        "p90": 346.4059441,
+        "repeats": 6
+      },
+      "vector_float32_to_fp16": {
+        "median": 14.6872504,
+        "p90": 14.92075181,
+        "repeats": 6
+      }
+    },
+    "memory_view_and_map_encode_us": {
+      "median": 893.4172713,
+      "p90": 1057.451108,
+      "repeats": 6
+    },
+    "fused_float32_us": {
+      "median": 602.0709434,
+      "p90": 755.7403724,
+      "repeats": 6
+    },
+    "saved_us": {
+      "median": 307.4141623,
+      "p90": 462.9250318,
+      "repeats": 6
+    },
+    "saved_percent": {
+      "median": 34.65388257,
+      "p90": 43.7792151,
+      "repeats": 6
+    },
+    "fused_uint8_fp16_us": {
+      "median": 620.416273,
+      "p90": 779.5072277,
+      "repeats": 6
+    },
+    "packed_saved_us": {
+      "median": 289.7143284,
+      "p90": 443.643842,
+      "repeats": 6
+    },
+    "packed_saved_percent": {
+      "median": 32.73571295,
+      "p90": 41.95216455,
+      "repeats": 6
+    },
+    "bytes_per_agent": {
+      "float32_maps": 363840,
+      "uint8_fp16_maps": 109152,
+      "float32_maps_and_vector": 372508,
+      "uint8_fp16_maps_and_fp16_vector": 113486
+    },
+    "float32_bitwise_equal": true,
+    "uint8_fp16_bitwise_equal": true,
+    "checked_decisions_per_pass": 5653,
+    "label": "helpers copied inline in the benchmark translation unit",
+    "source_commit": "61c44245",
+    "source_sha256": "c7235126bacdd439367f54fa623e457e9a429deb426b83ae628ef15e2790f02c",
+    "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/bench.json",
+    "raw_sha256": "70cd6377a1f885184e40459bf23afee6892a0501588b13779fb9c68f5ad9a15f",
+    "gq_class": "quick",
+    "gq_threads": 1,
+    "gq_memory_gib": 3,
+    "cpu_affinity": "14",
+    "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n66cba5e2d9a2 nav-follow-trail batch  running    8t 7G gpu=0G окно=0 слот=—      17:00:17 7200s ≤0s\n3f2db28cff7a nav-follow-trail batch  running    8t 7G gpu=0G окно=0 слот=—      17:14:00 7200s ≤7200s\n5e8eb4008779 ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤14401s median=1s\nd952a9b8d10a claude-navsim-ra quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤16200s\n96555c6ccaeb nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤19800s\n64d050a75d7f nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤27000s\n346b2bc6e137 nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤30600s\n98a83f3c9707 claude-navsim-me quick  queued     16t 10G gpu=0G окно=0 слот=—    —        2700s ≤34200s\nfd909def45b7 claude-navsim-me quick  running    1t 3G gpu=0G окно=0 слот=—      17:32:39 1200s ≤36900s\nDisk /home/kaifaty/gothic-ai: free 122.2G; minimum 20G\nDisk /: free 122.2G; minimum 20G\n",
+    "gq_status_raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/replay-gq.txt",
+    "distribution_scope": "Median and p90 across six repeat-level means per readout, weighted by readout count across all 24 traces; one full warmup pass per trace.",
+    "order": "All six permutations of current, fused float32, fused uint8+fp16 across six measured repetitions.",
+    "savings_scope": "view near+far plus preallocated map encode; update is unchanged. Full allocating NavPolicy::encode is also timed.",
+    "view_timing_scope": "Direct engine read calls for near/far; View pose/path metadata copied outside timers.",
+    "packed_layout": "CHW: probability channels 0..6 and validity are uint8=lround(float32*255); relative heights 7,8 are IEEE binary16 casts of identical float32 heights. Vector is fp16.",
+    "bytes_per_agent_scope": "Network input payload only; excludes world memory grids, temporary scratch, weights and recurrent state.",
+    "equality_checked_readouts": 39571,
+    "equality_reference": "Real NavPolicy::encode(memory.view()), every channel of both maps at every readout, including warmup. float32 memcmp; uint8 equals lround(reference*255); fp16 bitwise equals (_Float16)reference. Mismatch exits 1.",
+    "including_update": {
+      "float32": {
+        "current_us": {
+          "median": 1138.84670215,
+          "p90": 1302.7135008999999,
+          "repeats": 6
+        },
+        "fused_us": {
+          "median": 850.14492615,
+          "p90": 1002.8963016,
+          "repeats": 6
+        },
+        "saved_us": {
+          "median": 307.4141623000001,
+          "p90": 462.92503184999987,
+          "repeats": 6
+        },
+        "saved_percent": {
+          "median": 27.09482556931908,
+          "p90": 35.53760488148427,
+          "repeats": 6
+        }
+      },
+      "uint8_fp16": {
+        "current_us": {
+          "median": 1138.84670215,
+          "p90": 1302.7135008999999,
+          "repeats": 6
+        },
+        "fused_us": {
+          "median": 865.75350845,
+          "p90": 1027.03429325,
+          "repeats": 6
+        },
+        "saved_us": {
+          "median": 289.7143285,
+          "p90": 443.6438420499999,
+          "repeats": 6
+        },
+        "saved_percent": {
+          "median": 25.589273549201437,
+          "p90": 34.05306227777866,
+          "repeats": 6
+        }
+      }
+    },
+    "including_full_encode_allocations": {
+      "float32": {
+        "current_us": {
+          "median": 1187.08231555,
+          "p90": 1351.788286,
+          "repeats": 6
+        },
+        "fused_us": {
+          "median": 854.6799242925,
+          "p90": 1007.4050354579999,
+          "repeats": 6
+        },
+        "saved_us": {
+          "median": 349.07254666649993,
+          "p90": 507.320687196,
+          "repeats": 6
+        },
+        "saved_percent": {
+          "median": 29.566004829883518,
+          "p90": 37.53380236687538,
+          "repeats": 6
+        }
+      },
+      "uint8_fp16": {
+        "current_us": {
+          "median": 1187.08231555,
+          "p90": 1351.788286,
+          "repeats": 6
+        },
+        "fused_us": {
+          "median": 884.812651917,
+          "p90": 1046.2123212884999,
+          "repeats": 6
+        },
+        "saved_us": {
+          "median": 317.729867302,
+          "p90": 473.42590134100004,
+          "repeats": 6
+        },
+        "saved_percent": {
+          "median": 26.938143677743604,
+          "p90": 35.017476931302255,
+          "repeats": 6
+        }
+      }
+    },
+    "maps_and_vector_us": {
+      "float32": {
+        "median": 606.6059415425,
+        "p90": 760.2491062080001,
+        "repeats": 6
+      },
+      "uint8_fp16": {
+        "median": 639.72031173,
+        "p90": 798.6852556885001,
+        "repeats": 6
+      }
+    },
+    "self_test": {
+      "self_test": "passed",
+      "decisions": 96,
+      "float32_bitwise_equal": true,
+      "uint8_fp16_bitwise_equal": true
+    }
+  },
+  "limitations": [
+    "Memory traces record actor memory pose, not the separate physical feet position used by the stand Snapshot; replay uses the captured pose Y as encode height reference.",
+    "Replay vector uses the first 238 current eye rays; roads/body are Snapshot defaults because memory-cost.bin does not contain them. Scalar step is timed on these reconstructed inputs.",
+    "Standalone benchmark follows navpolicy-contract flags. The runner inherits Jolt SIMD/FP flags; both are recorded. Compare current and fused timings within the benchmark.",
+    "Fused far readout classifies only forward output rows 50..99. Savings include skipping classification of cells discarded by the HD far input.",
+    "Timings use quick because quiet did not gain admission within approximately 30 minutes; competing gq jobs and CPU affinity are recorded. Historical external-helper and new inline-helper runs have different queue load and order; their absolute times are not a controlled comparison.",
+    "The main inline-helper run used a noticeably busy core: unchanged update took 245 us versus 146 us in the external-helper run, and p90 reached approximately 1.4 times the median. The 307 us (34.7%) saving is noisy; use 148 us (22.7%) from ed11800d as the conservative estimate.",
+    "Generic standalone flags do not enable F16C: GCC implements _Float16 casts with libgcc conversion calls. Packed timings include that conversion cost; no CPU-specific packing optimization is applied.",
+    "N=50 with 8 runners and 16-runner profiles were removed from scope by the lead session of the nav-sim research.",
+    "Replay uses 24 v5 drive trajectories; population uses the HD proxy and historical train pairs. Replay savings are not an end-to-end population speedup measurement.",
+    "N=100 x 8 runners was not measured: gq did not admit the 16-thread/10 GiB request within the allowed 3600-second wait; the request was cancelled with exit 75. Full queue status is in population_8_runners.",
+    "Saved engine-targets check exited 75 before compilation because of queue availability; the same target was built and self-tested in the admitted one-thread request. The Python checks ran separately and passed 75 tests."
+  ],
+  "trace_count": 24,
+  "benchmark_source_commit": "61c44245",
+  "quiet_admission": {
+    "id": "469270647c7b",
+    "status": "cancelled",
+    "wait_seconds": 1851.8227472305298,
+    "requested_threads": 24,
+    "requested_mem_bytes": 21474836480
+  },
+  "population_8_runners": {
+    "measured": false,
+    "job": "98a83f3c9707",
+    "N": 100,
+    "runners": 8,
+    "requested_threads": 16,
+    "requested_mem_gib": 10,
+    "wait_limit_seconds": 3600,
+    "waited_seconds": 3601.0010282993317,
+    "submitted_utc": "2026-11-04T14:31:13.587685+00:00",
+    "start_utc": null,
+    "job_status": "cancelled",
+    "job_exit_code": 143,
+    "launcher_exit_code": 75,
+    "reason": "The 16-thread/10 GiB request did not gain admission within 3600 seconds; gq --wait-max cancelled it before build or measurement.",
+    "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n64d050a75d7f nav-follow-trail batch  running    6t 10G gpu=3G окно=1 слот=0     18:27:24 3600s ≤0s\n346b2bc6e137 nav-follow-trail batch  running    6t 10G gpu=3G окно=1 слот=1     18:29:03 3600s ≤3600s\n20f17ea794ef ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤7201s median=1s\nDisk /home/kaifaty/gothic-ai: free 122.6G; minimum 20G\nDisk /: free 122.6G; minimum 20G\n",
+    "gq_status_raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/population8-final-gq.txt"
+  },
+  "trace_bytes": 199414735,
+  "helpers_external_calls": {
+    "weights": "/mnt/shared/gothic-ai/nav-pace-v5/run/policy.navbc",
+    "warmup_passes_per_capture": 1,
+    "repetitions": 6,
+    "vector_context": "captured eye and feet height; roads/body Snapshot defaults; forced run",
+    "us_per_decision": {
+      "update": {
+        "median": 145.770211,
+        "p90": 146.9325594,
+        "repeats": 6
+      },
+      "view_near": {
+        "median": 231.7381097,
+        "p90": 234.5960914,
+        "repeats": 6
+      },
+      "view_far": {
+        "median": 192.2548407,
+        "p90": 198.4395501,
+        "repeats": 6
+      },
+      "encode_near": {
+        "median": 109.857616,
+        "p90": 110.8895538,
+        "repeats": 6
+      },
+      "encode_far": {
+        "median": 115.7350552,
+        "p90": 117.077107,
+        "repeats": 6
+      },
+      "encode_vector": {
+        "median": 2.940402087,
+        "p90": 2.969292765,
+        "repeats": 6
+      },
+      "encode_full": {
+        "median": 249.3286054,
+        "p90": 251.7243351,
+        "repeats": 6
+      },
+      "policy_scalar_cpp": {
+        "median": 1141.76476,
+        "p90": 1150.986037,
+        "repeats": 6
+      },
+      "fused_float32_near": {
+        "median": 307.5509591,
+        "p90": 311.5399122,
+        "repeats": 6
+      },
+      "fused_float32_far": {
+        "median": 194.3088407,
+        "p90": 198.0957513,
+        "repeats": 6
+      }
+    },
+    "memory_view_and_map_encode_us": {
+      "median": 650.173282,
+      "p90": 660.0157081,
+      "repeats": 6
+    },
+    "fused_float32_us": {
+      "median": 502.6019412,
+      "p90": 508.8248067,
+      "repeats": 6
+    },
+    "saved_us": {
+      "median": 147.6530212,
+      "p90": 161.290329,
+      "repeats": 6
+    },
+    "saved_percent": {
+      "median": 22.72508667,
+      "p90": 24.50249935,
+      "repeats": 6
+    },
+    "float32_bitwise_equal": true,
+    "checked_decisions_per_pass": 5653,
+    "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/external-helpers-bench.json",
+    "gq_class": "quick",
+    "gq_threads": 1,
+    "cpu_affinity": "14",
+    "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n95f08f4917b2 ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤1s median=1s\n690444aaa5f8 claude-navsim-ra quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤1800s\n9744a68782a6 nav-roads-carrot batch  queued     16t 11G gpu=0G окно=0 слот=—    —        7200s ≤5400s\n958d3668d7fe nav-roads-carrot quick  running    12t 5G gpu=4G окно=1 слот=0     14:42:10 3540s ≤12600s\n96586e10afb5 navsim-rays-engi quick  running    1t 4G gpu=0G окно=0 слот=—      14:31:01 3600s ≤16140s\n5316ce9cb34d navsim-rays-engi quick  running    1t 4G gpu=0G окно=0 слот=—      14:48:08 3600s ≤19740s\n13522ad7cdfc claude-navsim-me quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤23340s\nc595687bcb65 claude-navsim-in quick  running    8t 6G gpu=6G окно=0 слот=—      14:49:22 3600s ≤26940s\n6814958cf3ca navsim-memory    quick  queued     16t 12G gpu=0G окно=0 слот=—    —        1800s ≤30540s\n2f9b17b3707d claude-quiver-mo quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤32450s median=110s\n1b0a8a17cc7d navsim-memory    quick  queued     1t 3G gpu=0G окно=0 слот=—      —        1800s ≤35940s\nd7fa9e1c636e navsim-motion    batch  queued     1t 2G gpu=0G окно=0 слот=—      —        1800s ≤38135s median=395s\n0912c9d2f006 nav-follow-trail quick  queued     4t 6G gpu=0G окно=0 слот=—      —        2400s ≤39540s\nfef61adfee64 navsim-memory    quick  running    1t 1G gpu=0G окно=0 слот=—      14:49:23 1200s ≤41940s\nDisk /home/kaifaty/gothic-ai: free 118.1G; minimum 20G\nDisk /: free 118.1G; minimum 20G\n",
+    "distribution_scope": "Median and p90 across repeat-level means per readout, weighted by readout count across traces.",
+    "savings_scope": "view near+far and preallocated map encode; update and vector are unchanged. Full NavPolicy::encode including allocations is measured separately.",
+    "including_update": {
+      "current_us": {
+        "median": 795.4865099,
+        "p90": 806.15801885,
+        "repeats": 6
+      },
+      "fused_float32_us": {
+        "median": 648.6362253,
+        "p90": 655.3852665,
+        "repeats": 6
+      },
+      "saved_us": {
+        "median": 147.65302125,
+        "p90": 161.2903291,
+        "repeats": 6
+      },
+      "saved_percent": {
+        "median": 18.54959861365132,
+        "p90": 20.061672421680377,
+        "repeats": 6
+      }
+    },
+    "including_full_encode_allocations": {
+      "current_us": {
+        "median": 819.1731221,
+        "p90": 830.1456933500001,
+        "repeats": 6
+      },
+      "fused_plus_vector_us": {
+        "median": 651.595412546,
+        "p90": 658.332540956,
+        "repeats": 6
+      },
+      "saved_us": {
+        "median": 168.81765416249993,
+        "p90": 182.3164029455,
+        "repeats": 6
+      },
+      "saved_percent": {
+        "median": 20.58869174879682,
+        "p90": 22.01827666516135,
+        "repeats": 6
+      }
+    },
+    "equality_checked_readouts": 39571,
+    "view_timing_scope": "Direct engine read calls for near/far; View pose/path metadata copied outside timers.",
+    "source_commit": "ed11800d",
+    "label": "helpers external calls",
+    "raw_sha256": "e82dc66f7e5b9493b6bc903c2a60edad64f5996e61fe79e9e61d06269050898a",
+    "gq_status_raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/external-helpers-replay-gq.txt"
+  },
+  "checks": {
+    "saved_engine_targets": {
+      "outcome": "unavailable",
+      "exit_code": 75,
+      "target_executions": 0,
+      "reason": "Final attempt: gq estimated admission in 9000 seconds, beyond the 1800-second check budget; cancelled before compilation. Earlier attempt estimated 38100 seconds and also exited 75 without executing a target.",
+      "attempts": 2,
+      "job": "a2dcc50c8934",
+      "command": "MAC_BUILD=0 bash ~/.codex/checks/gothic/engine-targets.sh . gothic-navsim-memory-bench && python3 scripts/check.py run",
+      "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/final-saved-check.log"
+    },
+    "selected_python": {
+      "exit_code": 0,
+      "passed": 75,
+      "groups": [
+        44,
+        31
+      ],
+      "command": "python3 scripts/check.py run",
+      "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/final-python-check.log"
+    },
+    "benchmark_build": {
+      "exit_code": 0,
+      "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/inline-build.log"
+    },
+    "self_test": {
+      "self_test": "passed",
+      "decisions": 96,
+      "float32_bitwise_equal": true,
+      "uint8_fp16_bitwise_equal": true
+    }
+  },
+  "raw_checksums": {
+    "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/all-raw.sha256",
+    "sha256": "3d83abf8dbcf40312a082527cf54addd90b3e8c3b47451d2f9f78a36e09e3a60",
+    "entries": 1239
+  }
+}

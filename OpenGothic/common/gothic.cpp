@@ -1,4 +1,6 @@
 #include "gothic.h"
+#include "settings.h"
+#include "loadprobe.h"
 
 #include <Tempest/Log>
 #include <Tempest/TextCodec>
@@ -13,9 +15,11 @@
 #include <malloc.h>
 #endif
 
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 
 #include "game/definitions/definitiontypes.h"
+#include "game/definitions/baseprogram.h"
+#include "game/bodyenginepolicy.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
 #include "game/definitions/cameradefinitions.h"
@@ -38,33 +42,13 @@ Gothic* Gothic::instance = nullptr;
 
 Gothic::Gothic() {
   instance = this;
+  BodyEnginePolicy::initialize();
   if(!Resources::isHeadless())
     sndDev = std::make_unique<Tempest::SoundDevice>();
 
   systemPackIniFile.reset(new IniFile(nestedPath({u"system",u"SystemPack.ini"},Dir::FT_File)));
   showFpsCounter = systemPackIniFile->getI("DEBUG","Show_FPS_Counter");
-  opts.hideFocus = systemPackIniFile->getI("PARAMETERS","HideFocus");
-  opts.cameraFov = systemPackIniFile->getF("PARAMETERS","VerticalFOV");
-  opts.fpsLimit  = std::max(0, systemPackIniFile->getI("PARAMETERS", "FPS_Limit", 0));
-  if(opts.cameraFov<1.f) {
-    opts.cameraFov = 67.5;
-    }
-  opts.interfaceScale = systemPackIniFile->getF("INTERFACE","Scale",1);
-  if(opts.interfaceScale<=0) {
-    opts.interfaceScale = 1;
-    }
-  opts.inventoryCellSize = systemPackIniFile->getI("INTERFACE","InventoryCellSize",opts.inventoryCellSize);
-  opts.inventoryCellSize = std::max(opts.inventoryCellSize, 10);
-
-  opts.newChapterSize.w    = systemPackIniFile->getI("INTERFACE","NewChapterSizeX",opts.newChapterSize.w);
-  opts.newChapterSize.h    = systemPackIniFile->getI("INTERFACE","NewChapterSizeY",opts.newChapterSize.h);
-
-  opts.saveGameImageSize.w = systemPackIniFile->getI("INTERFACE","SaveGameImageSizeX",opts.saveGameImageSize.w);
-  opts.saveGameImageSize.h = systemPackIniFile->getI("INTERFACE","SaveGameImageSizeY",opts.saveGameImageSize.h);
-
-  opts.showHealthBar     = !(systemPackIniFile->getI("INTERFACE","HideHealthBar",0)!=0);
-  opts.showManaBar       = uint8_t(std::clamp(systemPackIniFile->getI("INTERFACE","ShowManaBar",1), 0, 2));
-  opts.showSwimBar       = uint8_t(std::clamp(systemPackIniFile->getI("INTERFACE","ShowSwimBar",1), 0, 2));
+  settings.loadSystemPackOptions(*systemPackIniFile);
 
 #ifndef NDEBUG
   setMarvinEnabled(true);
@@ -75,126 +59,19 @@ Gothic::Gothic() {
 #endif
   setBenchmarkMode(CommandLine::inst().isBenchmarkMode());
 
-  if(Resources::hasGraphicsDevice() && Resources::device().properties().raytracing.rayQuery) {
-    opts.doGi = CommandLine::inst().isRtGi();
-    // GI probes by default on a discrete GPU: ≈0.7 ms on an RTX 3080, an M1 is at 99 % with them
-    // (reports/render-features/2026-10-18); the renderer drops them without -rt
-    if(!CommandLine::inst().hasRtGiArg() && Resources::device().properties().type==Tempest::DeviceType::Discrete)
-      opts.doGi = GiMethod::Probes;
-    }
-
-  opts.aaPreset = CommandLine::inst().aaPreset();
+  settings.setupOptions();
 
   wrldDef = CommandLine::inst().wrldDef;
 
-  baseIniFile.reset(new IniFile(nestedPath({u"system",u"Gothic.ini"},Dir::FT_File)));
-  iniFile    .reset(new IniFile(u"Gothic.ini"));
-  if(!iniFile->has("INTERNAL", "vidResIndex")) {
-    iniFile->set("INTERNAL", "vidResIndex", 0); // full-res
-    }
-  {
-  defaults.reset(new IniFile());
-  defaults->set("GAME", "enableMouse",         1);
-  defaults->set("GAME", "mouseSensitivity",    0.5f);
-  defaults->set("GAME", "invCatOrder",         "COMBAT,POTION,FOOD,ARMOR,MAGIC,RUNE,DOCS,OTHER,NONE");
-  defaults->set("GAME", "invMaxColumns",       5);
-  defaults->set("GAME", "animatedWindows",     1);
-  defaults->set("GAME", "useGothic1Controls",  1);
-  defaults->set("GAME", "highlightMeleeFocus", 0);
-  defaults->set("GAME", "useQuickSaveKeys",    1);
-  defaults->set("GAME", "manualAim",           1); // the bow aimed by hand (game/archery)
-  defaults->set("GAME", "npcManualAim",        1); // npc archers aim by hand too (game/archerai)
-  defaults->set("GAME", "ragdoll",             1); // physical death/KO bodies; GAME/ragdoll=0 keeps animation-only behavior
-  defaults->set("GAME", "ragdoll_quest_guard", 1);
-  defaults->set("GAME", "living_bodies",       1);
-  defaults->set("GAME", "arrow_physics",       1);
-  defaults->set("GAME", "arrow_sticking",      1);
-  defaults->set("GAME", "spell_physics",       1);
-  defaults->set("GAME", "movable_vobs",        1);
-  defaults->set("GAME", "physics_noise",       1);
-  defaults->set("GAME", "destruction",         1);
-  defaults->set("GAME", "buoyancy",            1);
-  defaults->set("GAME", "cloth",               1);
-  defaults->set("GAME", "character_virtual",   1);
-  defaults->set("GAME", "npc_character_virtual",1);
-  defaults->set("GAME", "monster_character_virtual",1);
-  defaults->set("GAME", "melee_blade_shadow",    1);
-  defaults->set("GAME", "melee_physics_hits",    1);
+  settings.load(nestedPath({u"system",u"Gothic.ini"},Dir::FT_File),u"Gothic.ini");
 
-  defaults->set("GAME", "animatedWindows",     1);
-  defaults->set("GAME", "subTitles",           1);
-  defaults->set("GAME", "subTitlesPlayer",     1);
-
-  // switch related language options
-  defaults->set("GAME", "language", -1);
-  defaults->set("GAME", "voice",    -1);
-  defaults->set("GAME", "scaleVideos", 1);
-
-  defaults->set("SKY_OUTDOOR", "zSunName",   "unsun5.tga");
-  defaults->set("SKY_OUTDOOR", "zSunSize",   200);
-  defaults->set("SKY_OUTDOOR", "zSunAlpha",  230);
-  defaults->set("SKY_OUTDOOR", "zMoonName",  "moon.tga");
-  defaults->set("SKY_OUTDOOR", "zMoonSize",  400);
-  defaults->set("SKY_OUTDOOR", "zMoonAlpha", 255);
-
-  defaults->set("RENDERER_D3D", "zFogRadial", 1); // sunshafts
-  defaults->set("ENGINE",       "zEnvMappingEnabled", 1); // reflections
-  defaults->set("ENGINE",       "zCloudShadowScale", Resources::hasGraphicsDevice() &&
-                Resources::device().properties().type==Tempest::DeviceType::Discrete); // ssao
-  defaults->set("INTERNAL",     "vidResIndex", 0); // full-res
-
-  defaults->set("VIDEO", "zVidBrightness", 0.5f);
-  defaults->set("VIDEO", "zVidContrast",   0.5f);
-  defaults->set("VIDEO", "zVidGamma",      0.5f);
-
-  defaults->set("SOUND", "musicEnabled",  1);
-  defaults->set("SOUND", "musicVolume",   0.5f);
-  defaults->set("SOUND", "soundEnabled",  1);
-  defaults->set("SOUND", "soundVolume",   0.5f);
-  // the world's own sound objects (zCVobSound: a place's loops and stingers); 0 for the shorts, which lay a bed
-  defaults->set("SOUND", "worldSounds",   1);
-
-  //defaults->set("ENGINE", "zEnvMappingEnabled", 0);
-  //defaults->set("ENGINE", "zCloudShadowScale",  0);
-  defaults->set("ENGINE", "zWindEnabled",       1);
-  defaults->set("ENGINE", "zWindCycleTime",     4);
-  defaults->set("ENGINE", "zWindCycleTimeVar",  6);
-
-  defaults->set("KEYS", "keyEnd",         "0100");
-  defaults->set("KEYS", "keyHeal",        "2300");
-  defaults->set("KEYS", "keyPotion",      "1900");
-  defaults->set("KEYS", "keyLockTarget",  "4f00");
-  defaults->set("KEYS", "keyParade",      "cf000d02");
-  defaults->set("KEYS", "keyActionRight", "d100");
-  defaults->set("KEYS", "keyActionLeft",  "d300");
-  defaults->set("KEYS", "keyUp",          "c8001100");
-  defaults->set("KEYS", "keyDown",        "d0001f00");
-  defaults->set("KEYS", "keyLeft",        "cb001000");
-  defaults->set("KEYS", "keyRight",       "cd001200");
-  defaults->set("KEYS", "keyStrafeLeft",  "d3001e00");
-  defaults->set("KEYS", "keyStrafeRight", "d1002000");
-  defaults->set("KEYS", "keyAction",      "1d000c02");
-  defaults->set("KEYS", "keySlow",        "2a003600");
-  defaults->set("KEYS", "keySMove",       "38009d00");
-  defaults->set("KEYS", "keyWeapon",      "39000e02");
-  defaults->set("KEYS", "keySneak",       "2d00");
-  defaults->set("KEYS", "keyLook",        "13005200");
-  defaults->set("KEYS", "keyLookFP",      "21005300");
-  defaults->set("KEYS", "keyInventory",   "0f000e00");
-  defaults->set("KEYS", "keyShowStatus",  "30002e00");
-  defaults->set("KEYS", "keyShowLog",     "31002600");
-  defaults->set("KEYS", "keyShowMap",     "3200");
-  }
-
-  detectGothicVersion();
+  Resources::loadBase();
 
   std::u16string_view mod = CommandLine::inst().modPath();
   if(!mod.empty()){
     modFile.reset(new IniFile(mod));
     }
 
-  std::vector<std::u16string> modvdfs;
-  bool                        modFilter = true;
   if(modFile!=nullptr) {
     wrldDef = modFile->getS("SETTINGS","WORLD");
     size_t split = wrldDef.rfind('\\');
@@ -203,28 +80,10 @@ Gothic::Gothic() {
     plDef      = modFile->getS("SETTINGS","PLAYER");
     gameDatDef = modFile->getS("FILES","GAME");
     ouDef      = modFile->getS("FILES","OUTPUTUNITS");
-
-    std::u16string vdf = TextCodec::toUtf16(modFile->getS("FILES","VDF"));
-    modFilter = modFile->has("FILES","VDF");
-    for(size_t start = 0, split = 0; split != std::string::npos; start = split+1) {
-      split = vdf.find(' ', start);
-      std::u16string mod = vdf.substr(start, split-start);
-      if(!mod.empty())
-        modvdfs.emplace_back(std::move(mod));
-      }
     }
-  /*
-   '/work' seem to have lowest priority
-   load it last with zenkit::VfsOverwriteBehavior::NONE
-   any other order will interact with time-stamp based override, resulting in inconsistent behaviour
-  */
-  Resources::loadVdfs(modvdfs, modFilter);
-  Resources::mountWork(Gothic::nestedPath({u"_work"}, Dir::FT_Dir));
 
   if(wrldDef.empty()) {
-    if(version().game==2)
-      wrldDef = "newworld.zen"; else
-      wrldDef = "world.zen";
+    wrldDef = "newworld.zen";
     }
 
   if(plDef.empty())
@@ -239,11 +98,14 @@ Gothic::Gothic() {
     ouDef = "OU";
     }
 
-  onSettingsChanged.bind(this,&Gothic::setupSettings);
+  Settings::inst().onSettingsChanged.bind(this,&Gothic::setupSettings);
   setupSettings();
   }
 
 Gothic::~Gothic() {
+  // Session teardown still queries the singleton and its definitions.
+  pendingGame.reset();
+  game.reset();
   instance = nullptr;
   }
 
@@ -259,10 +121,6 @@ void Gothic::setupGlobalScripts() {
   particleDef.reset(new ParticlesDefinitions());
   vfxDef     .reset(new VisualFxDefinitions());
   music      .reset(new MusicDefinitions());
-  }
-
-const VersionInfo& Gothic::version() const {
-  return vinfo;
   }
 
 bool Gothic::isInGame() const {
@@ -313,16 +171,37 @@ WorldView *Gothic::worldView() const {
   return nullptr;
   }
 
+const BloodDecalSource* Gothic::bloodDecalSource() const {
+  return world();
+  }
+
 Npc *Gothic::player() {
   if(game)
     return game->player();
   return nullptr;
   }
 
+const CameraTarget* Gothic::cameraTarget() {
+  return player();
+  }
+
 Camera* Gothic::camera() {
   if(game)
     return &game->camera();
   return nullptr;
+  }
+
+void Gothic::cameraProjection(Tempest::Matrix4x4& proj) {
+  if(auto w = world())
+    w->globalFx()->morph(proj);
+  }
+
+bool Gothic::cameraShake(Tempest::Vec3& shake) {
+  if(auto w = world()) {
+    w->globalFx()->shake(shake);
+    return true;
+    }
+  return false;
   }
 
 const QuestLog* Gothic::questLog() const {
@@ -344,6 +223,7 @@ const Tempest::Texture2d* Gothic::loadingBanner() const {
   }
 
 SoundFx *Gothic::loadSoundFx(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("sound_load");
   if(name.empty())
     return nullptr;
 
@@ -365,6 +245,7 @@ SoundFx *Gothic::loadSoundFx(std::string_view name) {
   }
 
 SoundFx *Gothic::loadSoundWavFx(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("sound_load");
   auto cname = std::string(name);
 
   std::lock_guard<std::mutex> guard(syncSnd);
@@ -388,10 +269,12 @@ const VisualFx* Gothic::loadVisualFx(std::string_view name) {
   }
 
 const ParticleFx* Gothic::loadParticleFx(std::string_view name, bool relaxed) {
+  LoadProbe::Vobs::Scope probe("pfx_load");
   return particleDef->get(name,relaxed);
   }
 
 const ParticleFx* Gothic::loadParticleFx(const ParticleFx* base, const VisualFx::Key* key) {
+  LoadProbe::Vobs::Scope probe("pfx_load");
   return particleDef->get(base,key);
   }
 
@@ -486,8 +369,8 @@ void Gothic::setMarvinEnabled(bool m) {
 
 float Gothic::interfaceScale(const Tempest::Widget* w) {
   float mul = 1;
-  if(instance->opts.interfaceScale>0.0)
-    mul = instance->opts.interfaceScale;
+  if(Settings::options().interfaceScale>0.0)
+    mul = Settings::options().interfaceScale;
 
   while(w->owner()!=nullptr) {
     w = w->owner();
@@ -507,11 +390,6 @@ bool Gothic::isBenchmarkModeCi() const {
 
 void Gothic::setBenchmarkMode(Benchmark b) {
   isBenchmark = b;
-  }
-
-const Gothic::Options& Gothic::options() {
-  assert(instance!=nullptr);
-  return instance->opts;
   }
 
 Gothic::LoadState Gothic::checkLoading() const {
@@ -647,7 +525,7 @@ void Gothic::tick(uint64_t dt) {
 
   // before world tick: queued external AI commands apply in the same frame
   onTick(dt);
-  refreshPhysicsFlags();
+  settings.refreshPhysicsFlags();
   if(game)
     game->tick(dt);
   }
@@ -753,53 +631,21 @@ std::string_view Gothic::menuMain() const {
   return ::menuMain;
   }
 
-std::unique_ptr<zenkit::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
+std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
   auto sc = loadScript(datFile, lang);
   setupCommonScriptClasses(sc);
 
-  auto vm = std::make_unique<zenkit::DaedalusVm>(std::move(sc), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  auto vm = std::make_unique<daedalus::DaedalusVm>(std::move(sc), daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   setupVmCommonApi(*vm);
   return vm;
   }
 
-zenkit::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {
-  const auto request = datFile;
-  if(Resources::hasFile(datFile)) {
-    return Resources::loadBaseProgram(request,int(lang),"vfs_find_request");
-    }
-
-  const size_t segment = datFile.find_last_of("\\/");
-  if(segment!=std::string::npos && Resources::hasFile(datFile.substr(segment+1))) {
-    return Resources::loadBaseProgram(request,int(lang),"vfs_find_basename");
-    }
-
-  char16_t str16[256] = {};
-  for(size_t i=0; i<datFile.size() && i<255; ++i)
-    str16[i] = char16_t(datFile[i]);
-
-  auto gscript = CommandLine::inst().scriptPath();
-  auto path    = caseInsensitiveSegment(gscript,str16,Dir::FT_File);
-  const char* branch = "host_ordinary";
-  if(!FileUtil::exists(path) && int(lang)>=0) {
-    gscript = CommandLine::inst().scriptPath(lang);
-    path    = caseInsensitiveSegment(gscript,str16,Dir::FT_File);
-    branch = "host_localized_full";
-    }
-  if(!FileUtil::exists(path) && int(lang)>=0) {
-    datFile = datFile.substr(segment+1);
-    for(size_t i=0; i<datFile.size() && i<255; ++i)
-      str16[i] = char16_t(datFile[i]);
-    str16[std::min(datFile.size(),size_t(255))] = u'\0';
-    gscript = CommandLine::inst().scriptPath(lang);
-    path    = caseInsensitiveSegment(gscript,str16,Dir::FT_File);
-    branch = "host_localized_basename";
-    }
-
-  return Resources::loadBaseProgram(request,int(lang),branch,path);
+daedalus::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {
+  return loadBaseProgram(datFile,int(lang));
   }
 
-void Gothic::setupCommonScriptClasses(zenkit::DaedalusScript& sc) {
-  // Use customized setup, instead of zenkit::register_all_script_classes
+void Gothic::setupCommonScriptClasses(daedalus::DaedalusScript& sc) {
+  // Use customized setup, instead of daedalus::register_all_script_classes
   auto registerIfExists = [&](std::string_view sym, auto d) {
     if(sc.find_symbol_by_name(sym) != nullptr) {
       d(sc);
@@ -812,180 +658,56 @@ void Gothic::setupCommonScriptClasses(zenkit::DaedalusScript& sc) {
       }
     };
 
-  registerIfExists("C_GILVALUES",    zenkit::IGuildValues::register_);
-  registerIfExists("C_NPC",          zenkit::INpc::register_);
-  registerIfExists("C_MISSION",      zenkit::IMission::register_);
-  registerIfExists("C_ITEM",         zenkit::IItem::register_);
-  registerIfExists("C_FOCUS",        zenkit::IFocus::register_);
-  registerIfExists("C_INFO",         zenkit::IInfo::register_);
-  registerIfExists("C_ITEMREACT",    zenkit::IItemReact::register_);
-  registerIfExists("C_SPELL",        zenkit::ISpell::register_);
+  registerIfExists("C_GILVALUES",    daedalus::IGuildValues::register_);
+  registerIfExists("C_NPC",          daedalus::INpc::register_);
+  registerIfExists("C_MISSION",      daedalus::IMission::register_);
+  registerIfExists("C_ITEM",         daedalus::IItem::register_);
+  registerIfExists("C_FOCUS",        daedalus::IFocus::register_);
+  registerIfExists("C_INFO",         daedalus::IInfo::register_);
+  registerIfExists("C_ITEMREACT",    daedalus::IItemReact::register_);
+  registerIfExists("C_SPELL",        daedalus::ISpell::register_);
   registerOpaque  ("C_SVM"); // structure is very customizable, so better to use type-less mapping
-  registerIfExists("C_MENU",         zenkit::IMenu::register_);
-  registerIfExists("C_MENU_ITEM",    zenkit::IMenuItem::register_);
-  registerIfExists("CCAMSYS",        Def::Camera::register_);
-  registerIfExists("C_MUSICSYS_CFG", zenkit::IMusicSystem::register_);
-  registerIfExists("C_MUSICTHEME",   Def::MusicTheme::register_);
-  registerIfExists("C_MUSICJINGLE",  zenkit::IMusicJingle::register_);
-  registerIfExists("C_PARTICLEFX",   Def::ParticleEffect::register_);
-  registerIfExists("CFX_BASE",       Def::EffectBase::register_);
-  registerIfExists("C_PARTICLEFXEMITKEY", Def::ParticleEffectEmitKey::register_);
+  registerIfExists("C_MENU",         daedalus::IMenu::register_);
+  registerIfExists("C_MENU_ITEM",    daedalus::IMenuItem::register_);
+  registerIfExists("CCAMSYS",        VmDef::Camera::register_);
+  registerIfExists("C_MUSICSYS_CFG", daedalus::IMusicSystem::register_);
+  registerIfExists("C_MUSICTHEME",   VmDef::MusicTheme::register_);
+  registerIfExists("C_MUSICJINGLE",  daedalus::IMusicJingle::register_);
+  registerIfExists("C_PARTICLEFX",   VmDef::ParticleEffect::register_);
+  registerIfExists("CFX_BASE",       VmDef::EffectBase::register_);
+  registerIfExists("C_PARTICLEFXEMITKEY", VmDef::ParticleEffectEmitKey::register_);
   registerOpaque  ("C_FIGHTAI"); // many mods get it wrong/corrupted. Opaque binding is one is a way to get around it
-  registerIfExists("C_SFX",          Def::SoundEffect::register_);
-  registerIfExists("C_SNDSYS_CFG",   zenkit::ISoundSystem::register_);
-  }
-
-bool Gothic::settingsHasSection(std::string_view sec) {
-  if(instance->iniFile->has(sec))
-    return true;
-  if(instance->baseIniFile->has(sec))
-    return true;
-  // no defaults
-  return false;
-  }
-
-int Gothic::settingsGetI(std::string_view sec, std::string_view name) {
-  if(name.empty())
-    return 0;
-  if(instance->iniFile->has(sec,name))
-    return instance->iniFile->getI(sec,name);
-  if(instance->baseIniFile->has(sec,name))
-    return instance->baseIniFile->getI(sec,name);
-  if(instance->defaults->has(sec,name))
-    return instance->defaults->getI(sec,name);
-  return 0;
-  }
-
-void Gothic::settingsSetI(std::string_view sec, std::string_view name, int val) {
-  instance->iniFile->set(sec,name,val);
-  instance->onSettingsChanged();
-  }
-
-std::string_view Gothic::settingsGetS(std::string_view sec, std::string_view name) {
-  if(name.empty())
-    return "";
-  if(instance->iniFile->has(sec,name))
-    return instance->iniFile->getS(sec,name);
-  if(instance->baseIniFile->has(sec,name))
-    return instance->baseIniFile->getS(sec,name);
-  if(instance->defaults->has(sec,name))
-    return instance->defaults->getS(sec,name);
-  return "";
-  }
-
-void Gothic::settingsSetS(std::string_view sec, std::string_view name, std::string_view val) {
-  instance->iniFile->set(sec,name,val);
-  instance->onSettingsChanged();
-  }
-
-float Gothic::settingsGetF(std::string_view sec, std::string_view name) {
-  if(name.empty())
-    return 0;
-  if(instance->iniFile->has(sec,name))
-    return instance->iniFile->getF(sec,name);
-  if(instance->baseIniFile->has(sec,name))
-    return instance->baseIniFile->getF(sec,name);
-  if(instance->defaults->has(sec,name))
-    return instance->defaults->getF(sec,name);
-  return 0;
-  }
-
-void Gothic::settingsSetF(std::string_view sec, std::string_view name, float val) {
-  instance->iniFile->set(sec,name,val);
-  instance->onSettingsChanged();
-  }
-
-float Gothic::settingsSoundVolume() {
-  const bool  soundEnabled = settingsGetI("SOUND","soundEnabled")!=0;
-  const float soundVolume  = settingsGetF("SOUND","soundVolume");
-
-  return soundEnabled ? soundVolume : 0.f;
-  }
-
-void Gothic::flushSettings() {
-  instance->iniFile->flush();
-  }
-
-void Gothic::detectGothicVersion() {
-  int score[3]={};
-
-  auto gpath = CommandLine::inst().rootPath();
-  if(gpath.find(u"Gothic/")!=std::string::npos || gpath.find(u"gothic/")!=std::string::npos)
-    score[1]++;
-  if(FileUtil::exists(nestedPath({u"_work",u"Data",u"Scripts",u"content",u"CUTSCENE",u"OU.BIN"},Dir::FT_File)))
-    score[1]++;
-
-  if(FileUtil::exists(nestedPath({u"_work",u"Data",u"Scripts",u"content",u"CUTSCENE",u"OU.DAT"},Dir::FT_File)))
-    score[2]++;
-  if(baseIniFile->has("KEYSDEFAULT1"))
-    score[2]++;
-  if(baseIniFile->has("GAME","PATCHVERSION"))
-    score[2]++;
-  if(baseIniFile->has("GAME","useGothic1Controls"))
-    score[2]++;
-
-  if(score[1]>score[2])
-    vinfo.game = 1; else
-    vinfo.game = 2;
-
-  if(vinfo.game==2) {
-    vinfo.patch = baseIniFile->getI("GAME","PATCHVERSION");
-    }
-
-  if(CommandLine::inst().doForceG1()) {
-    vinfo.game = 1;
-    }
-  else if(CommandLine::inst().doForceG2()) {
-    vinfo.game  = 2;
-    vinfo.patch = 0;
-    }
-  else if(CommandLine::inst().doForceG2NR()) {
-    vinfo.game  = 2;
-    vinfo.patch = 5;
-    }
-  }
-
-void Gothic::refreshPhysicsFlags() {
-  physicsFlagsCache = {
-    settingsGetI("GAME","ragdoll")!=0,
-    settingsGetI("GAME","ragdoll_quest_guard")!=0,
-    settingsGetI("GAME","living_bodies")!=0,
-    settingsGetI("GAME","arrow_physics")!=0,
-    settingsGetI("GAME","arrow_sticking")!=0,
-    settingsGetI("GAME","spell_physics")!=0,
-    settingsGetI("GAME","movable_vobs")!=0,
-    settingsGetI("GAME","physics_noise")!=0,
-    settingsGetI("GAME","destruction")!=0,
-    settingsGetI("GAME","buoyancy")!=0,
-    settingsGetI("GAME","cloth")!=0,
-    settingsGetI("GAME","character_virtual")!=0,
-    settingsGetI("GAME","npc_character_virtual")!=0,
-    settingsGetI("GAME","monster_character_virtual")!=0,
-    settingsGetI("GAME","melee_blade_shadow")!=0,
-    settingsGetI("GAME","melee_physics_hits")!=0
-    };
+  registerIfExists("C_SFX",          VmDef::SoundEffect::register_);
+  registerIfExists("C_SNDSYS_CFG",   daedalus::ISoundSystem::register_);
   }
 
 void Gothic::setupSettings() {
-  Resources::censusProfile(gameDatDef,ouDef,settingsGetI("GAME","language"));
-  // settingsSetI/S/F emit onSettingsChanged synchronously. Publish before any
+  Resources::configureTextures(Settings::getS("GAME","texture_budget_mb"),Settings::getS("GAME","texture_far_skip_mips"),
+                               Settings::getS("GAME","texture_target_mb"),Settings::getS("GAME","texture_screen_mips"),
+                               Settings::getS("GAME","texture_lookahead"));
+  Resources::censusProfile(gameDatDef,ouDef,Settings::getI("GAME","language"));
+  // Settings::setI/S/F emit onSettingsChanged synchronously. Publish before any
   // same-dispatch actor creation, prepare or input query can consume the change.
-  refreshPhysicsFlags();
+  settings.refreshPhysicsFlags();
   if(game!=nullptr)
     game->setupSettings();
   if(auto* activeWorld = world()) {
-    activeWorld->physic()->setMovableVobsEnabled(physicsFlagsCache.movableVobs);
-    activeWorld->physic()->setPhysicsNoiseEnabled(physicsFlagsCache.physicsNoise);
-    activeWorld->physic()->setDestructionEnabled(physicsFlagsCache.destruction);
-    activeWorld->physic()->setBuoyancyEnabled(physicsFlagsCache.buoyancy);
-    activeWorld->physic()->setClothEnabled(physicsFlagsCache.cloth);
+    activeWorld->physic()->setFurniturePartsEnabled(Settings::physicsFlags().furnitureParts);
+    activeWorld->physic()->setMovableVobsEnabled(Settings::physicsFlags().movableVobs);
+    activeWorld->physic()->setPhysicsNoiseEnabled(Settings::physicsFlags().physicsNoise);
+    activeWorld->physic()->setDestructionEnabled(Settings::physicsFlags().destruction);
+    activeWorld->physic()->setBuoyancyEnabled(Settings::physicsFlags().buoyancy);
+    activeWorld->physic()->setClothEnabled(Settings::physicsFlags().cloth);
+    activeWorld->physic()->setItemWakeEnabled(Settings::physicsFlags().itemWake);
+    activeWorld->physic()->setItemDeepestContactEnabled(Settings::physicsFlags().itemDeepestContact);
+    activeWorld->physic()->setRagdollBirthGuardEnabled(Settings::physicsFlags().ragdollBirthGuard);
     }
 
-  const float soundVolume = settingsSoundVolume();
+  const float soundVolume = Settings::soundVolume();
   if(sndDev)
     sndDev->setGlobalVolume(soundVolume);
 
-  auto ord  = Gothic::settingsGetS("GAME","invCatOrder");
+  auto ord  = Settings::getS("GAME","invCatOrder");
   while(!ord.empty()) {
     auto l    = ord.find_first_of(" \t,");
     auto name = ord.substr(0,l);
@@ -1030,7 +752,7 @@ std::u16string Gothic::nestedPath(const std::initializer_list<const char16_t*> &
   return CommandLine::inst().nestedPath(name,type);
   }
 
-void Gothic::setupVmCommonApi(zenkit::DaedalusVm& vm) {
+void Gothic::setupVmCommonApi(daedalus::DaedalusVm& vm) {
   vm.register_default_external([](std::string_view name) { notImplementedRoutine(std::string {name}); });
 
   if(auto sym = vm.find_symbol_by_name("C_SVM"))
@@ -1284,21 +1006,40 @@ void Gothic::exitgame() {
   }
 
 void Gothic::printdebug(std::string_view msg) {
-  if(version().game==2)
-    Log::d("[zspy]: ",msg);
+  Log::d("[zspy]: ",msg);
   }
 
 void Gothic::printdebugch(int ch, std::string_view msg) {
-  if(version().game==2)
-    Log::d("[zspy,",ch,"]: ",msg);
+  Log::d("[zspy,",ch,"]: ",msg);
   }
 
 void Gothic::printdebuginst(std::string_view msg) {
-  if(version().game==2)
-    Log::d("[zspy]: ",msg);
+  Log::d("[zspy]: ",msg);
   }
 
 void Gothic::printdebuginstch(int ch, std::string_view msg) {
-  if(version().game==2)
-    Log::d("[zspy,",ch,"]: ",msg);
+  Log::d("[zspy,",ch,"]: ",msg);
+  }
+
+const CameraPresets& Gothic::cameraDefinitions() const {
+  return cameraDef();
+  }
+
+const Def::SoundEffect& Gothic::soundEffect(std::string_view name) const {
+  return sfx()[name];
+  }
+
+int64_t Gothic::worldTime() const {
+  const auto* w = world();
+  return (w!=nullptr ? w->time() : gtime(8,0)).toInt();
+  }
+
+uint64_t Gothic::worldTickCount() const {
+  const auto* w = world();
+  return w!=nullptr ? w->tickCount() : uint64_t();
+  }
+
+DynamicWorld* Gothic::physicsWorld() const {
+  const auto* w = world();
+  return w!=nullptr ? w->physic() : nullptr;
   }

@@ -30,6 +30,26 @@ constexpr float WaistShare = 0.4f;     // of the trunk's turn the waist does, th
 constexpr float MaxStep    = 1.f/240.f;
 constexpr float RestAngle  = 0.05f*Deg;
 constexpr float RestSpeed  = 0.5f*Deg;
+constexpr float MaxBumpTrunk = 25.f*Deg;
+constexpr float MaxBumpNeck  = 30.f*Deg;
+
+// trunk, twist, head, freq, damp, headFreq, headDamp, floor
+Flinch::BumpForm bumpForms[Flinch::Bump::KindCount] = {
+  {20.f, 8.f, 22.f, 14.f, 0.75f, 18.f, 0.55f, 0.35f}, // Wall: off it, the head stays behind
+  {20.f, 0.f, -6.f, 14.f, 1.f,   16.f, 0.7f,  0.35f}, // Waist: folds over it and comes up, no swing back
+  {16.f, 8.f, 18.f, 14.f, 0.75f, 18.f, 0.55f, 0.35f}, // Person: as off a wall; the other body gives
+  {18.f, 0.f, 16.f, 11.f, 0.8f,  15.f, 0.5f,  0.35f}, // Pushed: the runner's way, a body at rest is softer
+  {9.f,  0.f, -8.f, 10.f, 0.9f,  12.f, 0.7f,  0.35f}, // Braced: the palms are on the wall, the chest goes on to them
+                                                      // and comes back, the head with it
+  };
+
+// the speed that carries a damped spring to this peak
+float kickFor(float peak, float freq, float damp) {
+  if(damp>=1.f)
+    return peak*freq*float(M_E);
+  const float w = std::sqrt(1.f-damp*damp);
+  return peak*freq*std::exp(damp*std::atan2(w,damp)/w);
+  }
 
 bool enabled = []() {
   const char* v = std::getenv("OPENGOTHIC_FLINCH");
@@ -112,7 +132,44 @@ void Flinch::setSkeleton(const Skeleton* sk) {
   }
 
 bool Flinch::active() const {
-  return trunk!=Vec3() || trunkV!=Vec3() || neck!=Vec3() || neckV!=Vec3();
+  return trunk!=Vec3() || trunkV!=Vec3() || neck!=Vec3() || neckV!=Vec3() || bumpActive();
+  }
+
+bool Flinch::bumpActive() const {
+  return bTrunk!=Vec3() || bTrunkV!=Vec3() || bNeck!=Vec3() || bNeckV!=Vec3();
+  }
+
+Flinch::BumpForm& Flinch::bumpForm(Bump::Kind kind) {
+  return bumpForms[kind<Bump::KindCount ? kind : Bump::Wall];
+  }
+
+void Flinch::bump(const Bump& b, const Vec3& fwd) {
+  if(!valid || b.kind>=Bump::KindCount)
+    return;
+  const Vec3 f = normalize(Vec3(fwd.x,0,fwd.z));
+  if(length(f)>0.5f)
+    forward = f;
+  const Vec3 n = normalize(Vec3(b.normal.x,0,b.normal.z));
+  const float s = std::clamp(b.strength,0.f,1.f);
+  if(length(n)<0.5f || s<=0.f)
+    return;
+  const auto& form = bumpForms[b.kind];
+  const float a    = form.floor + (1.f-form.floor)*s;
+  bFreq     = std::max(form.freq,1.f);
+  bDamp     = std::clamp(form.damp,0.1f,1.f);
+  bHeadFreq = std::max(form.headFreq,1.f);
+  bHeadDamp = std::clamp(form.headDamp,0.1f,1.f);
+
+  // where the top of the trunk is thrown, and where the obstacle is
+  const Vec3 thrown   = (b.kind==Bump::Waist || b.kind==Bump::Braced) ? n*-1.f : n;
+  const Vec3 obstacle = b.kind==Bump::Pushed ? Vec3() : n*-1.f;
+  const Vec3 axis     = toBody(cross(Up,thrown),forward);
+  bTrunkV += axis*(kickFor(form.trunk*Deg,bFreq,bDamp)*a);
+  // the shoulder that meets the obstacle stops, the other one goes on: the trunk turns to the obstacle
+  const float side = toBody(obstacle,forward).z;
+  bTrunkV += Vec3(0,1,0)*(-kickFor(form.twist*Deg,bFreq,bDamp)*a*std::clamp(side,-1.f,1.f));
+  bNeckV  += axis*(-kickFor(form.head*Deg,bHeadFreq,bHeadDamp)*a);
+  bumps++;
   }
 
 void Flinch::hit(const Hit& h, const Vec3& fwd) {
@@ -151,7 +208,8 @@ bool Flinch::update(const Input& in) {
     return false;
   if(!enabled) {
     trunk = trunkV = neck = neckV = Vec3();
-    return true;
+    if(!bumpActive())
+      return true;
     }
 
   const float dt = float(in.dt)/1000.f;
@@ -167,9 +225,18 @@ bool Flinch::update(const Input& in) {
     const Vec3 an = neck*(-NeckFreq*NeckFreq) - neckV*(2.f*NeckDamp*NeckFreq) - at*Inertia;
     neckV  += an*h;
     neck   += neckV*h;
+    // the bump: the same springs with its own stiffness, the head is thrown by itself
+    bTrunkV += (bTrunk*(-bFreq*bFreq) - bTrunkV*(2.f*bDamp*bFreq))*h;
+    bTrunk  += bTrunkV*h;
+    bNeckV  += (bNeck*(-bHeadFreq*bHeadFreq) - bNeckV*(2.f*bHeadDamp*bHeadFreq))*h;
+    bNeck   += bNeckV*h;
     }
   clampLength(trunk,MaxTrunk);
   clampLength(neck, MaxNeck);
+  clampLength(bTrunk,MaxBumpTrunk);
+  clampLength(bNeck, MaxBumpNeck);
+  if(length(bTrunk)<RestAngle && length(bTrunkV)<RestSpeed && length(bNeck)<RestAngle && length(bNeckV)<RestSpeed)
+    bTrunk = bTrunkV = bNeck = bNeckV = Vec3();
 
   if(length(trunk)<RestAngle && length(trunkV)<RestSpeed && length(neck)<RestAngle && length(neckV)<RestSpeed)
     trunk = trunkV = neck = neckV = Vec3();
@@ -179,9 +246,9 @@ bool Flinch::update(const Input& in) {
 void Flinch::apply(Matrix4x4* tr, size_t numBones) {
   if(!valid || !active() || headTree.back()>=numBones)
     return;
-  const Vec3  t  = fromBody(trunk,forward);
+  const Vec3  t  = fromBody(trunk+bTrunk,forward);
   const float at = length(t);
-  Vec3 n = fromBody(neck,forward);
+  Vec3 n = fromBody(neck+bNeck,forward);
   if(!headOnly && chestTree.back()<numBones && waistTree.back()<numBones) {
     if(at>0.f) {
       const Vec3 axis = t*(1.f/at);
@@ -210,4 +277,10 @@ void Flinch::probe(Probe& p) const {
   p.hits     = hits;
   p.strength = lastStrength;
   p.height   = lastHeight;
+  // a turn about the side axis leans forward
+  p.bumpPitch = bTrunk.z/Deg;
+  p.bumpRoll  = bTrunk.x/Deg;
+  p.bumpTwist = bTrunk.y/Deg;
+  p.bumpHead  = bNeck.z/Deg;
+  p.bumps     = bumps;
   }

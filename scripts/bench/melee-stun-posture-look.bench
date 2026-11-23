@@ -1,0 +1,84 @@
+# Lost-balance look (melee_stagger, `stun ... posture`, 1.5 s): an attacking bandit with a one-hander, then a
+# two-hander, loses his balance against the hero: the stagger back (`T_STUMBLEB` at half speed, ~720 ms), then the
+# second beat, the stagger forward (`T_STUMBLE` at 0.6) to the end of the stun. Side video of both, dense shots
+# around the second beat and `stun_drift` root samples every 100 ms (OPENGOTHIC_BODY_TRACE=1); the look is judged
+# by Claude from the clip.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=ryzen OPENGOTHIC_BODY_TRACE=1
+seed 73013
+cheat god
+set time 12 0
+release all
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+# The fixture's signpost stands between them at the wall: turn into the open field.
+turn 180
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+pin off
+immortal BDT_1013_BANDIT_L on
+watch player
+still player on
+cam two BDT_1013_BANDIT_L 320 10 1
+wait 800
+
+rec posture-1h
+melee-shadow bandit 1h
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+pin off
+fight BDT_1013_BANDIT_L player
+wait 1000
+stun-drift BDT_1013_BANDIT_L player
+stun BDT_1013_BANDIT_L posture
+shot 1h-000
+wait 350
+shot 1h-350
+wait 350
+shot 1h-700
+wait 150
+shot 1h-850
+wait 150
+shot 1h-1000
+wait 200
+shot 1h-1200
+wait 300
+shot 1h-1500
+wait 1000
+stop
+
+rec posture-2h
+melee-shadow bandit 2h
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+pin off
+fight BDT_1013_BANDIT_L player
+wait 1200
+stun-drift BDT_1013_BANDIT_L player
+stun BDT_1013_BANDIT_L posture
+shot 2h-000
+wait 350
+shot 2h-350
+wait 350
+shot 2h-700
+wait 150
+shot 2h-850
+wait 150
+shot 2h-1000
+wait 200
+shot 2h-1200
+wait 300
+shot 2h-1500
+wait 1000
+stop

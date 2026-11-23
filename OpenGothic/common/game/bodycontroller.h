@@ -56,6 +56,9 @@ class BodyController final {
     // Extra boundary diagnostics are opt-in for CPU fixtures, outside the strict wire schema.
     static std::string statusJson(const Npc* actor=nullptr,bool boundaryDiagnostics=false);
     static std::string drainJson();
+    static std::vector<std::string> drainPolicyJson();
+    // The exact post-animation row, after its observation clock has been published.
+    static void onObservation(Npc& actor,std::string_view row);
     static void setSink(std::function<void(std::string_view)> sink);
     static Snapshot snapshot(const Npc& actor);
     static bool owns(const Npc& actor);
@@ -93,7 +96,7 @@ class BodyController final {
   private:
     static AcquireState acquireState(const Npc& actor,uint64_t target);
     static void grantAcquire(Npc& actor,uint64_t target,uint64_t timeout,const std::string& provider,
-                             const std::string& mode,uint64_t requestId=0);
+                             const std::string& mode,uint64_t requestId=0,bool enginePolicy=false);
     static void pollAcquire(Npc& actor,bool grant);
     static bool stopOwnedMovement(Npc& actor);
   };

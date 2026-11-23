@@ -1,16 +1,16 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
 class SpellDefinitions final {
   public:
-    SpellDefinitions(zenkit::DaedalusVm &vm);
+    SpellDefinitions(daedalus::DaedalusVm &vm);
     ~SpellDefinitions();
 
-    const zenkit::ISpell& find(std::string_view instanceName) const;
+    const daedalus::ISpell& find(std::string_view instanceName) const;
 
   private:
-    zenkit::DaedalusVm&                          vm;
-    std::vector<std::shared_ptr<zenkit::ISpell>> spl;
+    daedalus::DaedalusVm&                          vm;
+    std::vector<std::shared_ptr<daedalus::ISpell>> spl;
   };

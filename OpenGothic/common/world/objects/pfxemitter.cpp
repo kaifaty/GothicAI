@@ -1,23 +1,21 @@
 #include "pfxemitter.h"
+#include "loadprobe.h"
 
 #include <Tempest/Log>
 
 #include "graphics/pfx/pfxobjects.h"
-#include "graphics/pfx/pfxbucket.h"
 #include "graphics/pfx/particlefx.h"
 
 #include "world/world.h"
+#include "world/objects/npc.h"
+#include "world/voblayer.h"
 #include "utils/fileext.h"
-#include "gothic.h"
+#include "gameservices.h"
 
 using namespace Tempest;
 
-PfxEmitter::PfxEmitter(PfxBucket& b, size_t id)
-  :bucket(&b), id(id) {
-  }
-
 PfxEmitter::PfxEmitter(World& world, std::string_view name)
-  :PfxEmitter(world,Gothic::inst().loadParticleFx(name)) {
+  :PfxEmitter(world,GameServices::inst().loadParticleFx(name)) {
   }
 
 PfxEmitter::PfxEmitter(World& world, const ParticleFx* decl) {
@@ -27,48 +25,40 @@ PfxEmitter::PfxEmitter(World& world, const ParticleFx* decl) {
     return;
     }
   *this = PfxEmitter(world.view()->pfxGroup,decl);
+  setBorn(world.tickCount());
   }
 
-PfxEmitter::PfxEmitter(PfxObjects& owner, const ParticleFx* decl) {
-  if(decl==nullptr || (decl->visMaterial.tex==nullptr && !decl->hasTrails()))
-    return;
-  std::lock_guard<std::recursive_mutex> guard(owner.sync);
-  bucket = &owner.getBucket(*decl);
-  id     = bucket->allocEmitter();
-  if(decl->shpMesh!=nullptr && decl->shpMeshRender)
-    shpMesh = owner.world.addView(decl->shpMesh_S,0,0,0);
+PfxEmitter::PfxEmitter(PfxObjects& owner, const ParticleFx* decl)
+  :slot(owner,decl) {
+  if(decl!=nullptr)
+    for(const auto* other:decl->with)
+      extra.emplace_back(owner,other);
   }
 
 PfxEmitter::PfxEmitter(World& world, const asset::VirtualObject& vob) {
+  LoadProbe::Vobs::Scope probe("pfx");
   if(Resources::isHeadless()) {
     if(FileExt::hasExt(vob.visual->name,"PFX")) {
-      cpuDecl = Gothic::inst().loadParticleFx(vob.visual->name);
+      cpuDecl = GameServices::inst().loadParticleFx(vob.visual->name);
       cpuWorld = &world;
       }
     return;
     }
   auto& owner = world.view()->pfxGroup;
   if(FileExt::hasExt(vob.visual->name,"PFX")) {
-    auto decl = Gothic::inst().loadParticleFx(vob.visual->name);
+    auto decl = GameServices::inst().loadParticleFx(vob.visual->name);
     if(decl==nullptr || decl->visMaterial.tex==nullptr)
       return;
-    std::lock_guard<std::recursive_mutex> guard(owner.sync);
-    bucket = &owner.getBucket(*decl);
-    id     = bucket->allocEmitter();
+    slot = PfxSlot(owner,*decl,VobLayer::flicker(vob));
+    setBorn(world.tickCount());
     }
   else if(auto decal = dynamic_cast<const asset::VisualDecal*>(vob.visual.get())) {
     Material mat(*decal);
-    std::lock_guard<std::recursive_mutex> guard(owner.sync);
-    bucket = &owner.getBucket(mat,vob);
-    id     = bucket->allocEmitter();
+    slot = PfxSlot(owner,mat,vob);
     }
   }
 
 PfxEmitter::~PfxEmitter() {
-  if(bucket!=nullptr) {
-    std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-    bucket->freeEmitter(id);
-    }
   }
 
 PfxEmitter::PfxEmitter(PfxEmitter && b)
@@ -77,8 +67,8 @@ PfxEmitter::PfxEmitter(PfxEmitter && b)
   }
 
 PfxEmitter& PfxEmitter::operator=(PfxEmitter &&b) {
-  std::swap(bucket,b.bucket);
-  std::swap(id,    b.id);
+  slot = std::move(b.slot);
+  extra = std::move(b.extra);
   std::swap(zone,  b.zone);
   std::swap(cpuDecl,b.cpuDecl);
   std::swap(cpuWorld,b.cpuWorld);
@@ -100,50 +90,39 @@ void PfxEmitter::setPosition(const Vec3& pos) {
     zone.setPosition(pos);
     return;
     }
-  if(bucket==nullptr)
+  if(slot.isEmpty())
     return;
-  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-  auto& v = bucket->get(id);
-  v.pos = pos;
+  auto guard = slot.lock();
+  slot.setPosition(pos);
   zone.setPosition(pos);
-
-  if(v.next!=nullptr)
-    v.next->setPosition(pos);
-  if(v.block==size_t(-1))
-    return; // no backup memory
-  auto& p = bucket->getBlock(*this);
-  p.pos = pos;
-  bucket->invalidateDecal();
+  for(auto& i:extra) {
+    auto g = i.lock();
+    i.setPosition(pos);
+    }
   }
 
 bool PfxEmitter::renderPosition(Vec3& out) const {
-  if(bucket==nullptr)
-    return false;
-  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-  auto& v = bucket->get(id);
-  out = v.block==size_t(-1) ? v.pos : bucket->getBlock(v).pos;
-  return true;
+  return slot.renderPosition(out);
+  }
+
+bool PfxEmitter::position(Vec3& out) const {
+  if(cpuDecl!=nullptr) {
+    out = cpuPosition;
+    return true;
+    }
+  return slot.renderPosition(out);
   }
 
 void PfxEmitter::setTarget(const Npc* tg) {
-  if(bucket==nullptr)
-    return;
-  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-  auto& v = bucket->get(id);
-  v.targetNpc = tg;
+  slot.setTarget(tg);
+  for(auto& i:extra)
+    i.setTarget(tg);
   }
 
 void PfxEmitter::setDirection(const Matrix4x4& d) {
-  if(bucket==nullptr)
-    return;
-  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-  auto& v = bucket->get(id);
-  v.direction[0] = Vec3(d.at(0,0),d.at(0,1),d.at(0,2));
-  v.direction[1] = Vec3(d.at(1,0),d.at(1,1),d.at(1,2));
-  v.direction[2] = Vec3(d.at(2,0),d.at(2,1),d.at(2,2));
-
-  if(v.next!=nullptr)
-    v.next->setDirection(d);
+  slot.setDirection(d);
+  for(auto& i:extra)
+    i.setDirection(d);
   }
 
 void PfxEmitter::setActive(bool act) {
@@ -157,28 +136,15 @@ void PfxEmitter::setActive(bool act) {
       }
     return;
     }
-  if(bucket==nullptr)
-    return;
-  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-  auto& v     = bucket->get(id);
-  auto  state = (act ? PfxBucket::S_Active : PfxBucket::S_Inactive);
-  if(v.st==state)
-    return;
-  v.st = state;
-  if(v.next!=nullptr)
-    v.next->setActive(act);
-  if(act==true)
-    v.waitforNext = bucket->decl.ppsCreateEmDelay;
+  slot.setActive(act);
+  for(auto& i:extra)
+    i.setActive(act);
   }
 
 bool PfxEmitter::isActive() const {
   if(cpuDecl!=nullptr)
     return cpuActive;
-  if(bucket==nullptr)
-    return false;
-  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-  auto& v = bucket->get(id);
-  return v.st==PfxBucket::S_Active;
+  return slot.isActive();
   }
 
 void PfxEmitter::setLooped(bool loop) {
@@ -186,26 +152,21 @@ void PfxEmitter::setLooped(bool loop) {
     cpuLooped = loop;
     return;
     }
-  if(bucket==nullptr)
-    return;
-  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-  auto& v = bucket->get(id);
-  v.isLoop = loop;
-  if(v.next!=nullptr)
-    v.next->setLooped(loop);
+  slot.setLooped(loop);
+  for(auto& i:extra)
+    i.setLooped(loop);
   }
 
-void PfxEmitter::setMesh(const MeshObjects::Mesh* mesh, const Pose* pose) {
-  if(bucket==nullptr)
-    return;
-  const PfxEmitterMesh* m = (mesh!=nullptr) ? mesh->toMeshEmitter() : nullptr;
+void PfxEmitter::setBorn(uint64_t worldTime) {
+  slot.setBorn(worldTime);
+  for(auto& i:extra)
+    i.setBorn(worldTime);
+  }
 
-  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-  auto& v = bucket->get(id);
-  v.mesh = m;
-  v.pose = pose;
-  if(v.next!=nullptr)
-    v.next->setMesh(mesh,pose);
+void PfxEmitter::setMesh(const MeshObjects::Mesh* mesh, const Pose* pose, const std::vector<Tempest::Matrix4x4>* skin) {
+  slot.setMesh(mesh,pose,skin);
+  for(auto& i:extra)
+    i.setMesh(mesh,pose,skin);
   }
 
 void PfxEmitter::setPhysicsEnable(World& p, std::function<void (Npc&)> cb) {
@@ -214,11 +175,10 @@ void PfxEmitter::setPhysicsEnable(World& p, std::function<void (Npc&)> cb) {
     zone.setCallback(std::move(cb));
     return;
     }
-  if(bucket==nullptr)
+  if(slot.isEmpty())
     return;
-  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-  auto& v = bucket->get(id);
-  zone = CollisionZone(p, v.pos, bucket->decl);
+  auto guard = slot.lock();
+  zone = CollisionZone(p, slot.position(), slot.decl());
   zone.setCallback(cb);
   }
 
@@ -229,9 +189,9 @@ void PfxEmitter::setPhysicsDisable() {
 uint64_t PfxEmitter::effectPrefferedTime() const {
   if(cpuDecl!=nullptr)
     return cpuDecl->effectPrefferedTime();
-  if(bucket==nullptr)
+  if(slot.isEmpty())
     return 0;
-  return bucket->decl.effectPrefferedTime();
+  return slot.decl().effectPrefferedTime();
   }
 
 bool PfxEmitter::isAlive() const {
@@ -243,18 +203,16 @@ bool PfxEmitter::isAlive() const {
                                     : cpuStopped+cpuDecl->maxLifetime();
     return now<until;
     }
-  if(bucket==nullptr)
-    return false;
-  std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
-  auto& v = bucket->get(id);
-  if(v.block==size_t(-1))
-    return false;
-  auto& b = bucket->block[v.block];
-  return b.count>0;
+  for(auto& i:extra)
+    if(i.isAlive())
+      return true;
+  return slot.isAlive();
   }
 
 void PfxEmitter::setObjMatrix(const Matrix4x4 &mt) {
   setPosition (mt.at(3,0),mt.at(3,1),mt.at(3,2));
   setDirection(mt);
-  shpMesh.setObjMatrix(mt);
+  slot.setShapeMatrix(mt);
+  for(auto& i:extra)
+    i.setShapeMatrix(mt);
   }

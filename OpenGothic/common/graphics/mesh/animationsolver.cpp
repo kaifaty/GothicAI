@@ -1,28 +1,26 @@
 #include "animationsolver.h"
 
-#include "world/objects/interactive.h"
-#include "world/world.h"
-#include "game/serialize.h"
+#include "animationinteractive.h"
+#include "savearchive.h"
 #include "utils/fileext.h"
-#include "gothic.h"
 #include "skeleton.h"
 #include "pose.h"
 #include "resources.h"
-#include "testbench.h"
+#include "benchprobe.h"
 
 using namespace Tempest;
 
 AnimationSolver::AnimationSolver() {
   }
 
-void AnimationSolver::save(Serialize &fout) const {
+void AnimationSolver::save(SaveArchive &fout) const {
   fout.write(uint32_t(overlay.size()));
   for(auto& i:overlay){
     fout.write(i.skeleton->name(),i.time);
     }
   }
 
-void AnimationSolver::load(Serialize &fin) {
+void AnimationSolver::load(SaveArchive &fin) {
   uint32_t sz=0;
   std::string s;
 
@@ -102,6 +100,11 @@ void AnimationSolver::update(uint64_t tickCount) {
   }
 
 const Animation::Sequence* AnimationSolver::solveAnim(AnimationSolver::Anim a, WeaponState st, WalkBit wlkMode, const Pose& pose, const Npc* npc) const {
+  if(pose.isUsingItemInHand()) {
+    if(a==MoveBack)
+      return solveFrm("S_%sWALKBL",st);
+    wlkMode = WalkBit::WM_Walk;
+    }
   if(0<a && a<=AnimationSolver::CacheLast && int(st)<2 && int(wlkMode)<2) {
     auto& ptr = cache[a-1][int(st)][int(wlkMode)];
     if(ptr==nullptr)
@@ -120,8 +123,7 @@ const Animation::Sequence* AnimationSolver::implSolveAnim(AnimationSolver::Anim 
       return solveFrm("S_FISTATTACK");
       }
     if(a==Anim::AttackBlock) {
-      bool g2 = Gothic::inst().version().game==2;
-      return g2 ? solveFrm("T_FISTPARADE_0") : solveFrm("T_FISTPARADE_O");
+      return solveFrm("T_FISTPARADE_0");
       }
     }
   else if(st==WeaponState::W1H || st==WeaponState::W2H) {
@@ -134,24 +136,20 @@ const Animation::Sequence* AnimationSolver::implSolveAnim(AnimationSolver::Anim 
     if(a==Anim::Attack || a==Anim::AttackL || a==Anim::AttackR)
       return solveFrm("S_%sATTACK",st);
     if(a==Anim::AttackBlock) {
-      bool g2 = Gothic::inst().version().game==2;
-      if(g2) {
-        const Animation::Sequence* s=nullptr;
-        // Preserve the original shared RNG draw at precisely this solve point in every mode.
-        // Only an explicit benchmark opt-in may replace its presentation-clip branch.
-        const int fallback = std::rand()%3;
-        const int variant = npc==nullptr ? fallback : TestBench::bodyBlockVariant(*npc,fallback);
-        switch(variant) {
-          case 0: s = solveFrm("T_%sPARADE_0",   st); break;
-          case 1: s = solveFrm("T_%sPARADE_0_A2",st); break;
-          case 2: s = solveFrm("T_%sPARADE_0_A3",st); break;
-          }
-        if(s==nullptr)
-          s = solveFrm("T_%sPARADE_0",st);
-        return s;
-        } else {
-        return solveFrm("T_%sPARADE_O",st);
+      const Animation::Sequence* s=nullptr;
+      // Preserve the original shared RNG draw at precisely this solve point in every mode.
+      // Only an explicit benchmark opt-in may replace its presentation-clip branch.
+      const int fallback = std::rand()%3;
+      const auto* probe = BenchProbe::get();
+      const int variant = npc==nullptr || probe==nullptr ? fallback : probe->bodyBlockVariant(*npc,fallback);
+      switch(variant) {
+        case 0: s = solveFrm("T_%sPARADE_0",   st); break;
+        case 1: s = solveFrm("T_%sPARADE_0_A2",st); break;
+        case 2: s = solveFrm("T_%sPARADE_0_A3",st); break;
         }
+      if(s==nullptr)
+        s = solveFrm("T_%sPARADE_0",st);
+      return s;
       }
     if(a==Anim::AttackFinish)
       return solveFrm("T_%sSFINISH",st);
@@ -443,18 +441,18 @@ const Animation::Sequence* AnimationSolver::solveAnim(std::string_view scheme, b
   return solveFrm(name);
   }
 
-const Animation::Sequence *AnimationSolver::solveAnim(Interactive *inter, AnimationSolver::Anim a, const Pose &) const {
+const Animation::Sequence *AnimationSolver::solveAnim(AnimationInteractive *inter, AnimationSolver::Anim a, const Pose &) const {
   if(inter==nullptr)
     return nullptr;
   switch(a) {
     case AnimationSolver::InteractIn:
-      return inter->animNpc(*this,Interactive::In);
+      return inter->animNpc(*this,AnimationInteractive::In);
     case AnimationSolver::InteractOut:
-      return inter->animNpc(*this,Interactive::Out);
+      return inter->animNpc(*this,AnimationInteractive::Out);
     case AnimationSolver::InteractToStand:
-      return inter->animNpc(*this,Interactive::ToStand);
+      return inter->animNpc(*this,AnimationInteractive::ToStand);
     case AnimationSolver::InteractFromStand:
-      return inter->animNpc(*this,Interactive::FromStand);
+      return inter->animNpc(*this,AnimationInteractive::FromStand);
     default:
       return nullptr;
     }

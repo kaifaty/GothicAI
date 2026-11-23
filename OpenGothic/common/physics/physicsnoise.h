@@ -2,7 +2,7 @@
 
 #include <Tempest/Vec>
 #include "asset/material.h"
-#include "game/constants.h"
+#include "records/definitions.h"
 #include <cstdint>
 #include <string>
 

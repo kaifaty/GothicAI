@@ -1,11 +1,11 @@
 #include "exec.h"
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 
 #include <cstring>
 
 using namespace storygraph;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 namespace {
 
@@ -167,8 +167,8 @@ bool Interpreter::store(const Step& s) {
     return true;
     }
 
-  zenkit::DaedalusSymbol*                    sym = nullptr;
-  std::shared_ptr<zenkit::DaedalusInstance>  of;
+  daedalus::DaedalusSymbol*                    sym = nullptr;
+  std::shared_ptr<daedalus::DaedalusInstance>  of;
   if(t.kind==Expr::Var) {
     sym = vm.find_symbol_by_name(t.name);
     if(sym==nullptr)
@@ -218,8 +218,8 @@ bool Interpreter::store(const Step& s) {
     }
   }
 
-static std::optional<Value> readMember(zenkit::DaedalusVm& vm, const Expr& e,
-                                       const std::shared_ptr<zenkit::DaedalusInstance>& inst, std::string& error) {
+static std::optional<Value> readMember(daedalus::DaedalusVm& vm, const Expr& e,
+                                       const std::shared_ptr<daedalus::DaedalusInstance>& inst, std::string& error) {
   if(inst==nullptr) {
     // members of no instance read as 0 or "" (ALLOW_NULL_INSTANCE_ACCESS); the class is not known, so the
     // member's type is looked up by name

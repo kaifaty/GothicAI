@@ -1,0 +1,80 @@
+# Sky and fog with the observer's height (plPosY) from WorldView::bbox().
+# Four viewpoints of streaming-shots at noon and at 20:00 (sun ~18 degrees up).
+# Run on one host: main and the fix with streaming, and OPENGOTHIC_STREAMING=0 as the reference.
+seed 73013
+deterministic on
+cheat god
+world-check NEWWORLD.ZEN
+overlay off
+ui off
+view full
+cam lift off
+watch player
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+cam look 120
+cam world 700 280 0
+wait 10000
+cam hold
+streaming wait
+shot market-12
+wait 34
+goto pos 5391 320 -5822
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+streaming wait
+shot harbour-12
+wait 34
+goto NW_FOREST_PATH_16
+cam look 150
+cam world 500 230 0
+wait 10000
+cam hold
+streaming wait
+shot forest-12
+wait 34
+goto pos 30000 4000 -12000
+cam look 120
+cam world 42000 6500 138.5
+wait 10000
+cam hold
+streaming wait
+shot island-12
+wait 34
+set time 20 0
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+cam look 120
+cam world 700 280 0
+wait 10000
+cam hold
+streaming wait
+shot market-20
+wait 34
+goto pos 5391 320 -5822
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+streaming wait
+shot harbour-20
+wait 34
+goto NW_FOREST_PATH_16
+cam look 150
+cam world 500 230 0
+wait 10000
+cam hold
+streaming wait
+shot forest-20
+wait 34
+goto pos 30000 4000 -12000
+cam look 120
+cam world 42000 6500 138.5
+wait 10000
+cam hold
+streaming wait
+shot island-20
+wait 34

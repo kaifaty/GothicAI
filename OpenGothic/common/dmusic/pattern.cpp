@@ -21,12 +21,6 @@ Pattern::Pattern(Riff& input) {
     });
   }
 
-uint32_t Pattern::timeLength(double tempo) const {
-  const uint32_t PulsesPerQuarterNote  = uint32_t(600*(100.0/tempo));
-  uint32_t mul = (header.timeSig.bBeatsPerMeasure*PulsesPerQuarterNote*4)/header.timeSig.bBeat;
-  return header.wNbrMeasures * mul;
-  }
-
 void Pattern::implRead(Riff &input) {
   if(input.is("ptnh"))
     input.read(&header,sizeof(header));
@@ -37,4 +31,3 @@ void Pattern::implRead(Riff &input) {
       info = Unfo(input);
     }
   }
-

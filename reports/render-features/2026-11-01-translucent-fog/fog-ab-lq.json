@@ -1,0 +1,142 @@
+{
+ "huts": {
+  "before": {
+   "sky": {
+    "day": 0.019,
+    "night": 0.104,
+    "ratio": 0.19,
+    "px": 10262
+   },
+   "crown": {
+    "day": 0.045,
+    "night": 0.129,
+    "ratio": 0.35,
+    "px": 776
+   },
+   "other": {
+    "day": 0.051,
+    "night": 0.135,
+    "ratio": 0.38,
+    "px": 1313
+   }
+  },
+  "after": {
+   "sky": {
+    "day": 0.082,
+    "night": 0.104,
+    "ratio": 0.79,
+    "px": 10276
+   },
+   "crown": {
+    "day": 0.091,
+    "night": 0.128,
+    "ratio": 0.71,
+    "px": 771
+   },
+   "other": {
+    "day": 0.063,
+    "night": 0.135,
+    "ratio": 0.47,
+    "px": 1307
+   }
+  },
+  "A": {
+   "moved": 0.0,
+   "max": 0.0
+  },
+  "A-night": {
+   "moved": 0.0,
+   "max": 20.8
+  }
+ },
+ "huts-north": {
+  "before": {
+   "sky": {
+    "day": 0.013,
+    "night": 0.125,
+    "ratio": 0.1,
+    "px": 31766
+   }
+  },
+  "after": {
+   "sky": {
+    "day": 0.11,
+    "night": 0.125,
+    "ratio": 0.87,
+    "px": 31777
+   }
+  },
+  "A": {
+   "moved": 0.0,
+   "max": 0.0
+  },
+  "A-night": {
+   "moved": 0.0,
+   "max": 4.6
+  }
+ },
+ "hole": {
+  "before": {
+   "crown": {
+    "day": 0.099,
+    "night": 0.119,
+    "ratio": 0.83,
+    "px": 40
+   },
+   "other": {
+    "day": 0.097,
+    "night": 0.114,
+    "ratio": 0.85,
+    "px": 4176
+   }
+  },
+  "after": {
+   "crown": {
+    "day": 0.114,
+    "night": 0.12,
+    "ratio": 0.95,
+    "px": 40
+   },
+   "other": {
+    "day": 0.106,
+    "night": 0.114,
+    "ratio": 0.93,
+    "px": 4188
+   }
+  },
+  "A": {
+   "moved": 0.0001,
+   "max": 36.6
+  },
+  "A-night": {
+   "moved": 0.0,
+   "max": 49.3
+  }
+ },
+ "backlit": {
+  "before": {
+   "sky": {
+    "day": 0.022,
+    "night": 0.101,
+    "ratio": 0.22,
+    "px": 33690
+   }
+  },
+  "after": {
+   "sky": {
+    "day": 0.09,
+    "night": 0.101,
+    "ratio": 0.88,
+    "px": 33718
+   }
+  },
+  "A": {
+   "moved": 0.0,
+   "max": 0.0
+  },
+  "A-night": {
+   "moved": 0.0,
+   "max": 0.0
+  }
+ }
+}

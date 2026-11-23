@@ -1,3 +1,4 @@
+#include "loadprobe.h"
 #include "appcadence.h"
 #include "mainwindow.h"
 
@@ -9,6 +10,11 @@
 #include <Tempest/Layout>
 #include <Tempest/Application>
 #include <Tempest/Log>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
 
 #include "ui/crosshair.h"
 #include "ui/dialogmenu.h"
@@ -28,26 +34,55 @@
 
 #include "commandline.h"
 #include "gothic.h"
-#include "testbench.h"
+#include "settings.h"
+#include "world/benchhooks.h"
 #include "frameprofile.h"
+#include "marvin.h"
+#include "world/chunkresidency.h"
 
 using namespace Tempest;
 
+// Seconds of play before the first pipeline-cache write (the device writes it again on clean shutdown).
+static constexpr uint64_t PipelineCacheSaveDelay = 20000;
+
+// OPENGOTHIC_HAND_MOTION*, and --no-hand-motion on top
+static HandMotionReceiver::Config handMotionConfig() {
+  auto cfg = HandMotionReceiver::Config::fromEnvironment();
+  cfg.enabled = cfg.enabled && CommandLine::inst().doHandMotion();
+  return cfg;
+  }
+
 MainWindow::MainWindow(Device& device)
-  : Window(TestBench::isActive() ? Minimized : Maximized),device(device),swapchain(device,hwnd()),
+  : Window(Bench::isActive() ?
+      (std::getenv("OPENGOTHIC_BENCH_VISIBLE")!=nullptr && std::strcmp(std::getenv("OPENGOTHIC_BENCH_VISIBLE"),"1")==0 ? Normal : Minimized) : Maximized),
+    device(device),swapchain(SystemApi::isOffscreen() ? Swapchain() : Swapchain(device,hwnd())),
     atlas(device),rootMenu(keycodec),inventory(keycodec),
     dialogs(inventory),document(keycodec),
     console(*this),
 #if defined(__MOBILE_PLATFORM__)
     mobileUi(player),
 #endif
-    player(dialogs,inventory) {
-  Gothic::inst().onSettingsChanged.bind(this,&MainWindow::onSettings);
+    player(dialogs,inventory),
+    handMotion(handMotionConfig()) {
+  Settings::inst().onSettingsChanged.bind(this,&MainWindow::onSettings);
   onSettings();
 
-  if(Gothic::inst().version().game==2)
-    setWindowTitle("Gothic II"); else
-    setWindowTitle("Gothic");
+  if(SystemApi::isOffscreen()) {
+    offscreen = device.attachment(TextureFormat::RGBA8,uint32_t(w()),uint32_t(h()));
+    // 200 by default: a window on Ryzen's 199.92 Hz screen with FIFO, one frame per game step
+    uint64_t fps = 200;
+    if(const char* v = std::getenv("TEMPEST_OFFSCREEN_FPS")) {
+      char* end = nullptr;
+      const auto n = std::strtoull(v,&end,10);
+      if(end!=v && *end=='\0')
+        fps = uint64_t(n); else
+        Log::e("TEMPEST_OFFSCREEN_FPS is not a number: ",v,", using ",fps);
+      }
+    offscreenFrameInv = fps>0 ? 1000u/fps : 0;
+    Log::i("[offscreen] frame ",w(),"x",h(),", limit ",fps," fps (",offscreenFrameInv," ms)");
+    }
+
+  setWindowTitle("Gothic II");
 
   if(!CommandLine::inst().isWindowMode()) {
     setFullscreen(true);
@@ -55,6 +90,12 @@ MainWindow::MainWindow(Device& device)
 
   //renderer.resetSwapchain();
   setupUi();
+  Bench::openMenu = [this](std::string_view menu) {
+    rootMenu.setMenu(menu,KeyCodec::Log);
+    if(auto pl = Gothic::inst().player())
+      rootMenu.setPlayer(*pl);
+    clearInput();
+    };
 
   barBack    = Resources::loadTexture("BAR_BACK.TGA");
   barHp      = Resources::loadTexture("BAR_HEALTH.TGA");
@@ -77,7 +118,7 @@ MainWindow::MainWindow(Device& device)
   Gothic::inst().onVideo       .bind(this,&MainWindow::onVideo);
 
   if(CommandLine::inst().doIntro() && !Gothic::inst().isBenchmarkMode() &&
-     Gothic::settingsGetI("GAME","scaleVideos")>=0)
+     Settings::getI("GAME","scaleVideos")>=0)
     Resources::startVideoBase();
 
   Gothic::inst().onBenchmarkFinished.bind(this,&MainWindow::onBenchmarkFinished);
@@ -92,6 +133,7 @@ MainWindow::MainWindow(Device& device)
     }
   else {
     rootMenu.processMusicTheme();
+    Log::i("Main menu ready: ",Gothic::inst().menuMain());
     }
 
   funcKey[2] = Shortcut(*this,Event::M_NoModifier,Event::K_F2);
@@ -123,6 +165,7 @@ MainWindow::MainWindow(Device& device)
   }
 
 MainWindow::~MainWindow() {
+  Bench::openMenu = nullptr;
   GameMusic::inst().stopMusic();
   Gothic::inst().cancelLoading();
   device.waitIdle();
@@ -161,9 +204,9 @@ void MainWindow::setupUi() {
 #endif
 
   rootMenu.setMainMenu();
-
   Gothic::inst().onDialogPipe  .bind(&dialogs,&DialogMenu::openPipe);
   Gothic::inst().isNpcInDialogFn = std::bind(&DialogMenu::isNpcInDialog, &dialogs, std::placeholders::_1);
+  Gothic::inst().isDialogActiveFn = [this]() { return dialogs.isActive(); };
   Gothic::inst().dialogEntriesFn = [this]() { return dialogs.entries(); };
   Gothic::inst().dialogPickFn    = [this](size_t i) { return dialogs.pick(i); };
 
@@ -208,13 +251,7 @@ void MainWindow::paintEvent(PaintEvent& event) {
                    0,0,back->w(),back->h());
         }
       if(loadBox!=nullptr && !loadBox->isEmpty()) {
-        if(Gothic::inst().version().game==1) {
-          int lw = int(w()*0.5);
-          int lh = int(h()*0.05);
-          drawLoading(p,(w()-lw)/2, int(h()*0.75), lw, lh);
-          } else {
-          drawLoading(p,int(w()*0.92)-loadBox->w(), int(h()*0.12), loadBox->w(),loadBox->h());
-          }
+        drawLoading(p,int(w()*0.92)-loadBox->w(), int(h()*0.12), loadBox->w(),loadBox->h());
         }
       }
     } else {
@@ -232,7 +269,7 @@ void MainWindow::paintEvent(PaintEvent& event) {
 
       if(auto pl = Gothic::inst().player()){
         if (!Gothic::inst().isDesktop()) {
-          auto& opt = Gothic::options();
+          auto& opt = Settings::options();
           float hp  = float(pl->attribute(ATR_HITPOINTS))/float(pl->attribute(ATR_HITPOINTSMAX));
           float mp  = float(pl->attribute(ATR_MANA))     /float(pl->attribute(ATR_MANAMAX));
 
@@ -242,6 +279,7 @@ void MainWindow::paintEvent(PaintEvent& event) {
 
           if(showHealthBar)
             drawBar(p,barHp, 10, h()-10, hp, AlignLeft | AlignBottom);
+          drawStamina(p,*pl,showHealthBar);
           if(showManaBar)
             drawBar(p,barMana, w()-10, h()-10, mp, AlignRight | AlignBottom);
           if(showSwimBar) {
@@ -265,6 +303,8 @@ void MainWindow::paintEvent(PaintEvent& event) {
       world->marchInteractives(dbg);
       world->view()->dbgLights(dbg);
       world->marchCsCameras(dbg);
+      if(Marvin::chunksVisible())
+        drawChunks(p,*world,*c);
       }
     }
 
@@ -310,12 +350,161 @@ void MainWindow::paintEvent(PaintEvent& event) {
     }
   }
 
+void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera) {
+  auto& fnt = Resources::font(Gothic::interfaceScale(this));
+  const int x = 10, y = 60, line = fnt.pixelSize()+3;
+  const auto textures = Resources::textureStats();
+  auto drawTextures = [&](int top) {
+    char text[256];
+    std::snprintf(text,sizeof(text),"Textures %llu: %.2f MiB live  %.2f retired  %.2f peak",
+                  static_cast<unsigned long long>(textures.count),double(textures.liveBytes)/1048576.0,
+                  double(textures.retiredBytes)/1048576.0,double(textures.peakBytes)/1048576.0);
+    fnt.drawText(p,x,top,text);
+    std::snprintf(text,sizeof(text),"Landscape %.2f MiB/%llu  Static %.2f MiB/%llu",
+                  double(textures.categoryBytes[0])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[0]),
+                  double(textures.categoryBytes[1])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[1]));
+    fnt.drawText(p,x,top+line,text);
+    std::snprintf(text,sizeof(text),"NPC/items %.2f MiB/%llu  Other %.2f MiB/%llu",
+                  double(textures.categoryBytes[2])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[2]),
+                  double(textures.categoryBytes[3])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[3]));
+    fnt.drawText(p,x,top+2*line,text);
+    std::snprintf(text,sizeof(text),"Texture session: evicted %llu  reloaded %llu",
+                  static_cast<unsigned long long>(textures.evicted),static_cast<unsigned long long>(textures.reloaded));
+    fnt.drawText(p,x,top+3*line,text);
+    std::snprintf(text,sizeof(text),"Full %.2f MiB  Tail %.2f MiB  promoted %llu  demoted %llu  queue %llu",
+                  double(textures.fullBytes)/1048576.0,double(textures.tailBytes)/1048576.0,
+                  static_cast<unsigned long long>(textures.promoted),static_cast<unsigned long long>(textures.demoted),
+                  static_cast<unsigned long long>(textures.promotionQueue));
+    fnt.drawText(p,x,top+4*line,text);
+    std::snprintf(text,sizeof(text),"Near (ring 1) on Tail: %llu textures  %.6f texture-seconds",
+                  static_cast<unsigned long long>(textures.nearTailCount),textures.nearTailSeconds);
+    fnt.drawText(p,x,top+5*line,text);
+    const auto& level=textures.levelBytes;
+    std::snprintf(text,sizeof(text),"Levels MiB %.1f/%.1f/%.1f/%.1f/%.1f/%.1f  shortfall %llu  %.3f texture-seconds",
+                  double(level[0])/1048576.0,double(level[1])/1048576.0,double(level[2])/1048576.0,
+                  double(level[3])/1048576.0,double(level[4])/1048576.0,double(level[5])/1048576.0,
+                  static_cast<unsigned long long>(textures.shortfallCount),textures.shortfallSeconds);
+    fnt.drawText(p,x,top+6*line,text);
+    std::snprintf(text,sizeof(text),"Device %.0f/%.0f MiB%s%s  target %.0f MiB (%s)  stage %u (deepest %u)  D0 %.1f  D %.1f MiB",
+                  double(textures.device.usage)/1048576.0,double(textures.device.budget)/1048576.0,
+                  textures.device.shared ? " shared" : "",textures.device.measured ? "" : " estimated",
+                  double(textures.targetBytes)/1048576.0,TextureBudget::name(textures.targetSource),textures.stage,
+                  textures.stageDeepest,double(textures.stageBytes0)/1048576.0,double(textures.stageBytes)/1048576.0);
+    fnt.drawText(p,x,top+7*line,text);
+    // seconds on each stage reached
+    int at=std::snprintf(text,sizeof(text),"Seconds on stages:");
+    for(uint32_t stage=0;stage<=textures.stageDeepest && stage<textures.stageSeconds.size();++stage)
+      if(at>0 && size_t(at)<sizeof(text) && textures.stageSeconds[stage]>0)
+        at+=std::snprintf(text+at,sizeof(text)-size_t(at),"  %u: %.0f",stage,textures.stageSeconds[stage]);
+    fnt.drawText(p,x,top+8*line,text);
+    // step 4 (textureflow.h): the shortfall's texture-seconds by state, the visible part, loads in flight, latency
+    const auto& flow=textures.flow;
+    std::snprintf(text,sizeof(text),"Short s: wait %.1f read %.1f upload %.1f publish %.1f stale %.1f  visible %.1f  "
+                  "loads %llu %.1f MiB  latency p50/p90/max %.0f/%.0f/%.0f ms",
+                  flow.seconds[TextureFlow::Waiting],flow.seconds[TextureFlow::Reading],flow.seconds[TextureFlow::Uploading],
+                  flow.seconds[TextureFlow::Publishing],flow.seconds[TextureFlow::Stale],flow.visibleSeconds,
+                  static_cast<unsigned long long>(textures.loadsInFlight),double(flow.bytesInFlight)/1048576.0,
+                  flow.latencyP50,flow.latencyP90,flow.latencyMax);
+    fnt.drawText(p,x,top+9*line,text);
+    };
+  auto drawNpcTiers = [&](int top) {
+    const auto& tiers = world.npcSimTierStats();
+    char text[192];
+    std::snprintf(text,sizeof(text),"NPC tier %s: Full %zu  Simplified %zu  to Full %llu  to Simplified %llu",
+                  NpcSimTiers::name(tiers.mode),tiers.full,tiers.simplified,
+                  static_cast<unsigned long long>(tiers.toFull),static_cast<unsigned long long>(tiers.toSimplified));
+    fnt.drawText(p,x,top,text);
+    std::snprintf(text,sizeof(text),"NPC tick: Full %.3f ms  Simplified %.3f ms",tiers.fullTickMs,tiers.simplifiedTickMs);
+    fnt.drawText(p,x,top+line,text);
+    };
+  const auto chunks = world.chunkResidency();
+  if(chunks==nullptr) {
+    fnt.drawText(p,x,y,"Chunks: streaming manager disabled");
+    drawTextures(y+line);
+    drawNpcTiers(y+11*line);
+    return;
+    }
+  auto hero = world.player();
+  if(hero==nullptr)
+    return;
+
+  const auto center = ChunkId::fromPosition(hero->position().x,hero->position().z);
+  const auto cam = camera.originLwc();
+  const auto cameraId = ChunkId::fromPosition(cam.x,cam.z);
+  const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
+                                            std::abs(int64_t(cameraId.z)-center.z)+1});
+  const int mapSize = std::min(240,std::min(w(),h())/2);
+  const int mapY = y+19*line;
+  const float cell = float(mapSize)/float(radius*2+1);
+  p.setBrush(Color(0.f,0.f,0.f,0.8f));
+  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+21*line+10);
+
+  const auto& stats = chunks->stats();
+  char text[160];
+  std::snprintf(text,sizeof(text),"Chunks 64 m: Near %zu  Far %zu  Outside %zu",stats.near,stats.far,stats.outside);
+  fnt.drawText(p,x,y,text);
+  std::snprintf(text,sizeof(text),"Transitions/s %zu  update %.3f ms  work %.3f ms",
+                stats.transitionsLastSecond,stats.updateMs,stats.workMs);
+  fnt.drawText(p,x,y+line,text);
+  std::snprintf(text,sizeof(text),"Landscape: pending %zu  published %llu  released %llu",stats.pending,
+                static_cast<unsigned long long>(stats.published),static_cast<unsigned long long>(stats.released));
+  fnt.drawText(p,x,y+2*line,text);
+  std::snprintf(text,sizeof(text),"Pages %zu: %.2f MiB used  %.2f free  %.2f retired",stats.landscapePageCount,
+                double(stats.landscapePageUsedBytes)/1048576.0,double(stats.landscapePageFreeBytes)/1048576.0,
+                double(stats.landscapePageRetiredBytes)/1048576.0);
+  fnt.drawText(p,x,y+3*line,text);
+  std::snprintf(text,sizeof(text),"Vobs: Near %zu  Far %zu  Outside %zu  pending %zu",
+                stats.vobNear,stats.vobFar,stats.vobOutside,stats.vobPending);
+  fnt.drawText(p,x,y+4*line,text);
+  std::snprintf(text,sizeof(text),"Vobs: created %llu  released %llu  publish %.3f ms",
+                static_cast<unsigned long long>(stats.vobCreated),static_cast<unsigned long long>(stats.vobReleased),
+                stats.vobPublicationMs);
+  fnt.drawText(p,x,y+5*line,text);
+  std::snprintf(text,sizeof(text),"Vobs Near missing: %zu  %.6f visual-seconds",stats.vobNearMissing,stats.vobNearMissingSeconds);
+  fnt.drawText(p,x,y+6*line,text);
+  drawTextures(y+7*line);
+  drawNpcTiers(y+17*line);
+
+  const auto& entries = chunks->table().entries;
+  for(size_t i=0;i<entries.size();++i) {
+    const auto id = entries[i].id;
+    const int64_t dx = int64_t(id.x)-center.x, dz = int64_t(id.z)-center.z;
+    if(std::abs(dx)>radius || std::abs(dz)>radius)
+      continue;
+    switch(chunks->desired(i)) {
+      case ChunkResidency::State::Near:    p.setBrush(Color(0.2f,0.8f,0.3f)); break;
+      case ChunkResidency::State::Far:     p.setBrush(Color(0.2f,0.45f,0.9f)); break;
+      case ChunkResidency::State::Outside: p.setBrush(Color(0.3f,0.3f,0.3f)); break;
+      }
+    const int px = x+int(float(dx+radius)*cell);
+    const int py = mapY+int(float(radius-dz)*cell);
+    p.drawRect(px,py,std::max(1,int(cell)-1),std::max(1,int(cell)-1));
+    }
+
+  auto marker = [&](const Vec3& position,const Color& color,std::string_view label) {
+    const float dx = position.x/float(ChunkId::Size)-float(center.x);
+    const float dz = position.z/float(ChunkId::Size)-float(center.z);
+    const int px = x+int((dx+float(radius))*cell);
+    const int py = mapY+int((float(radius)+1.f-dz)*cell);
+    p.setBrush(color);
+    p.drawRect(px-3,py-3,7,7);
+    fnt.drawText(p,px+4,py-4,label);
+    };
+  marker(cam,Color(1.f,0.8f,0.1f),"C");
+  marker(hero->position(),Color(1.f),"H");
+  fnt.drawText(p,x,mapY+mapSize+line,"Green Near  Blue Far  Gray Outside  H hero  C camera");
+  }
+
 void MainWindow::resizeEvent(SizeEvent&) {
   for(auto& i:fence)
     i.wait();
-  swapchain.reset();
+  if(SystemApi::isOffscreen())
+    offscreen = device.attachment(TextureFormat::RGBA8,uint32_t(w()),uint32_t(h())); else
+    swapchain.reset();
+  if(Bench::isActive())
+    Log::i("[bench] drawable ",frameW(),"x",frameH());
   if(auto camera = Gothic::inst().camera())
-    camera->setViewport(swapchain.w(),swapchain.h());
+    camera->setViewport(frameW(),frameH());
 
   if(SystemApi::isFullscreen(hwnd())) {
     setCursorPosition(Point(w()/2,h()/2));
@@ -360,7 +549,7 @@ void MainWindow::mouseMoveEvent(MouseEvent &event) {
 bool MainWindow::aimCatchesMouse() {
   // aiming by hand: the mouse aims, in a window too - but not a window in the background (the test bench
   // runs one: the mouse is someone else's)
-  return player.isManualAim() && hasFocus() && !TestBench::isActive();
+  return player.isManualAim() && hasFocus() && !Bench::isActive();
   }
 
 void MainWindow::processMouse(MouseEvent& event, bool enable) {
@@ -378,7 +567,7 @@ void MainWindow::tickMouse(uint64_t dt) {
     return;
     }
 
-  const bool enableMouse = Gothic::inst().settingsGetI("GAME","enableMouse");
+  const bool enableMouse = Settings::getI("GAME","enableMouse");
   if(enableMouse==0) {
     dMouse = Point();
     return;
@@ -387,8 +576,8 @@ void MainWindow::tickMouse(uint64_t dt) {
   if(dMouse==Point())
     return;
 
-  const bool  camLookaroundInverse = Gothic::inst().settingsGetI("GAME","camLookaroundInverse");
-  const float mouseSensitivity     = Gothic::inst().settingsGetF("GAME","mouseSensitivity")/MouseUtil::mouseSysSpeed();
+  const bool  camLookaroundInverse = Settings::getI("GAME","camLookaroundInverse");
+  const float mouseSensitivity     = Settings::getF("GAME","mouseSensitivity")/MouseUtil::mouseSysSpeed();
   PointF dpScaled = PointF(float(dMouse.x)*mouseSensitivity,float(dMouse.y)*mouseSensitivity);
   dpScaled.x/=float(w());
   dpScaled.y/=float(h());
@@ -415,9 +604,9 @@ void MainWindow::tickMouse(uint64_t dt) {
   }
 
 void MainWindow::onSettings() {
-  auto zMaxFps = Gothic::options().fpsLimit;
+  auto zMaxFps = Settings::options().fpsLimit;
   if(zMaxFps<=0)
-    zMaxFps = Gothic::inst().settingsGetI("ENGINE", "zMaxFps");
+    zMaxFps = Settings::getI("ENGINE", "zMaxFps");
   if(zMaxFps>0)
     maxFpsInv = 1000u/uint64_t(zMaxFps); else
     maxFpsInv = 0;
@@ -635,7 +824,7 @@ void MainWindow::paintFocus(Painter& p, const Focus& focus, const Matrix4x4& vp)
     drawBar(p,barHp, w()/2,10, hp, AlignHCenter|AlignTop);
     }
 
-  const int foc = Gothic::settingsGetI("GAME","highlightMeleeFocus");
+  const int foc = Settings::getI("GAME","highlightMeleeFocus");
   if(focus.npc!=nullptr  &&
      (foc==1 || foc==3) &&
      player.isPressed(KeyCodec::ActionGeneric) &&
@@ -732,13 +921,41 @@ void MainWindow::paintFocus(Painter& p, Rect rect) {
   p.drawRect(rect.x+rect.w-w,rect.y+rect.h-h,w,h, w,h, w2,h2);
   }
 
-void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y, float v, AlignFlag flg) {
+int MainWindow::barHeight() const {
+  if(barBack==nullptr)
+    return 0;
+  const float scale = Gothic::interfaceScale(this);
+  const float destW = 200.f*scale*float(std::min(w(),800))/800.f;
+  return int(float(barBack->h())*destW/float(std::max(barBack->w(),1)));
+  }
+
+void MainWindow::drawStamina(Painter& p, const Npc& pl, bool aboveHealth) {
+  // The hidden meter of melee shows only in a fight: a weapon of melee drawn, or still filling up after it.
+  // Thin gold under the frame of the health bar, as the game's own bars; spent to nothing it dims and
+  // marks the quarter it must come back to before a blow or a jump back.
+  if(!pl.hasStamina())
+    return;
+  const auto ws    = pl.weaponState();
+  const bool melee = ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H;
+  const float v    = pl.staminaFraction();
+  if(!melee && v>=1.f)
+    return;
+  constexpr float height = .6f;
+  const int   gap  = std::max(1,int(2.f*Gothic::interfaceScale(this)));
+  const int   y    = h()-10-(aboveHealth ? barHeight()+gap : 0);
+  if(pl.isStaminaExhausted())
+    drawBar(p,barMisc,10,y,v,AlignLeft|AlignBottom,height,Color(.55f,.42f,.32f,1.f),.25f); else
+    drawBar(p,barMisc,10,y,v,AlignLeft|AlignBottom,height);
+  }
+
+void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y, float v, AlignFlag flg,
+                         float height, const Tempest::Color& tint, float mark) {
   if(barBack==nullptr || bar==nullptr)
     return;
   const float scale   = Gothic::interfaceScale(this);
   const float destW   = 200.f*scale*float(std::min(w(),800))/800.f;
   const float k       = float(destW)/float(std::max(barBack->w(),1));
-  const float destH   = float(barBack->h())*k;
+  const float destH   = float(barBack->h())*k*height;
   const float destHin = float(destH)*24.f/32.f;
   //const float destHin = 20;//float(destH)*24.f/32.f;
 
@@ -755,9 +972,14 @@ void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y
 
   int   dy = int(0.5f*(destH-destHin));
   float pd = 9.f*k;
-  p.setBrush(*bar);
+  p.setBrush(Brush(*bar,tint,Painter::Alpha));
   p.drawRect(x+int(pd),y+dy,int(float(destW-pd*2)*v),int(destHin),
              0,0,bar->w(),bar->h());
+  if(mark>0.f && mark<1.f) {
+    const int mx = x+int(pd)+int(float(destW-pd*2)*mark);
+    p.setBrush(Brush(Color(.9f,.8f,.55f,.9f),Painter::Alpha));
+    p.drawRect(mx,y+dy,std::max(1,int(scale)),int(destHin));
+    }
   }
 
 void MainWindow::drawMsg(Tempest::Painter& p) {
@@ -780,11 +1002,6 @@ void MainWindow::drawProgress(Painter &p, int x, int y, int w, int h, float v) {
 
   int paddL = int((float(w)*75.f)/float(loadBox->w()));
   int paddT = int((float(h)*10.f)/float(loadBox->h()));
-
-  if(Gothic::inst().version().game==1) {
-    paddL = int((float(w)*30.f)/float(loadBox->w()));
-    paddT = int((float(h)* 5.f)/float(loadBox->h()));
-    }
 
   p.setBrush(*loadVal);
   p.drawRect(x+paddL,y+paddT,int(float(w-2*paddL)*v),h-2*paddT,
@@ -809,8 +1026,8 @@ void MainWindow::drawSaving(Painter &p) {
     return;
 
   const float scale = Gothic::interfaceScale(this);
-  int         szX   = Gothic::options().saveGameImageSize.w;
-  int         szY   = Gothic::options().saveGameImageSize.h;
+  int         szX   = Settings::options().saveGameImageSize.w;
+  int         szY   = Settings::options().saveGameImageSize.h;
 
   if(szX<=460 || szY<=300) {
     // way too small otherwise
@@ -864,7 +1081,7 @@ void MainWindow::onMarvinKey() {
         }
       break;
     case Event::K_F5: {
-      const bool useQuickSaveKeys = Gothic::settingsGetI("GAME", "useQuickSaveKeys")!=0;
+      const bool useQuickSaveKeys = Settings::getI("GAME", "useQuickSaveKeys")!=0;
 #ifdef NDEBUG
       const bool debug = false;
 #else
@@ -902,7 +1119,7 @@ void MainWindow::onMarvinKey() {
       break;
 
     case Event::K_F9: {
-      const bool useQuickSaveKeys = Gothic::settingsGetI("GAME", "useQuickSaveKeys")!=0;
+      const bool useQuickSaveKeys = Settings::getI("GAME", "useQuickSaveKeys")!=0;
       if(Gothic::inst().isMarvinEnabled()) {
         if(runtimeMode==R_Normal)
           runtimeMode = R_Suspended; else
@@ -930,10 +1147,13 @@ void MainWindow::onMarvinKey() {
   }
 
 uint64_t MainWindow::tick() {
+  // before every early return: the socket is read in menus, loading, video and pause too
+  handMotion.tick();
   auto time = Application::tickCount();
   auto dt   = time-lastTick;
-  // NOTE: limit to ~200 FPS in game logic to avoid math issues
-  if(dt<5)
+  // NOTE: limit to ~200 FPS in game logic to avoid math issues; a deterministic bench steps every frame
+  // (its step is fixed, Bench::frameDt), so how fast frames come does not change their count
+  if(dt<5 && !Bench::deterministic())
     return 0;
   lastTick  = time;
 
@@ -960,10 +1180,14 @@ uint64_t MainWindow::tick() {
   if(Gothic::inst().isPause()) {
     return 0;
     }
+  if(Bench::simulationFrozen()) {
+    update();
+    return 0;
+    }
 
   if(dt>50)
     dt=50;
-  dt = TestBench::frameDt(dt);
+  dt = Bench::frameDt(dt);
 
   if(runtimeMode==R_Step) {
     runtimeMode = R_Suspended;
@@ -1033,7 +1257,7 @@ void MainWindow::tickCamera(uint64_t dt) {
       }
     else if(pl!=nullptr && !camera.isFree()) {
       auto spin = camera.spin();
-      if(pl->interactive()==nullptr && !pl->isDown())
+      if(pl->interactive()==nullptr && !pl->isDown() && !pl->isMeleeKnockedDown())
         spin.y = pl->rotation();
       if(pl->isDive() && !camera.isMarvin())
         spin.x = -pl->rotationY();
@@ -1072,13 +1296,14 @@ Camera::Mode MainWindow::solveCameraMode() const {
   if(auto pl = Gothic::inst().player()) {
     if(pl->isDead())
       return Camera::Death;
+    if(pl->isMeleeKnockedDown())
+      return Camera::Normal;
     if(pl->isDive())
       return Camera::Dive;
     if(pl->isSwim())
       return Camera::Swim;
     if(pl->isFallingDeep())
       return Camera::Fall;
-    bool g2 = Gothic::inst().version().game==2;
     switch(pl->weaponState()){
       case WeaponState::Fist:
       case WeaponState::W1H:
@@ -1086,9 +1311,9 @@ Camera::Mode MainWindow::solveCameraMode() const {
         return Camera::Melee;
       case WeaponState::Bow:
       case WeaponState::CBow:
-        return g2 ? Camera::Ranged : Camera::Normal;
+        return Camera::Ranged;
       case WeaponState::Mage:
-        return g2 ? Camera::Ranged : Camera::Melee;
+        return Camera::Ranged;
       case WeaponState::NoWeapon:
         return Camera::Normal;
       }
@@ -1132,16 +1357,18 @@ void MainWindow::loadGame(std::string_view slot) {
   update();
   }
 
-Attachment MainWindow::screenshotWithUi() {
+Attachment MainWindow::screenshotWithUi(Attachment&& reuse) {
   // the frame of the swapchain's size, drawn as render() draws it, into an image of our own
   device.waitIdle();
   dispatchPaintEvent(uiLayer,atlas);
   uiMesh[cmdId].update(device,uiLayer);
-  auto img = device.attachment(TextureFormat::RGBA8,swapchain.w(),swapchain.h());
+  auto img = std::move(reuse);
+  if(img.isEmpty() || uint32_t(img.w())!=frameW() || uint32_t(img.h())!=frameH())
+    img = device.attachment(TextureFormat::RGBA8,frameW(),frameH());
   CommandBuffer cmd;
   {
   auto enc = cmd.startEncoding(device);
-  renderer.draw(img,enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+  drawGameFrame(renderer,img,enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
   }
   auto sync = device.submit(cmd);
   sync.wait();
@@ -1203,7 +1430,7 @@ void MainWindow::saveGame(std::string_view slot, std::string_view name) {
 void MainWindow::onVideo(std::string_view fname, bool explicitRequest) {
   // -nointro (autotests): no videos, Xardas's first dialog plays the addon's intro for over a minute
   if(!explicitRequest && (Gothic::inst().isBenchmarkMode() || !CommandLine::inst().doIntro() ||
-                         Gothic::settingsGetI("GAME","scaleVideos")<0))
+                         Settings::getI("GAME","scaleVideos")<0))
     return;
   video.pushVideo(fname);
   }
@@ -1216,6 +1443,11 @@ void MainWindow::onStartLoading() {
 
 void MainWindow::onWorldLoaded() {
   dMouse = Point();
+  if(Bench::isActive())
+    Log::i("[bench] drawable ",frameW(),"x",frameH());
+  if(Bench::isActive())
+    if(auto* world = Gothic::inst().world())
+      Log::i("[bench] world ready: ",world->name());
 
   if(Gothic::inst().isBenchmarkMode()) {
     if(auto world = Gothic::inst().world()) {
@@ -1294,6 +1526,20 @@ void MainWindow::clearInput() {
   std::memset(mouseP,0,sizeof(mouseP));
   }
 
+Attachment& MainWindow::frameImage() {
+  if(SystemApi::isOffscreen())
+    return offscreen;
+  return swapchain[swapchain.currentImage()];
+  }
+
+uint32_t MainWindow::frameW() const {
+  return SystemApi::isOffscreen() ? uint32_t(offscreen.w()) : swapchain.w();
+  }
+
+uint32_t MainWindow::frameH() const {
+  return SystemApi::isOffscreen() ? uint32_t(offscreen.h()) : swapchain.h();
+  }
+
 void MainWindow::setFullscreen(bool fs) {
   SystemApi::setAsFullscreen(hwnd(),fs);
   setCursorShape(fs ? CursorShape::Hidden : CursorShape::Arrow);
@@ -1311,7 +1557,7 @@ void MainWindow::render(){
     if(once) {
       // the start's jingle is music (43 s in the addon) played on the sound channel: it stays off with the music,
       // else it plays under the first takes of a bench filmed with music off
-      if(Gothic::settingsGetI("SOUND","musicEnabled")!=0)
+      if(Settings::getI("SOUND","musicEnabled")!=0)
         Gothic::inst().emitGlobalSoundWav("GAMESTART.WAV");
       once=false;
       }
@@ -1324,6 +1570,10 @@ void MainWindow::render(){
         }
       }
 
+    // Reuse only this frame slot; do not advance the simulation while its GPU work is pending.
+    auto& sync = fence[cmdId];
+    { FrameProfile::Scope timing(FrameProfile::Zone::FencePoll); sync.wait(); }
+
     /*
       Note: game update goes first
       once player position is updated, animation bones(cameraBone in particular) can be updated
@@ -1335,33 +1585,45 @@ void MainWindow::render(){
       FrameProfile::Scope timing(FrameProfile::Zone::FinishStep);
       return SimulationStep::finishStep(dt,player,[&] { FrameProfile::Scope cameraTiming(FrameProfile::Zone::Camera); tickCamera(dt); });
       }();
+    if(Bench::takeRenderReset())
+      renderer.resetTemporal();
+    if(auto world = Gothic::inst().world()) {
+      auto hero = Gothic::inst().player();
+      auto camera = Gothic::inst().camera();
+      if(hero!=nullptr && camera!=nullptr) {
+        world->updateLandscape(*camera);
+        Bench::sampleStreaming(*world);
+        }
+      else if(Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
+        Resources::updateTextures(nullptr);
+        }
+      }
+    else if(Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
+      Resources::updateTextures(nullptr);
+      }
     if(capture) {
       profile.flag(FrameProfile::Flag::CaptureRequested);
-      auto   tex = TestBench::withUi() ? screenshotWithUi() : renderer.screenshoot(cmdId);
       Pixmap pm;
+      const bool landscapeMask = Renderer::benchClusterLodMask;
+      // filming draws every frame of the video into one image: a new one each step costs an allocation
+      auto tex = Bench::withUi() && !landscapeMask ? screenshotWithUi(std::move(captureImage))
+            : renderer.screenshoot(cmdId,std::move(captureImage),!Bench::filming(),landscapeMask ? &pm : nullptr);
       if(!tex.isEmpty()) {
-        pm = device.readPixels(textureCast<const Texture2d&>(tex));
+        if(!landscapeMask)
+          pm = device.readPixels(textureCast<const Texture2d&>(tex));
         profile.flag(FrameProfile::Flag::CaptureReadCompleted);
         }
-      TestBench::capture(pm,Gothic::interfaceScale(this));
-      if(TestBench::filming() && !tex.isEmpty()) {
+      Bench::capture(pm,Gothic::interfaceScale(this));
+      if(Bench::filming() && !tex.isEmpty()) {
         // nobody watches the window: the captured frame is the frame (the GPU is idle after the capture)
         Resources::resetRecycled(cmdId);
         cmdId = (cmdId+1u)%Resources::MaxFramesInFlight;
         profile.outcome(FrameProfile::Outcome::Capture);
+        captureImage = std::move(tex);
         return;
         }
       }
 
-    auto& sync = fence[cmdId];
-    const bool ready=[&] { FrameProfile::Scope timing(FrameProfile::Zone::FencePoll); return sync.wait(0); }();
-    if(!ready) {
-      // GPU rendering is not done, pass to next frame
-      std::this_thread::yield();
-      profile.flag(FrameProfile::Flag::FenceBusy);
-      profile.outcome(FrameProfile::Outcome::FenceBusy);
-      return;
-      }
     { FrameProfile::Scope timing(FrameProfile::Zone::Recycle); Resources::resetRecycled(cmdId); }
 
     {
@@ -1387,17 +1649,33 @@ void MainWindow::render(){
     {
     FrameProfile::Scope timing(FrameProfile::Zone::Encode);
     auto enc = cmd.startEncoding(device);
-    renderer.draw(swapchain[swapchain.currentImage()],enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+    drawGameFrame(renderer,frameImage(),enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
     }
     { FrameProfile::Scope timing(FrameProfile::Zone::Submit); sync = device.submit(cmd); }
     profile.flag(FrameProfile::Flag::SubmitCompleted);
-    { FrameProfile::Scope timing(FrameProfile::Zone::Present); device.present(swapchain); }
-    profile.flag(FrameProfile::Flag::PresentCompleted);
+    if(!SystemApi::isOffscreen()) {
+      { FrameProfile::Scope timing(FrameProfile::Zone::Present); device.present(swapchain); }
+      profile.flag(FrameProfile::Flag::PresentCompleted);
+      }
+    if(LoadProbe::enabled() && Gothic::inst().isInGame() && Gothic::inst().checkLoading()==Gothic::LoadState::Idle)
+      LoadProbe::presented();
+    if(!pipelineCacheSaved && Gothic::inst().isInGame() && Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
+      const uint64_t now = Application::tickCount();
+      if(pipelineCacheSaveAt==0) {
+        pipelineCacheSaveAt = now+PipelineCacheSaveDelay;
+        }
+      else if(now>=pipelineCacheSaveAt) {
+        pipelineCacheSaved = true;
+        device.savePipelineCache();
+        }
+      }
     profile.outcome(FrameProfile::Outcome::Submitted);
     cmdId = (cmdId+1u)%Resources::MaxFramesInFlight;
 
     auto t = Application::tickCount();
     auto frameTime = maxFpsInv;
+    if(SystemApi::isOffscreen())
+      frameTime = std::max(frameTime,offscreenFrameInv); // no present waits for the screen: keep a window's pace
     if(!Gothic::inst().isInGame() && !video.isActive())
       frameTime = std::max<uint64_t>(frameTime,16);
     if(t-time<frameTime) {
@@ -1418,7 +1696,8 @@ void MainWindow::render(){
     profile.outcome(FrameProfile::Outcome::Error);
     Log::e("swapchain is outdated - reset renderer");
     device.waitIdle();
-    swapchain.reset();
+    if(!SystemApi::isOffscreen())
+      swapchain.reset();
     }
   }
 

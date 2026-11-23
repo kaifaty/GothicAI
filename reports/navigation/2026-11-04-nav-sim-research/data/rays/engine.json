@@ -1,0 +1,1092 @@
+{
+  "engine_revision": "006a8c2328cc1c890a279cf4f74f06d3e5a4cd3c",
+  "world": "NEWWORLD",
+  "physics": "cv",
+  "layout": 250,
+  "rays_per_update": 238,
+  "near_range_cm": 1000,
+  "center_range_cm": 10000,
+  "peripheral_range_cm": 3000,
+  "near_period_ms": 100,
+  "far_period_ms": 500,
+  "files": {
+    "static.bin": {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/static.bin",
+      "bytes": 105036874,
+      "sha256": "37aea3f12a8da5c2723cfd8bd7251272ae66a1ea3a99fe03d8af8b8ea3c946b6"
+    },
+    "rays.bin": {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/rays.bin",
+      "bytes": 154728020,
+      "sha256": "1b8f159d2e85e3151e00df199a7156a387dcdf89c2f5221f2fd553a617decc46"
+    },
+    "poses.txt": {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/poses.txt",
+      "bytes": 2628303,
+      "sha256": "b42eac8d55e05f54fadd508398c45f7121fcfac700fb76427a305feb29a4be96"
+    },
+    "perception-timing.json": {
+      "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/perception-timing.json",
+      "bytes": 1003,
+      "sha256": "0ccf0948432666182d82e27d6e0ce887957aa7124631dac9e3231ab096aefe0e"
+    }
+  },
+  "source": {
+    "source": "/mnt/shared/gothic-ai/nav-demos-v5/manifest.json",
+    "source_sha256": "55ef9e12dc7f8586ac37e3e73fae300d64533bc13103579970fbb6a33df8f2f5",
+    "selection": "Eight successful eligible point episodes per region, sorted id; centred contiguous 500 updates each",
+    "updates": 24000,
+    "episodes": 48,
+    "regions": [
+      "harbour",
+      "lobart",
+      "market",
+      "onar",
+      "port_streets",
+      "upper_streets"
+    ],
+    "step_ms": 100,
+    "poses_sha256": "b42eac8d55e05f54fadd508398c45f7121fcfac700fb76427a305feb29a4be96",
+    "episodes_source": [
+      {
+        "id": "point-01fbeb577b78bafd",
+        "region": "harbour",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-01fbeb577b78bafd/teacher-paths.jsonl",
+        "sha256": "c365c16e2af28fcd7fad260efd94409dd14ff349fd0edec6d2ae7991cb3c97dc",
+        "first_row": 81,
+        "updates": 500
+      },
+      {
+        "id": "point-01e63947e61f4994",
+        "region": "lobart",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-01e63947e61f4994/teacher-paths.jsonl",
+        "sha256": "60ad00481fbefe906ec2dbc49b5842e6c5fd05c95ac74c3d50f46104ea246825",
+        "first_row": 404,
+        "updates": 500
+      },
+      {
+        "id": "point-0eb0a0cb0666d092",
+        "region": "market",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-0eb0a0cb0666d092/teacher-paths.jsonl",
+        "sha256": "ef2e7929d083f907af47bf535fe8293c06b22908945ee518e0ccc22bf4e8a74b",
+        "first_row": 127,
+        "updates": 500
+      },
+      {
+        "id": "point-65c58f0116749e3e",
+        "region": "onar",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-65c58f0116749e3e/teacher-paths.jsonl",
+        "sha256": "bac25f6566812ccd54e2a35bfbb8dbdd0a197785e796194aba7aa6d9f520efae",
+        "first_row": 11,
+        "updates": 500
+      },
+      {
+        "id": "point-0a41f0067c874d41",
+        "region": "port_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-0a41f0067c874d41/teacher-paths.jsonl",
+        "sha256": "61aff1b14f42750d0144d9e40e851fb6bed209af85cb9c253cfbea267e07f564",
+        "first_row": 11,
+        "updates": 500
+      },
+      {
+        "id": "point-15a9ff98b7820151",
+        "region": "upper_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-15a9ff98b7820151/teacher-paths.jsonl",
+        "sha256": "5b24f3fd2df69d2cb48b5b75e0632496c239c87c50a8dbbd2b1a1d4a0194b8f3",
+        "first_row": 296,
+        "updates": 500
+      },
+      {
+        "id": "point-110acbf1df3054c8",
+        "region": "harbour",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-110acbf1df3054c8/teacher-paths.jsonl",
+        "sha256": "b428afd1d4a0eb0073c301cdc92d953ed95b73adac1c9f7c33b51515ecae07e8",
+        "first_row": 44,
+        "updates": 500
+      },
+      {
+        "id": "point-1820f70b64731af3",
+        "region": "lobart",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-1820f70b64731af3/teacher-paths.jsonl",
+        "sha256": "b6c79199e3692cf54e9dab9771f665e89e380f08d7a0e72f0f076827ac10edbf",
+        "first_row": 683,
+        "updates": 500
+      },
+      {
+        "id": "point-24583e0604cf9702",
+        "region": "market",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-24583e0604cf9702/teacher-paths.jsonl",
+        "sha256": "1f09ca03f0a7521049d9f03240e8f30d9254b1e79dec52653e0c393eda775a93",
+        "first_row": 163,
+        "updates": 500
+      },
+      {
+        "id": "point-77fce4d054787cfd",
+        "region": "onar",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-77fce4d054787cfd/teacher-paths.jsonl",
+        "sha256": "ba8ba0820241f66ed888e64091d9a9a594976d6c5bece2d1b8f12ac2b49e3ff3",
+        "first_row": 153,
+        "updates": 500
+      },
+      {
+        "id": "point-26f66ef79455d44d",
+        "region": "port_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-26f66ef79455d44d/teacher-paths.jsonl",
+        "sha256": "bd82a44c145b850444dc2cdedeba1fd52a53eb987311dd44f6a134f9ffd43b37",
+        "first_row": 255,
+        "updates": 500
+      },
+      {
+        "id": "point-1bf3fbd51c373d33",
+        "region": "upper_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-1bf3fbd51c373d33/teacher-paths.jsonl",
+        "sha256": "0af92fd345dbe7d4f69090377e9c14cb43f68061a12bba5e31b9786593cd9104",
+        "first_row": 445,
+        "updates": 500
+      },
+      {
+        "id": "point-113f19a83f7520a1",
+        "region": "harbour",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-113f19a83f7520a1/teacher-paths.jsonl",
+        "sha256": "141432fa05ac01f5546468bbdb1de7481f2ee333f0f29fe3b01ca591a8b95c53",
+        "first_row": 415,
+        "updates": 500
+      },
+      {
+        "id": "point-22379e5be0ce8e92",
+        "region": "lobart",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-22379e5be0ce8e92/teacher-paths.jsonl",
+        "sha256": "ab0d70c27c0f66c16c6bb8f32c2d71c275a82795f5495352ff3e17102ad0326d",
+        "first_row": 108,
+        "updates": 500
+      },
+      {
+        "id": "point-3ecd681ba562278f",
+        "region": "market",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-3ecd681ba562278f/teacher-paths.jsonl",
+        "sha256": "3527774365c84f23d09ae1b968099ee64d4789457b1252b93324625e2e9fa3f2",
+        "first_row": 13,
+        "updates": 500
+      },
+      {
+        "id": "point-7dbf217e91d40f46",
+        "region": "onar",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-7dbf217e91d40f46/teacher-paths.jsonl",
+        "sha256": "e489069a662803ca18c03361d5a065d32ecf69101736d5ac37204ac77545a83e",
+        "first_row": 311,
+        "updates": 500
+      },
+      {
+        "id": "point-2894e9a73546e652",
+        "region": "port_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-2894e9a73546e652/teacher-paths.jsonl",
+        "sha256": "f06b9b8dab967f70fe3c195c0b2b5dc696a19d2e5cc927adc78512bc33e05951",
+        "first_row": 4,
+        "updates": 500
+      },
+      {
+        "id": "point-1d4d4f100d1ca9f9",
+        "region": "upper_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-1d4d4f100d1ca9f9/teacher-paths.jsonl",
+        "sha256": "316fdb4e36ed827be84ab59ba5ab0934ff1475b6a4329ede561ac96368f13812",
+        "first_row": 45,
+        "updates": 500
+      },
+      {
+        "id": "point-176f6970402ae0b6",
+        "region": "harbour",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-176f6970402ae0b6/teacher-paths.jsonl",
+        "sha256": "7bce10c913d76b38dd4847257eebbfabe794e979237f39c27ec2fbd6b8d6fd53",
+        "first_row": 148,
+        "updates": 500
+      },
+      {
+        "id": "point-2b58f10aace92c42",
+        "region": "lobart",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-2b58f10aace92c42/teacher-paths.jsonl",
+        "sha256": "6b9516f14ffd7a947bc816993fd4a6133df73b97d2b7cb44e853e93eea0cdfe8",
+        "first_row": 65,
+        "updates": 500
+      },
+      {
+        "id": "point-4929136ca8fc03c9",
+        "region": "market",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-4929136ca8fc03c9/teacher-paths.jsonl",
+        "sha256": "6bf1180d64754711d0183ac8f0c6459e06bf613f0a637b1e2035f10667a1567e",
+        "first_row": 28,
+        "updates": 500
+      },
+      {
+        "id": "point-96f811c12d7c6662",
+        "region": "onar",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-96f811c12d7c6662/teacher-paths.jsonl",
+        "sha256": "2b7cc067467748a25f8fa09dfd0a8a7bfde926bc62f53584e9f5628e0f13080d",
+        "first_row": 17,
+        "updates": 500
+      },
+      {
+        "id": "point-32381426273023ef",
+        "region": "port_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-32381426273023ef/teacher-paths.jsonl",
+        "sha256": "6f50c0b049b5c306243bfb91a2dd85d46d5505776d00ede8a286a549b8a07d01",
+        "first_row": 22,
+        "updates": 500
+      },
+      {
+        "id": "point-358bae53ec901592",
+        "region": "upper_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-358bae53ec901592/teacher-paths.jsonl",
+        "sha256": "46f7e80f04e5f9305388fb729da31926ddd86f4ea00167bc1e8975a9a3da4afa",
+        "first_row": 742,
+        "updates": 500
+      },
+      {
+        "id": "point-3ff07bc3a9d6515d",
+        "region": "harbour",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-3ff07bc3a9d6515d/teacher-paths.jsonl",
+        "sha256": "f46da8d7a3b79d47c9c9a7a52bde66f733f479f975b2f022801cc771cbf32aa0",
+        "first_row": 8,
+        "updates": 500
+      },
+      {
+        "id": "point-5d9dc4584787c3af",
+        "region": "lobart",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-5d9dc4584787c3af/teacher-paths.jsonl",
+        "sha256": "f217d4f02eec1c47db328c6cf46328e4a80510f74eb51b0c58997873b56f679a",
+        "first_row": 41,
+        "updates": 500
+      },
+      {
+        "id": "point-661df890c5ea5be1",
+        "region": "market",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-661df890c5ea5be1/teacher-paths.jsonl",
+        "sha256": "99a3f66325106fc6d8eddfd2532b4fd72d13ced14e01adcf7f130fb10ea3d1cb",
+        "first_row": 98,
+        "updates": 500
+      },
+      {
+        "id": "point-cc5d992a4731c806",
+        "region": "onar",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-cc5d992a4731c806/teacher-paths.jsonl",
+        "sha256": "54b18d1b01b0e8927296906a704ceb71d859ef355ff192bd88d919be5c92241e",
+        "first_row": 555,
+        "updates": 500
+      },
+      {
+        "id": "point-54133307ebb4af9e",
+        "region": "port_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-54133307ebb4af9e/teacher-paths.jsonl",
+        "sha256": "e9ef625405b42f8de12bd5f3d27f6defe8b9f28e25e0d52612b9cec55c05a3c9",
+        "first_row": 20,
+        "updates": 500
+      },
+      {
+        "id": "point-47d067dcc8a70585",
+        "region": "upper_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-47d067dcc8a70585/teacher-paths.jsonl",
+        "sha256": "403a97da1e9878ef7a81a91f354f027f60fd8a52082e0796806a634daa488c36",
+        "first_row": 179,
+        "updates": 500
+      },
+      {
+        "id": "point-40a312b321cc4c15",
+        "region": "harbour",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-40a312b321cc4c15/teacher-paths.jsonl",
+        "sha256": "931a45a079f08b8e229d4b752fae74581d38c328444c032a9f6eed8c91071264",
+        "first_row": 358,
+        "updates": 500
+      },
+      {
+        "id": "point-614e5dbdfd083c67",
+        "region": "lobart",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-614e5dbdfd083c67/teacher-paths.jsonl",
+        "sha256": "5d0f07e9258368634e8852b22426507e8665563e166ccd65e20dbb00e125de4c",
+        "first_row": 222,
+        "updates": 500
+      },
+      {
+        "id": "point-6cd36c6c4a6e5616",
+        "region": "market",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-6cd36c6c4a6e5616/teacher-paths.jsonl",
+        "sha256": "f1f0f73128eba60bf2e3339be368733fe6230e8a58447f8fcef27b2a30af58b8",
+        "first_row": 42,
+        "updates": 500
+      },
+      {
+        "id": "point-da418e198db5bff8",
+        "region": "onar",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-da418e198db5bff8/teacher-paths.jsonl",
+        "sha256": "3f65a3f6aff198cdebc9ee700b7726f009d3b0ddd0ec40657f74b55f1533a47e",
+        "first_row": 3,
+        "updates": 500
+      },
+      {
+        "id": "point-5a6e12f2487db056",
+        "region": "port_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-5a6e12f2487db056/teacher-paths.jsonl",
+        "sha256": "a44bb6e6c0862224628ba915c65f9183da8d5d7bdab458d768fc67932abf61b4",
+        "first_row": 144,
+        "updates": 500
+      },
+      {
+        "id": "point-48537efa1b48d139",
+        "region": "upper_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-48537efa1b48d139/teacher-paths.jsonl",
+        "sha256": "07449587f928a0b81714ac4cf6a503ed930d06bb7c37c32060a19df16cac6788",
+        "first_row": 331,
+        "updates": 500
+      },
+      {
+        "id": "point-4bd2c11e092fd60d",
+        "region": "harbour",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-4bd2c11e092fd60d/teacher-paths.jsonl",
+        "sha256": "caf7d2a5c5dece7f98598cc697a2541d6e06afec22171254fe1a093b80b7e051",
+        "first_row": 250,
+        "updates": 500
+      },
+      {
+        "id": "point-620b2f92c053395e",
+        "region": "lobart",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-620b2f92c053395e/teacher-paths.jsonl",
+        "sha256": "0c6a97de9e78775d8f490a2dfd1cee0b34aafefb59ca876ca06e5267f8ba1597",
+        "first_row": 95,
+        "updates": 500
+      },
+      {
+        "id": "point-7b17b9f16ecd6eaa",
+        "region": "market",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-7b17b9f16ecd6eaa/teacher-paths.jsonl",
+        "sha256": "2453d20b7948838d9c67682f53e8276f8ca765f9ce92b1850ead5f8c9aa91031",
+        "first_row": 5,
+        "updates": 500
+      },
+      {
+        "id": "point-e1474bd9b6c35ff9",
+        "region": "onar",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-e1474bd9b6c35ff9/teacher-paths.jsonl",
+        "sha256": "fe629e7c1f39bb8eb97e177df0f34aff6fd5da91f38a184f2b032caf8f72c35e",
+        "first_row": 147,
+        "updates": 500
+      },
+      {
+        "id": "point-60ee8e778940c7f6",
+        "region": "port_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-60ee8e778940c7f6/teacher-paths.jsonl",
+        "sha256": "ddc8a5fce8d109335acb76a7875b54a854ca4ccabc1a63179bfb600b93ccf4aa",
+        "first_row": 61,
+        "updates": 500
+      },
+      {
+        "id": "point-4bfc331d326f2aaf",
+        "region": "upper_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-4bfc331d326f2aaf/teacher-paths.jsonl",
+        "sha256": "85234e75041f661c121026d0b0c8c704d90de7b41ac93918601c3bf5b5eb3824",
+        "first_row": 637,
+        "updates": 500
+      },
+      {
+        "id": "point-5a20b2f334209b88",
+        "region": "harbour",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-5a20b2f334209b88/teacher-paths.jsonl",
+        "sha256": "3dd41e62b8b8438cf106aab699724d06396643ec749390be74d256bcfb28fb62",
+        "first_row": 72,
+        "updates": 500
+      },
+      {
+        "id": "point-701ac3f7e0742bda",
+        "region": "lobart",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-701ac3f7e0742bda/teacher-paths.jsonl",
+        "sha256": "67b3a34c3b59c37617502be5d563a8aa640a1912e7548f095e381c1b7313637d",
+        "first_row": 58,
+        "updates": 500
+      },
+      {
+        "id": "point-7f190ae1e1d76e4e",
+        "region": "market",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-7f190ae1e1d76e4e/teacher-paths.jsonl",
+        "sha256": "2dad0e66cd03e0dc0e48efd2139831b2b06f87bf3c615944f4896dada261a310",
+        "first_row": 163,
+        "updates": 500
+      },
+      {
+        "id": "point-f1f909185d29d249",
+        "region": "onar",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-f1f909185d29d249/teacher-paths.jsonl",
+        "sha256": "e7aaefd4c22ab086418424637ebb0457614d1309eab57dcee4fc0f82de7ad6c8",
+        "first_row": 83,
+        "updates": 500
+      },
+      {
+        "id": "point-67e3f6429118d278",
+        "region": "port_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-67e3f6429118d278/teacher-paths.jsonl",
+        "sha256": "30bda4e4d37e2c4b2a858aa1936b7cee27e6a6a63f00bdb74c9e3e62eee86917",
+        "first_row": 222,
+        "updates": 500
+      },
+      {
+        "id": "point-51cbca904f8009fc",
+        "region": "upper_streets",
+        "path": "/mnt/shared/gothic-ai/nav-demos-v5/recordings/point/train/point-51cbca904f8009fc/teacher-paths.jsonl",
+        "sha256": "400441727af9043b4e14d34b9f4899f20aae3a8defcb41282a609f8351e7692d",
+        "first_row": 699,
+        "updates": 500
+      }
+    ]
+  },
+  "triangles": 2838834,
+  "triangles_by_category": {
+    "landscape": 1564611,
+    "static_object": 1124061,
+    "water": 10530,
+    "kinematic_object": 139632
+  },
+  "bodies_by_category": {
+    "landscape": 1,
+    "static_object": 5694,
+    "water": 1,
+    "kinematic_object": 1297
+  },
+  "static_bodies": 5696,
+  "kinematic_bodies": 1297,
+  "updates": 24000,
+  "episodes": 48,
+  "near_only_updates": 19200,
+  "full_updates": 4800,
+  "near_casts": 5712000,
+  "far_casts": 285223,
+  "casts": 5997223,
+  "measured_near_casts_total": 28560000,
+  "measured_far_casts_total": 1426115,
+  "counts_scope": "One 24000-update replay, matching rays.bin and the root perception-timing.json; five measured repeats also retained",
+  "ray_kind_counts": {
+    "none": 1307033,
+    "world": 4206098,
+    "static_vob": 139331,
+    "movable_vob": 59473,
+    "npc": 0,
+    "water": 65
+  },
+  "ray_kind_fractions": {
+    "none": 0.22882230392156863,
+    "world": 0.7363616946778712,
+    "static_vob": 0.02439268207282913,
+    "movable_vob": 0.010411939775910364,
+    "npc": 0.0,
+    "water": 1.1379551820728291e-05
+  },
+  "complete_rays": 4573219,
+  "incomplete_rays": 1138781,
+  "timing_aggregation": "Within each 24000-update replay: sorted upper-middle median and nearest-rank p90; across five repeats: middle median and nearest-rank p90",
+  "timing_units": "microseconds",
+  "timing": {
+    "eye": {
+      "median_us": {
+        "repeats": 5,
+        "median": 9048.547,
+        "p90": 9262.9
+      },
+      "p90_us": {
+        "repeats": 5,
+        "median": 11334.398,
+        "p90": 11508.026
+      },
+      "mean_us": {
+        "repeats": 5,
+        "median": 9384.48114092,
+        "p90": 9553.10390092
+      }
+    },
+    "near_only": {
+      "median_us": {
+        "repeats": 5,
+        "median": 8915.927,
+        "p90": 9091.508
+      },
+      "p90_us": {
+        "repeats": 5,
+        "median": 9553.537,
+        "p90": 9759.595
+      },
+      "mean_us": {
+        "repeats": 5,
+        "median": 8932.26518224,
+        "p90": 9093.05660073
+      }
+    },
+    "full": {
+      "median_us": {
+        "repeats": 5,
+        "median": 11252.193,
+        "p90": 11453.222
+      },
+      "p90_us": {
+        "repeats": 5,
+        "median": 12763.346,
+        "p90": 12974.645
+      },
+      "mean_us": {
+        "repeats": 5,
+        "median": 11193.3449756,
+        "p90": 11393.2931017
+      }
+    },
+    "amortized_per_cast": {
+      "median_us": {
+        "repeats": 5,
+        "median": 37.490340176,
+        "p90": 38.2256302521
+      },
+      "p90_us": {
+        "repeats": 5,
+        "median": 40.1467184874,
+        "p90": 41.0091470588
+      },
+      "mean_us": {
+        "repeats": 5,
+        "median": 37.5543833317,
+        "p90": 38.2316166693
+      }
+    },
+    "memory_and_view": {
+      "median_us": {
+        "repeats": 5,
+        "median": 1332.407,
+        "p90": 1349.069
+      },
+      "p90_us": {
+        "repeats": 5,
+        "median": 1914.632,
+        "p90": 1985.526
+      },
+      "mean_us": {
+        "repeats": 5,
+        "median": 1336.00774163,
+        "p90": 1362.07311204
+      }
+    }
+  },
+  "repeats": [
+    {
+      "file": {
+        "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/repeats/01/perception-timing.json",
+        "bytes": 1002,
+        "sha256": "817ea59c5e9c8020eb70b761a66a317be492f6b2dae6822fec46681cfe2bf65e"
+      },
+      "timing": {
+        "mode": "gaze",
+        "episodes": 48,
+        "updates": 24000,
+        "navigation_memory_version": 4,
+        "sampled_frames": 0,
+        "ray_count": 238,
+        "step_height_cm": 60,
+        "max_slope_degrees": 49.9999961853,
+        "near_period_ms": 100,
+        "far_period_ms": 500,
+        "casts": 5997223,
+        "near_casts": 5712000,
+        "far_casts": 285223,
+        "head_frame": "neutral body yaw, fixture head height",
+        "eye": {
+          "samples": 24000,
+          "sum_us": 225227547.382,
+          "mean_us": 9384.48114092,
+          "median_us": 9048.547,
+          "p90_us": 11334.398,
+          "p95_us": 12168.938
+        },
+        "near_only": {
+          "samples": 19200,
+          "sum_us": 171499491.499,
+          "mean_us": 8932.26518224,
+          "median_us": 8915.927,
+          "p90_us": 9553.537,
+          "p95_us": 9748.744
+        },
+        "full": {
+          "samples": 4800,
+          "sum_us": 53728055.883,
+          "mean_us": 11193.3449756,
+          "median_us": 11252.193,
+          "p90_us": 12763.346,
+          "p95_us": 13127.953
+        },
+        "memory_and_view": {
+          "samples": 24000,
+          "sum_us": 31967842.584,
+          "mean_us": 1331.993441,
+          "median_us": 1323.751,
+          "p90_us": 1914.632,
+          "p95_us": 2069.304
+        },
+        "amortized_per_cast": {
+          "samples": 24000,
+          "sum_us": 901305.19996,
+          "mean_us": 37.5543833317,
+          "median_us": 37.490340176,
+          "p90_us": 40.1467184874,
+          "p95_us": 40.9799705882
+        }
+      }
+    },
+    {
+      "file": {
+        "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/repeats/02/perception-timing.json",
+        "bytes": 1002,
+        "sha256": "24d1c70d459f1aac0adacf73d319ca20b61c327a0a981a7d3346c2375f9c7a3b"
+      },
+      "timing": {
+        "mode": "gaze",
+        "episodes": 48,
+        "updates": 24000,
+        "navigation_memory_version": 4,
+        "sampled_frames": 0,
+        "ray_count": 238,
+        "step_height_cm": 60,
+        "max_slope_degrees": 49.9999961853,
+        "near_period_ms": 100,
+        "far_period_ms": 500,
+        "casts": 5997223,
+        "near_casts": 5712000,
+        "far_casts": 285223,
+        "head_frame": "neutral body yaw, fixture head height",
+        "eye": {
+          "samples": 24000,
+          "sum_us": 227553964.06,
+          "mean_us": 9481.41516917,
+          "median_us": 9145.589,
+          "p90_us": 11438.604,
+          "p95_us": 12278.645
+        },
+        "near_only": {
+          "samples": 19200,
+          "sum_us": 173299758.384,
+          "mean_us": 9026.0290825,
+          "median_us": 8987.993,
+          "p90_us": 9725.65,
+          "p95_us": 9861.285
+        },
+        "full": {
+          "samples": 4800,
+          "sum_us": 54254205.676,
+          "mean_us": 11302.9595158,
+          "median_us": 11347.121,
+          "p90_us": 12941.411,
+          "p95_us": 13310.987
+        },
+        "memory_and_view": {
+          "samples": 24000,
+          "sum_us": 32689754.689,
+          "mean_us": 1362.07311204,
+          "median_us": 1349.069,
+          "p90_us": 1975.658,
+          "p95_us": 2157.209
+        },
+        "amortized_per_cast": {
+          "samples": 24000,
+          "sum_us": 910619.226062,
+          "mean_us": 37.9424677526,
+          "median_us": 37.795697479,
+          "p90_us": 40.8450504202,
+          "p95_us": 41.4289622642
+        }
+      }
+    },
+    {
+      "file": {
+        "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/repeats/03/perception-timing.json",
+        "bytes": 1004,
+        "sha256": "8fc0776887683b9f71cb696d6acf577543f9de6831a0c9d860bce5112c5dee21"
+      },
+      "timing": {
+        "mode": "gaze",
+        "episodes": 48,
+        "updates": 24000,
+        "navigation_memory_version": 4,
+        "sampled_frames": 0,
+        "ray_count": 238,
+        "step_height_cm": 60,
+        "max_slope_degrees": 49.9999961853,
+        "near_period_ms": 100,
+        "far_period_ms": 500,
+        "casts": 5997223,
+        "near_casts": 5712000,
+        "far_casts": 285223,
+        "head_frame": "neutral body yaw, fixture head height",
+        "eye": {
+          "samples": 24000,
+          "sum_us": 224475866.004,
+          "mean_us": 9353.1610835,
+          "median_us": 9019.031,
+          "p90_us": 11307.407,
+          "p95_us": 12094.859
+        },
+        "near_only": {
+          "samples": 19200,
+          "sum_us": 170944349.097,
+          "mean_us": 8903.35151547,
+          "median_us": 8897.512,
+          "p90_us": 9432.028,
+          "p95_us": 9702.738
+        },
+        "full": {
+          "samples": 4800,
+          "sum_us": 53531516.907,
+          "mean_us": 11152.3993556,
+          "median_us": 11228.399,
+          "p90_us": 12629.004,
+          "p95_us": 12945.069
+        },
+        "memory_and_view": {
+          "samples": 24000,
+          "sum_us": 32064185.799,
+          "mean_us": 1336.00774163,
+          "median_us": 1332.407,
+          "p90_us": 1894.816,
+          "p95_us": 2041.772
+        },
+        "amortized_per_cast": {
+          "samples": 24000,
+          "sum_us": 898351.973182,
+          "mean_us": 37.4313322159,
+          "median_us": 37.4148991597,
+          "p90_us": 39.6335714286,
+          "p95_us": 40.756105042
+        }
+      }
+    },
+    {
+      "file": {
+        "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/repeats/04/perception-timing.json",
+        "bytes": 1006,
+        "sha256": "b8249f08cad4e1d09845a3f59d78a71fd1edd687124d05301c957c31f3a6325e"
+      },
+      "timing": {
+        "mode": "gaze",
+        "episodes": 48,
+        "updates": 24000,
+        "navigation_memory_version": 4,
+        "sampled_frames": 0,
+        "ray_count": 238,
+        "step_height_cm": 60,
+        "max_slope_degrees": 49.9999961853,
+        "near_period_ms": 100,
+        "far_period_ms": 500,
+        "casts": 5997223,
+        "near_casts": 5712000,
+        "far_casts": 285223,
+        "head_frame": "neutral body yaw, fixture head height",
+        "eye": {
+          "samples": 24000,
+          "sum_us": 220087284.411,
+          "mean_us": 9170.30351712,
+          "median_us": 8865.282,
+          "p90_us": 11090.149,
+          "p95_us": 11879.274
+        },
+        "near_only": {
+          "samples": 19200,
+          "sum_us": 167625056.957,
+          "mean_us": 8730.47171651,
+          "median_us": 8768.751,
+          "p90_us": 9113.299,
+          "p95_us": 9187.218
+        },
+        "full": {
+          "samples": 4800,
+          "sum_us": 52462227.454,
+          "mean_us": 10929.6307196,
+          "median_us": 10996.732,
+          "p90_us": 12368.795,
+          "p95_us": 12633.061
+        },
+        "memory_and_view": {
+          "samples": 24000,
+          "sum_us": 31902877.377,
+          "mean_us": 1329.28655738,
+          "median_us": 1332.728,
+          "p90_us": 1872.934,
+          "p95_us": 2001.316
+        },
+        "amortized_per_cast": {
+          "samples": 24000,
+          "sum_us": 880760.407312,
+          "mean_us": 36.6983503047,
+          "median_us": 36.8624747899,
+          "p90_us": 38.2966827309,
+          "p95_us": 38.6017563025
+        }
+      }
+    },
+    {
+      "file": {
+        "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/repeats/05/perception-timing.json",
+        "bytes": 1003,
+        "sha256": "0ccf0948432666182d82e27d6e0ce887957aa7124631dac9e3231ab096aefe0e"
+      },
+      "timing": {
+        "mode": "gaze",
+        "episodes": 48,
+        "updates": 24000,
+        "navigation_memory_version": 4,
+        "sampled_frames": 0,
+        "ray_count": 238,
+        "step_height_cm": 60,
+        "max_slope_degrees": 49.9999961853,
+        "near_period_ms": 100,
+        "far_period_ms": 500,
+        "casts": 5997223,
+        "near_casts": 5712000,
+        "far_casts": 285223,
+        "head_frame": "neutral body yaw, fixture head height",
+        "eye": {
+          "samples": 24000,
+          "sum_us": 229274493.622,
+          "mean_us": 9553.10390092,
+          "median_us": 9262.9,
+          "p90_us": 11508.026,
+          "p95_us": 12381.559
+        },
+        "near_only": {
+          "samples": 19200,
+          "sum_us": 174586686.734,
+          "mean_us": 9093.05660073,
+          "median_us": 9091.508,
+          "p90_us": 9759.595,
+          "p95_us": 9877.116
+        },
+        "full": {
+          "samples": 4800,
+          "sum_us": 54687806.888,
+          "mean_us": 11393.2931017,
+          "median_us": 11453.222,
+          "p90_us": 12974.645,
+          "p95_us": 13305.368
+        },
+        "memory_and_view": {
+          "samples": 24000,
+          "sum_us": 32442515.393,
+          "mean_us": 1351.77147471,
+          "median_us": 1331.015,
+          "p90_us": 1985.526,
+          "p95_us": 2173.28
+        },
+        "amortized_per_cast": {
+          "samples": 24000,
+          "sum_us": 917558.800064,
+          "mean_us": 38.2316166693,
+          "median_us": 38.2256302521,
+          "p90_us": 41.0091470588,
+          "p95_us": 41.5302941176
+        }
+      }
+    }
+  ],
+  "eye_us_per_update": {
+    "eye": {
+      "median_us": 9048.547,
+      "p90_us": 11334.398,
+      "mean_us": 9384.48114092
+    },
+    "near_only": {
+      "median_us": 8915.927,
+      "p90_us": 9553.537,
+      "mean_us": 8932.26518224
+    },
+    "full": {
+      "median_us": 11252.193,
+      "p90_us": 12763.346,
+      "mean_us": 11193.3449756
+    }
+  },
+  "eye_us_per_cast": {
+    "median_us": 37.490340176,
+    "p90_us": 40.1467184874,
+    "mean_us": 37.5543833317
+  },
+  "eye_total_us_per_cast": {
+    "repeats": 5,
+    "median": 37.555306411317375,
+    "p90": 38.230109772806514,
+    "definition": "Total eye microseconds / total actual near+far casts in each repeat"
+  },
+  "measurement": {
+    "variant": "branch",
+    "class_used": "quick",
+    "quiet_reason": "Active jobs have declared remainders over 30 minutes; see gq status",
+    "gq_status": "2026-11-04T15:48:03+03:00\nID           \u0412\u041b\u0410\u0414\u0415\u041b\u0415\u0426         \u041a\u041b\u0410\u0421\u0421  \u0421\u041e\u0421\u0422\u041e\u042f\u041d\u0418\u0415  \u0420\u0415\u0421\u0423\u0420\u0421\u042b                         \u0421\u0422\u0410\u0420\u0422    \u041f\u041e\u0422\u041e\u041b\u041e\u041a \u041e\u0426\u0415\u041d\u041a\u0410\na1509c1bf00e nav-follow-trail batch  running    8t 7G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      15:42:14 7200s \u22640s\n6a3bdcda2f4d nav-follow-trail batch  running    8t 7G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      15:42:15 7200s \u22647200s\n66cba5e2d9a2 nav-follow-trail batch  queued     8t 7G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      \u2014        7200s \u226414400s\n3f2db28cff7a nav-follow-trail batch  queued     8t 7G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      \u2014        7200s \u226421600s\n727f868a569d nav-follow-trail batch  queued     6t 10G gpu=3G \u043e\u043a\u043d\u043e=1 \u0441\u043b\u043e\u0442=\u2014     \u2014        3600s \u226428800s\ne8390f840a73 nav-follow-trail batch  queued     6t 10G gpu=3G \u043e\u043a\u043d\u043e=1 \u0441\u043b\u043e\u0442=\u2014     \u2014        3600s \u226432400s\n5e8eb4008779 ryzen-play-autou quick  queued     12t 12G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        1800s \u226436001s median=1s\n806563db7ae6 claude-quiver-mo quick  queued     12t 13G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        3600s \u226437910s median=110s\nc852aa0ee083 navsim-rays-engi quick  running    1t 3G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      15:42:16 2700s \u226441400s\n55d3b552a427 navsim-rays-engi quick  running    1t 3G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      15:46:32 2700s \u226444100s\nDisk /home/kaifaty/gothic-ai: free 120.1G; minimum 20G\nDisk /: free 120.1G; minimum 20G\n",
+    "cpu_allowed": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31
+    ],
+    "cpu_pinned": 2,
+    "cpu_model": "AMD Ryzen 9 3950X 16-Core Processor",
+    "gpu_used": false,
+    "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+    "compiler": "c++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+    "gpu": "NVIDIA GeForce RTX 3080, 615.71.09",
+    "warmup_updates": 1000,
+    "repeats": 5,
+    "environment": {
+      "MKL_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "OPENGOTHIC_BASE": "/home/kaifaty/gothic-ai/nav-sim-research/rays/input/base",
+      "OPENGOTHIC_BASE_FINGERPRINT": "032e902aee6fef6ccc54fd01fdc4f018e0a2cb80ed470cdae2e79d5ee150b14b",
+      "OPENGOTHIC_VIDEOS_FINGERPRINT": "6ce7e0b2ed13967e04bb8efcd8fb4bbbbbe63d58acb60a50c6703d2a1a2083e7",
+      "OPENGOTHIC_BASE_CACHE": "/home/kaifaty/gothic-ai/nav-sim-research/rays/base-cache",
+      "OPENGOTHIC_BASE_STORE": "/home/kaifaty/gothic-ai/nav-sim-research/rays/base-store",
+      "OPENGOTHIC_BODY_TRACE": "0",
+      "OPENGOTHIC_NAV_FORCE_PACE": "run"
+    },
+    "wall_seconds": 1424.6800461040111,
+    "runner_sha256": "ac551fa5399556ef6e0aa7a853297fb64e6c9a65ee0d1983016c85769b011c34",
+    "compile_flags": {
+      "navperceptionbench.cpp": [
+        "-DDM_STATIC=1",
+        "-DDT_POLYREF64",
+        "-DJPH_CROSS_PLATFORM_DETERMINISTIC",
+        "-DJPH_USE_AVX",
+        "-DJPH_USE_AVX2",
+        "-DJPH_USE_F16C",
+        "-DJPH_USE_LZCNT",
+        "-DJPH_USE_SSE4_1",
+        "-DJPH_USE_SSE4_2",
+        "-DJPH_USE_TZCNT",
+        "-DMINIZ_NO_STDIO",
+        "-DTSF_NO_STDIO",
+        "-DZKNO_REM=1",
+        "-D_GNU_SOURCE",
+        "-D_ZK_WITH_MMAP=1",
+        "-O2",
+        "-g1",
+        "-DNDEBUG",
+        "-fPIC",
+        "-mavx2",
+        "-mbmi",
+        "-mpopcnt",
+        "-mlzcnt",
+        "-mf16c",
+        "-mfpmath=sse",
+        "-ffp-contract=off"
+      ],
+      "NarrowPhaseQuery.cpp": [
+        "-DJPH_CROSS_PLATFORM_DETERMINISTIC",
+        "-DJPH_USE_AVX",
+        "-DJPH_USE_AVX2",
+        "-DJPH_USE_F16C",
+        "-DJPH_USE_LZCNT",
+        "-DJPH_USE_SSE4_1",
+        "-DJPH_USE_SSE4_2",
+        "-DJPH_USE_TZCNT",
+        "-DMINIZ_NO_STDIO",
+        "-DTSF_NO_STDIO",
+        "-D_GNU_SOURCE",
+        "-g",
+        "-fno-rtti",
+        "-fno-exceptions",
+        "-ffp-contract=off",
+        "-O2",
+        "-g1",
+        "-DNDEBUG",
+        "-fPIC",
+        "-mavx2",
+        "-mbmi",
+        "-mpopcnt",
+        "-mlzcnt",
+        "-mf16c",
+        "-mfpmath=sse",
+        "-ffp-contract=off"
+      ]
+    },
+    "build_type": "RelWithDebInfo",
+    "jolt_x86": "x86-64-v3",
+    "march": "No -march; explicit Jolt SSE4.1/SSE4.2/AVX/AVX2/LZCNT/TZCNT/F16C, cross-platform deterministic",
+    "gq_status_capture": "Captured as rays.bin became nonempty during the first measured replay"
+  },
+  "navmesh": {
+    "base_revision": "d61ca9cbb320fe2dcbe1d6dd8582e2be89fc90ec",
+    "unchanged": true,
+    "base": {
+      "key": "73688f20d514c15a",
+      "triangles": 2688672,
+      "water_triangles": 10530,
+      "tiles": 1537,
+      "polygons": 48389,
+      "complete": true,
+      "whole_world": true
+    },
+    "branch": {
+      "key": "73688f20d514c15a",
+      "triangles": 2688672,
+      "water_triangles": 10530,
+      "tiles": 1537,
+      "polygons": 48389,
+      "complete": true,
+      "whole_world": true
+    },
+    "files": [
+      {
+        "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/navmesh-base.json",
+        "bytes": 543,
+        "sha256": "7b5669d52819c9242a06e723114fa24a6a93bd8872b9d03b2c232f82bcbb237b"
+      },
+      {
+        "path": "/mnt/shared/gothic-ai/nav-sim-research/rays/navmesh-branch.json",
+        "bytes": 543,
+        "sha256": "7bb683dedf686fe99394c4599bb01df65a8e9c99e68ea4fd463cd2356bd38999"
+      }
+    ]
+  },
+  "semantics": {
+    "coordinates": "float32 world centimetres, Y up",
+    "endianness": "little, no alignment",
+    "categories": "1 landscape; 2 static C_Object; 3 water; 4 kinematic C_Object at dump pose",
+    "samples": "NavigationEye.samples(), fresh near result; no cached far memory slots",
+    "elapsed": "Recorded elapsed_ms per episode, boundaries supplied by poses.txt labels; eye reset at each label",
+    "far_cast_count": "Authoritative runner counters; binary inference allows float32 hits within .1 cm of the near/far boundary",
+    "per_cast": "Amortized eye time per actual near+far cast in that update; includes head-pose lookup and eye bookkeeping",
+    "output_timing": "Binary write occurs after eye timer stops on every measured update",
+    "policy": "No policy inference or drive; OPENGOTHIC_NAV_FORCE_PACE=run is set",
+    "collision_coverage": "Static/kinematic authored collision only; NPCs and dynamic bodies are absent from static.bin",
+    "static_pose": "Dump after save load at bench time 10:00, before pose replay; no kinematic animation during the replay loop"
+  },
+  "validation": {
+    "binary_layout": true,
+    "finite": true,
+    "unit_directions": true,
+    "cast_counts_match": true,
+    "pose_timestamps_match": true,
+    "static_category_counts_match": true,
+    "navmesh_base_parity": true,
+    "inferred_far_casts": 285223,
+    "near_boundary_hits": 34
+  }
+}

@@ -267,7 +267,7 @@ void VPushDescriptor::write(VDevice& dev, VkWriteDescriptorSet& wx, WriteInfo& i
       break;
       }
     case ShaderReflection::Tlas: {
-      auto* tlas = reinterpret_cast<VAccelerationStructure*>(data);
+      auto* tlas = reinterpret_cast<VTopAccelerationStructure*>(data);
 
       auto& info = infoW.tlas;
       info.sType                      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
@@ -353,7 +353,7 @@ void VPushDescriptor::write(VDevice& dev, void* resPtr, ShaderReflection::Class 
       break;
       }
     case ShaderReflection::Tlas: {
-      auto* tlas = reinterpret_cast<VAccelerationStructure*>(data);
+      auto* tlas = reinterpret_cast<VTopAccelerationStructure*>(data);
 
       VkDeviceAddressRangeEXT info = {};
       info.address = tlas!=nullptr ? tlas->toDeviceAddress(dev) : 0;

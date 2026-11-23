@@ -14,8 +14,10 @@
 #include "vulkan/vaccelerationstructure.h"
 
 #include <Tempest/Pixmap>
+#include <cstring>
 #include <Tempest/Log>
 #include <Tempest/Application>
+#include <Tempest/SystemApi>
 
 #include <libspirv/libspirv.h>
 
@@ -24,12 +26,9 @@ using namespace Tempest::Detail;
 
 #define VK_KHR_WIN32_SURFACE_EXTENSION_NAME "VK_KHR_win32_surface"
 #define VK_KHR_XLIB_SURFACE_EXTENSION_NAME  "VK_KHR_xlib_surface"
-#define VK_KHR_ANDROID_SURFACE_EXTENSION_NAME "VK_KHR_android_surface"
 
 #if defined(__WINDOWS__)
 #define SURFACE_EXTENSION_NAME VK_KHR_WIN32_SURFACE_EXTENSION_NAME
-#elif defined(__ANDROID__)
-#define SURFACE_EXTENSION_NAME VK_KHR_ANDROID_SURFACE_EXTENSION_NAME
 #elif defined(__UNIX__)
 #define SURFACE_EXTENSION_NAME VK_KHR_XLIB_SURFACE_EXTENSION_NAME
 #endif
@@ -120,9 +119,12 @@ struct Tempest::VulkanApi::Impl {
 
     std::vector<const char*> rqExt = {
       VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
-      VK_KHR_SURFACE_EXTENSION_NAME,
-      SURFACE_EXTENSION_NAME,
       };
+    if(!SystemApi::isOffscreen()) {
+      // offscreen windows have no surface to present to
+      rqExt.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+      rqExt.push_back(SURFACE_EXTENSION_NAME);
+      }
 
     auto ext = instExtensionsList();
     if(extensionSupport(ext, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) {
@@ -171,6 +173,8 @@ struct Tempest::VulkanApi::Impl {
     }
 
   bool checkDeviceExtensionSupport(VkPhysicalDevice device) const {
+    if(SystemApi::isOffscreen())
+      return true; // VK_KHR_swapchain is only needed to present
     auto ext = VDevice::extensionsList(device);
     for(auto& i:VDevice::requiredExtensions) {
       if(!extensionSupport(ext,i))
@@ -430,6 +434,29 @@ AbstractGraphicsApi::PRtAs VulkanApi::createTopAccelerationStruct(Device* d, con
   return PRtAs(prtas.handler);
   }
 
+AbstractGraphicsApi::PRtAs VulkanApi::createTopAccelerationStruct(Device* d, size_t capacity) {
+  auto& dx = *reinterpret_cast<VDevice*>(d);
+
+  Detail::DSharedPtr<VTopAccelerationStructure*> prtas(new VTopAccelerationStructure(dx));
+  prtas.handler->alloc(capacity);
+  return PRtAs(prtas.handler);
+  }
+
+size_t VulkanApi::rtInstanceSize() const {
+  return sizeof(VkAccelerationStructureInstanceKHR);
+  }
+
+void VulkanApi::packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                               AccelerationStructure* as, void* slot) {
+  (void)d;
+  (void)tlas; // instances point at their BLAS by device address: nothing is held
+  // zero reference: an inactive instance, which the build skips
+  VkAccelerationStructureInstanceKHR obj = {};
+  if(as!=nullptr)
+    VTopAccelerationStructure::pack(obj, inst, *reinterpret_cast<const VAccelerationStructure*>(as));
+  std::memcpy(slot, &obj, sizeof(obj));
+  }
+
 void VulkanApi::readPixels(AbstractGraphicsApi::Device *d, Pixmap& out, const PTexture t,
                            TextureFormat frm, const uint32_t w, const uint32_t h, uint32_t mip, bool storageImg) {
   auto&           dx     = *reinterpret_cast<VDevice*>(d);
@@ -439,7 +466,11 @@ void VulkanApi::readPixels(AbstractGraphicsApi::Device *d, Pixmap& out, const PT
   Size            bsz    = Pixmap::blockCount(frm,w,h);
 
   const size_t    size   = bsz.w*bsz.h*bpb;
-  Detail::VBuffer stage  = dx.allocator.alloc(nullptr, size, MemUsage::Transfer, BufferHeap::Readback);
+  // the staging buffer stays with the device: a video capture reads a frame every step
+  std::lock_guard<std::mutex> guard(dx.syncReadback);
+  Detail::VBuffer& stage = dx.readbackStage;
+  if(stage.size()<size)
+    stage = dx.allocator.alloc(nullptr, size, MemUsage::Transfer, BufferHeap::Readback);
 
   auto cmd = dx.dataMgr().get();
   // cmd->begin(SyncHint::NoPendingReads);

@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
+import os
 import re
+import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -15,6 +19,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from . import base
 from .settings import Config
 
 CHATGPT_TOKENS = Path.home() / ".config" / "gothic-ai" / "chatgpt.json"
@@ -31,8 +36,7 @@ INWORLD_CHECK = {
 }
 DEFAULT_VOXTRAL_URL = "http://127.0.0.1:47830"  # the services' own defaults
 DEFAULT_VOXCPM_URL = "ws://127.0.0.1:47831"
-# share of cp1251 Cyrillic letters among the letters of OU.BIN: 0.27 in the Russian game, where line names
-# (DIA_XARDAS_HELLO_14_01.WAV) stay Latin; the English one has only hash bytes in that range
+# Share of cp1251 Cyrillic letters among the letters of the dialog library.
 RUSSIAN_MIN_SHARE = 0.1
 TIMEOUT_S = 3.0
 STEAM = Path.home() / "Library" / "Application Support" / "Steam"
@@ -57,8 +61,24 @@ class Check:
 
 
 def find_games(extra: list[Path] | None = None) -> list[Path]:
-    """Folders that look like Gothic II (they have a Data folder): Steam libraries, Wine bottles with
-    Steam or GOG, the usual places. A copy made by hand elsewhere is not found: the player picks it."""
+    """Folders that look like Gothic II (they have a Data folder): Steam libraries (on Linux also the
+    Flatpak's), Wine bottles with Steam or GOG on a Mac, the usual places. A copy made by hand elsewhere is
+    not found: the player picks it."""
+    if sys.platform == "win32":
+        steam_roots = []
+        for steam in _windows_steam():
+            steam_roots += [steam, *_steam_libraries(steam / "steamapps" / "libraryfolders.vdf")]
+        places = [root / "steamapps" / "common" for root in steam_roots] + steam_roots
+        x86 = Path(os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)")
+        places += [Path("C:/"), Path("C:/GOG Games"), x86 / "GOG Galaxy" / "Games", x86 / "JoWooD"]
+        places += [Path.home() / "Games"]
+        return _gothic_folders(places, extra)
+    if sys.platform == "linux":
+        steam_roots = []
+        for steam in _linux_steam():
+            steam_roots += [steam, *_steam_libraries(steam / "steamapps" / "libraryfolders.vdf")]
+        places = [root / "steamapps" / "common" for root in steam_roots] + steam_roots
+        return _gothic_folders([*places, Path.home() / "Games"], extra)
     steam_roots = [STEAM, *_steam_libraries(STEAM / "steamapps" / "libraryfolders.vdf")]
     for bottles in BOTTLES:
         for drive in _children(bottles, lambda p: p / "drive_c"):
@@ -66,6 +86,10 @@ def find_games(extra: list[Path] | None = None) -> list[Path]:
             steam_roots += [drive / "GOG Games", drive / "Program Files (x86)" / "GOG Galaxy" / "Games"]
     places = [root / "steamapps" / "common" for root in steam_roots] + steam_roots
     places += [Path.home() / "Games", Path("/Applications"), Path.home()]
+    return _gothic_folders(places, extra)
+
+
+def _gothic_folders(places: list[Path], extra: list[Path] | None) -> list[Path]:
     candidates = [place / name for place in places for name in GAME_FOLDERS] + (extra or [])
     found: dict[Path, Path] = {}
     for c in candidates:
@@ -75,12 +99,35 @@ def find_games(extra: list[Path] | None = None) -> list[Path]:
 
 
 def _steam_libraries(vdf: Path) -> list[Path]:
-    """`"path"  "/Volumes/Games/SteamLibrary"` lines of libraryfolders.vdf."""
+    """`"path"  "/Volumes/Games/SteamLibrary"` lines of libraryfolders.vdf (UTF-8, also on Windows)."""
     try:
-        text = vdf.read_text(errors="replace")
+        text = vdf.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
     return [Path(m.group(1).replace("\\\\", "\\")) for m in re.finditer(r'"path"\s+"([^"]+)"', text)]
+
+
+def _windows_steam() -> list[Path]:
+    """Where Steam says it is installed (its own registry value), then its default folder."""
+    roots: list[Path] = []
+    with contextlib.suppress(OSError, ImportError):
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+            roots.append(Path(winreg.QueryValueEx(key, "SteamPath")[0]))
+    x86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
+    return [*roots, Path(x86) / "Steam"]
+
+
+def _linux_steam() -> list[Path]:
+    """Steam's own link to its folder, its default folder and the Flatpak's; Gothic II under Proton is
+    installed into the same steamapps/common."""
+    home = Path.home()
+    return [
+        home / ".steam" / "steam",
+        home / ".local" / "share" / "Steam",
+        home / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam",
+    ]
 
 
 def _children(folder: Path, pick: Callable[[Path], Path]) -> list[Path]:
@@ -93,13 +140,30 @@ def _children(folder: Path, pick: Callable[[Path], Path]) -> list[Path]:
 def game_folder(folder: Path | None) -> list[Check]:
     """What the game needs from the folder; one check per thing a player can fix."""
     if folder is None:
-        return [Check("folder", False, "Папка игры", "Не выбрана")]
+        return [Check("folder", False, "Папка игры", "Укажите папку установленной Gothic II один раз")]
+    try:
+        selected = base.resolve(folder)
+    except RuntimeError as error:
+        base_error = str(error)
+    else:
+        with selected:
+            checks = [Check("base", True, "База игры готова", selected.fingerprint)]
+            try:
+                checks.append(_russian(_base_cyrillic_share(selected) >= RUSSIAN_MIN_SHARE))
+            except (RuntimeError, ValueError, KeyError, TypeError, IndexError) as error:
+                checks.append(Check("russian", False, "Русская локализация", str(error)))
+            return checks
     data = _child(folder, "data")
     if not folder.is_dir() or data is None:
-        return [Check("folder", False, "Папка игры", f"В {folder} нет папки Data: это не Gothic II")]
+        return [Check("folder", False, "Папка игры",
+                      f"Укажите папку установленной Gothic II один раз. {base_error}")]
     archives = sorted(p.name for p in data.iterdir() if p.suffix.lower() == ".vdf")
     addon = [n for n in archives if "addon" in n.lower()]
     checks = [
+        Check(
+            "base", True,
+            "Лаунчер подготовит базу перед запуском (несколько минут)", "Найдена установка Gothic II",
+        ),
         Check("archives", bool(archives), "Архивы Gothic II", _names(archives) or "В Data нет архивов .vdf"),
         Check(
             "addon",
@@ -112,18 +176,47 @@ def game_folder(folder: Path | None) -> list[Check]:
     if ou is None:
         checks.append(Check("russian", False, "Русская локализация", f"Нет файла реплик {OU_PATH}"))
     else:
-        russian = _cyrillic_share(ou) >= RUSSIAN_MIN_SHARE
-        checks.append(
-            Check(
-                "russian",
-                russian,
-                "Русская локализация",
-                "Реплики NPC на русском"
-                if russian
-                else "Реплики NPC не на русском: поставьте русскую локализацию (текст и шрифты)",
-            )
-        )
+        checks.append(_russian(_cyrillic_share(ou.read_bytes()) >= RUSSIAN_MIN_SHARE))
     return checks
+
+
+def _russian(ok: bool) -> Check:
+    return Check(
+        "russian", ok, "Русская локализация", "Реплики NPC на русском" if ok else
+        "Реплики NPC не на русском: поставьте русскую локализацию (текст и шрифты)",
+    )
+
+
+def _base_cyrillic_share(selected: base.Base) -> float:
+    """OU JSON preserves each original single-byte character as its Latin-1 code point."""
+    index = selected.json("outputunits/outputunits.json")
+    if index["format"] != "gothic-outputunits" or index["version"] != 1:
+        raise ValueError("invalid output units index")
+    source = index["server"]["ou_py"]
+    if type(source) is not int or source < 0:
+        raise ValueError("the base has no server OU library")
+    record = index["sources"][source]["record"]
+    if not isinstance(record, str) or not re.fullmatch(r"[0-9a-f]{64}", record):
+        raise ValueError("invalid output units record")
+    raw = selected.read(f"outputunits/{record}.json")
+    if index["records"][record] != hashlib.sha256(raw).hexdigest():
+        raise ValueError("output units record identity differs")
+    library = json.loads(raw)
+    if library["format"] != 1 or library["kind"] != "cutscene_library":
+        raise ValueError("invalid output units library")
+
+    def texts(value):
+        if isinstance(value, dict):
+            if value.get("class") == "oCMsgConversation":
+                yield value["text"].encode("latin1")
+            else:
+                for child in value.values():
+                    yield from texts(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from texts(child)
+
+    return _cyrillic_share(b"".join(texts(library["blocks"])))
 
 
 async def providers(config: Config, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
@@ -265,9 +358,8 @@ def _ou_file(folder: Path) -> Path | None:
     return next((p for p in d.iterdir() if p.name.lower() == "ou.bin"), None)
 
 
-def _cyrillic_share(path: Path) -> float:
+def _cyrillic_share(data: bytes) -> float:
     """cp1251 letters А-я (0xC0-0xFF) among all letters of the line library."""
-    data = path.read_bytes()
     cyrillic = sum(data.count(bytes([b])) for b in range(0xC0, 0x100))
     latin = sum(data.count(bytes([b])) for b in (*range(0x41, 0x5B), *range(0x61, 0x7B)))
     return cyrillic / max(cyrillic + latin, 1)

@@ -1,0 +1,27 @@
+{
+ "output": "~/.local/share/gothic-ai/content-staging/wall-torch-model/tiles",
+ "tiles": {
+  "own_torch_wood": {
+   "png": "~/.local/share/gothic-ai/content-sources/wall-torch-model/OWN_TORCH_WOOD-attempt-1.png",
+   "axes": "uv",
+   "roughness": 0.8,
+   "metallic": 0.0
+  },
+  "own_torch_tow": {
+   "png": "~/.local/share/gothic-ai/content-sources/wall-torch-model/OWN_TORCH_TOW-attempt-1.png",
+   "axes": "uv",
+   "roughness": 0.9,
+   "metallic": 0.0
+  },
+  "own_torch_iron": {
+   "procedural": {"base": [0.13, 0.125, 0.105], "noise": 0.3, "seed": 9, "relief": 0.5},
+   "roughness": 0.55,
+   "metallic": 1.0
+  },
+  "own_torch_pitch": {
+   "procedural": {"base": [0.012, 0.011, 0.01], "noise": 0.2, "seed": 5, "relief": 0.25},
+   "roughness": 0.3,
+   "metallic": 0.0
+  }
+ }
+}

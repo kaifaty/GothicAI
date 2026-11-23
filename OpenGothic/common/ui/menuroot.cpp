@@ -4,6 +4,7 @@
 
 #include "ui/gamemenu.h"
 #include "gothic.h"
+#include "settings.h"
 
 using namespace Tempest;
 
@@ -11,16 +12,16 @@ MenuRoot::MenuRoot(KeyCodec& keyCodec)
   :keyCodec(keyCodec) {
   setCursorShape(CursorShape::Hidden);
 
-  Gothic::inst().onSettingsChanged.bind(this,&MenuRoot::initSettings);
+  Settings::inst().onSettingsChanged.bind(this,&MenuRoot::initSettings);
   initSettings();
   }
 
 MenuRoot::~MenuRoot() {
-  Gothic::inst().onSettingsChanged.ubind(this,&MenuRoot::initSettings);
+  Settings::inst().onSettingsChanged.ubind(this,&MenuRoot::initSettings);
   }
 
 void MenuRoot::initSettings() {
-  const auto lang = Gothic::inst().settingsGetI("GAME", "language");
+  const auto lang = Settings::getI("GAME", "language");
   if(lang==vmLang && vm!=nullptr)
     return;
 

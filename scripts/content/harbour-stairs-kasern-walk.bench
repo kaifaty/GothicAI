@@ -1,0 +1,46 @@
+# The stair from the harbour up to the barracks (scripts/content/world/harbour_stairs_kasern.py): the hero walks
+# up both flights and back down along the waypoints NW_CITY_HABOUR_KASERN_06 (yard) -> 07 (landing) -> 08 (top);
+# pos logs where he ends up. Noon, NPC and effects hidden.
+cheat god
+set time 12 0
+overlay off
+view hide animated morph pfx
+cam lift off
+
+goto pos 1873 350 4605
+face wp NW_CITY_HABOUR_KASERN_07
+cam follow 300 90 200
+wait 2000
+pos
+walkmode walk
+hold forward 7500
+wait 7500
+release all
+wait 500
+pos
+shot walk-landing
+wait 300
+face wp NW_CITY_HABOUR_KASERN_08
+hold forward 6000
+wait 6000
+release all
+wait 500
+pos
+shot walk-top
+wait 300
+face wp NW_CITY_HABOUR_KASERN_07
+hold forward 6000
+wait 6000
+release all
+wait 500
+pos
+shot walk-down-landing
+wait 300
+face wp NW_CITY_HABOUR_KASERN_06
+hold forward 7500
+wait 7500
+release all
+wait 500
+pos
+shot walk-down-yard
+wait 300

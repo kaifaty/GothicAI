@@ -1,0 +1,17 @@
+# Load probe: NEWWORLD -> ADDONWORLD -> OLDWORLD -> NEWWORLD (revisit) through the native transition.
+seed 73028
+cheat god
+set time 12 0
+rec chain novideo
+world-check NEWWORLD.ZEN
+wait 3000
+world ADDONWORLD.ZEN
+world-check ADDONWORLD.ZEN
+wait 3000
+world OLDWORLD.ZEN
+world-check OLDWORLD.ZEN
+wait 3000
+world NEWWORLD.ZEN
+world-check NEWWORLD.ZEN
+wait 3000
+stop

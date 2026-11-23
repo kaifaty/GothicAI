@@ -1,15 +1,17 @@
+#include "loadprobe.h"
 #include "item.h"
+#include "graphics/inventoryrenderer.h"
+#include "graphics/mesh/protomesh.h"
 
 #include <Tempest/Log>
 #include <algorithm>
 #include <cmath>
 
 #include "game/serialize.h"
-#include "gothic.h"
-#include "game/gamescript.h"
+#include "settings.h"
+#include "game/gamerules.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "utils/versioninfo.h"
 #include "utils/fileext.h"
 #include "utils/dbgpainter.h"
 
@@ -34,61 +36,47 @@ asset::MaterialGroup physicsMaterial(int32_t material) {
 
 Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x4& initial)
   :Vob(owner) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Item);
+  LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Item,sizeof(Item));
   assert(itemInstance!=size_t(-1));
-  hitem = std::make_shared<zenkit::IItem>();
-  hitem->user_ptr=this;
-  owner.script().initializeInstanceItem(hitem, itemInstance);
+  hitem = owner.rules().createItem(*this,itemInstance,itemInstanceSymbol);
   setCount(1);
   // Mass and native inertia are fixed when physics is created. The default
   // Vob transform is zero, so establish the final pose and scale first.
   setObjMatrix(initial);
 
   if(type!=T_Inventory) {
-    visual = world.addView(*hitem);
+    const auto* residency=world.chunkResidency();
+    Resources::TextureLoadScope textureLoadScope(residency &&
+        residency->textureDistance(ChunkId::fromPosition(pos.x,pos.z))>2);
+    if(!FileExt::hasExt(hitem->visual,"ZEN")) {
+      visual.setWorldItem(*hitem,world,transform());
+      proto=visual.protoMesh();
+      }
     if(type==T_WorldDyn)
-      setPhysicsEnable(visual);
+      setPhysicsEnable(proto);
     }
   }
 
 Item::Item(World &owner, Serialize &fin, Type type)
   :Vob(owner) {
-  auto& h = hitem;
-  h = std::make_shared<zenkit::IItem>();
-  h->user_ptr = this;
-
+  hitem = owner.rules().loadItem(fin,*this,itemInstanceSymbol);
   Tempest::Matrix4x4 mat;
-
-  uint32_t instanceSymbol=0;
-  fin.read(instanceSymbol);
-
-  auto& vm = owner.script().getVm();
-  auto* sym = vm.find_symbol_by_index(instanceSymbol);
-
-  if (sym != nullptr) {
-    vm.allocate_instance(h, sym);
-    } else {
-    Tempest::Log::e("Loading unknown item from save: " , instanceSymbol);
-    }
-
-  fin.read(h->id,h->name,h->name_id,h->hp,h->hp_max,h->main_flag);
-  fin.read(reinterpret_cast<int&>(h->flags),h->weight,h->value,h->damage_type,h->damage_total,h->damage);
-  fin.read(h->wear,h->protection,h->nutrition,h->cond_atr,h->cond_value,h->change_atr,h->change_value,h->magic);
-  fin.read(h->on_equip,h->on_unequip,h->on_state);
-  fin.read(h->owner,h->owner_guild,h->disguise_guild,h->visual,h->visual_change);
-  fin.read(h->effect,h->visual_skin,h->scheme_name,h->material);
-  fin.read(h->munition,h->spell,h->range,h->mag_circle);
-  fin.read(h->description,h->text,h->count);
-  fin.read(h->inv_zbias,h->inv_rot_x,h->inv_rot_y,h->inv_rot_z,h->inv_animate);
   fin.read(amount);
   fin.read(pos,equipped,itSlot);
   fin.read(mat);
   setLocalTransform(mat);
 
   if(type!=T_Inventory) {
-    if(!FileExt::hasExt(hitem->visual,"ZEN"))
-      visual = world.addView(*hitem);
+    const auto* residency=world.chunkResidency();
+    Resources::TextureLoadScope textureLoadScope(residency &&
+        residency->textureDistance(ChunkId::fromPosition(pos.x,pos.z))>2);
+    if(!FileExt::hasExt(hitem->visual,"ZEN")) {
+      visual.setWorldItem(*hitem,world,transform());
+      proto=visual.protoMesh();
+      }
     if(type==T_WorldDyn)
-      setPhysicsEnable(visual);
+      setPhysicsEnable(proto);
     }
 
   visual.setObjMatrix(mat);
@@ -96,9 +84,10 @@ Item::Item(World &owner, Serialize &fin, Type type)
   }
 
 Item::Item(Item &&it)
-  : Vob(it.world), hitem(std::move(it.hitem)),
-    pos(it.pos),amount(it.amount),equipped(it.equipped),itSlot(it.itSlot),visual(std::move(it.visual)) {
-  hitem->user_ptr=this;
+  : Vob(it.world), hitem(std::move(it.hitem)),itemInstanceSymbol(it.itemInstanceSymbol),
+    pos(it.pos),amount(it.amount),equipped(it.equipped),itSlot(it.itSlot),
+    placedZenId(it.placedZenId),placedAllowed(it.placedAllowed),proto(it.proto),visual(std::move(it.visual)) {
+  world.rules().attachItem(hitem,*this);
   setLocalTransform(it.localTransform());
   physic = std::move(it.physic);
   if(!physic.isEmpty())
@@ -110,8 +99,8 @@ Item::~Item() {
 
 void Item::drawVobBox(DbgPainter& p) const {
   p.setPen(Tempest::Color(1,0,0));
-  if(auto mesh = visual.protoMesh()) {
-    p.drawObb(transform(), mesh->bbox());
+  if(proto!=nullptr) {
+    p.drawObb(transform(), proto->bbox());
 
     auto v = midPosition();
     p.setPen(Tempest::Color(0,1,0));
@@ -141,17 +130,7 @@ void Item::drawVobRay(DbgPainter& p, const Npc& npc) const {
   }
 
 void Item::save(Serialize &fout) const {
-  auto& h = *hitem;
-  fout.write(uint32_t(h.symbol_index()));
-  fout.write(h.id,h.name,h.name_id,h.hp,h.hp_max,h.main_flag);
-  fout.write(reinterpret_cast<int&>(h.flags),h.weight,h.value,h.damage_type,h.damage_total,h.damage);
-  fout.write(h.wear,h.protection,h.nutrition,h.cond_atr,h.cond_value,h.change_atr,h.change_value,h.magic);
-  fout.write(h.on_equip,h.on_unequip,h.on_state);
-  fout.write(h.owner,h.owner_guild,h.disguise_guild,h.visual,h.visual_change);
-  fout.write(h.effect,h.visual_skin,h.scheme_name,h.material);
-  fout.write(h.munition,h.spell,h.range,h.mag_circle);
-  fout.write(h.description,h.text,h.count);
-  fout.write(h.inv_zbias,h.inv_rot_x,h.inv_rot_y,h.inv_rot_z,h.inv_animate);
+  fout.write(uint32_t(clsId()),*hitem);
   fout.write(amount);
   fout.write(pos,equipped,itSlot);
   fout.write(localTransform());
@@ -171,7 +150,7 @@ void Item::restorePhysics(const Tempest::Matrix4x4& matrix, const Tempest::Vec3&
   }
 
 void Item::clearView() {
-  visual = MeshObjects::Mesh();
+  visual = ObjVisual();
   }
 
 bool Item::isTorchBurn() const {
@@ -192,6 +171,7 @@ void Item::setObjMatrix(const Tempest::Matrix4x4 &m) {
   pos.z = m.at(3,2);
   setLocalTransform(m);
   visual.setObjMatrix(m);
+  visual.setTextureOwner(pos,true);
   }
 
 void Item::setPhysicsMatrix(const Tempest::Matrix4x4& m) {
@@ -203,6 +183,7 @@ void Item::setPhysicsMatrix(const Tempest::Matrix4x4& m) {
   // on rounding differences, keeping the whole floating contact island awake.
   setGlobalTransform(m);
   visual.setObjMatrix(m);
+  visual.setTextureOwner(pos,true);
   }
 
 bool Item::isMission() const {
@@ -220,8 +201,14 @@ void Item::setAsEquipped(bool e) {
     itSlot=NSLOT;
   }
 
+const ProtoMesh* Item::physicsProto() {
+  if(proto==nullptr && !FileExt::hasExt(hitem->visual,"ZEN"))
+    proto=Resources::loadMesh(hitem->visual);
+  return proto;
+  }
+
 void Item::setPhysicsEnable(World& world) {
-  setPhysicsEnable(visual);
+  setPhysicsEnable(physicsProto());
   world.invalidateVobIndex();
   }
 
@@ -230,21 +217,40 @@ void Item::setPhysicsDisable() {
   world.invalidateVobIndex();
   }
 
-void Item::setPhysicsEnable(const MeshObjects::Mesh& view) {
-  if(view.nodesCount()==0)
-    return;
-  auto& p = *world.physic();
-  physic = p.addDynamicObj(transform(),view.bounds(),physicsMaterial(hitem->material));
-  physic.setItem(this);
+bool Item::wakePhysics() {
+  if(Settings::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return false;
+  const bool missing = !isDynamic();
+  if(missing) {
+    setPhysicsEnable(world);
+    if(!isDynamic())
+      return false;
+    physic.restorePhysics(transform(),true);
+    }
+  physic.retainForItemWake();
+  return missing;
+  }
+
+bool Item::activatePhysics() {
+  if(Settings::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return false;
+  wakePhysics();
+  if(!isDynamic())
+    return false;
+  physic.restorePhysics(transform(),false);
+  return true;
   }
 
 void Item::setPhysicsEnable(const ProtoMesh* mesh) {
+  if(Settings::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return;
   if(mesh==nullptr)
     return;
   auto& p = *world.physic();
   Bounds b;
   b.assign(mesh->bboxMesh);
-  physic = p.addDynamicObj(transform(),b,physicsMaterial(hitem->material));
+  physic = p.addDynamicObj(transform(),b,physicsMaterial(hitem->material),
+                           mesh,hitem->visual,Settings::physicsFlags().itemHulls);
   physic.setItem(this);
   }
 
@@ -286,14 +292,14 @@ Tempest::Vec3 Item::position() const {
   }
 
 const Vec3* Item::bBox() const {
-  if(visual.protoMesh()==nullptr)
+  if(proto==nullptr)
     return nullptr;
-  return visual.protoMesh()->bbox();
+  return proto->bbox();
   }
 
 Vec3 Item::midPosition() const {
-  if(auto mesh = visual.protoMesh())  {
-    auto bbox = mesh->bbox();
+  if(proto!=nullptr) {
+    auto bbox = proto->bbox();
     auto v    = (bbox[0] + bbox[1])*0.5;
     transform().project(v); // doesn't use to work for Karibik mod
     return v;
@@ -302,7 +308,7 @@ Vec3 Item::midPosition() const {
   }
 
 bool Item::isGold() const {
-  return hitem->symbol_index()==world.script().goldId()->index();
+  return itemInstanceSymbol==world.rules().goldItemId();
   }
 
 ItmFlags Item::mainFlag() const {
@@ -318,16 +324,9 @@ bool Item::isMulti() const {
   }
 
 bool Item::isSpellShoot() const {
-  // Whether a spell is a projectile is hardcoded in vanilla, see
-  // https://forum.worldofplayers.de/forum/threads/1460092-Stuck-in-a-charge-spell/page2?p=24786462&viewfull=1#post24786462
-  // Only hardcode Stormfist for now since other spells work with the heuristic based on target_collect_algo
   if(!isSpellOrRune())
     return false;
-  bool          g1            = world.version().game==1;
-  const int32_t SPL_STORMFIST = 47;
-  if(g1 && spellId()==SPL_STORMFIST)
-    return true;
-  auto& spl = world.script().spellDesc(spellId());
+  auto& spl = world.rules().spellDesc(spellId());
   return spl.target_collect_algo!=TargetCollect::TARGET_COLLECT_NONE &&
          spl.target_collect_algo!=TargetCollect::TARGET_COLLECT_CASTER &&
          spl.target_collect_algo!=TargetCollect::TARGET_COLLECT_FOCUS &&
@@ -397,7 +396,7 @@ int32_t Item::cost() const {
   }
 
 int32_t Item::sellCost() const {
-  return int32_t(std::ceil(world.script().tradeValueMultiplier()*float(cost())));
+  return int32_t(std::ceil(world.rules().tradeValueMultiplier()*float(cost())));
   }
 
 bool Item::checkCond(const Npc &other) const {
@@ -406,7 +405,7 @@ bool Item::checkCond(const Npc &other) const {
   }
 
 bool Item::checkCondUse(const Npc &other, int32_t &a, int32_t &nv) const {
-  for(size_t i=0;i<zenkit::IItem::condition_count;++i){
+  for(size_t i=0;i<ItemRecord::condition_count;++i){
     auto atr = Attribute(hitem->cond_atr[i]);
     if(other.attribute(atr)<hitem->cond_value[i] && hitem->cond_value[i]!=0) {
       a  = atr;
@@ -424,7 +423,7 @@ bool Item::checkCondRune(const Npc &other, int32_t &cPl, int32_t &cIt) const {
   }
 
 size_t Item::clsId() const {
-  return hitem->symbol_index();
+  return itemInstanceSymbol;
   }
 
 void Item::updateMatrix() {
@@ -436,7 +435,115 @@ void Item::updateMatrix() {
 
 void Item::moveEvent() {
   visual.setObjMatrix(transform());
+  visual.setTextureOwner(pos,true);
   physic.setObjMatrix(transform());
   if(!isDynamic())
     world.invalidateVobIndex();
+  }
+
+void Item::drawInventory(InventoryRenderer& renderer, int x, int y, int w, int h) const {
+  auto& itData = handle();
+  if(auto mesh = Resources::loadMesh(itData.visual)) {
+    auto     bbox = mesh->bbox();
+    float    sz   = (bbox[1]-bbox[0]).length();
+    auto     mv   = (bbox[1]+bbox[0])*0.5f;
+    ItmFlags flg  = ItmFlags(mainFlag());
+
+    mv = Vec3(mv.x,mv.y,mv.z);
+
+    sz = 2.f/sz;
+    if(sz>0.1f)
+      sz=0.1f;
+
+    Tempest::Matrix4x4 mat;
+    mat.identity();
+
+    float rotx = float(itData.inv_rot_x);
+    float roty = float(itData.inv_rot_y);
+    float rotz = float(itData.inv_rot_z);
+
+    if(flg&(ITM_CAT_NF | ITM_CAT_FF | ITM_CAT_MUN)) {
+      static const float invX = -45;
+      static const float invY = 0;
+      static const float invZ = 90;
+      mat.rotateOX(invX+rotx);
+      mat.rotateOZ(invZ+rotz);
+      mat.rotateOY(invY+roty);
+      }
+    else if(flg&ITM_CAT_ARMOR) {
+      static const float invX = 0;
+      static const float invY = -90;
+      static const float invZ = 180;
+      mat.rotateOX(invX+rotx);
+      mat.rotateOZ(invZ+rotz);
+      mat.rotateOY(invY+roty);
+      }
+    else if(flg&ITM_CAT_RUNE) {
+      static const float invX = 90;
+      static const float invY = 0;
+      static const float invZ = 90;
+      mat.rotateOX(invX+rotx);
+      mat.rotateOZ(invZ+rotz);
+      mat.rotateOY(invY+roty);
+      }
+    else if((flg&ITM_CAT_MAGIC) || (ItmFlags(itData.flags)&ITM_RING)) {
+      static const float invX = 200;
+      static const float invY = 0;
+      static const float invZ = 90;
+      mat.rotateOX(invX+rotx);
+      mat.rotateOZ(invZ+rotz);
+      mat.rotateOY(invY+roty);
+      }
+    else if(flg&ITM_CAT_POTION) {
+      static const float invX = 180;
+      static const float invY = 0;
+      static const float invZ = 0;
+      mat.rotateOX(invX+rotx);
+      mat.rotateOZ(invZ+rotz);
+      mat.rotateOY(invY+roty);
+      }
+    else if(flg&ITM_CAT_FOOD) {
+      static const float invX = 180;
+      static const float invY = 0;
+      static const float invZ = 45;
+      mat.rotateOX(invX+rotx);
+      mat.rotateOZ(invZ+rotz);
+      mat.rotateOY(invY+roty);
+      }
+    else if(flg&ITM_CAT_DOCS) {
+      static const float invX = 180;
+      static const float invY = 90;
+      static const float invZ = -90;
+      mat.rotateOX(invX);
+      mat.rotateOZ(invZ);
+      mat.rotateOY(invY);
+      }
+    else if(flg&ITM_CAT_NONE) {
+      static float invXa = 135;
+      static float invYa = 90;
+      static float invZa = 45;
+      //invXa++;
+      mat.rotateOX(invXa-rotx);
+      mat.rotateOZ(invZa-rotz);
+      mat.rotateOY(invYa-roty);
+      } else {
+      static const float invX = 180;
+      static const float invY = -90;
+      static const float invZ = -90;
+      mat.rotateOX(invX+rotx);
+      mat.rotateOZ(invZ+rotz);
+      mat.rotateOY(invY+roty);
+      }
+
+    for(int i=0; i<3; ++i){
+      auto trX = mat.at(i,0);
+      auto trY = mat.at(i,2);
+      mat.set(i,0,trY);
+      mat.set(i,2,trX);
+      }
+    mat.scale(sz);
+    mat.translate(-mv);
+
+    renderer.drawItem(x,y,w,h,*mesh,itData.material,mat);
+    }
   }

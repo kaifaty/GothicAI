@@ -69,6 +69,31 @@ export type SpeechResult = { text: string; provider: string; first_chunk_s: numb
 
 export type ServiceEvent = { proc: string; kind: string; detail: string; data: Health | null };
 
+/** One commit the personal Ryzen install is missing: a merged PR or a direct commit to main. */
+export type UpdateChange = { pr: number | null; title: string };
+
+/** The personal Ryzen install against origin/main (`scripts/ryzen-play.sh __status`), null elsewhere. */
+export type Update = {
+  current: boolean;
+  behind: number;
+  built: boolean;
+  latest_failed: boolean;
+  head: string;
+  target: string;
+  changes: UpdateChange[];
+  /** The last automatic update run, as ~/gothic-ai/play-update.json has it. */
+  report: { time: string; result: string; error?: string } | null;
+  /** The automatic update unit is installed: the window can run it. */
+  auto: boolean;
+  updating: {
+    state: "running" | "finished";
+    detail: string;
+    started: number;
+    result: string | null;
+    error: string | null;
+  } | null;
+};
+
 export type State = {
   configured: boolean;
   problems: string[];
@@ -79,6 +104,7 @@ export type State = {
   session: Session | null;
   journal: JournalEntry[];
   paths: { config: string; logs: string; game_home: string };
+  update?: Update | null;
 };
 
 export type CoreMessage =
@@ -87,6 +113,7 @@ export type CoreMessage =
   | { event: "service"; data: ServiceEvent }
   | { event: "journal"; data: JournalEntry }
   | { event: "voice_test"; data: { level?: number; partial?: string } }
+  | { event: "update"; data: Update | null }
   | { event: "core_exit"; data: Record<string, never> }
   | { event: "error"; data: { detail: string } };
 
@@ -103,6 +130,8 @@ export const toMenuBar = () => invoke("to_menu_bar");
 export const showWindow = () => invoke("show_window");
 /** Stops the game and the services and quits (after the player confirmed `quit_requested`). */
 export const quitApp = () => invoke("quit_app");
+/** Starts the launcher again from its (rebuilt) binary, after the core finished an update. */
+export const restartApp = () => invoke("restart_app");
 /** Quitting while the game runs: the window asks first. */
 export const onQuitRequested = (handler: () => void) => listen("quit_requested", handler);
 export const reveal = (path: string) => invoke("reveal", { path });

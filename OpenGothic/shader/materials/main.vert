@@ -13,8 +13,22 @@
 
 #if !defined(GL_VERTEX_SHADER)
 #extension GL_EXT_mesh_shader : enable
+#endif
+#if defined(TREE_BOUGH_CARDS)
+#include "tree_bough_cards.glsl"
+#elif !defined(GL_VERTEX_SHADER)
 layout(local_size_x = 64) in;
 layout(triangles, max_vertices = MaxVert, max_primitives = MaxPrim) out;
+#endif
+#if defined(TREE_BOUGH_JOINT)
+#include "tree_bough_dissolve.glsl"
+#endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY) && defined(GL_VERTEX_SHADER)
+layout(location = 9) out vec2 boughBandCellOut;
+layout(location = 10) flat out uvec2 boughBandOut;
+#elif defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+layout(location = 9) out vec2 boughBandCellOut[];
+layout(location = 10) flat out uvec2 boughBandOut[];
 #endif
 
 #if defined(VIRTUAL_SHADOW)
@@ -28,18 +42,41 @@ layout(push_constant, std430) uniform Push {
   } push;
 #endif
 
+#if defined(VIRTUAL_SHADOW)
+// the four planes of the page's rect; objects have a fifth on a lamp's faces: the fixture plane (processVertexVsm)
+#if defined(LVL_OBJECT)
+#define VSM_CLIP_COUNT 5
+#else
+#define VSM_CLIP_COUNT 4
+#endif
+#endif
+
+// These passes share the main depth buffer. Keep their position invariant
+// across specializations with and without material and motion varyings.
+#if defined(GBUFFER_MOTION) || defined(LANDSCAPE_GBUFFER) || defined(HIZ_OCCLUDER) || defined(HISTORY_PAYLOAD)
+#define INVARIANT_MAIN_POSITION
+#endif
+
 #if defined(GL_VERTEX_SHADER)
 out gl_PerVertex {
+#if defined(INVARIANT_MAIN_POSITION)
+  invariant vec4 gl_Position;
+#else
   vec4  gl_Position;
+#endif
 #if defined(VIRTUAL_SHADOW)
-  float gl_ClipDistance[4];
+  float gl_ClipDistance[VSM_CLIP_COUNT];
 #endif
   };
 #else
 out gl_MeshPerVertexEXT {
+#if defined(INVARIANT_MAIN_POSITION)
+  invariant vec4 gl_Position;
+#else
   vec4  gl_Position;
+#endif
 #if defined(VIRTUAL_SHADOW)
-  float gl_ClipDistance[4];
+  float gl_ClipDistance[VSM_CLIP_COUNT];
 #endif
   } gl_MeshVerticesEXT[];
 #endif
@@ -60,6 +97,15 @@ layout(location = 3) out flat uint vsmMipIdOut[];
 
 #if defined(VIRTUAL_SHADOW)
 uint shadowPageId = 0;
+#endif
+
+#if defined(VIRTUAL_SHADOW) && !defined(GL_VERTEX_SHADER)
+// the meshlet's vertices in clip space (x, y, w): the facing of its triangles (meshShader)
+shared vec3 vsmClip[MaxVert];
+#if defined(ATEST) && (MESH_TYPE==T_OBJ)
+#define SUN_CROWN_PAGE_CULL
+shared uint vsmOutside[MaxVert];
+#endif
 #endif
 
 #if defined(VIRTUAL_SHADOW)
@@ -114,24 +160,55 @@ vec4 mapViewport(vec4 pos, out float clipDistance[4]) {
   }
 
 vec4 processVertexVsm(out Varyings var, const Vertex vert, const uint bucketId, uint instanceId, const uint vboOffset, const uint laneID) {
-  const vec3 wpos = processVertexCommon(var, vert, bucketId, instanceId, vboOffset);
+  vec3       wpos = processVertexCommon(var, vert, bucketId, instanceId, vboOffset);
   const uint data = vsm.pageList[shadowPageId];
+#if (MESH_TYPE==T_OBJ)
+  if(strandVx.halfWidth>0.0) {
+    // a ribbon faces the light of its page
+    const vec3 toLight = vsmPageIsOmni(data) ? normalize(lights[unpackLightId(data).x].pos - wpos) : scene.sunDir;
+    if(!strandShadowRibbon(var, wpos, toLight))
+      wpos = vec3(uintBitsToFloat(0x7fc00000));
+    }
+#endif
 
-  vec4 pos4;
+  vec4  pos4;
+  float fixture = 1.0;
   if(vsmPageIsOmni(data)) {
     const uvec2       page = unpackLightId(data);
     const LightSource lx   = lights[page.x];
     const vec3        pos  = vsmMapDirToFace((wpos - lx.pos)/lx.range, page.y);
 
     pos4 = vsmApplyProjective(pos);
+    // a lamp's own fixture (a brazier's basket, a lantern's frame, a candle holder) casts no shadow of its light:
+    // an object's part nearer than scene.vsmLampNear to the light along the face's axis is clipped away here, so the
+    // face keeps what stands behind it. Left out at the lookup instead, it took the wall behind it out of the map
+    // too, and the light passed the planks of a hut (reports/render-features/2026-11-10-lamp-wall-leak). The world
+    // mesh is never a fixture: it keeps the projection's near plane alone
+    fixture = pos.z - scene.vsmLampNear/lx.range;
     } else {
     pos4 = scene.viewProject*vec4(wpos,1.0);
     }
-#if defined(GL_VERTEX_SHADER)
-  return mapViewport(pos4, gl_ClipDistance);
-#else
-  return mapViewport(pos4, gl_MeshVerticesEXT[laneID].gl_ClipDistance);
+
+  float clip[4];
+  pos4 = mapViewport(pos4, clip);
+#if defined(SUN_CROWN_PAGE_CULL)
+  vsmOutside[laneID] = (clip[0]<0.0 ? 1u : 0u) | (clip[1]<0.0 ? 2u : 0u) |
+                       (clip[2]<0.0 ? 4u : 0u) | (clip[3]<0.0 ? 8u : 0u);
 #endif
+#if defined(GL_VERTEX_SHADER)
+  [[unroll]] for(int i=0; i<4; ++i)
+    gl_ClipDistance[i] = clip[i];
+#if VSM_CLIP_COUNT>4
+  gl_ClipDistance[4] = fixture;
+#endif
+#else
+  [[unroll]] for(int i=0; i<4; ++i)
+    gl_MeshVerticesEXT[laneID].gl_ClipDistance[i] = clip[i];
+#if VSM_CLIP_COUNT>4
+  gl_MeshVerticesEXT[laneID].gl_ClipDistance[4] = fixture;
+#endif
+#endif
+  return pos4;
   }
 #endif
 
@@ -141,6 +218,28 @@ void initVsm(uvec4 task) {
   }
 #endif
 
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+// The shadow side of a level band (tree_bough_dissolve.glsl): the instance's word and seed, and the vertex's cell
+// across the light of the view: the sun, or a lamp of the virtual shadow map's page
+uvec2 boughBandShadow(uint instanceId, uint bucketId, vec3 pos, out vec2 cell) {
+  const Instance obj  = pullInstance(instanceId);
+  const uint     word = boughBandWord(obj);
+  cell = vec2(0);
+  if(!boughBandActive(word))
+    return uvec2(0);
+  vec3 toLight = scene.sunDir;
+#if defined(VIRTUAL_SHADOW)
+  const uint data = vsm.pageList[shadowPageId];
+  if(vsmPageIsOmni(data))
+    toLight = normalize(lights[unpackLightId(data).x].pos - obj.mat[3]);
+#endif
+  const float height = (bucket[bucketId].bbox[1].y - bucket[bucketId].bbox[0].y)*length(obj.mat[1]);
+  cell = boughBandShadowCell(pos, obj.mat[3], toLight, height);
+  return uvec2(word, boughJointSeed(obj.mat[3]));
+  }
+#endif
+
+#if !defined(TREE_BOUGH_CARDS)
 uvec2 processMeshlet(const uint meshletId, const uint bucketId) {
 #if defined(BINDLESS)
   nonuniformEXT uint bId = bucketId;
@@ -182,9 +281,14 @@ uvec3 processPrimitive(const uint meshletId, const uint bucketId, const uint out
   prim.z = ((bits >> 16) & 0xFF);
   return prim;
   }
+#endif
 
 vec4  processVertex(out Varyings var, uint instanceOffset, const uint meshletId, const uint bucketId, const uint laneID) {
+#if defined(TREE_BOUGH_CARDS)
+  const uint vboOffset = boughFirstVertex(meshletId, bucketId) + laneID;
+#else
   const uint vboOffset = meshletId * MaxVert + laneID;
+#endif
 #if (MESH_TYPE==T_PFX)
   const Vertex vert = pullVertex(instanceOffset);
 #else
@@ -197,8 +301,10 @@ vec4  processVertex(out Varyings var, uint instanceOffset, const uint meshletId,
 #endif
   }
 
-#if defined(GL_VERTEX_SHADER)
-void vertexShader(const uvec4 task) {
+#if defined(GL_VERTEX_SHADER) && defined(TREE_BOUGH_CARDS)
+#include "tree_bough_vertex.glsl"
+#elif defined(GL_VERTEX_SHADER)
+void vertexShader(const uvec4 task, const uint materialRef) {
   const uint  instanceId = task.x;
   const uint  meshletId  = task.y;
   const uint  bucketId   = task.z;
@@ -209,14 +315,13 @@ void vertexShader(const uvec4 task) {
 
   const uint  laneID     = gl_VertexIndex/3;
   if(laneID>=primCount) {
-    gl_Position = vec4(uintBitsToFloat(0x7fc00000));
+    gl_Position = MeshletPaddingPosition;
     return;
     }
 
 #if defined(MAT_VARYINGS)
-  bucketIdOut = bucketId;
+  bucketIdOut = materialRef;
 #endif
-
   Varyings var;
   uint idx = processPrimitive(meshletId, bucketId, laneID)[gl_VertexIndex%3];
   vec4 pos = processVertex(var, instanceId, meshletId, bucketId, idx);
@@ -224,13 +329,16 @@ void vertexShader(const uvec4 task) {
 #if defined(MAT_VARYINGS)
   shOut       = var;
 #endif
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+  boughBandOut = boughBandShadow(instanceId, bucketId, var.pos, boughBandCellOut);
+#endif
   }
-#else
-void meshShader(const uvec4 task) {
+#elif !defined(TREE_BOUGH_CARDS)
+void meshShader(const uvec4 task, const uint materialRef) {
   const uint  instanceId = task.x;
   const uint  meshletId  = task.y;
-  const uint  bucketId   = task.z;
 
+  const uint  bucketId   = task.z;
   const uvec2 mesh       = processMeshlet(meshletId, bucketId);
   const uint  vertCount  = mesh.x;
   const uint  primCount  = mesh.y;
@@ -240,44 +348,70 @@ void meshShader(const uvec4 task) {
   // Alloc outputs
   SetMeshOutputsEXT(vertCount, primCount);
 
-#if defined(MAT_VARYINGS)
-  bucketIdOut[laneID] = bucketId;
-#endif
-
   Varyings var;
-  if(laneID<primCount)
-    gl_PrimitiveTriangleIndicesEXT[laneID] = processPrimitive(meshletId, bucketId, laneID);
+  uvec3 prim = uvec3(0);
+  if(laneID<primCount) {
+    prim = processPrimitive(meshletId, bucketId, laneID);
+    gl_PrimitiveTriangleIndicesEXT[laneID] = prim;
+    }
   if(laneID<vertCount) {
+#if defined(MAT_VARYINGS)
+    bucketIdOut[laneID] = materialRef;
+#endif
     vec4 pos = processVertex(var, instanceId, meshletId, bucketId, laneID);
     gl_MeshVerticesEXT[laneID].gl_Position = pos;
+#if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
+    vec2 bandCell;
+    boughBandOut[laneID] = boughBandShadow(instanceId, bucketId, var.pos, bandCell);
+    boughBandCellOut[laneID] = bandCell;
+#endif
+#if defined(VIRTUAL_SHADOW)
+    vsmClip[laneID] = pos.xyw;
+#endif
 
-    /*
-        Workaround the AMD driver issue where assigning to a vec3 output results in a driver crash.
-        Here we unroll the shOut[laneID] = var assignment into individual fields and apply the workaround.
-        Once AMD fixes the issue the original code can be restored.
-        Original code: 
-            #if defined(MAT_VARYINGS)
-                shOut[laneID] = var;
-            #endif
-        Link to the discussion on AMD forums: https://community.amd.com/t5/newcomers-start-here/driver-crash-when-using-vk-ext-mesh-shader/m-p/667490
-        Link to the github issue: https://github.com/Try/OpenGothic/issues/577
-    */
-#if defined(MAT_COLOR)
-    shOut[laneID].color = var.color;
+#include "mesh_varyings.glsl"
+    }
+
+#if defined(VIRTUAL_SHADOW)
+  // The pipeline draws both sides here (Shaders::materialPipeline); the culling it did is done per primitive. A sun
+  // page keeps the side to the sun, as the rest of the frame does. A lamp's cube face is mirrored against the camera,
+  // so the pipeline's culling kept only the side away from the light, and a one-sided surface lit by the lamp (a floor
+  // without an underside, a wall of one layer) was missing from it: the light passed it. A lamp's face keeps both sides
+  // of the world mesh (scene.vsmLampSides 2) and of objects too (3, the default): a carpet lit by a hearth, a fireplace's
+  // hood, a net on a wall are one-sided as well (reports/render-features/2026-11-10-lamp-one-sided,
+  // reports/render-features/2026-11-11-lamp-objects-two-sided). One page per workgroup: the branch is uniform.
+  barrier();
+  if(laneID<primCount) {
+    const bool omni = vsmPageIsOmni(vsm.pageList[shadowPageId]);
+    // the sign of the homogeneous determinant is the facing as rasterized, also for a triangle cut by w=0; Tempest's
+    // front face is clockwise, CullMode::Front culled a positive one
+    const float det = dot(vsmClip[prim.x], cross(vsmClip[prim.y], vsmClip[prim.z]));
+#if defined(LVL_OBJECT)
+    const bool twoSided = scene.vsmLampSides>=3u;
+#else
+    const bool twoSided = scene.vsmLampSides>=2u;
 #endif
-#if defined(MAT_UV)
-    shOut[laneID].uv = var.uv;
+#if (MESH_TYPE==T_OBJ)
+    // a material of two sides (materials.json "two_sided") is in every page with both, as its pipelines draw it
+    const bool bothSides = (bucket[bucketId].flags & BK_TWO_SIDED)!=0u;
+#else
+    const bool bothSides = false;
 #endif
-#if defined(MAT_POSITION)
-    shOut[laneID].pos.xyz = var.pos; // pos is vec3, applying the workaround
-#endif
-#if defined(MAT_NORMAL)
-    shOut[laneID].normal.xyz = var.normal; // normal is vec3, applying the workaround
+    gl_MeshPrimitivesEXT[laneID].gl_CullPrimitiveEXT = det>0.0 && (!omni || !twoSided) && !bothSides;
+#if defined(SUN_CROWN_PAGE_CULL)
+    // All three vertices must lie strictly outside the same edge of the page.
+    if(!omni && (bucket[bucketId].flags & BK_CROWN)!=0u &&
+       (vsmOutside[prim.x] & vsmOutside[prim.y] & vsmOutside[prim.z])!=0u)
+      gl_MeshPrimitivesEXT[laneID].gl_CullPrimitiveEXT = true;
 #endif
     }
+#endif
   }
 #endif
 
+#if defined(TREE_BOUGH_CARDS) && !defined(GL_VERTEX_SHADER)
+#include "tree_bough_mesh.glsl"
+#else
 void main() {
 #if defined(GL_VERTEX_SHADER)
   const uint workIndex = gl_InstanceIndex;
@@ -291,15 +425,46 @@ void main() {
   const uint firstMeshlet = push.firstMeshlet;
 #endif
 
-  const uvec4 task = payload[workIndex + firstMeshlet];
+  const uint payloadId = workIndex + firstMeshlet;
+  const uvec4 task     = payload[payloadId];
+#if defined(TREE_BOUGH_CARDS)
+  const uint materialRef = boughBucket(task);
+#elif defined(HISTORY_PAYLOAD)
+  // Both history phases use this same vertex shader and carry the unchanged payload index.
+#if defined(TREE_BOUGH_JOINT)
+  uint materialRef = payloadId;
+#else
+  const uint materialRef = payloadId;
+#endif
+#else
+  uint materialRef     = task.z;
+#if defined(MAT_CLUSTER_LEVEL)
+  materialRef |= task.w << 16u;
+#endif
+#if defined(MAT_MOTION) || (MESH_TYPE==T_LANDSCAPE && defined(MAT_CLUSTER_LEVEL))
+  // The probe uses the existing flat output to recover both the bucket and cluster.
+  if((scene.viewFlags & VF_TREE_OCCLUSION_PROBE)!=0u)
+    materialRef = payloadId;
+#endif
+#endif
+
+#if defined(TREE_BOUGH_JOINT) && !defined(DEPTH_ONLY)
+  {
+    // the impostor joint or a level band: the fragment stage masks the instance's side
+    const Instance obj = pullInstance(task.x);
+    if((obj.animPtr & BoughJointTag)!=0u || boughBandActive(boughBandWord(obj)))
+      materialRef = payloadId | BoughJointTag;
+  }
+#endif
 
 #if defined(VIRTUAL_SHADOW)
   initVsm(task);
 #endif
 
 #if defined(GL_VERTEX_SHADER)
-  vertexShader(task);
+  vertexShader(task, materialRef);
 #else
-  meshShader(task);
+  meshShader(task, materialRef);
 #endif
   }
+#endif

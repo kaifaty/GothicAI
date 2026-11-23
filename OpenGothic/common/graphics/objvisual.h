@@ -4,29 +4,39 @@
 #include "world/objects/vobbundle.h"
 #include "physics/physicmesh.h"
 #include "graphics/mdlvisual.h"
+#include "graphics/streamedvisual.h"
 
 class Npc;
 class World;
 class ClothVisual;
+class WorldView;
+struct ItemRecord;
 
-class ObjVisual {
+class ObjVisual : public StreamedVisual {
   public:
+    size_t probePhysicsBytes() const override;
+
     ObjVisual();
     ObjVisual(ObjVisual&& other);
     ObjVisual& operator = (ObjVisual&& other);
-    ~ObjVisual();
+    ~ObjVisual() override;
 
     void save(Serialize& fout, const Interactive& mob) const;
     void load(Serialize& fin,  Interactive &mob);
 
-    void setVisual(const zenkit::IItem& visual, World& world, bool staticDraw);
+    // an item held (the burning torch in a hand): a bundle, else its view (graphics/itemview), its mesh with its effect
+    void setVisual(const ItemRecord& item, World& world, bool staticDraw);
+    // an item lying in the world: its view (graphics/itemview), its mesh with its effect, streamed with its chunk
+    void setWorldItem(const ItemRecord& item, World& world, const Tempest::Matrix4x4& matrix);
     void setVisual(const asset::VirtualObject& visual, World& world, bool staticDraw, bool enablePhysics = true);
     void setObjMatrix(const Tempest::Matrix4x4& obj);
+    // MeshObjects::Mesh::setTextureOwner of its view: how far it may move before a call can change its demand
+    float setTextureOwner(const Tempest::Vec3& position, bool spatial);
     // Preload the cached cut surfaces and their draw instances before impacts.
     void setupFracture(World& world, DynamicWorld::Item& body);
     bool renderPosition(Tempest::Vec3& out) const;
 
-    void setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot);
+    void setSlotItem(ItemView&& itm, std::string_view slot);
 
     void setInteractive(Interactive* it);
 
@@ -34,6 +44,7 @@ class ObjVisual {
     bool hasAnim(std::string_view name) const;
 
     bool updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint64_t dt, bool force);
+    void stopLoopedEffects(); // MdlVisual::stopLoopedEffects
     void processLayers(World& world);
     void syncPhysics();
 
@@ -54,12 +65,19 @@ class ObjVisual {
       PhysicMesh       physic;
       MdlVisual        view;
       const ProtoMesh* proto = nullptr;
+      bool staticBody = false;
+      bool published = false;
       };
 
     struct Mesh {
       PhysicMesh        physic;
       MeshObjects::Mesh view;
       const ProtoMesh*  proto = nullptr;
+      asset::AnimationType windMode = asset::AnimationType::NONE;
+      float windStrength = 0;
+      bool published = false;
+      bool worldItem = false;
+      ItemView item;  // worldItem: the item's view in place of view
       };
 
     union {
@@ -77,5 +95,12 @@ class ObjVisual {
 
     void cleanup();
     void setType(Type t);
+    void createView() override;
+    void releaseView() override;
+    bool isViewPublished() const override;
+    bool isViewMissing() const override;
+    size_t viewNodesCount() const override;
+    friend struct MeshGltfTest;
+    friend struct NpcDefinitionContract;
   };
 

@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING, Any
 
 from .. import triggers
 from ..game import GameLink
-from ..llm.fake import FakeBackend
 from ..npc_will import OWNER_NEAR_CM, ROUTINE_CM, SIMULATION_CM
 from ..protocol import GameMessage, NpcActCmd, NpcActResult, NpcDeed, NpcIdle, Session
 from .common import (
     HILDA,
     LOBART,
     VINO,
+    SharedBodyWatch,
     _logged,
     _save,
     _until,
@@ -25,6 +25,10 @@ from .common import (
     wait_message,
     wait_npc_visibility,
 )
+
+SCENARIOS = {
+    "npc_will": ("OFF", {"save": True, "timeout": 240}),
+}
 
 if TYPE_CHECKING:
     from ..chests import ChestDesk
@@ -61,7 +65,7 @@ async def npc_will(
     facts = will.chronicle.facts
     original_cards, original_crime_cards = will.cards, crimes.cards
     original_gate, original_stage = rumors.gate, rumors.stage
-    original_llm, send = dialogue.llm, link.send
+    send = link.send
     original_busy = will.busy
     preparing: set[str] = set()
     neutral = {npc: replace(card, honesty=5, greed=1) for npc, card in original_cards.items()}
@@ -441,7 +445,7 @@ async def npc_will(
         if courage >= 3 and not check(f"{label}_health", await health()):
             return False
         before = {npc: await count(npc, str(crime["item"])) for npc in (HILDA, LOBART)}
-        await link.body_watch([HILDA, LOBART], rate_hz=20)
+        await watch.watch([HILDA, LOBART])
         for rows in bodies.values():
             rows.clear()
         # Keep the hero off the direct AI_GotoNpc lane while leaving both bodies within 30 m.
@@ -487,6 +491,8 @@ async def npc_will(
     will.busy = lambda npc: npc in preparing or original_busy(npc)
     link.listeners.append(record)
     link.raw_body_listeners.append(body)
+    # The P30 pilot observes Lobart's fight: keep Hilda's rows in the shared subscription.
+    watch = SharedBodyWatch(link, "npc_will")
     cards()
     rumors.gate, rumors.stage = lambda *_: False, None
     try:
@@ -494,10 +500,9 @@ async def npc_will(
         if link.session is None:
             await wait_message(link, Session, timeout=10)
         if not check(
-            "enabled", will.enabled and crimes.enabled and isinstance(original_llm, FakeBackend), log_dir,
+            "enabled", will.enabled and crimes.enabled, log_dir,
         ):
             return _logged(results)
-        dialogue.llm = FakeBackend("Ну.", delay=0)
         await link.debug("player_hp", hp=5000)
         await link.debug("time", hour=8, minute=0)
         population = {str(p["npc"]): p for p in await link.story_people()}
@@ -537,14 +542,14 @@ async def npc_will(
         brave = await steal("brave", witnessed=True)
         if brave is None or not await tell_owner("brave", brave) or not await encounter("brave", brave, 3):
             return _logged(results)
-        await link.body_watch([])
+        await watch.watch([])
 
         if not await load_clean("timid"):
             return _logged(results)
         timid = await steal("timid", witnessed=True)
         if timid is None or not await tell_owner("timid", timid) or not await encounter("timid", timid, 2):
             return _logged(results)
-        await link.body_watch([])
+        await watch.watch([])
 
         if not await load_clean("suspect"):
             return _logged(results)
@@ -660,12 +665,12 @@ async def npc_will(
     finally:
         will.cards, crimes.cards = original_cards, original_crime_cards
         rumors.gate, rumors.stage = original_gate, original_stage
-        dialogue.llm = original_llm
         will.busy = original_busy
         link.send = send  # type: ignore[method-assign]
         try:
             if not link.closed.is_set():
-                await link.body_watch([])
+                await watch.watch([])
         finally:
+            watch.close()
             link.listeners.remove(record)
             link.raw_body_listeners.remove(body)

@@ -6,6 +6,7 @@
 
 #include "utils/string_frm.h"
 #include "world/objects/npc.h"
+#include "world/world.h"
 #include "world/objects/item.h"
 #include "world/triggers/abstracttrigger.h"
 #include "graphics/mesh/footik.h"
@@ -21,6 +22,7 @@
 #include "graphics/mesh/eyeblink.h"
 #include "camera.h"
 #include "gothic.h"
+#include "settings.h"
 
 static bool startsWith(std::string_view str, std::string_view needle) {
   if(needle.size()>str.size())
@@ -59,6 +61,8 @@ static bool fromString(std::string_view str, float& t) {
   return true;
   }
 
+bool Marvin::showChunks = false;
+
 Marvin::Marvin() {
   /* Legend:
    %c - instance variable from script
@@ -91,6 +95,7 @@ Marvin::Marvin() {
     // rendering
     {"set clipfactor %d",          C_Invalid},
     {"toggle frame",               C_ToggleFrame},
+    {"toggle chunks",              C_ToggleChunks},
     {"zfogzone",                   C_Invalid},
     {"zhighqualityrender",         C_Invalid},
     {"zmark",                      C_Invalid},
@@ -115,6 +120,7 @@ Marvin::Marvin() {
     {"ztoggle tnl",                C_Invalid},
     {"ztoggle vobbox",             C_ToggleVobBox},
     {"toggle melee_blade_draw",    C_ToggleMeleeBladeDraw},
+    {"toggle melee_blade_labels",  C_ToggleMeleeBladeLabels},
     {"zvideores %d %d %d",         C_Invalid},
 
     // game
@@ -162,7 +168,6 @@ Marvin::Marvin() {
 
     {"toggle gi",                  C_ToggleGI},
     {"toggle vsm",                 C_ToggleVsm},
-    {"toggle rtsm",                C_ToggleRtsm},
     {"toggle pathtrace",           C_TogglePathtrace},
     {"toggle footik",              C_ToggleFootIk},
     {"toggle gaze",                C_ToggleGaze},
@@ -172,7 +177,7 @@ Marvin::Marvin() {
     {"toggle aim",                 C_ToggleAim},
     {"toggle gestures",            C_ToggleGestures},
     {"toggle blink",               C_ToggleBlink},
-    {"toggle manualaim",           C_ToggleManualAim},
+    {"toggle bowstrength",         C_ToggleBowStrength},
     {"toggle npcmanualaim",        C_ToggleNpcManualAim},
     {"toggle flinch",              C_ToggleFlinch},
     {"toggle ragdoll",             C_ToggleRagdoll},
@@ -181,16 +186,48 @@ Marvin::Marvin() {
     {"toggle arrow_physics",      C_ToggleArrowPhysics},
     {"toggle arrow_sticking",     C_ToggleArrowSticking},
     {"toggle spell_physics",      C_ToggleSpellPhysics},
+    {"toggle body_impact_damage", C_ToggleBodyImpactDamage},
+    {"toggle body_traces",        C_ToggleBodyTraces},
+    {"toggle blood",              C_ToggleBlood},
+    // blood <waypoint> [pool|splash] [radius_cm]: a stain on the ground at the point (empty: splash, default size)
+    {"blood %s %s %d",            C_Blood},
     {"toggle movable_vobs",       C_ToggleMovableVobs},
+    {"toggle item_hulls",         C_ToggleItemHulls},
+    {"toggle item_deepest_contact",C_ToggleItemDeepestContact},
+    {"toggle ragdoll_birth_guard",C_ToggleRagdollBirthGuard},
+    {"toggle ragdoll_brace",      C_ToggleRagdollBrace},
+    {"toggle bump_reactions",     C_ToggleBumpReactions},
+    {"toggle wall_reach",         C_ToggleWallReach},
+    {"toggle wall_stop",          C_ToggleWallStop},
+    {"toggle furniture_parts",    C_ToggleFurnitureParts},
     {"toggle physics_noise",      C_TogglePhysicsNoise},
     {"toggle destruction",        C_ToggleDestruction},
     {"toggle buoyancy",           C_ToggleBuoyancy},
     {"toggle cloth",              C_ToggleCloth},
+    {"toggle item_wake",          C_ToggleItemWake},
+    {"toggle placed_items",       C_TogglePlacedItems},
     {"toggle character_virtual",  C_ToggleCharacterVirtual},
     {"toggle npc_character_virtual",C_ToggleNpcCharacterVirtual},
     {"toggle monster_character_virtual",C_ToggleMonsterCharacterVirtual},
     {"toggle melee_blade_shadow", C_ToggleMeleeBladeShadow},
     {"toggle melee_physics_hits", C_ToggleMeleePhysicsHits},
+    {"toggle melee_reactions",    C_ToggleMeleeReactions},
+    {"toggle melee_posture",      C_ToggleMeleePosture},
+    {"toggle melee_stagger",      C_ToggleMeleeStagger},
+    {"toggle melee_beast_poise",  C_ToggleMeleeBeastPoise},
+    {"toggle melee_backstab",     C_ToggleMeleeBackstab},
+    {"toggle melee_dodge",        C_ToggleMeleeDodge},
+    {"toggle melee_charge",       C_ToggleMeleeCharge},
+    {"toggle melee_heal_interrupt", C_ToggleMeleeHealInterrupt},
+    {"toggle melee_use_in_hand", C_ToggleMeleeUseInHand},
+    {"toggle food_over_time",     C_ToggleFoodOverTime},
+    {"toggle melee_ai_dodge",     C_ToggleMeleeAiDodge},
+    {"toggle melee_ai_charge",    C_ToggleMeleeAiCharge},
+    {"toggle melee_down_tactics", C_ToggleMeleeDownTactics},
+    {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
+    {"toggle melee_stamina",      C_ToggleMeleeStamina},
+    {"toggle melee_parry",        C_ToggleMeleeParry},
+    {"toggle melee_parry_ai",     C_ToggleMeleeParryAi},
     };
   }
 
@@ -408,6 +445,10 @@ bool Marvin::exec(std::string_view v) {
       Gothic::inst().setFRate(!Gothic::inst().doFrate());
       return true;
       }
+    case C_ToggleChunks:{
+      showChunks = !showChunks;
+      return true;
+      }
     case C_ToggleShowRay:{
       Gothic::inst().setVobRays(!Gothic::inst().doVobRays());
       return true;
@@ -418,6 +459,10 @@ bool Marvin::exec(std::string_view v) {
       }
     case C_ToggleMeleeBladeDraw:{
       Gothic::inst().setMeleeBladeDraw(!Gothic::inst().doMeleeBladeDraw());
+      return true;
+      }
+    case C_ToggleMeleeBladeLabels:{
+      Gothic::inst().setMeleeBladeLabels(!Gothic::inst().doMeleeBladeLabels());
       return true;
       }
     case C_ToggleTime:{
@@ -529,9 +574,6 @@ bool Marvin::exec(std::string_view v) {
     case C_ToggleVsm:
       Gothic::inst().toggleVsm();
       return true;
-    case C_ToggleRtsm:
-      Gothic::inst().toggleRtsm();
-      return true;
     case C_TogglePathtrace:
       Gothic::inst().togglePathtrace();
       return true;
@@ -559,8 +601,8 @@ bool Marvin::exec(std::string_view v) {
     case C_ToggleBlink:
       EyeBlink::setEnabled(!EyeBlink::isEnabled());
       return true;
-    case C_ToggleManualAim:
-      Archery::setEnabled(!Archery::isEnabled());
+    case C_ToggleBowStrength:
+      Archery::setBowStrengthEnabled(!Archery::isBowStrengthEnabled());
       return true;
     case C_ToggleNpcManualAim:
       ArcherAi::setEnabled(!ArcherAi::isEnabled());
@@ -569,69 +611,246 @@ bool Marvin::exec(std::string_view v) {
       Flinch::setEnabled(!Flinch::isEnabled());
       return true;
     case C_ToggleRagdoll:
-      Gothic::settingsSetI("GAME","ragdoll",Gothic::settingsGetI("GAME","ragdoll")==0 ? 1 : 0);
+      Settings::setI("GAME","ragdoll",Settings::getI("GAME","ragdoll")==0 ? 1 : 0);
       return true;
     case C_ToggleRagdollQuestGuard:
-      Gothic::settingsSetI("GAME","ragdoll_quest_guard",Gothic::settingsGetI("GAME","ragdoll_quest_guard")==0 ? 1 : 0);
+      Settings::setI("GAME","ragdoll_quest_guard",Settings::getI("GAME","ragdoll_quest_guard")==0 ? 1 : 0);
       return true;
     case C_ToggleLivingBodies:
-      Gothic::settingsSetI("GAME","living_bodies",Gothic::settingsGetI("GAME","living_bodies")==0 ? 1 : 0);
+      Settings::setI("GAME","living_bodies",Settings::getI("GAME","living_bodies")==0 ? 1 : 0);
       return true;
     case C_ToggleArrowPhysics:
-      Gothic::settingsSetI("GAME","arrow_physics",Gothic::settingsGetI("GAME","arrow_physics")==0 ? 1 : 0);
+      Settings::setI("GAME","arrow_physics",Settings::getI("GAME","arrow_physics")==0 ? 1 : 0);
       return true;
     case C_ToggleArrowSticking:
-      Gothic::settingsSetI("GAME","arrow_sticking",Gothic::settingsGetI("GAME","arrow_sticking")==0 ? 1 : 0);
+      Settings::setI("GAME","arrow_sticking",Settings::getI("GAME","arrow_sticking")==0 ? 1 : 0);
       return true;
     case C_ToggleSpellPhysics:
-      Gothic::settingsSetI("GAME","spell_physics",Gothic::settingsGetI("GAME","spell_physics")==0 ? 1 : 0);
+      Settings::setI("GAME","spell_physics",Settings::getI("GAME","spell_physics")==0 ? 1 : 0);
       return true;
+    case C_ToggleBodyImpactDamage:
+      Settings::setI("GAME","body_impact_damage",Settings::getI("GAME","body_impact_damage")==0 ? 1 : 0);
+      return true;
+    case C_ToggleBodyTraces:
+      Settings::setI("GAME","body_traces",Settings::getI("GAME","body_traces")==0 ? 1 : 0);
+      return true;
+    case C_ToggleBlood: {
+      const bool enabled = Settings::getI("GAME","blood")==0;
+      Settings::setI("GAME","blood",enabled ? 1 : 0);
+      print(enabled ? "Blood: ON" : "Blood: OFF");
+      return true;
+      }
+    case C_Blood: {
+      World* world = Gothic::inst().world();
+      if(world==nullptr)
+        return false;
+      const auto* point = world->findPoint(ret.argv[0],false);
+      const auto  kind  = ret.argv[1];
+      if(point==nullptr || (!kind.empty() && kind!="pool" && kind!="splash")) {
+        print("blood <waypoint> [pool|splash] [radius_cm]");
+        return false;
+        }
+      const bool pool   = kind=="pool";
+      float      radius = pool ? 40.f : 15.f;
+      if(!ret.argv[2].empty()) {
+        int value = 0;
+        auto err  = std::from_chars(ret.argv[2].data(),ret.argv[2].data()+ret.argv[2].size(),value).ec;
+        if(err!=std::errc() || value<=0) {
+          print("blood: radius_cm must be a positive number");
+          return false;
+          }
+        radius = float(value);
+        }
+      const auto id = world->placeBloodStain(point->position(),pool ? BloodStains::Kind::Pool : BloodStains::Kind::Splash,radius);
+      if(id!=0)
+        print("blood stain "+std::to_string(id)+" at "+point->name); else
+        print("blood: none placed (off, or no ground)");
+      return id!=0;
+      }
     case C_ToggleMovableVobs:
-      Gothic::settingsSetI("GAME","movable_vobs",Gothic::settingsGetI("GAME","movable_vobs")==0 ? 1 : 0);
+      Settings::setI("GAME","movable_vobs",Settings::getI("GAME","movable_vobs")==0 ? 1 : 0);
+      return true;
+    case C_ToggleItemHulls:
+      Settings::setI("GAME","item_hulls",Settings::getI("GAME","item_hulls")==0 ? 1 : 0);
+      return true;
+    case C_ToggleItemDeepestContact:
+      Settings::setI("GAME","item_deepest_contact",Settings::getI("GAME","item_deepest_contact")==0 ? 1 : 0);
+      return true;
+    case C_ToggleRagdollBirthGuard:
+      Settings::setI("GAME","ragdoll_birth_guard",Settings::getI("GAME","ragdoll_birth_guard")==0 ? 1 : 0);
+      return true;
+    case C_ToggleRagdollBrace:
+      Settings::setI("GAME","ragdoll_brace",Settings::getI("GAME","ragdoll_brace")==0 ? 1 : 0);
+      return true;
+    case C_ToggleBumpReactions:
+      Settings::setI("GAME","bump_reactions",Settings::getI("GAME","bump_reactions")==0 ? 1 : 0);
+      return true;
+    case C_ToggleWallReach:
+      Settings::setI("GAME","wall_reach",Settings::getI("GAME","wall_reach")==0 ? 1 : 0);
+      return true;
+    case C_ToggleWallStop:
+      Settings::setI("GAME","wall_stop",Settings::getI("GAME","wall_stop")==0 ? 1 : 0);
+      return true;
+    case C_ToggleFurnitureParts:
+      Settings::setI("GAME","furniture_parts",Settings::getI("GAME","furniture_parts")==0 ? 1 : 0);
       return true;
     case C_TogglePhysicsNoise:
-      Gothic::settingsSetI("GAME","physics_noise",Gothic::settingsGetI("GAME","physics_noise")==0 ? 1 : 0);
+      Settings::setI("GAME","physics_noise",Settings::getI("GAME","physics_noise")==0 ? 1 : 0);
       return true;
     case C_ToggleDestruction:
-      Gothic::settingsSetI("GAME","destruction",Gothic::settingsGetI("GAME","destruction")==0 ? 1 : 0);
+      Settings::setI("GAME","destruction",Settings::getI("GAME","destruction")==0 ? 1 : 0);
       return true;
     case C_ToggleBuoyancy:
-      Gothic::settingsSetI("GAME","buoyancy",Gothic::settingsGetI("GAME","buoyancy")==0 ? 1 : 0);
+      Settings::setI("GAME","buoyancy",Settings::getI("GAME","buoyancy")==0 ? 1 : 0);
       return true;
     case C_ToggleCloth: {
-      const bool enabled = !Gothic::physicsFlags().cloth;
-      Gothic::settingsSetI("GAME","cloth",enabled ? 1 : 0);
+      const bool enabled = !Settings::physicsFlags().cloth;
+      Settings::setI("GAME","cloth",enabled ? 1 : 0);
       print(enabled ? "Cloth: ON" : "Cloth: OFF");
       return true;
       }
+    case C_ToggleItemWake: {
+      const bool enabled = !Settings::physicsFlags().itemWake;
+      Settings::setI("GAME","item_wake",enabled ? 1 : 0);
+      print(enabled ? "Item wake: ON" : "Item wake: OFF");
+      return true;
+      }
+    case C_TogglePlacedItems: {
+      const bool enabled = !Settings::physicsFlags().placedItems;
+      Settings::setI("GAME","placed_items",enabled ? 1 : 0);
+      print(enabled ? "Placed items: ON" : "Placed items: OFF");
+      return true;
+      }
     case C_ToggleCharacterVirtual: {
-      const bool enabled = !Gothic::physicsFlags().characterVirtual;
-      Gothic::settingsSetI("GAME","character_virtual",enabled ? 1 : 0);
+      const bool enabled = !Settings::physicsFlags().characterVirtual;
+      Settings::setI("GAME","character_virtual",enabled ? 1 : 0);
       print(enabled ? "CharacterVirtual: ON (hero)" : "CharacterVirtual: OFF");
       return true;
       }
     case C_ToggleNpcCharacterVirtual: {
-      const bool enabled = !Gothic::physicsFlags().npcCharacterVirtual;
-      Gothic::settingsSetI("GAME","npc_character_virtual",enabled ? 1 : 0);
+      const bool enabled = !Settings::physicsFlags().npcCharacterVirtual;
+      Settings::setI("GAME","npc_character_virtual",enabled ? 1 : 0);
       print(enabled ? "CharacterVirtual: ON (nearby human NPCs)" : "CharacterVirtual: OFF (NPCs)");
       return true;
       }
     case C_ToggleMonsterCharacterVirtual: {
-      const bool enabled = !Gothic::physicsFlags().monsterCharacterVirtual;
-      Gothic::settingsSetI("GAME","monster_character_virtual",enabled ? 1 : 0);
+      const bool enabled = !Settings::physicsFlags().monsterCharacterVirtual;
+      Settings::setI("GAME","monster_character_virtual",enabled ? 1 : 0);
       print(enabled ? "CharacterVirtual: ON (nearby ground monsters)" : "CharacterVirtual: OFF (monsters)");
       return true;
       }
     case C_ToggleMeleeBladeShadow: {
-      const bool enabled = !Gothic::physicsFlags().meleeBladeShadow;
-      Gothic::settingsSetI("GAME","melee_blade_shadow",enabled ? 1 : 0);
+      const bool enabled = !Settings::physicsFlags().meleeBladeShadow;
+      Settings::setI("GAME","melee_blade_shadow",enabled ? 1 : 0);
       print(enabled ? "Melee blade shadow: ON" : "Melee blade shadow: OFF");
       return true;
       }
     case C_ToggleMeleePhysicsHits: {
-      const bool enabled = !Gothic::physicsFlags().meleePhysicsHits;
-      Gothic::settingsSetI("GAME","melee_physics_hits",enabled ? 1 : 0);
+      const bool enabled = !Settings::physicsFlags().meleePhysicsHits;
+      Settings::setI("GAME","melee_physics_hits",enabled ? 1 : 0);
       print(enabled ? "Melee physics hits: ON" : "Melee physics hits: OFF");
+      return true;
+      }
+    case C_ToggleMeleeReactions: {
+      const bool enabled = !Settings::physicsFlags().meleeReactions;
+      Settings::setI("GAME","melee_reactions",enabled ? 1 : 0);
+      print(enabled ? "Melee body reactions: ON" : "Melee body reactions: OFF");
+      return true;
+      }
+    case C_ToggleMeleePosture: {
+      const bool enabled = !Settings::physicsFlags().meleePosture;
+      Settings::setI("GAME","melee_posture",enabled ? 1 : 0);
+      print(enabled ? "Melee posture: ON" : "Melee posture: OFF");
+      return true;
+      }
+    case C_ToggleMeleeStagger: {
+      const bool enabled = Settings::getI("GAME","melee_stagger")==0;
+      Settings::setI("GAME","melee_stagger",enabled ? 1 : 0);
+      print(enabled ? "Melee stagger: ON" : "Melee stagger: OFF");
+      return true;
+      }
+    case C_ToggleMeleeBeastPoise: {
+      const bool enabled = Settings::getI("GAME","melee_beast_poise")==0;
+      Settings::setI("GAME","melee_beast_poise",enabled ? 1 : 0);
+      print(enabled ? "Melee beast poise: ON" : "Melee beast poise: OFF");
+      return true;
+      }
+    case C_ToggleMeleeBackstab: {
+      const bool enabled = !Settings::physicsFlags().meleeBackstab;
+      Settings::setI("GAME","melee_backstab",enabled ? 1 : 0);
+      print(enabled ? "Melee backstab: ON" : "Melee backstab: OFF");
+      return true;
+      }
+    case C_ToggleMeleeDodge: {
+      const bool enabled = !Settings::physicsFlags().meleeDodge;
+      Settings::setI("GAME","melee_dodge",enabled ? 1 : 0);
+      print(enabled ? "Melee dodge: ON" : "Melee dodge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeCharge: {
+      const bool enabled = !Settings::physicsFlags().meleeCharge;
+      Settings::setI("GAME","melee_charge",enabled ? 1 : 0);
+      print(enabled ? "Melee charge: ON" : "Melee charge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeHealInterrupt: {
+      const bool enabled = !Settings::physicsFlags().meleeHealInterrupt;
+      Settings::setI("GAME","melee_heal_interrupt",enabled ? 1 : 0);
+      print(enabled ? "Melee heal interrupt: ON" : "Melee heal interrupt: OFF");
+      return true;
+      }
+    case C_ToggleMeleeUseInHand: {
+      const bool enabled = !Settings::physicsFlags().meleeUseInHand;
+      Settings::setI("GAME","melee_use_in_hand",enabled ? 1 : 0);
+      print(enabled ? "Melee use in hand: ON" : "Melee use in hand: OFF");
+      return true;
+      }
+    case C_ToggleFoodOverTime: {
+      const bool enabled = !Settings::physicsFlags().foodOverTime;
+      Settings::setI("GAME","food_over_time",enabled ? 1 : 0);
+      print(enabled ? "Food over time: ON" : "Food over time: OFF");
+      return true;
+      }
+    case C_ToggleMeleeAiDodge: {
+      const bool enabled = !Settings::physicsFlags().meleeAiDodge;
+      Settings::setI("GAME","melee_ai_dodge",enabled ? 1 : 0);
+      print(enabled ? "Melee AI dodge: ON" : "Melee AI dodge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeAiCharge: {
+      const bool enabled = !Settings::physicsFlags().meleeAiCharge;
+      Settings::setI("GAME","melee_ai_charge",enabled ? 1 : 0);
+      print(enabled ? "Melee AI charge: ON" : "Melee AI charge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeDownTactics: {
+      const bool enabled = !Settings::physicsFlags().meleeDownTactics;
+      Settings::setI("GAME","melee_down_tactics",enabled ? 1 : 0);
+      print(enabled ? "Melee down tactics: ON" : "Melee down tactics: OFF");
+      return true;
+      }
+    case C_ToggleMeleeHitStop: {
+      const bool enabled = !Settings::physicsFlags().meleeHitStop;
+      Settings::setI("GAME","melee_hitstop",enabled ? 1 : 0);
+      print(enabled ? "Melee hit stop: ON" : "Melee hit stop: OFF");
+      return true;
+      }
+    case C_ToggleMeleeStamina: {
+      const bool enabled = !Settings::physicsFlags().meleeStamina;
+      Settings::setI("GAME","melee_stamina",enabled ? 1 : 0);
+      print(enabled ? "Melee stamina: ON" : "Melee stamina: OFF");
+      return true;
+      }
+    case C_ToggleMeleeParry: {
+      const bool enabled = !Settings::physicsFlags().meleeParry;
+      Settings::setI("GAME","melee_parry",enabled ? 1 : 0);
+      print(enabled ? "Melee parry: ON" : "Melee parry: OFF");
+      return true;
+      }
+    case C_ToggleMeleeParryAi: {
+      const bool enabled = !Settings::physicsFlags().meleeParryAi;
+      Settings::setI("GAME","melee_parry_ai",enabled ? 1 : 0);
+      print(enabled ? "Melee parry AI: ON" : "Melee parry AI: OFF");
       return true;
       }
     }
@@ -649,7 +868,7 @@ bool Marvin::addItemOrNpcBySymbolName(World* world, std::string_view name, const
   if(sym==nullptr || sym->parent()==uint32_t(-1))
     return false;
 
-  if(sym->type()!=zenkit::DaedalusDataType::INSTANCE || sym->address()==0)
+  if(sym->type()!=daedalus::DaedalusDataType::INSTANCE || sym->address()==0)
     return false;
 
   const auto* cls = sym;
@@ -674,16 +893,16 @@ bool Marvin::printVariable(World* world, std::string_view name) {
   if(sym==nullptr)
     return false;
   switch(sym->type()) {
-    case zenkit::DaedalusDataType::INT:
+    case daedalus::DaedalusDataType::INT:
       buf = string_frm(name," = ",sym->get_int(0));
       break;
-    case zenkit::DaedalusDataType::FLOAT:
+    case daedalus::DaedalusDataType::FLOAT:
       buf = string_frm(name," = ",sym->get_float(0));
       break;
-    case zenkit::DaedalusDataType::STRING:
+    case daedalus::DaedalusDataType::STRING:
       buf = string_frm(name," = ",sym->get_string(0));
       break;
-    case zenkit::DaedalusDataType::INSTANCE:
+    case daedalus::DaedalusDataType::INSTANCE:
       buf = string_frm(name," = ",sym->get_instance().get());
       break;
     default:
@@ -699,24 +918,24 @@ bool Marvin::setVariable(World* world, std::string_view name, std::string_view v
   if(sym==nullptr)
     return false;
   switch(sym->type()) {
-    case zenkit::DaedalusDataType::INT: {
+    case daedalus::DaedalusDataType::INT: {
       int32_t valueI = 0;
       if(!fromString(value, valueI))
         return false;
       sym->set_int(valueI);
       break;
       }
-    case zenkit::DaedalusDataType::FLOAT: {
+    case daedalus::DaedalusDataType::FLOAT: {
       float valueF = 0;
       if(!fromString(value, valueF))
         return false;
       sym->set_float(valueF);
       break;
       }
-    case zenkit::DaedalusDataType::STRING:
+    case daedalus::DaedalusDataType::STRING:
       sym->set_string(value);
       break;
-    case zenkit::DaedalusDataType::INSTANCE:
+    case daedalus::DaedalusDataType::INSTANCE:
       print("unable to override instance variable");
       break;
     default:

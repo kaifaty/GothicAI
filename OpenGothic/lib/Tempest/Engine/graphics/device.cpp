@@ -1,16 +1,57 @@
 #include "device.h"
 #include "utility/smallarray.h"
+#include "gapi/pipelinecache.h"
 
 #include <Tempest/Fence>
 #include <Tempest/UniformBuffer>
 #include <Tempest/File>
 #include <Tempest/Pixmap>
 #include <Tempest/Except>
+#include <Tempest/Log>
 
+#include <algorithm>
 #include <string>
 #include <cassert>
+#include <cstdlib>
+#include <cstring>
 
 using namespace Tempest;
+
+#if defined(TEMPEST_BUILD_METAL)
+size_t tempestProbeMetalGpuBytes();
+void tempestProbeMetalUploadBuffers(size_t&, size_t&);
+#endif
+#if defined(TEMPEST_BUILD_VULKAN)
+size_t tempestProbeVulkanGpuBytes();
+#endif
+
+bool tempestLoadProbeEnabled() {
+  static const bool enabled = []() {
+    const auto* value = std::getenv("OPENGOTHIC_LOADPROBE");
+    return value!=nullptr && std::strcmp(value,"1")==0;
+    }();
+  return enabled;
+  }
+
+size_t tempestProbeGpuBytes() {
+  if(!tempestLoadProbeEnabled())
+    return 0;
+  size_t bytes = 0;
+#if defined(TEMPEST_BUILD_METAL)
+  bytes += tempestProbeMetalGpuBytes();
+#endif
+#if defined(TEMPEST_BUILD_VULKAN)
+  bytes += tempestProbeVulkanGpuBytes();
+#endif
+  return bytes;
+  }
+
+void tempestProbeUploadBuffers(size_t& stagingCount, size_t& stagingBytes) {
+  stagingCount=stagingBytes=0;
+#if defined(TEMPEST_BUILD_METAL)
+  tempestProbeMetalUploadBuffers(stagingCount,stagingBytes);
+#endif
+  }
 
 static uint32_t mipCount(uint32_t w, uint32_t h) {
   uint32_t s = std::max(w,h);
@@ -74,8 +115,24 @@ Device::Device(AbstractGraphicsApi& api, DeviceType type)
 Device::~Device() {
   }
 
+void Device::setPipelineCacheDirectory(const std::filesystem::path& dir) {
+  Detail::PipelineCacheFile::setDirectory(dir);
+  }
+
+void Device::setShaderCacheDirectory(const std::filesystem::path& dir, bool verify) {
+  Detail::PipelineCacheFile::setShaderDirectory(dir,verify);
+  }
+
+void Device::savePipelineCache() {
+  impl.dev->savePipelineCache();
+  }
+
 void Device::waitIdle() {
   impl.dev->waitIdle();
+  }
+
+Device::MemoryBudget Device::memoryBudget() {
+  return impl.dev->memoryBudget();
   }
 
 Fence Device::submit(const CommandBuffer &cmd) {
@@ -170,7 +227,7 @@ Attachment Device::attachment(TextureFormat frm, const uint32_t w, const uint32_
   if(w>devProps.tex2d.maxSize || h>devProps.tex2d.maxSize)
     throw std::system_error(Tempest::GraphicsErrc::TooLargeTexture, std::to_string(std::max(w,h)));
   uint32_t mipCnt = mips ? mipCount(w,h) : 1;
-  Texture2d t(*this,api.createTexture(dev,w,h,mipCnt,frm),w,h,1,frm);
+  Texture2d t(*this,api.createTexture(dev,w,h,mipCnt,frm),w,h,1,frm,false);
   return Attachment(std::move(t));
   }
 
@@ -179,11 +236,19 @@ ZBuffer Device::zbuffer(TextureFormat frm, const uint32_t w, const uint32_t h) {
     throw std::system_error(Tempest::GraphicsErrc::UnsupportedTextureFormat, formatName(frm));
   if(w>devProps.tex2d.maxSize || h>devProps.tex2d.maxSize)
     throw std::system_error(Tempest::GraphicsErrc::TooLargeTexture, std::to_string(std::max(w,h)));
-  Texture2d t(*this,api.createTexture(dev,w,h,1,frm),w,h,1,frm);
+  Texture2d t(*this,api.createTexture(dev,w,h,1,frm),w,h,1,frm,false);
   return ZBuffer(std::move(t),!devProps.hasSamplerFormat(frm));
   }
 
-Texture2d Device::texture(const Pixmap &pm, const bool mips) {
+Texture2d Device::texture(const Pixmap& pm, const bool mips) {
+  return implTexture(pm,mips,false);
+  }
+
+Texture2d Device::textureAsync(const Pixmap& pm, const bool mips) {
+  return implTexture(pm,mips,true);
+  }
+
+Texture2d Device::implTexture(const Pixmap& pm, bool mips, bool async) {
   TextureFormat format = pm.format();
   uint32_t      mipCnt = mips ? mipCount(pm.w(),pm.h()) : 1;
   const Pixmap* p=&pm;
@@ -223,7 +288,17 @@ Texture2d Device::texture(const Pixmap &pm, const bool mips) {
       }
     }
 
-  Texture2d t(*this,api.createTexture(dev,*p,format,mipCnt),p->w(),p->h(),1,format);
+  auto payload=async ? api.createTextureAsync(dev,*p,format,mipCnt) : api.createTexture(dev,*p,format,mipCnt);
+  Texture2d t(*this,std::move(payload),p->w(),p->h(),1,format);
+  if(tempestLoadProbeEnabled()) {
+    size_t bytes = 0;
+    for(uint32_t mip=0; mip<t.mipCount(); ++mip) {
+      const auto blocks = Pixmap::blockCount(format,std::max(1u,pm.w()>>mip),std::max(1u,pm.h()>>mip));
+      bytes += size_t(blocks.w)*size_t(blocks.h)*Pixmap::blockSizeForFormat(format);
+      }
+    Log::i("[loadprobe-upload] data=",pm.data()," w=",t.w()," h=",t.h()," mips=",t.mipCount(),
+           " format=",formatName(format)," bytes=",bytes);
+    }
   return t;
   }
 
@@ -233,7 +308,7 @@ StorageImage Device::image2d(TextureFormat frm, const uint32_t w, const uint32_t
   if(w>devProps.tex2d.maxSize || h>devProps.tex2d.maxSize)
     throw std::system_error(Tempest::GraphicsErrc::TooLargeTexture, std::to_string(std::max(w,h)));
   uint32_t mipCnt = mips ? mipCount(w,h) : 1;
-  Texture2d t(*this,api.createStorage(dev,w,h,mipCnt,frm),w,h,1,frm);
+  Texture2d t(*this,api.createStorage(dev,w,h,mipCnt,frm),w,h,1,frm,false);
   return StorageImage(std::move(t));
   }
 
@@ -243,7 +318,7 @@ StorageImage Device::image3d(TextureFormat frm, const uint32_t w, const uint32_t
   if(w>devProps.tex3d.maxSize || h>devProps.tex3d.maxSize || d>devProps.tex3d.maxSize)
     throw std::system_error(Tempest::GraphicsErrc::TooLargeTexture, std::to_string(std::max(w,std::max(h,d))));
   uint32_t mipCnt = mips ? mipCount(w,h,d) : 1;
-  Texture2d t(*this,api.createStorage(dev,w,h,d,mipCnt,frm),w,h,d,frm);
+  Texture2d t(*this,api.createStorage(dev,w,h,d,mipCnt,frm),w,h,d,frm,false);
   return StorageImage(std::move(t));
   }
 
@@ -306,16 +381,38 @@ AccelerationStructure Device::tlas(const std::vector<RtInstance>& geom) {
   }
 
 AccelerationStructure Device::tlas(const RtInstance* geom, size_t geomSize) {
-  std::vector<AbstractGraphicsApi::AccelerationStructure*> as(geomSize);
-  size_t nonEmptyGeomSize = 0;
+  // Instances and their BLAS are dropped together: an empty BLAS must not shift the instances after it onto other BLAS
+  std::vector<RtInstance>                                  inst;
+  std::vector<AbstractGraphicsApi::AccelerationStructure*> as;
+  inst.reserve(geomSize);
+  as  .reserve(geomSize);
   for(size_t i=0; i<geomSize; ++i) {
-    if(geom[i].blas->impl.handler==nullptr)
+    if(geom[i].blas==nullptr || geom[i].blas->impl.handler==nullptr)
       continue;
-    as[nonEmptyGeomSize] = geom[i].blas->impl.handler;
-    ++nonEmptyGeomSize;
+    inst.push_back(geom[i]);
+    as  .push_back(geom[i].blas->impl.handler);
     }
-  auto tlas = api.createTopAccelerationStruct(dev,geom,as.data(),nonEmptyGeomSize);
+  auto tlas = api.createTopAccelerationStruct(dev,inst.data(),as.data(),as.size());
   return AccelerationStructure(*this, std::move(tlas));
+  }
+
+AccelerationStructure Device::tlas(Uninitialized_t, size_t capacity) {
+  if(!properties().raytracing.rayQuery)
+    throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension, "rayQuery");
+  capacity  = std::max<size_t>(capacity, 1);
+  auto tlas = api.createTopAccelerationStruct(dev,capacity);
+  return AccelerationStructure(*this, std::move(tlas), capacity);
+  }
+
+size_t Device::rtInstanceSize() const {
+  return api.rtInstanceSize();
+  }
+
+void Device::packRtInstance(AccelerationStructure& tlas, const RtInstance& inst, void* slot) {
+  if(tlas.impl.handler==nullptr || tlas.capacity()==0)
+    throw std::system_error(Tempest::GraphicsErrc::InvalidAccelerationStructure);
+  auto* blas = inst.blas!=nullptr ? inst.blas->impl.handler : nullptr;
+  api.packRtInstance(dev, *tlas.impl.handler, inst, blas, slot);
   }
 
 Pixmap Device::readPixels(const Texture2d &t, uint32_t mip) {

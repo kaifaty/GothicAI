@@ -1,6 +1,5 @@
 #include <Tempest/File>
 #include <Tempest/Log>
-#include <zenkit/Logger.hh>
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -9,6 +8,7 @@
 #include "gothic.h"
 #include "gamemusic.h"
 #include "resources.h"
+#include "basestore.h"
 #include "game/playercontrol.h"
 #include "game/serialize.h"
 #include "game/simulationstep.h"
@@ -17,12 +17,15 @@
 #include "game/bodyarena.h"
 #include "game/bodyarenageometry.h"
 #include "game/bodytrajectory.h"
+#include "societyexport.h"
 #include "testbench.h"
 #include "stucklogger.h"
+#include "world/animationtail.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "world/waypoint.h"
 #include "utils/workers.h"
+#include "../ai_bridge/aibridge.h"
 #include "../ai_bridge/npccontroller.h"
 #include "../ai_bridge/npcobserver.h"
 
@@ -51,9 +54,9 @@ using Json = rapidjson::Document;
 using Allocator = rapidjson::Document::AllocatorType;
 
 struct Options {
-  std::string save, scenario, output = ".body-runner", mode = "lockstep";
+  std::string save, world, scenario, output = ".body-runner", mode = "lockstep", societyExport;
   bool stdio = false, compactReplies = false, schedulingDiagnostics = false, serialWorkers = false, forkReset = false;
-  bool forkPrefix = false;
+  bool forkPrefix = false, gameParity = false;
 };
 
 Options options(int argc, const char** argv) {
@@ -66,6 +69,7 @@ Options options(int argc, const char** argv) {
       return argv[i];
     };
     if(arg=="--save") result.save = value();
+    else if(arg=="--world") result.world = value();
     else if(arg=="--scenario") result.scenario = value();
     else if(arg=="--output") result.output = value();
     else if(arg=="--mode") result.mode = value();
@@ -75,16 +79,26 @@ Options options(int argc, const char** argv) {
     else if(arg=="--serial-workers") result.serialWorkers = true;
     else if(arg=="--fork-reset") result.forkReset = true;
     else if(arg=="--fork-prefix") result.forkPrefix = true;
+    else if(arg=="--game-parity") result.gameParity = true;
+    else if(arg=="--society-export") result.societyExport = value();
   }
-  if(result.save.empty() || result.scenario.empty())
-    throw std::runtime_error("--save and --scenario are required");
+  if(!result.societyExport.empty()) {
+    // The world of the society stand: a fresh game in --world, written once, no scenario.
+    if(result.world.empty() || !result.save.empty())
+      throw std::runtime_error("--society-export requires --world and no --save");
+    result.societyExport = std::filesystem::absolute(result.societyExport).string();
+    return result;
+  }
+  if(result.save.empty()==result.world.empty() || result.scenario.empty())
+    throw std::runtime_error("--scenario and one of --save or --world are required");
   if(result.mode!="lockstep" && result.mode!="realtime")
     throw std::runtime_error("mode must be lockstep or realtime");
   if(result.forkReset && (!result.serialWorkers || !result.stdio))
     throw std::runtime_error("--fork-reset requires --serial-workers and --stdio");
   if(result.forkPrefix && !result.forkReset)
     throw std::runtime_error("--fork-prefix requires --fork-reset");
-  result.save = std::filesystem::absolute(result.save).string();
+  if(!result.save.empty())
+    result.save = std::filesystem::absolute(result.save).string();
   result.scenario = std::filesystem::absolute(result.scenario).string();
   result.output = std::filesystem::absolute(result.output).string();
   return result;
@@ -159,6 +173,7 @@ public:
         return uint64_t(arena[key].GetUint());
       };
       arenaConfig->scenario=textField("scenario","native_duel");
+      arenaConfig->weapon=textField("weapon","1h");
       arenaConfig->seed=uint32_t(unsignedField("seed",seed>=0 ? uint64_t(seed) : 17));
       arenaConfig->side=unsigned(unsignedField("side",0));
       arenaConfig->timeoutMs=unsignedField("timeout_ms",60000);
@@ -202,7 +217,9 @@ public:
         arenaConfig->centerOffsetCm={offset[0].GetFloat(),offset[1].GetFloat()};
       }
       seed=arenaConfig->seed;
-      if(arenaConfig->side>1 || !std::isfinite(arenaConfig->distanceCm) || arenaConfig->distanceCm<80 ||
+      if((arenaConfig->weapon!="1h" && arenaConfig->weapon!="2h") ||
+         (arenaConfig->weapon=="2h" && arenaConfig->scenario!="native_duel") ||
+         arenaConfig->side>1 || !std::isfinite(arenaConfig->distanceCm) || arenaConfig->distanceCm<80 ||
          arenaConfig->distanceCm>2000 || arenaConfig->timeoutMs<33 || arenaConfig->timeoutMs>60000 ||
          !std::isfinite(arenaConfig->yawOffsetDeg) || std::abs(arenaConfig->yawOffsetDeg)>45 ||
          !std::isfinite(arenaConfig->opponentYawOffsetDeg) || std::abs(arenaConfig->opponentYawOffsetDeg)>45 ||
@@ -302,6 +319,8 @@ public:
   // A fork ending its episode: flush its own journals without tearing down the shared world.
   void flushForExit() {
     finishMeleeShadowSwings();
+    // A forked runner leaves with _exit, past the summary atexit would print.
+    AnimationTail::reportCheck();
     saveSummary();
     observationFile.close(); timingFile.close(); controlFile.close(); arenaFile.close();
   }
@@ -315,6 +334,13 @@ private:
       for(uint32_t i=0;i<world->npcCount();++i)
         world->npcById(i)->finishMeleeShadowSwing();
       }
+  }
+
+  // --game-parity: the camera origin the rendered frame hands its particle range after the step. Animation
+  // effects and foot IK then run only within 40 m of it, as in the game, not for every NPC of the world.
+  void gameView() {
+    if(opts.gameParity)
+      gothic.world()->setHeadlessViewer(gothic.camera()->originLwc());
   }
 
   void teardown() {
@@ -339,16 +365,24 @@ private:
   }
 
   void loadWorld() {
-    Tempest::RFile file(opts.save);
-    Serialize save(file);
-    gothic.setGame(std::make_unique<GameSession>(save));
+    if(!opts.world.empty()) {
+      // --world: a new game in this world, as `-w <world>` starts it in the rendered game.
+      gothic.setGame(std::make_unique<GameSession>(opts.world));
+    } else {
+      Tempest::RFile file(opts.save);
+      Serialize save(file);
+      gothic.setGame(std::make_unique<GameSession>(save));
+    }
     if(gothic.world()==nullptr || gothic.player()==nullptr || gothic.world()->physic()==nullptr)
-      throw std::runtime_error("save did not restore a playable world");
+      throw std::runtime_error("save or world did not restore a playable world");
     player = std::make_unique<PlayerControl>();
     player->clearInput();
     gothic.gameSession()->setTimeMultiplyer(1.f);
     gothic.camera()->setViewport(640,480);
     player->clearFocus();
+    // The rendered game announces the loaded world here (Gothic::finishLoading): with --game-parity the AI
+    // bridge counts the important dialogs around a -nointro hero as told, as the game does.
+    gothic.onWorldLoaded();
   }
 
   void beginEpisode(const ResetPlan& p,Clock::time_point from,bool fromPrefix=false) {
@@ -356,8 +390,10 @@ private:
     (void)output;
     // Match the rendered load-finalize frame: animation/camera/bench initialize at dt=0.
     // A prefix fork already ran it, and its opening steps, in the template.
-    if(!fromPrefix)
+    if(!fromPrefix) {
       SimulationStep::finishStep(0,*player);
+      gameView();
+    }
     modeNow = mode;
     outputNow = output;
     generation++;
@@ -437,6 +473,10 @@ public:
     const uint64_t dt = TestBench::frameDt(33);
     SimulationStep::worldPlayerStep(dt,*player);
     SimulationStep::finishStep(dt,*player);
+    // As the rendered frame does after its step: chunk residency follows the hero and the camera
+    // (NPC simulation tiers in `auto`); without a view it publishes no visuals.
+    gothic.world()->updateLandscape(*gothic.camera());
+    gameView();
     BodyArena::postStep();
     if(watchRequested) {
       const auto watchFrom = Clock::now();
@@ -1403,25 +1443,71 @@ int serveForks(Runner& runner, std::FILE* protocol, std::string& line, int& fork
   _exit(0);
 }
 
+// --society-export: a fresh game in --world, after its startup scripts (day 0, 08:00), written as the society
+// stand's world (game/societyexport.h). No step of the world runs.
+int societyExport(Gothic& gothic, const Options& opts, std::FILE* protocol, Clock::time_point processStart) {
+  const auto seconds = [](Clock::time_point a, Clock::time_point b) { return std::chrono::duration<double>(b-a).count(); };
+  const auto loadStart = Clock::now();
+  gothic.setGame(std::make_unique<GameSession>(opts.world));
+  if(gothic.world()==nullptr)
+    throw std::runtime_error("--society-export: the world did not load");
+  const auto loaded = Clock::now();
+  const auto result = SocietyExport::build(*gothic.world());
+  {
+    std::ofstream file(opts.societyExport,std::ios::binary | std::ios::trunc);
+    file.write(result.json.data(),std::streamsize(result.json.size()));
+    if(!file.flush())
+      throw std::runtime_error("--society-export: cannot write " + opts.societyExport);
+  }
+  const auto written = Clock::now();
+  std::fprintf(stderr,"society export: %s: %s; %zu bytes; world %.1f s, export %.1f s, total %.1f s since start\n",
+               opts.societyExport.c_str(),result.summary.c_str(),result.json.size(),seconds(loadStart,loaded),
+               seconds(loaded,written),seconds(processStart,written));
+  std::fflush(stderr);
+  Json response(rapidjson::kObjectType);
+  response.AddMember("schema_version",1,response.GetAllocator());
+  response.AddMember("ok",true,response.GetAllocator());
+  string(response,"society_export",opts.societyExport);
+  response.AddMember("seconds",seconds(processStart,written),response.GetAllocator());
+  send(protocol,response);
+  gothic.clearGame().reset();
+  return 0;
+}
+
 int main(int argc, const char** argv) {
+  const auto processStart = Clock::now();
   // Reserve protocol stdout before redirecting all engine/library logging (including C stdio).
   std::FILE* protocol = fdopen(dup(STDOUT_FILENO),"w");
   dup2(STDERR_FILENO,STDOUT_FILENO);
   try {
     const auto opts = options(argc,argv);
+    // --game-parity: no body traces unless asked, as in the rendered game (they hook into NPC fights).
+    if(opts.gameParity)
+      setenv("OPENGOTHIC_BODY_TRACE","0",0);
     Workers::setSerialExecution(opts.serialWorkers);
     // Jolt steps on this thread unless asked otherwise: one schedule for lockstep and realtime runs,
     // and a single-threaded template for --fork-reset.
     setenv("OPENGOTHIC_PHYSICS_THREADS","0",0);
-    std::filesystem::create_directories(opts.output);
+    // No background copy of the base to the store: --fork-reset needs a single thread, and the
+    // copy would serialize every parallel runner on the store's lock.
+    BaseStore::setPublication(false);
+    if(opts.societyExport.empty())
+      std::filesystem::create_directories(opts.output);
     CommandLine commandLine(argc,argv);
-    zenkit::Logger::set(zenkit::LogLevel::WARNING,Resources::zenkitLog);
+    daedalus::set_log_level(daedalus::LogLevel::WARNING);
     Resources resources;
     Gothic gothic;
     auto stuckLogger = StuckLogger::fromEnvironment();
     gothic.isNpcInDialogFn = [](const Npc*) { return false; };
     gothic.setupGlobalScripts();
     GameMusic music;
+    if(!opts.societyExport.empty())
+      return societyExport(gothic,opts,protocol,processStart);
+    // --game-parity: the game's AI bridge, as main.cpp creates it. Without a server it still changes the
+    // simulation (beasts' perception, -nointro dialogs, dialogs as story programs); GOTHIC_AI=0 disables it.
+    std::optional<AiBridge> aiBridge;
+    if(opts.gameParity)
+      aiBridge.emplace();
     Runner runner(gothic,opts);
     if(!opts.stdio) {
       Json reset(rapidjson::kObjectType);

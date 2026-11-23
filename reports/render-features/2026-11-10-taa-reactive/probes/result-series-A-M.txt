@@ -1,0 +1,49 @@
+
+## harbour-night: mean over the 4 views of the per-view mean over clean runs, ms (runs per view)
+| mode | runs | frame | frame_med | Translucent.span | Translucent.vs | Translucent.fs | TAA.span | TAA.vs | TAA.fs |
+|---|---|---|---|---|---|---|---|---|---|
+| D | 7/6/6/6 | 18.210 | 18.368 | 3.515 | 0.165 | 0.207 | 5.395 | 0.151 | 1.907 |
+| C | 6/6/6/5 | 17.973 | 18.200 | 3.503 | 0.165 | 0.206 | 5.378 | 0.153 | 1.898 |
+| A | 7/7/7/7 | 17.483 | 17.701 | 3.397 | 0.164 | 0.095 | 5.196 | 0.152 | 1.816 |
+| M | 7/7/7/7 | 18.402 | 18.696 | 3.650 | 0.168 | 0.321 | 5.607 | 0.156 | 1.985 |
+
+### harbour-night: difference to A, ms (± standard error from the spread of runs)
+| mode | frame | frame_med | Translucent.span | Translucent.vs | Translucent.fs | TAA.span | TAA.vs | TAA.fs |
+|---|---|---|---|---|---|---|---|---|
+| D | +0.727 ± 0.180 | +0.667 ± 0.184 | +0.118 ± 0.015 | +0.001 ± 0.001 | +0.112 ± 0.004 | +0.200 ± 0.016 | -0.001 ± 0.001 | +0.091 ± 0.004 |
+| C | +0.490 ± 0.238 | +0.499 ± 0.252 | +0.106 ± 0.011 | +0.001 ± 0.001 | +0.111 ± 0.003 | +0.183 ± 0.011 | +0.001 ± 0.001 | +0.082 ± 0.003 |
+| M | +0.919 ± 0.191 | +0.996 ± 0.204 | +0.253 ± 0.030 | +0.004 ± 0.002 | +0.226 ± 0.004 | +0.411 ± 0.042 | +0.004 ± 0.002 | +0.169 ± 0.013 |
+
+## market: mean over the 4 views of the per-view mean over clean runs, ms (runs per view)
+| mode | runs | frame | frame_med | Translucent.span | Translucent.vs | Translucent.fs | TAA.span | TAA.vs | TAA.fs |
+|---|---|---|---|---|---|---|---|---|---|
+| D | 6/6/6/6 | 22.229 | 22.450 | 4.432 | 0.199 | 0.143 | 6.301 | 0.183 | 1.896 |
+| C | 6/6/7/7 | 21.706 | 22.041 | 4.451 | 0.199 | 0.147 | 6.315 | 0.185 | 1.884 |
+| A | 6/6/6/7 | 21.230 | 21.500 | 4.331 | 0.200 | 0.022 | 6.126 | 0.186 | 1.807 |
+| M | 7/7/7/7 | 22.518 | 22.878 | 4.631 | 0.205 | 0.271 | 6.575 | 0.190 | 1.974 |
+
+### market: difference to A, ms (± standard error from the spread of runs)
+| mode | frame | frame_med | Translucent.span | Translucent.vs | Translucent.fs | TAA.span | TAA.vs | TAA.fs |
+|---|---|---|---|---|---|---|---|---|
+| D | +0.999 ± 0.249 | +0.950 ± 0.268 | +0.101 ± 0.010 | -0.001 ± 0.002 | +0.121 ± 0.001 | +0.175 ± 0.010 | -0.003 ± 0.002 | +0.089 ± 0.003 |
+| C | +0.476 ± 0.293 | +0.541 ± 0.296 | +0.120 ± 0.012 | -0.001 ± 0.002 | +0.124 ± 0.001 | +0.188 ± 0.012 | -0.001 ± 0.002 | +0.077 ± 0.003 |
+| M | +1.287 ± 0.329 | +1.378 ± 0.330 | +0.300 ± 0.030 | +0.005 ± 0.002 | +0.249 ± 0.001 | +0.448 ± 0.043 | +0.004 ± 0.002 | +0.168 ± 0.014 |
+
+## dropped (17)
+- D.1-a1 harbour-night view-1: foreign 50.1 %, background nan %, frame 62.43 ms
+- D.1-a1 harbour-night view-2: foreign 56.0 %, background nan %, frame 72.98 ms
+- D.1-a1 harbour-night view-3: foreign 53.8 %, background nan %, frame 67.69 ms
+- D.1-a1 market view-1: foreign 18.3 %, background nan %, frame 43.45 ms
+- D.1-a1 market view-2: foreign 18.5 %, background nan %, frame 28.55 ms
+- D.1-a1 market view-3: foreign 29.2 %, background nan %, frame 82.48 ms
+- D.1-a1 market view-4: foreign 16.1 %, background nan %, frame 90.47 ms
+- C.1-a1 harbour-night view-1: foreign 51.1 %, background nan %, frame 67.17 ms
+- C.1-a1 harbour-night view-2: foreign 40.8 %, background nan %, frame 61.72 ms
+- C.1-a1 harbour-night view-3: foreign 39.2 %, background nan %, frame 62.76 ms
+- C.1-a1 harbour-night view-4: foreign 43.1 %, background nan %, frame 73.83 ms
+- A.2-a1 market view-1: foreign 16.2 %, background nan %, frame 20.15 ms
+- A.2-a1 market view-2: foreign 23.1 %, background nan %, frame 21.45 ms
+- A.2-a1 market view-3: foreign 23.2 %, background nan %, frame 23.25 ms
+- C.3-a1 market view-1: foreign 15.2 %, background nan %, frame 20.73 ms
+- C.3-a1 market view-2: foreign 21.5 %, background nan %, frame 22.05 ms
+- C.7-a1 harbour-night view-4: foreign 5.5 %, background 7.5 %, frame 20.03 ms

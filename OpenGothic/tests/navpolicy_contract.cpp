@@ -1,4 +1,5 @@
 #include "navpolicy.h"
+#include "navlivetrace.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -17,6 +18,8 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <optional>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -26,6 +29,50 @@ namespace {
 void require(bool condition,const std::string& message) {
   if(!condition) throw std::runtime_error(message);
   }
+
+void liveFormatContract() {
+  struct Temporary final {
+    std::filesystem::path path=std::filesystem::temp_directory_path()/
+      ("gothic-nav-live-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    ~Temporary() {std::error_code error;std::filesystem::remove_all(path,error);}
+  } temporary;
+  require(std::filesystem::create_directory(temporary.path),"cannot create live trace fixture directory");
+  NavigationMemory::View memory;
+  memory.near.size=64;memory.near.cellCm=25;memory.near.cells.resize(64*64);
+  memory.far.size=100;memory.far.cellCm=200;memory.far.cells.resize(100*100);
+  memory.near.cells[0].wall=.5f;memory.far.cells[0].familiar=1;
+  std::vector<NavigationEye::Ray> rays(NavDemoWriter::rayCount);
+  rays[0].point={100,200,300};rays[0].hit=true;rays[0].kind=NavigationEye::HitKind::World;
+  NavDemoWriter::Snapshot sample;sample.gameMs=1000;sample.memory=&memory;sample.eye=&rays;
+  NavMesh::Path path;path.complete=true;path.corners={{1,2,3},{4,5,6}};
+  NavLiveTrace trace(temporary.path,nullptr,path,rays.size(),true,{},false,true);
+  trace.observation(sample,nullptr,0,0);
+  sample.gameMs=1100;trace.observation(sample,nullptr,100,1);
+  sample.gameMs=1400;trace.observation(sample,nullptr,400,4);trace.finish();
+  std::ifstream meta(temporary.path/"live-format.json");
+  const std::string json{std::istreambuf_iterator<char>(meta),std::istreambuf_iterator<char>()};
+  rapidjson::Document format;format.Parse(json.c_str());
+  require(!format.HasParseError() && format["schema"].GetUint()==1,"invalid live trace metadata");
+  require(format["maps"]["near"]["shape"][0].GetUint()==8 && format["maps"]["far"]["shape"][1].GetUint()==100,
+          "teacher trace map shape mismatch");
+  require(format["detour_cm"][0][0].GetFloat()==100,"live Detour path is not in centimetres");
+  const auto& target=format["target_script"];
+  require(std::string(target["mode"].GetString())=="player-walk" && target["walk_cm_s"].GetInt()==100 &&
+          target["run_cm_s"].GetInt()==0 && target["run_leg_index"].IsNull() && target["run_leg_prefix_ms"].GetInt()==0,
+          "live player-walk metadata must match the 100cm/s script without a run burst");
+  const size_t recordBytes=16+(64*64+100*100)*8+rays.size()*55;
+  std::vector<uint8_t> bytes(12+recordBytes*2+1);
+  gzFile input=gzopen((temporary.path/"live-observations.bin.gz").string().c_str(),"rb");
+  require(input!=nullptr,"cannot read live trace fixture");
+  const int read=gzread(input,bytes.data(),unsigned(bytes.size()));
+  const int closed=gzclose(input);
+  require(read==int(bytes.size()-1) && closed==Z_OK,"live trace record count/size mismatch");
+  require(std::memcmp(bytes.data(),"NAVLIVE\0",8)==0 && bytes[8]==1,"live trace header mismatch");
+  require(bytes[12+16+2*64*64]==128,"live memory probability quantization mismatch");
+  require(bytes[12+16+64*64*8+7*100*100]==255,"live familiar channel mismatch");
+  require(bytes[12+recordBytes]==144 && bytes[13+recordBytes]==1,"live observation cadence mismatch");
+  std::cout<<"{\"contract\":\"nav_live_format\",\"records\":2,\"ray_bytes\":55,\"record_bytes\":"<<recordBytes<<"}\n";
+}
 
 void memoryContract(const std::string& weights) {
   const NavPolicy original(weights);
@@ -232,6 +279,96 @@ struct Observation final {
     }
   };
 
+void replayActions(const std::string& weights,const std::string& samples,
+                   const std::string& metadata,const std::string& output) {
+  const NavPolicy policy(weights);
+  // Replay reproduces learner-chosen keys; a pace-input policy does not choose its pace.
+  require(!policy.paceInput(),"replay does not support pace-input weights (.navbc v5)");
+  std::ifstream episodeFile(metadata);
+  require(bool(episodeFile),"cannot open replay episode metadata");
+  const std::string text{std::istreambuf_iterator<char>(episodeFile),std::istreambuf_iterator<char>()};
+  rapidjson::Document episode;episode.Parse(text.c_str());
+  require(!episode.HasParseError() && episode.IsObject(),"invalid replay episode JSON");
+  require(episode.HasMember("mixing_seed") && episode["mixing_seed"].IsUint64(),"missing replay mixing seed");
+  require(episode.HasMember("decisions") && episode["decisions"].IsUint64(),"missing replay decision count");
+  require(episode.HasMember("action_mode") && episode["action_mode"].IsString() &&
+          std::string(episode["action_mode"].GetString())=="sample","replay requires sampled learner actions");
+  require(episode.HasMember("eye_layout") && episode["eye_layout"].IsArray() &&
+          episode["eye_layout"].Size()==NavDemoWriter::rayCount,"replay eye layout mismatch");
+  std::vector<std::array<float,3>> layout;
+  for(const auto& row:episode["eye_layout"].GetArray()) {
+    require(row.IsArray() && row.Size()==3,"replay eye layout row mismatch");
+    std::array<float,3> ray;
+    for(size_t i=0;i<ray.size();++i) {
+      require(row[rapidjson::SizeType(i)].IsNumber(),"invalid replay eye layout scalar");
+      ray[i]=row[rapidjson::SizeType(i)].GetFloat();
+      require(std::isfinite(ray[i]),"non-finite replay eye layout scalar");
+      }
+    require(ray[2]>0,"invalid replay eye range");
+    layout.push_back(ray);
+    }
+  struct Stream final {
+    gzFile file;
+    ~Stream() {if(file)gzclose(file);}
+    } stream{gzopen(samples.c_str(),"rb")};
+  require(stream.file!=nullptr,"cannot open replay NAVDEMO");
+  const auto bytes=[&](std::vector<uint8_t>& data) {
+    require(data.size()<=size_t(std::numeric_limits<int>::max()),"oversized replay NAVDEMO block");
+    require(gzread(stream.file,data.data(),unsigned(data.size()))==int(data.size()),"truncated replay NAVDEMO");
+    };
+  std::vector<uint8_t> raw(NavDemoWriter::headerBytes);bytes(raw);
+  require(std::memcmp(raw.data(),"NAVDEMO\0",8)==0,"invalid replay NAVDEMO magic");
+  Cursor header(raw);
+  header.current+=8;
+  const auto version=header.u32();
+  // DAgger4 records the V3 familiar byte for inspection; HD still reads the
+  // identical V2 road fields and ignores that additional memory channel.
+  const bool hdJourneyRecording=version==3 && policy.navDemoVersion()==2 &&
+                                policy.weightVersion()==3 && policy.navigationMemoryVersion()==4;
+  require(version>=1 && version<=3 && (version==policy.navDemoVersion() || hdJourneyRecording),
+          "replay NAVDEMO version mismatch");
+  require(header.u32()==NavDemoWriter::recordBytesForVersion(version) &&
+          header.u32()==NavDemoWriter::rayCount && header.u32()==NavDemoWriter::nearSize &&
+          header.u32()==NavDemoWriter::farSize && header.u32()==100,"replay NAVDEMO header mismatch");
+  raw.resize(NavDemoWriter::recordBytesForVersion(version));
+  std::ofstream out(output);
+  require(bool(out),"cannot create replay action output");
+  out<<std::boolalpha;
+  std::mt19937_64 rng(episode["mixing_seed"].GetUint64());
+  NavPolicy::State state;
+  Observation observation;
+  uint64_t previousMs=0;
+  const uint64_t decisions=episode["decisions"].GetUint64();
+  for(uint64_t step=0;step<decisions;++step) {
+    bytes(raw);observation.decode(raw,layout,version);
+    require(step==0 || (observation.snapshot.gameMs>previousMs && observation.snapshot.gameMs-previousMs==100),
+            "replay decisions must be exactly 100 ms apart");
+    previousMs=observation.snapshot.gameMs;
+    const auto result=policy.step(observation.snapshot,state);
+    std::array<size_t,NavPolicy::headCount> indices={};
+    // Keep the arithmetic and RNG draws identical to navdemos.cpp::select.
+    for(size_t i=0;i<policy.actionHeadCount();++i) {
+      const auto& head=result.logits[i];
+      const double temperature=policy.headTemperature(i);
+      const double maximum=*std::max_element(head.begin(),head.end())/temperature;
+      std::vector<double> probabilities;double total=0;
+      for(float value:head) {probabilities.push_back(std::exp(double(value)/temperature-maximum));total+=probabilities.back();}
+      const double draw=std::uniform_real_distribution<double>(0.,total)(rng);
+      double cumulative=0;indices[i]=probabilities.size()-1;
+      for(size_t j=0;j<probabilities.size();++j) {
+        cumulative+=probabilities[j];if(draw<cumulative) {indices[i]=j;break;}
+        }
+      }
+    const auto keys=policy.keys(indices);
+    out<<"{\"time_ms\":"<<previousMs<<",\"learner_keys\":{\"forward\":"<<int(keys.forward)
+       <<",\"strafe\":"<<int(keys.strafe)<<",\"turn\":"<<int(keys.turn)
+       <<",\"walk\":"<<keys.walk<<",\"jump\":"<<keys.jump<<",\"climb\":"<<keys.climb<<"}}\n";
+    }
+  require(gzgetc(stream.file)==-1 && gzeof(stream.file),"trailing or damaged replay NAVDEMO payload");
+  out.close();require(bool(out),"cannot finish replay action output");
+  std::cout<<"{\"replay\":\"navpolicy_actions\",\"decisions\":"<<decisions<<"}\n";
+  }
+
 struct Fixture final {
   gzFile stream=nullptr;
   size_t steps=0,hidden=0,readSteps=0;
@@ -270,8 +407,11 @@ struct Fixture final {
       steps=number("steps");hidden=number("hidden_size");
       if(header.HasMember("navdemo_version")) demoVersion=uint32_t(number("navdemo_version"));
       if(header.HasMember("weight_version")) weightVersion=uint32_t(number("weight_version"));
-      require(weightVersion>=1 && weightVersion<=4,"unsupported fixture weight version");
-      if(weightVersion>=2) {
+      require(weightVersion>=1 && weightVersion<=5,"unsupported fixture weight version");
+      if(weightVersion==5) {
+        heads={"forward","strafe","turn","maneuver"};classes={3,3,3,3};
+        }
+      else if(weightVersion>=2) {
         heads={"forward","strafe","turn","walk","maneuver"};classes={3,3,3,2,3};
         }
       else {
@@ -282,7 +422,8 @@ struct Fixture final {
       require(steps>0 && steps<=100000 && hidden>0 && hidden<=4096,"fixture dimensions out of bounds");
       const auto vectorSize=number("vector_size");
       require(number("record_bytes")==NavDemoWriter::recordBytesForVersion(demoVersion) &&
-              (vectorSize==NavPolicy::vectorSize || vectorSize==NavPolicy::legacyVectorSize),
+              (weightVersion==5 ? vectorSize==NavPolicy::paceVectorSize :
+               vectorSize==NavPolicy::vectorSize || vectorSize==NavPolicy::legacyVectorSize),
               "fixture input dimensions differ from NAVDEMO");
       if(weightVersion>=3) {
         expected.near.resize(weightVersion==4 ? NavPolicy::bc4NearSize : NavPolicy::hdNearSize);
@@ -400,7 +541,9 @@ void parity(const std::string& weights,const std::string& path) {
   double featureError=0,logitError=0,hiddenError=0;
   while(fixture.next()) {
     observation.decode(fixture.raw,fixture.layout,fixture.demoVersion);
-    const auto actual=policy.encode(observation.snapshot);
+    // Training's pace input is the record's teacher walk key on the same decision.
+    const auto pace=policy.paceInput() ? std::optional<bool>(observation.snapshot.keys.walk) : std::nullopt;
+    const auto actual=policy.encode(observation.snapshot,pace);
     const double localFeature=std::max({difference(actual.near,fixture.expected.near),
         difference(actual.far,fixture.expected.far),difference(actual.vector,fixture.expected.vector)});
     featureError=std::max(featureError,localFeature);
@@ -425,16 +568,38 @@ void parity(const std::string& weights,const std::string& path) {
     for(size_t h=0;h<fixture.heads.size();++h)
       localLogit=std::max(localLogit,difference(result.logits[h],fixture.logits[h]));
     if(policy.weightVersion()>=2) {
-      const auto& maneuver=result.logits[4];
+      const auto& maneuver=result.logits[policy.maneuverHead()];
       const auto action=size_t(std::max_element(maneuver.begin(),maneuver.end())-maneuver.begin());
       require(result.keys.jump==(action==1) && result.keys.climb==(action==2),"maneuver key decode mismatch");
       }
+    if(pace)
+      require(result.keys.walk==*pace,"pace input does not set the walk key");
     logitError=std::max(logitError,localLogit);
     const double localHidden=difference(state.hidden,fixture.hiddenState);
     hiddenError=std::max(hiddenError,localHidden);
     require(localLogit<=1e-4,"logits differ at step "+std::to_string(fixture.readSteps)+": "+std::to_string(localLogit));
     require(localHidden<=1e-4,"hidden state differs at step "+std::to_string(fixture.readSteps)+": "+std::to_string(localHidden));
     if(fixture.readSteps==1) {
+      if(policy.paceInput()) {
+        // Population chooses pace per episode, independently of the teacher's label.
+        const bool selectedWalk=!*pace;
+        const auto selected=policy.encode(observation.snapshot,selectedWalk);
+        require(selected.vector.back()==float(selectedWalk) &&
+                difference(selected.near,actual.near)==0 && difference(selected.far,actual.far)==0 &&
+                std::equal(selected.vector.begin(),selected.vector.end()-1,actual.vector.begin()),
+                "episode pace must change only the explicit pace input");
+        NavPolicy::State selectedState;
+        require(policy.step(selected,selectedState).keys.walk==selectedWalk,
+                "episode pace must set the executed walk key");
+        std::array<size_t,NavPolicy::headCount> sampled={};
+        require(policy.keys(sampled,selectedWalk).walk==selectedWalk,
+                "sampled actions must retain the episode pace");
+      }
+      else {
+        const auto& walk=result.logits[3];
+        require(result.keys.walk==(std::max_element(walk.begin(),walk.end())!=walk.begin()),
+                "weights without a pace input must retain their walk head");
+      }
       // HD uses physical feet Y only as the local height origin. All policies
       // ignore absolute X/Z, yaw and the record's teacher annotations.
       const float feetY=observation.snapshot.position[1];
@@ -471,11 +636,11 @@ void parity(const std::string& weights,const std::string& path) {
         observation.snapshot.roads.remainingKnownCm=std::numeric_limits<float>::quiet_NaN();
         observation.snapshot.roads.beyondKnown=!observation.snapshot.roads.beyondKnown;
         }
-      const auto other=policy.encode(observation.snapshot);
+      const auto other=policy.encode(observation.snapshot,pace);
       require(difference(actual.near,other.near)==0 && difference(actual.far,other.far)==0 &&
               difference(actual.vector,other.vector)==0,"privileged annotation leaked into features");
       NavPolicy::State fresh;
-      const auto reset=policy.step(observation.snapshot,fresh);
+      const auto reset=policy.step(observation.snapshot,fresh,pace);
       for(size_t h=0;h<fixture.heads.size();++h)
         require(difference(result.logits[h],reset.logits[h])==0,"NPC state is shared across evaluations");
       }
@@ -503,9 +668,12 @@ void benchmark(const std::string& weights,const std::string& path,size_t npcs,si
   std::vector<NavPolicy::Features> features;
   std::vector<std::vector<uint8_t>> records;
   Observation observation;
+  const auto pace=[&]() {
+    return policy.paceInput() ? std::optional<bool>(observation.snapshot.keys.walk) : std::nullopt;
+    };
   for(size_t i=0;i<16 && fixture.next();++i) {
     observation.decode(fixture.raw,fixture.layout,fixture.demoVersion);
-    features.push_back(policy.encode(observation.snapshot));
+    features.push_back(policy.encode(observation.snapshot,pace()));
     records.push_back(fixture.raw);
     }
   require(!features.empty(),"empty benchmark fixture");
@@ -537,7 +705,7 @@ void benchmark(const std::string& weights,const std::string& path,size_t npcs,si
   for(size_t i=0;i<decisions;++i) {
     observation.decode(records[i%records.size()],fixture.layout,fixture.demoVersion);
     const auto before=Clock::now();
-    const auto encoded=policy.encode(observation.snapshot);
+    const auto encoded=policy.encode(observation.snapshot,pace());
     const auto after=Clock::now();
     encodeUs.push_back(micros(before,after));
     checksum+=encoded.vector[i%encoded.vector.size()];
@@ -545,7 +713,7 @@ void benchmark(const std::string& weights,const std::string& path,size_t npcs,si
   for(size_t i=0;i<decisions;++i) {
     observation.decode(records[i%records.size()],fixture.layout,fixture.demoVersion);
     const auto before=Clock::now();
-    const auto result=policy.step(observation.snapshot,states[i%npcs]);
+    const auto result=policy.step(observation.snapshot,states[i%npcs],pace());
     const auto after=Clock::now();
     policyUs.push_back(micros(before,after));
     checksum+=result.logits[0][0];
@@ -562,6 +730,14 @@ void benchmark(const std::string& weights,const std::string& path,size_t npcs,si
 
 int main(int argc,char** argv) {
   try {
+    if(argc==6 && std::string(argv[1])=="--replay-actions") {
+      replayActions(argv[2],argv[3],argv[4],argv[5]);
+      return 0;
+      }
+    if(argc==2 && std::string(argv[1])=="--live-format") {
+      liveFormatContract();
+      return 0;
+      }
     if(argc==3 && std::string(argv[1])=="--memory") {
       memoryContract(argv[2]);
       return 0;
@@ -583,7 +759,9 @@ int main(int argc,char** argv) {
       return 0;
       }
     std::cerr<<"usage: gothic-navpolicy-contract WEIGHTS FIXTURE\n"
+             <<"       gothic-navpolicy-contract --live-format\n"
              <<"       gothic-navpolicy-contract --memory WEIGHTS\n"
+             <<"       gothic-navpolicy-contract --replay-actions WEIGHTS SAMPLES.bin.gz EPISODE.json OUTPUT.jsonl\n"
              <<"       gothic-navpolicy-contract --benchmark WEIGHTS FIXTURE [--npcs 20] [--decisions 2000]\n";
     return 2;
     }

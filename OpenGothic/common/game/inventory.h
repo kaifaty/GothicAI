@@ -5,11 +5,11 @@
 #include <string_view>
 #include <string>
 
-#include "game/constants.h"
+#include "game/rpgvocabulary.h"
 
 class Item;
 class World;
-class GameScript;
+class GameRules;
 class Npc;
 class Interactive;
 class Serialize;
@@ -81,10 +81,10 @@ class Inventory final {
     void   equipBestArmor       (Npc &owner);
     void   equipBestMeleeWeapon (Npc &owner);
     void   equipBestRangedWeapon(Npc &owner);
-    void   unequipWeapons(GameScript &vm, Npc &owner);
-    void   unequipArmor(GameScript &vm, Npc &owner);
-    void   clear(GameScript &vm, Npc &owner, bool includeMissionItm = false);
-    void   clear(GameScript &vm, Interactive &owner, bool includeMissionItm = false);
+    void   unequipWeapons(GameRules &vm, Npc &owner);
+    void   unequipArmor(GameRules &vm, Npc &owner);
+    void   clear(GameRules &vm, Npc &owner, bool includeMissionItm = false);
+    void   clear(GameRules &vm, Interactive &owner, bool includeMissionItm = false);
     bool   hasSpell(int32_t spl) const;
     bool   hasMissionItems() const;
     bool   hasRangedWeaponWithAmmo() const;
@@ -109,9 +109,16 @@ class Inventory final {
     Item*  currentSpell(uint8_t s) { return numslot[s]; }
     const Item*  currentSpell(uint8_t s) const { return numslot[s]; }
     Item*  findByFlags(ItmFlags f, uint32_t num) const;
+    // the carried item of that class (the arrows of a bow: the quiver shows their mesh); nullptr if none
+    Item*  itemOfClass(size_t cls) { return findByClass(cls); }
 
     uint8_t currentSpellSlot() const;
     bool    hasStateItem() const;
+    const Item* slotItem(std::string_view slot) const {
+      for(const auto& i:mdlSlots)
+        if(i.slot==slot)return i.item;
+      return nullptr;
+      }
     // the item the npc holds for its state (a beer, a torch, a broom); nullptr if none
     const Item* stateSlotItem() const { return stateSlot.item; }
 

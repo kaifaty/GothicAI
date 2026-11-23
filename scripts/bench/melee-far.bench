@@ -1,0 +1,1199 @@
+# Native nonlethal starts; two pairs x three distances x six shared seeds.
+# BENCH_HOST=ryzen WORLD=NEWWORLD.ZEN TIMEOUT=2700 RYZEN_MAX=75m scripts/bench.sh melee-far
+# Each metrics-only segment retains both rolling shadow journals with stop shadow.
+cheat god
+release all
+overlay off
+set time 12 0
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 10000
+
+# melee-far-12m-p1-s1: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 1
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 1200 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 1
+rec melee-far-12m-p1-s1 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p1-s2: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 2
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 1200 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 2
+rec melee-far-12m-p1-s2 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p1-s3: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 3
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 1200 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 3
+rec melee-far-12m-p1-s3 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p1-s4: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 4
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 1200 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 4
+rec melee-far-12m-p1-s4 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p1-s5: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 5
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 1200 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 5
+rec melee-far-12m-p1-s5 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p1-s6: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 6
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 1200 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 6
+rec melee-far-12m-p1-s6 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p2-s1: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 1
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 1200 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 1
+rec melee-far-12m-p2-s1 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p2-s2: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 2
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 1200 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 2
+rec melee-far-12m-p2-s2 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p2-s3: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 3
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 1200 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 3
+rec melee-far-12m-p2-s3 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p2-s4: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 4
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 1200 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 4
+rec melee-far-12m-p2-s4 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p2-s5: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 5
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 1200 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 5
+rec melee-far-12m-p2-s5 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-12m-p2-s6: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 6
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 1200 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 6
+rec melee-far-12m-p2-s6 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p1-s1: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 1
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 2500 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 1
+rec melee-far-25m-p1-s1 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p1-s2: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 2
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 2500 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 2
+rec melee-far-25m-p1-s2 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p1-s3: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 3
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 2500 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 3
+rec melee-far-25m-p1-s3 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p1-s4: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 4
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 2500 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 4
+rec melee-far-25m-p1-s4 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p1-s5: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 5
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 2500 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 5
+rec melee-far-25m-p1-s5 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p1-s6: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 6
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 2500 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 6
+rec melee-far-25m-p1-s6 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p2-s1: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 1
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 2500 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 1
+rec melee-far-25m-p2-s1 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p2-s2: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 2
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 2500 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 2
+rec melee-far-25m-p2-s2 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p2-s3: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 3
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 2500 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 3
+rec melee-far-25m-p2-s3 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p2-s4: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 4
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 2500 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 4
+rec melee-far-25m-p2-s4 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p2-s5: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 5
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 2500 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 5
+rec melee-far-25m-p2-s5 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-25m-p2-s6: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 6
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 2500 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 6
+rec melee-far-25m-p2-s6 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p1-s1: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 1
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 4000 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 1
+rec melee-far-40m-p1-s1 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p1-s2: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 2
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 4000 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 2
+rec melee-far-40m-p1-s2 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p1-s3: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 3
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 4000 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 3
+rec melee-far-40m-p1-s3 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p1-s4: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 4
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 4000 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 4
+rec melee-far-40m-p1-s4 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p1-s5: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 5
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 4000 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 5
+rec melee-far-40m-p1-s5 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p1-s6: SLD_826_SOELDNER -> SLD_815_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 6
+arc SLD_826_SOELDNER 1 150 0
+put SLD_826_SOELDNER 150 180
+arc SLD_815_SOELDNER 1 150 0
+put SLD_815_SOELDNER 150 0
+wait 600
+watch SLD_826_SOELDNER
+place 4000 90
+release all
+where SLD_826_SOELDNER
+where SLD_815_SOELDNER
+seed 6
+rec melee-far-40m-p1-s6 novideo
+freeze SLD_815_SOELDNER off
+fight SLD_826_SOELDNER SLD_815_SOELDNER deed
+waitdown SLD_826_SOELDNER 60000 SLD_815_SOELDNER
+freeze SLD_826_SOELDNER
+freeze SLD_815_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put SLD_826_SOELDNER 150 180
+put SLD_815_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p2-s1: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 1
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 4000 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 1
+rec melee-far-40m-p2-s1 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p2-s2: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 2
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 4000 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 2
+rec melee-far-40m-p2-s2 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p2-s3: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 3
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 4000 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 3
+rec melee-far-40m-p2-s3 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p2-s4: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 4
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 4000 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 4
+rec melee-far-40m-p2-s4 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p2-s5: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 5
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 4000 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 5
+rec melee-far-40m-p2-s5 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500
+
+# melee-far-40m-p2-s6: MIL_322_MILIZ -> SLD_824_SOELDNER
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+clear 2500
+set time 12 0
+seed 6
+arc MIL_322_MILIZ 1 150 0
+put MIL_322_MILIZ 150 180
+arc SLD_824_SOELDNER 1 150 0
+put SLD_824_SOELDNER 150 0
+wait 600
+watch MIL_322_MILIZ
+place 4000 90
+release all
+where MIL_322_MILIZ
+where SLD_824_SOELDNER
+seed 6
+rec melee-far-40m-p2-s6 novideo
+freeze SLD_824_SOELDNER off
+fight MIL_322_MILIZ SLD_824_SOELDNER deed
+waitdown MIL_322_MILIZ 60000 SLD_824_SOELDNER
+freeze MIL_322_MILIZ
+freeze SLD_824_SOELDNER
+wait 2000
+stop shadow
+watch player
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 0
+put MIL_322_MILIZ 150 180
+put SLD_824_SOELDNER 150 0
+clear 2500

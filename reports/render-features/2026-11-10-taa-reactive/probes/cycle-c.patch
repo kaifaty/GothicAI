@@ -1,0 +1,224 @@
+diff --git a/OpenGothic/common/graphics/pfx/pfxbucket.cpp b/OpenGothic/common/graphics/pfx/pfxbucket.cpp
+index f6c7ed46c..e970f9674 100644
+--- a/OpenGothic/common/graphics/pfx/pfxbucket.cpp
++++ b/OpenGothic/common/graphics/pfx/pfxbucket.cpp
+@@ -10,6 +10,7 @@
+ #include "graphics/visualobjects.h"
+ #include "graphics/drawcommands.h"
+ #include "graphics/worldview.h"
++#include "graphics/renderer.h" // PROBE (mac-cost.md): gTaaProbeFlags
+ #include "pfxobjects.h"
+ #include "particlefx.h"
+ #include "world/objects/npc.h"
+@@ -987,7 +988,9 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const
+ 
+   cmd.setBinding(L_Scene, scene.uboGlobal[view]);
+   cmd.setBinding(L_Pfx,   itm.pfxGpu);
+-  if(view==SceneGlobals::V_Main && (mat.alpha==Material::Transparent || mat.alpha==Material::AdditiveLight)) {
++  // PROBE (reports/render-features/2026-11-10-taa-reactive/mac-cost.md): no push data per particle bucket
++  const bool probeNoPush = (gTaaProbeFlags & TaaProbe::PfxNoPush)!=0;
++  if(!probeNoPush && view==SceneGlobals::V_Main && (mat.alpha==Material::Transparent || mat.alpha==Material::AdditiveLight)) {
+     // the weight of the TAA reactive mask (main.frag, graphics plan 1v)
+     cmd.setPushData(reactive);
+     }
+diff --git a/OpenGothic/common/graphics/renderer.cpp b/OpenGothic/common/graphics/renderer.cpp
+index 1fa04a62e..0b667c677 100644
+--- a/OpenGothic/common/graphics/renderer.cpp
++++ b/OpenGothic/common/graphics/renderer.cpp
+@@ -8,6 +8,7 @@
+ #include <Tempest/Log>
+ #include <Tempest/StorageImage>
+ #include <cassert>
++#include <chrono> // PROBE (mac-cost.md)
+ #include <cmath>
+ #include <cstdio>
+ 
+@@ -155,6 +156,37 @@ Renderer::~Renderer() {
+   Gothic::inst().onSettingsChanged.ubind(this,&Renderer::setupSettings);
+   }
+ 
++// PROBE (reports/render-features/2026-11-10-taa-reactive/mac-cost.md, probes/cycle.patch): the probes of the mask's
++// cost on the Mac, by phase. OPENGOTHIC_PROBE_CYCLE=<ms> switches the phase every <ms> of steady_clock, at the start of
++// Renderer::draw; the analysis takes the phase of a frame from its frameprofile.csv row. Without it, phase 7 (none).
++uint32_t gTaaProbeFlags = 0;
++static const uint32_t taaProbePhases[8] = {
++  TaaProbe::MaskOff,                                                            // 0 O: the mask off, as taaReactive=0
++  TaaProbe::MaskOff | TaaProbe::AttNone,                                        // 1 the pass without the attachment
++  TaaProbe::MaskOff | TaaProbe::AttNoStore,                                     // 2 the attachment not stored
++  TaaProbe::MaskOff | TaaProbe::AttNoClear,                                     // 3 the attachment not cleared
++  TaaProbe::MaskOff | TaaProbe::ResNoMask,                                      // 4 the resolve of a545f43a4
++  TaaProbe::MaskOff | TaaProbe::PfxNoPush,                                      // 5 no push data per particle bucket
++  TaaProbe::MaskOff | TaaProbe::AttNone | TaaProbe::ResNoMask | TaaProbe::PfxNoPush, // 6 Z: all of the mask taken out
++  0,                                                                            // 7 N: as main, the mask on
++  };
++
++void Renderer::updateTaaProbe() {
++  static const uint64_t phaseNs = [] {
++    const char* e = std::getenv("OPENGOTHIC_PROBE_CYCLE");
++    const uint64_t ms = e ? uint64_t(std::strtoull(e, nullptr, 10)) : 0;
++    Log::i("render: probe cycle = ", int(ms), " ms");
++    return ms*1000000ull;
++    }();
++  if(phaseNs==0) {
++    gTaaProbeFlags = 0;
++    return;
++    }
++  const uint64_t now = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
++                                  std::chrono::steady_clock::now().time_since_epoch()).count());
++  gTaaProbeFlags = taaProbePhases[(now/phaseNs)%8];
++  }
++
+ void Renderer::setupSettings() {
+   settings.zEnvMappingEnabled = Gothic::settingsGetI("ENGINE","zEnvMappingEnabled")!=0;
+   settings.zCloudShadowScale  = Gothic::settingsGetI("ENGINE","zCloudShadowScale") !=0;
+@@ -721,6 +753,7 @@ void Renderer::dbgDraw(Tempest::Painter& p) {
+ 
+ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
+   FrameProfile::Scope mainTiming(FrameProfile::Zone::EncodeMain);
++  updateTaaProbe();
+   //FIXME: those also needed to be refactor away
+   const auto world     = Gothic::inst().world();
+   const auto gameTime  = world!=nullptr ? world->time() : gtime(8,0);
+@@ -857,6 +890,16 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
+   FrameProfile::Scope translucentTiming(FrameProfile::Zone::EncodeWater);
+   // the TAA reactive mask is the second attachment: each translucent pipeline writes it under its own blend
+   // (main.frag, graphics plan 1v), the TAA resolve reads it
++  // PROBE (reports/render-features/2026-11-10-taa-reactive/mac-cost.md): the pass without the mask, its store, its clear
++  if(gTaaProbeFlags & TaaProbe::AttNone)
++    cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
++  else if(gTaaProbeFlags & TaaProbe::AttNoStore)
++    cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Vec4(), Tempest::Discard}},
++                       {zbuffer, Tempest::Preserve, Tempest::Preserve});
++  else if(gTaaProbeFlags & TaaProbe::AttNoClear)
++    cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Discard, Tempest::Preserve}},
++                       {zbuffer, Tempest::Preserve, Tempest::Preserve});
++  else
+   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Vec4(), Tempest::Preserve}},
+                      {zbuffer, Tempest::Preserve, Tempest::Preserve});
+   cmd.setDebugMarker("Translucent");
+diff --git a/OpenGothic/common/graphics/renderer.h b/OpenGothic/common/graphics/renderer.h
+index 48a9bc92a..47babba0a 100644
+--- a/OpenGothic/common/graphics/renderer.h
++++ b/OpenGothic/common/graphics/renderer.h
+@@ -17,6 +17,12 @@ class Camera;
+ class InventoryMenu;
+ class VideoWidget;
+ 
++// PROBE (reports/render-features/2026-11-10-taa-reactive/mac-cost.md): the mask's parts switched off by phase
++namespace TaaProbe {
++enum : uint32_t { AttNone = 1, AttNoStore = 2, AttNoClear = 4, ResNoMask = 8, PfxNoPush = 16, MaskOff = 32 };
++}
++extern uint32_t gTaaProbeFlags;
++
+ class Renderer final {
+   public:
+     Renderer();
+@@ -125,6 +131,7 @@ class Renderer final {
+     void drawLightTreeDbg (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
+ 
+     void setupSettings();
++    void updateTaaProbe(); // PROBE (mac-cost.md)
+     void toggleGi();
+     void toggleVsm();
+     void togglePathtrace();
+diff --git a/OpenGothic/common/graphics/renderer_post.cpp b/OpenGothic/common/graphics/renderer_post.cpp
+index 0891e2f6f..c32a14fde 100644
+--- a/OpenGothic/common/graphics/renderer_post.cpp
++++ b/OpenGothic/common/graphics/renderer_post.cpp
+@@ -234,9 +234,15 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused
+   cmd.setBinding(1, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
+   cmd.setBinding(2, prev,        Sampler::bilinear(ClampMode::ClampToEdge));
+   cmd.setBinding(3, gbufMotion,  Sampler::nearest(ClampMode::ClampToEdge));
+-  cmd.setBinding(4, taa.reactive,Sampler::nearest(ClampMode::ClampToEdge));
++  // PROBE (reports/render-features/2026-11-10-taa-reactive/mac-cost.md): the resolve without the mask's binding and code
++  // (the shader of a545f43a4), and the mask off as taaReactive=0
++  const bool probeNoMask = (gTaaProbeFlags & TaaProbe::ResNoMask)!=0;
++  if(gTaaProbeFlags & TaaProbe::MaskOff)
++    push.reactive = 0;
++  if(!probeNoMask)
++    cmd.setBinding(4, taa.reactive,Sampler::nearest(ClampMode::ClampToEdge));
+   cmd.setPushData(push);
+-  cmd.setPipeline(shaders.taaResolve);
++  cmd.setPipeline(probeNoMask ? shaders.taaResolveNoMask : shaders.taaResolve);
+   cmd.draw(nullptr, 0, 3);
+   taa.valid = true;
+ 
+diff --git a/OpenGothic/common/graphics/shaders.cpp b/OpenGothic/common/graphics/shaders.cpp
+index aa99cc12f..c0ead2f2e 100644
+--- a/OpenGothic/common/graphics/shaders.cpp
++++ b/OpenGothic/common/graphics/shaders.cpp
+@@ -228,8 +228,10 @@ void Shaders::compileShaders() noexcept {
+ #if defined(__APPLE__)
+   // the Mac is always Metal: half colours, -14% of the pass; Vulkan would need shaderFloat16
+   taaResolve             = postEffect("triangle", "taa_resolve_h", RenderState::ZTestMode::Always);
++  taaResolveNoMask       = postEffect("triangle", "taa_resolve_h_nomask", RenderState::ZTestMode::Always); // PROBE
+ #else
+   taaResolve             = postEffect("triangle", "taa_resolve", RenderState::ZTestMode::Always);
++  taaResolveNoMask       = taaResolve; // PROBE: Metal only
+ #endif
+   taaSharpen             = postEffect("triangle", "taa_sharpen", RenderState::ZTestMode::Always);
+   motionCamera           = postEffect("triangle",    "motion_camera",     RenderState::ZTestMode::Always);
+diff --git a/OpenGothic/common/graphics/shaders.h b/OpenGothic/common/graphics/shaders.h
+index c2baa0fda..415932ecd 100644
+--- a/OpenGothic/common/graphics/shaders.h
++++ b/OpenGothic/common/graphics/shaders.h
+@@ -85,6 +85,7 @@ class Shaders {
+     Tempest::ComputePipeline cmaa2ProcessCandidates;
+     Tempest::RenderPipeline  cmaa2DeferredColorApply2x2;
+     Tempest::RenderPipeline  taaResolve, taaSharpen;
++    Tempest::RenderPipeline  taaResolveNoMask; // PROBE (mac-cost.md)
+     // temporal upscale (MetalFX Temporal): camera motion vectors, tonemapping with the bloom in it
+     Tempest::RenderPipeline  motionCamera, tonemappingBloom, tonemappingTaa;
+ 
+diff --git a/OpenGothic/shader/CMakeLists.txt b/OpenGothic/shader/CMakeLists.txt
+index 7dd885f10..b9b2f7fa3 100644
+--- a/OpenGothic/shader/CMakeLists.txt
++++ b/OpenGothic/shader/CMakeLists.txt
+@@ -430,6 +430,7 @@ add_shader(cmaa2_deferred_color_apply_2x2.frag     antialiasing/cmaa2/deferred_c
+ # temporal AA by the camera (docs/graphics-plan.md, step 1a)
+ add_shader(taa_resolve.frag                        antialiasing/taa_resolve.frag)
+ add_shader(taa_resolve_h.frag                      antialiasing/taa_resolve.frag -DFP16)
++add_shader(taa_resolve_h_nomask.frag               antialiasing/taa_resolve.frag -DFP16 -DNO_REACTIVE) # PROBE (mac-cost.md)
+ add_shader(taa_sharpen.frag                        antialiasing/taa_sharpen.frag)
+ 
+ # virtual shadows
+diff --git a/OpenGothic/shader/antialiasing/taa_resolve.frag b/OpenGothic/shader/antialiasing/taa_resolve.frag
+index a80db911d..6b7186692 100644
+--- a/OpenGothic/shader/antialiasing/taa_resolve.frag
++++ b/OpenGothic/shader/antialiasing/taa_resolve.frag
+@@ -40,7 +40,9 @@ layout(binding = 0) uniform sampler2D current; // linear HDR, pre-exposed
+ layout(binding = 1) uniform sampler2D depth;
+ layout(binding = 2) uniform sampler2D history; // bilinear
+ layout(binding = 3) uniform sampler2D motion;  // the objects' own motion, texture coordinates, current -> previous
++#if !defined(NO_REACTIVE) // PROBE (mac-cost.md): the resolve without the mask's binding and sample
+ layout(binding = 4) uniform sampler2D reactive; // the reactive mask of this frame, R8
++#endif
+ 
+ layout(location = 0) out vec4 outHistory; // the sharpening pass makes the scene from it (taa_sharpen.frag)
+ 
+@@ -119,8 +121,13 @@ void main() {
+   const ivec2 pix  = ivec2(gl_FragCoord.xy);
+   const vec3  cur  = texelFetch(current, pix, 0).rgb;
+   // this frame's mask under the ceiling; the history's alpha takes it (1 with the mask off, as before)
++#if defined(NO_REACTIVE)
++  const float r    = 0.0;
++  const float outA = 1.0;
++#else
+   const float r    = push.reactive!=0 ? min(texelFetch(reactive, pix, 0).r, push.reactiveMax) : 0.0;
+   const float outA = push.reactive!=0 ? r : 1.0;
++#endif
+ 
+   if(push.reset!=0) {
+     outHistory = vec4(cur, outA);
+@@ -182,7 +189,11 @@ void main() {
+   // weights by inverse luminance: one bright spark does not burn into the history. Under the mask (this frame's or
+   // the last one's, which the history keeps) the new frame's share grows and the weights by luminance fade: a real
+   // spark keeps its light. With the mask 0 these are the weights without it (Taa::resolveWeights)
++#if defined(NO_REACTIVE)
++  const float rPrev = 0.0;
++#else
+   const float rPrev = push.reactive!=0 ? histA : 0.0;
++#endif
+   const float k     = max(r, rPrev);
+   const float a     = mix(push.alpha, 1.0, k);
+   const float wCur  = a      /(1.0 + (1.0-k)*float(rgb2ycocg(hvec3(cur)).x));

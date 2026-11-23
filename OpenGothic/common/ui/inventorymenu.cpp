@@ -11,8 +11,9 @@
 #include "utils/gthfont.h"
 #include "utils/keycodec.h"
 #include "gothic.h"
+#include "settings.h"
 #include "resources.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 using namespace Tempest;
 
@@ -83,7 +84,7 @@ InventoryMenu::InventoryMenu(const KeyCodec& key)
   selU = Resources::loadTexture("INV_SLOT_EQUIPPED.TGA");
   tex  = Resources::loadTexture("INV_BACK.TGA"); // INV_TITEL.TGA
 
-  int invMaxColumns = Gothic::settingsGetI("GAME","invMaxColumns");
+  int invMaxColumns = Settings::getI("GAME","invMaxColumns");
   if(invMaxColumns>0)
     columsCount = size_t(invMaxColumns); else
     columsCount = 5;
@@ -108,7 +109,7 @@ void InventoryMenu::close() {
   }
 
 void InventoryMenu::open(Npc &pl) {
-  if(pl.isDown() || pl.isMonster() || pl.isInAir() || pl.isSlide() || (pl.interactive()!=nullptr))
+  if(pl.isDown() || pl.isMeleeKnockedDown() || pl.isMonster() || pl.isInAir() || pl.isSlide() || (pl.interactive()!=nullptr))
     return;
   if(pl.bodyStateMasked()==BS_UNCONSCIOUS || pl.bodyStateMasked()==BS_LIE)
     return;
@@ -131,7 +132,7 @@ void InventoryMenu::open(Npc &pl) {
   }
 
 void InventoryMenu::trade(Npc &pl, Npc &tr) {
-  if(pl.isDown())
+  if(pl.isDown() || pl.isMeleeKnockedDown())
     return;
   state  = State::Trade;
   player = &pl;
@@ -146,7 +147,7 @@ void InventoryMenu::trade(Npc &pl, Npc &tr) {
   }
 
 bool InventoryMenu::ransack(Npc &pl, Npc &tr) {
-  if(pl.isDown())
+  if(pl.isDown() || pl.isMeleeKnockedDown())
     return false;
   auto it = tr.inventory().iterator(Inventory::T_Ransack);
   if(!it.isValid())
@@ -161,13 +162,13 @@ bool InventoryMenu::ransack(Npc &pl, Npc &tr) {
   adjustScroll();
   update();
   Gothic::inst().emitGlobalSound("INV_OPEN");
-  if(TestBench::ragdollLootOpened(pl,tr))
+  if(Bench::ragdollLootOpened(pl,tr))
     close();
   return true;
   }
 
 void InventoryMenu::open(Npc &pl, Interactive &ch) {
-  if(pl.isDown())
+  if(pl.isDown() || pl.isMeleeKnockedDown())
     return;
   const bool needToPicklock = ch.needToLockpick(pl);
   if(!pl.setInteraction(&ch))
@@ -205,7 +206,7 @@ void InventoryMenu::onWorldChanged() {
   }
 
 void InventoryMenu::tick(uint64_t /*dt*/) {
-  if(player!=nullptr && (player->isDown() || player->bodyStateMasked()==BS_UNCONSCIOUS)) {
+  if(player!=nullptr && (player->isDown() || player->isMeleeKnockedDown() || player->bodyStateMasked()==BS_UNCONSCIOUS)) {
     close();
     return;
     }
@@ -426,7 +427,7 @@ void InventoryMenu::paintNumOverlay(PaintEvent& e) {
 
 Size InventoryMenu::slotSize() const {
   const float scale = Gothic::interfaceScale(this);
-  const float cell  = float(Gothic::options().inventoryCellSize);
+  const float cell  = float(Settings::options().inventoryCellSize);
   return Size(int(cell*scale),int(cell*scale));
   }
 
@@ -646,7 +647,7 @@ void InventoryMenu::drawSlot(Painter &p, DrawPass pass, const Inventory::Iterato
       }
 
     const int dsz = (id==sel.sel ? 5 : 0);
-    renderer.drawItem(x-dsz, y-dsz, slotSize().w+2*dsz, slotSize().h+2*dsz, *it);
+    it->drawInventory(renderer,x-dsz,y-dsz,slotSize().w+2*dsz,slotSize().h+2*dsz);
     } else {
     auto fnt = Resources::font(scale);
 
@@ -752,7 +753,7 @@ void InventoryMenu::drawInfo(Painter &p) {
     }
 
   const int sz = dh;
-  renderer.drawItem(x+dw-sz-sz/2,y,sz,sz,r);
+  r.drawInventory(renderer,x+dw-sz-sz/2,y,sz,sz);
   }
 
 void InventoryMenu::draw(Tempest::Encoder<CommandBuffer>& cmd) {

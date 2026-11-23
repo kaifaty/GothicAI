@@ -35,7 +35,7 @@ class StoryRuntime final {
     explicit StoryRuntime(std::function<std::string(const std::string&,const std::string&)> ownLine);
     ~StoryRuntime();
 
-    zenkit::DaedalusVm* vm() const;
+    daedalus::DaedalusVm* vm() const;
     GameScript*         script() const;
 
     // the director's story variable `name` (DIR_..., op "vars"): made with `first` in the VM if it is missing,
@@ -51,17 +51,17 @@ class StoryRuntime final {
     // the expression may be evaluated: names exist, script functions it calls can be lifted
     std::string         checkExpr(const storygraph::ExprP& e);
     // the names an expression uses exist; empty: they do
-    std::string         checkNames(zenkit::DaedalusVm& v, const storygraph::ExprP& e) const;
+    std::string         checkNames(daedalus::DaedalusVm& v, const storygraph::ExprP& e) const;
     // the program may run in place of `fn` (nullptr: a program of the director's, no parameters): names exist,
     // functions get as many arguments as they take, stores go into variables. `choices`: Choice and
     // ClearChoices steps may be offered (a dialog of the director's), else they are rejected
-    std::string         checkProgram(zenkit::DaedalusVm& v, const storygraph::Program& p, const zenkit::DaedalusSymbol* fn,
+    std::string         checkProgram(daedalus::DaedalusVm& v, const storygraph::Program& p, const daedalus::DaedalusSymbol* fn,
                                      bool choices = true) const;
 
     // a condition, with self and other as they are now; nullopt: it could not be computed (logged once as `what`)
     std::optional<bool> test(const storygraph::ExprP& e, std::string_view what);
     // the interpreter of the VM's programs, made again for a new VM
-    storygraph::Interpreter& interpreter(zenkit::DaedalusVm& v);
+    storygraph::Interpreter& interpreter(daedalus::DaedalusVm& v);
     // a Choice or ClearChoices step ran: the dialog of the director that runs takes it (dialoggraph.h); false: none
     std::function<bool(const storygraph::Step&)> choices;
 
@@ -73,14 +73,14 @@ class StoryRuntime final {
     // self and other bound for a program or a condition outside a dialog; as they were afterwards. nullptr: none
     class Bind final {
       public:
-        Bind(zenkit::DaedalusVm& v, Npc* self, Npc* other);
+        Bind(daedalus::DaedalusVm& v, Npc* self, Npc* other);
         Bind(const Bind&) = delete;
         ~Bind();
 
       private:
-        zenkit::DaedalusSymbol*                   self  = nullptr;
-        zenkit::DaedalusSymbol*                   other = nullptr;
-        std::shared_ptr<zenkit::DaedalusInstance> prevSelf, prevOther;
+        daedalus::DaedalusSymbol*                   self  = nullptr;
+        daedalus::DaedalusSymbol*                   other = nullptr;
+        std::shared_ptr<daedalus::DaedalusInstance> prevSelf, prevOther;
       };
 
     // true the first time for `key`: what is logged once
@@ -96,14 +96,14 @@ class StoryRuntime final {
 
     std::map<std::string,int32_t>                vars;      // the director's, with their first values
     std::set<std::string>                        varsMade;  // of those, the ones in varsFor
-    zenkit::DaedalusVm*                          varsFor = nullptr;
+    daedalus::DaedalusVm*                          varsFor = nullptr;
 
-    zenkit::DaedalusVm*                          liftedFor = nullptr;
+    daedalus::DaedalusVm*                          liftedFor = nullptr;
     std::unique_ptr<storygraph::Bytecode>        code;
     std::unique_ptr<storygraph::Lifter>          lifter;
     std::unique_ptr<storygraph::Predicates>      lifted;
 
-    zenkit::DaedalusVm*                          runFor = nullptr;
+    daedalus::DaedalusVm*                          runFor = nullptr;
     std::unique_ptr<storygraph::Externals>       engine;
     std::unique_ptr<storygraph::Interpreter>     interp;
 

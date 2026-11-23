@@ -1,0 +1,777 @@
+#include "worldchunkcook.h"
+
+#include <Tempest/Log>
+
+#include <algorithm>
+#include <atomic>
+#include <bit>
+#include <cctype>
+#include <cerrno>
+#include <chrono>
+#include <cstring>
+#include <fstream>
+#include <functional>
+#include <iterator>
+#include <unordered_map>
+#include <stdexcept>
+#include <thread>
+#include <tuple>
+
+#include "gothicglb.h"
+#include "physics/worldclothbundle.h"
+#include "utils/fileext.h"
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <process.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
+
+namespace fs = std::filesystem;
+
+namespace {
+
+constexpr uint32_t Unset = 0xFFFFFFFFu;
+
+struct ChunkHierarchy {
+  std::vector<wcb::VertexRef> vertices;
+  ClusterLod::Graph graph;
+
+  wcb::HierarchyView view() const {
+    return {vertices,graph.clusters,graph.groups,graph.vertexIndices,graph.indices};
+    }
+  };
+
+bool opaqueDds(const fs::path& path) {
+  std::ifstream file(path,std::ios::binary|std::ios::ate);
+  std::array<uint8_t,128> header;
+  const auto size = file.tellg();
+  if(size<std::streamoff(header.size()))
+    return false;
+  file.seekg(0);
+  if(!file.read(reinterpret_cast<char*>(header.data()),std::streamsize(header.size())))
+    return false;
+  const auto u32 = [&](size_t offset) { return wcb::le32(header.data()+offset); };
+  const auto width=u32(16), height=u32(12), mips=std::max(1u,u32(28));
+  // Match the renderer's accepted 2D DXT1 format and validate the advertised
+  // mip chain by file length, without loading its texel payload.
+  if(std::memcmp(header.data(),"DDS ",4)!=0 || u32(4)!=124 || u32(76)!=32 ||
+     width==0 || height==0 || u32(24)>1 || (u32(112)&(0xfe00u|0x200000u))!=0 ||
+     std::memcmp(header.data()+84,"DXT1",4)!=0 || mips>uint32_t(std::bit_width(std::max(width,height))))
+    return false;
+  uintmax_t available = uintmax_t(size)-header.size();
+  for(uint32_t mip=0; mip<mips; ++mip) {
+    const uint64_t blocksX=(uint64_t(std::max(1u,width>>mip))+3)/4;
+    const uint64_t blocksY=(uint64_t(std::max(1u,height>>mip))+3)/4;
+    if(blocksX>available/8/blocksY)
+      return false;
+    available -= blocksX*blocksY*8;
+    }
+  return true;
+  }
+
+ChunkHierarchy buildHierarchy(std::span<const wcb::Position> positions, std::span<const wcb::Feature> features,
+                              std::span<const wcb::Triangle> triangles, std::span<const uint8_t> lockedMaterials) {
+  ChunkHierarchy out;
+  std::unordered_map<uint64_t,uint32_t> local;
+  std::vector<ClusterLod::Vertex> vertices;
+  std::vector<ClusterLod::Triangle> input;
+  input.reserve(triangles.size());
+  // Assign IDs in GLB corner order. The lookup table's order is never used.
+  for(const auto& triangle:triangles) {
+    ClusterLod::Triangle t {{},triangle.material,lockedMaterials[triangle.material]!=0};
+    for(size_t c=0;c<t.vertices.size();++c) {
+      const auto p = triangle.vertex[c], f = triangle.feature[c];
+      const auto key = (uint64_t(p)<<32) | f;
+      const auto [it,inserted] = local.try_emplace(key,uint32_t(vertices.size()));
+      if(inserted) {
+        const auto& position = positions[p];
+        const auto& feature = features[f];
+        const auto argb = feature.light;
+        const auto rgba = (argb&0xff00ff00u) | ((argb&0x00ff0000u)>>16) | ((argb&0x000000ffu)<<16);
+        vertices.push_back({{position.x,position.y,position.z},{feature.nx,feature.ny,feature.nz},
+                            {feature.u,feature.v},rgba});
+        out.vertices.push_back({p,f});
+        }
+      t.vertices[c] = it->second;
+      }
+    input.push_back(t);
+    }
+  // The builder preserves open borders. Cooking never needs neighbouring cells.
+  out.graph = ClusterLod::build(vertices,input,std::vector<uint8_t>(vertices.size()));
+  return out;
+  }
+
+template<class T>
+bool sameSection(std::span<const T> a, std::span<const T> b) {
+  const auto bytes = std::as_bytes(a);
+  const auto expected = std::as_bytes(b);
+  return std::equal(bytes.begin(),bytes.end(),expected.begin(),expected.end());
+  }
+
+const char* differentSection(const wcb::HierarchyView& a, const wcb::HierarchyView& b) {
+  if(!sameSection(a.clusters,b.clusters))           return "clusters";
+  if(!sameSection(a.groups,b.groups))               return "groups";
+  if(!sameSection(a.indices,b.indices))             return "indices";
+  if(!sameSection(a.vertexIndices,b.vertexIndices)) return "vertex indices";
+  if(!sameSection(a.vertices,b.vertices))           return "vertex references";
+  return nullptr;
+  }
+
+[[noreturn]] void fail(const std::string& reason) {
+  throw std::runtime_error("cooked world: " + reason);
+  }
+
+std::string cellName(ChunkId id) {
+  return std::to_string(id.x) + "," + std::to_string(id.z);
+  }
+
+bool sameBits(const asset::Vec3& a, const asset::Vec3& b) {
+  for(unsigned axis=0;axis<3;++axis)
+    if(std::bit_cast<uint32_t>(a[axis])!=std::bit_cast<uint32_t>(b[axis]))
+      return false;
+  return true;
+  }
+
+uint64_t processId() {
+#ifdef _WIN32
+  return uint64_t(_getpid());
+#else
+  return uint64_t(getpid());
+#endif
+  }
+
+// The stitched rank readWorldChunks gives a source triangle of this order: its
+// orders are sorted, so the order less the missing orders below it.
+uint32_t sourceRank(const std::vector<uint32_t>& missing, uint32_t order) {
+  return order-uint32_t(std::lower_bound(missing.begin(),missing.end(),order)-missing.begin());
+  }
+
+// Appends the local indices of one cell whose stitched id is not their source key.
+wci::Range exceptions(std::vector<wci::Exception>& out, const std::vector<uint32_t>& ids,
+                      const std::vector<uint32_t>& sources) {
+  wci::Range r {uint32_t(out.size()),0};
+  for(size_t local=0;local<ids.size();++local)
+    if(ids[local]!=sources[local])
+      out.push_back({uint32_t(local),ids[local]});
+  r.count = uint32_t(out.size()-r.first);
+  return r;
+  }
+
+}
+
+std::vector<uint8_t> clusterLodLockedMaterials(const fs::path& worldDir, std::span<const asset::Material> materials) {
+  std::error_code error;
+  const auto world = fs::canonical(worldDir,error);
+  const auto folder = error ? fs::path() : world.parent_path().parent_path()/"textures";
+  rapidjson::Document index;
+  if(!folder.empty()) {
+    std::ifstream file(folder/"textures.json",std::ios::binary);
+    if(file) {
+      const std::string json{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+      index.Parse<rapidjson::kParseValidateEncodingFlag>(json.data(),json.size());
+      }
+    }
+  const auto* textures = !index.HasParseError() && index.IsObject() && index.HasMember("textures") &&
+                         index["textures"].IsObject() ? &index["textures"] : nullptr;
+
+  std::unordered_map<std::string,bool> opaque;
+  const auto isOpaque = [&](const asset::Material& material) {
+    const auto alpha = material.alpha_func;
+    if(material.dont_collapse || material.group==asset::MaterialGroup::WATER || material.color.a!=255 ||
+       material.wave_mode!=asset::WaveMode::NONE ||
+       (alpha!=asset::AlphaFunction::DEFAULT && alpha!=asset::AlphaFunction::NONE && alpha!=asset::AlphaFunction::BLEND))
+      return false;
+    if(material.texture.empty())
+      return alpha!=asset::AlphaFunction::BLEND;
+    if(textures==nullptr || !FileExt::hasExt(material.texture,"TGA"))
+      return false;
+    std::string key=material.texture.substr(0,material.texture.size()-4);
+    for(char& c:key)
+      c = char(std::toupper(static_cast<unsigned char>(c)));
+    const auto [cached,inserted] = opaque.try_emplace(key,false);
+    if(!inserted)
+      return cached->second;
+    const auto member = textures->FindMember(rapidjson::StringRef(key.data(),rapidjson::SizeType(key.size())));
+    if(member==textures->MemberEnd() || !member->value.IsString())
+      return false;
+    const std::string path(member->value.GetString(),member->value.GetStringLength());
+    if(!FileExt::hasExt(path,"DDS") || path.find_first_of("/\\:")!=std::string::npos || path.find('\0')!=std::string::npos)
+      return false;
+    cached->second = opaqueDds(folder/path);
+    return cached->second;
+    };
+
+  std::vector<uint8_t> locked;
+  locked.reserve(materials.size());
+  for(const auto& material : materials)
+    locked.push_back(uint8_t(!isOpaque(material)));
+  return locked;
+  }
+
+fs::path chunkGlbPath(const fs::path& dir, const fs::path& overrideDir, const std::string& file) {
+  // The same rule as readWorldChunks.
+  if(!overrideDir.empty() && fs::exists(overrideDir/file))
+    return overrideDir/file;
+  return dir/file;
+  }
+
+fs::path cookedChunkPath(const fs::path& dir, const fs::path& overrideDir, const std::string& file, const fs::path& outDir) {
+  auto path = outDir.empty() ? chunkGlbPath(dir,overrideDir,file) : outDir/file;
+  path.replace_extension(".wcb");
+  return path;
+  }
+
+fs::path cookedIndexPath(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir) {
+  if(!outDir.empty())
+    return outDir/wci::FileName;
+  return (overrideDir.empty() ? dir : overrideDir)/wci::FileName;
+  }
+
+fs::path cookedTemporaryPath(const fs::path& path) {
+  static std::atomic<uint64_t> calls {0};
+  auto temporary = path;
+  temporary += "."+std::to_string(processId())+"-"+std::to_string(++calls)+".tmp";
+  return temporary;
+  }
+
+namespace {
+
+// One cook per directory at a time: an exclusive lock on the directory that holds the index, for the whole cook.
+// POSIX: flock on the directory's descriptor; Windows: a named mutex whose name comes from its canonical path.
+// Both go with the process. A cook nested in another's hook on the same thread takes no second lock.
+class CookLock {
+  public:
+    explicit CookLock(const fs::path& dir) {
+      std::error_code error;
+      fs::create_directories(dir,error);
+      auto canonical = fs::weakly_canonical(dir,error);
+      if(error)
+        canonical = fs::absolute(dir);
+      const auto utf8 = canonical.generic_u8string();
+      key.assign(reinterpret_cast<const char*>(utf8.data()),utf8.size());
+      for(const auto& held:holding())
+        if(held==key)
+          return;
+#ifdef _WIN32
+      std::string lower;
+      for(const auto c:key)
+        lower += char(std::tolower(static_cast<unsigned char>(c)));
+      const auto hash = sha256Bytes({reinterpret_cast<const uint8_t*>(lower.data()),lower.size()});
+      std::wstring name = L"Local\\gothic-ai-cook-";
+      static constexpr wchar_t digits[] = L"0123456789abcdef";
+      for(const auto b:hash) {
+        name += digits[b>>4];
+        name += digits[b&15];
+        }
+      handle = CreateMutexW(nullptr,FALSE,name.c_str());
+      if(handle==nullptr) {
+        warn("CreateMutexW failed with error "+std::to_string(GetLastError()));
+        return;
+        }
+      const auto wait = WaitForSingleObject(handle,INFINITE);
+      if(wait!=WAIT_OBJECT_0 && wait!=WAIT_ABANDONED) {
+        warn("waiting for the mutex failed with error "+std::to_string(GetLastError()));
+        CloseHandle(handle);
+        handle = nullptr;
+        return;
+        }
+#else
+      fd = ::open(canonical.c_str(),O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+      if(fd<0) {
+        warn(std::string("cannot open the directory: ")+std::strerror(errno));
+        return;
+        }
+      while(::flock(fd,LOCK_EX)!=0) {
+        if(errno==EINTR)
+          continue;
+        warn(std::string("flock failed: ")+std::strerror(errno));
+        ::close(fd);
+        fd = -1;
+        return;
+        }
+#endif
+      holding().push_back(key);
+      locked = true;
+      }
+    ~CookLock() {
+      if(!locked)
+        return;
+      auto& held = holding();
+      held.erase(std::find(held.begin(),held.end(),key));
+#ifdef _WIN32
+      ReleaseMutex(handle);
+      CloseHandle(handle);
+#else
+      ::flock(fd,LOCK_UN);
+      ::close(fd);
+#endif
+      }
+    CookLock(const CookLock&) = delete;
+    CookLock& operator=(const CookLock&) = delete;
+
+  private:
+    std::string key;
+    bool        locked = false;
+#ifdef _WIN32
+    HANDLE      handle = nullptr;
+#else
+    int         fd = -1;
+#endif
+    static std::vector<std::string>& holding() {
+      thread_local std::vector<std::string> held;
+      return held;
+      }
+    void warn(const std::string& reason) const {
+      Tempest::Log::e("cooked world: no lock on ",key,", the cook runs without one: ",reason);
+      }
+  };
+
+// Windows refuses to delete or replace a file another process holds open, as a concurrent cook does while it
+// compares the file; that read ends within milliseconds, so the callers retry for up to a second.
+template<class Step>
+void retryFileStep(Step&& step, std::error_code& error) {
+  for(int attempt=0;;++attempt) {
+    step(error);
+    if(!error || attempt==100)
+      return;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+
+}
+
+bool writeCookedFile(const fs::path& path, std::span<const uint8_t> bytes, const std::function<void()>& beforeWrite) {
+  std::error_code error;
+  const auto size = fs::file_size(path,error);
+  if(!error && size==bytes.size()) {
+    // A file that cannot be read, as when a reader meets another cook's rename on Windows, counts as different.
+    try {
+      const auto old = gothicglb::readFile(path);
+      if(std::equal(old.begin(),old.end(),bytes.begin(),bytes.end()))
+        return false;
+      }
+    catch(const std::exception&) {
+      }
+    }
+  if(beforeWrite)
+    beforeWrite();
+  // Unique to the process and the call: two cooks into the same files never share a temporary.
+  const auto temporary = cookedTemporaryPath(path);
+  if(!path.parent_path().empty())
+    fs::create_directories(path.parent_path());
+  {
+  std::ofstream file(temporary,std::ios::binary | std::ios::trunc);
+  file.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
+  file.close();
+  if(!file) {
+    fs::remove(temporary,error);
+    fail("cannot write "+temporary.string());
+    }
+  }
+  retryFileStep([&](std::error_code& e) { fs::rename(temporary,path,e); },error);
+  if(error) {
+    std::error_code ignored;
+    fs::remove(temporary,ignored);
+    fail("cannot rename "+temporary.string()+" to "+path.string()+": "+error.message());
+    }
+  return true;
+  }
+
+CookedWorldStats cookWorldChunks(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir,
+                                 const std::function<void()>& beforeIndex, const std::function<void()>& afterCheck) {
+  const auto indexPath = cookedIndexPath(dir,overrideDir,outDir);
+  const CookLock lock(indexPath.parent_path());
+  const auto manifest = readWorldChunkManifest(dir);
+  // The index goes before the first cell or bundle file is created or replaced and comes back last: a cook
+  // stopped at any point leaves either no index, and the game reads the GLBs, or a consistent set.
+  bool indexRemoved = false;
+  const std::function<void()> removeIndex = [&] {
+    if(indexRemoved)
+      return;
+    std::error_code error;
+    retryFileStep([&](std::error_code& e) { fs::remove(indexPath,e); },error);
+    if(error)
+      fail("cannot remove "+indexPath.string()+" before writing cells: "+error.message());
+    indexRemoved = true;
+    };
+  // Each GLB's length and time before the read: the bytes hashed below must be the ones the mesh came from.
+  std::vector<std::pair<uintmax_t,fs::file_time_type>> inputs;
+  for(const auto& cell:manifest.cells) {
+    const auto glb = chunkGlbPath(dir,overrideDir,cell.drawFile());
+    inputs.emplace_back(fs::file_size(glb),fs::last_write_time(glb));
+    }
+  ChunkTable table;
+  WorldChunkTrace trace;
+  auto mesh = readWorldChunks(dir,overrideDir,&table,&trace);
+  const auto& p = mesh.polygons;
+  const size_t n = p.material_indices.size();
+  if(table.entries.size()!=manifest.cells.size() || table.triangleChunks.size()!=n ||
+     table.triangleSources.size()!=n || trace.orders.size()!=n || trace.corners.size()!=n*3)
+    fail("the stitched mesh of "+dir.string()+" and its chunk table disagree");
+  const auto lists = chunkTriangleLists(mesh,table);
+  const auto lockedMaterials = clusterLodLockedMaterials(dir,mesh.materials);
+
+  // Source triangles come first, in ascending order: the orders they skip are the missing ones.
+  CookedIndexData index;
+  uint32_t sourceTriangles = 0;
+  for(uint32_t expected=0;sourceTriangles<n && trace.orders[sourceTriangles]>=0;++sourceTriangles) {
+    const auto order = uint32_t(trace.orders[sourceTriangles]);
+    if(order<expected)
+      fail("the source triangles of the stitched mesh are not in ascending order");
+    while(expected<order)
+      index.missing.push_back(expected++);
+    expected = order+1;
+    }
+  for(size_t rank=sourceTriangles;rank<n;++rank)
+    if(trace.orders[rank]>=0)
+      fail("a source triangle follows an added one in the stitched mesh");
+
+  const size_t baseMaterials = manifest.materials.size();
+  // Stitched index -> index in the current cell's arrays; reset after each cell.
+  std::vector<uint32_t> vertexLocal(mesh.vertices.size(),Unset), featureLocal(mesh.features.size(),Unset),
+                        materialLocal(mesh.materials.size(),Unset);
+  uint32_t addedNext = sourceTriangles;
+  CookedWorldStats stats;
+  for(size_t cell=0;cell<table.entries.size();++cell) {
+    const auto& entry = table.entries[cell];
+    const auto& ranks = lists[cell];
+    std::vector<uint32_t> byOrdinal(ranks.size(),Unset);
+    for(const auto rank:ranks) {
+      const auto ordinal = table.triangleSources[rank];
+      if(ordinal>=ranks.size() || byOrdinal[ordinal]!=Unset)
+        fail(entry.file+": its GLB triangle ordinals are not 0.."+std::to_string(ranks.size())+" once each");
+      byOrdinal[ordinal] = rank;
+      }
+
+    // The cell's arrays in first use; per local index its stitched id and its source key.
+    CookedChunkData data;
+    data.triangles.reserve(ranks.size());
+    std::vector<uint32_t> vertexIds, vertexSources, featureIds, featureSources, materialIds, materialSources;
+    auto local = [&](std::vector<uint32_t>& map, std::vector<uint32_t>& ids, std::vector<uint32_t>& sources,
+                     uint32_t id, uint32_t source, size_t sourceLimit, const char* kind) {
+      auto& slot = map[id];
+      if(slot==Unset) {
+        // Below world.json's count a stitched id is its own source key; appended ids are past it.
+        if(id<sourceLimit && source!=id)
+          fail(entry.file+": "+kind+" "+std::to_string(id)+" carries the source key "+std::to_string(source));
+        slot = uint32_t(ids.size());
+        ids.push_back(id);
+        sources.push_back(source);
+        return std::make_pair(slot,true);
+        }
+      if(sources[slot]!=source)
+        fail(entry.file+": "+kind+" "+std::to_string(id)+" carries two source keys");
+      return std::make_pair(slot,false);
+      };
+    uint32_t added = 0;
+    for(const auto rank:byOrdinal) {
+      wcb::Triangle t {};
+      for(unsigned c=0;c<3;++c) {
+        const auto [vertexSource,featureSource] = trace.corners[size_t(rank)*3+c];
+        const auto v = p.vertex_indices[size_t(rank)*3+c];
+        const auto [vl,newVertex] = local(vertexLocal,vertexIds,vertexSources,v,vertexSource,manifest.vertices,"vertex");
+        if(newVertex) {
+          const auto& x = mesh.vertices[v];
+          data.positions.push_back({x.x,x.y,x.z,vertexSource});
+          }
+        t.vertex[c] = vl;
+        const auto f = p.feature_indices[size_t(rank)*3+c];
+        const auto [fl,newFeature] = local(featureLocal,featureIds,featureSources,f,featureSource,manifest.features,"feature");
+        if(newFeature) {
+          const auto& x = mesh.features[f];
+          data.features.push_back({x.texture.x,x.texture.y,x.light,x.normal.x,x.normal.y,x.normal.z,featureSource});
+          }
+        t.feature[c] = fl;
+        }
+      // A material below world.json's count is its record there (readWorldChunks keeps the index only then).
+      const auto m = p.material_indices[rank];
+      const auto materialSource = m<baseMaterials ? m : wcb::None;
+      const auto [ml,newMaterial] = local(materialLocal,materialIds,materialSources,m,materialSource,baseMaterials,"material");
+      if(newMaterial)
+        data.materials.emplace_back(materialSource,mesh.materials[m]);
+      t.material = ml;
+      // The index must place every triangle where readWorldChunks put it.
+      const auto order = trace.orders[rank];
+      const auto expected = order<0 ? addedNext+added : sourceRank(index.missing,uint32_t(order));
+      if(rank!=expected)
+        fail(entry.file+": a triangle of rank "+std::to_string(rank)+" would be placed at "+std::to_string(expected));
+      if(order<0)
+        ++added;
+      t.order    = order<0 ? wcb::Added : uint32_t(order);
+      t.lightmap = p.lightmap_indices[rank];
+      t.flags    = wcb::packFlags(p.flags[rank]);
+      t.sector   = p.flags[rank].sector_index;
+      data.triangles.push_back(t);
+      }
+    for(const auto id:vertexIds)
+      vertexLocal[id] = Unset;
+    for(const auto id:featureIds)
+      featureLocal[id] = Unset;
+    for(const auto id:materialIds)
+      materialLocal[id] = Unset;
+
+    const auto glb = chunkGlbPath(dir,overrideDir,entry.file);
+    const auto bytes = gothicglb::readFile(glb);
+    if(bytes.size()!=inputs[cell].first || fs::file_size(glb)!=inputs[cell].first ||
+       fs::last_write_time(glb)!=inputs[cell].second)
+      fail(glb.string()+" changed while it was cooked");
+    auto& h = data.header;
+    h.cell       = entry.id;
+    h.min        = entry.min;
+    h.max        = entry.max;
+    h.glbSize    = bytes.size();
+    h.glbSha256  = sha256Bytes(bytes);
+    h.worldSize  = manifest.source.size;
+    h.worldCrc32 = manifest.source.crc32;
+    if(entry.triangleCount!=data.triangles.size())
+      fail(entry.file+": the chunk table counts "+std::to_string(entry.triangleCount)+" triangles, the mesh has "+
+           std::to_string(data.triangles.size()));
+
+    wci::Cell ic {};
+    ic.x          = entry.id.x;
+    ic.z          = entry.id.z;
+    ic.glbSize    = h.glbSize;
+    std::copy(h.glbSha256.begin(),h.glbSha256.end(),ic.glbSha256);
+    ic.addedStart = addedNext;
+    ic.vertices   = exceptions(index.vertices,vertexIds,vertexSources);
+    ic.features   = exceptions(index.features,featureIds,featureSources);
+    ic.materials  = exceptions(index.materials,materialIds,materialSources);
+    index.cells.push_back(ic);
+    addedNext += added;
+
+    std::vector<uint8_t> lockedLocal;
+    lockedLocal.reserve(materialIds.size());
+    for(const auto id:materialIds)
+      lockedLocal.push_back(lockedMaterials[id]);
+    const auto hierarchy = buildHierarchy(data.positions,data.features,data.triangles,lockedLocal);
+    data.hierarchy = hierarchy.view();
+    const auto encoded = encodeCookedChunk(data);
+    if(writeCookedFile(cookedChunkPath(dir,overrideDir,entry.file,outDir),encoded,removeIndex))
+      ++stats.written;
+    else
+      ++stats.left;
+    ++stats.cells;
+    stats.triangles += data.triangles.size();
+    stats.glbBytes  += bytes.size();
+    stats.wcbBytes  += encoded.size();
+    stats.hierarchyBytes += data.hierarchy.byteSize();
+    }
+  if(addedNext!=n)
+    fail("the cells hold "+std::to_string(addedNext)+" triangles, the stitched mesh "+std::to_string(n));
+
+  auto& h = index.header;
+  h.worldSize       = manifest.source.size;
+  h.worldCrc32      = manifest.source.crc32;
+  h.vertices        = wcb::count32(mesh.vertices.size(),"vertices");
+  h.features        = wcb::count32(mesh.features.size(),"features");
+  h.materials       = wcb::count32(mesh.materials.size(),"materials");
+  h.triangles       = wcb::count32(n,"triangles");
+  h.sourceTriangles = sourceTriangles;
+  index.appended.assign(mesh.materials.begin()+ptrdiff_t(baseMaterials),mesh.materials.end());
+  const auto encoded = encodeCookedIndex(index);
+
+  // The world cloth bundle: the island search on this stitched mesh and table, for exactly these index bytes.
+  const auto cloth = cookClothBundle(mesh,table,manifest.source,sha256Bytes(encoded));
+  const auto clothBytes = encodeClothBundle(cloth);
+  stats.clothWritten   = writeCookedFile(cookedClothPath(dir,overrideDir,outDir),clothBytes,removeIndex);
+  stats.clothBytes     = clothBytes.size();
+  stats.clothSurfaces  = cloth.cloth.surfaces.size();
+  stats.clothTriangles = cloth.cloth.original.polygons.material_indices.size();
+
+  if(beforeIndex)
+    beforeIndex();
+  // A GLB that changed since it was read must not get this snapshot's index. Another cook cannot have changed
+  // anything meanwhile (the lock), but an edit can.
+  for(size_t cell=0;cell<manifest.cells.size();++cell) {
+    const auto glb = chunkGlbPath(dir,overrideDir,manifest.cells[cell].drawFile());
+    std::error_code error;
+    const auto size = fs::file_size(glb,error);
+    if(error || size!=inputs[cell].first || fs::last_write_time(glb,error)!=inputs[cell].second || error)
+      fail(glb.string()+" changed while the world was cooked: its index is not written");
+    }
+  if(afterCheck)
+    afterCheck();
+  stats.indexWritten = writeCookedFile(indexPath,encoded);
+  stats.indexBytes   = encoded.size();
+  return stats;
+  }
+
+void checkCookedIndex(const CookedIndex& index, const WorldCellManifest& manifest) {
+  const auto& h = index.header();
+  const auto& name = index.name();
+  if(h.worldSize!=manifest.source.size || h.worldCrc32!=manifest.source.crc32)
+    fail(name+" names another source world than "+manifest.source.world);
+  if(index.cells().size()!=manifest.cells.size())
+    fail(name+" lists "+std::to_string(index.cells().size())+" cells, world.json "+
+         std::to_string(manifest.cells.size()));
+  for(size_t i=0;i<manifest.cells.size();++i) {
+    const auto& c = index.cells()[i];
+    if(!(ChunkId{c.x,c.z}==manifest.cells[i].id))
+      fail(name+": entry "+std::to_string(i)+" is cell "+cellName({c.x,c.z})+", world.json lists cell "+
+           cellName(manifest.cells[i].id)+" there: another cell order");
+    }
+  if(h.vertices<manifest.vertices || h.features<manifest.features ||
+     h.materials!=manifest.materials.size()+index.appendedMaterials())
+    fail(name+": the stitched mesh's "+std::to_string(h.vertices)+" vertices, "+std::to_string(h.features)+
+         " features and "+std::to_string(h.materials)+" materials do not fit world.json's "+
+         std::to_string(manifest.vertices)+", "+std::to_string(manifest.features)+" and "+
+         std::to_string(manifest.materials.size())+" with "+std::to_string(index.appendedMaterials())+" appended");
+  // An exception names an appended id: below world.json's count a stitched id is its own source key.
+  for(size_t i=0;i<index.cells().size();++i) {
+    const std::pair<std::span<const wci::Exception>,size_t> lists[] = {
+      {index.vertexExceptions(i),manifest.vertices},{index.featureExceptions(i),manifest.features},
+      {index.materialExceptions(i),manifest.materials.size()}};
+    for(const auto& [list,base]:lists)
+      for(const auto& e:list)
+        if(e.id<base)
+          fail(name+": cell "+cellName(manifest.cells[i].id)+": an exception gives local "+std::to_string(e.local)+
+               " the source id "+std::to_string(e.id));
+    }
+  }
+
+void checkCookedCell(const CookedChunk& chunk, size_t i, const WorldCellManifest& manifest, const CookedIndex& index,
+                     const fs::path& glb) {
+  const auto name = glb.filename().replace_extension(".wcb").string();
+  checkCookedCell(chunk,i,manifest.cells.at(i).id,manifest.source,index,name);
+  const auto stale = cookedChunkStale(chunk,glb,false);
+  if(!stale.empty())
+    fail(name+" is stale: "+stale);
+  }
+
+void checkCookedCell(const CookedChunk& chunk, size_t i, ChunkId id, const WorldChunkSource& source,
+                     const CookedIndex& index, const std::string& name) {
+  const auto& h = chunk.header();
+  if(!(h.cell==id))
+    fail(name+" was cooked for cell "+cellName(h.cell)+", world.json lists it for cell "+cellName(id));
+  if(h.worldSize!=source.size || h.worldCrc32!=source.crc32)
+    fail(name+" was cooked for another source world than "+source.world);
+  const auto& entry = index.cells()[i];
+  if(entry.glbSize!=h.glbSize || !std::equal(h.glbSha256.begin(),h.glbSha256.end(),entry.glbSha256))
+    fail(index.name()+" lists cell "+cellName(id)+" with another GLB (length or SHA-256) than "+name+
+         ": the cell was re-cooked without the index");
+  const std::tuple<std::span<const wci::Exception>,size_t,const char*> lists[] = {
+    {index.vertexExceptions(i),chunk.positions().size(),"positions"},
+    {index.featureExceptions(i),chunk.features().size(),"features"},
+    {index.materialExceptions(i),chunk.materials().size(),"materials"}};
+  for(const auto& [list,count,kind]:lists)
+    if(!list.empty() && list.back().local>=count)
+      fail(index.name()+": cell "+cellName(id)+": an exception points to local "+
+           std::to_string(list.back().local)+", past the "+std::to_string(count)+" "+kind+" of "+name);
+  if(uint64_t(entry.addedStart)+chunk.added()!=index.addedEnd(i))
+    fail(index.name()+": cell "+cellName(id)+" places "+std::to_string(index.addedEnd(i)-entry.addedStart)+
+         " added triangles, "+name+" holds "+std::to_string(chunk.added()));
+  }
+
+CookedWorld readCookedWorld(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir) {
+  CookedWorld world;
+  world.dir = dir;
+  world.manifest = readWorldChunkManifest(dir);
+  const auto indexPath = cookedIndexPath(dir,overrideDir,outDir);
+  if(!fs::exists(indexPath))
+    fail("the index "+indexPath.string()+" is missing: cook the world again");
+  world.index = CookedIndex::read(indexPath);
+  checkCookedIndex(world.index,world.manifest);
+  world.cells.reserve(world.manifest.cells.size());
+  for(size_t i=0;i<world.manifest.cells.size();++i) {
+    const auto& file = world.manifest.cells[i].drawFile();
+    auto chunk = CookedChunk::read(cookedChunkPath(dir,overrideDir,file,outDir),true);
+    checkCookedCell(chunk,i,world.manifest,world.index,chunkGlbPath(dir,overrideDir,file));
+    world.cells.push_back(std::move(chunk));
+    }
+  return world;
+  }
+
+std::string compareChunkTables(const ChunkTable& e, const ChunkTable& a) {
+  if(e.entries.size()!=a.entries.size())
+    return "entries: "+std::to_string(e.entries.size())+" vs "+std::to_string(a.entries.size());
+  for(size_t i=0;i<e.entries.size();++i) {
+    const auto& x = e.entries[i];
+    const auto& y = a.entries[i];
+    const auto where = "entry "+std::to_string(i)+" (cell "+cellName(x.id)+")";
+    if(!(x.id==y.id) || x.file!=y.file || !(x.meshes==y.meshes))
+      return where+": cell, file or meshes differ";
+    if(x.triangleCount!=y.triangleCount)
+      return where+": "+std::to_string(x.triangleCount)+" vs "+std::to_string(y.triangleCount)+" triangles";
+    if(!sameBits(x.min,y.min) || !sameBits(x.max,y.max))
+      return where+": bounds differ";
+    }
+  if(e.triangleChunks.size()!=a.triangleChunks.size())
+    return "triangle ownership: "+std::to_string(e.triangleChunks.size())+" vs "+std::to_string(a.triangleChunks.size());
+  for(size_t t=0;t<e.triangleChunks.size();++t)
+    if(e.triangleChunks[t]!=a.triangleChunks[t])
+      return "triangle "+std::to_string(t)+" is owned by entry "+std::to_string(e.triangleChunks[t])+" vs "+
+             std::to_string(a.triangleChunks[t]);
+  if(e.triangleSources.size()!=a.triangleSources.size())
+    return "GLB ordinals: "+std::to_string(e.triangleSources.size())+" vs "+std::to_string(a.triangleSources.size());
+  for(size_t t=0;t<e.triangleSources.size();++t)
+    if(e.triangleSources[t]!=a.triangleSources[t])
+      return "triangle "+std::to_string(t)+" has GLB ordinal "+std::to_string(e.triangleSources[t])+" vs "+
+             std::to_string(a.triangleSources[t]);
+  return {};
+  }
+
+std::string verifyCookedWorld(const fs::path& dir, const fs::path& overrideDir, const fs::path& outDir, bool hash) {
+  ChunkTable expectedTable, actualTable;
+  auto expected = readWorldChunks(dir,overrideDir,&expectedTable);
+  const auto world = readCookedWorld(dir,overrideDir,outDir);
+  const auto lockedMaterials = clusterLodLockedMaterials(dir,expected.materials);
+  for(size_t i=0;i<world.cells.size();++i) {
+    const auto& chunk = world.cells[i];
+    const auto& file = world.manifest.cells[i].drawFile();
+    const auto glb = chunkGlbPath(dir,overrideDir,file);
+    if(chunk.version()==wcb::Version) {
+      try {
+        const auto source = recoverIndexedChunk(glb,world.index,i,world.manifest.materials);
+        std::vector<uint8_t> lockedLocal;
+        lockedLocal.reserve(source.materials().size());
+        const auto exceptions = world.index.materialExceptions(i);
+        for(size_t m=0; m<source.materials().size(); ++m) {
+          const auto id = CookedIndex::resolve(exceptions,uint32_t(m),source.materials()[m].source);
+          lockedLocal.push_back(lockedMaterials.at(id));
+          }
+        const auto fresh = buildHierarchy(source.positions(),source.features(),source.triangles(),lockedLocal);
+        if(const auto* part = differentSection(chunk.hierarchy(),fresh.view()))
+          return file+": cluster hierarchy "+part+" differ from a rebuild from the GLB";
+        }
+      catch(const std::runtime_error&) {
+        const auto stale = cookedChunkStale(chunk,glb,true);
+        if(!stale.empty())
+          return file+": "+stale;
+        throw;
+        }
+      }
+    else if(hash) {
+      const auto stale = cookedChunkStale(chunk,glb,true);
+      if(!stale.empty())
+        return file+": "+stale;
+      }
+    }
+  const auto actual = assembleCookedWorld(world,&actualTable);
+  auto difference = compareWorldMeshes(expected,actual);
+  if(!difference.empty())
+    return "mesh: "+difference;
+  difference = compareChunkTables(expectedTable,actualTable);
+  if(!difference.empty())
+    return "chunk table: "+difference;
+
+  const auto clothPath = cookedClothPath(dir,overrideDir,outDir);
+  if(!fs::exists(clothPath))
+    return "the world cloth bundle "+clothPath.string()+" is missing: cook the world again";
+  const auto bundle = ClothBundle::read(clothPath).data();
+  const auto indexBytes = gothicglb::readFile(cookedIndexPath(dir,overrideDir,outDir));
+  const auto fresh = cookClothBundle(expected,expectedTable,world.manifest.source,sha256Bytes(indexBytes));
+  difference = compareClothBundles(fresh,bundle);
+  if(!difference.empty())
+    return "world cloth bundle "+clothPath.string()+": "+difference;
+  return {};
+  }

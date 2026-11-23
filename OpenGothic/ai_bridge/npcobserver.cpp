@@ -17,7 +17,7 @@
 #include "gothic.h"
 #include "physics/dynamicworld.h"
 #include "physics/physicsnoise.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 #include "world/aiqueue.h"
 #include "world/movablevobs.h"
 #include "world/waypoint.h"
@@ -445,7 +445,7 @@ void NpcObserver::physicsNoise(World& world, Npc& self, const PhysicsNoise& nois
         j.str("other_name",TextCodec::toUtf8(noise.culprit->displayName()));
       }
     }
-  TestBench::physicsNoiseBridgeEvent(self,world.tickCount());
+  Bench::physicsNoiseBridgeEvent(self,world.tickCount());
   emit(j.finish());
   }
 
@@ -687,6 +687,30 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
       }
     }
   ScriptFn state;
+  const WayPoint* activityPoint = nullptr;
+  if(action=="start_activity") {
+    const auto name = upper(JsonRead::str(args,"state"));
+    activityPoint = world.findPoint(JsonRead::str(args,"waypoint"),false);
+    state = name.starts_with("ZS_") ? AiNpc::scriptState(world,name) : ScriptFn();
+    if(!state.isValid() || activityPoint==nullptr) {
+      result("rejected",!state.isValid() ? "unknown state: " + name : "unknown waypoint");
+      return;
+      }
+    if(JsonRead::boolean(args,"catalog_only",false)) {
+      if(world.script().eventActivity(state)==nullptr) {
+        result("rejected","activity is not in the event catalog: " + name);
+        return;
+        }
+      if(npc->isAttack() || npc->weaponState()!=WeaponState::NoWeapon || npc->isInState(state)) {
+        result("rejected","npc is fighting or already doing the activity");
+        return;
+        }
+      }
+    }
+  if(npc->isPhysicsInvestigating() && action!="fight" && action!="flee" && action!="draw_weapon" && action!="steal") {
+    result("rejected","npc is investigating a noise");
+    return;
+    }
   Running  run;  // what is tracked until npc_idle
 
   for(auto& previous:running)
@@ -696,11 +720,6 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
       if(previous.deed)
         npc->clearServerDeed();
       }
-
-  if(npc->isPhysicsInvestigating() && action!="fight" && action!="flee" && action!="draw_weapon" && action!="steal") {
-    result("rejected","npc is investigating a noise");
-    return;
-    }
 
   if(action=="steal") {
     std::string error;
@@ -790,9 +809,9 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
         const auto last = HeroDeed::constant(*npc,"AIV_LASTPLAYERAR");
         const auto fight = HeroDeed::constant(*npc,"AIV_LASTFIGHTAGAINSTPLAYER");
         const auto comment = HeroDeed::constant(*npc,"AIV_LASTFIGHTCOMMENT");
-        const auto valid = [](int32_t index) { return index>=0 && uint32_t(index)<zenkit::INpc::aivar_count; };
+        const auto valid = [](int32_t index) { return index>=0 && uint32_t(index)<daedalus::INpc::aivar_count; };
         if(!reasonName.starts_with("AR_") || reason==nullptr || !reason->is_const() ||
-           reason->type()!=zenkit::DaedalusDataType::INT || !valid(attack) ||
+           reason->type()!=daedalus::DaedalusDataType::INT || !valid(attack) ||
            (target->isPlayer() && !valid(last)) || !valid(fight) || !valid(comment)) {
           result("rejected","fight needs a vanilla AR_* reason and its attack variables");
           return;
@@ -847,7 +866,7 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
           if(!replaced)
             npc->startSpeech(std::move(voice));
           npc->setAiOutputBarrier(world.script().messageTime(line),true);
-          TestBench::npcOutput(*npc,svm,target,audioMs);
+          Bench::npcOutput(*npc,svm,target,audioMs);
           Tempest::Log::i("[ai] ",symbol," combat shout ",svm," audio_ms=",audioMs,
                          " replaced=",replaced," game_ms=",world.tickCount());
           }
@@ -865,28 +884,21 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
   else if(action=="start_activity") {
     // what a routine entry does (TA_Sit_Bench: ZS_SIT_BENCH at a waypoint), now, for `minutes` of game
     // time; afterwards the routine goes on by itself
-    const auto name = upper(JsonRead::str(args,"state"));
-    const auto wp   = world.findPoint(JsonRead::str(args,"waypoint"),false);
-    state = name.starts_with("ZS_") ? AiNpc::scriptState(world,name) : ScriptFn();
-    if(!state.isValid() || wp==nullptr) {
-      result("rejected",!state.isValid() ? "unknown state: " + name : "unknown waypoint");
-      return;
-      }
     auto until = world.time();
     until.addMilis(uint64_t(std::clamp<int64_t>(JsonRead::integer(args,"minutes",60),1,24*60))*60*1000);
     // `place` (v38): it is there at once, the way the engine puts everyone at their routine's spot when the
     // clock leaps (World::setDayTime: the hero slept), as Npc::resetPositionToTA does: the walk went by meanwhile
     if(JsonRead::boolean(args,"place",false)) {
       npc->clearAiQueue();
-      npc->setPosition (wp->position());
-      npc->setDirection(wp->direction());
+      npc->setPosition (activityPoint->position());
+      npc->setDirection(activityPoint->direction());
       world.script().fixNpcPosition(*npc,0,100);
       }
-    npc->startState(state,wp->name,until,false);
+    npc->startState(state,activityPoint->name,until,false);
     // `arrive` (v15): npc_idle "arrived" once it is there doing it, not only when it leaves it
     run.arrival = JsonRead::boolean(args,"arrive",false);
     // Native waypoint walks end at groundPos; authored points can float above the floor.
-    run.at      = wp->groundPos;
+    run.at      = activityPoint->groundPos;
     run.radius  = float(std::clamp<int64_t>(JsonRead::integer(args,"radius",500),50,5000));
     }
   else if(action=="set_routine") {
@@ -986,6 +998,9 @@ void NpcObserver::routine(World& world, const rapidjson::Value& msg) {
     if(n.size()>4+suffix.size() && n.starts_with("RTN_") && n.ends_with(suffix))
       j.item(n.substr(4,n.size()-4-suffix.size()));
     }
+  j.endArray().array("event_activities");
+  for(auto name:world.script().eventActivityNames())
+    j.item(name);
   emit(j.endArray().finish());
   }
 

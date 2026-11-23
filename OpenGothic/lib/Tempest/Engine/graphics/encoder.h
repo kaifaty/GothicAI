@@ -103,6 +103,11 @@ class Encoder<Tempest::CommandBuffer> {
 
     void drawIndirect(const StorageBuffer& indirect, size_t offset);
 
+    // Reads one DrawIndexedIndirectCommand at the byte offset, without a vertex buffer.
+    template<class I>
+    void drawIndexedIndirect(const IndexBuffer<I>& ibo, const StorageBuffer& indirect, size_t offset)
+      { implDrawIndexedIndirect(ibo.impl, Detail::indexCls<I>(), indirect, offset); }
+
     void dispatchMesh(size_t x, size_t y=1, size_t z=1);
     void dispatchMeshIndirect(const StorageBuffer& indirect, size_t offset);
     void dispatchMeshThreads(size_t x, size_t y=1, size_t z=1);
@@ -117,7 +122,18 @@ class Encoder<Tempest::CommandBuffer> {
     void copy(const Attachment& src, uint32_t mip, StorageBuffer& dest, size_t offset);
     void copy(const Texture2d&  src, uint32_t mip, StorageBuffer& dest, size_t offset);
 
+    // Builds a top-level structure of Device::tlas(Uninitialized, capacity) from `count` instances that
+    // Device::packRtInstances wrote into `instances`; count must not exceed tlas.capacity(). Outside of a render pass.
+    // Ray queries recorded after it in this command buffer read the new structure: the backend waits for the build.
+    void buildTlas(AccelerationStructure& tlas, const StorageBuffer& instances, size_t count);
+
     void generateMipmaps(Attachment& tex);
+    // Spatial upscale of a tonemapped image into dst; requires Device::properties().spatialUpscale.
+    void upscale(const Attachment& src, StorageImage& dst);
+    // Temporal upscale (MetalFX Temporal) of a jittered linear frame into dst, which keeps no history of its own:
+    // the backend holds it until the sizes or formats change. Requires Device::properties().temporalUpscale.
+    void upscaleTemporal(const Attachment& color, const ZBuffer& depth, const Attachment& motion, StorageImage& dst,
+                         const TemporalUpscaleDesc& desc);
 
   private:
     explicit Encoder(CommandBuffer* ow);
@@ -141,6 +157,7 @@ class Encoder<Tempest::CommandBuffer> {
     void         implDraw(const Detail::VideoBuffer& vbo, size_t stride, size_t offset, size_t size, size_t firstInstance, size_t instanceCount);
     void         implDraw(const Detail::VideoBuffer& vbo, size_t stride, const Detail::VideoBuffer &ibo, Detail::IndexClass index,
                           size_t offset, size_t size, size_t firstInstance, size_t instanceCount);
+    void         implDrawIndexedIndirect(const Detail::VideoBuffer& ibo, Detail::IndexClass index, const StorageBuffer& indirect, size_t offset);
     void         implBindBuffer(size_t id, const Detail::VideoBuffer& buf);
 
   friend class CommandBuffer;

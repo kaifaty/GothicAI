@@ -6,11 +6,13 @@
 class VobLight : public Vob {
   public:
     VobLight(Vob* parent, World& world, const asset::VLight& vob, Flags flags);
+    ~VobLight();
 
   private:
     void  moveEvent() override;
     void  fillAttachmentSnapshot(AttachmentSnapshot& out) const override;
 
     LightGroup::Light light;
+    Tempest::Vec3     lightOffset = {}; // the light's place from the lamp's own (vobs.d "offset_cm")
   };
 

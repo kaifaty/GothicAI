@@ -4,20 +4,24 @@
 #include <memory>
 #include <thread>
 #include <exception>
+#include <functional>
+#include <utility>
 
 #include <Tempest/Signal>
 #include <Tempest/Dir>
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
+#include "settings.h"
+#include "gameservices.h"
+#include "game/gamehost.h"
 
+#include "game/chronicle.h"
 #include "game/gamesession.h"
 #include "world/world.h"
 #include "ui/documentmenu.h"
 #include "ui/chapterscreen.h"
-#include "utils/versioninfo.h"
 #include "sound/soundfx.h"
 
-class VersionInfo;
 class CameraDefinitions;
 class SoundDefinitions;
 class VisualFxDefinitions;
@@ -29,7 +33,7 @@ class Serialize;
 struct PhysicsNoise;
 struct HeroDeed;
 
-class Gothic final {
+class Gothic final : public GameServices, public GameHost {
   public:
     Gothic();
     ~Gothic();
@@ -44,50 +48,6 @@ class Gothic final {
       FailedLoad = 4,
       FailedSave = 5
       };
-
-    struct PhysicsFlags {
-      bool ragdoll       = false;
-      bool questGuard    = false;
-      bool livingBodies  = false;
-      bool arrowPhysics  = false;
-      bool arrowSticking = false;
-      bool spellPhysics  = false;
-      bool movableVobs   = false;
-      bool physicsNoise  = false;
-      bool destruction   = false;
-      bool buoyancy      = true;
-      bool cloth         = true;
-      bool characterVirtual = false;
-      bool npcCharacterVirtual = false;
-      bool monsterCharacterVirtual = false;
-      bool meleeBladeShadow = true;
-      bool meleePhysicsHits = true;
-
-      bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
-        return monsterCharacterVirtual && !down && !flying;
-        }
-      };
-
-    struct Options {
-      GiMethod doGi              = GiMethod::None;
-      uint32_t aaPreset          = 0;
-
-      bool     hideFocus         = false;
-      float    cameraFov         = 67.5f;
-      int      fpsLimit          = 0;
-      float    interfaceScale    = 1;
-      int      inventoryCellSize = 70;
-
-      Tempest::Size newChapterSize = {800, 600};
-
-      Tempest::Size saveGameImageSize = {0, 0};
-
-      bool     showHealthBar     = true;
-      uint8_t  showManaBar       = 2;
-      uint8_t  showSwimBar       = 1;
-      };
-
-    auto         version() const -> const VersionInfo&;
 
     bool         isInGame() const;
     bool         isInGameAndAlive() const;
@@ -106,11 +66,18 @@ class Gothic final {
     auto         gameSession() const -> const GameSession*;
     auto         gameSession() -> GameSession*;
     const World* world() const;
-    World*       world();
-    WorldView*   worldView() const;
-    Npc*         player();
-    Camera*      camera();
+    World*       world() override;
+    WorldView*   worldView() const override;
+    const BloodDecalSource* bloodDecalSource() const override;
+    Npc*         player() override;
+    const CameraTarget* cameraTarget() override;
+    Camera*      camera() override;
+    void         cameraProjection(Tempest::Matrix4x4& proj) override;
+    bool         cameraShake(Tempest::Vec3& shake) override;
     auto         questLog() const -> const QuestLog*;
+    // the hero's chronicle for the diary (ai_bridge keeps it fresh; empty without the server)
+    auto         chronicle() const -> const ChronicleData& { return chronicleBook; }
+    void         setChronicle(ChronicleData data) { chronicleBook = std::move(data); }
 
     void         setupGlobalScripts();
 
@@ -118,16 +85,16 @@ class Gothic final {
     int          loadingProgress() const;
     void         setLoadingProgress(int v);
 
-    SoundFx*     loadSoundFx   (std::string_view name);
-    SoundFx*     loadSoundWavFx(std::string_view name);
+    SoundFx*     loadSoundFx   (std::string_view name) override;
+    SoundFx*     loadSoundWavFx(std::string_view name) override;
 
-    auto         loadParticleFx(std::string_view name, bool relaxed=false) -> const ParticleFx*;
-    auto         loadParticleFx(const ParticleFx* base, const VisualFx::Key* key) -> const ParticleFx*;
-    auto         loadVisualFx  (std::string_view name) -> const VisualFx*;
+    auto         loadParticleFx(std::string_view name, bool relaxed=false) -> const ParticleFx* override;
+    auto         loadParticleFx(const ParticleFx* base, const VisualFx::Key* key) -> const ParticleFx* override;
+    auto         loadVisualFx  (std::string_view name) -> const VisualFx* override;
 
     void         emitGlobalSound(std::string_view   sfx);
     void         emitGlobalSound(const SoundFx*     sfx);
-    void         emitGlobalSound(const Tempest::Sound& sfx);
+    void         emitGlobalSound(const Tempest::Sound& sfx) override;
 
     void         emitGlobalSoundWav(std::string_view wav);
 
@@ -135,19 +102,21 @@ class Gothic final {
 
     void         pushPause();
     void         popPause();
-    bool         isPause() const;
+    bool         isPause() const override;
 
-    bool         isMarvinEnabled() const;
+    bool         isMarvinEnabled() const override;
     void         setMarvinEnabled(bool m);
 
-    static auto  options() -> const Options&;
     static float interfaceScale(const Tempest::Widget* w);
 
-    bool         isGodMode() const { return godMode; }
+    bool         isGodMode() const override { return godMode; }
     void         setGodMode(bool g) { godMode = g; }
     // a scene of its own (the AI bridge's endings): no bars, no focus, no messages over it
     bool         isHudHidden() const { return hudHidden; }
     void         setHudHidden(bool h) { hudHidden = h; }
+    // the game's script ends the game (the finale's exitsession): a taker (ai_bridge's final card,
+    // docs/achievements.md) shows something first and ends the session itself; false: it ends at once
+    std::function<bool(std::string_view kind)> takeGameEnd;
 
     void         toggleDesktop() { desktop = !desktop; }
     bool         isDesktop() { return desktop; }
@@ -164,14 +133,14 @@ class Gothic final {
     bool         doVobRays() const { return vobRays; }
     void         setVobRays(bool v) { vobRays = v; }
 
-    bool         doMeleeBladeDraw() const { return meleeBladeDraw; }
+    bool         doMeleeBladeDraw() const override { return meleeBladeDraw; }
     void         setMeleeBladeDraw(bool v) { meleeBladeDraw = v; }
+    bool         doMeleeBladeLabels() const override { return meleeBladeLabels; }
+    void         setMeleeBladeLabels(bool v) { meleeBladeLabels = v; }
 
-    bool         isBenchmarkMode() const;
+    bool         isBenchmarkMode() const override;
     bool         isBenchmarkModeCi() const;
     void         setBenchmarkMode(Benchmark b);
-
-    Tempest::Signal<void()> toggleGi, toggleVsm, toggleRtsm, togglePathtrace;
 
     LoadState    checkLoading() const;
     bool         finishLoading();
@@ -179,9 +148,9 @@ class Gothic final {
     void         startSave(Tempest::Texture2d&& tex, const std::function<std::unique_ptr<GameSession>(std::unique_ptr<GameSession>&&)> f);
     void         cancelLoading();
 
-    void         tick(uint64_t dt);
+    void         tick(uint64_t dt) override;
 
-    void         updateAnimation(uint64_t dt);
+    void         updateAnimation(uint64_t dt) override;
     void         quickSave();
     void         quickLoad();
     void         save(std::string_view slot, std::string_view usrName);
@@ -190,9 +159,11 @@ class Gothic final {
     auto         updateDialog(const GameScript::DlgChoice& dlg, Npc& player, Npc& npc) -> std::vector<GameScript::DlgChoice>;
     void         dialogExec  (const GameScript::DlgChoice& dlg, Npc& player, Npc& npc);
 
-    void         openDialogPipe (Npc& player, Npc& npc, AiOuputPipe*& pipe);
-    bool         isNpcInDialog(const Npc& npc) const;
-    bool         isInDialog() const;
+    void         openDialogPipe (Npc& player, Npc& npc, AiOuputPipe*& pipe) override;
+    bool         isNpcInDialog(const Npc& npc) const override;
+    bool         isInDialog() const override;
+    bool         isDialogActive() const override;
+    ParticleNameCheck particleNameCheck() override;
 
     Tempest::Signal<void(std::string_view)>                             onStartGame;
     Tempest::Signal<void(std::string_view)>                             onLoadGame;
@@ -200,6 +171,7 @@ class Gothic final {
 
     Tempest::Signal<void(Npc&,Npc&,AiOuputPipe*&)>                      onDialogPipe;
     std::function<bool(const Npc*)>                                     isNpcInDialogFn;
+    std::function<bool()>                                              isDialogActiveFn = [] { return false; };
     // the dialog window: what it offers now and picking the i-th as the player does (debug and test tools)
     std::function<std::vector<std::string>()>                           dialogEntriesFn;
     std::function<bool(size_t)>                                         dialogPickFn;
@@ -214,7 +186,6 @@ class Gothic final {
     Tempest::Signal<void()>                                             onStartLoading;
     Tempest::Signal<void()>                                             onSessionExit;
     Tempest::Signal<void()>                                             onSessionUnload;  // the session and its sound device are about to go
-    Tempest::Signal<void()>                                             onSettingsChanged;
 
     Tempest::Signal<void()>                                             onBenchmarkFinished;
 
@@ -236,8 +207,6 @@ class Gothic final {
     std::function<bool(std::string_view,std::string&)>                  consoleCommandFn;
     // runtime dialog lines: id -> subtitle text and duration (ms); false if the id is not external
     std::function<bool(std::string_view,std::string_view&,uint32_t&)>   externalMessageFn;
-    // runtime dialog voice: sound file name -> WAV bytes; false if the name is not external
-    std::function<bool(std::string_view,std::vector<uint8_t>&)>         externalSoundFn;
     // custom save-game data, called on the loading thread: write own entries into a save;
     // a GameSession was created from a save (or nullptr for a new game)
     std::function<void(Serialize&)>                                     saveExtFn;
@@ -245,11 +214,11 @@ class Gothic final {
     // story graph: which dialogs an npc offers. Called while the dialog menu is built and by Npc_CheckInfo,
     // with self and other set as for the conditions.
     // a script dialog whose condition was checked: `visible` comes in as the script's answer
-    std::function<void(const zenkit::IInfo&,bool&)>                     dialogFilterFn;
+    std::function<void(const daedalus::IInfo&,bool&)>                     dialogFilterFn;
     // a choice of a script dialog (Info_AddChoice) about to be shown: false hides it
-    std::function<bool(const zenkit::IInfo&,int32_t)>                   dialogChoiceFilterFn;
+    std::function<bool(const daedalus::IInfo&,int32_t)>                   dialogChoiceFilterFn;
     // dialogs made at runtime that the npc offers now; `important` ones start on their own
-    std::function<void(const zenkit::INpc&,bool,std::vector<GameScript::DlgChoice>&)> dialogExtraFn;
+    std::function<void(const daedalus::INpc&,bool,std::vector<GameScript::DlgChoice>&)> dialogExtraFn;
     // one of those was chosen: play it
     std::function<void(const GameScript::DlgChoice&,Npc&,Npc&)>         dialogExtraExecFn;
     // the choices one of those offers now, after its lines (as Info_AddChoice's after a script dialog)
@@ -258,40 +227,50 @@ class Gothic final {
     Tempest::Signal<void(const GameScript::DlgChoice&,Npc&,Npc&)>       onDialogChosen;
     // a dialog's script function (its condition, its information or a choice) is about to run, self and other
     // set: true if the story graph ran it in place of the VM, a condition's answer in `result`
-    std::function<bool(zenkit::DaedalusSymbol&,int32_t&)>               dialogScriptFn;
+    std::function<bool(daedalus::DaedalusSymbol&,int32_t&)>               dialogScriptFn;
 
     std::string_view                      messageFromSvm(std::string_view id, int voice) const;
     std::string_view                      messageByName (std::string_view id) const;
     uint32_t                              messageTime   (std::string_view id) const;
 
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
-    std::unique_ptr<zenkit::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
-    zenkit::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
-    void                                  setupCommonScriptClasses(zenkit::DaedalusScript &sc);
-    void                                  setupVmCommonApi(zenkit::DaedalusVm &vm);
+    std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
+    daedalus::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
+    void                                  setupCommonScriptClasses(daedalus::DaedalusScript &sc);
+    void                                  setupVmCommonApi(daedalus::DaedalusVm &vm);
 
     static const FightAi&                 fai();
     static const SoundDefinitions&        sfx();
     static const MusicDefinitions&        musicDef();
     static const CameraDefinitions&       cameraDef();
 
-    // Shared read-only snapshot for actor/physics hot paths, refreshed on settings changes
-    // and once before each world tick. It is also ready before loading the first actor.
-    static const PhysicsFlags&            physicsFlags() { return instance->physicsFlagsCache; }
-    static bool                           settingsHasSection(std::string_view sec);
-    static int                            settingsGetI(std::string_view sec, std::string_view name);
-    static void                           settingsSetI(std::string_view sec, std::string_view name, int val);
-    static std::string_view               settingsGetS(std::string_view sec, std::string_view name);
-    static void                           settingsSetS(std::string_view sec, std::string_view name, std::string_view val);
-    static float                          settingsGetF(std::string_view sec, std::string_view name);
-    static void                           settingsSetF(std::string_view sec, std::string_view name, float val);
-    static float                          settingsSoundVolume();
-    static void                           flushSettings();
+    const CameraPresets& cameraDefinitions() const override;
+    const Def::SoundEffect& soundEffect(std::string_view name) const override;
+    int64_t worldTime() const override;
+    uint64_t worldTickCount() const override;
+    DynamicWorld* physicsWorld() const override;
 
   private:
-    VersionInfo                             vinfo;
-    Options                                 opts;
-    PhysicsFlags                            physicsFlagsCache;
+    void emitHeroDeed(const HeroDeed& deed) override;
+    void emitCombatHit(Npc& npc, Npc& other, int32_t lost, std::string_view kind) override;
+    void emitObservedPerception(Npc& npc, Npc& player, Npc* victim, PercType type) override;
+    void emitExternalPerception(Npc& npc, Npc& player, Npc* victim, PercType type) override;
+    void emitPhysicsNoiseHeard(Npc& npc, const PhysicsNoise& noise) override;
+    void emitPrint(std::string_view text) override;
+    bool takePerception(Npc& npc, Npc& player, Npc* victim, PercType type, const HeroDeed* deed) override;
+    bool setMusic(std::string_view name, uint8_t tags) override;
+    const std::vector<ItmFlags>& inventoryCategoryOrder() const override;
+    Camera* sessionCamera(GameSession& session) override;
+    GameScript* sessionScript(GameSession& session) override;
+    uint64_t sessionTickCount(GameSession& session) const override;
+    gtime sessionTime(GameSession& session) const override;
+    void setSessionTime(GameSession& session, gtime time) override;
+    void changeWorld(GameSession& session, std::string_view world, std::string_view waypoint) override;
+    Tempest::SoundEffect loadSound(GameSession& session, const Tempest::Sound& sound) override;
+    Tempest::SoundEffect loadSound(GameSession& session, const SoundFx& sound, bool& looped) override;
+    void updateListenerPos(GameSession& session, const Camera::ListenerPos& position) override;
+
+    Settings                                settings;
     std::mt19937                            randGen;
     uint16_t                                pauseSum=0;
     bool                                    isMarvin       = false;
@@ -303,13 +282,11 @@ class Gothic final {
     bool                                    vobBox         = false;
     bool                                    vobRays        = false;
     bool                                    meleeBladeDraw = false;
+    bool                                    meleeBladeLabels = true;
     Benchmark                               isBenchmark    = Benchmark::None;
 
     std::string                             wrldDef, plDef, gameDatDef, ouDef;
 
-    std::unique_ptr<IniFile>                defaults;
-    std::unique_ptr<IniFile>                baseIniFile;
-    std::unique_ptr<IniFile>                iniFile;
     std::unique_ptr<IniFile>                modFile;
     std::unique_ptr<IniFile>                systemPackIniFile;
 
@@ -324,6 +301,7 @@ class Gothic final {
 #endif
 
     std::unique_ptr<GameSession>            game, pendingGame;
+    ChronicleData                           chronicleBook;
     std::unique_ptr<FightAi>                fight;
     std::unique_ptr<CameraDefinitions>      camDef;
     std::unique_ptr<SoundDefinitions>       soundDef;
@@ -349,9 +327,7 @@ class Gothic final {
                                                               bool load,
                                                               const std::function<std::unique_ptr<GameSession>(std::unique_ptr<GameSession>&&)> f);
 
-    void                                    detectGothicVersion();
     void                                    setupSettings();
-    void                                    refreshPhysicsFlags();
 
     auto                                    getDocument(int id) -> std::unique_ptr<DocumentMenu::Show>&;
 

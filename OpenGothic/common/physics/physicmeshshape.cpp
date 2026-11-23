@@ -1,4 +1,5 @@
 #include "physicmeshshape.h"
+#include "loadprobe.h"
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "dynamicworld.h"
@@ -8,6 +9,7 @@ float PhysicMeshShape::friction() const {
   }
 
 PhysicMeshShape* PhysicMeshShape::load(PackedMesh&& packed) {
+  LoadProbe::Vobs::Scope probe("mesh_shape");
   uint32_t count = 0;
   for(auto& i : packed.subMeshes)
     if(!i.material.disable_collision && i.iboLength > 0) {
@@ -19,14 +21,17 @@ PhysicMeshShape* PhysicMeshShape::load(PackedMesh&& packed) {
   }
 
 PhysicMeshShape::PhysicMeshShape(PackedMesh&& sPacked)
-  :mesh(std::move(sPacked)), shape(mesh.shape()) {
-  size_t largest = 0;
+  :mesh(std::move(sPacked)) {
+  size_t largest = 0, colliding = 0;
   for(auto& i:sPacked.subMeshes) {
+    if(i.material.disable_collision || i.iboLength==0)
+      continue;  // the water in a pot takes no part in the pot's friction
     frict += DynamicWorld::materialFriction(i.material.group);
-    if(!i.material.disable_collision && i.iboLength>largest) {
+    colliding++;
+    if(i.iboLength>largest) {
       material = i.material.group;
       largest = i.iboLength;
       }
     }
-  frict = frict/float(sPacked.subMeshes.size());
+  frict = frict/float(colliding);
   }

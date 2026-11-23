@@ -8,7 +8,7 @@
 
 class Npc;
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusVm;
   }
 
@@ -16,9 +16,12 @@ namespace zenkit {
 // in a dialog of its own, or as the consequence of a lie found out.
 struct StoryEffect final {
   std::string kind;     // give, xp, set, journal, end, attack, refuse_talk, routine, create, teach, calm, party,
-                        // knows, crime_memory, chest_take
+                        // knows, crime_memory, chest_take, knockout, wound
   std::string item;     // give, create, chest_take: item instance
   std::string chest;    // chest_take (v48): source chest's NpcChests id
+  std::string by;       // knockout/wound (v59): other participant's npc instance
+  int64_t     loss = 0; // knockout: winner's HP loss; wound: self's HP loss
+  int64_t     byLoss = 0; // wound: by's HP loss; both effects leave at least 1 HP
   std::string teach;    // teach: attribute, fight, circle, rune, thief, alchemy, smith, trophy (v17)
   std::string arg;      // teach: the scripts' constant (ATR_STRENGTH, NPC_TALENT_1H, SPL_*, POTION_*...)
   std::string var;      // set: global int variable
@@ -39,10 +42,10 @@ struct StoryEffect final {
 
   // `{"do": "give", "item": ..., ...}`; an error if it is malformed or, with a VM, names something
   // the scripts don't have
-  static std::string read(const rapidjson::Value& v, zenkit::DaedalusVm* vm, StoryEffect& e);
+  static std::string read(const rapidjson::Value& v, daedalus::DaedalusVm* vm, StoryEffect& e);
   // with the npc as self and the hero as other; failures are logged with `who`
-  void run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string_view who) const;
+  void run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::string_view who) const;
   // teach: the learning points it takes from the hero, as the scripts' teacher function counts them;
   // -1 and `error` if the scripts can't say
-  int32_t learnCost(zenkit::DaedalusVm& vm, Npc& player, std::string& error) const;
+  int32_t learnCost(daedalus::DaedalusVm& vm, Npc& player, std::string& error) const;
   };

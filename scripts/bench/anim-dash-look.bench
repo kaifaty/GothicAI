@@ -1,0 +1,96 @@
+# Our own back dash T_1HDASHB (step 6 of the melee port, reports/Свои анимации для боя.md) at each 1H talent level,
+# next to Gothic's own jump-back T_1HPARADEJUMPB of the same level: no overlay (HUMANS), HUMANS_1HST1, HUMANS_1HST2.
+# Each take from the same spot on an open field, from the side at 1x and slowed 4x.
+# The dash comes from OPENGOTHIC_CONTENT made by scripts/content/anim/content_pack.py (T_1HDASHB in HUMANS.MSB and
+# both overlay scripts). The look is judged by Claude from the clips; anim_pop in metrics.csv at the switches.
+# The fixture's talent does not put a stance overlay on, and re-arming takes an overlay off: the first takes
+# run without one, the later ones put their level's overlay on after every re-arm (animinfo S_1HRUN logs it). After an `ani` the hero idles in S_1H (sword
+# down), so each take re-arms first; after a goto the hero needs ~2 s on the ground before `ani` is accepted.
+# WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=/abs/content
+seed 73013
+cheat god
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+melee-shadow weapon 1h
+wait 1500
+cam follow 380 110 270
+animinfo T_1HDASHB T_1HPARADEJUMPB S_1HRUN
+
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec t0-dash
+ani player T_1HDASHB
+wait 1300
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec t0-jumpb
+ani player T_1HPARADEJUMPB
+wait 1300
+stop
+
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+bladepath HUMANS_1HST1.MDS
+animinfo S_1HRUN
+wait 2000
+rec t1-dash
+ani player T_1HDASHB
+wait 1300
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+bladepath HUMANS_1HST1.MDS
+animinfo S_1HRUN
+wait 2000
+rec t1-jumpb
+ani player T_1HPARADEJUMPB
+wait 1300
+stop
+
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+bladepath HUMANS_1HST2.MDS
+animinfo S_1HRUN
+wait 2000
+rec t2-dash
+ani player T_1HDASHB
+wait 1300
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+bladepath HUMANS_1HST2.MDS
+animinfo S_1HRUN
+wait 2000
+rec t2-jumpb
+ani player T_1HPARADEJUMPB
+wait 1300
+stop
+
+slowmo 4
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+bladepath HUMANS_1HST2.MDS
+animinfo S_1HRUN
+wait 2000
+rec t2-dash-slow
+ani player T_1HDASHB
+wait 1000
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+bladepath HUMANS_1HST2.MDS
+animinfo S_1HRUN
+wait 2000
+rec t2-jumpb-slow
+ani player T_1HPARADEJUMPB
+wait 1000
+stop
+slowmo 1

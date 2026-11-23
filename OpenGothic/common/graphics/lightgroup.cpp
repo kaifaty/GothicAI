@@ -1,4 +1,10 @@
 #include "lightgroup.h"
+#include "voblight.h"
+#include "loadprobe.h"
+
+#include <cmath>
+#include <cstdlib>
+#include <string_view>
 
 #include <Tempest/Dir>
 #include <Tempest/Log>
@@ -6,9 +12,7 @@
 #include "graphics/shaders.h"
 #include "graphics/sceneglobals.h"
 #include "utils/string_frm.h"
-#include "world/world.h"
 #include "utils/dbgpainter.h"
-#include "gothic.h"
 #include "worlddata.h"
 
 using namespace Tempest;
@@ -61,9 +65,14 @@ void LightGroup::Light::setEnabled(bool e) {
   auto& data = owner->lightSourceDesc[id];
   data.setEnabled(e);
 
+  // a lamp switched back on takes its range again (the lamps of a house, houselamps.h)
   auto& ssbo = owner->lightSourceData[id];
-  ssbo.range = 0;
+  ssbo.range = e ? clampRange(data.currentRange()) : 0;
   owner->markAsDurty(id);
+  }
+
+bool LightGroup::Light::isEnabled() const {
+  return owner!=nullptr && owner->lightSourceDesc[id].isEnabled();
   }
 
 void LightGroup::Light::setRange(float r) {
@@ -106,6 +115,24 @@ void LightGroup::Light::setTimeOffset(uint64_t t) {
   data.setTimeOffset(t);
   }
 
+void LightGroup::Light::setKeysOnce(bool once) {
+  if(owner==nullptr)
+    return;
+  owner->lightSourceDesc[id].setKeysOnce(once);
+  }
+
+void LightGroup::Light::setYaw(float yaw) {
+  if(owner==nullptr)
+    return;
+  auto& ssbo = owner->lightSourceData[id];
+  if(ssbo.cookie<=0)
+    return;
+  float turns = yaw/6.2831853f;
+  turns -= std::floor(turns);
+  ssbo.cookie = std::floor(ssbo.cookie) + std::min(turns, 0.999f);
+  owner->markAsDurty(id);
+  }
+
 uint64_t LightGroup::Light::effectPrefferedTime() const {
   if(owner==nullptr)
     return 0;
@@ -128,6 +155,7 @@ LightGroup::LightGroup(const SceneGlobals& scene) {
   }
 
 LightGroup::Light LightGroup::add(const asset::LightPreset& vob) {
+  LoadProbe::Vobs::Scope probe("light");
   LightSource l;
   l.setPosition(Vec3(0, 0, 0));
   l.setDebugName(vob.preset);
@@ -162,8 +190,59 @@ LightGroup::Light LightGroup::add(const asset::LightPreset& vob) {
 
 LightGroup::Light LightGroup::add(const asset::VLight& vob) {
   auto l = add(static_cast<const asset::LightPreset&>(vob));
-  l.setPosition(Vec3(vob.position.x,vob.position.y,vob.position.z));
+  // a base lamp's light may sit off the lamp's own place (vobs.d "offset_cm"; VobLight::moveEvent keeps it there)
+  const auto offset = VobLayer::lightOffset(vob);
+  l.setPosition(Vec3(vob.position.x+offset[0],vob.position.y+offset[1],vob.position.z+offset[2]));
+  if(const float sourceCm = VobLayer::lightSourceCm(vob); sourceCm!=VobLayer::DefaultLightSourceCm) {
+    std::lock_guard<std::mutex> guard(sync);
+    lightSourceData[l.id].sourceSize = sourceCm;
+    markAsDurtyNoSync(l.id);
+    }
+  if(const float nearLimit = VobLayer::lightNear(vob); nearLimit>0) {
+    // the lamp's own limit of the light near it in place of the common one (vobs.d "near", light.frag)
+    std::lock_guard<std::mutex> guard(sync);
+    lightSourceData[l.id].nearLimit = nearLimit;
+    markAsDurtyNoSync(l.id);
+    }
+  float jitterCm = 0, swayHz = 0;
+  if(const auto* flicker = VobLayer::flicker(vob, &jitterCm, &swayHz)) {
+    // the brightness of a lamp follows its emitter's flame signal (vobs.d "flicker_from")
+    std::lock_guard<std::mutex> guard(sync);
+    lightSourceDesc[l.id].setFlicker(*flicker, jitterCm, swayHz);
+    animatedLights.insert(l.id);
+    }
+  if(!vob.cookie.empty()) {
+    std::lock_guard<std::mutex> guard(sync);
+    if(const uint32_t slot = cookieSlot(vob.cookie)) {
+      lightSourceData[l.id].cookie = float(slot);
+      markAsDurtyNoSync(l.id);
+      }
+    }
   return l;
+  }
+
+uint32_t LightGroup::cookieSlot(std::string_view name) {
+  for(size_t i=0; i<cookieNames.size(); ++i)
+    if(cookieNames[i]==name)
+      return uint32_t(i+1);
+  if(cookieNames.size()>=MaxCookies) {
+    Log::e("light: more than ", MaxCookies, " light masks, \"", name, "\" ignored");
+    return 0;
+    }
+  auto* tex = Resources::loadMaterialAlbedo(name); // an own texture: materials.json, as particle sprites
+  if(tex==nullptr) {
+    Log::e("light: unable to load light mask \"", name, "\"");
+    return 0;
+    }
+  cookieTex[cookieNames.size()] = tex;
+  cookieNames.emplace_back(name);
+  return uint32_t(cookieNames.size());
+  }
+
+const Tempest::Texture2d& LightGroup::cookie(size_t slot) const {
+  if(slot<MaxCookies && cookieTex[slot]!=nullptr)
+    return *cookieTex[slot];
+  return *Resources::loadTexture(Tempest::Color(1,1,1,1));
   }
 
 LightGroup::Light LightGroup::add(std::string_view preset) {
@@ -300,17 +379,40 @@ const asset::LightPreset& LightGroup::findPreset(std::string_view preset) const 
   return zero;
   }
 
+void LightGroup::nearLights(const Vec3& at, float reach, std::vector<Near>& out) const {
+  out.clear();
+  std::lock_guard<std::mutex> guard(sync);
+  for(auto& l:lightSourceData) {
+    if(l.range<=0)
+      continue;
+    const float r = l.range + reach;
+    if((l.pos-at).quadLength()<r*r)
+      out.push_back({l.pos, l.range, l.color});
+    }
+  }
+
 void LightGroup::tick(uint64_t time) {
+  // OPENGOTHIC_LIGHT_FREEZE=1: the lights' range and colour animation stands at its first frame, for a measurement
+  // of the flicker of shadows (reports/render-features/2026-11-04-lamp-pcss/step-2d.md)
+  static const bool freeze = [] {
+    const char* e = std::getenv("OPENGOTHIC_LIGHT_FREEZE");
+    return e!=nullptr && std::string_view(e)=="1";
+    }();
+  if(freeze)
+    time = 0;
   for(size_t i : animatedLights) {
     auto& light = lightSourceDesc[i];
     light.update(time);
 
-    LightSsbo ssbo;
-    ssbo.pos   = light.position();
-    ssbo.color = light.currentColor();
-    ssbo.range = light.isEnabled() ? clampRange(light.currentRange()) : 0;
-
     auto& dst = lightSourceData[i];
+    LightSsbo ssbo;
+    ssbo.pos    = light.currentPosition();
+    ssbo.color  = light.currentColor();
+    ssbo.range  = light.isEnabled() ? clampRange(light.currentRange()) : 0;
+    ssbo.cookie = dst.cookie;
+    ssbo.sourceSize = dst.sourceSize;
+    ssbo.nearLimit  = dst.nearLimit;
+
     if(std::memcmp(&dst, &ssbo, sizeof(ssbo))==0)
       continue;
     dst = ssbo;
@@ -393,3 +495,5 @@ void LightGroup::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>& cmd, u
   cmd.setPipeline(Shaders::inst().patch);
   cmd.dispatch(patchBlock.size());
   }
+
+static_assert(VobLayer::DefaultLightSourceCm==6.f, "LightGroup::LightSsbo::sourceSize defaults to it");

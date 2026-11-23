@@ -108,27 +108,27 @@ class DialogGraph final {
       storygraph::Program               program;
       };
 
-    void        onFilter(const zenkit::IInfo& info, bool& visible);
-    bool        onChoiceFilter(const zenkit::IInfo& info, int32_t fn);
-    void        onExtra(const zenkit::INpc& npc, bool important, std::vector<GameScript::DlgChoice>& out);
+    void        onFilter(const daedalus::IInfo& info, bool& visible);
+    bool        onChoiceFilter(const daedalus::IInfo& info, int32_t fn);
+    void        onExtra(const daedalus::INpc& npc, bool important, std::vector<GameScript::DlgChoice>& out);
     void        onExec(const GameScript::DlgChoice& dlg, Npc& player, Npc& npc);
     void        onChoices(const GameScript::DlgChoice& dlg, std::vector<GameScript::DlgChoice>& out);
     // runs steps of a dialog of the director: its program, or a choice it offered; `node` gets the choices
     void        runOwn(const std::string& node, const std::vector<storygraph::Step>& steps);
     void        onChosen(const GameScript::DlgChoice& dlg, Npc& player, Npc& npc);
     // a dialog's condition, information or choice: run as its program (docs/story-graph.md, «Исполнение без VM»)
-    bool        onScript(zenkit::DaedalusSymbol& fn, int32_t& result);
+    bool        onScript(daedalus::DaedalusSymbol& fn, int32_t& result);
 
     std::string readNode(const rapidjson::Value& v, Node& n);
     // the script function behind a dialog's condition or information, or a choice's function
-    zenkit::DaedalusSymbol* functionOf(zenkit::DaedalusVm& v, const std::string& node, bool condition,
+    daedalus::DaedalusSymbol* functionOf(daedalus::DaedalusVm& v, const std::string& node, bool condition,
                                        std::string& error) const;
     // the director's program in place of this function, nullptr if there is none
-    const storygraph::Program* replacedProgram(zenkit::DaedalusVm& v, uint32_t fn);
+    const storygraph::Program* replacedProgram(daedalus::DaedalusVm& v, uint32_t fn);
     // the interpreter for this VM; a new VM: the lifted programs are lifted again
-    storygraph::Interpreter& interpreter(zenkit::DaedalusVm& v);
-    void        check(const zenkit::IInfo& info, bool visible);
-    zenkit::DaedalusVm* vm() const { return rt.vm(); }
+    storygraph::Interpreter& interpreter(daedalus::DaedalusVm& v);
+    void        check(const daedalus::IInfo& info, bool visible);
+    daedalus::DaedalusVm* vm() const { return rt.vm(); }
 
     std::function<void(std::string&&)>                               send;
     std::function<std::string(const std::string&,const std::string&)> addLine;
@@ -143,11 +143,11 @@ class DialogGraph final {
     std::string                                            runningOwn;  // the dialog of the director whose steps run
     std::map<std::string,Replaced>                         replaced;    // by node, or node + ":CONDITION"
     std::unordered_map<uint32_t,const storygraph::Program*> replacedFns; // by function symbol, for replacedFor
-    zenkit::DaedalusVm*                                    replacedFor = nullptr;
+    daedalus::DaedalusVm*                                    replacedFor = nullptr;
 
     // the graph runs dialogs' script functions in place of the VM; GOTHIC_AI_STORYEXEC=0: the VM runs them
     bool                                                   running = true;
-    zenkit::DaedalusVm*                                    programsFor = nullptr;
+    daedalus::DaedalusVm*                                    programsFor = nullptr;
     std::unordered_map<uint32_t,storygraph::Program>       programs;   // by function symbol, lifted when it first runs
     size_t                                                 ran = 0, notPrograms = 0, runErrors = 0, replacedRuns = 0;
 

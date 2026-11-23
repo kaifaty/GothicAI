@@ -9,6 +9,8 @@
 
 #include "physics/dynamicworld.h"
 #include "graphics/mesh/animationsolver.h"
+#include "bumpsignal.h"
+#include "reachsignal.h"
 
 class Npc;
 class World;
@@ -21,6 +23,25 @@ class MoveAlgo final {
     static const float climbMove;
 
     MoveAlgo(Npc& unit);
+
+    // What the body shows at an obstacle it runs at (game/reachsignal): seen only, transient
+    struct WallReach final {
+      float         press     = 0;      // 0..1: held by an obstacle while asking to move, the legs stand
+      bool          warn      = false;  // an obstacle ahead is a quarter of a second away: the hands go out
+      bool          hands     = false;  // warned or held: the free hands are on the obstacle
+      float         timeToHit = -1;     // s
+      bool          person    = false;  // held by a person: no hands on them
+      Tempest::Vec3 normal;             // of the obstacle ahead or the one that holds, along the ground
+      bool          flat      = false;  // what holds is a wall that stands flat to both sides of the body
+      bool          plant     = false;  // the body is still or on its way: a palm's point is kept in the world
+      bool          stop      = false;  // the wall stop holds the hero: his move asks only the way into the wall
+      uint64_t      tick      = 0;
+      };
+    WallReach wallReach(uint64_t now) const;
+    // The wall stop (GAME wall_stop, game/reachsignal): the hero held nearly head on by a flat wall asks only the
+    // way into it - he does not creep along the wall with the key held. Turned further than 25 degrees off, at a
+    // door's jamb or a corner he slides as before
+    Tempest::Vec3 wallStop(const Tempest::Vec3& displacement);
 
     struct JumpStatus {
       AnimationSolver::Anim anim    = AnimationSolver::Anim::Jump;
@@ -87,6 +108,7 @@ class MoveAlgo final {
     // Telemetry counter only: records real MoveAlgo invocations, never advances simulation.
     uint64_t traceTickSerial() const { return movementTraceSerial; }
     bool    characterVirtualActive() const { return virtualMovementActive; }
+    bool    characterVirtualReady();
     auto    characterVirtualGroundVelocity() const -> Tempest::Vec3 { return virtualGroundVelocity; }
 
     asset::MaterialGroup groundMaterial() const;
@@ -122,7 +144,12 @@ class MoveAlgo final {
     void    tickClimb (uint64_t dt);
     void    tickJumpup(uint64_t dt);
     bool    implTick  (uint64_t dt, MvFlags fai);
-    bool    tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement);
+    bool    tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement, bool standing = false,
+                                 bool meleeStep = false);
+    void    tickBumpSignal(uint64_t dt, const Tempest::Vec3& origin, const Tempest::Vec3& displacement,
+                           const DynamicWorld::NpcItem::VirtualMoveResult& moved, bool meleeStep);
+    void    tickReachSignal(uint64_t dt, const Tempest::Vec3& origin, const Tempest::Vec3& displacement,
+                            const DynamicWorld::NpcItem::VirtualMoveResult& moved, const BumpSignal::Result& bump);
     bool    useCharacterVirtual();
     bool    preserveMovementImpulse(uint64_t generation, State previousState, std::string_view backend);
 
@@ -188,6 +215,10 @@ class MoveAlgo final {
     bool                npcVirtualMobTransition = false;
     Tempest::Vec3       virtualGroundVelocity = {}; // cm/s
     Tempest::Vec3       virtualJumpVelocity = {};   // cm/ms, inherited during jump root motion
+    BumpSignal::State    bumpSignal;
+    ReachSignal::State   reachSignal;
+    WallReach            reach;
+    bool                 wallStopping = false;
 
     uint64_t            climbStart=0;
     Tempest::Vec3       climbPos0={};

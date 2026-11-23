@@ -181,6 +181,18 @@ void Encoder<Tempest::CommandBuffer>::drawIndirect(const StorageBuffer& indirect
   impl->drawIndirect(*indirect.impl.impl.handler, offset);
   }
 
+void Encoder<Tempest::CommandBuffer>::implDrawIndexedIndirect(const Detail::VideoBuffer& ibo, Detail::IndexClass icls,
+                                                              const StorageBuffer& indirect, size_t offset) {
+  if(state.stage!=Rendering)
+    throw std::system_error(Tempest::GraphicsErrc::DrawCallWithoutFbo);
+  if(!ibo.impl)
+    return;
+  const auto size = indirect.byteSize();
+  if(offset%4 != 0 || offset > size || size - offset < sizeof(DrawIndexedIndirectCommand))
+    throw std::system_error(Tempest::GraphicsErrc::InvalidStorageBuffer);
+  impl->drawIndexedIndirect(*ibo.impl.handler, icls, *indirect.impl.impl.handler, offset);
+  }
+
 void Encoder<Tempest::CommandBuffer>::dispatchMesh(size_t x, size_t y, size_t z) {
   if(state.stage!=Rendering)
     throw std::system_error(Tempest::GraphicsErrc::DrawCallWithoutFbo);
@@ -317,6 +329,47 @@ void Encoder<CommandBuffer>::copy(const Texture2d& src, uint32_t mip, StorageBuf
   uint32_t w = src.w(), h = src.h();
   auto& tx = *src.impl.handler;
   impl->copy(*dest.impl.impl.handler,offset,tx,w,h,mip);
+  }
+
+void Encoder<CommandBuffer>::upscale(const Attachment& src, StorageImage& dst) {
+  if(state.stage==Rendering)
+    throw std::system_error(Tempest::GraphicsErrc::ComputeCallInRenderPass);
+  if(!src.tImpl.impl.handler || !dst.tImpl.impl.handler)
+    throw std::system_error(Tempest::GraphicsErrc::InvalidTexture);
+  impl->upscale(*src.tImpl.impl.handler, *dst.tImpl.impl.handler);
+  // the backend may close its compute encoder
+  state.curPipeline = nullptr;
+  state.curCompute  = nullptr;
+  state.stage       = None;
+  }
+
+void Encoder<CommandBuffer>::upscaleTemporal(const Attachment& color, const ZBuffer& depth, const Attachment& motion,
+                                             StorageImage& dst, const TemporalUpscaleDesc& desc) {
+  if(state.stage==Rendering)
+    throw std::system_error(Tempest::GraphicsErrc::ComputeCallInRenderPass);
+  if(!color.tImpl.impl.handler || !depth.tImpl.impl.handler || !motion.tImpl.impl.handler || !dst.tImpl.impl.handler)
+    throw std::system_error(Tempest::GraphicsErrc::InvalidTexture);
+  impl->upscaleTemporal(*color.tImpl.impl.handler, *depth.tImpl.impl.handler, *motion.tImpl.impl.handler,
+                        *dst.tImpl.impl.handler, desc);
+  // MetalFX closes whatever encoder was open
+  state.curPipeline = nullptr;
+  state.curCompute  = nullptr;
+  state.stage       = None;
+  }
+
+void Encoder<CommandBuffer>::buildTlas(AccelerationStructure& tlas, const StorageBuffer& instances, size_t count) {
+  if(state.stage==Rendering)
+    throw std::system_error(Tempest::GraphicsErrc::ComputeCallInRenderPass);
+  if(tlas.impl.handler==nullptr || count>tlas.capacity())
+    throw std::system_error(Tempest::GraphicsErrc::InvalidAccelerationStructure);
+  auto* inst = instances.impl.impl.handler;
+  if(inst==nullptr && count>0)
+    throw std::system_error(Tempest::GraphicsErrc::InvalidStorageBuffer);
+  impl->buildTlas(*tlas.impl.handler, inst, count);
+  // Metal records the build in an encoder of its own: the next pipeline is bound again
+  state.curPipeline = nullptr;
+  state.curCompute  = nullptr;
+  state.stage       = None;
   }
 
 void Encoder<CommandBuffer>::generateMipmaps(Attachment& tex) {

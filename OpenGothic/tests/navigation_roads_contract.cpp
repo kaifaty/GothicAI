@@ -176,6 +176,8 @@ void forwardGuidance() {
   close(guidance.remainingKnownCm,3500,"known remainder excludes already passed prefix");
   require(guidance.route.nodes==std::vector<size_t>({0,1,2}),"guidance preserves original familiar node IDs");
 
+  // Real decisions move at most 0.5 m; walking passes every 6.5 m window.
+  roads.updateGuidance(knowledge,{800,0,0},goal,guidance);
   roads.updateGuidance(knowledge,{1200,0,0},goal,guidance);
   require(!guidance.rebuilt,"following a route does not rebuild it");
   close(guidance.progressCm,1200,"projection advances along fixed route");
@@ -184,6 +186,10 @@ void forwardGuidance() {
   close(guidance.progressCm,1200,"backward movement cannot decrease projection progress");
   close(guidance.carrot.x,1800,"backward movement cannot move carrot backwards");
 
+  for(const float x:{1800.f,2400.f,3000.f}) {
+    roads.updateGuidance(knowledge,{x,0,0},goal,guidance);
+    require(!guidance.beyondKnown,"familiar road remains ahead");
+    }
   roads.updateGuidance(knowledge,{3500,0,0},goal,guidance);
   require(guidance.beyondKnown && !guidance.rebuilt,"lookahead passing familiar endpoint hands off to eyes");
   close(guidance.carrot.x,goal.x,"carrot after final familiar node is actual goal");
@@ -244,6 +250,199 @@ void guidanceDeviationAndHeight() {
   require(!unknown.rebuilt && unknown.beyondKnown,"empty familiar path remains a stable goal handoff");
   std::puts("guidance deviation: >8 m rebuild from current pose; off-road carrot stays six metres ahead on road; stacked roads and empty graph handled");
   }
+
+void guidanceHairpin() {
+  // A U-shaped road: 20 m east, 10 m north, 40 m west. Near the start the far
+  // leg is closer (3 m) than the first leg (7 m), but it is 47 m ahead in route.
+  const Roads roads({{"a",{0,0,0}},{"b",{2000,0,0}},{"c",{2000,0,1000}},{"e",{-2000,0,1000}}},
+                    {{0,1,2000,true},{1,2,1000,true},{2,3,4000,true}});
+  const Roads::Knowledge knowledge{{1,1,1,1},{1,1,1},false};
+  const Vec3 goal{-2500,0,1000};
+  require(Roads::guidanceWindowCm==650.f,"window is the 6 m lookahead plus the largest 100 ms step");
+
+  Roads::Guidance start;
+  roads.updateGuidance(knowledge,{300,0,700},goal,start);
+  require(start.rebuilt && start.route.nodes==std::vector<size_t>({0,1,2,3}),"route starts at the closest node");
+  close(start.progressCm,300,"initial projection stays on the first leg, not on the closer far leg");
+  close(start.carrot.x,900,"initial carrot is six metres along the first leg");
+  close(start.carrot.z,0,"initial carrot is not behind the hairpin");
+
+  Roads::Guidance guidance;
+  roads.updateGuidance(knowledge,{0,0,100},goal,guidance);
+  close(guidance.progressCm,0,"start on the first node");
+  roads.updateGuidance(knowledge,{300,0,700},goal,guidance);
+  require(!guidance.rebuilt,"three metres from the far leg is not a deviation");
+  close(guidance.progressCm,300,"progress does not jump 47 m to the far leg");
+  close(guidance.carrot.x,900,"carrot stays on the first leg");
+  close(guidance.carrot.z,0,"carrot does not move behind the hairpin");
+  roads.updateGuidance(knowledge,{300,0,100},goal,guidance);
+  close(guidance.progressCm,300,"returning to the road keeps progress");
+
+  // Ordinary following: the same projection and carrot as on the whole route.
+  const std::vector<std::pair<Vec3,double>> walk = {
+    {{800,0,50},800}, {{1400,0,-30},1400}, {{1950,0,0},1950}, {{2050,0,300},2300},
+    {{1980,0,700},2700}, {{1700,0,1000},3300}, {{1200,0,950},3800}, {{600,0,1050},4400}};
+  for(const auto& [position,progress]:walk) {
+    roads.updateGuidance(knowledge,position,goal,guidance);
+    require(!guidance.rebuilt,"following the hairpin keeps the route");
+    close(guidance.progressCm,progress,"progress follows the route through the turn");
+    }
+  close(guidance.carrot.x,0,"carrot six metres ahead on the far leg");
+  close(guidance.carrot.z,1000,"carrot on the far leg after the turn");
+
+  // A later stretch beyond the window does not take progress, even when the
+  // actor stands on it: only the >8 m deviation rebuilds the route.
+  Roads::Guidance ahead;
+  roads.updateGuidance(knowledge,{300,0,0},goal,ahead);
+  for(int i=0; i<5; ++i) {
+    roads.updateGuidance(knowledge,{2000,0,500},goal,ahead);
+    require(!ahead.rebuilt,"standing on the route is not a deviation");
+    close(ahead.progressCm,300,"a stretch 17 m ahead stays outside the window");
+    }
+
+  // A tight hairpin, 6 m wide: the turn enters the window. An actor that stands
+  // between the legs, 5 m from the first and 1 m from the far one, keeps its
+  // progress instead of creeping one window per decision onto the far leg.
+  const Roads tight({{"a",{0,0,0}},{"b",{1000,0,0}},{"c",{1000,0,600}},{"e",{-2000,0,600}}},
+                    {{0,1,1000,true},{1,2,600,true},{2,3,3000,true}});
+  Roads::Guidance stand;
+  tight.updateGuidance(knowledge,{0,0,50},{-2500,0,600},stand);
+  require(stand.rebuilt && stand.route.nodes==std::vector<size_t>({0,1,2,3}),"tight route starts at its first node");
+  tight.updateGuidance(knowledge,{300,0,100},{-2500,0,600},stand);
+  tight.updateGuidance(knowledge,{700,0,100},{-2500,0,600},stand);
+  for(int i=0; i<10; ++i) {
+    tight.updateGuidance(knowledge,{700,0,500},{-2500,0,600},stand);
+    require(!stand.rebuilt,"one metre from the far leg is not a deviation");
+    close(stand.progressCm,700,"standing actor keeps progress on the first leg");
+    }
+  close(stand.carrot.x,1000,"carrot six metres ahead on the turn");
+  close(stand.carrot.z,300,"carrot does not move onto the far leg");
+  std::puts("guidance hairpin: far leg 3 m away does not take progress; following the turn matches the whole-route projection; standing actor never creeps onto the far leg");
+  }
+
+// The caller's memory: a seen wall on the XZ plane closes every passage that
+// crosses it; elsewhere the ground is seen free, or unseen.
+struct Memory final {
+  float x0 = 0, z0 = 0, x1 = 0, z1 = 0; // the wall segment
+  Roads::Passage elsewhere = Roads::Passage::Free;
+  mutable int calls = 0;
+  Roads::Passage operator()(const Vec3& a, const Vec3& b) const {
+    ++calls;
+    const auto side = [](float ax, float az, float bx, float bz, float px, float pz) {
+      return (bx-ax)*(pz-az)-(bz-az)*(px-ax);
+      };
+    const float d1 = side(x0,z0,x1,z1,a.x,a.z), d2 = side(x0,z0,x1,z1,b.x,b.z);
+    const float d3 = side(a.x,a.z,b.x,b.z,x0,z0), d4 = side(a.x,a.z,b.x,b.z,x1,z1);
+    if(((d1>0 && d2<0) || (d1<0 && d2>0)) && ((d3>0 && d4<0) || (d3<0 && d4>0)))
+      return Roads::Passage::Closed;
+    return elsewhere;
+    }
+  };
+
+Vec3 pointAt(const Roads::Guidance& guidance) {
+  double rest = guidance.progressCm;
+  for(size_t i=0; i+1<guidance.polyline.size(); ++i) {
+    const auto edge = guidance.polyline[i+1]-guidance.polyline[i];
+    const double length = double(edge.length());
+    if(length>0 && rest<length)
+      return guidance.polyline[i]+edge*float(rest/length);
+    rest -= length;
+    }
+  return guidance.polyline.back();
+  }
+
+void guidanceMemory() {
+  // The U-shaped road of guidanceHairpin: 20 m east, 10 m north, 40 m west.
+  const Roads roads({{"a",{0,0,0}},{"b",{2000,0,0}},{"c",{2000,0,1000}},{"e",{-2000,0,1000}}},
+                    {{0,1,2000,true},{1,2,1000,true},{2,3,4000,true}});
+  const Roads::Knowledge knowledge{{1,1,1,1},{1,1,1},false};
+  const Vec3 goal{-2500,0,1000};
+  const auto walkTo = [&](const Roads::PassageCheck& memory, Roads::Guidance& guidance) {
+    roads.updateGuidance(knowledge,{0,0,100},goal,guidance,memory);
+    roads.updateGuidance(knowledge,{300,0,100},goal,guidance,memory);
+    roads.updateGuidance(knowledge,{300,0,700},goal,guidance,memory);
+    };
+
+  // A cut across the loop: the actor stands 3 m from the far leg and memory has
+  // seen the 3 m between free. Progress takes the far leg at once.
+  Memory open;open.x0=open.x1=-9000; // no wall
+  Roads::Guidance cut;
+  walkTo(std::cref(open),cut);
+  require(!cut.rebuilt && cut.caughtUp,"a cut of the loop seen free catches up");
+  close(cut.progressCm,4700,"progress is the closest point of the far leg");
+  close(cut.carrot.x,-300,"carrot six metres ahead on the far leg");
+  close(cut.carrot.z,1000,"carrot on the far leg");
+  roads.updateGuidance(knowledge,{200,0,800},goal,cut,std::cref(open));
+  require(!cut.caughtUp,"following the far leg is ordinary progress");
+  close(cut.progressCm,4800,"progress follows the far leg");
+
+  // The same place behind a wall the actor has seen between the legs.
+  Memory wall;wall.x0=-3000;wall.z0=850;wall.x1=1500;wall.z1=850;
+  Roads::Guidance blocked;
+  walkTo(std::cref(wall),blocked);
+  for(int i=0; i<5; ++i) {
+    roads.updateGuidance(knowledge,{300,0,700},goal,blocked,std::cref(wall));
+    require(!blocked.rebuilt && !blocked.caughtUp,"a stretch behind a seen wall is not taken");
+    close(blocked.progressCm,300,"progress stays on the first leg behind the wall");
+    }
+  close(blocked.carrot.x,900,"carrot stays on the first leg");
+
+  // Unseen ground between the legs: no catch-up either, the window rule holds.
+  Memory dark;dark.x0=dark.x1=-9000;dark.elsewhere=Roads::Passage::Unknown;
+  Roads::Guidance unseen;
+  walkTo(std::cref(dark),unseen);
+  require(!unseen.caughtUp,"an unseen passage does not catch up");
+  close(unseen.progressCm,300,"unseen far leg stays outside the window");
+
+  // No memory: the previous rule exactly.
+  Roads::Guidance plain, none;
+  walkTo({},plain);
+  walkTo([](const Vec3&,const Vec3&) {return Roads::Passage::Unknown;},none);
+  close(plain.progressCm,none.progressCm,"unknown memory equals no memory");
+
+  // A rebuilt route does not start at a node behind a seen wall.
+  // gate (0,0) - side (10,0) - goal (50,0) m; the actor stands 5 m south of side,
+  // a wall between them; gate is 11.2 m away with nothing seen between.
+  const Roads line({{"gate",{0,0,0}},{"side",{1000,0,0}},{"goal",{5000,0,0}}},
+                   {{0,1,1000,true},{1,2,4000,true}});
+  const Roads::Knowledge all{{1,1,1},{1,1},false};
+  const Vec3 actor{1000,0,-500}, end{5000,0,0};
+  Memory pocket;pocket.x0=800;pocket.z0=-200;pocket.x1=1500;pocket.z1=-200;pocket.elsewhere=Roads::Passage::Unknown;
+  const auto before = line.path(all,actor,end);
+  require(before.nodes.front()==1,"without memory the route starts at the closest node");
+  const auto around = line.path(all,actor,end,std::cref(pocket));
+  require(around.nodes.front()==0 && around.startSkipped==1 && !around.startFallback,
+          "a rebuilt route skips the closest node behind a seen wall");
+  close(around.startOffsetCm,std::sqrt(1000.*1000.+500.*500.),"start offset is to the node taken");
+  Roads::Guidance rebuilt;
+  line.updateGuidance(all,actor,end,rebuilt,std::cref(pocket));
+  require(rebuilt.rebuilt && rebuilt.route.nodes.front()==0,"guidance starts the rebuilt route on this side of the wall");
+  // The actor's projection on the new route, side (10, 0) m, is behind the same
+  // wall: progress stays at the start node, and neither it nor the carrot is
+  // behind a seen wall.
+  require(rebuilt.projectionRejected,"the initial projection behind a seen wall is rejected");
+  close(rebuilt.progressCm,0,"progress stays at the start node");
+  require(pocket(actor,pointAt(rebuilt))!=Roads::Passage::Closed,"the progress point is not behind a seen wall");
+  require(pocket(actor,rebuilt.carrot)!=Roads::Passage::Closed,"the carrot is not behind a seen wall");
+  line.updateGuidance(all,actor,end,rebuilt,std::cref(pocket));
+  require(!rebuilt.rebuilt && !rebuilt.projectionRejected,"the rejection is a diagnosis of the rebuild decision only");
+  Roads::Guidance blind;
+  line.updateGuidance(all,actor,end,blind,[](const Vec3&,const Vec3&) {return Roads::Passage::Unknown;});
+  require(!blind.projectionRejected && blind.route.nodes.front()==1,"without a seen wall the projection stands");
+  // Every candidate behind seen walls: the closest node, as before.
+  Memory closed;closed.x0=-9000;closed.z0=-100;closed.x1=9000;closed.z1=-100;closed.elsewhere=Roads::Passage::Unknown;
+  const auto fallback = line.path(all,actor,end,std::cref(closed));
+  require(fallback.nodes.front()==1 && fallback.startFallback && !fallback.startDeparture,
+          "if memory closes every node the first route starts at the closest one");
+  // A later rebuild with every node closed goes back to where the walker left its route.
+  Roads::Guidance back;
+  line.updateGuidance(all,{100,0,0},end,back,std::cref(open));
+  require(back.rebuilt && back.route.nodes.front()==0,"the first route starts at the gate");
+  line.updateGuidance(all,{1000,0,-900},end,back,std::cref(closed));
+  require(back.rebuilt && back.route.startFallback && back.route.startDeparture && back.route.nodes.front()==0,
+          "with every node behind a seen wall the rebuilt route starts where the walker left the previous one");
+  std::puts("guidance memory: a loop cut seen free catches up; a stretch behind a seen wall or unseen does not; a rebuilt route skips nodes behind a seen wall, and with all of them closed starts where the walker left its route");
+  }
 }
 
 int main() {
@@ -253,5 +452,7 @@ int main() {
   roadClassificationSeam();
   forwardGuidance();
   guidanceDeviationAndHeight();
+  guidanceHairpin();
+  guidanceMemory();
   std::puts("navigation roads contracts passed");
   }

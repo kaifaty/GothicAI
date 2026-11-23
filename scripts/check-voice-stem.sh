@@ -15,7 +15,7 @@ fi
 
 for take in control stem; do
   mkdir -p "$OUT/$take"
-  OPTIONS=(-u OPENGOTHIC_BENCH_VOICE_STEM SCENARIO=tts LLM=fake TTS=fake GOTHIC_TTS_RECORD=1
+  OPTIONS=(-u OPENGOTHIC_BENCH_VOICE_STEM SCENARIO=tts LLM=off TTS=fake GOTHIC_TTS_RECORD=1
     DECIDER_URL= QUICK_URL=
     "LOG_DIR=$OUT/$take")
   if [[ "$take" == stem ]]; then OPTIONS+=(OPENGOTHIC_BENCH_VOICE_STEM=1); fi

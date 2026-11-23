@@ -1,0 +1,37 @@
+# The face from the voice in the game, close up and with sound (reports/content/2026-11-hero-head/engine-plan.md,
+# step 10, "FaceRig"): Vino with an own head says four lines of his original voice, each with a face track of
+# Audio2Face lying next to the head as <sound>.face.json - two with lip sounds м, п, б and у, then the two long lines of
+# face-brows-clip.bench over S_ANGRY (with an emotion in their tracks the expression gives way to it, without one it
+# shows over the track). No AI server. Needs an own head for BAU_952_VINO whose face profile has speech_face;
+# OPENGOTHIC_SPEECH_FACE=0 films the same without the layer (the mouth by loudness, the brows on the accents).
+# How to run it and make the clip - scripts/bench/README.md, "Speech face clip".
+# @timeout 300
+seed 73013
+cheat god
+set time 12 0
+# the near clip 30 cm before the mouth: Vino stands a little above the hero and bends his head to him, at 15 cm the
+# clip cut his forehead
+view clean 30
+overlay off
+goto NW_FARM1_PATH_01
+wait 3000
+freeze BAU_952_VINO
+# to the hero's left: the sun on his face (straight ahead it is behind him)
+put BAU_952_VINO 200 90
+watch BAU_952_VINO
+wait 1500
+# a little below the mouth: Vino bends his head about 9 degrees down to the hero, from above the face reads badly
+cam face 45 0 -8
+wait 1000
+rec clip
+wait 500
+speak BAU_952_VINO DIA_Vino_SEEKWORK_05_04
+wait 11800
+speak BAU_952_VINO DIA_Vino_PERM45UND6_05_03
+wait 7600
+faceanim BAU_952_VINO S_ANGRY 23000
+speak BAU_952_VINO DIA_Vino_HALLO_05_02
+wait 10700
+speak BAU_952_VINO DIA_Vino_PERM_05_04
+wait 11500
+stop

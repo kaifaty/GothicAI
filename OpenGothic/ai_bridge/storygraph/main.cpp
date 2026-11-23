@@ -19,11 +19,11 @@
 //                                  or of a script function
 //   storygraph <game directory> --ou-messages    owned raw message pairs for the Python server
 //
-// Subtitles use the imported source next to the scripts, or --ou <imported source|native record>.
+// Subtitles use the indexed program-relative OU, or --ou <native record.json>.
 
 #include "bytecode.h"
 #include "baseimport.h"
-#include "basestore.h"
+#include "basestoreimport.h"
 #include "check.h"
 #include "execcheck.h"
 #include "gothicglb.h"
@@ -34,11 +34,11 @@
 #include "programdata.h"
 #include "vocab.h"
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 #include <zenkit/Logger.hh>
-#include <zenkit/Vfs.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 
+#include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
@@ -57,29 +57,13 @@ using namespace storygraph;
 namespace fs = std::filesystem;
 
 namespace storygraph {
-  int scanDialogs(zenkit::DaedalusVm& vm, const Bytecode& code, const char* tsvPath, size_t top);
+  int scanDialogs(daedalus::DaedalusVm& vm, const Bytecode& code, const char* tsvPath, size_t top);
   }
 
 static std::string upper(std::string s) {
   for(auto& c : s)
     c = char(std::toupper(uint8_t(c)));
   return s;
-  }
-
-// a child of `dir` by name, ignoring case
-static fs::path child(const fs::path& dir, const std::string& name) {
-  std::error_code ec;
-  for(auto& e : fs::directory_iterator(dir, ec))
-    if(upper(e.path().filename().string())==upper(name))
-      return e.path();
-  return {};
-  }
-
-static fs::path findOu(const fs::path& dat) {
-  auto scripts = dat.parent_path().parent_path();  // _work/Data/Scripts/_compiled/GOTHIC.DAT
-  auto content = child(scripts, "CONTENT");
-  auto cut     = content.empty() ? fs::path() : child(content, "CUTSCENE");
-  return cut.empty() ? fs::path() : child(cut, "OU.BIN");
   }
 
 static fs::path installationRoot(const fs::path& input, bool directory) {
@@ -216,7 +200,12 @@ static void printStats(const Model& m, size_t lineTexts) {
   }
 
 static int run(int argc, char** argv) {
+#ifdef _WIN32
+  // the Microsoft CRT has no line buffering: _IOLBF is full buffering and a zero size is an invalid parameter
+  std::setvbuf(stdout, nullptr, _IONBF, 0);  // what was printed survives a crash
+#else
   std::setvbuf(stdout, nullptr, _IOLBF, 0);  // what was printed survives a crash
+#endif
   const char* datPath = nullptr;
   const char* ouPath  = nullptr;
   const char* json    = nullptr;
@@ -274,7 +263,7 @@ static int run(int argc, char** argv) {
       datPath = argv[i];
     }
   if(datPath==nullptr) {
-    std::fprintf(stderr, "usage: storygraph <game directory|DAT source path> [--ou OU.BIN|native.json] [--ou-messages] "
+    std::fprintf(stderr, "usage: storygraph <game directory|DAT source path> [--ou native.json] [--ou-messages] "
                          "[--json out.json [--pretty]] [--node ID] "
                          "[--quest MIS_*] [--scan [--tsv out.tsv] [--top N]] [--disasm FN] "
                          "[--check <save dir>... [--verbose]] [--fuzz N] [--effects|--exec [--via-json]] [--program FN]\n");
@@ -290,27 +279,29 @@ static int run(int argc, char** argv) {
     BaseImport::onZenkitLog(level,component,message);
     });
   BaseImport::Files mounted;
-  {
-  zenkit::Vfs vfs;
-  fs::path work;
-  for(const auto& archive:BaseImport::mountRuntime(vfs,gothic,work))
-    mounted.emplace_back(archive.name,archive.size);
-  }
-  std::sort(mounted.begin(),mounted.end());
-  auto base = BaseStore::resolve(gothic,mounted,[](std::string_view message) {
+  for(const auto& archive:BaseImport::runtimeArchives(gothic))
+    if(!archive.mod) mounted.emplace_back(archive.name,archive.size);
+  auto base = BaseStore::ensure(gothic,mounted,[](std::string_view message) {
     std::fprintf(stderr,"%.*s\n",int(message.size()),message.data());
     });
   if(importOutput!=nullptr)
     std::cout.rdbuf(importOutput);
   zenkit::Logger::set(zenkit::LogLevel::INFO,{});
+  const auto identity = BaseImport::readIdentity(base.path);
+  rapidjson::Document metadata;
+  metadata.Parse(identity.json.data(),identity.json.size());
+  BaseImport::Files archives;
+  for(const auto& archive:metadata["archives"].GetArray())
+    archives.emplace_back(archive["name"].GetString(),archive["size"].GetUint64());
+  std::sort(archives.begin(),archives.end());
   const auto ouIndex = OutputUnits::readIndex(base.path/"outputunits");
-  if(ouIndex.archives!=mounted)
-    throw std::runtime_error("output units index archives differ from the installation");
+  if(ouIndex.archives!=archives)
+    throw std::runtime_error("output units index archives differ from the selected base");
   if(ouMessages)
     return printOuMessages(ouIndex);
   const auto index = ProgramData::readIndex(base.path/"programs");
-  if(index.archives!=mounted)
-    throw std::runtime_error("program index archives differ from the installation");
+  if(index.archives!=archives)
+    throw std::runtime_error("program index archives differ from the selected base");
   const auto* source = directory ? index.server() : index.findHost(fs::absolute(input).lexically_relative(gothic).generic_string());
   if(source==nullptr || source->origin!="host")
     throw std::runtime_error("selected host program is missing from the base");
@@ -320,11 +311,11 @@ static int run(int argc, char** argv) {
   auto programData = ProgramData::readProgram(record,&programSha);
   if(programSha!=source->recordSha256)
     throw std::runtime_error("selected program record identity differs from its index");
-  auto script = zenkit::DaedalusScript::from_program(std::move(programData));
-  zenkit::register_all_script_classes(script);
-  zenkit::DaedalusVm vm(std::move(script), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
-  vm.register_default_external([](const zenkit::DaedalusSymbol&){});
-  const zenkit::DaedalusScript& dat = vm;
+  auto script = daedalus::DaedalusScript::from_program(std::move(programData));
+  daedalus::register_all_script_classes(script);
+  daedalus::DaedalusVm vm(std::move(script), daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  vm.register_default_external([](const daedalus::DaedalusSymbol&){});
+  const daedalus::DaedalusScript& dat = vm;
   Bytecode code(dat);
 
   if(disasm!=nullptr)
@@ -338,7 +329,7 @@ static int run(int argc, char** argv) {
       }
     std::vector<uint32_t> fns = {sym->index()};
     if(code.isInfo(*sym)) {
-      auto info = vm.init_instance<zenkit::IInfo>(sym);
+      auto info = vm.init_instance<daedalus::IInfo>(sym);
       fns.clear();
       for(auto f : {info->condition, info->information})
         if(f!=0)
@@ -353,31 +344,23 @@ static int run(int argc, char** argv) {
   if(scan)
     return scanDialogs(vm, code, tsvPath, top);
 
-  fs::path ou = ouPath ? fs::path(ouPath) : findOu(gothic/fs::path(source->path));
   LineTexts lines;
   std::string ouNativeSha, ouSourceSha;
-  if(!ou.empty()) {
-    const auto relative = fs::absolute(ou).lexically_normal().lexically_relative(gothic.lexically_normal());
-    const auto* ouSource = !relative.empty() && *relative.begin()!=".." ?
-                          ouIndex.findHost(relative.generic_string()) : nullptr;
-    if(ouSource!=nullptr) {
+  if(ouPath!=nullptr) {
+    const fs::path ou(ouPath);
+    if(ou.extension()!=".json")
+      throw std::runtime_error("--ou requires a native cutscene-library JSON record; invoke "
+                               "content-convert outputunits-file <file> <record.json>");
+    lines = loadLines(OutputUnits::readLibrary(ou,&ouNativeSha));
+    } else {
+    const auto relative = fs::path(source->path).parent_path().parent_path()/"CONTENT"/"CUTSCENE"/"OU.BIN";
+    if(const auto* ouSource = ouIndex.findHost(relative.generic_string())) {
       lines = loadLines(loadLibrary(ouIndex,*ouSource,ouNativeSha));
       ouSourceSha = ouSource->sha256;
-      } else if(ouPath!=nullptr) {
-      try {
-        lines = loadLines(OutputUnits::readLibrary(ou,&ouNativeSha));
-        }
-      catch(const std::exception& error) {
-        throw std::runtime_error(ou.string()+" is neither an imported OU source of this installation nor a native "
-                                 "cutscene-library record; invoke content-convert outputunits-file <file> <record.json>: "+
-                                 error.what());
-        }
-      } else {
-      throw std::runtime_error("selected host OU is missing from the base: "+relative.generic_string());
       }
     }
   if(lines.empty())
-    std::fprintf(stderr, "no subtitles (OU.BIN not found, use --ou): lines will have no text\n");
+    throw std::runtime_error("selected base has no storygraph OU subtitles; select a base with the program-relative OU");
 
   Lifter lifter(dat, code);
   Model  m = buildModel(vm, code, lifter, lines);

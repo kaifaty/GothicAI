@@ -33,6 +33,18 @@ POLICIES: dict[str, EventPolicy] = {
         15,
         salient=True,
     ),
+    # the first sight of a trace that matters by itself (found_traces.py): a body (v58), blood (v60)
+    "trace_found": EventPolicy(
+        "You found the body of {other} {place}, {detail}. Someone was killed here.{context}",
+        120,
+        salient=True,
+    ),
+    # the same find of blood (source "blood"): no body, only that someone was hurt there
+    "trace_found:blood": EventPolicy(
+        "You found blood on the ground {place}, {detail}. Someone was hurt here.{context}",
+        120,
+        salient=True,
+    ),
     "player_sleeps": EventPolicy("The hero lay down to sleep nearby.", 60),
     "player_sits": EventPolicy("The hero sat down nearby.", 30),
     "weapon_drawn": EventPolicy("The hero drew a weapon near you.", 20, scripted=True),
@@ -106,7 +118,8 @@ class Stimulus:
 
     @property
     def policy(self) -> EventPolicy:
-        return policy(self.kind)
+        # a kind may have a wording of its own per source: trace_found of blood
+        return POLICIES.get(f"{self.kind}:{self.source}") or policy(self.kind)
 
     def alive(self, now: float) -> bool:
         return now - self.at <= self.policy.ttl_s

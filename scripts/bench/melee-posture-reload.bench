@@ -1,0 +1,6 @@
+# A fresh process loads session-stage3-down.sav from melee-posture-npc.
+# SAVE=<absolute archive path>; no WORLD override.
+ragdoll session-initial PAL_255_RITTER stage3-loaded
+release all
+waitragdoll PAL_255_RITTER getup 9000
+ragdoll session-snapshot PAL_255_RITTER stage3-standing

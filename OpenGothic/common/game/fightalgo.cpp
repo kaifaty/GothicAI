@@ -1,15 +1,15 @@
 #include "fightalgo.h"
+#include "game/gamerules.h"
 
 #include <Tempest/Log>
 #include <algorithm>
+#include <set>
 
-#include "game/definitions/fightaidefinitions.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "gothic.h"
 #include "serialize.h"
-#include "testbench.h"
+#include "world/benchhooks.h"
 
 // According to Gothic1 scripts:
 // W  - Weapon Range (FIGHT_RANGE_FIST * 3)
@@ -17,6 +17,16 @@
 // FK - Long-range combat range (30m)
 
 FightAlgo::FightAlgo() {
+  }
+
+FightAlgo::Action FightAlgo::resolveDownTactics(bool enabled, bool knockdown, bool rising, bool inRange, bool focus) {
+  if(!enabled || !knockdown)
+    return MV_NULL;
+  if(!inRange)
+    return MV_MOVE;
+  if(!focus)
+    return MV_TURN2HIT;
+  return rising ? MV_WAIT : MV_ATTACK;
   }
 
 void FightAlgo::load(Serialize &fin) {
@@ -33,8 +43,8 @@ void FightAlgo::save(Serialize &fout) {
   fout.write(hitFlg);
   }
 
-void FightAlgo::fillQueue(Npc &npc, Npc &tg, GameScript& owner) {
-  auto& ai = Gothic::fai()[size_t(npc.handle().fight_tactic)];
+void FightAlgo::fillQueue(Npc &npc, Npc &tg, GameRules& owner) {
+  auto& ai = owner.fightAi(size_t(npc.handle().fight_tactic));
   auto  ws = npc.weaponState();
 
   if(hitFlg) {
@@ -92,7 +102,7 @@ void FightAlgo::fillQueue(Npc &npc, Npc &tg, GameScript& owner) {
   fillQueue(npc,owner,ai.my_w_nofocus);
   }
 
-bool FightAlgo::fillQueue(const Npc& npc, GameScript& owner, const Def::FightAi& src) {
+bool FightAlgo::fillQueue(const Npc& npc, GameRules& owner, const Def::FightAi& src) {
   uint32_t sz=0;
   for(size_t i=0; i<Def::FightAi::move_count; ++i){
     if(src.move[i]==Def::FightMove::NOP)
@@ -105,7 +115,7 @@ bool FightAlgo::fillQueue(const Npc& npc, GameScript& owner, const Def::FightAi&
   return queueId!=Def::FightMove::NOP;
   }
 
-FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner) {
+FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameRules& owner) {
   using Def::FightMove;
 
   if(tr[0]==MV_NULL) {
@@ -203,7 +213,7 @@ FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner)
       }
     traceInstruction=int(selected); ++traceEntry;
     queueId = FightMove::NOP;
-    if(TestBench::bodyTracing()) {
+    if(Bench::bodyTracing()) {
       std::string moves = "[";
       for(size_t i=0; i<MV_MAX; ++i) {
         if(i!=0)
@@ -211,7 +221,7 @@ FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner)
         moves += std::to_string(int(tr[i]));
         }
       moves += "]";
-      TestBench::bodyEvent(npc,&tg,"native_choice",npc.world().tickCount(),
+      Bench::bodyEvent(npc,&tg,"native_choice",npc.world().tickCount(),
                           "\"choice_id\":" + std::to_string(++traceChoice) +
                           ",\"fai_instruction\":" + std::to_string(int(selected)) +
                           ",\"primitive\":" + std::to_string(int(tr[0])) + ",\"queue\":" + moves);
@@ -224,7 +234,7 @@ bool FightAlgo::hasInstructions() const {
   return tr[0]!=MV_NULL;
   }
 
-bool FightAlgo::fetchInstructions(Npc &npc, Npc &tg, GameScript& owner) {
+bool FightAlgo::fetchInstructions(Npc &npc, Npc &tg, GameRules& owner) {
   fillQueue(npc,tg,owner);
   if(queueId==Def::FightMove::NOP)
     return false;
@@ -245,6 +255,12 @@ void FightAlgo::onClearTarget() {
   tr[0]   = MV_NULL;
   }
 
+void FightAlgo::onTargetKnockdown() {
+  onClearTarget();
+  for(auto& action:tr)
+    action = MV_NULL;
+  }
+
 void FightAlgo::onTakeHit() {
   hitFlg = true;
   for(auto& i:tr)
@@ -256,21 +272,21 @@ float FightAlgo::qDistTo(const Npc& npc, const Npc& tg) const {
   return npc.fightDistanceTo(tg).quadLength();
   }
 
-float FightAlgo::baseDistance(const Npc& npc, const Npc& tg,  GameScript &owner) const {
+float FightAlgo::baseDistance(const Npc& npc, const Npc& tg,  GameRules &owner) const {
   auto&  gv      = owner.guildVal();
   float  baseTg  = float(gv.fight_range_base[tg .guild()]);
   float  baseNpc = float(gv.fight_range_base[npc.guild()]);
   return baseTg + baseNpc;
   }
 
-float FightAlgo::prefferedAttackDistance(const Npc& npc, const Npc& tg,  GameScript &owner) const {
+float FightAlgo::prefferedAttackDistance(const Npc& npc, const Npc& tg,  GameRules &owner) const {
   auto&  gv      = owner.guildVal();
   float  baseTg  = float(gv.fight_range_base[tg.guild()]);
   float  baseNpc = float(gv.fight_range_base[npc.guild()]);
   return baseTg + baseNpc + weaponRange(owner,npc);
   }
 
-float FightAlgo::prefferedGDistance(const Npc& npc, const Npc& tg, GameScript &owner) const {
+float FightAlgo::prefferedGDistance(const Npc& npc, const Npc& tg, GameRules &owner) const {
   auto   gl      = npc.guild();
   auto&  gv      = owner.guildVal();
   float  baseTg  = float(gv.fight_range_base[tg.guild()]);
@@ -278,37 +294,30 @@ float FightAlgo::prefferedGDistance(const Npc& npc, const Npc& tg, GameScript &o
   return float(baseTg + baseNpc + float(gv.fight_range_g[gl])) + weaponRange(owner,npc);
   }
 
-float FightAlgo::attackFinishDistance(GameScript &owner) const {
-  float NPC_ATTACK_FINISH_DISTANCE = 180;
-  if(auto var = owner.findSymbol("NPC_ATTACK_FINISH_DISTANCE")) {
-    if(var->type()==zenkit::DaedalusDataType::INT)
-      NPC_ATTACK_FINISH_DISTANCE = float(var->get_int());
-    else if(var->type()==zenkit::DaedalusDataType::FLOAT)
-      NPC_ATTACK_FINISH_DISTANCE = var->get_float();
-    }
-  return NPC_ATTACK_FINISH_DISTANCE;
+float FightAlgo::attackFinishDistance(GameRules &owner) const {
+  return owner.attackFinishDistance();
   }
 
-bool FightAlgo::isInAttackRange(const Npc &npc, const Npc &tg, GameScript &owner) const {
+bool FightAlgo::isInAttackRange(const Npc &npc, const Npc &tg, GameRules &owner) const {
   auto dist = qDistTo(npc, tg);
   auto pd   = prefferedAttackDistance(npc,tg,owner);
   return (dist<=pd*pd);
   }
 
-bool FightAlgo::isInFinishRange(const Npc& npc, const Npc& tg, GameScript& owner) const {
+bool FightAlgo::isInFinishRange(const Npc& npc, const Npc& tg, GameRules& owner) const {
   auto dist = qDistTo(npc, tg);
   auto pd   = attackFinishDistance(owner);
   return (dist<=pd*pd);
   }
 
-bool FightAlgo::isInCloseupRange(const Npc& npc, const Npc& tg, GameScript& owner) const {
+bool FightAlgo::isInCloseupRange(const Npc& npc, const Npc& tg, GameRules& owner) const {
   // script: automatic movement of the figure (if too close) to 0.75*FightRange
   auto dist = qDistTo(npc, tg);
   auto pd   = baseDistance(npc,tg,owner) * 0.75f;
   return (dist<=pd*pd);
   }
 
-bool FightAlgo::isInWRange(const Npc& npc, const Npc& tg, GameScript& owner) const {
+bool FightAlgo::isInWRange(const Npc& npc, const Npc& tg, GameRules& owner) const {
   // tested in vanilla on Bloofly's:
   //  60 weapon range (Spiked club) is not enough to hit
   //  70 weapon range (Rusty Sword) is good to hit
@@ -318,7 +327,7 @@ bool FightAlgo::isInWRange(const Npc& npc, const Npc& tg, GameScript& owner) con
   return (dist<=pd*pd);
   }
 
-bool FightAlgo::isInGRange(const Npc &npc, const Npc &tg, GameScript &owner) const {
+bool FightAlgo::isInGRange(const Npc &npc, const Npc &tg, GameRules &owner) const {
   auto dist = qDistTo(npc, tg);
   auto pd   = prefferedGDistance(npc,tg,owner);
   return (dist<=pd*pd);
@@ -352,7 +361,7 @@ bool FightAlgo::angleTest(const Npc& npc, const Npc& tg, float cosMax) {
   return true;
   }
 
-float FightAlgo::weaponRange(GameScript &owner, const Npc &npc) {
+float FightAlgo::weaponRange(GameRules &owner, const Npc &npc) {
   /*
   NOTE: comments from G2 scripts:
     Bip01 bis BBox
@@ -363,7 +372,7 @@ float FightAlgo::weaponRange(GameScript &owner, const Npc &npc) {
   auto& gv  = owner.guildVal();
   auto  w   = npc.inventory().activeWeapon();
   int   add = w ? w->swordLength() : 0;
-  auto  bR  = Gothic::inst().version().game==2 ? ReferenceBowRangeG2 : ReferenceBowRangeG1;
+  auto  bR  = ReferenceBowRangeG2;
 
   switch(npc.weaponState()) {
     case WeaponState::W1H:

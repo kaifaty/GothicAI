@@ -3,6 +3,7 @@ import gzip
 import hashlib
 import importlib.util
 import json
+import lzma
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,29 @@ SPEC = importlib.util.spec_from_file_location("nav_bc_data", MODULE_PATH)
 data = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(data)
 demos = data.nav_demos
+LEAN_SPEC = importlib.util.spec_from_file_location("nav_lean_data", MODULE_PATH.with_name("nav_lean_data.py"))
+lean = importlib.util.module_from_spec(LEAN_SPEC)
+LEAN_SPEC.loader.exec_module(lean)
+
+
+def test_circling_analysis_separates_labels_controllers_and_similar_inputs():
+    spec = importlib.util.spec_from_file_location("circling", MODULE_PATH.with_name("nav_dagger_circling.py"))
+    analysis = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(analysis)
+    keys = np.asarray([[0, 0, 1, 1, 0, 0], [0, 0, -1, 1, 0, 0],
+                       [1, 0, 1, 0, 0, 0], [0, 0, -1, 0, 0, 0]], float)
+    counts = analysis.action_counts(keys)
+    assert (counts["forward"], counts["turn_only"], counts["walk"], counts["flips"]) == (1, 3, 2, 3)
+    # Filtering a controller must not create an adjacent pair across the other controller.
+    assert analysis.action_counts(keys, np.asarray([True, False, True, False]))["adjacent"] == 0
+    direction = np.tile([0., 0., 1.], (4, 1))
+    distance = np.asarray([1000., 1020., 1100., 1000.])
+    maps = np.zeros((4, 112), np.float32)
+    maps[3] = .2
+    matched, pairs, examples = analysis.close_opposite_pairs(direction, distance, maps, keys[:, 2])
+    assert matched.tolist() == [True, True, False, False]
+    assert pairs == 1 and examples[0]["goal_distance_difference_cm"] == 20
+    assert analysis.path_distance(np.asarray([50., 30.]), [[0, 0], [100, 0]]) == 30
 
 
 def fixture_records(count=3):
@@ -333,7 +357,7 @@ def write_bc3_manifest(tmp_path, families=("point", "follow_below_gate")):
     return source, output, path, manifest, records, layout
 
 
-def test_bc3_manifest_uses_exact_train_refs_including_failed_follow(tmp_path):
+def test_bc3_manifest_uses_exact_train_refs_including_failed_follow(tmp_path, monkeypatch):
     source, output, path, manifest, records, layout = write_bc3_manifest(tmp_path)
     # Even a real extra successful recording is not admitted without a train ref.
     write_episode(source, "not-selected", records, layout, "not-selected", navigation_memory_version=3)
@@ -359,6 +383,75 @@ def test_bc3_manifest_uses_exact_train_refs_including_failed_follow(tmp_path):
         assert not cached["detour_valid"].any()
         for name in ("near", "far", "vector"):
             np.testing.assert_allclose(cached[name], expected[name], atol=1 / 255)
+    direct = data.training_index(source, path)
+    for name in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits"):
+        assert direct[name] == index[name]
+    relocated = tmp_path / "relocated"
+    for entry in manifest["episodes"]:
+        original = Path(entry["episode"])
+        directory = relocated / original.relative_to(source)
+        conversion_entry = {**entry, "directory": original}
+        result = lean.convert_episode(conversion_entry, directory)
+        assert result["reused"] is False
+        samples = directory / "samples.bin.xz"
+        metadata_file = directory / "episode.json"
+        with gzip.open(original / "samples.bin.gz", "rb") as incoming, lzma.open(samples, "rb") as restored:
+            assert restored.read() == incoming.read()
+        metadata = json.loads(metadata_file.read_text())
+        assert metadata["nav_bc_stats"] == data.episode_stats(original, 3, chunk_records=2)
+        before = {file: (file.read_bytes(), file.stat().st_mtime_ns) for file in (samples, metadata_file)}
+        assert lean.convert_episode(conversion_entry, directory)["reused"] is True
+        assert {file: (file.read_bytes(), file.stat().st_mtime_ns) for file in before} == before
+        corrupted = bytearray(before[samples][0])
+        corrupted[len(corrupted) // 2] ^= 1
+        samples.write_bytes(corrupted)
+        with pytest.raises(ValueError, match="Existing converted episode differs"):
+            lean.convert_episode(conversion_entry, directory)
+        samples.write_bytes(before[samples][0])
+        metadata_file.write_text(json.dumps({**metadata, "id": "changed"}))
+        with pytest.raises(ValueError, match="Existing converted episode differs"):
+            lean.convert_episode(conversion_entry, directory)
+        metadata_file.write_bytes(before[metadata_file][0])
+    def unexpected_stats(*_args, **_kwargs):
+        raise AssertionError("Converted metadata must avoid a statistics pass")
+    monkeypatch.setattr(data, "episode_stats", unexpected_stats)
+    converted = data.training_index(relocated, path)
+    for name in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits"):
+        assert converted[name] == index[name]
+    assert all(entry["file"].endswith(".xz") for entry in converted["episodes"])
+    assert not (relocated / "index.json").exists()
+
+
+def test_convert_episode_recovers_partial_temporary_output(tmp_path):
+    _, _, _, manifest, _, _ = write_bc3_manifest(tmp_path)
+    entry = manifest["episodes"][0]
+    destination = tmp_path / "converted" / "episode"
+    temporary = destination.with_name(destination.name + ".tmp")
+    temporary.mkdir(parents=True)
+    (temporary / "samples.bin.xz").write_bytes(b"partial XZ")
+
+    result = lean.convert_episode({**entry, "directory": Path(entry["episode"])}, destination)
+
+    assert result["reused"] is False
+    assert not temporary.exists()
+    assert (destination / "samples.bin.xz").is_file()
+    assert (destination / "episode.json").is_file()
+
+
+def test_convert_episode_preserves_unrelated_temporary_file(tmp_path):
+    _, _, _, manifest, _, _ = write_bc3_manifest(tmp_path)
+    entry = manifest["episodes"][0]
+    destination = tmp_path / "converted" / "episode"
+    temporary = destination.with_name(destination.name + ".tmp")
+    temporary.mkdir(parents=True)
+    unrelated = temporary / "unrelated.txt"
+    unrelated.write_text("keep me")
+
+    with pytest.raises(OSError, match="Directory not empty"):
+        lean.convert_episode({**entry, "directory": Path(entry["episode"])}, destination)
+
+    assert unrelated.read_text() == "keep me"
+    assert not destination.exists()
 
 
 @pytest.mark.parametrize("relative", ["point/train/point-0", "../outside", "/outside"])
@@ -369,7 +462,7 @@ def test_compact_v5_manifest_uses_supplied_root_and_only_eligible_train(tmp_path
     metadata = {"id": "point-0", "goal_kind": "point", "split": "train", "training_eligible": True,
                 "decisions": 2, "navigation_memory_version": 4, "journey_memory": True,
                 "demo_version": 3, "perception_mode": "gaze", "physics_mode": "cv",
-                "start": "start", "goal": "goal", "region": "forest"}
+                "start": "start", "goal": "goal", "region": "forest", "teacher_version": 3}
     (directory / "episode.json").write_text(json.dumps(metadata))
     entry = {"id": "point-0", "family": "point", "split": "train", "training_eligible": True,
              "decisions": 2, "samples_sha256": "a" * 64, "episode": relative}
@@ -430,6 +523,70 @@ def test_compact_v5_manifest_uses_supplied_root_and_only_eligible_train(tmp_path
     np.testing.assert_allclose(cached["near"][:, 10, 3, 4], [1, 128 / 255])
     np.testing.assert_allclose(cached["far"][:, 10, 10, 70], [128 / 255, 1])
     assert cached["aux_near"].shape == (2, 9, 32, 32)
+    direct = data.training_index(source, path, "hd-familiar")
+    for name in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits"):
+        assert direct[name] == index[name]
+    with gzip.open(directory / "samples.bin.gz", "rb") as stream:
+        (directory / "samples.bin.xz").write_bytes(lzma.compress(stream.read(), preset=6))
+    metadata["navdemo_storage"] = {"source_samples_sha256": entry["samples_sha256"],
+        "samples_sha256": hashlib.sha256((directory / "samples.bin.xz").read_bytes()).hexdigest()}
+    metadata["nav_bc_stats"] = data.episode_stats(directory / "samples.bin.gz", None)
+    (directory / "episode.json").write_text(json.dumps(metadata))
+    converted = data.training_index(source, path, "hd-familiar")
+    assert converted["class_counts"] == index["class_counts"]
+    packed = data.encode_episode(directory, layout, None, "hd-familiar", chunk_records=1)
+    assert data.nav_demos.samples_path(directory).suffix == ".xz"
+    expanded = data.unpack_cached(packed)
+    for name in cached:
+        assert cached[name].tobytes() == expanded[name].tobytes()
+    dagger = tmp_path / "dagger" / "point" / "learner"
+    dagger.mkdir(parents=True)
+    (dagger / "samples.bin.gz").write_bytes((directory / "samples.bin.gz").read_bytes())
+    (dagger / "episode.json").write_text(json.dumps({**metadata, "drive": True, "dagger": True,
+        "dagger_scenario": {"split": "train"}, "training_valid": True, "teacher_version": 3}))
+    (dagger / "samples.jsonl").write_text("\n".join(json.dumps({
+        "time_ms": int(stamp), "teacher_control": number == 0, "maneuver_mask": number == 1,
+    }) for number, stamp in enumerate(records["time_ms"])))
+    hd_output = tmp_path / "hd-cache"
+    links = tmp_path / "accepted-links.txt"
+    links.write_text("0 7 0 1 7 0 1 1\n")
+    with monkeypatch.context() as storage:
+        storage.setattr(data.shutil, "disk_usage", lambda path: SimpleNamespace(free=32 * 1024**3))
+        hd_index = data.prepare(source, hd_output, manifest=path, input_variant="hd", chunk_records=1,
+                                dagger_sources=[tmp_path / "dagger"], maneuver_links=links)
+    assert hd_index["cache_version"] == data.HD_CACHE_VERSION
+    assert hd_index["navigation_memory_version"] == 4
+    assert hd_index["preprocessing"] == {**data.HD_PREPROCESSING, "navigation_memory_version": 4}
+    assert [ep["source_kind"] for ep in hd_index["episodes"]] == ["teacher", "dagger"]
+    entry = hd_index["episodes"][1]
+    assert entry["effective_steps"] == 1.5 and entry["teacher_control_steps"] == 1
+    cached = data.load_cached(hd_output / entry["file"])
+    assert cached["near"].shape == (2, 10, 64, 64)
+    assert cached["far"].shape == (2, 10, 50, 100)
+    np.testing.assert_array_equal(cached["sample_weight"], [.5, 1])
+    np.testing.assert_array_equal(cached["maneuver_valid"], [1, 0])
+    assert not cached["labels"][:, 4].any()
+    teacher = data.load_cached(hd_output / hd_index["episodes"][0]["file"])
+    assert not teacher["maneuver_valid"].any()
+    chunk_output = tmp_path / "hd-chunk"
+    original_chunks = demos.iter_chunks
+    def selected_chunks(samples, chunk_records):
+        assert samples.parent == dagger
+        return original_chunks(samples, chunk_records)
+    with monkeypatch.context() as storage:
+        storage.setattr(data.shutil, "disk_usage", lambda path: SimpleNamespace(free=32 * 1024**3))
+        storage.setattr(demos, "iter_chunks", selected_chunks)
+        chunk = data.prepare_manifest(source, chunk_output, path, input_variant="hd", chunk_records=1,
+            dagger_sources=[tmp_path / "dagger"], maneuver_links=links, episode_range=(1, 2))
+        for invalid_range in ((2, 2), (0, 3)):
+            with pytest.raises(ValueError, match="episode range"):
+                data.prepare_manifest(source, tmp_path / "invalid-chunk", path, input_variant="hd",
+                    dagger_sources=[tmp_path / "dagger"], maneuver_links=links, episode_range=invalid_range)
+    assert chunk["preparation_range"] == {"start": 1, "stop": 2, "total": 2}
+    assert chunk["episodes"] == [hd_index["episodes"][1]]
+    assert chunk["splits"]["train"] == {"pairs": 1, "episodes": 1, "steps": 2}
+    assert list((chunk_output / "episodes").glob("*.npz")) == [chunk_output / entry["file"]]
+    assert not (tmp_path / "invalid-chunk").exists()
 
 
 @pytest.mark.parametrize("input_variant", ["compact", "hd", "hd-familiar"])

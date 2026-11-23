@@ -5,6 +5,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+/character-tool/build/
+/character-tool/dist/
+/character-tool/src/*.egg-info/
 
 # Secrets and local config (.env.example is the template)
 .env
@@ -14,23 +17,43 @@ __pycache__/
 secrets/
 
 # Runtime data
+/.live/
 *.log
 *.sqlite
 *.sqlite3
 data/
+!reports/navigation/2026-11-04-nav-sim-research/data/
 !/data/
 /data/*
+!/data/npc/
+/data/npc/*
+!/data/npc/far-fight-pairs.json
+!/data/npc/far-fight-weapons.json
+!/data/society/
+/data/society/*
+!/data/society/config.json
+!/data/society/protected.json
 !/data/content/
 /data/content/*
 !/data/content/registry.jsonl
 !/data/content/mesh3d-pilot.json
 !/data/content/mesh3d-market.json
+!/data/content/mesh3d-rigging.json
+!/data/content/prop-models.jsonl
 !/data/content/quality-pilot.jsonl
 !/data/content/quality-pilot-2.jsonl
 !/data/content/quality-pilot-3.jsonl
 !/data/content/market-house.jsonl
 !/data/content/city-materials.csv
 !/data/content/world-edits.jsonl
+!/data/content/world/
+/data/content/world/*
+!/data/content/world/roof01-holes.json
+!/data/content/world/harbour-life-placements.json
+!/data/content/world/harbour-motion-placements.json
+!/data/content/world/NEWWORLD/
+!/data/content/particles.d/
+!/data/content/vobtrees.d/
 !/data/content/remaster/
 !OpenGothic/data/
 
@@ -42,6 +65,7 @@ data/
 *.vdf
 *.VDF
 *.fracture
+*.convex-parts
 
 # Claude Code: per-session worktrees and personal settings
 .claude/worktrees/
@@ -54,13 +78,15 @@ log.txt
 
 /tts-samples/
 
-# Test bench output (scripts/bench.sh)
+# Test bench output (scripts/bench.sh) and local clips, frames and sheets made
+# for a look check: they stay out of git (public repository).
 /.bench/
+/.bench-out/
 
 # Collected Ryzen test logs
 /.ryzen/
 
-# Shorts: takes and voiced lines (gothic-shorts)
+# Takes and voiced lines written by gothic-shorts
 /.shorts/
 
 # Site build (gothic-site)

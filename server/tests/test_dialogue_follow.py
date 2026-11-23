@@ -145,7 +145,9 @@ async def test_the_models_repeated_companion_intent_resumes_following(goal, body
         await link.attach(CAVALORN)
         conv = dialogue.open(CAVALORN, "Кавалорн")
         conv.intent = Intent(goal, "PLAYER")
-        snap = await link.snapshot(CAVALORN, fresh=True)
+        # Consume attach's snapshot before editing the cache; a second reply could overwrite it.
+        await _until(lambda: CAVALORN in link.snapshots)
+        snap = link.snapshots[CAVALORN]
         link.snapshots[CAVALORN] = snap.model_copy(update={
             "npc": snap.npc.model_copy(update={
                 "busy": True, "action": "go_to_npc", "following": body == "following",

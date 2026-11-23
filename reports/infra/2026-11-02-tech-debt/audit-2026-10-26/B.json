@@ -1,0 +1,124 @@
+{
+ "slice": "B",
+ "base": "7d18eb5dc0fb",
+ "head": "b2f951d2a10e",
+ "findings": [
+  {
+   "match": "new",
+   "kind": "workaround",
+   "path": "OpenGothic/common/physics/physicvbo.cpp",
+   "symbol": "splitTriangles",
+   "severity": "medium",
+   "title": "Ошибку контактов Jolt обходят дроблением статичной коллизии",
+   "what": "Неверные EPA-нормали на крупных гранях обходят делением физической геометрии до ребра 4 м. Причина ошибки остаётся, увеличенные формы используются постоянно.",
+   "evidence": [
+    {
+     "path": "OpenGothic/common/physics/physicvbo.cpp",
+     "start": 31,
+     "end": 64,
+     "note": "Деление длинных рёбер продолжается до порога 4 м."
+    },
+    {
+     "path": "OpenGothic/common/physics/physicvbo.cpp",
+     "start": 501,
+     "end": 516,
+     "note": "Увеличенная геометрия передаётся построителю физических форм."
+    },
+    {
+     "path": "reports/physics/2026-10-31-item-fixes/README.md",
+     "start": 13,
+     "end": 28,
+     "note": "Зафиксированы обратные EPA-оси, обход дроблением и измеренная цена."
+    }
+   ],
+   "interest": "Отчёт недели: память статичных форм NEWWORLD выросла 8,86→32,99 МБ, в 3,72 раза; загрузка — на 5,71%. Это измерения отчёта, повторно не проверенные.",
+   "fix": "Исправить контакт на исходных гранях. Готово, когда 150 бросков giant_quad и существующие физические контракты проходят без глобального дробления.",
+   "size": "L",
+   "prs": [
+    599,
+    652
+   ]
+  },
+  {
+   "match": "new",
+   "kind": "duplicate-logic",
+   "path": "OpenGothic/common/world/objects/npc.cpp",
+   "symbol": "Npc::takeDamage",
+   "severity": "medium",
+   "title": "Три копии правил защиты уже расходятся",
+   "what": "Защита рассчитывается независимо для физического контакта, legacy-наблюдения и урона. Legacy-копия не содержит запретов блока и отскока при оглушении и нокдауне.",
+   "evidence": [
+    {
+     "path": "OpenGothic/common/world/objects/npc.cpp",
+     "start": 2453,
+     "end": 2456,
+     "note": "Физический классификатор учитывает оглушение и нокдаун."
+    },
+    {
+     "path": "OpenGothic/common/world/objects/npc.cpp",
+     "start": 5074,
+     "end": 5088,
+     "note": "Legacy-копия этих условий не содержит."
+    },
+    {
+     "path": "OpenGothic/common/world/objects/npc.cpp",
+     "start": 5342,
+     "end": 5347,
+     "note": "Реальный расчёт защиты содержит оба запрета."
+    },
+    {
+     "path": "OpenGothic/common/world/objects/npc.cpp",
+     "start": 2627,
+     "end": 2637,
+     "note": "Legacy-результат участвует в сравнении способов попадания."
+    }
+   ],
+   "interest": "Четыре PR недели меняли правило в трёх копиях. Расхождение условий проверено; возможное искажение диагностики боёв — предположение без воспроизведения.",
+   "fix": "Объединить классификацию защиты. Готово, когда существующий контракт проверяет согласованность всех вызывающих мест при оглушении, нокдауне и уклонении.",
+   "size": "M",
+   "prs": [
+    491,
+    511,
+    619,
+    718
+   ]
+  },
+  {
+   "match": "new",
+   "kind": "fragile-test",
+   "path": "OpenGothic/tests/body_watch_test.cpp",
+   "symbol": "enginePolicy",
+   "severity": "medium",
+   "title": "Проверка watchdog зависит от планировщика",
+   "what": "Тест требует получить решение до истечения реальных 500 мс, используя sleep между шагами.",
+   "evidence": [
+    {
+     "path": "OpenGothic/tests/body_watch_test.cpp",
+     "start": 244,
+     "end": 270,
+     "note": "Timeout 500 мс, sleep и обязательное решение перед истечением."
+    },
+    {
+     "path": "OpenGothic/common/game/bodycontroller.cpp",
+     "start": 479,
+     "end": 493,
+     "note": "Watchdog использует фактически прошедшее время."
+    }
+   ],
+   "interest": "Добавлен в #518, расширен в #523. Пауза процесса свыше 500 мс перед первым шагом способна вызвать ложное падение; частота таких сбоев не измерена.",
+   "fix": "Проверять deadline управляемым временем. Готово, когда проверки до и после истечения не зависят от sleep и задержек планировщика.",
+   "size": "M",
+   "prs": [
+    518,
+    523
+   ]
+  }
+ ],
+ "annotations": [],
+ "bugs": [],
+ "notes": [
+  "Проверено статически в указанном head; тесты не запускались.",
+  "Покрытие: physics_contract.cpp:testMeshRayEdges (OpenGothic/tests/physics_contract.cpp:2514–2544), meleedodge_contract (OpenGothic/tests/meleedodge_contract.cpp:141–156), gothic-body-watch-test (OpenGothic/CMakeLists.txt:316–320).",
+  "Визуальные алгоритмы и качество изображения не исследовались."
+ ]
+}

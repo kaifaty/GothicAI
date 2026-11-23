@@ -1,0 +1,5225 @@
+{
+ "recorded_sets": {
+  "revisions": {
+   "before": "063bded3a884e903af0941142110800fe0f028ba",
+   "whole": "d61ca9cbb320fe2dcbe1d6dd8582e2be89fc90ec",
+   "after": "WORKTREE",
+   "oracle": "WORKTREE"
+  },
+  "passages": {
+   "before": "never",
+   "whole": "never",
+   "after": "never",
+   "oracle": "oracle"
+  },
+  "recorded": null,
+  "sets": {
+   "point-v5-run": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 40219,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 3872,
+      "creep_decisions": 0,
+      "lag_decisions": 79,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 13409,
+      "progress_ray": 14991,
+      "start_events": 132,
+      "start_events_through_wall": 75,
+      "start_events_ray": 91,
+      "start_event_classes": {
+       "closest": {
+        "events": 132,
+        "no_path": 0,
+        "ratio_le_1.2": 4,
+        "ratio_1.2_2.5": 30,
+        "ratio_gt_2.5": 41
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "whole": {
+      "decisions": 40219,
+      "jumps": 11,
+      "initial_skips": 11,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 3872,
+      "creep_decisions": 98,
+      "lag_decisions": 0,
+      "advances": 22,
+      "advances_through_wall": 15,
+      "advances_ray": 21,
+      "progress_behind_wall": 14233,
+      "progress_ray": 15041,
+      "start_events": 132,
+      "start_events_through_wall": 75,
+      "start_events_ray": 91,
+      "start_event_classes": {
+       "closest": {
+        "events": 132,
+        "no_path": 0,
+        "ratio_le_1.2": 4,
+        "ratio_1.2_2.5": 30,
+        "ratio_gt_2.5": 41
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "after": {
+      "decisions": 40219,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 3872,
+      "creep_decisions": 0,
+      "lag_decisions": 79,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 13409,
+      "progress_ray": 14991,
+      "start_events": 132,
+      "start_events_through_wall": 75,
+      "start_events_ray": 91,
+      "start_event_classes": {
+       "closest": {
+        "events": 132,
+        "no_path": 0,
+        "ratio_le_1.2": 4,
+        "ratio_1.2_2.5": 30,
+        "ratio_gt_2.5": 41
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "oracle": {
+      "decisions": 40219,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 5,
+      "catch_ups_beyond_window": 5,
+      "starts_moved": 2307,
+      "start_fallbacks": 5598,
+      "start_departures": 5586,
+      "projections_rejected": 437,
+      "rebuilds": 8240,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 5,
+      "advances_through_wall": 0,
+      "advances_ray": 5,
+      "progress_behind_wall": 8584,
+      "progress_ray": 12768,
+      "start_events": 158,
+      "start_events_through_wall": 12,
+      "start_events_ray": 109,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 59,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 87,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 12,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 11,
+        "ratio_gt_2.5": 1
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "whole": {
+      "decisions": 40219,
+      "carrot_within_1cm": 36817,
+      "clean_episodes": 60,
+      "clean_decisions": 40219,
+      "clean_within_1cm": 36817,
+      "clean_differences": 7,
+      "differs_before_memory": 7
+     },
+     "after": {
+      "decisions": 40219,
+      "carrot_within_1cm": 40219,
+      "clean_episodes": 60,
+      "clean_decisions": 40219,
+      "clean_within_1cm": 40219,
+      "clean_differences": 0,
+      "differs_before_memory": 0
+     },
+     "oracle": {
+      "decisions": 40219,
+      "carrot_within_1cm": 27982,
+      "clean_episodes": 60,
+      "clean_decisions": 40219,
+      "clean_within_1cm": 27982,
+      "clean_differences": 13,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "point-v5-walk": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 112058,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 3269,
+      "creep_decisions": 0,
+      "lag_decisions": 883,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 23425,
+      "progress_ray": 24816,
+      "start_events": 87,
+      "start_events_through_wall": 43,
+      "start_events_ray": 48,
+      "start_event_classes": {
+       "closest": {
+        "events": 87,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 22,
+        "ratio_gt_2.5": 21
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "whole": {
+      "decisions": 112058,
+      "jumps": 3,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 3269,
+      "creep_decisions": 30,
+      "lag_decisions": 0,
+      "advances": 3,
+      "advances_through_wall": 1,
+      "advances_ray": 1,
+      "progress_behind_wall": 23191,
+      "progress_ray": 24022,
+      "start_events": 87,
+      "start_events_through_wall": 43,
+      "start_events_ray": 48,
+      "start_event_classes": {
+       "closest": {
+        "events": 87,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 22,
+        "ratio_gt_2.5": 21
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "after": {
+      "decisions": 112058,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 3269,
+      "creep_decisions": 0,
+      "lag_decisions": 883,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 23425,
+      "progress_ray": 24816,
+      "start_events": 87,
+      "start_events_through_wall": 43,
+      "start_events_ray": 48,
+      "start_event_classes": {
+       "closest": {
+        "events": 87,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 22,
+        "ratio_gt_2.5": 21
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "oracle": {
+      "decisions": 112058,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 1,
+      "catch_ups_beyond_window": 1,
+      "starts_moved": 9655,
+      "start_fallbacks": 1595,
+      "start_departures": 1583,
+      "projections_rejected": 791,
+      "rebuilds": 12086,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 1,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 10545,
+      "progress_ray": 20802,
+      "start_events": 127,
+      "start_events_through_wall": 12,
+      "start_events_ray": 82,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 52,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 63,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 12,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 11,
+        "ratio_gt_2.5": 1
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "whole": {
+      "decisions": 112058,
+      "carrot_within_1cm": 104258,
+      "clean_episodes": 60,
+      "clean_decisions": 112058,
+      "clean_within_1cm": 104258,
+      "clean_differences": 3,
+      "differs_before_memory": 3
+     },
+     "after": {
+      "decisions": 112058,
+      "carrot_within_1cm": 112058,
+      "clean_episodes": 60,
+      "clean_decisions": 112058,
+      "clean_within_1cm": 112058,
+      "clean_differences": 0,
+      "differs_before_memory": 0
+     },
+     "oracle": {
+      "decisions": 112058,
+      "carrot_within_1cm": 89312,
+      "clean_episodes": 60,
+      "clean_decisions": 112058,
+      "clean_within_1cm": 89312,
+      "clean_differences": 13,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "point-hd-run": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 50226,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 2277,
+      "creep_decisions": 0,
+      "lag_decisions": 168,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 17210,
+      "progress_ray": 18301,
+      "start_events": 130,
+      "start_events_through_wall": 83,
+      "start_events_ray": 91,
+      "start_event_classes": {
+       "closest": {
+        "events": 130,
+        "no_path": 1,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 39,
+        "ratio_gt_2.5": 43
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "whole": {
+      "decisions": 50226,
+      "jumps": 6,
+      "initial_skips": 11,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 2277,
+      "creep_decisions": 36,
+      "lag_decisions": 0,
+      "advances": 17,
+      "advances_through_wall": 13,
+      "advances_ray": 14,
+      "progress_behind_wall": 16036,
+      "progress_ray": 16760,
+      "start_events": 130,
+      "start_events_through_wall": 83,
+      "start_events_ray": 91,
+      "start_event_classes": {
+       "closest": {
+        "events": 130,
+        "no_path": 1,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 39,
+        "ratio_gt_2.5": 43
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "after": {
+      "decisions": 50226,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 2277,
+      "creep_decisions": 0,
+      "lag_decisions": 168,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 17210,
+      "progress_ray": 18301,
+      "start_events": 130,
+      "start_events_through_wall": 83,
+      "start_events_ray": 91,
+      "start_event_classes": {
+       "closest": {
+        "events": 130,
+        "no_path": 1,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 39,
+        "ratio_gt_2.5": 43
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "oracle": {
+      "decisions": 50226,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 3,
+      "catch_ups_beyond_window": 3,
+      "starts_moved": 5275,
+      "start_fallbacks": 2487,
+      "start_departures": 2475,
+      "projections_rejected": 984,
+      "rebuilds": 7949,
+      "creep_decisions": 0,
+      "lag_decisions": 54,
+      "advances": 3,
+      "advances_through_wall": 0,
+      "advances_ray": 1,
+      "progress_behind_wall": 9482,
+      "progress_ray": 16137,
+      "start_events": 251,
+      "start_events_through_wall": 12,
+      "start_events_ray": 207,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 54,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 185,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 12,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 11,
+        "ratio_gt_2.5": 1
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "whole": {
+      "decisions": 50226,
+      "carrot_within_1cm": 47422,
+      "clean_episodes": 60,
+      "clean_decisions": 50226,
+      "clean_within_1cm": 47422,
+      "clean_differences": 10,
+      "differs_before_memory": 10
+     },
+     "after": {
+      "decisions": 50226,
+      "carrot_within_1cm": 50226,
+      "clean_episodes": 60,
+      "clean_decisions": 50226,
+      "clean_within_1cm": 50226,
+      "clean_differences": 0,
+      "differs_before_memory": 0
+     },
+     "oracle": {
+      "decisions": 50226,
+      "carrot_within_1cm": 38454,
+      "clean_episodes": 60,
+      "clean_decisions": 50226,
+      "clean_within_1cm": 38454,
+      "clean_differences": 14,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "point-hd-walk": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 137767,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 4762,
+      "creep_decisions": 0,
+      "lag_decisions": 406,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 42194,
+      "progress_ray": 44774,
+      "start_events": 84,
+      "start_events_through_wall": 41,
+      "start_events_ray": 44,
+      "start_event_classes": {
+       "closest": {
+        "events": 84,
+        "no_path": 0,
+        "ratio_le_1.2": 2,
+        "ratio_1.2_2.5": 23,
+        "ratio_gt_2.5": 16
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "whole": {
+      "decisions": 137767,
+      "jumps": 6,
+      "initial_skips": 2,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 4761,
+      "creep_decisions": 32,
+      "lag_decisions": 0,
+      "advances": 8,
+      "advances_through_wall": 6,
+      "advances_ray": 7,
+      "progress_behind_wall": 41949,
+      "progress_ray": 45454,
+      "start_events": 83,
+      "start_events_through_wall": 41,
+      "start_events_ray": 44,
+      "start_event_classes": {
+       "closest": {
+        "events": 83,
+        "no_path": 0,
+        "ratio_le_1.2": 2,
+        "ratio_1.2_2.5": 23,
+        "ratio_gt_2.5": 16
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "after": {
+      "decisions": 137767,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 4762,
+      "creep_decisions": 0,
+      "lag_decisions": 406,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 42194,
+      "progress_ray": 44774,
+      "start_events": 84,
+      "start_events_through_wall": 41,
+      "start_events_ray": 44,
+      "start_event_classes": {
+       "closest": {
+        "events": 84,
+        "no_path": 0,
+        "ratio_le_1.2": 2,
+        "ratio_1.2_2.5": 23,
+        "ratio_gt_2.5": 16
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "oracle": {
+      "decisions": 137767,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 2,
+      "catch_ups_beyond_window": 2,
+      "starts_moved": 16835,
+      "start_fallbacks": 8292,
+      "start_departures": 8280,
+      "projections_rejected": 815,
+      "rebuilds": 25937,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 2,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 20428,
+      "progress_ray": 39126,
+      "start_events": 181,
+      "start_events_through_wall": 12,
+      "start_events_ray": 128,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 49,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 120,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 12,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 11,
+        "ratio_gt_2.5": 1
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "whole": {
+      "decisions": 137767,
+      "carrot_within_1cm": 131853,
+      "clean_episodes": 60,
+      "clean_decisions": 137767,
+      "clean_within_1cm": 131853,
+      "clean_differences": 6,
+      "differs_before_memory": 6
+     },
+     "after": {
+      "decisions": 137767,
+      "carrot_within_1cm": 137767,
+      "clean_episodes": 60,
+      "clean_decisions": 137767,
+      "clean_within_1cm": 137767,
+      "clean_differences": 0,
+      "differs_before_memory": 0
+     },
+     "oracle": {
+      "decisions": 137767,
+      "carrot_within_1cm": 106938,
+      "clean_episodes": 60,
+      "clean_decisions": 137767,
+      "clean_within_1cm": 106938,
+      "clean_differences": 12,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "live-v5": {
+    "episodes": 24,
+    "totals": {
+     "before": {
+      "decisions": 6735,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 795,
+      "creep_decisions": 0,
+      "lag_decisions": 36,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 2443,
+      "progress_ray": 2575,
+      "start_events": 38,
+      "start_events_through_wall": 15,
+      "start_events_ray": 20,
+      "start_event_classes": {
+       "closest": {
+        "events": 38,
+        "no_path": 6,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 9
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 2490.3538126201465
+     },
+     "whole": {
+      "decisions": 6735,
+      "jumps": 2,
+      "initial_skips": 17,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 795,
+      "creep_decisions": 8,
+      "lag_decisions": 0,
+      "advances": 19,
+      "advances_through_wall": 3,
+      "advances_ray": 3,
+      "progress_behind_wall": 2515,
+      "progress_ray": 2585,
+      "start_events": 38,
+      "start_events_through_wall": 15,
+      "start_events_ray": 20,
+      "start_event_classes": {
+       "closest": {
+        "events": 38,
+        "no_path": 6,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 9
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 0.0010578865720123755
+     },
+     "after": {
+      "decisions": 6735,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 795,
+      "creep_decisions": 0,
+      "lag_decisions": 36,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 2443,
+      "progress_ray": 2575,
+      "start_events": 38,
+      "start_events_through_wall": 15,
+      "start_events_ray": 20,
+      "start_event_classes": {
+       "closest": {
+        "events": 38,
+        "no_path": 6,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 9
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 2490.3538126201465
+     },
+     "oracle": {
+      "decisions": 6735,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 16,
+      "catch_ups_beyond_window": 16,
+      "starts_moved": 481,
+      "start_fallbacks": 299,
+      "start_departures": 295,
+      "projections_rejected": 282,
+      "rebuilds": 985,
+      "creep_decisions": 0,
+      "lag_decisions": 729,
+      "advances": 16,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 1972,
+      "progress_ray": 2588,
+      "start_events": 28,
+      "start_events_through_wall": 4,
+      "start_events_ray": 9,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 23,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 1,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 4,
+        "no_path": 3,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 1
+       }
+      },
+      "recorded_carrot_max_error_cm": 3922.973705837802
+     }
+    },
+    "same_carrot": {
+     "whole": {
+      "decisions": 6735,
+      "carrot_within_1cm": 6223,
+      "clean_episodes": 24,
+      "clean_decisions": 6735,
+      "clean_within_1cm": 6223,
+      "clean_differences": 4,
+      "differs_before_memory": 4
+     },
+     "after": {
+      "decisions": 6735,
+      "carrot_within_1cm": 6735,
+      "clean_episodes": 24,
+      "clean_decisions": 6735,
+      "clean_within_1cm": 6735,
+      "clean_differences": 0,
+      "differs_before_memory": 0
+     },
+     "oracle": {
+      "decisions": 6735,
+      "carrot_within_1cm": 4403,
+      "clean_episodes": 24,
+      "clean_decisions": 6735,
+      "clean_within_1cm": 4403,
+      "clean_differences": 8,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "live-hd": {
+    "episodes": 24,
+    "totals": {
+     "before": {
+      "decisions": 6142,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 860,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 1596,
+      "progress_ray": 1683,
+      "start_events": 32,
+      "start_events_through_wall": 10,
+      "start_events_ray": 14,
+      "start_event_classes": {
+       "closest": {
+        "events": 32,
+        "no_path": 6,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 4
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 2015.2515871913188
+     },
+     "whole": {
+      "decisions": 6142,
+      "jumps": 0,
+      "initial_skips": 3,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 860,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 3,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 1596,
+      "progress_ray": 1683,
+      "start_events": 32,
+      "start_events_through_wall": 10,
+      "start_events_ray": 14,
+      "start_event_classes": {
+       "closest": {
+        "events": 32,
+        "no_path": 6,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 4
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 0.0010377379241826921
+     },
+     "after": {
+      "decisions": 6142,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 860,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 1596,
+      "progress_ray": 1683,
+      "start_events": 32,
+      "start_events_through_wall": 10,
+      "start_events_ray": 14,
+      "start_event_classes": {
+       "closest": {
+        "events": 32,
+        "no_path": 6,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 4
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 2015.2515871913188
+     },
+     "oracle": {
+      "decisions": 6142,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 3,
+      "catch_ups_beyond_window": 3,
+      "starts_moved": 561,
+      "start_fallbacks": 306,
+      "start_departures": 302,
+      "projections_rejected": 394,
+      "rebuilds": 1032,
+      "creep_decisions": 0,
+      "lag_decisions": 31,
+      "advances": 3,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 1107,
+      "progress_ray": 1755,
+      "start_events": 28,
+      "start_events_through_wall": 4,
+      "start_events_ray": 9,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 23,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 1,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 4,
+        "no_path": 3,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 1
+       }
+      },
+      "recorded_carrot_max_error_cm": 3914.9898462764986
+     }
+    },
+    "same_carrot": {
+     "whole": {
+      "decisions": 6142,
+      "carrot_within_1cm": 6139,
+      "clean_episodes": 24,
+      "clean_decisions": 6142,
+      "clean_within_1cm": 6139,
+      "clean_differences": 1,
+      "differs_before_memory": 1
+     },
+     "after": {
+      "decisions": 6142,
+      "carrot_within_1cm": 6142,
+      "clean_episodes": 24,
+      "clean_decisions": 6142,
+      "clean_within_1cm": 6142,
+      "clean_differences": 0,
+      "differs_before_memory": 0
+     },
+     "oracle": {
+      "decisions": 6142,
+      "carrot_within_1cm": 4554,
+      "clean_episodes": 24,
+      "clean_decisions": 6142,
+      "clean_within_1cm": 4554,
+      "clean_differences": 6,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "live-teacher": {
+    "episodes": 10,
+    "totals": {
+     "before": {
+      "decisions": 3787,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 273,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 133,
+      "progress_ray": 148,
+      "start_events": 12,
+      "start_events_through_wall": 3,
+      "start_events_ray": 5,
+      "start_event_classes": {
+       "closest": {
+        "events": 12,
+        "no_path": 2,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 1
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 2030.1781498388812
+     },
+     "whole": {
+      "decisions": 3787,
+      "jumps": 0,
+      "initial_skips": 13,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 273,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 13,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 133,
+      "progress_ray": 148,
+      "start_events": 12,
+      "start_events_through_wall": 3,
+      "start_events_ray": 5,
+      "start_event_classes": {
+       "closest": {
+        "events": 12,
+        "no_path": 2,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 1
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 0.0010960492681368313
+     },
+     "after": {
+      "decisions": 3787,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 273,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 133,
+      "progress_ray": 148,
+      "start_events": 12,
+      "start_events_through_wall": 3,
+      "start_events_ray": 5,
+      "start_event_classes": {
+       "closest": {
+        "events": 12,
+        "no_path": 2,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 1
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 2030.1781498388812
+     },
+     "oracle": {
+      "decisions": 3787,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 13,
+      "catch_ups_beyond_window": 13,
+      "starts_moved": 60,
+      "start_fallbacks": 122,
+      "start_departures": 120,
+      "projections_rejected": 131,
+      "rebuilds": 321,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 13,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 122,
+      "progress_ray": 197,
+      "start_events": 13,
+      "start_events_through_wall": 2,
+      "start_events_ray": 5,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 10,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 1,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 2,
+        "no_path": 1,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 1
+       }
+      },
+      "recorded_carrot_max_error_cm": 3926.3447343734933
+     }
+    },
+    "same_carrot": {
+     "whole": {
+      "decisions": 3787,
+      "carrot_within_1cm": 3774,
+      "clean_episodes": 10,
+      "clean_decisions": 3787,
+      "clean_within_1cm": 3774,
+      "clean_differences": 1,
+      "differs_before_memory": 1
+     },
+     "after": {
+      "decisions": 3787,
+      "carrot_within_1cm": 3787,
+      "clean_episodes": 10,
+      "clean_decisions": 3787,
+      "clean_within_1cm": 3787,
+      "clean_differences": 0,
+      "differs_before_memory": 0
+     },
+     "oracle": {
+      "decisions": 3787,
+      "carrot_within_1cm": 3609,
+      "clean_episodes": 10,
+      "clean_decisions": 3787,
+      "clean_within_1cm": 3609,
+      "clean_differences": 3,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "run-main": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 42752,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 3939,
+      "creep_decisions": 0,
+      "lag_decisions": 79,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 13494,
+      "progress_ray": 15048,
+      "start_events": 132,
+      "start_events_through_wall": 75,
+      "start_events_ray": 91,
+      "start_event_classes": {
+       "closest": {
+        "events": 132,
+        "no_path": 0,
+        "ratio_le_1.2": 4,
+        "ratio_1.2_2.5": 30,
+        "ratio_gt_2.5": 41
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "whole": {
+      "decisions": 42752,
+      "jumps": 11,
+      "initial_skips": 11,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 3939,
+      "creep_decisions": 98,
+      "lag_decisions": 0,
+      "advances": 22,
+      "advances_through_wall": 15,
+      "advances_ray": 21,
+      "progress_behind_wall": 14318,
+      "progress_ray": 15098,
+      "start_events": 132,
+      "start_events_through_wall": 75,
+      "start_events_ray": 91,
+      "start_event_classes": {
+       "closest": {
+        "events": 132,
+        "no_path": 0,
+        "ratio_le_1.2": 4,
+        "ratio_1.2_2.5": 30,
+        "ratio_gt_2.5": 41
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "after": {
+      "decisions": 42752,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 3939,
+      "creep_decisions": 0,
+      "lag_decisions": 79,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 13494,
+      "progress_ray": 15048,
+      "start_events": 132,
+      "start_events_through_wall": 75,
+      "start_events_ray": 91,
+      "start_event_classes": {
+       "closest": {
+        "events": 132,
+        "no_path": 0,
+        "ratio_le_1.2": 4,
+        "ratio_1.2_2.5": 30,
+        "ratio_gt_2.5": 41
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "oracle": {
+      "decisions": 42752,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 5,
+      "catch_ups_beyond_window": 5,
+      "starts_moved": 2392,
+      "start_fallbacks": 5598,
+      "start_departures": 5586,
+      "projections_rejected": 437,
+      "rebuilds": 8315,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 5,
+      "advances_through_wall": 0,
+      "advances_ray": 5,
+      "progress_behind_wall": 8584,
+      "progress_ray": 12827,
+      "start_events": 158,
+      "start_events_through_wall": 12,
+      "start_events_ray": 109,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 59,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 87,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 12,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 11,
+        "ratio_gt_2.5": 1
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "whole": {
+      "decisions": 42752,
+      "carrot_within_1cm": 39350,
+      "clean_episodes": 60,
+      "clean_decisions": 42752,
+      "clean_within_1cm": 39350,
+      "clean_differences": 7,
+      "differs_before_memory": 7
+     },
+     "after": {
+      "decisions": 42752,
+      "carrot_within_1cm": 42752,
+      "clean_episodes": 60,
+      "clean_decisions": 42752,
+      "clean_within_1cm": 42752,
+      "clean_differences": 0,
+      "differs_before_memory": 0
+     },
+     "oracle": {
+      "decisions": 42752,
+      "carrot_within_1cm": 30430,
+      "clean_episodes": 60,
+      "clean_decisions": 42752,
+      "clean_within_1cm": 30430,
+      "clean_differences": 13,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "run-minima": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 40598,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 4175,
+      "creep_decisions": 0,
+      "lag_decisions": 15,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 11791,
+      "progress_ray": 12692,
+      "start_events": 115,
+      "start_events_through_wall": 60,
+      "start_events_ray": 76,
+      "start_event_classes": {
+       "closest": {
+        "events": 115,
+        "no_path": 0,
+        "ratio_le_1.2": 1,
+        "ratio_1.2_2.5": 29,
+        "ratio_gt_2.5": 30
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "whole": {
+      "decisions": 40598,
+      "jumps": 5,
+      "initial_skips": 5,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 4175,
+      "creep_decisions": 43,
+      "lag_decisions": 0,
+      "advances": 10,
+      "advances_through_wall": 5,
+      "advances_ray": 9,
+      "progress_behind_wall": 11632,
+      "progress_ray": 12666,
+      "start_events": 115,
+      "start_events_through_wall": 60,
+      "start_events_ray": 76,
+      "start_event_classes": {
+       "closest": {
+        "events": 115,
+        "no_path": 0,
+        "ratio_le_1.2": 1,
+        "ratio_1.2_2.5": 29,
+        "ratio_gt_2.5": 30
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "after": {
+      "decisions": 40598,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 4175,
+      "creep_decisions": 0,
+      "lag_decisions": 15,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 11791,
+      "progress_ray": 12692,
+      "start_events": 115,
+      "start_events_through_wall": 60,
+      "start_events_ray": 76,
+      "start_event_classes": {
+       "closest": {
+        "events": 115,
+        "no_path": 0,
+        "ratio_le_1.2": 1,
+        "ratio_1.2_2.5": 29,
+        "ratio_gt_2.5": 30
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "oracle": {
+      "decisions": 40598,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 4,
+      "catch_ups_beyond_window": 4,
+      "starts_moved": 2118,
+      "start_fallbacks": 4537,
+      "start_departures": 4525,
+      "projections_rejected": 223,
+      "rebuilds": 7026,
+      "creep_decisions": 0,
+      "lag_decisions": 20,
+      "advances": 4,
+      "advances_through_wall": 0,
+      "advances_ray": 4,
+      "progress_behind_wall": 6874,
+      "progress_ray": 10008,
+      "start_events": 164,
+      "start_events_through_wall": 12,
+      "start_events_ray": 112,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 59,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 93,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 12,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 11,
+        "ratio_gt_2.5": 1
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "whole": {
+      "decisions": 40598,
+      "carrot_within_1cm": 37618,
+      "clean_episodes": 60,
+      "clean_decisions": 40598,
+      "clean_within_1cm": 37618,
+      "clean_differences": 7,
+      "differs_before_memory": 7
+     },
+     "after": {
+      "decisions": 40598,
+      "carrot_within_1cm": 40598,
+      "clean_episodes": 60,
+      "clean_decisions": 40598,
+      "clean_within_1cm": 40598,
+      "clean_differences": 0,
+      "differs_before_memory": 0
+     },
+     "oracle": {
+      "decisions": 40598,
+      "carrot_within_1cm": 30563,
+      "clean_episodes": 60,
+      "clean_decisions": 40598,
+      "clean_within_1cm": 30563,
+      "clean_differences": 13,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "live-minima": {
+    "episodes": 4,
+    "totals": {
+     "before": {
+      "decisions": 2534,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 14,
+      "creep_decisions": 0,
+      "lag_decisions": 23,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 1226,
+      "progress_ray": 1418,
+      "start_events": 14,
+      "start_events_through_wall": 9,
+      "start_events_ray": 13,
+      "start_event_classes": {
+       "closest": {
+        "events": 14,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 9
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 0.00037844550481919945
+     },
+     "whole": {
+      "decisions": 2534,
+      "jumps": 3,
+      "initial_skips": 1,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 14,
+      "creep_decisions": 18,
+      "lag_decisions": 0,
+      "advances": 4,
+      "advances_through_wall": 4,
+      "advances_ray": 4,
+      "progress_behind_wall": 1406,
+      "progress_ray": 1505,
+      "start_events": 14,
+      "start_events_through_wall": 9,
+      "start_events_ray": 13,
+      "start_event_classes": {
+       "closest": {
+        "events": 14,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 9
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 2422.2785543338555
+     },
+     "after": {
+      "decisions": 2534,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 14,
+      "creep_decisions": 0,
+      "lag_decisions": 23,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 1226,
+      "progress_ray": 1418,
+      "start_events": 14,
+      "start_events_through_wall": 9,
+      "start_events_ray": 13,
+      "start_event_classes": {
+       "closest": {
+        "events": 14,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 9
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 0.00037844550481919945
+     },
+     "oracle": {
+      "decisions": 2534,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 255,
+      "start_departures": 255,
+      "projections_rejected": 0,
+      "rebuilds": 259,
+      "creep_decisions": 0,
+      "lag_decisions": 125,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 1175,
+      "progress_ray": 1374,
+      "start_events": 4,
+      "start_events_through_wall": 0,
+      "start_events_ray": 4,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 4,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 2482.060412250478
+     }
+    },
+    "same_carrot": {
+     "whole": {
+      "decisions": 2534,
+      "carrot_within_1cm": 2107,
+      "clean_episodes": 4,
+      "clean_decisions": 2534,
+      "clean_within_1cm": 2107,
+      "clean_differences": 3,
+      "differs_before_memory": 3
+     },
+     "after": {
+      "decisions": 2534,
+      "carrot_within_1cm": 2534,
+      "clean_episodes": 4,
+      "clean_decisions": 2534,
+      "clean_within_1cm": 2534,
+      "clean_differences": 0,
+      "differs_before_memory": 0
+     },
+     "oracle": {
+      "decisions": 2534,
+      "carrot_within_1cm": 1364,
+      "clean_episodes": 4,
+      "clean_decisions": 2534,
+      "clean_within_1cm": 1364,
+      "clean_differences": 3,
+      "differs_before_memory": 0
+     }
+    }
+   }
+  }
+ },
+ "point_memory": {
+  "revisions": {
+   "before": "705084fc319a71f4d3fa2bf8cefce9f6b0cd8cb3"
+  },
+  "passages": {
+   "before": "never"
+  },
+  "recorded": "game",
+  "sets": {
+   "run-memory": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 42283,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "rebuilds": 5435,
+      "creep_decisions": 0,
+      "lag_decisions": 52,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 15815,
+      "start_events": 251,
+      "start_events_through_wall": 197,
+      "recorded_carrot_max_error_cm": null
+     },
+     "game": {
+      "decisions": 42283,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 1,
+      "catch_ups_beyond_window": 1,
+      "starts_moved": 2637,
+      "start_fallbacks": 5067,
+      "start_departures": 5063,
+      "rebuilds": 7879,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 1,
+      "advances_through_wall": 1,
+      "progress_behind_wall": 14692,
+      "start_events": 1037,
+      "start_events_through_wall": 918,
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 42283,
+      "carrot_within_1cm": 32927,
+      "clean_episodes": 60,
+      "clean_decisions": 42283,
+      "clean_within_1cm": 32927,
+      "clean_differences": 14,
+      "differs_before_memory": 0
+     }
+    }
+   }
+  }
+ },
+ "live_memory": {
+  "revisions": {
+   "before": "24b257c750d9289fa39eebc9c8f347d4963f3bef"
+  },
+  "passages": {
+   "before": "never"
+  },
+  "recorded": "game",
+  "sets": {
+   "live-memory": {
+    "episodes": 4,
+    "totals": {
+     "before": {
+      "decisions": 1478,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "rebuilds": 11,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 274,
+      "start_events": 11,
+      "start_events_through_wall": 4,
+      "recorded_carrot_max_error_cm": 2098.0877924322326
+     },
+     "game": {
+      "decisions": 1478,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 29,
+      "start_fallbacks": 2,
+      "start_departures": 2,
+      "rebuilds": 35,
+      "creep_decisions": 0,
+      "lag_decisions": 59,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 124,
+      "start_events": 4,
+      "start_events_through_wall": 0,
+      "recorded_carrot_max_error_cm": 0.0
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 1478,
+      "carrot_within_1cm": 1232,
+      "clean_episodes": 4,
+      "clean_decisions": 1478,
+      "clean_within_1cm": 1232,
+      "clean_differences": 3,
+      "differs_before_memory": 0
+     }
+    }
+   }
+  }
+ },
+ "closed_loop_point": {
+  "main": {
+   "arrived": 50,
+   "median_elapsed_s": 27.2665,
+   "median_arrived_elapsed_s": 21.8835,
+   "runner_sha256": "93e742d4f51c283ad34afed4d2116fafa2a6c33bc1b2ffaddeb2c814902618c7"
+  },
+  "branch": {
+   "arrived": 51,
+   "median_elapsed_s": 25.2165,
+   "median_arrived_elapsed_s": 21.567,
+   "runner_sha256": "97a7512b11bf76d3ecc7e66d19a4e763d8a20ff8b7e261a4dd4c0638e21b9f1a"
+  },
+  "differing": {
+   "point-02f055dccbda70ad": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 62933
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 51467
+    }
+   },
+   "point-0fd3f112b0f5feb0": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 22200
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 22833
+    }
+   },
+   "point-200ffb1aee7e8744": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 51933
+    },
+    "branch": {
+     "success": false,
+     "elapsed_ms": 240000
+    }
+   },
+   "point-2241bf42214cbd26": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 11900
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 12100
+    }
+   },
+   "point-2c34c69fbcead52d": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 28733
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 39900
+    }
+   },
+   "point-3b6357386ddfdd83": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 15867
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 37600
+    }
+   },
+   "point-5f1d196b6fc5cb8f": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 52200
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 27800
+    }
+   },
+   "point-608b674909f2950a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 10667
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 11467
+    }
+   },
+   "point-6094a45e3c72e6df": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 50767
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 60667
+    }
+   },
+   "point-6789b2f9ac08baad": {
+    "main": {
+     "success": false,
+     "elapsed_ms": 240000
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 81533
+    }
+   },
+   "point-703e252f4418000a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 35867
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 19867
+    }
+   },
+   "point-77bac6e6bfef83cb": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 95567
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 189700
+    }
+   },
+   "point-7fcd8e0ed6ecba03": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 81333
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 82500
+    }
+   },
+   "point-820ddfa1ca089f1a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 29700
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 36233
+    }
+   },
+   "point-92f1060b68f7db80": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 15733
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 18800
+    }
+   },
+   "point-9330472d07b2f47a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 70867
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 72833
+    }
+   },
+   "point-965c6345515b4b53": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 102533
+    },
+    "branch": {
+     "success": false,
+     "elapsed_ms": 240000
+    }
+   },
+   "point-c6de8dde80e43a66": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 27700
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 15067
+    }
+   },
+   "point-d2915db8e0242db1": {
+    "main": {
+     "success": false,
+     "elapsed_ms": 240000
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 178000
+    }
+   },
+   "point-f4770074315f062e": {
+    "main": {
+     "success": false,
+     "elapsed_ms": 240000
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 235167
+    }
+   }
+  },
+  "main_repeat": {
+   "arrived": 52,
+   "median_elapsed_s": 23.5165,
+   "median_arrived_elapsed_s": 22.2,
+   "runner_sha256": "69d27bbe04813adb0f534625c383f7ed1e9771e6f3c5bb631f7aab09133e3e5a"
+  },
+  "main_repeat_differing": {
+   "point-0fd3f112b0f5feb0": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 22200
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 22833
+    }
+   },
+   "point-2c34c69fbcead52d": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 28733
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 39900
+    }
+   },
+   "point-2ceb61fedd853e39": {
+    "main": {
+     "success": false,
+     "elapsed_ms": 240000
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 30267
+    }
+   },
+   "point-44d107ab66596872": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 17933
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 19200
+    }
+   },
+   "point-53fcacbd52257c6e": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 20033
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 22900
+    }
+   },
+   "point-5f1d196b6fc5cb8f": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 52200
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 27800
+    }
+   },
+   "point-6094a45e3c72e6df": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 50767
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 20900
+    }
+   },
+   "point-77bac6e6bfef83cb": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 95567
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 189700
+    }
+   },
+   "point-7e35226690f76270": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 135800
+    },
+    "repeat": {
+     "success": false,
+     "elapsed_ms": 240000
+    }
+   },
+   "point-820ddfa1ca089f1a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 29700
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 36233
+    }
+   },
+   "point-ae977669805b27e2": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 27700
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 7633
+    }
+   },
+   "point-ca319fd7f34b79d4": {
+    "main": {
+     "success": false,
+     "elapsed_ms": 240000
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 79833
+    }
+   },
+   "point-d2915db8e0242db1": {
+    "main": {
+     "success": false,
+     "elapsed_ms": 240000
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 178000
+    }
+   }
+  }
+ },
+ "teacher_memory": {
+  "revisions": {
+   "before": "063bded3a884e903af0941142110800fe0f028ba"
+  },
+  "recorded": "game",
+  "sets": {
+   "teacher-memory": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 53481,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "rebuilds": 6359,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 10235,
+      "start_events": 141,
+      "start_events_through_wall": 95,
+      "recorded_carrot_max_error_cm": null
+     },
+     "game": {
+      "decisions": 53481,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 4428,
+      "start_fallbacks": 3050,
+      "start_departures": 3046,
+      "rebuilds": 7868,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 10193,
+      "start_events": 761,
+      "start_events_through_wall": 681,
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 53481,
+      "carrot_within_1cm": 45562,
+      "clean_episodes": 60,
+      "clean_decisions": 53481,
+      "clean_within_1cm": 45562,
+      "clean_differences": 10,
+      "differs_before_memory": 0
+     }
+    }
+   }
+  }
+ },
+ "closed_loop_teacher": {
+  "main": {
+   "arrived": 51,
+   "median_elapsed_s": 59.2335,
+   "runner_sha256": "f0222dc2b949babc7a57986533daccf0b8d06d815f7bcbb43962a61f57e49008"
+  },
+  "branch": {
+   "arrived": 51,
+   "median_elapsed_s": 55.6835,
+   "runner_sha256": "f2e70d326177aae96b175a4ff72094dda804342f696abf3f21e08f62799ce745"
+  },
+  "paired_success": {
+   "delta": 0.0,
+   "se": 0.0
+  },
+  "paired_elapsed_s": {
+   "delta": -1.7788833333333331,
+   "se": 3.0100726415481107
+  },
+  "differing": {
+   "point-c6de8dde80e43a66": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 11233
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 23767
+    }
+   },
+   "point-200ffb1aee7e8744": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 103367
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 104267
+    }
+   },
+   "point-f20f60cbd9bfd249": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 27167
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 26567
+    }
+   },
+   "point-703e252f4418000a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 91967
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 34700
+    }
+   },
+   "point-608b674909f2950a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 193700
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 51900
+    }
+   },
+   "point-2241bf42214cbd26": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 16067
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 16100
+    }
+   },
+   "point-9330472d07b2f47a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 50300
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 142767
+    }
+   },
+   "point-6094a45e3c72e6df": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 30367
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 17367
+    }
+   }
+  }
+ },
+ "liveset_memory": {
+  "revisions": {
+   "before": "063bded3a884e903af0941142110800fe0f028ba"
+  },
+  "recorded": "game",
+  "sets": {
+   "liveset": {
+    "episodes": 34,
+    "totals": {
+     "before": {
+      "decisions": 9328,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "rebuilds": 1135,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 1004,
+      "start_events": 51,
+      "start_events_through_wall": 14,
+      "recorded_carrot_max_error_cm": 3480.8673035025677
+     },
+     "game": {
+      "decisions": 9328,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 28,
+      "catch_ups_beyond_window": 28,
+      "starts_moved": 59,
+      "start_fallbacks": 2,
+      "start_departures": 2,
+      "rebuilds": 1044,
+      "creep_decisions": 0,
+      "lag_decisions": 59,
+      "advances": 28,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 834,
+      "start_events": 52,
+      "start_events_through_wall": 14,
+      "recorded_carrot_max_error_cm": 0.0
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 9328,
+      "carrot_within_1cm": 8850,
+      "clean_episodes": 34,
+      "clean_decisions": 9328,
+      "clean_within_1cm": 8850,
+      "clean_differences": 10,
+      "differs_before_memory": 0
+     }
+    }
+   }
+  }
+ },
+ "closed_loop_liveset": {
+  "binary_sha256": "99a352a5fdb1115dff5b235c302371b7de3d21dd7860f00addb464e6710780ba",
+  "branch": [
+   {
+    "place": "01-maleth-fence",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 6.733,
+    "path_to_teacher_ratio": 0.984840415006602,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 7.0,
+    "path_to_teacher_ratio": 1.0434212540159586,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 9.8,
+    "path_to_teacher_ratio": 1.2434850094371679,
+    "obstacle_contacts": 3
+   },
+   {
+    "place": "02-routine-return-forest-tree",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "02-routine-return-forest-tree",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 24.167,
+    "path_to_teacher_ratio": 0.9350814776246207,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "02-routine-return-farm-edge",
+    "model": "teacher",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "02-routine-return-farm-edge",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 103.2,
+    "path_to_teacher_ratio": 1.0910549494597825,
+    "obstacle_contacts": 3
+   },
+   {
+    "place": "02-routine-return-forest-pine",
+    "model": "teacher",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "02-routine-return-forest-pine",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 67.667,
+    "path_to_teacher_ratio": 1.8642686644942539,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": false,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 4.331980272819816,
+    "obstacle_contacts": 23
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 4.279842120844444,
+    "obstacle_contacts": 33
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 5.088743412784198,
+    "obstacle_contacts": 29
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 26.167,
+    "path_to_teacher_ratio": 1.2354409434985423,
+    "obstacle_contacts": 8
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 35.967,
+    "path_to_teacher_ratio": 1.435368304647791,
+    "obstacle_contacts": 12
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 36.767,
+    "path_to_teacher_ratio": 1.595645289924314,
+    "obstacle_contacts": 13
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 23.8,
+    "path_to_teacher_ratio": 1.713487480511432,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 21.033,
+    "path_to_teacher_ratio": 1.485029569222342,
+    "obstacle_contacts": 5
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 28.033,
+    "path_to_teacher_ratio": 1.7568499892233376,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 2.767,
+    "path_to_teacher_ratio": 0.7134727881633667,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 3.167,
+    "path_to_teacher_ratio": 0.8405250777152617,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 2.267,
+    "path_to_teacher_ratio": 0.797257286709449,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 33.033,
+    "path_to_teacher_ratio": 1.0953887792938755,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 32.2,
+    "path_to_teacher_ratio": 1.0609457724303153,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 32.267,
+    "path_to_teacher_ratio": 1.0565190978746426,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 1.633,
+    "path_to_teacher_ratio": 0.9992807413951742,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 2.3,
+    "path_to_teacher_ratio": 1.0938936306286533,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 1.633,
+    "path_to_teacher_ratio": 0.9979187276057243,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 18.167,
+    "path_to_teacher_ratio": 1.1565912723804896,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 18.667,
+    "path_to_teacher_ratio": 1.1916420423766623,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 18.833,
+    "path_to_teacher_ratio": 1.2076968106112638,
+    "obstacle_contacts": 2
+   }
+  ],
+  "pace_v5": [
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 6.733,
+    "path_to_teacher_ratio": 0.984840415006602,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 7.0,
+    "path_to_teacher_ratio": 1.0434212540159586,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 9.8,
+    "path_to_teacher_ratio": 1.2434850094371679,
+    "obstacle_contacts": 3
+   },
+   {
+    "place": "02-routine-return-forest-tree",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 27.4,
+    "path_to_teacher_ratio": 1.0269652429877376,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "02-routine-return-farm-edge",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 95.733,
+    "path_to_teacher_ratio": 0.9824813663336698,
+    "obstacle_contacts": 5
+   },
+   {
+    "place": "02-routine-return-forest-pine",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 67.667,
+    "path_to_teacher_ratio": 1.8485524505346453,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 0.829139494795592,
+    "obstacle_contacts": 63
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 1.237192256061423,
+    "obstacle_contacts": 23
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 1.6108046412205073,
+    "obstacle_contacts": 19
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 38.867,
+    "path_to_teacher_ratio": 1.7394477769235213,
+    "obstacle_contacts": 11
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": false,
+    "elapsed_seconds": 90.0,
+    "path_to_teacher_ratio": 1.0222869584146617,
+    "obstacle_contacts": 20
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": false,
+    "elapsed_seconds": 90.0,
+    "path_to_teacher_ratio": 4.022842602213238,
+    "obstacle_contacts": 46
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 23.8,
+    "path_to_teacher_ratio": 1.713487480511432,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 21.033,
+    "path_to_teacher_ratio": 1.485029569222342,
+    "obstacle_contacts": 5
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 28.033,
+    "path_to_teacher_ratio": 1.7568499892233376,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 2.767,
+    "path_to_teacher_ratio": 0.7134727881633667,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 3.167,
+    "path_to_teacher_ratio": 0.8405250777152617,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 1.967,
+    "path_to_teacher_ratio": 0.8046640631481256,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 33.033,
+    "path_to_teacher_ratio": 1.0953887792938755,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 32.2,
+    "path_to_teacher_ratio": 1.0609457724303153,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 32.267,
+    "path_to_teacher_ratio": 1.0565190978746426,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 1.633,
+    "path_to_teacher_ratio": 0.9992807413951742,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 2.3,
+    "path_to_teacher_ratio": 1.0938936306286533,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 1.633,
+    "path_to_teacher_ratio": 0.9979187276057243,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 18.167,
+    "path_to_teacher_ratio": 1.1565912723804896,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 18.667,
+    "path_to_teacher_ratio": 1.1916420423766623,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 18.833,
+    "path_to_teacher_ratio": 1.2076968106112638,
+    "obstacle_contacts": 2
+   }
+  ]
+ },
+ "branch_start_events": {
+  "revisions": {
+   "before": "063bded3a884e903af0941142110800fe0f028ba"
+  },
+  "passages": {
+   "before": "never"
+  },
+  "recorded": "game",
+  "sets": {
+   "branch-point": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 42283,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 5435,
+      "creep_decisions": 0,
+      "lag_decisions": 52,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 15815,
+      "progress_ray": 16585,
+      "start_events": 251,
+      "start_events_through_wall": 197,
+      "start_events_ray": 210,
+      "start_event_classes": {
+       "closest": {
+        "events": 251,
+        "no_path": 0,
+        "ratio_le_1.2": 3,
+        "ratio_1.2_2.5": 82,
+        "ratio_gt_2.5": 112
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "game": {
+      "decisions": 42283,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 1,
+      "catch_ups_beyond_window": 1,
+      "starts_moved": 2637,
+      "start_fallbacks": 5067,
+      "start_departures": 5063,
+      "projections_rejected": 0,
+      "rebuilds": 7879,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 1,
+      "advances_through_wall": 1,
+      "advances_ray": 1,
+      "progress_behind_wall": 14692,
+      "progress_ray": 15638,
+      "start_events": 1037,
+      "start_events_through_wall": 918,
+      "start_events_ray": 964,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 65,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 8,
+        "ratio_gt_2.5": 11
+       },
+       "memory_moved": {
+        "events": 826,
+        "no_path": 0,
+        "ratio_le_1.2": 10,
+        "ratio_1.2_2.5": 93,
+        "ratio_gt_2.5": 657
+       },
+       "departure": {
+        "events": 142,
+        "no_path": 0,
+        "ratio_le_1.2": 9,
+        "ratio_1.2_2.5": 9,
+        "ratio_gt_2.5": 117
+       },
+       "closest_fallback": {
+        "events": 4,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 4,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 42283,
+      "carrot_within_1cm": 32927,
+      "clean_episodes": 60,
+      "clean_decisions": 42283,
+      "clean_within_1cm": 32927,
+      "clean_differences": 14,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "branch-teacher": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 53481,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 6359,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 10235,
+      "progress_ray": 10742,
+      "start_events": 141,
+      "start_events_through_wall": 95,
+      "start_events_ray": 100,
+      "start_event_classes": {
+       "closest": {
+        "events": 141,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 48,
+        "ratio_gt_2.5": 47
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "game": {
+      "decisions": 53481,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 4428,
+      "start_fallbacks": 3050,
+      "start_departures": 3046,
+      "projections_rejected": 0,
+      "rebuilds": 7868,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 10193,
+      "progress_ray": 10515,
+      "start_events": 761,
+      "start_events_through_wall": 681,
+      "start_events_ray": 696,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 74,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 20,
+        "ratio_gt_2.5": 4
+       },
+       "memory_moved": {
+        "events": 585,
+        "no_path": 0,
+        "ratio_le_1.2": 6,
+        "ratio_1.2_2.5": 70,
+        "ratio_gt_2.5": 480
+       },
+       "departure": {
+        "events": 98,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 1,
+        "ratio_gt_2.5": 96
+       },
+       "closest_fallback": {
+        "events": 4,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 4,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 53481,
+      "carrot_within_1cm": 45562,
+      "clean_episodes": 60,
+      "clean_decisions": 53481,
+      "clean_within_1cm": 45562,
+      "clean_differences": 10,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "branch-live": {
+    "episodes": 4,
+    "totals": {
+     "before": {
+      "decisions": 1478,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 11,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 274,
+      "progress_ray": 315,
+      "start_events": 11,
+      "start_events_through_wall": 4,
+      "start_events_ray": 9,
+      "start_event_classes": {
+       "closest": {
+        "events": 11,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 4
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 2098.0877924322326
+     },
+     "game": {
+      "decisions": 1478,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 29,
+      "start_fallbacks": 2,
+      "start_departures": 2,
+      "projections_rejected": 0,
+      "rebuilds": 35,
+      "creep_decisions": 0,
+      "lag_decisions": 59,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 124,
+      "progress_ray": 279,
+      "start_events": 4,
+      "start_events_through_wall": 0,
+      "start_events_ray": 4,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 4,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 0.0
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 1478,
+      "carrot_within_1cm": 1232,
+      "clean_episodes": 4,
+      "clean_decisions": 1478,
+      "clean_within_1cm": 1232,
+      "clean_differences": 3,
+      "differs_before_memory": 0
+     }
+    }
+   },
+   "branch-liveset": {
+    "episodes": 34,
+    "totals": {
+     "before": {
+      "decisions": 9328,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 1135,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 1004,
+      "progress_ray": 1076,
+      "start_events": 51,
+      "start_events_through_wall": 14,
+      "start_events_ray": 21,
+      "start_event_classes": {
+       "closest": {
+        "events": 51,
+        "no_path": 8,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 6
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 3480.8673035025677
+     },
+     "game": {
+      "decisions": 9328,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 28,
+      "catch_ups_beyond_window": 28,
+      "starts_moved": 59,
+      "start_fallbacks": 2,
+      "start_departures": 2,
+      "projections_rejected": 0,
+      "rebuilds": 1044,
+      "creep_decisions": 0,
+      "lag_decisions": 59,
+      "advances": 28,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 834,
+      "progress_ray": 1000,
+      "start_events": 52,
+      "start_events_through_wall": 14,
+      "start_events_ray": 20,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 47,
+        "no_path": 8,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 3
+       },
+       "memory_moved": {
+        "events": 5,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 3
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": 0.0
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 9328,
+      "carrot_within_1cm": 8850,
+      "clean_episodes": 34,
+      "clean_decisions": 9328,
+      "clean_within_1cm": 8850,
+      "clean_differences": 10,
+      "differs_before_memory": 0
+     }
+    }
+   }
+  }
+ },
+ "f8_point_memory": {
+  "revisions": {
+   "before": "063bded3a884e903af0941142110800fe0f028ba"
+  },
+  "passages": {
+   "before": "never"
+  },
+  "recorded": "game",
+  "sets": {
+   "f8-point": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 35545,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "projections_rejected": 0,
+      "rebuilds": 3102,
+      "creep_decisions": 0,
+      "lag_decisions": 198,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "advances_ray": 0,
+      "progress_behind_wall": 10448,
+      "progress_ray": 11521,
+      "start_events": 196,
+      "start_events_through_wall": 131,
+      "start_events_ray": 150,
+      "start_event_classes": {
+       "closest": {
+        "events": 196,
+        "no_path": 0,
+        "ratio_le_1.2": 6,
+        "ratio_1.2_2.5": 51,
+        "ratio_gt_2.5": 74
+       },
+       "memory_closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_moved": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "departure": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "closest_fallback": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     },
+     "game": {
+      "decisions": 35545,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 2,
+      "catch_ups_beyond_window": 2,
+      "starts_moved": 1846,
+      "start_fallbacks": 3084,
+      "start_departures": 3080,
+      "projections_rejected": 6567,
+      "rebuilds": 5097,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 2,
+      "advances_through_wall": 0,
+      "advances_ray": 1,
+      "progress_behind_wall": 8113,
+      "progress_ray": 9070,
+      "start_events": 454,
+      "start_events_through_wall": 366,
+      "start_events_ray": 388,
+      "start_event_classes": {
+       "closest": {
+        "events": 0,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 0,
+        "ratio_gt_2.5": 0
+       },
+       "memory_closest": {
+        "events": 61,
+        "no_path": 0,
+        "ratio_le_1.2": 1,
+        "ratio_1.2_2.5": 8,
+        "ratio_gt_2.5": 6
+       },
+       "memory_moved": {
+        "events": 387,
+        "no_path": 0,
+        "ratio_le_1.2": 33,
+        "ratio_1.2_2.5": 75,
+        "ratio_gt_2.5": 237
+       },
+       "departure": {
+        "events": 2,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 1,
+        "ratio_gt_2.5": 1
+       },
+       "closest_fallback": {
+        "events": 4,
+        "no_path": 0,
+        "ratio_le_1.2": 0,
+        "ratio_1.2_2.5": 4,
+        "ratio_gt_2.5": 0
+       }
+      },
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 35545,
+      "carrot_within_1cm": 25682,
+      "clean_episodes": 60,
+      "clean_decisions": 35545,
+      "clean_within_1cm": 25682,
+      "clean_differences": 14,
+      "differs_before_memory": 0
+     }
+    }
+   }
+  }
+ },
+ "f8_closed_loop": {
+  "point": {
+   "before": {
+    "arrived": 52,
+    "median_elapsed_s": 25.483,
+    "runner_sha256": "ef96b9f656a779cd07b24f4bfae66b09246150fcf0c4206235da5568c74cae34"
+   },
+   "after": {
+    "arrived": 53,
+    "median_elapsed_s": 23.5165,
+    "runner_sha256": "63c3d2675ae49d0aca901a2295408794135aaec8d58c0cbebeb1b056b8efe285"
+   },
+   "paired_elapsed_s": {
+    "delta": -9.028866666666666,
+    "se": 8.05295960583797
+   },
+   "changed": {
+    "point-200ffb1aee7e8744": {
+     "before": {
+      "success": false,
+      "elapsed_ms": 240000
+     },
+     "after": {
+      "success": true,
+      "elapsed_ms": 30000
+     }
+    },
+    "point-2ceb61fedd853e39": {
+     "before": {
+      "success": false,
+      "elapsed_ms": 240000
+     },
+     "after": {
+      "success": true,
+      "elapsed_ms": 30267
+     }
+    },
+    "point-7fcd8e0ed6ecba03": {
+     "before": {
+      "success": true,
+      "elapsed_ms": 82500
+     },
+     "after": {
+      "success": false,
+      "elapsed_ms": 240000
+     }
+    },
+    "point-bce9d29bf1a5f806": {
+     "before": {
+      "success": true,
+      "elapsed_ms": 123867
+     },
+     "after": {
+      "success": false,
+      "elapsed_ms": 240000
+     }
+    },
+    "point-ca319fd7f34b79d4": {
+     "before": {
+      "success": false,
+      "elapsed_ms": 240000
+     },
+     "after": {
+      "success": true,
+      "elapsed_ms": 24000
+     }
+    },
+    "point-d2915db8e0242db1": {
+     "before": {
+      "success": false,
+      "elapsed_ms": 240000
+     },
+     "after": {
+      "success": true,
+      "elapsed_ms": 178000
+     }
+    },
+    "point-f4770074315f062e": {
+     "before": {
+      "success": true,
+      "elapsed_ms": 235167
+     },
+     "after": {
+      "success": false,
+      "elapsed_ms": 240000
+     }
+    }
+   }
+  },
+  "teacher": {
+   "before": {
+    "arrived": 51,
+    "median_elapsed_s": 55.6835,
+    "runner_sha256": "2d8454a9aff9a74dc2778c91df6128d6e2b95b2c880d021bac542bc815888b8f"
+   },
+   "after": {
+    "arrived": 51,
+    "median_elapsed_s": 55.6835,
+    "runner_sha256": "7e5ecb4867d3e5a715bc7594d4f049d91a7743d97f57fbf0675ccbd5db895f60"
+   },
+   "paired_elapsed_s": {
+    "delta": 0.04443333333333334,
+    "se": 0.059488684613015416
+   },
+   "changed": {}
+  },
+  "rejections_at_rebuilds": {
+   "point": 3262,
+   "point_rebuilds": 5097,
+   "teacher": 2636,
+   "teacher_rebuilds": 8087,
+   "live": 0,
+   "liveset": 4
+  },
+  "liveset": {
+   "binary_sha256": "249328f74f155489d5cf475fbd797c2fb3c7b5978fe77088ff38c993999eb6fc",
+   "rows": [
+    {
+     "place": "01-maleth-fence",
+     "model": "teacher",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": null,
+     "elapsed_ms": 26733,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "01-maleth-fence",
+     "model": "pace-v5",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": 6.733,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 0.984840415006602
+    },
+    {
+     "place": "01-maleth-fence",
+     "model": "pace-v5",
+     "seed": 18102028,
+     "success": true,
+     "elapsed_seconds": 7.0,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.0434212540159586
+    },
+    {
+     "place": "01-maleth-fence",
+     "model": "pace-v5",
+     "seed": 18102029,
+     "success": true,
+     "elapsed_seconds": 9.867,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.2563745888535256
+    },
+    {
+     "place": "02-routine-return-forest-tree",
+     "model": "teacher",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": null,
+     "elapsed_ms": 19833,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "02-routine-return-forest-tree",
+     "model": "pace-v5",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": 24.167,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 0.9350814776246207
+    },
+    {
+     "place": "02-routine-return-farm-edge",
+     "model": "teacher",
+     "seed": 18102028,
+     "success": true,
+     "elapsed_seconds": null,
+     "elapsed_ms": 81100,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "02-routine-return-farm-edge",
+     "model": "pace-v5",
+     "seed": 18102028,
+     "success": true,
+     "elapsed_seconds": 103.2,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.0910549494597825
+    },
+    {
+     "place": "02-routine-return-forest-pine",
+     "model": "teacher",
+     "seed": 18102029,
+     "success": true,
+     "elapsed_seconds": null,
+     "elapsed_ms": 19733,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "02-routine-return-forest-pine",
+     "model": "pace-v5",
+     "seed": 18102029,
+     "success": true,
+     "elapsed_seconds": 67.667,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.8790632734994492
+    },
+    {
+     "place": "03-follow-hero",
+     "model": "teacher",
+     "seed": 18102027,
+     "success": false,
+     "elapsed_seconds": null,
+     "elapsed_ms": 180000,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "03-follow-hero",
+     "model": "pace-v5",
+     "seed": 18102027,
+     "success": false,
+     "elapsed_seconds": 180.0,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 4.331980272819816
+    },
+    {
+     "place": "03-follow-hero",
+     "model": "pace-v5",
+     "seed": 18102028,
+     "success": false,
+     "elapsed_seconds": 180.0,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 4.279842120844444
+    },
+    {
+     "place": "03-follow-hero",
+     "model": "pace-v5",
+     "seed": 18102029,
+     "success": false,
+     "elapsed_seconds": 180.0,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 2.9681748748565235
+    },
+    {
+     "place": "05-wall-pocket",
+     "model": "teacher",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": null,
+     "elapsed_ms": 48767,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "05-wall-pocket",
+     "model": "pace-v5",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": 26.167,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.2354409434985423
+    },
+    {
+     "place": "05-wall-pocket",
+     "model": "pace-v5",
+     "seed": 18102028,
+     "success": true,
+     "elapsed_seconds": 35.967,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.435368304647791
+    },
+    {
+     "place": "05-wall-pocket",
+     "model": "pace-v5",
+     "seed": 18102029,
+     "success": true,
+     "elapsed_seconds": 36.767,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.595645289924314
+    },
+    {
+     "place": "06-harbour-water",
+     "model": "teacher",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": null,
+     "elapsed_ms": 35267,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "06-harbour-water",
+     "model": "pace-v5",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": 23.8,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.713487480511432
+    },
+    {
+     "place": "06-harbour-water",
+     "model": "pace-v5",
+     "seed": 18102028,
+     "success": true,
+     "elapsed_seconds": 21.033,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.485029569222342
+    },
+    {
+     "place": "06-harbour-water",
+     "model": "pace-v5",
+     "seed": 18102029,
+     "success": true,
+     "elapsed_seconds": 28.033,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.7568499892233376
+    },
+    {
+     "place": "07-cliff-trail",
+     "model": "teacher",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": null,
+     "elapsed_ms": 10500,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "07-cliff-trail",
+     "model": "pace-v5",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": 2.867,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 0.775880368113686
+    },
+    {
+     "place": "07-cliff-trail",
+     "model": "pace-v5",
+     "seed": 18102028,
+     "success": true,
+     "elapsed_seconds": 3.167,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 0.8405250777152617
+    },
+    {
+     "place": "07-cliff-trail",
+     "model": "pace-v5",
+     "seed": 18102029,
+     "success": true,
+     "elapsed_seconds": 2.133,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 0.8131943451708447
+    },
+    {
+     "place": "08-market-crowd",
+     "model": "teacher",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": null,
+     "elapsed_ms": 84167,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "08-market-crowd",
+     "model": "pace-v5",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": 33.033,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.0953887792938755
+    },
+    {
+     "place": "08-market-crowd",
+     "model": "pace-v5",
+     "seed": 18102028,
+     "success": true,
+     "elapsed_seconds": 32.2,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.0609457724303153
+    },
+    {
+     "place": "08-market-crowd",
+     "model": "pace-v5",
+     "seed": 18102029,
+     "success": true,
+     "elapsed_seconds": 32.267,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.0565190978746426
+    },
+    {
+     "place": "09-door-stairs-door",
+     "model": "teacher",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": null,
+     "elapsed_ms": 5233,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "09-door-stairs-door",
+     "model": "pace-v5",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": 1.633,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 0.9992807413951742
+    },
+    {
+     "place": "09-door-stairs-door",
+     "model": "pace-v5",
+     "seed": 18102028,
+     "success": true,
+     "elapsed_seconds": 2.3,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.0938936306286533
+    },
+    {
+     "place": "09-door-stairs-door",
+     "model": "pace-v5",
+     "seed": 18102029,
+     "success": true,
+     "elapsed_seconds": 1.633,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 0.9979187276057243
+    },
+    {
+     "place": "10-local-stranger",
+     "model": "teacher",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": null,
+     "elapsed_ms": 42700,
+     "path_to_teacher_ratio": null
+    },
+    {
+     "place": "10-local-stranger",
+     "model": "pace-v5",
+     "seed": 18102027,
+     "success": true,
+     "elapsed_seconds": 18.167,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.1565912723804896
+    },
+    {
+     "place": "10-local-stranger",
+     "model": "pace-v5",
+     "seed": 18102028,
+     "success": true,
+     "elapsed_seconds": 18.667,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.1916420423766623
+    },
+    {
+     "place": "10-local-stranger",
+     "model": "pace-v5",
+     "seed": 18102029,
+     "success": true,
+     "elapsed_seconds": 18.833,
+     "elapsed_ms": null,
+     "path_to_teacher_ratio": 1.2076968106112638
+    }
+   ]
+  }
+ }
+}

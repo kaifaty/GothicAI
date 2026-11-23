@@ -8,9 +8,10 @@
 #include <limits>
 #include <map>
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
+#include "game/bodycontroller.h"
 #include "game/inventory.h"
 #include "physics/dynamicworld.h"
 #include "world/objects/interactive.h"
@@ -22,6 +23,7 @@
 #include "chesttake.h"
 #include "jsonread.h"
 #include "jsonwriter.h"
+#include "knockout.h"
 #include "npcfind.h"
 #include "npcchests.h"
 #include "npcsteal.h"
@@ -36,10 +38,10 @@ namespace {
 // the npc goes with the hero: a companion's dialog, or the server's `party` effect (v30), marked it
 bool partyMember(World& world, const Npc& npc) {
   auto* s = world.script().getVm().find_symbol_by_name("AIV_PARTYMEMBER");
-  if(s==nullptr || s->type()!=zenkit::DaedalusDataType::INT)
+  if(s==nullptr || s->type()!=daedalus::DaedalusDataType::INT)
     return false;
   const int32_t aiv = s->get_int(0);
-  return aiv>=0 && uint32_t(aiv)<zenkit::INpc::aivar_count && npc.handlePtr()->aivar[size_t(aiv)]!=0;
+  return aiv>=0 && uint32_t(aiv)<daedalus::INpc::aivar_count && npc.handlePtr()->aivar[size_t(aiv)]!=0;
   }
 
 constexpr uint64_t ScanMs   = 500;   // how often deaths are looked for
@@ -69,15 +71,15 @@ float distance(const Npc& a, const Npc& b) {
   }
 
 // the class an instance (or prototype) is of: C_NPC, C_ITEM, C_INFO...
-std::string classOf(zenkit::DaedalusVm& vm, const zenkit::DaedalusSymbol& sym) {
+std::string classOf(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& sym) {
   auto* s = &sym;
-  for(int i=0; i<8 && s!=nullptr && s->type()!=zenkit::DaedalusDataType::CLASS; ++i)
+  for(int i=0; i<8 && s!=nullptr && s->type()!=daedalus::DaedalusDataType::CLASS; ++i)
     s = vm.find_symbol_by_index(s->parent());
-  return s!=nullptr && s->type()==zenkit::DaedalusDataType::CLASS ? std::string(s->name()) : std::string();
+  return s!=nullptr && s->type()==daedalus::DaedalusDataType::CLASS ? std::string(s->name()) : std::string();
   }
 
-std::string kindOf(zenkit::DaedalusVm& vm, const zenkit::DaedalusSymbol& sym) {
-  using zenkit::DaedalusDataType;
+std::string kindOf(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& sym) {
+  using daedalus::DaedalusDataType;
   if(sym.is_member())
     return "other";
   switch(sym.type()) {
@@ -197,7 +199,7 @@ void StoryWorld::watch(const rapidjson::Value& msg) {
   eachString(msg,"npcs",[&](const std::string& name) { list.push_back(name); });
   }
 
-bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string& error) {
+bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string& error, std::string& value) {
   Npc* npc = bySymbol(world,JsonRead::str(msg,"npc"));
   Npc* pl  = world.player();
   if(npc==nullptr || pl==nullptr) {
@@ -239,6 +241,61 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     });
   if(!error.empty())
     return false;
+  const auto inspect = [](Npc* actor) {
+    Knockout::Actor state;
+    if(actor==nullptr)
+      return state;
+    state.exists = true;
+    state.human = actor->guild()<GIL_SEPERATOR_HUM;
+    state.hero = actor->isPlayer();
+    state.dead = actor->isDead();
+    state.down = actor->isDown();
+    state.immortal = actor->isImmortal();
+    state.insideSimulation = actor->processPolicy()==NpcProcessPolicy::AiNormal;
+    state.bodyControlled = BodyController::owns(*actor);
+    state.externalControl = actor->isExternalControl();
+    state.hp = actor->attribute(ATR_HITPOINTS);
+    if(auto* weapon = actor->currentMeleeWeapon())
+      if(auto* symbol = actor->world().script().findSymbol(weapon->clsId()))
+        state.weapon = symbol->name();
+    return state;
+    };
+  // Mandatory even without check:true, before any other effect or controller release.
+  struct FightOutcome {
+    Npc* by = nullptr;
+    Knockout::Result knockout;
+    Knockout::WoundResult wound;
+    };
+  std::vector<FightOutcome> outcomes(list.size());
+  std::map<Npc*,Knockout::Actor> actors;
+  auto actor = [&](Npc* n) -> Knockout::Actor& { return actors.try_emplace(n,inspect(n)).first->second; };
+  for(size_t i=0;i<list.size();++i) {
+    const auto& e = list[i];
+    if(e.kind!="knockout" && e.kind!="wound")
+      continue;
+    auto& outcome = outcomes[i];
+    outcome.by = bySymbol(world,e.by);
+    auto& self = actor(npc);
+    auto& by = actor(outcome.by);
+    if(e.kind=="knockout") {
+      outcome.knockout = Knockout::check(self,by,npc==outcome.by,e.loss);
+      error = outcome.knockout.error;
+      if(error.empty()) {
+        self.down = true; // a second knockout of this self rejects the entire batch
+        self.hp = 1;
+        by.hp = outcome.knockout.winnerHp;
+        }
+      } else {
+      outcome.wound = Knockout::wound(self,by,npc==outcome.by,e.loss,e.byLoss);
+      error = outcome.wound.error;
+      if(error.empty()) {
+        self.hp = outcome.wound.selfHp;
+        by.hp = outcome.wound.byHp;
+        }
+      }
+    if(!error.empty())
+      return false;
+    }
   if(JsonRead::boolean(msg,"check",false)) {
     // all or nothing (v10, a deal): each giver must have all it gives, or nothing happens; what the npc
     // creates (v17, its stash) is its own to give, and the hero must have the learning points of all
@@ -274,7 +331,52 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       }
     }
   const auto who = symbolOf(world,*npc);
-  for(auto& e : list) {
+  for(size_t i=0;i<list.size();++i) {
+    auto& e = list[i];
+    auto* winner = outcomes[i].by;
+    auto& outcome = outcomes[i].knockout;
+    if(e.kind=="wound") {
+      const auto& wounded = outcomes[i].wound;
+      npc->handlePtr()->attribute[ATR_HITPOINTS] = wounded.selfHp;
+      winner->handlePtr()->attribute[ATR_HITPOINTS] = wounded.byHp;
+      rapidjson::StringBuffer buf;
+      rapidjson::Writer<rapidjson::StringBuffer> result(buf);
+      result.StartObject();
+      result.Key("self_hp"); result.Int(wounded.selfHp);
+      result.Key("by_hp"); result.Int(wounded.byHp);
+      result.EndObject();
+      value.assign(buf.GetString(),buf.GetSize());
+      continue;
+      }
+    if(e.kind=="knockout") {
+      winner->handlePtr()->attribute[ATR_HITPOINTS] = outcome.winnerHp;
+      outcome.dropped.clear();
+      if(auto* weapon = npc->currentMeleeWeapon()) {
+        const auto id = weapon->clsId();
+        if(auto* symbol = world.script().findSymbol(id))
+          outcome.dropped = symbol->name();
+        Matrix4x4 at;
+        at.identity();
+        at.translate(npc->position());
+        world.addItemDyn(id,at,npc->instanceSymbol())->setCount(1);
+        // Unequip even a stacked weapon so the native fall cannot drop another copy.
+        npc->unequipItem(id);
+        npc->delItem(id,1);
+        }
+      npc->setLastHitBy(winner);
+      npc->setRagdollDown(false); // onNoHealth(false, HS_NoSound), no combat perceptions
+      rapidjson::StringBuffer buf;
+      rapidjson::Writer<rapidjson::StringBuffer> result(buf);
+      result.StartObject();
+      result.Key("winner_hp"); result.Int(outcome.winnerHp);
+      result.Key("dropped");
+      if(outcome.dropped.empty())
+        result.Null(); else
+        result.String(outcome.dropped.data(),rapidjson::SizeType(outcome.dropped.size()));
+      result.EndObject();
+      value.assign(buf.GetString(),buf.GetSize());
+      continue;
+      }
     if(e.kind=="attack" || e.kind=="refuse_talk" || e.kind=="calm")
       release(world,*npc);  // the scripts carry these out: an npc the server holds is let go first
     e.run(vm,*npc,*pl,who);
@@ -311,7 +413,7 @@ std::string StoryWorld::nearby(World& world, const rapidjson::Value& msg) {
   }
 
 std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
-  using zenkit::DaedalusDataType;
+  using daedalus::DaedalusDataType;
   auto&  vm = world.script().getVm();
   Npc*   pl = world.player();
   rapidjson::StringBuffer                    buf;
@@ -366,7 +468,7 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
     auto*       s = vm.find_symbol_by_name(name);
     std::string err;
     auto        r = s!=nullptr && pl!=nullptr && knows!=nullptr
-                    ? storygraph::callFunction(vm,*knows,{storygraph::Value::instance(pl->handlePtr()),
+                    ? storygraph::callFunction(vm,*knows,{storygraph::Value::instance(std::static_pointer_cast<daedalus::INpc>(pl->handlePtr())),
                                                           storygraph::Value::integer(int32_t(s->index()))},err)
                     : std::nullopt;
     if(r && r->type==storygraph::Value::Int) {
@@ -396,7 +498,7 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
     // the engine reads names the same way (the gold's); the symbol keeps the instance it had
     auto prev = s->get_instance();
     try {
-      auto item = vm.init_instance<zenkit::IItem>(s);
+      auto item = world.script().createItemForQuery(s->index());
       auto text = TextCodec::toUtf8(item->name);
       key(name);
       w.String(text.data(),rapidjson::SizeType(text.size()));

@@ -24,6 +24,9 @@ constexpr float BreathAmp     = 0.8f;     // ...that much of the sway
 constexpr float TremorMax     = 1.5f;     // of the sway: trembling at GiveUp past the hold limit
 constexpr float TremorTired   = 0.5f;
 constexpr float TremorWeak    = 0.6f;     // too weak for the bow: trembles drawing
+constexpr float TremorBurst   = 1.5f;     // of the sway at the burst draw limit
+constexpr float ShakeCm       = 0.9f;     // cm, RMS each way: the arms seen shaking at the burst limit...
+constexpr float CreepCm       = 2.5f;     // ...and the drawing hand losing ground along the arrow, at most
 constexpr float FatigueRest   = 4.f;      // seconds to rest from full fatigue
 constexpr float RaiseMin      = 0.25f;    // seconds raising before the string can be drawn
 constexpr float ReloadMax     = 3.f;      // seconds: reloading takes no longer, steady or not
@@ -67,6 +70,16 @@ float Archer::wander(float t, uint32_t axis) const {
   return s/std::sqrt((1.f+0.64f+0.25f+0.09f)*0.5f);
   }
 
+// the arms straining, seen: archers' arms at full draw tremble in two bands, 3-7 Hz and 8-12 Hz; RMS 1
+float Archer::shiver(float t, uint32_t axis) const {
+  static const float f[2][3] = {{3.7f,9.3f,11.1f},{4.3f,8.6f,10.4f}};
+  static const float a[3]    = {1.f,0.6f,0.4f};
+  float s = 0;
+  for(uint32_t i=0; i<3; ++i)
+    s += a[i]*std::sin(Pi2*f[axis][i]*t + phase(seed,32u+axis*8u+i));
+  return s/std::sqrt((1.f+0.36f+0.16f)*0.5f);
+  }
+
 // the arms trembling: fast, RMS 1
 float Archer::tremor(float t, uint32_t axis) const {
   static const float f[2][2] = {{7.3f,9.1f},{8.2f,6.7f}};
@@ -76,6 +89,8 @@ float Archer::tremor(float t, uint32_t axis) const {
 
 bool Archer::tick(const Input& in, const Archery::Stats& st) {
   const float dt = float(in.dt)/1000.f;
+  const bool strengthDraw = st.bowStrength;
+  const float targetDraw = strengthDraw ? (in.burst ? st.burstDraw : st.steadyDraw) : 1.f;
   clock     += dt;
   stageTime += dt;
   strength   = st.strength;
@@ -129,19 +144,33 @@ bool Archer::tick(const Input& in, const Archery::Stats& st) {
             }
           break;
           }
-        drawAmt = st.drawTime>0.f ? std::min(1.f,drawAmt+dt/st.drawTime) : 1.f;
-        if(drawAmt>=1.f) {
+        if(strengthDraw)
+          drawAmt = std::min(targetDraw,Archery::advanceDraw(st.strength,drawAmt,dt,st.drawSpeed)); else
+          drawAmt = st.drawTime>0.f ? std::min(1.f,drawAmt+dt/st.drawTime) : 1.f;
+        if(drawAmt>=targetDraw) {
           setStage(Held);
           hold = 0;
           }
         break;
       case Held:
         if(!in.draw) {
-          release = true;
+          if(drawAmt>=Archery::MinDraw) {
+            release = true;
+            } else {
+            drawAmt = 0;
+            hold = 0;
+            setStage(Nocked);
+            }
+          break;
+          }
+        drawAmt = std::min(drawAmt,targetDraw);
+        if(drawAmt<targetDraw) {
+          setStage(Drawing);
+          hold = 0;
           break;
           }
         hold += dt;
-        if(hold>st.holdLimit+Archery::GiveUp) {
+        if(hold>(strengthDraw ? Archery::holdLimit(st.strength,drawAmt) : st.holdLimit)+Archery::GiveUp) {
           // the arms give up: the string goes back, press again to draw
           drawAmt = 0;
           hold    = 0;
@@ -156,7 +185,7 @@ bool Archer::tick(const Input& in, const Archery::Stats& st) {
   if(stg!=Held)
     fatigue = std::max(0.f,fatigue-dt/FatigueRest);
 
-  // the breath is held drawing, at full draw; runs out
+  // the breath is held drawing or holding; runs out
   const bool drawn = (stg==Drawing || stg==Held);
   holding = in.breath && drawn && recover<=0.f && breath>0.f;
   if(holding) {
@@ -185,6 +214,7 @@ bool Archer::tick(const Input& in, const Archery::Stats& st) {
     spr = 0;
     sw  = Vec2();
     trm = Vec2();
+    shk = Vec3();
     return false;
     }
 
@@ -193,10 +223,17 @@ bool Archer::tick(const Input& in, const Archery::Stats& st) {
                        (1.f + (WalkShaky-1.f)*std::clamp(in.walk,0.f,1.f));
   amp = st.sway*(0.6f+0.4f*drawAmt)*calm*(1.f+DisturbGain*disturb)*stance;
   float trem = TremorTired*fatigue;
-  if(stg==Held)
-    trem += TremorMax*std::clamp((hold-st.holdLimit)/Archery::GiveUp,0.f,1.f);
-  if(drawn)
-    trem += TremorWeak*std::max(0.f,1.f-st.strength);
+  // held past the arms' limit: 0..1 over GiveUp; drawn past the steady limit: 0..1 to the burst one
+  const float over  = stg==Held ? std::clamp((hold-(strengthDraw ? Archery::holdLimit(st.strength,drawAmt) : st.holdLimit))/Archery::GiveUp,0.f,1.f) : 0.f;
+  const float burst = strengthDraw && drawn && st.strength>0.f ? std::clamp((drawAmt/st.strength-1.f)/(Archery::Burst-1.f),0.f,1.f) : 0.f;
+  trem += TremorMax*over;
+  if(drawn) {
+    if(strengthDraw) {
+      trem += TremorBurst*burst;
+      } else {
+      trem += TremorWeak*std::max(0.f,1.f-st.strength);
+      }
+    }
   trem *= st.sway;
   const float br = st.sway*BreathAmp*std::clamp(calm,0.f,1.f);
   const float t  = float(clock);
@@ -204,6 +241,13 @@ bool Archer::tick(const Input& in, const Archery::Stats& st) {
   sw.y  = amp*wander(t,1) + br*std::sin(Pi2*BreathRate*t);
   trm.x = trem*tremor(t,0);
   trm.y = trem*tremor(t,1);
+  // the strain seen (the bow drawn by strength only: the old model looks as it did): the arms shake, the
+  // drawing hand creeps forward and pulls back
+  const float strain = strengthDraw && drawn ? std::max({burst,over,0.5f*fatigue}) : 0.f;
+  const float creep  = 0.5f + 0.3f*std::sin(Pi2*1.3f*t + phase(seed,48u)) + 0.2f*std::sin(Pi2*3.1f*t + phase(seed,49u));
+  shk.x = ShakeCm*strain*shiver(t,0);
+  shk.y = ShakeCm*strain*shiver(t,1);
+  shk.z = CreepCm*strain*creep;
   // how far off the arrow may go: the sway's reach (twice its RMS), the trembling, the breathing, the
   // release
   spr = 2.f*(amp+trem) + br + st.cone;

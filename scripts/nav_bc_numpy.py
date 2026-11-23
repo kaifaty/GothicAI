@@ -22,6 +22,8 @@ HEAD_SIZES = {
     2: {"forward": 3, "strafe": 3, "turn": 3, "walk": 2, "maneuver": 3},
     3: {"forward": 3, "strafe": 3, "turn": 3, "walk": 2, "maneuver": 3},
     4: {"forward": 3, "strafe": 3, "turn": 3, "walk": 2, "maneuver": 3},
+    # The pace is the last vector input (walk=1, run=0), not an action head.
+    5: {"forward": 3, "strafe": 3, "turn": 3, "maneuver": 3},
 }
 
 
@@ -83,8 +85,14 @@ class NumpyPolicy:
         architecture = self.header["architecture"]
         if architecture["name"] != "map-cnn-vector-gru" or architecture["version"] != 1:
             raise ValueError("unsupported policy architecture")
-        if self.format_version == 3 and self.header.get("preprocessing", {}).get("input_variant") != "hd":
-            raise ValueError("navigation weight format 3 requires hd preprocessing")
+        if self.format_version in (3, 5) and self.header.get("preprocessing", {}).get("input_variant") != "hd":
+            raise ValueError(f"navigation weight format {self.format_version} requires hd preprocessing")
+        self.pace_input = self.format_version == 5
+        if self.pace_input:
+            preprocessing = self.header["preprocessing"]
+            if (preprocessing.get("navdemo_version") != 2
+                    or preprocessing.get("vector_order") != ["eye", "roads", "body", "pace"]):
+                raise ValueError("navigation weight format 5 requires NAVDEMO v2 and a final pace input")
         if self.format_version == 4:
             preprocessing = self.header.get("preprocessing", {})
             if (preprocessing.get("input_variant") != "hd-familiar"
@@ -177,13 +185,19 @@ class NumpyPolicy:
             probabilities[name] = weights / weights.sum()
         return probabilities
 
-    def sample(self, logits: dict[str, np.ndarray], rng: np.random.Generator) -> dict[str, float | bool]:
-        """Sample runtime keys; v2 and newer jump and climb are mutually exclusive."""
+    def sample(self, logits: dict[str, np.ndarray], rng: np.random.Generator,
+               walk: bool | None = None) -> dict[str, float | bool]:
+        """Sample runtime keys; v2 and newer jump and climb are mutually exclusive.
+
+        Format 5 has no walk head: ``walk`` must repeat the pace given as input.
+        """
+        if self.pace_input != (walk is not None):
+            raise ValueError("walk is required exactly for pace-input weights")
         actions = {name: int(rng.choice(len(values), p=values))
                    for name, values in self.probabilities(logits).items()}
         return {
             "forward": float(actions["forward"] - 1), "strafe": float(actions["strafe"] - 1),
-            "turn": float(actions["turn"] - 1), "walk": actions["walk"] != 0,
+            "turn": float(actions["turn"] - 1), "walk": bool(walk) if self.pace_input else actions["walk"] != 0,
             "jump": actions["maneuver"] == 1 if self.format_version >= 2 else actions["jump"] != 0,
             "climb": actions["maneuver"] == 2 if self.format_version >= 2 else actions["climb"] != 0,
         }

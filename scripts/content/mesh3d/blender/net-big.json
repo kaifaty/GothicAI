@@ -1,0 +1,28 @@
+{
+  "id": "rig-net-big",
+  "seed": 6,
+  "folds": [
+    3,
+    [
+      0.02,
+      0.05
+    ],
+    [
+      0.4,
+      0.8
+    ]
+  ],
+  "target": "data/content/mesh3d-rigging.json",
+  "edge": 0.1,
+  "lift": 0.022,
+  "tile_m": 1.04,
+  "rings": 9,
+  "segments": 30,
+  "profile": [
+    0.86,
+    0.62,
+    0.68,
+    0.4
+  ],
+  "uv_turn": 0.12
+}

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,12 +16,17 @@ class NavPolicy final {
     static constexpr size_t hdNearSize = 10*64*64, hdFarSize = 10*50*100;
     static constexpr size_t bc4NearSize = 11*64*64, bc4FarSize = 11*50*100;
     static constexpr size_t vectorSize = NavDemoWriter::rayCount*9+24, legacyVectorSize = vectorSize+8;
+    // Format 5: HD inputs plus one pace value after body (walk=1, run=0).
+    static constexpr size_t paceVectorSize = vectorSize+1;
     static constexpr size_t headCount = 6;
     inline static constexpr std::array<const char*,headCount> headNames = {
       "forward","strafe","turn","walk","jump","climb"
       };
     inline static constexpr std::array<const char*,5> bc3HeadNames = {
       "forward","strafe","turn","walk","maneuver"
+      };
+    inline static constexpr std::array<const char*,4> paceHeadNames = {
+      "forward","strafe","turn","maneuver"
       };
 
     struct Features final {
@@ -47,9 +53,13 @@ class NavPolicy final {
     // The weight header selects the NAVDEMO road schema (v1 next waypoint or
     // v2 carrot), then eye/roads/body, optionally followed by previous keys for
     // legacy v1 policies. New policies do not read those keys.
-    Features encode(const NavDemoWriter::Snapshot& observation) const;
+    // Pace-input weights (format 5) append walk; it is required for them and
+    // ignored by every other format, whose walk/run comes from a head.
+    Features encode(const NavDemoWriter::Snapshot& observation, std::optional<bool> walk = std::nullopt) const;
+    // Format 5 returns keys.walk equal to its pace input.
     Result step(const Features& features, State& state) const;
-    Result step(const NavDemoWriter::Snapshot& observation, State& state) const;
+    Result step(const NavDemoWriter::Snapshot& observation, State& state,
+                std::optional<bool> walk = std::nullopt) const;
     size_t hiddenSize() const { return hidden; }
     size_t vectorInputSize() const { return vectorEncoder.inputs; }
     uint32_t navDemoVersion() const { return demoVersion; }
@@ -58,11 +68,22 @@ class NavPolicy final {
     // experiment override uses OPENGOTHIC_NAV_JOURNEY_MEMORY's 0/1 values.
     void configureMemory(NavigationMemory& memory, const char* journeyOverride = nullptr) const;
     uint32_t weightVersion() const { return formatVersion; }
-    size_t nearInputSize() const { return formatVersion==4 ? bc4NearSize : formatVersion==3 ? hdNearSize : nearSize; }
-    size_t farInputSize() const { return formatVersion==4 ? bc4FarSize : formatVersion==3 ? hdFarSize : farSize; }
-    size_t actionHeadCount() const { return formatVersion>=2 ? bc3HeadNames.size() : headNames.size(); }
-    const char* headName(size_t index) const { return formatVersion>=2 ? bc3HeadNames.at(index) : headNames.at(index); }
-    size_t headSize(size_t index) const { return index<3 || (formatVersion>=2 && index==4) ? 3 : 2; }
+    bool paceInput() const { return formatVersion==5; }
+    size_t mapChannels() const { return formatVersion==4 ? 11 : formatVersion>=3 ? 10 : 9; }
+    size_t nearInputSize() const { return formatVersion==4 ? bc4NearSize : formatVersion>=3 ? hdNearSize : nearSize; }
+    size_t farInputSize() const { return formatVersion==4 ? bc4FarSize : formatVersion>=3 ? hdFarSize : farSize; }
+    size_t actionHeadCount() const {
+      return paceInput() ? paceHeadNames.size() : formatVersion>=2 ? bc3HeadNames.size() : headNames.size();
+      }
+    const char* headName(size_t index) const {
+      return paceInput() ? paceHeadNames.at(index) : formatVersion>=2 ? bc3HeadNames.at(index) : headNames.at(index);
+      }
+    // v2+ joint jump/climb head {none,jump,climb}; v1 keeps separate jump (4) and climb (5).
+    size_t maneuverHead() const { return paceInput() ? 3 : 4; }
+    size_t headSize(size_t index) const { return index<3 || (formatVersion>=2 && index==maneuverHead()) ? 3 : 2; }
+    // Decode sampled or argmax head indices into keys. Format 5 takes walk
+    // from its pace input; the others from head 3.
+    NpcKeys::KeyState keys(const std::array<size_t,headCount>& action, std::optional<bool> walk = std::nullopt) const;
     double headTemperature(size_t index) const { return temperatures.at(index); }
 
   private:

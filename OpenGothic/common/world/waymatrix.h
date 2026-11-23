@@ -7,15 +7,28 @@
 
 #include <vector>
 #include <functional>
+#include <memory>
 
 #include "waypath.h"
 #include "waypoint.h"
+#include "wayheights.h"
 
 class World;
 class DbgPainter;
+class WayHeights;
 
 class WayMatrix final {
   public:
+    // scripting doc says 20m, but number seems to be incorrect
+    // Vatras requires at least 8.1 meters; Vatras is broken in vanilla
+    // Keroloth requires less than 8.18 meters
+    // Abuyin requires less than 10 meters
+    // Harry(CoM) requires less(!) than 8 meters (~7.96)
+    // Gothic 1 range is identical
+    // Vanilla is buggy here as Vatras can't reach his praying spot from teaching location
+    static constexpr float distanceThreshold = 800.f;
+    size_t probeCpuBytes() const;
+
     WayMatrix(World& owner, const asset::WayNet& dat);
 
     const WayPoint* findWayPoint (const Tempest::Vec3& at, const std::function<bool(const WayPoint&)>& filter) const;
@@ -36,23 +49,23 @@ class WayMatrix final {
     void            forEachPoint(const std::function<void(const WayPoint&)>& f) const;
 
     WayPath         wayTo(const WayPoint** begin, size_t beginSz, const Tempest::Vec3 exactBegin, const WayPoint& end) const;
+    const WayHeights::Profile& groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                             float stepHeight,float slopeCos);
 
   private:
     friend struct WorldDataContract;
+    friend struct WayHeightsContract;
+    struct BuildStats {
+      size_t points = 0, hits = 0, misses = 0;
+      double keyMs = 0, adjustMs = 0, indexMs = 0, laddersMs = 0, totalMs = 0, writeMs = 0;
+      } stats;
     struct WayEdge {
       size_t a = 0;
       size_t b = 0;
       };
 
     World&                 world;
-    // scripting doc says 20m, but number seems to be incorrect
-    // Vatras requires at least 8.1 meters; Vatras is broken in vanilla
-    // Keroloth requires less than 8.18 meters
-    // Abuyin requires less than 10 meters
-    // Harry(CoM) requires less(!) than 8 meters (~7.96)
-    // Gothic 1 range is identical
-    // Vanilla is buggy here as Vatras can't reach his praying spot from teaching location
-    float                  distanceThreshold = 800.f;
+    std::unique_ptr<WayHeights> heightCache;
 
     std::vector<WayEdge>   edges;
 
@@ -71,7 +84,7 @@ class WayMatrix final {
     mutable uint16_t                      pathGen=0;
     mutable std::vector<const WayPoint*>  stk[2];
 
-    void                   adjustWaypoints(std::vector<WayPoint> &wp);
+    void                   adjustWaypoints(std::vector<WayPoint>& wp, WayHeights& heights);
     void                   calculateLadderPoints();
 
     const FpIndex&         findFpIndex(std::string_view name) const;

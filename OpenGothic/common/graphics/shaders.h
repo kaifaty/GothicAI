@@ -7,7 +7,7 @@
 #include <list>
 
 #include "graphics/drawcommands.h"
-#include "game/constants.h"
+#include "engineconstants.h"
 #include "material.h"
 
 class Shaders {
@@ -22,6 +22,9 @@ class Shaders {
       T_Shadow,
       T_Vsm,
       T_Main,
+      T_HistoryGBuffer,
+      T_HistoryDepth,
+      T_HistoryDepthVerify,
       };
 
     struct Options {
@@ -30,34 +33,33 @@ class Shaders {
       bool     doRayQuery        = false;
       bool     doMeshShading     = false;
       bool     doVirtualShadow   = false;
-      bool     doSoftwareShadow  = false;
       bool     doMaterialMaps    = false;
-
-      bool     doSoftwareRT      = false;
-      uint32_t swRenderingPreset = 0;
       };
 
     static Shaders& inst(bool waitCompiler = true);
     static const Options& options();
 
     static bool isVsmSupported();
-    static bool isRtsmSupported();
     static bool isLightsTreeSupported();
     static bool isGi1Supported();
     static bool isGi2Supported();
+    static bool isHiZHistorySupported();
 
     Tempest::RenderPipeline  lights, lightsRq, lightsVsm;
+    Tempest::RenderPipeline  lightsVsmHard;  // [INTERNAL] vsmLampSoft=0: lamp shadows in one gather, no PCSS
+    Tempest::RenderPipeline  lightsVsmProbe; // OPENGOTHIC_VSM_LAMP and OPENGOTHIC_VSM_STATS: lamp filter study
     Tempest::RenderPipeline  directLight,  directLightSh, directLightRq;
     Tempest::RenderPipeline  ambientLight, ambientLightSsao, ambientLightSurf;
 
     Tempest::ComputePipeline copyBuf;
     Tempest::ComputePipeline copyImg;
     Tempest::ComputePipeline patch;
+    Tempest::ComputePipeline patchCopy; // InstanceStorage history: cur -> prev by a list in the patch buffer
     Tempest::RenderPipeline  copy, downscale;
     Tempest::RenderPipeline  stash;
     Tempest::RenderPipeline  bink;
 
-    Tempest::ComputePipeline ssao, ssaoBlur;
+    Tempest::ComputePipeline ssao, ssaoBlur, ssaoDepth;
 
     Tempest::ComputePipeline irradiance;
 
@@ -66,32 +68,50 @@ class Shaders {
     Tempest::RenderPipeline  skyViewLut, skyViewCldLut, sky, skySep;
     Tempest::RenderPipeline  fog;
     Tempest::RenderPipeline  fog3dHQ;
+    Tempest::RenderPipeline  fog3dHQSky;     // fog3dHQ with the sky seen from the camera (FOG_SKY_VIS), under GI
+    Tempest::ComputePipeline fogSkyVis;      // fog_sky_vis.comp: the sky seen from the camera, with ray query
+
+    // Blood on the GBuffer (physics stage 8, step 4c): albedo RGB, and roughness with material maps
+    Tempest::RenderPipeline  bloodDecal, bloodDecalAlbedo; // with and without the ORM target
+    Tempest::RenderPipeline  grass[2], grassCulled[2];      // indexed by whether the G-buffer writes history owners
+    Tempest::ComputePipeline grassCull, grassCullFinish;
+    Tempest::ComputePipeline grassContactMask;
     Tempest::RenderPipeline  sun;
-    Tempest::ComputePipeline cloudsLut, fogOcclusion;
+    Tempest::ComputePipeline cloudsLut, fogOcclusion, fogOcclusionEmpty;
     Tempest::ComputePipeline fogViewLut3d, fogViewLutSep;
     Tempest::ComputePipeline skyExposure;
-
-    Tempest::RenderPipeline  skyPathTrace;
+    Tempest::ComputePipeline eyeMeter;
 
     Tempest::RenderPipeline  underwaterT, underwaterS;
     Tempest::RenderPipeline  waterReflection, waterReflectionSSR;
 
     Tempest::RenderPipeline  tonemapping, tonemappingUpscale;
+    Tempest::RenderPipeline  motionView; // debug: gbufMotion as the frame (OPENGOTHIC_MOTION_VIEW=1)
+    Tempest::RenderPipeline  reactiveView; // debug: the TAA reactive mask as the frame (OPENGOTHIC_TAA_REACTIVE_VIEW=1)
+    Tempest::RenderPipeline  bloomDownKaris, bloomDown, bloomUp, bloomMix;
 
     // AA
     Tempest::ComputePipeline cmaa2EdgeColor2x2Presets[uint32_t(AaPreset::PRESETS_COUNT)];
     Tempest::ComputePipeline cmaa2ProcessCandidates;
     Tempest::RenderPipeline  cmaa2DeferredColorApply2x2;
+    Tempest::RenderPipeline  taaResolve, taaSharpen;
+    // temporal upscale (MetalFX Temporal): camera motion vectors, tonemapping with the bloom in it
+    Tempest::RenderPipeline  motionCamera, tonemappingBloom, tonemappingTaa;
+    Tempest::RenderPipeline  taauResolve, taauPrepare;
 
     // HUD
-    Tempest::RenderPipeline  gizmo, lightImposter;
 
     // HiZ
     Tempest::ComputePipeline hiZPot, hiZMip;
+    Tempest::ComputePipeline hizHistoryPot, hizHistoryMip, hizHistoryClassify, hizHistoryCompact, hizHistorySample, hizHistoryVerify;
 
     // Cluster
     Tempest::ComputePipeline clusterInit, clusterPatch;
     Tempest::ComputePipeline visibilityPassSh, visibilityPassHiZ, visibilityPassHiZCr;
+    Tempest::ComputePipeline visibilityPassShOrd, visibilityPassHiZOrd, visibilityPassHiZCrOrd;
+    Tempest::ComputePipeline visibilityPassHiZProbe, visibilityPassHiZProbeOrd;
+    Tempest::ComputePipeline visibilityPassHistory, visibilityPassHistoryOrd;
+    Tempest::ComputePipeline visibilityStats; // the frame profile's counters of the main view (DrawCommands::visibilityStats)
 
     // RT/RQ
     Tempest::RenderPipeline  rtDbg;
@@ -101,8 +121,10 @@ class Shaders {
     // GI
     Tempest::RenderPipeline  probeDbg, probeHitDbg;
     Tempest::ComputePipeline probeInit, probeClear, probeClearHash, probeMakeHash;
-    Tempest::ComputePipeline probeVote, probePrune, probeAlocation;
-    Tempest::ComputePipeline probeTrace, probeLighting;
+    Tempest::ComputePipeline probeVote, probePrune, probeAlocation, probeHitAlloc, probeClearVotes;
+    Tempest::ComputePipeline probeTrace, probeRelight, probeRelightNew, probeLighting, probeStats;
+    Tempest::ComputePipeline probeMakeHashOrdered, probeRelightOrdered, probeRelightNewOrdered, probeLightingOrdered, probeOrderRequests;
+    void prepareOrderedProbes();
     Tempest::RenderPipeline  probeAmbient;
 
     // GI-Surf
@@ -124,45 +146,24 @@ class Shaders {
 
     // Virtual shadow
     Tempest::ComputePipeline vsmVisibilityPass;
+    Tempest::ComputePipeline vsmCullMeshlets; // the meshlets of the visibility pass's candidates: count, then write
     Tempest::ComputePipeline vsmClear, vsmClearOmni, vsmCullLights, vsmMarkPages, vsmMarkOmniPages, vsmPostprocessOmni;
     Tempest::ComputePipeline vsmTrimPages, vsmSortPages, vsmListPages, vsmClumpPages, vsmAllocPages, vsmAlloc2Pages, vsmMergePages;
     Tempest::ComputePipeline vsmPackDraw0, vsmPackDraw1;
-    Tempest::ComputePipeline vsmFogPages, vsmFogShadow, vsmFogTrace;
-    Tempest::RenderPipeline  vsmFog;
+    Tempest::ComputePipeline vsmCullMeshletsStats, vsmPackDraw0Stats, vsmPackDraw1Stats, vsmCountPrimitives;
+    Tempest::ComputePipeline vsmFogPages, vsmFogShadow;
     Tempest::RenderPipeline  vsmDirectLight;
     Tempest::RenderPipeline  vsmDbg;
 
     Tempest::ComputePipeline vsmRendering;
 
-    // RTSM (Experimental)
-    Tempest::RenderPipeline  rtsmDirectLight;
-
-    Tempest::ComputePipeline rtsmClear, rtsmPages, rtsmFogPages, rtsmHiZ;
-    Tempest::ComputePipeline rtsmCulling, rtsmPosition;
-    Tempest::ComputePipeline rtsmMeshletCull, rtsmPrimCull;
-    Tempest::ComputePipeline rtsmRaster;
-
-    Tempest::ComputePipeline rtsmClearOmni;
-    Tempest::ComputePipeline rtsmCullLights, rtsmCompactLights, rtsmCullingOmni;
-    Tempest::ComputePipeline rtsmPositionOmni;
-    Tempest::ComputePipeline rtsmMeshletOmni, rtsmBackfaceOmni;
-    Tempest::ComputePipeline rtsmLightsOmni, rtsmBboxesOmni, rtsmCompactOmni, rtsmTaskOmni;
-    Tempest::ComputePipeline rtsmPrimOmni, rtsmRasterOmni;
-
-    Tempest::ComputePipeline rtsmRendering, rtsmRenderingOmni; //reference
-    Tempest::RenderPipeline  rtsmDbg;
-
-    Tempest::ComputePipeline swRaytracing, swRaytracing64;
-    Tempest::ComputePipeline swRaytracing8;
-
-    // Software rendering
-    Tempest::ComputePipeline swRendering;
-    Tempest::RenderPipeline  swRenderingDbg;
-
     // Inventory
     Tempest::RenderPipeline  inventory;
 
-    const Tempest::RenderPipeline* materialPipeline(const Material& desc, DrawCommands::Type t, PipelineType pt, bool bindless) const;
+    enum class Bough : uint8_t { None, Cards, Joint };
+    const Tempest::RenderPipeline* materialPipeline(const Material& desc, DrawCommands::Type t, PipelineType pt,
+                                                    bool bindless, Bough bough = Bough::None) const;
+    const Tempest::RenderPipeline& impostorPipeline(bool history, bool joint) const;
 
   private:
     struct Entry {
@@ -172,7 +173,11 @@ class Shaders {
       PipelineType            pipelineType = PipelineType::T_Main;
       bool                    bindless     = false;
       bool                    trivial      = false;
+      bool                    twoSided     = false;
+      Bough                   bough        = Bough::None;
       };
+
+    mutable Tempest::RenderPipeline impostor[2][2];
 
     void                     setupOptions();
     void                     compileKeyShaders();
@@ -182,10 +187,12 @@ class Shaders {
     Tempest::RenderPipeline  postEffect(std::string_view name, Tempest::RenderState::ZTestMode ztest);
     Tempest::RenderPipeline  postEffect(std::string_view vs, std::string_view fs, Tempest::RenderState::ZTestMode ztest = Tempest::RenderState::ZTestMode::LEqual);
     Tempest::ComputePipeline computeShader(std::string_view name);
+    void compileGrassShaders(bool historySupported);
     Tempest::RenderPipeline  fogShader (std::string_view name);
     Tempest::RenderPipeline  inWaterShader   (std::string_view name, bool isScattering);
     Tempest::RenderPipeline  reflectionShader(std::string_view name, bool hasMeshlets);
     Tempest::RenderPipeline  ambientLightShader(std::string_view name);
+    Tempest::RenderPipeline bloodDecalShader(bool materialMaps);
 
     Options         opts;
     static Shaders* instance;

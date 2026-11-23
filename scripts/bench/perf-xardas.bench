@@ -1,0 +1,40 @@
+# Xardas's tower at midnight, the 23 wall torches of the game's first scene: what the torch's own model and fire
+# cost (reports/content/remaster/wall-torch-model). Four held views: the start room with two torches at 5 m, the
+# entrance passage with three, the lower hall with one, a torch of the stairs at 1.3 m, where its flame is largest
+# in the frame. Compare sets with scripts/perf-content.sh A B xardas. Animated draws are hidden on both sides: the
+# camera stands over the hero.
+seed 73013
+cheat god
+set time 0 0
+cadence normal
+overlay off
+ui off
+view full
+view hide animated morph
+cam lift off
+goto pos 29901 5198 -15441
+cam at 29901 5368 -15441 29330 5400 -15670
+# Ten real seconds after the first teleport for loading and native simulation, five after the next ones.
+wait 10000
+set time 0 0
+perf sample perf-xardas/view-1
+wait 8000
+perf stop
+goto pos 31648 4356 -16080
+cam at 31648 4526 -16080 31300 4500 -15900
+wait 5000
+perf sample perf-xardas/view-2
+wait 8000
+perf stop
+goto pos 30259 4303 -14765
+cam at 30259 4473 -14765 29834 4540 -14903
+wait 5000
+perf sample perf-xardas/view-3
+wait 8000
+perf stop
+goto pos 30862 4696 -14719
+cam at 30862 4866 -14719 30913 4850 -14841
+wait 5000
+perf sample perf-xardas/view-4
+wait 8000
+perf stop

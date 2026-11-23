@@ -1,0 +1,335 @@
+{
+ "source": "converted base meshes",
+ "targets": [
+  {
+   "id": "rig-crate-broken",
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
+   "budget_tris": 2500,
+   "zones": [
+    {
+     "key": "OWN_PROP_WOOD_PLANK",
+     "group": "WOOD",
+     "role": "box plank faces"
+    },
+    {
+     "key": "OWN_PROP_WOOD_BRACE",
+     "group": "WOOD",
+     "role": "corner posts and battens"
+    },
+    {
+     "key": "OWN_PROP_IRON_NAIL",
+     "group": "METAL",
+     "role": "small forged nail heads"
+    },
+    {
+     "key": "OWN_PROP_ROPE",
+     "group": "UNDEF",
+     "role": "twisted hemp rope"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -0.60001,
+    -0.49999,
+    -0.49999
+   ],
+   "bbox_max": [
+    0.59999,
+    0.50001,
+    0.50001
+   ],
+   "origin_in_bbox": [
+    0.500008,
+    0.49999,
+    0.49999
+   ],
+   "source_tris": 152,
+   "source_materials": [
+    "NW_HARBOUR_WOODCRATE_01.TGA",
+    "NW_HARBOUR_WOODCRATE_02.TGA"
+   ]
+  },
+  {
+   "id": "rig-rope",
+   "visual": "NW_HARBOUR_ROPE_01",
+   "budget_tris": 4200,
+   "zones": [
+    {
+     "key": "OWN_PROP_ROPE",
+     "group": "UNDEF",
+     "role": "twisted hemp rope"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -0.891244,
+    -0.23405,
+    -1.461081
+   ],
+   "bbox_max": [
+    0.891224,
+    0.23407,
+    1.461101
+   ],
+   "origin_in_bbox": [
+    0.500006,
+    0.499979,
+    0.499997
+   ],
+   "source_tris": 177,
+   "source_materials": [
+    "NW_HARBOUR_ROPEWALL_01.TGA",
+    "NW_CITY_ROPE_01.TGA"
+   ]
+  },
+  {
+   "id": "rig-cannon",
+   "visual": "NW_HARBOUR_CANON_01",
+   "budget_tris": 3500,
+   "zones": [
+    {
+     "key": "OWN_PROP_IRON_CAST",
+     "group": "METAL",
+     "role": "cast iron: cannon barrel, bollard"
+    },
+    {
+     "key": "OWN_PROP_IRON_BORE",
+     "group": "METAL",
+     "role": "the dark bore inside the muzzle"
+    },
+    {
+     "key": "OWN_PROP_WOOD_FRAME",
+     "group": "WOOD",
+     "role": "hewn beams, carriage cheeks, wheels"
+    },
+    {
+     "key": "OWN_PROP_IRON_BAND",
+     "group": "METAL",
+     "role": "forged straps, caps, pins and bolts"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -0.496198,
+    -0.492029,
+    -0.895809
+   ],
+   "bbox_max": [
+    0.496178,
+    0.492049,
+    0.895829
+   ],
+   "origin_in_bbox": [
+    0.50001,
+    0.49999,
+    0.499994
+   ],
+   "source_tris": 382,
+   "source_materials": [
+    "NW_HARBOUR_WOOD_IRON_01.TGA",
+    "NW_HARBOUR_CANON_01.TGA",
+    "NW_HARBOUR_CANONHOLE.TGA"
+   ]
+  },
+  {
+   "id": "rig-net-big",
+   "visual": "NW_HARBOUR_FISHINGNETBIG",
+   "budget_tris": 3600,
+   "zones": [
+    {
+     "key": "OWN_PROP_NET",
+     "group": "UNDEF",
+     "role": "knotted hemp net, alpha-tested meshes"
+    },
+    {
+     "key": "OWN_PROP_NET_UNDER",
+     "group": "UNDEF",
+     "role": "lower layers of a net heap, seen through the top ones: darker"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -1.158737,
+    -0.216871,
+    -1.544673
+   ],
+   "bbox_max": [
+    1.16674,
+    0.216891,
+    1.544693
+   ],
+   "origin_in_bbox": [
+    0.498279,
+    0.499977,
+    0.499997
+   ],
+   "source_tris": 62,
+   "source_materials": [
+    "NW_HARBOUR_FISHINGNET_01.TGA"
+   ]
+  },
+  {
+   "id": "rig-net-small",
+   "visual": "NW_HARBOUR_FISHINGNETSMALL",
+   "budget_tris": 2400,
+   "zones": [
+    {
+     "key": "OWN_PROP_NET",
+     "group": "UNDEF",
+     "role": "knotted hemp net, alpha-tested meshes"
+    },
+    {
+     "key": "OWN_PROP_NET_UNDER",
+     "group": "UNDEF",
+     "role": "lower layers of a net heap, seen through the top ones: darker"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -0.748772,
+    -0.189613,
+    -0.862194
+   ],
+   "bbox_max": [
+    0.748752,
+    0.189633,
+    0.862215
+   ],
+   "origin_in_bbox": [
+    0.500007,
+    0.499974,
+    0.499994
+   ],
+   "source_tris": 62,
+   "source_materials": [
+    "NW_HARBOUR_FISHINGNET_01.TGA"
+   ]
+  },
+  {
+   "id": "rig-net-rack",
+   "visual": "NW_HARBOUR_FISHINGNET_01",
+   "budget_tris": 9000,
+   "zones": [
+    {
+     "key": "OWN_PROP_WOOD_FRAME",
+     "group": "WOOD",
+     "role": "hewn beams, carriage cheeks, wheels"
+    },
+    {
+     "key": "OWN_PROP_NET",
+     "group": "UNDEF",
+     "role": "knotted hemp net, alpha-tested meshes"
+    },
+    {
+     "key": "OWN_PROP_NET_ROLL",
+     "group": "UNDEF",
+     "role": "rolled-up net bundles, opaque"
+    },
+    {
+     "key": "OWN_PROP_ROPE",
+     "group": "UNDEF",
+     "role": "twisted hemp rope"
+    },
+    {
+     "key": "OWN_PROP_IRON_BAND",
+     "group": "METAL",
+     "role": "forged straps, caps, pins and bolts"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -3.045411,
+    0.0,
+    -4.313542
+   ],
+   "bbox_max": [
+    2.709709,
+    4.524988,
+    4.4702
+   ],
+   "origin_in_bbox": [
+    0.529166,
+    -0.0,
+    0.491083
+   ],
+   "source_tris": 1030,
+   "source_materials": [
+    "NW_HARBOUR_WOOD_IRON_01.TGA",
+    "NW_HARBOUR_ROPEWALL_01.TGA",
+    "NW_CITY_ROPE_01.TGA",
+    "NW_HARBOUR_FISHINGNET_03.TGA",
+    "NW_HARBOUR_FISHINGNET_04.TGA"
+   ]
+  },
+  {
+   "id": "rig-bollard-rope",
+   "visual": "NW_HARBOUR_IRONROPEHOLDER_WROPE_01",
+   "budget_tris": 2000,
+   "zones": [
+    {
+     "key": "OWN_PROP_IRON_CAST",
+     "group": "METAL",
+     "role": "cast iron: cannon barrel, bollard"
+    },
+    {
+     "key": "OWN_PROP_ROPE",
+     "group": "UNDEF",
+     "role": "twisted hemp rope"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -0.548678,
+    -0.48697,
+    -0.414908
+   ],
+   "bbox_max": [
+    0.548658,
+    0.48699,
+    0.414928
+   ],
+   "origin_in_bbox": [
+    0.500009,
+    0.49999,
+    0.499988
+   ],
+   "source_tris": 162,
+   "source_materials": [
+    "NW_HARBOUR_ROPEWALL_01.TGA",
+    "NW_HARBOUR_BLACKIRON_01.TGA"
+   ]
+  },
+  {
+   "id": "rig-bollard",
+   "visual": "NW_HARBOUR_IRONROPEHOLDER_01",
+   "budget_tris": 1200,
+   "zones": [
+    {
+     "key": "OWN_PROP_IRON_CAST",
+     "group": "METAL",
+     "role": "cast iron: cannon barrel, bollard"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -0.590615,
+    -0.48697,
+    -0.429813
+   ],
+   "bbox_max": [
+    0.590595,
+    0.48699,
+    0.429833
+   ],
+   "origin_in_bbox": [
+    0.500008,
+    0.49999,
+    0.499988
+   ],
+   "source_tris": 98,
+   "source_materials": [
+    "NW_HARBOUR_BLACKIRON_01.TGA"
+   ]
+  }
+ ]
+}

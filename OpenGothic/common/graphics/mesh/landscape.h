@@ -12,21 +12,31 @@ class PackedMesh;
 class Landscape final {
   public:
     Landscape(VisualObjects& visual, const PackedMesh& wmesh);
+    Landscape(VisualObjects& visual, const PackedMesh& wmesh, LandscapePages& pages, const Tempest::Vec3& texturePosition);
+    ~Landscape();
 
     void setVisible(bool visible);
-
-    const Tempest::StorageBuffer& bvh()   const { return bvhNodes; }
+    size_t levelRecordCount() const { return levelRecords; }
 
   private:
+    void init(const PackedMesh& packed, bool wholeWorld, const Tempest::Vec3* texturePosition = nullptr);
     using Item = VisualObjects::Item;
 
     struct Block {
       Item mesh;
       };
 
-    std::vector<Block>     blocks;
+    // The ray scene: the solid (0) and the alpha-tested (1) submeshes as a BLAS each, a geometry per submesh, built
+    // with the Landscape (a chunk: at its publication) and recycled with it; water keeps a BLAS of its submesh
+    struct RtPart {
+      Tempest::AccelerationStructure blas;
+      size_t                         id = size_t(-1);  // VisualObjects::addRtLandscape
+      };
+
+    VisualObjects&         visual;
     StaticMesh             mesh;
     Tempest::StorageBuffer meshletDesc;
-
-    Tempest::StorageBuffer bvhNodes;
+    std::vector<Block>     blocks;
+    size_t                 levelRecords = 0;
+    RtPart                 rt[2];
   };

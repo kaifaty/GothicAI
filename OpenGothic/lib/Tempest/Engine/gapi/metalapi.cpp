@@ -23,6 +23,21 @@
 
 #include <Metal/Metal.hpp>
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "frameprofile.h"
+
+void Tempest::Detail::profileGpu(MTL::CommandBuffer* cmd) {
+  auto* record=FrameProfile::gpuSubmitted();
+  if(record==nullptr) return;
+  cmd->addCompletedHandler(^(MTL::CommandBuffer* completed) {
+    if(completed->status()==MTL::CommandBufferStatusCompleted)
+      FrameProfile::gpuCompleted(record,completed->GPUStartTime(),completed->GPUEndTime());
+    else
+      FrameProfile::gpuCompleted(record,0,0);
+    });
+  }
+#endif
+
 using namespace Tempest;
 using namespace Tempest::Detail;
 
@@ -127,6 +142,12 @@ AbstractGraphicsApi::PTexture MetalApi::createTexture(AbstractGraphicsApi::Devic
   return PTexture(new MtTexture(dev,p,mips,frm));
   }
 
+AbstractGraphicsApi::PTexture MetalApi::createTextureAsync(AbstractGraphicsApi::Device* d,
+                                                          const Pixmap& p, TextureFormat frm, uint32_t mips) {
+  auto& dev=*reinterpret_cast<MtDevice*>(d);
+  return PTexture(new MtTexture(dev,p,mips,frm,false));
+  }
+
 AbstractGraphicsApi::PTexture MetalApi::createTexture(AbstractGraphicsApi::Device *d,
                                                       const uint32_t w, const uint32_t h, uint32_t mips, TextureFormat frm) {
   auto& dev = *reinterpret_cast<MtDevice*>(d);
@@ -154,6 +175,21 @@ AbstractGraphicsApi::PRtAs MetalApi::createBottomAccelerationStruct(Device* d, c
 AbstractGraphicsApi::PRtAs MetalApi::createTopAccelerationStruct(Device* d, const RtInstance* inst, AccelerationStructure*const* as, size_t size) {
   auto& dev = *reinterpret_cast<MtDevice*>(d);
   return PRtAs(new MtTopAccelerationStructure(dev,inst,as,size));
+  }
+
+AbstractGraphicsApi::PRtAs MetalApi::createTopAccelerationStruct(Device* d, size_t capacity) {
+  auto& dev = *reinterpret_cast<MtDevice*>(d);
+  return PRtAs(new MtTopAccelerationStructure(dev,capacity));
+  }
+
+size_t MetalApi::rtInstanceSize() const {
+  return sizeof(MTL::AccelerationStructureUserIDInstanceDescriptor);
+  }
+
+void MetalApi::packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                              AccelerationStructure* as, void* slot) {
+  (void)d;
+  reinterpret_cast<MtTopAccelerationStructure&>(tlas).pack(inst, as, slot);
   }
 
 AbstractGraphicsApi::DescArray* MetalApi::createDescriptors(Device* d, Texture** tex, size_t cnt, uint32_t mipLevel) {
@@ -203,6 +239,10 @@ std::shared_ptr<AbstractGraphicsApi::Fence> MetalApi::submit(Device* d, CommandB
     throw DeviceLostException();
 
   MTL::CommandBuffer& cmd = *cx.impl;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(&cmd);
+  cx.submitGpuProfile();
+#endif
   dx->onSubmit();
   cmd.addCompletedHandler(^(MTL::CommandBuffer* c){
     const MTL::CommandBufferStatus s = c->status();

@@ -806,9 +806,13 @@ class NpcWill:
             return
         act = str(rule.action(self.cards.get(npc)))
         action = f"far:{motive['id']}"
+        defense = None
         if act == "fight":
             crime = self._crime(motive)
-            if crime is None or await self.fight_far(crime, npc, generation) is None:
+            if crime is None:
+                return
+            defense = await self.fight_far(crime, npc, generation)
+            if defense is None:
                 return
         if generation != self._generation or self.npc_crimes.settled(cid):
             return
@@ -817,7 +821,10 @@ class NpcWill:
         attempt = next(a for a in reversed(self.attempts()) if a["action"] == action)
         if act == "accuse":
             self._accused(motive, far=True)
-        self._outcome(attempt, "completed", "far_meeting")
+        if defense is not None and defense.get("outcome") == "timeout":
+            self._outcome(attempt, "aborted", "timeout")
+        else:
+            self._outcome(attempt, "completed", "far_meeting")
 
     def _reacted(self, motive: Fact) -> bool:
         original = self.npc_crimes.crime(motive["crime"])

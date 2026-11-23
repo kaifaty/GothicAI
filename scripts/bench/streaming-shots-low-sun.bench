@@ -1,0 +1,55 @@
+# The views of streaming-shots at a low sun, for the ray scene with the landscape by chunks (step 1c of the RT
+# revisit, reports/render-features/2026-11-08-rt-revisit/step-1c.md): a sun shadow ray from a hit is longer than the
+# Far range (1 km), so a hill beyond it that shades the view goes missing. Run with OPENGOTHIC_RT=1 OPENGOTHIC_GI=1,
+# once with OPENGOTHIC_STREAMING=0 and once without it, and compare the pairs cell by cell
+# (scripts/gi_compare.py --tolerance 5). 20:30: the sun 12.6 degrees high in the west; 6:00: 15 degrees in the east.
+seed 73013
+deterministic on
+cheat god
+world-check NEWWORLD.ZEN
+set time 20 30
+overlay off
+ui off
+view full
+cam lift off
+watch player
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+cam look 120
+cam world 700 280 0
+wait 10000
+cam hold
+streaming wait
+shot low-sun-market
+wait 34
+goto pos 5391 320 -5822
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+streaming wait
+shot low-sun-harbour
+wait 34
+goto NW_FOREST_PATH_16
+cam look 150
+cam world 500 230 0
+wait 10000
+cam hold
+streaming wait
+shot low-sun-forest
+wait 34
+# Above the lighthouse, looking inland across the city towards the distant forest (range 300-800 m).
+goto pos 30000 4000 -12000
+cam look 120
+cam world 42000 6500 138.5
+wait 10000
+cam hold
+streaming wait
+shot low-sun-island
+wait 34
+set time 6 0
+wait 10000
+cam hold
+streaming wait
+shot low-sun-island-morning
+wait 34

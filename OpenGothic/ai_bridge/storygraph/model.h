@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusVm;
   }
 
@@ -80,7 +80,7 @@ struct Model final {
 // lines of OU.BIN: line name (uppercase) -> subtitle in the game codepage
 using LineTexts = std::unordered_map<std::string,std::string>;
 
-Model       buildModel(zenkit::DaedalusVm& vm, const Bytecode& code, const Lifter& lifter, const LineTexts& lines);
+Model       buildModel(daedalus::DaedalusVm& vm, const Bytecode& code, const Lifter& lifter, const LineTexts& lines);
 
 std::string toJson(const Model& m, bool pretty);
 std::string toJson(const ExprP& e);

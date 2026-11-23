@@ -536,6 +536,11 @@ void DxCommandBuffer::dispatchIndirect(const AbstractGraphicsApi::Buffer& indire
   impl->ExecuteIndirect(sign, 1, ind.impl.get(), UINT64(offset), nullptr, 0);
   }
 
+void DxCommandBuffer::drawIndexedIndirect(const AbstractGraphicsApi::Buffer&, Detail::IndexClass,
+                                          const AbstractGraphicsApi::Buffer&, size_t) {
+  throw std::system_error(GraphicsErrc::UnsupportedExtension, "indexed indirect draw");
+  }
+
 void DxCommandBuffer::setPipeline(AbstractGraphicsApi::Pipeline& p) {
   DxPipeline& px     = reinterpret_cast<DxPipeline&>(p);
 

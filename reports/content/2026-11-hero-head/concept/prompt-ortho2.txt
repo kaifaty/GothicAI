@@ -1,0 +1,7 @@
+Orthographic modelling reference sheet of one man's head, neck and top of the shoulders: exactly two views side by side on a plain mid-grey background (#7a7c80) — on the left a strict front view, on the right a strict left profile view (the face looking to the left of the image). No perspective, like orthographic camera blueprints for a 3D sculptor. Both views at the same scale, with the eyes, the nose tip, the mouth and the chin on the same horizontal lines in both views. Neutral relaxed expression, mouth closed, eyes looking straight ahead, brows relaxed (not frowning). Flat even diffuse light from the front, very soft shadows, no rim light, so the forms and the outline read clearly. Realistic high-end 3D game character sculpt look.
+
+The man is the one in man.png: keep exactly his face, head shape, proportions, skin, grey-blue eyes, eyebrows, forehead wrinkles, the two faint scratches on the cheekbone, the goatee joined with the moustache with only stubble on the jaw, and the greasy slicked-back hair with olive-golden strands and the short ponytail tied with a leather thong. Keep his face slightly uneven, not mirrored: the left eyebrow a little higher, the nose bridge very slightly off centre, one mouth corner a little lower.
+
+Clothing only as a hint: the collar of a coarse undyed linen shirt, dull grey-brown.
+
+Avoid: perspective distortion, a three-quarter turn, a tilted head, dramatic lighting, a frown, a different face from man.png, a mirrored symmetrical face, a full beard along the jaw, orange or golden colour cast, painterly strokes.

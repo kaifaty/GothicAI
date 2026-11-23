@@ -290,6 +290,13 @@ def test_remote_dispatch_checks_each_variant_against_its_index(tmp_path, set_nam
     tools = capture / "runtime/tools"
     tools.mkdir(parents=True)
     (tools / "capture-city.sh").write_text(SCRIPT.read_text())
+    for name in ("ryzen_game.py", "base-ensure.sh"):
+        (tools / name).write_text((SCRIPT.parents[1] / name).read_text())
+    settings = tmp_path / "gothic-ai/game-settings/system"
+    settings.mkdir(parents=True)
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (settings / name).write_text("fixture")
+    (tmp_path / "gothic-ai/game-base.json").write_text(json.dumps({"base": "a" * 64, "videos": ""}))
     (tools / "city.bench").write_text("goto MARKT\nshot market\n")
     for variant in variants:
         directory = capture / "content" / variant / "materials"
@@ -319,16 +326,30 @@ Path(os.environ['OPENGOTHIC_CENSUS']).write_text(json.dumps({
     'files': [original] if variant == 'before' else [], 'replacements': replacements}))
 PY
 ''')
-    result = subprocess.run(["bash", str(SCRIPT), "--remote", str(task), "fixture", set_name],
+    result = subprocess.run(["bash", str(tools / "capture-city.sh"), "--remote", str(task), "fixture", set_name],
                             capture_output=True, text=True, env={**os.environ, "HOME": str(tmp_path)})
     assert result.returncode == 0, result.stdout + result.stderr
     assert [line.split(":", 1)[0] for line in result.stdout.splitlines()] == list(variants)
     assert {path.name for path in (task / "runs/fixture").iterdir()} == set(variants)
 
 
-def test_census_rejects_compiled_original_alias_even_with_replacement(tmp_path):
+def test_census_accepts_prepared_base_originals(tmp_path):
+    directory, scenario, index, census, original = fixture_capture(tmp_path, "before")
+    census["files"] = []
+    census["replacements"] = [dict(original, kind="basetexture", replacement="/base/textures/wall.dds")]
+    (directory / "census.json").write_text(json.dumps(census))
+    result = run_check(directory, scenario, index, "before")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "replaced=0 originals_opened=1" in result.stdout
+
+
+@pytest.mark.parametrize("source", ("archive", "base"))
+def test_census_rejects_compiled_original_alias_even_with_replacement(tmp_path, source):
     directory, scenario, index, census, original = fixture_capture(tmp_path)
-    census["files"].append(original)
+    if source == "archive":
+        census["files"].append(original)
+    else:
+        census["replacements"].append(dict(original, kind="basetexture", replacement="/base/textures/wall.dds"))
     (directory / "census.json").write_text(json.dumps(census))
     result = run_check(directory, scenario, index)
     assert result.returncode != 0
@@ -375,6 +396,11 @@ def test_capture_rejects_incomplete_or_incorrect_work(tmp_path, failure):
 
 @pytest.mark.parametrize("escape", ["../outside.dds", "/outside.dds", "escape.dds"])
 def test_packed_set_rejects_dds_paths_escaping_material_directory(tmp_path, escape):
+    # the script checks the game on Ryzen before it packs: a stub ssh answers, so the test stays on this machine
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "ssh").write_text("#!/bin/sh\nexit 0\n")
+    (stub / "ssh").chmod(0o755)
     source = tmp_path / "content/materials"
     source.mkdir(parents=True)
     (tmp_path / "content/outside.dds").write_bytes(b"not a generated map")
@@ -384,7 +410,7 @@ def test_packed_set_rejects_dds_paths_escaping_material_directory(tmp_path, esca
     }))
     result = subprocess.run(
         ["bash", str(SCRIPT), "--content-root", str(source.parent), "--output", str(tmp_path / "output")],
-        capture_output=True, text=True,
+        capture_output=True, text=True, env={**os.environ, "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}"},
     )
     assert result.returncode != 0
     assert "unsafe DDS path" in result.stderr

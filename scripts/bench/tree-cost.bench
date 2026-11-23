@@ -1,0 +1,54 @@
+# Pairs of frames for the cost of a forest of spruce A (reports/engine/2026-11-16-modern-trees/tree-cost.md): spruce
+# A alone on the top of the rock hill east of the meadow (LONE of scripts/content/fir_set.py, ground 63.8 m), seen
+# from the west at the height of the middle of its crown, from 24, 48, 97, 194 and 388 m: 18 m tall, it is about
+# 800, 400, 200, 100 and 50 px high at 2560x1440 (vertical field of view 67.5 degrees). The hill hides the forest
+# behind it. Run once per set of `fir_set.py forest` (the full spruce or thinned ones; the lone spruce is thinned
+# with its set) and put the halves side by side; two runs of one set give the noise of the wind and of TAA.
+# Stills at noon, each in the calm after a gust; the hero waits on the meadow west of the hill.
+#   OPENGOTHIC_CONTENT=<set> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh tree-cost /absolute/out
+# @timeout 600
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+set time 12 0
+
+goto pos 43700 3000 500
+clear 3000
+streaming wait
+cam at 46100 7283 500 48500 7283 500
+grass wait
+wait 4000
+foliage wait-lull 1500 0
+wait 1500
+shot lone-024
+wait 200
+
+cam at 43700 7283 500 48500 7283 500
+wait 2500
+foliage wait-lull 1500 0
+wait 1500
+shot lone-048
+wait 200
+
+cam at 38800 7283 500 48500 7283 500
+wait 2500
+foliage wait-lull 1500 0
+wait 1500
+shot lone-097
+wait 200
+
+cam at 29100 7283 500 48500 7283 500
+wait 2500
+foliage wait-lull 1500 0
+wait 1500
+shot lone-194
+wait 200
+
+cam at 9700 7283 500 48500 7283 500
+wait 2500
+foliage wait-lull 1500 0
+wait 1500
+shot lone-388
+wait 200

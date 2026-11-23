@@ -10,7 +10,6 @@ living on
 arrow setup
 wait 600
 sticking setup
-manual on
 equip ItRw_Bow_L_01
 give ItRw_Arrow 30
 stats str 150 dex 150 bow 100

@@ -1,4 +1,5 @@
 #include "navtransitions.h"
+#include "game/navigationeyeworld.h"
 #include "navdemos.h"
 
 #include "physics/navmesh.h"
@@ -153,7 +154,7 @@ void record(World& w,const std::string& reason,bool accepted) {
   const auto position=npc.position();
   const bool finitePosition=std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z);
   const auto rayStart=!finitePosition || (session.candidatePreparation && !session.candidateGround.teleported)?session.takeoff:position;
-  const auto obstruction=w.physic()->navigationRay(rayStart+Vec3(0,50,0),centimeters(a.end)+Vec3(0,50,0),&npc);
+  const auto obstruction=navigationRay(*w.physic(),rayStart+Vec3(0,50,0),centimeters(a.end)+Vec3(0,50,0),&npc);
   auto out=outputFile("transitions.jsonl",true);
   out<<"{\"from\":"<<std::quoted(session.from)<<",\"to\":"<<std::quoted(session.to)
      <<",\"link_id\":"<<linkId(a)<<",\"source_start_m\":["<<a.start[0]<<','<<a.start[1]<<','<<a.start[2]
@@ -271,7 +272,7 @@ void prepareCandidate(World& w) {
     }
   // A local ray only reconciles voxel height with the physical floor. It may
   // not pick a distant lower storey or move through an intervening wall.
-  const auto across=w.physic()->navigationRay(centimeters(g.site.snapped)+Vec3(0,CandidateFloorUpCm,0),
+  const auto across=navigationRay(*w.physic(),centimeters(g.site.snapped)+Vec3(0,CandidateFloorUpCm,0),
                                               ground.v+Vec3(0,CandidateFloorUpCm,0),&npc);
   if(across.hasCol) {record(w,"takeoff_inset_obstructed",false);return;}
   const auto water=w.physic()->waterRay(ground.v+Vec3(0,1,0),0);
@@ -450,7 +451,7 @@ bool NavTransitions::command(const std::vector<std::string>& args,World& world,N
     if(args.size()!=4 && args.size()!=5) throw std::runtime_error("navmesh "+args[1]+" NPC /abs/links.txt [attempt_ms]");
     if(session.active) throw std::runtime_error("navmesh probe already running");
     if(!std::filesystem::path(args[3]).is_absolute()) throw std::runtime_error("navmesh probe-links: input must be absolute");
-    auto* npc=world.findNpcByInstance(world.script().findSymbolIndex(args[2]));
+    auto* npc=world.findNpcByInstance(world.rules().findSymbolIndex(args[2]));
     if(!npc) throw std::runtime_error("navmesh probe-links: missing actor");
     std::ifstream input(args[3]);
     if(!input) throw std::runtime_error("navmesh probe-links: cannot read input");
@@ -483,7 +484,7 @@ bool NavTransitions::command(const std::vector<std::string>& args,World& world,N
   if(args.size()!=5 && args.size()!=6)
     throw std::runtime_error("navmesh probe NPC FROM TO [attempt_ms]");
   if(session.active) throw std::runtime_error("navmesh probe already running");
-  auto* npc=world.findNpcByInstance(world.script().findSymbolIndex(args[2]));
+  auto* npc=world.findNpcByInstance(world.rules().findSymbolIndex(args[2]));
   const auto* from=world.findPoint(args[3],false);
   const auto* to=world.findPoint(args[4],false);
   if(!npc || !from || !to) throw std::runtime_error("navmesh probe: missing actor or waypoint");

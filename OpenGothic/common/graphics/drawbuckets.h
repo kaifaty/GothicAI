@@ -2,11 +2,15 @@
 
 #include <Tempest/DescriptorArray>
 #include <Tempest/StorageBuffer>
+#include <array>
+#include <unordered_map>
 
 #include "material.h"
+#include "graphics/meshletspheres.h"
 
 class StaticMesh;
 class AnimMesh;
+namespace TreeBough { struct Page; }
 
 class DrawBuckets {
   public:
@@ -15,7 +19,11 @@ class DrawBuckets {
     struct Bucket {
       const StaticMesh* staticMesh = nullptr;
       const AnimMesh*   animMesh   = nullptr;
+      const TreeBough::Page* boughPage = nullptr;
       Material          mat;
+
+      const Tempest::StorageBuffer& iboBuffer() const;
+      const Tempest::StorageBuffer& vboBuffer() const;
       };
 
     class Id {
@@ -39,17 +47,23 @@ class DrawBuckets {
       friend class DrawBuckets;
       };
 
-    Id   alloc(const Material& mat, const StaticMesh& mesh);
+    Id   alloc(const Material& mat, const StaticMesh& mesh, const TreeBough::Page* page = nullptr);
     Id   alloc(const Material& mat, const AnimMesh&   mesh);
+    void invalidate(const StaticMesh& mesh);
 
     const Bucket& operator[](size_t i) { return bucketsCpu[i]; }
 
     auto ssbo() const -> const Tempest::StorageBuffer& { return bucketsGpu; }
-    auto buckets() -> const std::vector<Bucket>&;
+    auto buckets() const -> const std::vector<Bucket>&;
+    // the spheres of the meshlets of the buckets' static meshes (Bucket::meshletSpheres of scene.glsl)
+    auto meshletSpheres() const -> const Tempest::StorageBuffer& { return spheres.ssbo(); }
+    auto treeHiZBounds() const -> const Tempest::StorageBuffer& { return treeHiZBoundsGpu; }
+    const Tempest::StorageBuffer& primitiveOffsetTable() const { return primitiveOffsets; }
+    const Tempest::StorageBuffer& primitiveCountTable() const { return primitiveCounts; }
 
-    auto& textures() const { return desc.tex;     }
-    auto& normals()  const { return desc.normal;  }
-    auto& orm()      const { return desc.orm;     }
+    auto& textures() const { return textureDesc[currentFrame].arrays[0]; }
+    auto& normals()  const { return textureDesc[currentFrame].arrays[1]; }
+    auto& orm()      const { return textureDesc[currentFrame].arrays[2]; }
     auto& vbo()      const { return desc.vbo;     }
     auto& ibo()      const { return desc.ibo;     }
     auto& morphId()  const { return desc.morphId; }
@@ -58,7 +72,9 @@ class DrawBuckets {
     bool commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
   private:
-    void updateBindlessArrays();
+    void updateBindlessArrays(bool updateBuffers, uint8_t fId);
+    void updateTextureArrays(uint8_t fId);
+    void updatePrimitiveCounts(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     enum BucketFlg : uint32_t {
       BK_SOLID = 0x1,
@@ -70,6 +86,23 @@ class DrawBuckets {
       BK_MATERIAL_MAPS = 0x40,
       BK_ANTITILE = 0x80,
       BK_ANTITILE_ROTATE = 0x100,
+      BK_HASHED_ALPHA = 0x200,
+      BK_HAIR = 0x400,
+      BK_STRAND = 0x800,
+      BK_EYE = 0x1000,
+      BK_PROJECTION = 0x2000,
+      BK_FRINGE = 0x4000,
+      BK_FOLIAGE = 0x8000,
+      BK_GRASS = 0x10000,
+      BK_WINDOW = 0x20000,
+      BK_GROUND = 0x40000,
+      BK_VERGE = 0x80000,
+      BK_TRACK = 0x100000,
+      BK_TWO_SIDED = 0x200000,
+      BK_TWO_SIDED_FLIP = 0x400000,
+      BK_CROWN = 0x800000,
+      BK_CANOPY = 0x1000000,
+      BK_OWN_MESH = 0x2000000,
       };
 
     struct BucketGpu final {
@@ -82,21 +115,61 @@ class DrawBuckets {
       uint32_t       flags            = 0;
       float          uvScale          = 1.f;
       float          antitileCell     = 1.f;
-      uint32_t       padding[3]       = {};
+      uint32_t       diffuseFrames   = 0;
+      uint32_t       frameCount      = 0;
+      uint32_t       frameDuration   = 0;
+      float          turbidity        = 0.f;
+      float          turbidityDepth   = 0.f;
+      float          emissive         = 0.f;
+      float          reactive         = 0.f; // Material::taaReactive (graphics plan 1v); scalars: an array member here
+                                             // faulted the GPU on Metal
+      // the layer over a projection (BK_FRINGE, material_projection.glsl): where its three maps sit in the bindless
+      // arrays, its repeats per repeat of the projection, its bands as shares of v (Material::Fringe)
+      uint32_t       fringeTex        = 0;
+      float          fringeScale      = 0.f;
+      float          fringeTop0       = 0.f;
+      float          fringeTop1       = 0.f;
+      float          fringeBottom0    = 0.f;
+      float          fringeBottom1    = 0.f;
+      uint32_t       foliage          = 0;   // BK_FOLIAGE: FoliageWind::pack of Material::foliage;
+                                             // BK_GRASS: Grass::pack of Material::grass;
+                                             // BK_WINDOW: WindowGlow::pack of Material::window
+      float          foliageReach     = 0.f; // its mesh at rest: the largest arm, or a tree's height (FoliageTree::reach)
+      uint32_t       meshletSpheres   = MeshletSpheres::None; // its mesh's first sphere in meshletSpheres()
+      uint32_t       treeHiZFirst     = 0;   // range of rest boxes in treeHiZBounds()
+      uint32_t       treeHiZCount     = 0;
+      uint32_t       padding          = 0;   // the stride of the GPU's array rounds up to 16 bytes
       };
-    static_assert(sizeof(BucketGpu)==80); // GPU array stride of Bucket in scene.glsl
+    static_assert(sizeof(BucketGpu)==144); // GPU array stride of Bucket in scene.glsl
 
     struct {
-      Tempest::DescriptorArray tex;
-      Tempest::DescriptorArray normal;
-      Tempest::DescriptorArray orm;
       Tempest::DescriptorArray vbo;
       Tempest::DescriptorArray ibo;
       Tempest::DescriptorArray morphId;
       Tempest::DescriptorArray morph;
       } desc;
 
+    using TextureSlot = std::pair<uint8_t,uint32_t>;
+    struct TextureArrays {
+      std::array<Tempest::DescriptorArray,3> arrays;
+      std::vector<TextureSlot> pending;
+      bool rebuild = true;
+      };
+    std::vector<TextureArrays> textureDesc;
+    std::array<std::vector<const Tempest::Texture2d*>,3> textureSlots;
+    std::unordered_map<const Tempest::Texture2d*,std::vector<TextureSlot>> textureUsers;
+    uint8_t currentFrame = 0;
+
+    // the fringes' maps (albedo, normal, ORM) in the bindless arrays after the buckets and their frames, one entry
+    // per distinct set: BucketGpu::fringeTex is the first's index plus its place here. A meadow's two layers
+    // (Material::Layers) are two entries one after the other, the sward's first
+    std::vector<std::array<const Tempest::Texture2d*,3>> fringeMaps;
+
     std::vector<Bucket>      bucketsCpu;
     Tempest::StorageBuffer   bucketsGpu;
+    Tempest::StorageBuffer   treeHiZBoundsGpu;
+    Tempest::StorageBuffer   primitiveOffsets, primitiveCounts;
+    MeshletSpheres           spheres;
     bool                     bucketsDurtyBit = false;
+    uint64_t                 textureGeneration = 0;
   };

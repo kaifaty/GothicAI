@@ -1,0 +1,204 @@
+{
+ "about": "Placements of the harbour's traces of life (asset harbour-life, step M4 of docs/world-detail-plan.md); scripts/content/harbour_life.py turns them into the vob layer. x, z: Gothic cm; yaw: degrees; wall: put the item this many cm off the nearest wall, local X along it, yaw added; on: stand on the top of that earlier item; tilt: [about x, about z] degrees; sink/lift: cm.",
+ "items": [
+  {
+   "key": "life-fish-basket-1",
+   "zone": "fishers",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "x": -8185,
+   "z": -5665,
+   "yaw": 20,
+   "sink": 1
+  },
+  {
+   "key": "life-fish-basket-2",
+   "zone": "fishers",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "x": -7955,
+   "z": -5625,
+   "yaw": -35,
+   "sink": 1
+  },
+  {
+   "key": "life-fish-bucket-1",
+   "zone": "fishers",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": -8075,
+   "z": -5590,
+   "yaw": 0,
+   "sink": 1
+  },
+  {
+   "key": "life-fish-bucket-2",
+   "zone": "fishers",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": -7790,
+   "z": -5955,
+   "yaw": 140,
+   "sink": 1
+  },
+  {
+   "key": "life-crane-basket-1",
+   "zone": "crane",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "x": -1560,
+   "z": -3480,
+   "yaw": 70,
+   "sink": 1
+  },
+  {
+   "key": "life-crane-bucket-1",
+   "zone": "crane",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": -1445,
+   "z": -3565,
+   "yaw": 210,
+   "sink": 1
+  },
+  {
+   "key": "life-crane-basket-2",
+   "zone": "crane",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "x": -1250,
+   "z": -3605,
+   "yaw": -20,
+   "sink": 1
+  },
+  {
+   "key": "life-werft-broken-1",
+   "zone": "werft",
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
+   "x": 400,
+   "z": 1800,
+   "yaw": 35,
+   "tilt": [
+    0,
+    6
+   ],
+   "sink": 3
+  },
+  {
+   "key": "life-werft-bucket-1",
+   "zone": "werft",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": 530,
+   "z": 1730,
+   "yaw": -40,
+   "sink": 1
+  },
+  {
+   "key": "life-poor-bucket-1",
+   "zone": "poor",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": 520,
+   "z": -4610,
+   "yaw": 80,
+   "sink": 1
+  },
+  {
+   "key": "life-poor-wood-1",
+   "zone": "poor",
+   "visual": "OC_FIREWOOD_V2",
+   "x": 1900,
+   "z": -4700,
+   "wall": 3,
+   "yaw": 5,
+   "sink": 2
+  },
+  {
+   "key": "life-poor-wood-2",
+   "zone": "poor",
+   "visual": "OC_FIREWOOD_V2",
+   "x": 2250,
+   "z": -5200,
+   "wall": 3,
+   "yaw": -12,
+   "sink": 2
+  },
+  {
+   "key": "life-alley-trash-1",
+   "zone": "alley",
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
+   "x": 1000,
+   "z": -6440,
+   "wall": 18,
+   "yaw": 25,
+   "tilt": [
+    0,
+    7
+   ],
+   "sink": 3
+  },
+  {
+   "key": "life-alley-trash-2",
+   "zone": "alley",
+   "visual": "OC_BARREL_V1_DESTROYED",
+   "x": 1130,
+   "z": -6480,
+   "wall": 12,
+   "yaw": 70,
+   "sink": 3
+  },
+  {
+   "key": "life-alley-wood-1",
+   "zone": "alley",
+   "visual": "OC_FIREWOOD_V2",
+   "x": 1650,
+   "z": -6050,
+   "wall": 3,
+   "yaw": 54,
+   "sink": 2,
+   "tilt": [
+    0,
+    5
+   ]
+  },
+  {
+   "key": "life-alley-trash-4",
+   "zone": "alley",
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
+   "x": 2290,
+   "z": -6380,
+   "wall": 8,
+   "yaw": -150,
+   "sink": 3
+  },
+  {
+   "key": "life-alley-bucket-1",
+   "zone": "alley",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": 2620,
+   "z": -6170,
+   "yaw": 0,
+   "sink": 1
+  },
+  {
+   "key": "life-alley-laundry-1",
+   "zone": "alley",
+   "visual": "OWN_HARBOUR_LAUNDRY_01",
+   "x": 1450,
+   "z": -6420,
+   "wall": 140,
+   "yaw": 3,
+   "sink": 4
+  },
+  {
+   "key": "life-east-wood-1",
+   "zone": "east",
+   "visual": "OC_FIREWOOD_V2",
+   "x": 4300,
+   "z": -5780,
+   "yaw": 30,
+   "sink": 2
+  },
+  {
+   "key": "life-east-bucket-1",
+   "zone": "east",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": 4010,
+   "z": -6030,
+   "yaw": 25,
+   "sink": 1
+  }
+ ]
+}

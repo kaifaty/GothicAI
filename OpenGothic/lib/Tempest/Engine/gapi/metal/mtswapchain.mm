@@ -8,13 +8,12 @@
 
 #include "mtdevice.h"
 
-#ifdef __OSX__
-#import <AppKit/AppKit.h>
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "gapi/metalapi.h"
 #endif
 
-#ifdef __IOS__
-#import <UIKit/UIKit.h>
-#import <Foundation/Foundation.h>
+#ifdef __OSX__
+#import <AppKit/AppKit.h>
 #endif
 
 #import <QuartzCore/QuartzCore.hpp>
@@ -28,11 +27,6 @@ using namespace Tempest::Detail;
 #ifdef __OSX__
 using SysView = NSView;
 using SysWindow = NSWindow;
-#endif
-
-#ifdef __IOS__
-using SysView = UIView;
-using SysWindow = UIWindow;
 #endif
 
 @class MetalView;
@@ -57,8 +51,6 @@ struct MtSwapchain::Impl {
   CAMetalLayer* metalLayer() {
 #if defined(__OSX__)
     return reinterpret_cast<CAMetalLayer*>(wnd.contentView.layer);
-#elif defined(__IOS__)
-    return reinterpret_cast<CAMetalLayer*>(wnd.rootViewController.view.layer);
 #endif
     }
   };
@@ -66,8 +58,6 @@ struct MtSwapchain::Impl {
 static float backingScaleFactor(SysWindow* w) {
 #if defined(__OSX__)
   return [w screen].backingScaleFactor;
-#elif defined(__IOS__)
-  return [UIScreen mainScreen].scale;
 #endif
   }
 
@@ -75,18 +65,6 @@ static float backingScaleFactor(SysWindow* w) {
 static NSRect windowRect(NSWindow* wnd) {
   NSRect fr = [wnd contentRectForFrameRect:[wnd frame]];
   fr = [wnd convertRectToBacking:fr];
-  return fr;
-  }
-#elif defined(__IOS__)
-static CGRect windowRect(UIWindow* wnd) {
-  CGRect  fr    = wnd.rootViewController.view.frame;
-  CGFloat scale = wnd.contentScaleFactor;
-  // fr = [wnd convertRect:fr fromView:wnd.rootViewController.view];
-  
-  fr.origin.x    *= scale;
-  fr.origin.y    *= scale;
-  fr.size.width  *= scale;
-  fr.size.height *= scale;
   return fr;
   }
 #endif
@@ -105,8 +83,6 @@ MtSwapchain::MtSwapchain(MtDevice& dev, SystemApi::Window *w)
 #if defined(__OSX__)
   pimpl->view.wantsLayer = YES;
   pimpl->wnd.contentView = pimpl->view;
-#elif defined(__IOS__)
-  pimpl->wnd.rootViewController.view = pimpl->view;
 #endif
 
   CAMetalLayer* lay = pimpl->metalLayer();
@@ -115,10 +91,6 @@ MtSwapchain::MtSwapchain(MtDevice& dev, SystemApi::Window *w)
   lay.device = id<MTLDevice>(dev.impl.get());
     
   [lay setContentsScale:dpi];
-#if defined(__IOS__)
-  // Swapchain takes too much memory on 2GB iPhone
-  lay.maximumDrawableCount      = 2;
-#endif
   lay.pixelFormat               = MTLPixelFormatBGRA8Unorm;
   lay.allowsNextDrawableTimeout = NO;
   lay.framebufferOnly           = NO;
@@ -184,6 +156,9 @@ void MtSwapchain::present() {
   enc->endEncoding();
   cmd->presentDrawable(drawable);
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(cmd);
+#endif
   dev.onSubmit();
   cmd->addCompletedHandler(^(MTL::CommandBuffer* c){
     MTL::CommandBufferStatus s = c->status();

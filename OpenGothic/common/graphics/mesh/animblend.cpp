@@ -1,7 +1,8 @@
 #include "animblend.h"
 
 #include "animmath.h"
-#include "game/serialize.h"
+#include "animsample.h"
+#include "savearchive.h"
 
 #include <Tempest/Log>
 
@@ -16,7 +17,7 @@ using namespace Tempest;
 
 namespace {
 
-using Quat = zenkit::Quat;
+using Quat = asset::Quat;
 
 constexpr uint64_t MaxGap   = 250;     // ms between two frames: longer, and the velocity is not known
 constexpr float    MaxSpeed = 3000.f;  // cm/s of a bone in its parent
@@ -34,12 +35,12 @@ bool enabled = []() {
 
 AnimBlend::Params prm;
 
-Vec3 vec(const zenkit::Vec3& v) {
+Vec3 vec(const asset::Vec3& v) {
   return Vec3(v.x,v.y,v.z);
   }
 
-zenkit::Vec3 vec(const Vec3& v) {
-  return zenkit::Vec3(v.x,v.y,v.z);
+asset::Vec3 vec(const Vec3& v) {
+  return asset::Vec3(v.x,v.y,v.z);
   }
 
 float dot(const Vec3& a, const Vec3& b) {
@@ -117,6 +118,12 @@ bool AnimBlend::setParam(std::string_view name, float v) {
     prm.outSpeed = v;
   else if(name=="side")
     prm.sideSpeed = v;
+  else if(name=="blow")
+    prm.blowTime = v;
+  else if(name=="ease")
+    prm.easeScale = v;
+  else if(name=="easemax")
+    prm.easeMax = v;
   else
     return false;
   return true;
@@ -158,6 +165,7 @@ void AnimBlend::reset(size_t numBones) {
   last.assign(numBones,Sample());
   outTime  = 0;
   lastTime = 0;
+  easeSeq  = nullptr;
   external.clear();
   externalPrevious.clear();
   externalPreviousTime = 0;
@@ -195,6 +203,7 @@ void AnimBlend::setExternalTarget(const Sample* current, const Sample* next, siz
     cur[i].a=current+i;
     cur[i].b=next+i;
     cur[i].rate=rate;
+    cur[i].smooth=false;
     }
   }
 
@@ -206,7 +215,7 @@ float AnimBlend::externalWeight(uint64_t now) const {
   return std::clamp(externalFade.at(float(now-externalStart)*.001f),0.f,1.f);
   }
 
-void AnimBlend::saveExternal(Serialize& fout) const {
+void AnimBlend::saveExternal(SaveArchive& fout) const {
   fout.write(uint32_t(off.size()),outTime,lastTime,externalStart,externalClockPending);
   auto curve = [&](const Curve& c) {
     fout.write(c.t1,c.x0,c.v0,c.a0,c.A,c.B,c.C);
@@ -226,7 +235,7 @@ void AnimBlend::saveExternal(Serialize& fout) const {
     fout.write(i);
   }
 
-void AnimBlend::loadExternal(Serialize& fin, size_t expectedBones, bool hasVelocityState) {
+void AnimBlend::loadExternal(SaveArchive& fin, size_t expectedBones, bool hasVelocityState) {
   uint32_t count = 0;
   fin.read(count);
   if(count!=expectedBones || count==0)
@@ -337,7 +346,17 @@ void AnimBlend::prepare(size_t i, const Sample& target, const Sample& shown, flo
   const Quat rot = normalize(mul(fromRotVec(turn*dtNow),shown.rotation));
 
   Vec3 tvel, tturn;
-  if(c.a!=nullptr && c.b!=nullptr && c.rate>0) {
+  if(c.a!=nullptr && c.b!=nullptr && c.rate>0 && c.smooth) {
+    // on the curve through its keys the animation moves as the curve does at this time, not as the chord
+    // between the two keys: over a short step of the curve
+    static const float Step = 1.f/32.f;
+    const float  t0 = c.t+Step<=1.f ? c.t : 1.f-Step;
+    const Sample s0 = AnimSample::mix(c.before,*c.a,*c.b,c.after,t0);
+    const Sample s1 = AnimSample::mix(c.before,*c.a,*c.b,c.after,t0+Step);
+    tvel  = (vec(s1.position) - vec(s0.position))*(c.rate/Step);
+    tturn = rotVec(mul(s1.rotation,conj(s0.rotation)))*(c.rate/Step);
+    }
+  else if(c.a!=nullptr && c.b!=nullptr && c.rate>0) {
     tvel  = (vec(c.b->position) - vec(c.a->position))*c.rate;
     tturn = rotVec(mul(c.b->rotation,conj(c.a->rotation)))*c.rate;
     if(externalDriven) {
@@ -361,22 +380,39 @@ void AnimBlend::prepare(size_t i, const Sample& target, const Sample& shown, flo
   sw.dmove = vel - tvel;
   // the MDS: the new animation's blend in, the old one's blend out
   sw.time  = float(std::max(c.in,d.out))*0.001f*prm.scale;
+  // stopped at ease: as fast at most as the old one's blend out as a linear fade
+  sw.ease  = easeSeq!=nullptr && d.seq==easeSeq && prm.easeScale>0;
+  if(sw.ease)
+    sw.time = std::max(sw.time,float(d.out)*0.001f*prm.scale*prm.easeScale);
   pend.push_back(sw);
   }
 
 // The switches of this frame: one blend time for all, so that a limb stays one limb on the way (a
 // time per bone bent the legs of a stumbling waran apart). A large offset takes longer, not to whip
 void AnimBlend::begin(uint64_t now) {
-  float time = prm.minTime;
+  // the bones out of an animation stopped at ease share a time of their own (the arms and the trunk of one who
+  // gestured: no leg among them)
+  float time = prm.minTime, ease = prm.minTime;
+  bool  blow = false, eased = false, usual = false;
   for(auto& sw:pend) {
-    time = std::max(time,sw.time);
+    float& t = sw.ease ? ease : time;
+    (sw.ease ? eased : usual) = true;
+    t = std::max(t,sw.time);
     if(prm.turnSpeed>0)
-      time = std::max(time,1.875f*sw.angle/prm.turnSpeed);
+      t = std::max(t,1.875f*sw.angle/prm.turnSpeed);
     if(prm.moveSpeed>0)
-      time = std::max(time,1.875f*sw.len/prm.moveSpeed);
+      t = std::max(t,1.875f*sw.len/prm.moveSpeed);
+    const auto* seq = cur[sw.bone].seq;
+    blow = blow || (weaponBody && seq!=nullptr && seq->data!=nullptr && seq->isAttackAnim());
     }
   time      = std::min(time,std::max(prm.maxTime,prm.minTime));
-  lastBlend = std::max(lastBlend,time);
+  ease      = std::min(ease,std::max(prm.easeMax,prm.minTime));
+  if(weaponBody && blow) {
+    // into a blow nothing is at ease
+    time = std::min(time,prm.blowTime);
+    ease = time;
+    }
+  lastBlend = std::max(lastBlend,std::max(usual ? time : 0.f,eased ? ease : 0.f));
   if(externalDriven && externalClockPending) {
     externalFade.init(1.f,0.f,time,0.f);
     externalStart = now;
@@ -385,20 +421,20 @@ void AnimBlend::begin(uint64_t now) {
 
   // an offset and its velocity: a curve along it from its size, one across it from zero; a rotation
   // does not go out past MaxTurnOffset (limit), aside or along
-  auto init = [&](Curve& along, Curve& across, const Vec3& dir, Vec3& side, const Vec3& v, float x0, float limit) {
+  auto init = [&](Curve& along, Curve& across, const Vec3& dir, Vec3& side, const Vec3& v, float x0, float limit, float over) {
     const float va    = dot(dir,v);
-    float       out   = prm.outSpeed*x0/time;
-    float       aside = prm.sideSpeed*x0/time;
+    float       out   = prm.outSpeed*x0/over;
+    float       aside = prm.sideSpeed*x0/over;
     if(limit>0) {
-      out   = std::min(out,  std::max(limit-x0,0.f)/OutPerSpeed/time);
-      aside = std::min(aside,std::sqrt(std::max(limit*limit - x0*x0,0.f))/(SidePeak*time));
+      out   = std::min(out,  std::max(limit-x0,0.f)/OutPerSpeed/over);
+      aside = std::min(aside,std::sqrt(std::max(limit*limit - x0*x0,0.f))/(SidePeak*over));
       }
-    along.init(x0,va,time,out);
+    along.init(x0,va,over,out);
     const Vec3  vs = v - dir*va;
     const float s  = vs.length();
     if(s>1e-3f*std::max(x0,1.f)) {
       side = vs*(1.f/s);
-      across.init(0,s,time,aside);
+      across.init(0,s,over,aside);
       }
     };
 
@@ -406,13 +442,14 @@ void AnimBlend::begin(uint64_t now) {
     Offset& o = off[sw.bone];
     o = Offset();
     o.start = now;
+    const float t = sw.ease ? ease : time;
     if(sw.angle>MinAngle) {
       o.axis = sw.turn*(1.f/sw.angle);
-      init(o.rot,o.rotSide,o.axis,o.axisSide,sw.dturn,sw.angle,MaxTurnOffset);
+      init(o.rot,o.rotSide,o.axis,o.axisSide,sw.dturn,sw.angle,MaxTurnOffset,t);
       }
     if(sw.len>MinMove) {
       o.dir = sw.move*(1.f/sw.len);
-      init(o.pos,o.posSide,o.dir,o.dirSide,sw.dmove,sw.len,0);
+      init(o.pos,o.posSide,o.dir,o.dirSide,sw.dmove,sw.len,0,t);
       }
     o.end    = std::max(std::max(o.rot.t1,o.rotSide.t1),std::max(o.pos.t1,o.posSide.t1));
     o.active = o.end>0;
@@ -422,7 +459,7 @@ void AnimBlend::begin(uint64_t now) {
                     (unsigned long long)now,sw.bone,drv[sw.bone].seq ? drv[sw.bone].seq->name.c_str() : "physical",
                     cur[sw.bone].seq ? cur[sw.bone].seq->name.c_str() : "pose",
                     double(sw.angle*180.f/float(M_PI)),double(dot(o.axis,sw.dturn)),double(o.rot.v0),double(o.rotSide.v0),
-                    double(sw.len),double(dot(o.dir,sw.dmove)),double(time));
+                    double(sw.len),double(dot(o.dir,sw.dmove)),double(t));
       Log::d(buf);
       }
     }
@@ -482,6 +519,8 @@ bool AnimBlend::apply(const Sample* raw, Sample* out, size_t numBones, uint64_t 
     }
   if(!pend.empty())
     begin(now);
+  if(next)
+    easeSeq = nullptr;
 
   bool blending = externalDriven && externalWeight(now)>0.f;
   for(size_t i=0; i<numBones; ++i) {

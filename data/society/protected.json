@@ -1,0 +1,345 @@
+[
+  {
+    "id": "BDT_10018_ADDON_TORWACHE",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "BDT_1020_BANDIT_L",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "BDT_1064_BANDIT_L",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "BDT_1071_ADDON_RAMON",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "BDT_1088_ADDON_TORWACHE",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "BDT_1090_ADDON_RAVEN",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "DJG_705_ANGAR",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "DJG_705_ANGAR_DI",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "DJG_705_ANGAR_NW",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "DRAGON_FIRE",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "DRAGON_FIRE_ISLAND",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "DRAGON_ICE",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "DRAGON_ROCK",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "DRAGON_SWAMP",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "DRAGON_TESTMODELL",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "DRAGON_UNDEAD",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "KDF_500_PYROKAR",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "KDF_501_SERPENTES",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "KDF_502_ULTHAR",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "KDF_505_MARDUK",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "KDF_507_TALAMON",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "KDW_14000_ADDON_SATURAS_ADW",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "KDW_1400_ADDON_SATURAS_NW",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "MIL_305_TORWACHE",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "MIL_310_STADTWACHE",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "MIL_325_MILIZ",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "MIL_333_STADTWACHE",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "NONE_100_XARDAS",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PAL_200_HAGEN",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PAL_205_TORWACHE",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "PAL_213_SCHIFFSWACHE",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "PAL_250_GAROND",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_FIGHTER_DI",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_FIGHTER_DJG",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_FIGHTER_NW_NACH_DJG",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_FIGHTER_NW_VOR_DJG",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_FIGHTER_OW",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_HERO",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_MAGE_DI",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_MAGE_NW",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_MAGE_OW",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_PSIONIC",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_PSIONIC_DI",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_THIEFOW",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_THIEF_DI",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PC_THIEF_NW",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "PIR_1354_ADDON_HENRY",
+    "reasons": [
+      "post"
+    ]
+  },
+  {
+    "id": "SH",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "SH_OLDWORLD",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "SLD_800_LEE",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "SLD_800_LEE_DI",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "SLD_809_BENNET",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "SLD_809_BENNET_DI",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "VLK_439_VATRAS",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "VLK_439_VATRAS_DI",
+    "reasons": [
+      "plot"
+    ]
+  },
+  {
+    "id": "VLK_449_LARES",
+    "reasons": [
+      "plot",
+      "post"
+    ]
+  },
+  {
+    "id": "VLK_449_LARES_DI",
+    "reasons": [
+      "plot"
+    ]
+  }
+]

@@ -3,7 +3,9 @@
 #include <Tempest/Sound>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 
@@ -11,6 +13,18 @@ namespace {
 
 constexpr uint64_t StepMs  = 10;
 constexpr float    MinPeak = -45.f;  // dB: a line quieter than this is not stretched to a wide open mouth
+
+// the tone (YIN): the sound at 8 kHz, a window of 30 ms compared with itself shifted by one period of 60..400 Hz
+constexpr uint32_t ToneRate  = 8000;
+constexpr size_t   ToneStep  = ToneRate*StepMs/1000;  // samples a step
+constexpr size_t   ToneWin   = 240;                   // 30 ms
+constexpr size_t   TauMin    = ToneRate/400;          // the shortest period: 400 Hz
+constexpr size_t   TauMax    = ToneRate/60+1;         // the longest: 59.7 Hz
+constexpr size_t   ToneSpan  = ToneWin+TauMax+1;      // samples a step looks at, centred on the step's middle
+constexpr size_t   TonePad   = ToneSpan/2;            // silence before the sound: the first steps have their span
+constexpr float    ToneThr   = 0.15f;  // of the normalized difference: a period below it is clear, else no tone
+constexpr float    ToneQuiet = 1e-8f;  // mean power of the window below which it is silence (-80 dB)
+constexpr float    ToneCut   = 1000.f; // Hz: the harmonics above do not help to find the period
 
 // the parameters can be changed at runtime (LipSync::setParam, bench `lips param <name> <value>`)
 float Range   = 24.f;   // dB below the loudest moment of the line where the mouth starts to open
@@ -25,6 +39,12 @@ float Dip     = 0.6f;   // a syllable ends when the voice falls below this part 
 float Rise    = 0.15f;  // ...and the next one starts when it rises this much above the quietest moment
 float MinOpen = 0.15f;  // shapes that open the mouth less than this are not used
 float Fit     = 0.5f;   // a shape may open this part of what the syllable needs (more shapes to pick from)
+// the live microphone (player-voice-face.md): no voice ahead to look at, so no lead; quicker so the delay stays small
+float LiveRef     = -16.f;  // dB of the speech band: the loudest moment of a live track is taken as at least this
+float LiveAttack  = 15.f;   // ms, time constant of opening
+float LiveRelease = 40.f;   // ms, of closing: a pause of 150 ms shuts the mouth
+float LiveBuffer  = 10.f;   // ms the clock stays behind the arrived sound (a chunk late by less moves on smoothly)
+float LiveDuck    = 18.f;   // dB lower while an npc's voice sounds near the hero
 
 struct Param final {
   std::string_view name;
@@ -35,6 +55,8 @@ const Param params[] = {
   {"Range", &Range}, {"Top", &Top}, {"Gamma", &Gamma}, {"Lead", &Lead},
   {"Attack", &Attack}, {"Release", &Release}, {"Look", &Look}, {"Blend", &Blend},
   {"Dip", &Dip}, {"Rise", &Rise}, {"MinOpen", &MinOpen}, {"Fit", &Fit},
+  {"LiveRef", &LiveRef}, {"LiveAttack", &LiveAttack}, {"LiveRelease", &LiveRelease}, {"LiveBuffer", &LiveBuffer},
+  {"LiveDuck", &LiveDuck},
   };
 
 bool enabled = []() {
@@ -62,6 +84,11 @@ void LipSync::setEnabled(bool e) {
   enabled = e;
   }
 
+void LipSync::syllableRule(float& dip, float& rise) {
+  dip  = Dip;
+  rise = Rise;
+  }
+
 bool LipSync::setParam(std::string_view name, float value) {
   for(auto& p:params)
     if(p.name==name) {
@@ -69,6 +96,14 @@ bool LipSync::setParam(std::string_view name, float value) {
       return true;
       }
   return false;
+  }
+
+uint64_t LipSync::liveBufferMs() {
+  return uint64_t(std::max(0.f,LiveBuffer));
+  }
+
+float LipSync::liveDuckDb() {
+  return std::max(0.f,LiveDuck);
   }
 
 std::string LipSync::paramList() {
@@ -107,9 +142,13 @@ LipSync::Track::Track(uint32_t r)
     };
   mk(hp, 120.f,  true);
   mk(lp, 2500.f, false);
+  for(auto& f:toneLp)
+    mk(f, ToneCut, false);
+  decStep = double(rate)/double(ToneRate);
+  dec.assign(TonePad,0.f);
   }
 
-std::shared_ptr<LipSync::Track> LipSync::Track::fromSound(const Tempest::Sound& snd) {
+std::shared_ptr<LipSync::Track> LipSync::Track::fromSound(const Tempest::Sound& snd, std::string_view name) {
   size_t   count = 0;
   uint16_t ch    = 1;
   uint32_t freq  = 0;
@@ -117,6 +156,7 @@ std::shared_ptr<LipSync::Track> LipSync::Track::fromSound(const Tempest::Sound& 
   if(pcm==nullptr || count==0 || freq==0)
     return nullptr;
   auto t = std::make_shared<Track>(freq);
+  t->lineName = std::string(name);
   t->append(pcm,count,ch);
   t->finish();
   return t;
@@ -130,11 +170,13 @@ void LipSync::Track::append(const int16_t* pcm, size_t count, uint16_t channels)
     float x = 0;
     for(uint16_t c=0; c<channels; ++c)
       x += float(pcm[i+c]);
-    x = lp.run(hp.run(x/(32768.f*float(channels))));
+    x = x/(32768.f*float(channels));
+    pushTone(x);
+    x = lp.run(hp.run(x));
     acc += double(x*x);
     if(++accN<perStep)
       continue;
-    db.push_back(float(10.0*std::log10(acc/double(accN) + 1e-10)));
+    db.push_back(float(10.0*std::log10(acc/double(accN) + 1e-10)) + liveGain);
     acc  = 0;
     accN = 0;
     // a click is not the loudest moment: the peak is taken over 30 ms
@@ -143,21 +185,163 @@ void LipSync::Track::append(const int16_t* pcm, size_t count, uint16_t channels)
       peakDb = std::max(peakDb, (db[n-1]+db[n-2]+db[n-3])/3.f);
       }
     }
+  findTones(false);
+  }
+
+void LipSync::Track::pushTone(float x) {
+  x = toneLp[1].run(toneLp[0].run(x));
+  // the samples at 8 kHz between the last one and this, by a straight line
+  while(decAt<=1.0) {
+    dec.push_back(decLast + (x-decLast)*float(decAt));
+    decAt += decStep;
+    }
+  decAt  -= 1.0;
+  decLast = x;
+  }
+
+void LipSync::Track::findTones(bool flush) {
+  // step i looks at [i*ToneStep + ToneStep/2 - ToneSpan/2, +ToneSpan) of the sound, TonePad of silence before it
+  while(hz.size()<db.size()) {
+    const size_t at = hz.size()*ToneStep + ToneStep/2 + TonePad - ToneSpan/2;
+    if(at+ToneSpan>decBase+dec.size()) {
+      if(!flush)
+        break;
+      dec.resize(at+ToneSpan-decBase,0.f);  // the end of the sound: silence after it
+      }
+    const float f = yin(at);
+    hz.push_back(f);
+    if(f>0)
+      ++toned;
+    }
+  // the samples no step looks at any more
+  const size_t next = hz.size()*ToneStep + ToneStep/2 + TonePad - ToneSpan/2;
+  if(next>decBase+4096) {
+    const size_t drop = std::min(next-decBase,dec.size());
+    dec.erase(dec.begin(),dec.begin()+ptrdiff_t(drop));
+    decBase += drop;
+    }
+  }
+
+float LipSync::Track::yin(size_t at) const {
+  const float* x = dec.data()+(at-decBase);
+  float power = 0;
+  for(size_t j=0; j<ToneWin; ++j)
+    power += x[j]*x[j];
+  if(power<ToneQuiet*float(ToneWin))
+    return 0;
+  // the difference of the window and the window a lag on (summed over the window in the outer loop: the lags are
+  // independent sums and go in vectors), normalized by its mean over the shorter lags
+  float d[TauMax+2] = {};
+  for(size_t j=0; j<ToneWin; ++j) {
+    const float  xj = x[j];
+    const float* y  = x+j;
+    for(size_t tau=1; tau<=TauMax+1; ++tau) {
+      const float e = xj-y[tau];
+      d[tau] += e*e;
+      }
+    }
+  d[0] = 1;
+  float sum = 0;
+  for(size_t tau=1; tau<=TauMax+1; ++tau) {
+    sum   += d[tau];
+    d[tau] = sum>0 ? d[tau]*float(tau)/sum : 1.f;
+    }
+  // the first lag clearly periodic, down to the bottom of its dip; else none
+  size_t tau = TauMin;
+  while(tau<=TauMax && d[tau]>=ToneThr)
+    ++tau;
+  if(tau>TauMax)
+    return 0;
+  while(tau<TauMax && d[tau+1]<d[tau])
+    ++tau;
+  // between the lags: the bottom of the parabola through the three around it
+  const float a = d[tau-1], b = d[tau], c = d[tau+1];
+  const float k = a - 2.f*b + c;
+  const float shift = k>0 ? std::clamp(0.5f*(a-c)/k, -1.f, 1.f) : 0.f;
+  return float(ToneRate)/(float(tau)+shift);
   }
 
 void LipSync::Track::finish() {
   std::lock_guard<std::mutex> guard(sync);
   if(accN>perStep/2)
-    db.push_back(float(10.0*std::log10(acc/double(accN) + 1e-10)));
+    db.push_back(float(10.0*std::log10(acc/double(accN) + 1e-10)) + liveGain);
   acc      = 0;
   accN     = 0;
   finished = true;
+  findTones(true);
+  }
+
+float LipSync::Track::toneHz(uint64_t ms) const {
+  std::lock_guard<std::mutex> guard(sync);
+  const size_t i = size_t(ms/StepMs);
+  return i<hz.size() ? hz[i] : 0.f;
+  }
+
+float LipSync::Track::implMedian() const {
+  if(medianOf!=toned) {
+    std::vector<float> st;
+    st.reserve(toned);
+    for(auto f:hz)
+      if(f>0)
+        st.push_back(f);
+    if(!st.empty()) {
+      auto mid = st.begin()+ptrdiff_t(st.size()/2);
+      std::nth_element(st.begin(),mid,st.end());
+      medianSt = 12.f*std::log2(*mid);
+      }
+    medianOf = toned;
+    }
+  return medianSt;
+  }
+
+bool LipSync::Track::tone(uint64_t ms, float& semitones) const {
+  std::lock_guard<std::mutex> guard(sync);
+  const size_t i = size_t(ms/StepMs);
+  if(i>=hz.size() || hz[i]<=0)
+    return false;
+  semitones = 12.f*std::log2(hz[i]) - implMedian();
+  return true;
+  }
+
+uint64_t LipSync::Track::toneKnownMs() const {
+  std::lock_guard<std::mutex> guard(sync);
+  return hz.size()*StepMs;
+  }
+
+void LipSync::Track::setLiveGain(float gain) {
+  std::lock_guard<std::mutex> guard(sync);
+  liveGain = gain;
+  }
+
+void LipSync::Track::setName(std::string_view n) {
+  std::lock_guard<std::mutex> guard(sync);
+  lineName = std::string(n);
+  }
+
+std::string LipSync::Track::name() const {
+  std::lock_guard<std::mutex> guard(sync);
+  return lineName;
+  }
+
+bool LipSync::Track::isOf(std::string_view line) const {
+  if(line.empty())
+    return false;
+  const std::string n = name();
+  const auto same = [](std::string_view a, std::string_view b) {
+    return a.size()==b.size() && std::equal(a.begin(),a.end(),b.begin(),[](char x, char y) {
+      return std::tolower(uint8_t(x))==std::tolower(uint8_t(y));
+      });
+    };
+  const std::string_view v = n;
+  if(same(v,line))
+    return true;
+  return v.size()==line.size()+4 && same(v.substr(0,line.size()),line) && same(v.substr(line.size()),".WAV");
   }
 
 float LipSync::Track::implLevel(size_t step) const {
   if(step>=db.size())
     return 0;
-  const float ref = std::max(peakDb, MinPeak);
+  const float ref = std::max(peakDb, liveInput ? LiveRef : MinPeak);
   const float lo  = ref - Range;
   const float hi  = ref - std::min(Top, Range-1.f);
   const float v   = std::clamp((db[step]-lo)/(hi-lo), 0.f, 1.f);
@@ -166,8 +350,14 @@ float LipSync::Track::implLevel(size_t step) const {
 
 float LipSync::Track::level(uint64_t ms) const {
   std::lock_guard<std::mutex> guard(sync);
-  const size_t i = size_t(ms/StepMs);
-  const float  k = float(ms%StepMs)/float(StepMs);
+  size_t      i = size_t(ms/StepMs);
+  const float k = float(ms%StepMs)/float(StepMs);
+  if(liveInput && !db.empty()) {
+    // the microphone: a step that has not arrived yet holds the last one (a late chunk does not shut the mouth)
+    i = std::min(i, db.size()-1);
+    const size_t j = std::min(i+1, db.size()-1);
+    return implLevel(i)*(1.f-k) + implLevel(j)*k;
+    }
   return implLevel(i)*(1.f-k) + implLevel(i+1)*k;
   }
 
@@ -179,9 +369,37 @@ float LipSync::Track::peak(uint64_t from, uint64_t to) const {
   return ret;
   }
 
+float LipSync::Track::loudestDb(uint64_t from, uint64_t to) const {
+  std::lock_guard<std::mutex> guard(sync);
+  float ret = -100;
+  for(size_t i=size_t(from/StepMs); i<=size_t(to/StepMs) && i<db.size(); ++i)
+    ret = std::max(ret, db[i]);
+  return ret;
+  }
+
 uint64_t LipSync::Track::durationMs() const {
   std::lock_guard<std::mutex> guard(sync);
   return db.size()*StepMs;
+  }
+
+bool LipSync::Track::quietRun(uint64_t from, float below, uint64_t minMs, uint64_t& start, uint64_t& end) const {
+  std::lock_guard<std::mutex> guard(sync);
+  size_t i = size_t(from/StepMs);
+  while(i<db.size() && implLevel(i)<below)
+    ++i;
+  while(i<db.size()) {
+    while(i<db.size() && implLevel(i)>=below)
+      ++i;
+    const size_t q = i;
+    while(i<db.size() && implLevel(i)<below)
+      ++i;
+    if(i>q && uint64_t(i-q)*StepMs>=minMs) {
+      start = q*StepMs;
+      end   = i*StepMs;
+      return true;
+      }
+    }
+  return false;
   }
 
 bool LipSync::Track::isFinished() const {
@@ -204,6 +422,7 @@ void LipSync::start(std::shared_ptr<Track> t, uint64_t now) {
   if(!enabled || open.empty() || t==nullptr)
     return;
   track     = std::move(t);
+  live      = track->isLiveInput();
   startTick = now;
   active    = true;
   inDip     = true;
@@ -294,11 +513,12 @@ bool LipSync::update(uint64_t now, uint64_t dt, Shape& out) {
     return false;
     }
 
+  const uint64_t lead = track!=nullptr && track->isLiveInput() ? 0 : uint64_t(std::max(0.f,Lead));
   float target = 0;
   if(track!=nullptr) {
     time = lineTime(now);
-    const uint64_t t = time + uint64_t(std::max(0.f,Lead));
-    if(track->isFinished() && t>track->durationMs()+uint64_t(std::max(0.f,Lead)))
+    const uint64_t t = time + lead;
+    if(track->isFinished() && t>track->durationMs()+lead)
       track = nullptr;  // the line is over
     else if(track->playedMs()!=0)
       target = track->level(t);  // (a streamed voice that has not started playing yet: the mouth waits)
@@ -320,17 +540,30 @@ bool LipSync::update(uint64_t now, uint64_t dt, Shape& out) {
       inDip  = false;
       sylMax = lvl;
       ++syllables;
-      const uint64_t t = time + uint64_t(std::max(0.f,Lead));
+      const uint64_t t = time + lead;
       sylLoud = track!=nullptr ? track->peak(t, t+uint64_t(std::max(0.f,Look))) : lvl;
       pick(sylLoud, now);
+      sylAt      = t;
+      sylPending = track!=nullptr;
+      }
+    }
+  // judged once its first JudgeMs have arrived (a recorded voice has them at once)
+  if(sylPending) {
+    const uint64_t span = live ? LiveJudgeMs : JudgeMs;
+    if(track==nullptr)
+      sylPending = false;
+    else if(track->durationMs()>=sylAt+span || track->isFinished()) {
+      judgedLoud = track->loudestDb(sylAt, sylAt+span);
+      sylPending = false;
+      ++judged;
       }
     }
 
   if(dt>0)
-    mouth = smooth(mouth, lvl, dt, lvl>mouth ? Attack : Release);
+    mouth = smooth(mouth, lvl, dt, lvl>mouth ? (live ? LiveAttack : Attack) : (live ? LiveRelease : Release));
   // louder than the syllable looked: a shape for that
   if(!inDip && mouth>sylPeak*1.2f && now>=lastPick+uint64_t(std::max(0.f,Blend))) {
-    const uint64_t t = time + uint64_t(std::max(0.f,Lead));
+    const uint64_t t = time + lead;
     pick(std::max(mouth, track!=nullptr ? track->peak(t, t+uint64_t(std::max(0.f,Look))) : 0.f), now);
     }
   if(blend<1.f && dt>0)
@@ -356,6 +589,9 @@ void LipSync::probe(Probe& p) const {
   p.valid  = !open.empty();
   p.active = active;
   p.level  = lvl;
+  p.tone   = std::nanf("");
+  if(track!=nullptr && !track->tone(time,p.tone))
+    p.tone = std::nanf("");
   p.mouth  = mouth;
   p.open   = shownOpen;
   p.shape  = shown;

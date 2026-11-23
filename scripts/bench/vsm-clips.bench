@@ -1,0 +1,136 @@
+# Virtual shadow maps (VSM) for the sun and the lamps: clips and shots for the review, and the counters of
+# OPENGOTHIC_VSM_STATS=1 at the perf-harbour-night and perf-interior views.
+# Run it twice: as it is (VSM, the default) and with OPENGOTHIC_VSM=0 (the two sun cascades, lamps unshadowed):
+#   TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_VSM_STATS=1 BENCH_HOST=ryzen scripts/bench.sh vsm-clips
+#   TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_VSM=0 BENCH_HOST=ryzen scripts/bench.sh vsm-clips
+# Report: reports/render-features/2026-11-03-lamp-shadows/step-2a.md
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+
+# 1. The night harbour at brazier 1 (vob layer harbour-motion.json): the hero and the crates by the fire,
+#    the camera pans slowly, the shadows must hold still.
+set time 0 0
+goto pos -3150 140 -4560
+watch player
+cam look 120
+cam world 600 220 60
+wait 10000
+cam hold
+shot harbour-brazier
+rec harbour-brazier
+wait 1500
+cloth camera-turn 35 7000
+wait 1000
+stop
+
+# 2. The hero walks past brazier 1 between it and the camera: his shadow sweeps over the ground and the wall.
+#    The camera of scene 1 (the wall behind, the brazier to the right) follows him from the side.
+goto pos -3040 140 -4659
+face 150
+watch player
+cam look 110
+cam world 600 220 60
+walkmode walk
+wait 4000
+shot walk-brazier-start
+rec walk-brazier
+hold forward 3500
+wait 4000
+stop
+shot walk-brazier-end
+wait 500
+
+# 3. The candle- and torch-lit harbour house of perf-interior: four views, then a slow pan.
+set time 22 0
+goto pos 3924 -73 -6663
+watch player
+cam look 110
+cam world 160 170 0
+wait 10000
+cam hold
+shot interior-1
+wait 6000
+cam world 160 170 90
+wait 300
+cam hold
+shot interior-2
+wait 6000
+cam world 160 170 180
+wait 300
+cam hold
+shot interior-3
+wait 6000
+cam world 160 170 270
+wait 300
+cam hold
+shot interior-4
+rec interior-pan
+wait 1000
+cloth camera-turn 60 8000
+wait 1000
+stop
+
+# 4. The perf-harbour-night views (lamp posts, braziers, the vob layer lights): 6 s each, one counter line
+#    at least under OPENGOTHIC_VSM_STATS=1.
+set time 0 0
+goto pos 5391 320 -5822
+watch player
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+shot harbour-night-1
+wait 6000
+cam world 850 300 90
+wait 300
+cam hold
+shot harbour-night-2
+wait 6000
+cam world 850 300 180
+wait 300
+cam hold
+shot harbour-night-3
+wait 6000
+cam world 850 300 270
+wait 300
+cam hold
+shot harbour-night-4
+wait 6000
+
+# 5. Day pairs with own materials (barrels, crates, houses): the market and the harbour at noon.
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+watch player
+cam look 120
+cam world 700 280 90
+wait 10000
+cam hold
+shot market-day-a
+cam world 700 280 270
+wait 500
+cam hold
+shot market-day-b
+wait 500
+# the harbour water at the way to the ship: the boat at the waterline, the bay with the ship, the quay and crane
+# (the water is forward-lit: its sun shadow comes from VSM too)
+goto NW_CITY_WAY_TO_SHIP_FISCHER_06
+watch player
+cam look 120
+cam world 900 500 90
+wait 10000
+cam hold
+shot harbour-day-a
+cam world 900 500 180
+wait 500
+cam hold
+shot harbour-day-b
+cam world 900 500 270
+wait 500
+cam hold
+shot harbour-day-c
+wait 1000

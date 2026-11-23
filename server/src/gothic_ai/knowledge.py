@@ -107,6 +107,11 @@ class Partial:
         flow: Callable[[str], int | None] | None = None,
     ) -> None:
         self.graph, self.state, self.own, self.flow = graph, state, set(own), flow
+        # a lifted function's value by its arguments: a guard's dialogs call B_GETGREATESTPETZCRIME and its
+        # C_NPCBELONGSTO* again and again, 1.4 s a turn (2026-10-28); not kept if it asked `flow`, whose
+        # answers change while Knowledge.view walks the dialogs
+        self._fns: dict[tuple[str, tuple[Value, ...], int], Value] = {}
+        self._flow_asked = 0
 
     def truth(self, e: Expr | None) -> bool | None:
         """False only when the story rules it out; no condition is true."""
@@ -140,7 +145,14 @@ class Partial:
                 body = self.graph.functions.get(fn, {})
                 if depth >= FN_DEPTH or not body.get("lifted") or "body" not in body:
                     return None
-                return self.value(body["body"], tuple(self.value(a, params, depth) for a in args), depth + 1)
+                key = (fn, tuple(self.value(a, params, depth) for a in args), depth)
+                if key in self._fns:
+                    return self._fns[key]
+                asked = self._flow_asked
+                v = self.value(body["body"], key[1], depth + 1)
+                if self._flow_asked == asked:
+                    self._fns[key] = v
+                return v
             case ["cases", *pairs]:
                 for i in range(0, len(pairs) - 1, 2):
                     g = self.value(pairs[i], params, depth)
@@ -173,6 +185,7 @@ class Partial:
         match fn, args:
             case "NPC_KNOWSINFO", [who, info] if who in HERO and isinstance(info, str):
                 if info in self.own:
+                    self._flow_asked += 1
                     return self.flow(info) if self.flow is not None else None
                 return int(self.state.knows[info]) if info in self.state.knows else None
             case "NPC_ISDEAD", [npc] if isinstance(npc, str):
@@ -302,10 +315,11 @@ class Knowledge:
         pool = self.ambient(guild, voice, named=bool(own))
         quests = self.quests(npc)
         atoms = Atoms(vars={"KAPITEL"}, knows={n.id for n in own})
+        seen: set[str] = set()  # each function's body once: the atoms are a union
         for node in [*own, *pool, *(c for n in own for c in self._choices(n))]:
-            atoms.add(self.graph, node.condition)
+            atoms.add(self.graph, node.condition, seen)
             for e in node.effects:
-                atoms.add(self.graph, e.get("when"))
+                atoms.add(self.graph, e.get("when"), seen)
         atoms.vars |= {q.var for q in quests}
         raw = await self.link.story_state(
             vars=sorted(atoms.vars), knows=sorted(atoms.knows), npcs=sorted(atoms.npcs)

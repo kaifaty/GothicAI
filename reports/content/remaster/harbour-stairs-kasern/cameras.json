@@ -1,0 +1,7 @@
+{
+ "cameras": [
+  {"name": "stairs-yard", "eye": [1300, 500, 4300], "target": [1900, 520, 5400], "note": "both flights from the yard at the foot, 12 m, eye 2 m above the yard"},
+  {"name": "stairs-close", "eye": [1550, 420, 4750], "target": [1800, 450, 5200], "note": "the lower flight from 5 m, eye at the foot of it"},
+  {"name": "stairs-landing", "eye": [1700, 700, 5300], "target": [2100, 650, 5700], "note": "the upper flight from the landing, 5.5 m"}
+ ]
+}

@@ -1,16 +1,35 @@
 #include "commandline.h"
 #include "gothic.h"
+#include "gamemusic.h"
 #include "game/constants.h"
 #include "graphics/pfx/particlefx.h"
 #include "graphics/visualfx.h"
 #include "gltfmesh.h"
+#include "gltfmeshcolor.h"
+#include "meshclusterlod.h"
 #include "graphics/shaders.h"
+#include "graphics/meshlevels.h"
+#include "graphics/treeboughasset.h"
+#include "graphics/treeboughgroups.h"
+#include "graphics/foliagetree.h"
 #include "graphics/mesh/protomesh.h"
+#include "graphics/mesh/facerig.h"
 #include "graphics/mesh/skeleton.h"
+#include "graphics/mesh/pose.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/worldview.h"
+#include "graphics/objvisual.h"
+#include "world/chunkresidency.h"
+#include "graphics/landscapestart.h"
+#include "physics/worldcloth.h"
+#include "worldchunkcatalogue.h"
+#include "worldchunkcook.h"
+#include "loadprobe.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "physics/fracture.h"
 #include "resources.h"
+#include "settings.h"
+#include "shader.h"
 #include "asset/fromzenkit.h"
 #include "baseimport.h"
 #include "basemesh.h"
@@ -18,18 +37,30 @@
 #include "musicdata.h"
 #include "sha256.h"
 #include "dmusic/patternlist.h"
+#include "dmusic/dxmusicsource.h"
 #include "dmusic.h"
 #include "utils/gthfont.h"
+#include "game/gamesession.h"
+#include "game/serialize.h"
+#include "world/world.h"
+#include "world/objects/npc.h"
+#include "world/objects/item.h"
 
 #include <Tempest/Device>
+#include <Tempest/Fence>
 #include <Tempest/Log>
+#include <Tempest/MemReader>
+#include <Tempest/MemWriter>
 #include <Tempest/VulkanApi>
+#ifdef __APPLE__
+#include <Tempest/MetalApi>
+#endif
 #include <zenkit/Stream.hh>
 #include <zenkit/Font.hh>
 #include <zenkit/Model.hh>
 #include <zenkit/Vfs.hh>
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 #include <miniz.h>
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -40,6 +71,7 @@
 #include <bit>
 #include <cmath>
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -49,15 +81,89 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
+#include <thread>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
 
+extern char** environ;
+
+struct MeshGltfTest {
+  static MdlVisual& visual(Npc& npc) { return npc.visual; }
+  static MeshObjects::Mesh& head(Npc& npc) { return npc.visual.head.view; }
+  static size_t headBone(const Npc& npc) { return npc.visual.head.boneId; }
+  static const FaceRig& face(Npc& npc) { return npc.visual.face; }
+  static void refreshBody(Npc& npc) {
+    npc.setVisualBody(npc.vHead,npc.vTeeth,npc.vColor,npc.bdColor,npc.body,npc.head);
+    npc.updateTransform();
+    }
+  static void attach(ObjVisual& visual, WorldView& view, const ProtoMesh* proto, const Tempest::Vec3& position,
+                     bool worldItem = false, int32_t material = 0) {
+    visual.setType(ObjVisual::M_Mesh);
+    visual.mesh.proto=proto;
+    visual.mesh.worldItem=worldItem;
+    if(worldItem)
+      visual.mesh.item=ItemView(proto,material,MeshObjects::Mesh());
+    if(!worldItem) {
+      visual.mesh.windMode=asset::AnimationType::WIND;
+      visual.mesh.windStrength=.5f;
+      }
+    auto matrix=Tempest::Matrix4x4::mkIdentity();
+    matrix.translate(position);
+    visual.setObjMatrix(matrix);
+    view.addVob(visual,ChunkId::fromPosition(position.x,position.z));
+    }
+
+  static const MeshObjects::Mesh& meshView(const ObjVisual& visual) {
+    return visual.mesh.worldItem ? visual.mesh.item.view() : visual.mesh.view;
+    }
+  static bool drawable(const ObjVisual& visual) { return !meshView(visual).isEmpty(); }
+  static Tempest::Matrix4x4 matrix(const ObjVisual& visual) { return meshView(visual).node(0).position(); }
+  static const Material& material(const ObjVisual& visual) { return meshView(visual).node(0).material(); }
+
+  static void attachModel(ObjVisual& visual, WorldView& view, const ProtoMesh* proto, const Tempest::Vec3& position) {
+    visual.setType(ObjVisual::M_Mdl);
+    visual.mdl.proto=proto;
+    visual.mdl.view.setYTranslationEnable(false);
+    visual.mdl.view.setVisual(proto->skeleton.get());
+    auto matrix=Tempest::Matrix4x4::mkIdentity();
+    matrix.translate(position);
+    visual.setObjMatrix(matrix);
+    visual.mdl.view.setTextureOwner(position,true);
+    visual.mdl.view.clearVisualBody();
+    view.addVob(visual,ChunkId::fromPosition(position.x,position.z));
+    }
+
+  static Pose& modelPose(ObjVisual& visual) { return visual.mdl.view.pose(); }
+  static bool modelDrawable(const ObjVisual& visual) { return !visual.mdl.view.view.isEmpty(); }
+  static Tempest::Matrix4x4 modelMatrix(const ObjVisual& visual) { return visual.mdl.view.view.node(0).position(); }
+  static bool modelSlotDrawable(const ObjVisual& visual) { return !visual.mdl.view.item.at(0).view.isEmpty(); }
+  static Tempest::Matrix4x4 modelSlotMatrix(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.view().node(0).position(); }
+  static const Tempest::Texture2d* modelSlotTexture(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.view().node(0).material().tex; }
+  static const ProtoMesh* modelSlotProto(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.protoMesh(); }
+  // a slot item with no item behind it (graphics/itemview)
+  static ItemView slotItem(MeshObjects::Mesh&& mesh, int32_t material) {
+    const auto* proto = mesh.protoMesh();
+    return ItemView(proto,material,std::move(mesh));
+    }
+  static bool startModelAnimation(ObjVisual& visual, const Animation::Sequence& sequence) {
+    return visual.mdl.view.pose().startAnim(visual.mdl.view.solver,&sequence,0,BS_NONE,Pose::Force,0);
+    }
+  };
+
 namespace {
+#ifdef __APPLE__
+using TestApi = Tempest::MetalApi;
+#else
+using TestApi = Tempest::VulkanApi;
+#endif
+
 size_t assertions = 0;
 
 void require(bool condition, std::string_view message) {
@@ -75,17 +181,8 @@ void textFile(const std::filesystem::path& path, std::string_view text) {
     throw std::runtime_error("unable to write mesh fixture");
   }
 
-void word(std::vector<uint8_t>& bytes, uint32_t value) {
-  for(size_t i=0;i<4;++i)
-    bytes.push_back(uint8_t(value>>(i*8)));
-  }
-
-void real(std::vector<uint8_t>& bytes, float value) {
-  uint32_t bits = 0;
-  static_assert(sizeof(bits)==sizeof(value));
-  std::memcpy(&bits,&value,sizeof(bits));
-  word(bytes,bits);
-  }
+#include "mesh_gltf_color.h" // word, real; colorCases
+#include "tree_bough_cut_test.h"
 
 struct GlbOptions {
   size_t positions = 3;
@@ -305,6 +402,76 @@ void originalFile(const std::filesystem::path& path) {
     throw std::runtime_error("invalid original MRM fixture roundtrip");
   }
 
+// Two rigid parts sharing a material and two target names. Only vertex 1
+// moves in smile; normalOnly changes vertex 2's normal without moving it.
+void headGlbFile(const std::filesystem::path& path, bool sparse = false, std::string_view invalid = {}) {
+  std::vector<uint8_t> binary;
+  std::vector<std::pair<size_t,size_t>> views;
+  const auto floats=[&](std::initializer_list<float> values) {
+    const auto start=binary.size();
+    for(float v:values) real(binary,v);
+    views.emplace_back(start,binary.size()-start);
+    };
+  floats({0,0,0, .1f,0,0, 0,.1f,0});
+  floats({0,0,1, 0,0,1, 0,0,1});
+  floats({0,0, 1,0, 0,1});
+  if(sparse) {
+    floats({.01f,.02f,.03f});
+    floats({.1f,.2f,0});
+    floats({0,0,0});
+    floats({.3f,0,0});
+    }
+  else {
+    floats({0,0,0, .01f,.02f,.03f, 0,0,0});
+    floats({0,0,0, .1f,.2f,0, 0,0,0});
+    floats({0,0,0, 0,0,0, 0,0,0});
+    floats({0,0,0, 0,0,0, .3f,0,0});
+    }
+  const auto start=binary.size();
+  binary.insert(binary.end(),{1,2,0,0});
+  views.emplace_back(start,2);
+  std::string json=R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],"nodes":[{"name":")";
+  json+=invalid=="node" ? "tail" : "face";
+  json+=R"(","mesh":0},{"name":"beard","mesh":0,"translation":[0,0.01,0]}],"buffers":[{"byteLength":)"+
+        std::to_string(binary.size())+"}],\"bufferViews\":[";
+  for(size_t i=0; i<views.size(); ++i) {
+    if(i!=0) json+=',';
+    json+="{\"buffer\":0,\"byteOffset\":"+std::to_string(views[i].first)+
+          ",\"byteLength\":"+std::to_string(views[i].second)+"}";
+    }
+  json+="],\"accessors\":[";
+  for(size_t i=0; i<7; ++i) {
+    if(i!=0) json+=',';
+    json+=R"({"componentType":5126,"count":3,"type":")"+std::string(i==2 ? "VEC2" : "VEC3")+"\"";
+    if(sparse && i>=3) {
+      json+=R"(,"sparse":{"count":1,"indices":{"bufferView":7,"componentType":5121,"byteOffset":)"+
+            std::to_string(i>=5 ? 1 : 0)+"},\"values\":{\"bufferView\":"+std::to_string(i)+"}}";
+      }
+    else
+      json+=",\"bufferView\":"+std::to_string(i);
+    json+='}';
+    }
+  json+=R"(],"materials":[{"name":"OWN_TEST_BARREL_WOOD"}],"meshes":[{)";
+  if(invalid!="names")
+    json+=R"("extras":{"targetNames":["smile","normalOnly"]},)";
+  json+=R"("primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2)";
+  if(invalid=="joints") json+=R"(,"JOINTS_0":0)";
+  json+=R"(},"material":0,"targets":[{"POSITION":3)";
+  if(invalid!="normal") json+=R"(,"NORMAL":4)";
+  json+=R"(},{"POSITION":5,"NORMAL":6}]}]}]})";
+  while(json.size()%4!=0) json+=' ';
+  std::vector<uint8_t> bytes;
+  word(bytes,0x46546c67); word(bytes,2);
+  word(bytes,uint32_t(28+json.size()+binary.size()));
+  word(bytes,uint32_t(json.size())); word(bytes,0x4e4f534a);
+  bytes.insert(bytes.end(),json.begin(),json.end());
+  word(bytes,uint32_t(binary.size())); word(bytes,0x004e4942);
+  bytes.insert(bytes.end(),binary.begin(),binary.end());
+  std::ofstream out(path,std::ios::binary);
+  out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
+  require(bool(out),"synthetic head GLB must be written");
+  }
+
 struct Fixture {
   std::filesystem::path root;
   Fixture() {
@@ -322,8 +489,7 @@ struct Fixture {
     setenv("OPENGOTHIC_TEXTURES","",1);
     setenv("OPENGOTHIC_CENSUS",(root/"census.json").c_str(),1);
     setenv("OPENGOTHIC_BASE",(root/"base").c_str(),1);
-    // The public importer requires an installation archive. Keep originals
-    // loose so the no-source-mount case still has no original MRM in its VFS.
+    // The public importer requires an installation archive; the game uses only the base.
     const std::byte marker {1};
     zenkit::Vfs vfs;
     vfs.mount(zenkit::VfsNode::file("FIXTURE.BIN",{&marker,1,false}),"/");
@@ -345,7 +511,7 @@ struct Fixture {
     json.EndObject(); json.EndObject();
     index(std::string_view(buffer.GetString(),buffer.GetSize()));
     }
-  void mount(bool mountOriginal = true) const {
+  void mount() const {
     const auto base=root/"base";
     for(const auto* kind:{"meshes","textures","zen","models"})
       std::filesystem::create_directories(base/kind);
@@ -370,7 +536,7 @@ struct Fixture {
     if(std::filesystem::is_regular_file(root/"_work/ORIGINAL.FNT")) {
       std::filesystem::copy_file(root/"materials/transparent-bc1.dds",base/"textures/FONT_ATLAS.dds",
                                  std::filesystem::copy_options::overwrite_existing);
-      textures=R"({"ORIGINAL":"FONT_ATLAS.dds","ORIGINAL_HI":"FONT_ATLAS.dds"})";
+      textures=R"({"ORIGINAL":"FONT_ATLAS.dds","ORIGINAL_HI":"FONT_ATLAS.dds","VOB_DECAL":"FONT_ATLAS.dds"})";
       }
     textFile(base/"textures/textures.json","{\"format\":\"gothic-textures\",\"version\":1,\"archives\":"+archives+",\"textures\":"+textures+"}");
     textFile(base/"zen/zen.json","{\"format\":1,\"archives\":"+archives+",\"loose_files\":[],\"files\":{}}");
@@ -384,9 +550,7 @@ struct Fixture {
     std::filesystem::create_directories(base/"sources");
     textFile(base/"sources/sources.json","{\"format\":\"gothic-sources\",\"version\":1,\"synthetic\":\"mesh-gltf fixture without remaining-family inputs\"}\n");
     BaseImport::writeBaseMetadata(base,BaseImport::identify(root));
-    if(mountOriginal)
-      Resources::mountWork(root/"_work");
-    Resources::loadVdfs({},false);
+    Resources::loadBase();
     }
   rapidjson::Document census() const {
     require(Resources::writeCensus(),"mesh census must be writable");
@@ -400,6 +564,132 @@ struct Fixture {
     return document;
     }
   };
+
+void headConverterCases(const Fixture& fixture) {
+  const auto path=fixture.root/"head.glb";
+  headGlbFile(path);
+  const auto dense=loadGltfHeadMesh(path);
+  require(dense.parts.size()==2 && dense.mesh.positions.size()==6 && dense.mesh.normals.size()==6,
+          "head nodes must merge into one mesh with parallel neutral positions/normals");
+  require(dense.mesh.sub_meshes.size()==1 && dense.mesh.sub_meshes[0].triangles.size()==2,
+          "head parts sharing a material must share a submesh");
+  require(dense.parts[0].firstVertex==0 && dense.parts[0].vertexCount==3 &&
+          dense.parts[1].firstVertex==3 && dense.parts[1].vertexCount==3 &&
+          dense.parts[0].name=="beard" && dense.parts[1].name=="face",
+          "head part ranges must describe the merged logical vertex order");
+  require(close(dense.mesh.positions[1].x,-10) && close(dense.mesh.positions[0].y,1) &&
+          close(dense.mesh.positions[3].y,0),"head positions must include node transforms, X mirror and centimetres");
+  require(dense.targets.size()==2 && dense.targets[0].name=="smile" && dense.targets[1].name=="normalOnly",
+          "target names must come from mesh.extras.targetNames and merge across parts");
+  require(dense.targets[0].vertices.size()==2 && dense.targets[1].vertices.size()==2,
+          "each sparse head target must retain only affected vertices from both parts");
+  const auto& smile=dense.targets[0].vertices;
+  require(smile[0].vertex==1 && smile[1].vertex==4 && close(smile[0].position.x,-1) &&
+          close(smile[0].position.y,2) && close(smile[0].position.z,3) &&
+          close(smile[0].normal.x,-.1f) && close(smile[0].normal.y,.2f),
+          "morph deltas must use global IDs, mirrored axes and position units without translation");
+  require(dense.targets[1].vertices[0].vertex==2 && dense.targets[1].vertices[1].vertex==5 &&
+          close(dense.targets[1].vertices[0].position.x,0) && close(dense.targets[1].vertices[0].normal.x,-.3f),
+          "normal-only changes must survive sparse filtering");
+  headGlbFile(path,true);
+  const auto sparse=loadGltfHeadMesh(path);
+  for(size_t t=0; t<dense.targets.size(); ++t) {
+    require(sparse.targets[t].name==dense.targets[t].name &&
+            sparse.targets[t].vertices.size()==dense.targets[t].vertices.size(),"sparse and dense target identity must match");
+    for(size_t i=0; i<dense.targets[t].vertices.size(); ++i) {
+      const auto& a=dense.targets[t].vertices[i];
+      const auto& b=sparse.targets[t].vertices[i];
+      require(a.vertex==b.vertex,"sparse and dense vertex IDs must match");
+      for(unsigned c=0; c<3; ++c)
+        require(close(a.position[c],b.position[c]) && close(a.normal[c],b.normal[c]),
+                "sparse and dense morph POSITION/NORMAL must match");
+      }
+    }
+  for(const auto& [invalid,reason]:{std::pair{"names","targetNames"}, {"normal","morph NORMAL"},
+                                  {"joints","JOINTS_0"}, {"node","unknown head mesh node: tail"}}) {
+    headGlbFile(path,false,invalid);
+    bool rejected=false;
+    try { (void)loadGltfHeadMesh(path); }
+    catch(const std::exception& error) { rejected=std::string_view(error.what()).find(reason)!=std::string_view::npos; }
+    require(rejected,std::string("head must reject with reason: ")+reason);
+    }
+  }
+
+void headManifestCases(const Fixture& fixture) {
+  const auto root=fixture.root/"characters";
+  std::filesystem::create_directories(root/"hero");
+  headGlbFile(root/"hero/head.glb");
+  const auto test=[&](std::string_view table, bool valid) {
+    textFile(root/"characters.json",table);
+    Resources resources;
+    const auto* head=Resources::loadCharacterHead("pC_hErO");
+    require((head!=nullptr)==valid,"characters.json must accept only valid head entries");
+    require(Resources::loadCharacterHead("PC_THIEF")==nullptr,"a script instance the manifest does not list must retain its original head");
+    if(head==nullptr) return;
+    require(head==Resources::loadCharacterHead("PC_HERO") && head->head!=nullptr,
+            "head lookup must be case insensitive and retain the parsed target data");
+    require(head->morph.empty(),"custom heads must not install original MMB animations");
+    const auto& data=*head->head;
+    require(data.targets.size()==2 && data.targets[0].vertices.size()==2,"step 3 must be able to read target names and counts");
+    std::vector<bool> seen(data.mesh.positions.size(),false);
+    for(auto id:data.renderVertexIds)
+      if(id!=uint32_t(-1)) {
+        require(id<data.mesh.positions.size(),"render vertices must map into the merged head");
+        seen[id]=true;
+        }
+    require(std::all_of(seen.begin(),seen.end(),[](bool v) { return v; }),
+            "the deformation map must cover vertices of every part");
+    };
+  test(R"({"pc_hero":{"head":"hero/head.glb"},"PC_ROCKEFELLER":{"head":"hero/head.glb"}})",true);
+  {
+    // an npc the manifest lists gets its own head too, a head of its own (not the hero's)
+    Resources resources;
+    const auto* npc=Resources::loadCharacterHead("pc_rockefeller");
+    require(npc!=nullptr && npc->head!=nullptr && npc!=Resources::loadCharacterHead("PC_HERO"),
+            "an npc listed in characters.json must get its own head");
+  }
+  const auto invalidPath=[&](std::string_view path) {
+    rapidjson::StringBuffer buffer;
+    rapidjson::Writer<rapidjson::StringBuffer> json(buffer);
+    json.StartObject(); json.Key("PC_HERO"); json.StartObject(); json.Key("head");
+    json.String(path.data(),rapidjson::SizeType(path.size())); json.EndObject(); json.EndObject();
+    test({buffer.GetString(),buffer.GetSize()},false);
+    };
+  invalidPath((root/"hero/head.glb").string());
+  for(const auto* path:{"../characters/hero/head.glb","hero/../hero/head.glb","hero/head.MRM",""})
+    invalidPath(path);
+  invalidPath(std::string_view("hero/head.glb\0suffix",20));
+  test(R"({"PC_HERO":{}})",false);
+  test(R"({"PC_HERO":{"head":"hero/head.glb"}})",true);
+
+  // "face": the profile of the old face anim names; a bad one leaves the head without face anims
+  textFile(root/"hero/head.face.json",R"({"version":1,"mouth":["smile"],"anims":{"S_FRIENDLY":{"layer":1,"blend_in_ms":1000,)"
+                                      R"("blend_out_ms":1000,"duration_ms":-1,"frame_ms":1000,"frames":[{"smile":0.5}]}}})");
+  textFile(root/"hero/bad.face.json",R"({"version":1,"mouth":[],"anims":{"S_FRIENDLY":{"layer":1,"blend_in_ms":1000,)"
+                                     R"("blend_out_ms":1000,"duration_ms":-1,"frame_ms":1000,"frames":[{"frown":0.5}]}}})");
+  const auto face=[&](std::string_view value, bool loaded) {
+    textFile(root/"characters.json",std::string(R"({"PC_HERO":{"head":"hero/head.glb","face":)")+std::string(value)+"}}");
+    Resources resources;
+    const auto* head=Resources::loadCharacterHead("PC_HERO");
+    require(head!=nullptr && head->head!=nullptr,"a bad face profile must not cost the head: "+std::string(value));
+    require((head->face!=nullptr)==loaded,"characters.json face must load only a valid profile: "+std::string(value));
+    if(loaded)
+      require(head->face->anims.size()==1 && head->face->find("S_FRIENDLY")!=nullptr && head->face->mouth.size()==2 &&
+              head->face->mouth[0]==1 && head->face->mouth[1]==0,"the face profile must name the head's targets");
+    };
+  face(R"("hero/head.face.json")",true);
+  for(const auto* invalid:{R"("../characters/hero/head.face.json")",R"("hero/../hero/head.face.json")",R"("hero/head.glb")",
+                           R"("")",R"(1)",R"("hero/missing.face.json")",R"("hero/bad.face.json")"})
+    face(invalid,false);
+  {
+    rapidjson::StringBuffer buffer;
+    rapidjson::Writer<rapidjson::StringBuffer> json(buffer);
+    const auto absolute=(root/"hero/head.face.json").string();
+    json.String(absolute.data(),rapidjson::SizeType(absolute.size()));
+    face({buffer.GetString(),buffer.GetSize()},false);
+  }
+  std::filesystem::remove(root/"characters.json");
+  }
 
 void checkCensus(const Fixture& fixture, bool own, uint64_t expectedOpens) {
   const auto document = fixture.census();
@@ -804,7 +1094,7 @@ void modelGpuGeometry(const Fixture& fixture, Tempest::Device& device, std::stri
     device.readBytes(attachment.vbo,vertices.data(),vertices.size()*sizeof(vertices[0]));
     device.readBytes(attachment.ibo,indices.data(),indices.size()*sizeof(indices[0]));
     const auto& global = expected.tr[node];
-    const auto sourceNormal = multi ? (node==0 ? zenkit::Vec3{0,0,1} : zenkit::Vec3{-1,0,0}) :
+    const auto sourceNormal = multi ? (node==0 ? asset::Vec3{0,0,1} : asset::Vec3{-1,0,0}) :
                                      source.sub_meshes[0].wedges[0].normal;
     const auto points = modelGlbPoints(multi,node);
     Tempest::Vec3 localNormal {
@@ -888,12 +1178,12 @@ void multiModelGpuCases(const Fixture& fixture, Tempest::Device& device) {
     }
   }
 
-void resourcePaths(const Fixture& fixture, bool own, bool mountOriginal = true) {
+void resourcePaths(const Fixture& fixture, bool own) {
   Resources resources;
-  fixture.mount(mountOriginal);
-  if(!mountOriginal)
-    require(Resources::vdfsIndex().find("OWN_MESH.MRM")==nullptr,
-            "content replacement must work without its original mesh in the source VFS");
+  fixture.mount();
+  const auto heightInputs=Resources::wayHeightInputs("SMALL.ZEN");
+  require(!heightInputs.baseFingerprint.empty() && !heightInputs.contentFingerprint.empty(),
+          "way height inputs must be available before loading replacement geometry");
   const auto* proto = Resources::loadMesh("own_mesh.3ds");
   require(proto!=nullptr,"visual mesh must load");
   const auto* bounds = proto->bbox();
@@ -928,6 +1218,17 @@ void resourcePaths(const Fixture& fixture, bool own, bool mountOriginal = true) 
           "shared loader must retain the selected physical material group");
   require(close(source.bbox.min.x,own ? -400.f : 10.f),"cloth source must select the same geometry");
   checkCensus(fixture,own,3);
+  require(Resources::wayHeightInputs("SMALL.ZEN").contentFingerprint==heightInputs.contentFingerprint,
+          "loading replacement geometry must not change the way height input fingerprint");
+  if(own) {
+    const auto glb=fixture.root/"meshes/test/own.glb";
+    const auto modified=std::filesystem::last_write_time(glb);
+    std::filesystem::last_write_time(glb,modified+std::chrono::seconds(1));
+    const auto changed=Resources::wayHeightInputs("SMALL.ZEN");
+    std::filesystem::last_write_time(glb,modified);
+    require(changed.contentFingerprint.empty(),
+            "changed GLB metadata must disable way height caching for stale Resources");
+    }
   }
 
 void frontFaces(const asset::StaticMesh& mesh) {
@@ -1046,6 +1347,23 @@ void converterCases(const Fixture& fixture) {
     require(mesh.sub_meshes[0].mat.texture=="NAMED_TEXTURE.TGA","existing texture extension must remain unchanged");
     }
   options = {};
+  options.group = "WATER";
+  options.alpha = "BLEND";
+  glbFile(path,options);
+  mesh = loadGltfMesh(path);
+  require(mesh.sub_meshes[0].mat.group==asset::MaterialGroup::WATER &&
+          mesh.sub_meshes[0].mat.alpha_func==asset::AlphaFunction::BLEND,
+          "WATER with BLEND must load as a water surface");
+  require(mesh.sub_meshes[0].mat.disable_collision,"a water surface must not collide");
+  {
+    Resources resources;
+    fixture.mount();
+    PackedMesh packed(mesh,PackedMesh::PK_Visual,true);
+    ProtoMesh proto(std::move(packed),"WATER.MRM");
+    require(proto.attach[0].sub[0].material.alpha==Material::Water,"WATER with BLEND must draw as engine water");
+  }
+
+  options = {};
   options.mixedAlpha = true;
   glbFile(path,options);
   mesh = loadGltfMesh(path);
@@ -1096,11 +1414,11 @@ void rejectionCases(const Fixture& fixture) {
     options = {};
     options.group = "WATER";
     options.alpha = alpha;
-    invalidGlb(fixture,"WATER static material",options,"water belongs to world mesh surfaces and overrides OPAQUE/MASK");
+    invalidGlb(fixture,"WATER static material",options,"water belongs to extras.group WATER with alphaMode BLEND");
     }
   options = {};
   options.skin = true; invalidGlb(fixture,"skin",options);
-  options = {}; options.alpha = "BLEND"; invalidGlb(fixture,"BLEND",options);
+  options = {}; options.alpha = "BLEND"; invalidGlb(fixture,"BLEND",options,"BLEND only to water");
   options = {}; options.normals = false; invalidGlb(fixture,"missing NORMAL",options);
   options = {}; options.external = true; invalidGlb(fixture,"external URI",options);
   options = {}; options.positions = 65536; invalidGlb(fixture,"more than 65535 positions",options);
@@ -1143,20 +1461,506 @@ void indexCases(const Fixture& fixture) {
   resourcePaths(fixture,true);
   }
 
-void fractureFile(const std::filesystem::path& path, size_t version = 1, size_t sourceSize = 0, uint32_t sourceCrc32 = 0) {
+void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool dxt5 = false,
+                  uint32_t side = 4, uint32_t mips = 1);
+
+std::string impostorLevel(int px = 49) {
+  return R"({"impostor":{"albedo":"test/atlas.dds","surface":"test/atlas.dds","orm":"test/atlas.dds"},"px":)"+
+         std::to_string(px)+"}";
+  }
+
+// The switches are read once, so their settings and environment cases need fresh processes.
+int levelSwitchChild(std::string_view mode) {
+  Fixture fixture;
+  const auto root=fixture.root.string();
+  const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","0"};
+  CommandLine commandLine(5,args);
+  std::unique_ptr<Settings> settings;
+  if(mode.starts_with("bough-")) {
+    glbFile(fixture.root/"meshes/test/lod1.glb");
+    fixture.index(mode!="bough-legacy" ?
+      R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400}],"hierarchy":"test/missing.json"}})" :
+      R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400}]}})");
+    Resources resources;
+    if(mode!="bough-legacy") {
+      // The game indexes the content before it loads its settings.
+      textFile(fixture.root/"system.ini", "");
+      textFile(fixture.root/"user.ini", "[INTERNAL]\ntreeBoughLod=1\n");
+      settings = std::make_unique<Settings>();
+      settings->load((fixture.root/"system.ini").u16string(),(fixture.root/"user.ini").u16string());
+      }
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(TreeBough::enabled()==(mode!="bough-env-off"),"tree bough switch after settings load");
+    require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1,"plain level mesh loads");
+    const auto& mesh = proto->attach[0];
+    const auto& sub = mesh.sub[0];
+    require(mesh.treeBough==nullptr && mesh.levelMeshlets(sub.iboOffset,sub.iboLength,0)==std::pair(0u,1u) &&
+            mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==std::pair(1u,1u) &&
+            mesh.rtSlice(sub.iboOffset,sub.iboLength)==std::pair(sub.iboOffset+sub.iboLength,sub.iboLength),
+            "missing or disabled hierarchy keeps the meshlet and ray ranges");
+    return 0;
+    }
+  if(mode.starts_with("shadow-")) {
+    textFile(fixture.root/"system.ini", "");
+    const char* ini = "";
+    float expectedNearPx = MeshLevels::ShadowNearDefaultPx;
+    if(mode=="shadow-ini") {
+      ini = "[INTERNAL]\nshadowLevels=0\nshadowLevelNearPx=600\n";
+      expectedNearPx = 600.f;
+      }
+    if(mode=="shadow-env") {
+      ini = "[INTERNAL]\nshadowLevelNearPx=600\n";
+      expectedNearPx = 650.f;
+      }
+    textFile(fixture.root/"user.ini", ini);
+    settings = std::make_unique<Settings>();
+    settings->load((fixture.root/"system.ini").u16string(), (fixture.root/"user.ini").u16string());
+    const bool  enabled = MeshLevels::shadowLevelsEnabled();
+    const float nearPx  = MeshLevels::shadowNearPx();
+    require(nearPx==expectedNearPx &&
+            MeshLevels::pickShadow(4, 0, false, 700.f, 0, true, nearPx)==(mode=="shadow-default" ? 3 : 0),
+            "the shadow selection must honor the default, INI and environment: "+std::string(mode));
+    require(enabled==(mode=="shadow-default") && MeshLevels::pickShadow(4, 0, false, 700.f, 0, enabled, nearPx)==(enabled ? 3 : 0),
+            "the shadow switch must affect only the shadow level: "+std::string(mode));
+    return 0;
+    }
+  const bool impostorOnly = mode.starts_with("impostor-");
+  if(mode.ends_with("-ini") || mode=="ini") {
+    textFile(fixture.root/"system.ini","");
+    textFile(fixture.root/"user.ini",impostorOnly ? "[INTERNAL]\nimpostors=0\n" : "[INTERNAL]\nmeshLevels=0\n");
+    settings=std::make_unique<Settings>();
+    settings->load((fixture.root/"system.ini").u16string(),(fixture.root/"user.ini").u16string());
+    }
+  glbFile(fixture.root/"meshes/test/lod1.glb");
+  alphaDdsFile(fixture.root/"meshes/test/atlas.dds",false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
+  fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":[{"glb":"test/lod1.glb","px":400},)"+
+                impostorLevel()+"]}}");
+  Resources resources;
+  fixture.mount();
+  const auto* proto = Resources::loadMesh("own_mesh.3ds");
+  require(MeshLevels::enabled()==impostorOnly,"mesh levels switch has the wrong state: "+std::string(mode));
+  if(impostorOnly)
+    require(!MeshLevels::impostorsEnabled(),"the impostor switch must be off: "+std::string(mode));
+  require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1,"the mesh must load");
+  const auto& mesh = proto->attach[0];
+  const auto& sub  = mesh.sub[0];
+  require(mesh.impostor.px==0.f,"the impostor must be absent when switched off");
+  const auto expected = impostorOnly ? std::pair(sub.iboOffset+sub.iboLength,sub.iboLength) :
+                                       std::pair(sub.iboOffset,sub.iboLength);
+  require(mesh.levels.size()==size_t(impostorOnly) && mesh.rtSlice(sub.iboOffset,sub.iboLength)==expected &&
+          mesh.levelMeshlets(sub.iboOffset,sub.iboLength,1)==std::pair(uint32_t(impostorOnly),1u),
+          "switching off the impostor must preserve the 3D levels and their ray geometry when enabled: "+std::string(mode));
+  std::cout << "mesh detail switch " << mode << " leaves " << mesh.levels.size() << " 3D levels\n";
+  return 0;
+  }
+
+// Runs levelSwitchChild in this test's binary anew; fork and exec only, so a thread of this process cannot hold a lock
+void levelSwitchCase(std::string_view mode) {
+  std::error_code error;
+  const auto self = std::filesystem::read_symlink("/proc/self/exe",error);
+  require(!error,"the switch's case needs this test's binary (/proc/self/exe)");
+  std::vector<std::string> env;
+  for(char** e=environ; *e!=nullptr; ++e) {
+    const std::string_view v(*e);
+    if(!v.starts_with("OPENGOTHIC_MESH_LEVELS=") && !v.starts_with("OPENGOTHIC_IMPOSTORS=") &&
+       !v.starts_with("OPENGOTHIC_SHADOW_LEVELS=") && !v.starts_with("OPENGOTHIC_SHADOW_LEVEL_NEAR_PX=") &&
+       !v.starts_with("OPENGOTHIC_TREE_BOUGH_LOD=") &&
+       !v.starts_with("GOTHIC_MESH_LEVELS_CHILD="))
+      env.emplace_back(v);
+    }
+  env.push_back("GOTHIC_MESH_LEVELS_CHILD="+std::string(mode));
+  if(mode=="env")
+    env.push_back("OPENGOTHIC_MESH_LEVELS=0");
+  if(mode=="impostor-env")
+    env.push_back("OPENGOTHIC_IMPOSTORS=0");
+  if(mode=="shadow-env") {
+    env.push_back("OPENGOTHIC_SHADOW_LEVELS=0");
+    env.push_back("OPENGOTHIC_SHADOW_LEVEL_NEAR_PX=650");
+    }
+  if(mode=="bough-env-off")
+    env.push_back("OPENGOTHIC_TREE_BOUGH_LOD=0");
+  if(mode=="bough-legacy")
+    env.push_back("OPENGOTHIC_TREE_BOUGH_LOD=1");
+  std::vector<char*> envp;
+  for(auto& v:env)
+    envp.push_back(v.data());
+  envp.push_back(nullptr);
+  const std::string path = self.string();
+  char* argv[] = {const_cast<char*>(path.c_str()),nullptr};
+  std::cout.flush();
+  const pid_t child = fork();
+  require(child>=0,"the switch's process must start");
+  if(child==0) {
+    execve(path.c_str(),argv,envp.data());
+    _exit(127);
+    }
+  int status = 0;
+  require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0,
+          "the mesh detail switch must be respected: "+std::string(mode));
+  }
+
+// Levels of detail of an own mesh (graphics/meshlevels.h): the switch, the choice by the height on screen, the field
+// of meshes.json and the packing of the levels after the mesh
+void levelCases(const Fixture& fixture) {
+  require(MeshLevels::parse("",true) && !MeshLevels::parse("",false) && !MeshLevels::parse("0",true) &&
+          MeshLevels::parse("1",false),"OPENGOTHIC_MESH_LEVELS must win over [INTERNAL] meshLevels, 0 is off");
+  levelSwitchCase("env");
+  levelSwitchCase("ini");
+  levelSwitchCase("impostor-env");
+  levelSwitchCase("impostor-ini");
+  levelSwitchCase("shadow-default");
+  levelSwitchCase("shadow-env");
+  levelSwitchCase("shadow-ini");
+  levelSwitchCase("bough-env-off");
+  levelSwitchCase("bough-legacy");
+  levelSwitchCase("bough-ini");
+
+  const auto spruceShadow = [](uint8_t previous, float height) {
+    return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true, MeshLevels::ShadowNearDefaultPx);
+    };
+  const auto separate = spruceShadow(0, 799.9f);
+  require(spruceShadow(0, 800.f)==0 && separate==3 && spruceShadow(separate, 800.f)==3 &&
+          spruceShadow(separate, 879.9f)==3 && spruceShadow(separate, 880.f)==0 && spruceShadow(0, 879.9f)==0,
+          "the near shadow must leave the visual GLB below 800 pixels and return at 880 pixels");
+  constexpr float nearPx = MeshLevels::ShadowNearDefaultPx;
+  require(MeshLevels::pickShadow(4, 1, false, 850.f, 0, true, nearPx)==0 &&
+          MeshLevels::pickShadow(4, 0, false, 800.f, 1, true, nearPx)==1 &&
+          MeshLevels::pickShadow(4, 0, false, 390.f, 0, true, nearPx)==4 &&
+          MeshLevels::pickShadow(4, 4, true, 420.f, 1, true, nearPx)==4 &&
+          MeshLevels::pickShadow(4, 4, true, 450.f, 1, true, nearPx)==3 &&
+          MeshLevels::pickShadow(2, 0, false, 390.f, 0, true, nearPx)==2 &&
+          MeshLevels::pickShadow(4, 3, true, 850.f, 0, false, nearPx)==0,
+          "shadow LOD must match the near visual GLB and use its own thresholds and hysteresis farther away");
+  const auto probeShadow = [](uint8_t previous, float height) {
+    return MeshLevels::pickShadow(4, previous, previous!=0, height, 0, true, 600.f);
+    };
+  require(MeshLevels::parseShadowNearPx("1")==MeshLevels::ShadowFarPx && !MeshLevels::parseShadowNearPx("nan") &&
+          probeShadow(0, 599.9f)==3 && probeShadow(0, 600.f)==0 &&
+          probeShadow(3, 659.9f)==3 && probeShadow(3, 660.f)==0 && probeShadow(0, 390.f)==4,
+          "a configured near threshold must keep the return band and the far shadow step");
+
+  // Spruce A, 18 m, at 1920x1080 and 67.5 degrees: 400, 200, 100 and 50 px at 36, 73, 145 and 291 m
+  const float px[] = {400,200,100,50};
+  const auto  count = std::size(px);
+  const auto  at    = [](float metres) { return MeshLevels::screenHeight(1800,metres*100,1.f/std::tan(0.589f),1080); };
+  require(std::abs(at(36.37f)-400)<1 && std::abs(at(291.f)-50)<1,"the height on screen must go as height/distance");
+  uint8_t level = 0;
+  std::vector<uint8_t> seen;
+  for(float metres=10; metres<=400; metres+=.5f) {
+    const auto next = MeshLevels::pick(px,count,level,at(metres));
+    require(next>=level,"a farther object must never get a finer level");
+    if(next!=level)
+      seen.push_back(next);
+    level = next;
+    }
+  require(seen==std::vector<uint8_t>{1,2,3,4} && level==4,"going away the levels must come one by one, in their order");
+  seen.clear();
+  for(float metres=400; metres>=10; metres-=.5f) {
+    const auto next = MeshLevels::pick(px,count,level,at(metres));
+    require(next<=level,"a nearer object must never get a coarser level");
+    if(next!=level)
+      seen.push_back(next);
+    level = next;
+    }
+  require(seen==std::vector<uint8_t>{3,2,1,0} && level==0,"coming near the levels must go one by one back to the mesh");
+  require(MeshLevels::pick(px,count,0,399)==1 && MeshLevels::pick(px,count,0,400)==0 && MeshLevels::pick(px,count,0,420)==0,
+          "a level must come under its px, not on it");
+  for(float h:{399.f,401.f,420.f,439.f,400.f,438.f})
+    require(MeshLevels::pick(px,count,1,h)==1,"a height between px and 1.1 px must keep the level it has: no flicker");
+  require(MeshLevels::pick(px,count,1,440)==0 && MeshLevels::pick(px,count,3,109)==3 && MeshLevels::pick(px,count,3,110)==2,
+          "a level must give way to the finer one at 1.1 of its px");
+  require(MeshLevels::pick(px,count,3,50)==3 && MeshLevels::pick(px,count,4,54)==4 && MeshLevels::pick(px,count,4,55)==3,
+          "the fourth level must have a 50 to 55 px hysteresis band");
+  require(MeshLevels::pick(px,count,0,49)==4 && MeshLevels::pick(px,count,4,1000)==0,"a jump must cross every threshold at once");
+  require(MeshLevels::pick(px,0,0,1)==0 && MeshLevels::pick(px,1,0,50)==1,
+          "a record without levels must draw the mesh at any height; one level must be the last");
+  // the field
+  const auto root = fixture.root/"meshes/test";
+  glbFile(root/"own.glb");
+  glbFile(root/"lod1.glb");
+  GlbOptions bigger;
+  bigger.transformed = true;
+  glbFile(root/"lod2.glb",bigger);
+  const auto record = [&](std::string_view levels) {
+    fixture.index(R"({"own_mesh":{"glb":"test/own.glb","levels":)"+std::string(levels)+"}}");
+    };
+  const std::string firstTwo = R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod2.glb","px":200.5})";
+  const float fieldPx[] = {400,200.5f,100,50};
+  for(size_t expectedLevels:{2u,4u}) {
+    record(firstTwo+(expectedLevels==2 ? "]" : R"(,{"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50}])"));
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"a mesh with levels must load");
+    const auto& mesh = proto->attach[0];
+    require(mesh.levels.size()==expectedLevels,"the mesh must keep exactly the declared levels");
+    require(mesh.impostor.px==0.f,"a GLB-only record must not have an impostor");
+    require(mesh.sub.size()==1 && mesh.sub[0].iboOffset==0,"the test mesh must begin with one submesh");
+    const auto& sub = mesh.sub[0];
+    // what VisualObjects gives the object's cluster at each level (drawnMeshlets)
+    using Range = std::pair<uint32_t,uint32_t>;
+    const auto itself = Range(uint32_t(sub.iboOffset/PackedMesh::MaxInd),uint32_t(sub.iboLength/PackedMesh::MaxInd));
+    require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,0)==itself,"level 0 must draw the mesh itself");
+    for(size_t undeclared=expectedLevels+1; undeclared<=MeshLevels::MaxLevels+1; ++undeclared)
+      require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,undeclared)==itself,
+              "an undeclared level must draw the mesh itself");
+    size_t offset = sub.iboOffset+sub.iboLength;
+    for(size_t i=0; i<mesh.levels.size(); ++i) {
+      require(mesh.levels[i].px==fieldPx[i],"the levels must keep their order and px");
+      const auto& slices = mesh.levels[i].sub;
+      require(slices.size()==1 && slices[0].first==offset && slices[0].second==PackedMesh::MaxInd,
+              "each level must have one meshlet packed after the previous one");
+      require(mesh.levelMeshlets(sub.iboOffset,sub.iboLength,i+1)==Range(uint32_t(offset/PackedMesh::MaxInd),1),
+              "a cluster must use the meshlets of its declared level");
+      offset += slices[0].second;
+      }
+    require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==mesh.levels.back().sub[0],"the ray scene must take the last declared level");
+    require(close(mesh.bbox.bbox[0].x,-400.f) && close(mesh.bbox.bbox[1].y,600.f),
+            "the mesh's own box (the wind's height) must not take the levels in");
+    const auto& own = mesh.bbox.bbox;
+    const auto& all = mesh.drawn.bbox;
+    require(all[0].x<=own[0].x && all[0].y<=own[0].y && all[0].z<=own[0].z &&
+            all[1].x>=own[1].x && all[1].y>=own[1].y && all[1].z>=own[1].z,"the culling box must hold the mesh");
+    require(mesh.drawn.rConservative>mesh.bbox.rConservative+100.f,"the culling box must hold the larger level");
+    require(mesh.shape!=nullptr && mesh.hullVertices.size()==3 && !proto->points.empty(),
+            "collision and the hull must be built from the mesh alone");
+    for(const auto& point:mesh.hullVertices)
+      require(point.x<=-100.f && point.x>=-400.f && point.y<=600.f,"the hull must have no vertex of a level");
+  }
+
+  const std::string four = firstTwo+R"(,{"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50})";
+  const auto atlas = root/"atlas.dds";
+  alphaDdsFile(atlas,false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
+  const auto loadImpostor = [&](std::string_view entries, size_t expectedLevels, float expectedPx) {
+    record(entries);
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"the impostor entry must not affect mesh loading");
+    const auto& mesh = proto->attach[0];
+    require(mesh.levels.size()==expectedLevels && mesh.impostor.px==expectedPx,
+            "the terminal impostor must be loaded independently of the GLBs");
+    if(!mesh.levels.empty()) {
+      const auto& sub = mesh.sub[0];
+      require(mesh.rtSlice(sub.iboOffset,sub.iboLength)==mesh.levels.back().sub[0],
+              "rays must still use the last 3D level");
+      }
+    if(expectedPx>0.f) {
+      const auto before = mesh.pickLevel(4,49.f,true);
+      const auto entered = mesh.pickLevel(before.stage,48.9f,true);
+      const auto held = mesh.pickLevel(entered.stage,53.8f,true);
+      const auto returned = mesh.pickLevel(held.stage,49.f * MeshLevels::Hysteresis,true);
+      require(before==MeshLevels::Selection{4,4} && !before.impostor() &&
+              entered==MeshLevels::Selection{5,4} && entered.impostor() && held==entered && returned==before,
+              "the impostor must enter below its threshold, keep level four for shadows and return after hysteresis");
+      require(mesh.pickLevel(held.stage,48.9f,false)==before,
+              "a disabled impostor must return to the last GLB");
+      }
+    };
+  const std::string tail = ","+impostorLevel()+"]";
+  loadImpostor(four+tail,4,49.f);
+  {
+    size_t rejected = 0;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+      if(mode==Tempest::Log::Error && std::string_view(text).find("px must be positive and less than the last GLB level's px")!=std::string_view::npos)
+        ++rejected;
+      });
+    struct LogReset { ~LogReset() { Tempest::Log::setOutputCallback({}); } } reset;
+    for(int px:{50,0,-1})
+      loadImpostor(four+","+impostorLevel(px)+"]",4,0.f);
+    require(rejected==3,"equal and nonpositive impostor thresholds must be rejected without discarding the GLBs");
+  }
+  loadImpostor(four+R"(,{"impostor":{"albedo":"../atlas.dds"},"px":49}])",4,0.f);
+  loadImpostor("["+impostorLevel()+R"(,{"glb":"test/lod1.glb","px":50}])",1,0.f);
+  loadImpostor("["+impostorLevel()+"]",0,0.f);
+  alphaDdsFile(atlas,false,true); // valid DDS, incompatible atlas dimensions and mip chain
+  loadImpostor(four+tail,4,0.f);
+  std::filesystem::remove(atlas);
+
+  // a wrong field: the reason in the log, the mesh drawn alone
+  const auto alone = [&](std::string_view what) {
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1 && proto->attach[0].sub.size()==1 &&
+            proto->attach[0].sub[0].texName=="OWN_TEST_BARREL_WOOD.TGA",
+            "a mesh whose levels are rejected must still load: "+std::string(what));
+    require(proto->attach[0].levels.empty() &&
+            proto->attach[0].rtSlice(proto->attach[0].sub[0].iboOffset,proto->attach[0].sub[0].iboLength).first==0,
+            "levels must be rejected: "+std::string(what));
+    };
+  fixture.index();
+  alone("no field");
+  {
+    record(R"([{"glb":"test/lod1.glb","px":400},{"glb":"test/lod1.glb","px":200},)"
+           R"({"glb":"test/lod1.glb","px":100},{"glb":"test/lod1.glb","px":50},{"glb":"test/lod1.glb","px":25}])");
+    bool tooMany = false;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+      if(mode==Tempest::Log::Error && std::string_view(text).find("5 levels, at most 4")!=std::string_view::npos)
+        tooMany = true;
+      });
+    struct LogReset { ~LogReset() { Tempest::Log::setOutputCallback({}); } } reset;
+    alone("five levels");
+    require(tooMany,"a fifth level must be rejected for exceeding the level limit");
+  }
+  for(const auto* levels:{R"({"glb":"test/lod1.glb","px":400})",
+                          R"([{"glb":"test/lod1.glb","px":200},{"glb":"test/lod2.glb","px":200}])",
+                          R"([{"glb":"test/lod1.glb","px":200},{"glb":"test/lod2.glb","px":400}])",
+                          R"([{"glb":"test/lod1.glb","px":0}])",
+                          R"([{"glb":"test/lod1.glb","px":-1}])",
+                          R"([{"glb":"test/lod1.glb","px":"400"}])",
+                          R"([{"glb":"test/lod1.glb"}])",
+                          R"([{"px":400}])",
+                          R"([{"glb":7,"px":400}])",
+                          R"(["test/lod1.glb"])",
+                          R"([{"glb":"../meshes/test/lod1.glb","px":400}])",
+                          R"([{"glb":"test/lod1.png","px":400}])",
+                          R"([{"glb":"test/missing.glb","px":400}])"}) {
+    record(levels);
+    alone(levels);
+    }
+  record(R"([{"glb":"test/lod1.glb","px":400}])");
+  GlbOptions other;
+  other.texture = "OWN_TEST_OTHER";
+  glbFile(root/"lod1.glb",other);
+  alone("a level of another material");
+  other = {};
+  other.mixedAlpha = true;
+  glbFile(root/"lod1.glb",other);
+  alone("a level with a material the mesh has not");
+  colorGlbFile(root/"lod1.glb",2);
+  alone("a level with COLOR_0 of a mesh without it");
+  textFile(root/"lod1.glb","broken glb");
+  alone("a level that does not load");
+  std::filesystem::remove(root/"lod1.glb");
+  std::filesystem::remove(root/"lod2.glb");
+  fixture.index();
+  }
+
+void clusterHierarchyCases(const Fixture& fixture) {
+  const auto dir = fixture.root/"meshes/test";
+  const auto glb = dir/"cluster.glb";
+  const auto index = [&](std::string_view fields) {
+    fixture.index(R"({"own_mesh":{"glb":"test/cluster.glb")"+std::string(fields)+"}}");
+    };
+  asset::StaticMesh grid;
+  auto& surface = grid.sub_meshes.emplace_back();
+  surface.mat.name = surface.mat.texture = "OWN_TEST_BARREL_WOOD.TGA";
+  surface.mat.group = asset::MaterialGroup::WOOD;
+  constexpr uint16_t side = 21;
+  for(uint16_t y=0; y<side; ++y)
+    for(uint16_t x=0; x<side; ++x) {
+      const auto vertex = uint16_t(grid.positions.size());
+      grid.positions.push_back({float(x)*10.f,float(y)*10.f,30.f});
+      surface.wedges.push_back({{0,0,1},{float(x)/side,float(y)/side},vertex});
+      if(x>0 && y>0) {
+        const auto left = uint16_t(vertex-1), below = uint16_t(vertex-side), corner = uint16_t(below-1);
+        surface.triangles.push_back({{corner,left,vertex}});
+        surface.triangles.push_back({{corner,vertex,below}});
+        }
+      }
+  grid.bbox = {grid.positions.front(),grid.positions.back()};
+  writeBaseMesh(grid,"CLUSTER_MESH",glb);
+  std::vector<uint8_t> bytes;
+  const auto mesh = loadGltfMesh(glb,&bytes);
+  const auto sourceCrc32 = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
+  const std::array<uint8_t,1> locked = {0};
+  const auto graph = MeshClusterLod::build(mesh,{},locked);
+  require(std::ranges::any_of(graph.clusters,[](const auto& c) { return c.level==1; }),
+          "cluster fixture must provide a simplifiable surface");
+  MeshClusterLod::write(glb,bytes.size(),sourceCrc32,graph);
+  const auto restored = MeshClusterLod::read(glb,bytes.size(),sourceCrc32,mesh,locked);
+  require(restored.has_value(),"own mesh graph must read back with the GLB key");
+  MeshClusterLod::write(dir/"reserialized.glb",bytes.size(),sourceCrc32,*restored);
+  require(gothicglb::readFile(dir/"cluster.clod")==gothicglb::readFile(dir/"reserialized.clod"),
+          "graph round trip must preserve every packed field");
+  const auto graphBytes = gothicglb::readFile(dir/"cluster.clod");
+  const auto staleGlb = dir/"stale.glb";
+  for(const size_t offset:{4u,8u,12u}) { // Format, GLB loader and cluster builder versions.
+    auto stale = graphBytes;
+    stale.at(offset) ^= 1u;
+    gothicglb::writeFile(dir/"stale.clod",stale.data(),stale.size());
+    require(!MeshClusterLod::read(staleGlb,bytes.size(),sourceCrc32,mesh,locked),
+            "a different format, loader or builder version must invalidate the graph");
+    }
+
+  const auto load = [&](bool clustered, size_t levels, float impostor) {
+    Resources resources;
+    fixture.mount();
+    const auto* proto = Resources::loadMesh("own_mesh.3ds");
+    require(proto!=nullptr && proto->attach.size()==1,"cluster fixture must load through Resources");
+    const auto& render = proto->attach.front();
+    require(render.clusterLevels.empty()==!clustered && render.levels.size()==levels && render.impostor.px==impostor,
+            "only rigid static replacements without discrete levels may use a current graph");
+    if(clustered) {
+      require(render.clusterLevels.size()==render.meshletSpheres.size() &&
+              render.sub.front().rtLength<render.sub.front().iboLength && render.sub.front().rtLength>0,
+              "graphics must register every meshlet while rays reference only level zero");
+      }
+    require(render.shape!=nullptr && !render.hullVertices.empty(),"clustered visuals must retain collision geometry");
+    return render.hullVertices;
+    };
+  index("");
+  const auto clusteredHull = load(true,0,0);
+  constexpr std::string_view name = "CLUSTER_MESH";
+  const auto nameAt = std::search(bytes.begin(),bytes.end(),name.begin(),name.end());
+  require(nameAt!=bytes.end(),"GLB fixture must contain its node name");
+  *nameAt = 'D';
+  gothicglb::writeFile(glb,bytes.data(),bytes.size());
+  {
+    size_t rejected = 0;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+      if(mode==Tempest::Log::Error && std::string_view(text).find("cluster hierarchy for \"OWN_MESH\"")!=std::string_view::npos)
+        ++rejected;
+      });
+    struct LogReset { ~LogReset() { Tempest::Log::setOutputCallback({}); } } reset;
+    require(load(false,0,0)==clusteredHull,"the clustered and ordinary visuals must use identical hull geometry");
+    require(rejected==1,"a stale graph must log one rejection naming its visual");
+  }
+  *nameAt = 'C';
+  gothicglb::writeFile(glb,bytes.data(),bytes.size());
+
+  glbFile(dir/"cluster-level.glb");
+  const std::string levels = R"(,"levels":[{"glb":"test/cluster-level.glb","px":80})";
+  index(levels+"]");
+  load(false,1,0);
+  const auto atlas = dir/"atlas.dds";
+  alphaDdsFile(atlas,false,true,MeshLevels::ImpostorAtlasSize,MeshLevels::ImpostorMipCount);
+  index(levels+","+impostorLevel()+"]");
+  load(false,1,49.f);
+  std::filesystem::remove(atlas);
+  fixture.index();
+  }
+
+void fractureFile(const std::filesystem::path& path, size_t version = 1, size_t sourceSize = 0, uint32_t sourceCrc32 = 0,
+                  size_t pieceCount = 8) {
   // Eight independent solid tetrahedra exercise the real cache parser and
   // Jolt convex-hull construction, with no geometry from the original game.
   std::ofstream file(path);
   file << "GOTHIC_FRACTURE " << version << '\n';
-  if(version==2)
+  if(version>=2)
     file << "source " << sourceSize << ' ' << std::hex << sourceCrc32 << std::dec << '\n';
-  file << "pieces 8\n";
+  file << "pieces " << pieceCount << '\n';
   const std::array<std::array<float,3>,4> points = {{{0,0,0},{10,0,0},{0,10,0},{0,0,10}}};
   const std::array<std::array<size_t,3>,4> triangles = {{{0,2,1},{0,1,3},{0,3,2},{1,2,3}}};
-  for(size_t piece=0;piece<8;++piece) {
-    file << "piece 166.6666666667 " << float(piece)*20.f+2.5f << " 2.5 2.5 4\n";
-    for(const auto& triangle:triangles) {
-      file << "tri " << (version==2 ? "OWN_TEST_BARREL_WOOD.TGA" : "ORIGINAL.TGA") << '\n';
+  const std::array groups = {"WOOD","METAL","STONE","CLAY","EARTH","WATER","SNOW","UNDEF"};
+  for(size_t piece=0;piece<pieceCount;++piece) {
+    file << "piece 166.6666666667 " << float(piece)*20.f+2.5f << " 2.5 2.5 ";
+    if(version==3) {
+      const size_t hulls=1+piece%2;
+      file << groups[piece%groups.size()] << ' ' << hulls << " 1\n";
+      for(size_t hull=0;hull<hulls;++hull) {
+        file << "hull 4\n";
+        for(const auto& point:points)
+          file << point[0]+float(piece)*20.f+float(hull)*5.f << ' ' << point[1] << ' ' << point[2] << '\n';
+        }
+      }
+    else file << "4\n";
+    const size_t triangleCount=version==3 ? 1 : triangles.size();
+    for(size_t t=0;t<triangleCount;++t) {
+      file << "tri " << (version>=2 ? "OWN_TEST_BARREL_WOOD.TGA" : "ORIGINAL.TGA") << '\n';
+      const auto& triangle=triangles[t];
       for(const auto index:triangle) {
         const auto& point = points[index];
         file << point[0]+float(piece)*20.f << ' ' << point[1] << ' ' << point[2] << " 0 1 0 0 0\n";
@@ -1195,6 +1999,7 @@ void fractureCache(const Fixture& fixture) {
   const auto original = FractureMesh::load("own_mesh.3ds");
   require(original!=nullptr && original->pieces.size()==8 && original->volume>0,
           "synthetic original fracture cache must contain eight valid solid pieces");
+  require(original->version==1,"original sidecars must retain version 1");
   for(const auto& piece:original->pieces)
     require(piece.hull!=nullptr && piece.triangles.size()==4,"each original cache piece must have a real convex hull");
 
@@ -1221,6 +2026,7 @@ void fractureCache(const Fixture& fixture) {
       else {
         require(fracture!=nullptr && fracture->pieces.size()==8 && fracture->volume==original->volume,
                 "selected geometry must retain eight matched cached pieces for saved destruction");
+        require(fracture->version==(own ? 2u : 1u),"legacy sidecars must retain their version");
         for(const auto& piece:fracture->pieces) {
           require(piece.hull!=nullptr && piece.triangles.size()==4,
                   "selected fracture pieces must retain their solid hulls");
@@ -1269,6 +2075,52 @@ void fractureCache(const Fixture& fixture) {
   const uint32_t crc = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
   fractureFile(sidecar,2,bytes.size(),crc);
   expectFracture(true,true);
+  {
+    Resources resources;
+    fixture.mount();
+    Resources::loadVisualMesh("OWN_MESH.MRM");
+    fractureFile(sidecar,3,bytes.size(),crc);
+    const auto fracture=FractureMesh::load("OWN_MESH.MRM");
+    require(fracture!=nullptr && fracture->version==3 && fracture->pieces.size()==8,
+            "v3 sidecars must load matched GLB geometry");
+    const std::array groups = {asset::MaterialGroup::WOOD,asset::MaterialGroup::METAL,asset::MaterialGroup::STONE,
+                              asset::MaterialGroup::CLAY,asset::MaterialGroup::EARTH,asset::MaterialGroup::WATER,
+                              asset::MaterialGroup::SNOW,asset::MaterialGroup::UNDEFINED};
+    for(size_t i=0;i<groups.size();++i)
+      require(fracture->pieces[i].group==groups[i],"v3 pieces must retain their material group");
+    require(fracture->pieces[0].hull->GetSubType()==JPH::EShapeSubType::ConvexHull &&
+            fracture->pieces[1].hull->GetSubType()==JPH::EShapeSubType::StaticCompound &&
+            fracture->pieces[0].triangles.size()==1,
+            "v3 collision must use independent single or compound hulls, including an open render mesh");
+    fractureFile(sidecar,3,bytes.size(),crc,2);
+    const auto minimum=FractureMesh::load("OWN_MESH.MRM");
+    require(minimum!=nullptr && minimum->pieces.size()==2,"v3 must accept two pieces");
+    fractureFile(sidecar,3,bytes.size(),crc,64);
+    const auto maximum=FractureMesh::load("OWN_MESH.MRM");
+    require(maximum!=nullptr && maximum->pieces.size()==64,"v3 must accept 64 pieces");
+    fractureFile(sidecar,3,bytes.size(),crc,65);
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject 65 pieces");
+    fractureFile(sidecar,3,bytes.size(),crc^1u);
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject stale source identity");
+    fractureFile(sidecar,3,bytes.size(),crc);
+    std::ifstream validFile(sidecar);
+    const std::string valid{std::istreambuf_iterator<char>(validFile),std::istreambuf_iterator<char>()};
+    const auto reject=[&](std::string_view from,std::string_view to,std::string_view message) {
+      auto invalid=valid;
+      const auto at=invalid.find(from);
+      require(at!=std::string::npos,"v3 invalid fixture must replace an existing token");
+      invalid.replace(at,from.size(),to);
+      textFile(sidecar,invalid);
+      require(!FractureMesh::load("OWN_MESH.MRM"),message);
+      };
+    reject("WOOD 1 1","WOOD 0 1","v3 must reject zero hulls");
+    reject("hull 4","hull 3","v3 must reject three hull points");
+    reject("WOOD 1 1","UNKNOWN 1 1","v3 must reject unknown material groups");
+    textFile(sidecar,valid.substr(0,valid.size()-10));
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject truncated sidecars");
+    textFile(sidecar,valid+"unexpected\n");
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject trailing data");
+    }
   fractureFile(sidecar,2,bytes.size(),crc^1u);
   expectFracture(true);
   fractureFile(sidecar,2,bytes.size()+1,crc);
@@ -1304,7 +2156,7 @@ void fractureCache(const Fixture& fixture) {
   glbFile(glb);
   }
 
-void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool dxt5 = false) {
+void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool dxt5, uint32_t side, uint32_t mips) {
   std::array<uint8_t,144> bytes{};
   auto field = [&](size_t at, uint32_t value) {
     for(size_t i=0;i<4;++i)
@@ -1312,15 +2164,17 @@ void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool d
     };
   field(0,0x20534444); // DDS
   field(1,124);
-  field(2,0x81007);
-  field(3,4);
-  field(4,4);
-  field(5,dxt5 ? 16 : 8);
-  field(7,1);
+  const uint32_t blockBytes = dxt5 ? 16 : 8;
+  const auto levelBytes = [blockBytes](uint32_t size) { return ((size+3)/4)*((size+3)/4)*blockBytes; };
+  field(2,mips>1 ? 0xa1007 : 0x81007);
+  field(3,side);
+  field(4,side);
+  field(5,levelBytes(side));
+  field(7,mips);
   field(19,32);
   field(20,4);
   field(21,dxt5 ? 0x35545844 : 0x31545844); // DXT5 / DXT1
-  field(27,0x1000);
+  field(27,mips>1 ? 0x401008 : 0x1000);
   if(dxt5) {
     bytes[128] = 255; // Opaque alpha endpoint, all alpha indices zero.
     bytes[136] = 255;
@@ -1341,8 +2195,738 @@ void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool d
     }
   std::ofstream out(path,std::ios::binary);
   out.write(reinterpret_cast<const char*>(bytes.data()),dxt5 ? 144 : 136);
+  if(side>4 || mips>1) {
+    uint32_t length = 128;
+    for(uint32_t mip=0; mip<mips; ++mip)
+      length += levelBytes(std::max(1u,side>>mip));
+    out.seekp(length-1);
+    out.put('\0');
+    }
   if(!out)
     throw std::runtime_error("unable to write mesh alpha DDS fixture");
+  }
+
+void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
+  const auto source=loadGltfMesh(fixture.root/"meshes/test/opaque.glb");
+  asset::WorldMesh world;
+  world.materials={source.sub_meshes[0].mat};
+  world.vertices={{100,100,100},{100,200,100},{200,100,100}};
+  world.features={{{0,0},0xffffffffu,{0,0,1}},{{0,1},0xffffffffu,{0,0,1}},{{1,0},0xffffffffu,{0,0,1}}};
+  world.polygons.vertex_indices={0,1,2};
+  world.polygons.feature_indices={0,1,2};
+  world.polygons.material_indices={0};
+  world.polygons.lightmap_indices={-1};
+  world.polygons.flags.resize(1);
+  PackedMesh packed(world,PackedMesh::PK_VisualLnd);
+  require(!packed.indices.empty(),"landscape lifetime fixture must contain meshlets");
+  for(const auto& sub:packed.subMeshes)
+    Resources::loadMaterial(sub.material,true);
+  Gothic gothic;
+  const auto directory=fixture.root/"landscape-lifetime";
+  writeWorldChunks(world,{"CONTRACT.ZEN",0,0},directory);
+  ChunkTable table;
+  world=readWorldChunks(directory,{},&table);
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  Resources::resetRecycled(0);
+  const auto baseline=tempestProbeGpuBufferCount();
+  const auto chunkFile=directory/table.entries[0].file;
+  {
+  ChunkResidency residency(table);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(world),residency,0);
+  const auto update=[&](const Tempest::Vec3& position, float range=1000) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,range);
+    view.finishLandscapeUpdate();
+    };
+  const auto emptyBuffers=tempestProbeGpuBufferCount();
+  size_t bucketCount=0;
+  size_t firstMeshlet=0,pageBytes=0,releasedBuffers=0;
+  const Tempest::StorageBuffer* vertices=nullptr;
+  const Tempest::StorageBuffer* indices=nullptr;
+  const auto usedBytes=packed.vertices.size()*sizeof(packed.vertices[0])+packed.indices8.size();
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update({100,100,100});
+    device.waitIdle();
+    require(residency.desired(size_t(0))==ChunkResidency::State::Near && residency.stats().published==cycle+1,
+            "Near must publish the streaming landscape synchronously");
+    require(tempestProbeGpuBufferCount()>emptyBuffers,"published landscape pages must own live GPU buffers");
+    require(residency.stats().landscapePageCount==1 && residency.stats().landscapePageUsedBytes==usedBytes &&
+            residency.stats().landscapePageRetiredBytes==0,"published landscape must occupy exactly its page range");
+    const auto& buckets=view.drawBuckets().buckets();
+    const auto bucket=std::find_if(buckets.begin(),buckets.end(),[](const auto& bucket) {
+      return bucket.staticMesh!=nullptr;
+      });
+    require(bucket!=buckets.end(),"published landscape must register its stable mesh in draw buckets");
+    const auto bucketIndex=size_t(bucket-buckets.begin());
+    const auto* mesh=bucket->staticMesh;
+    if(cycle==0) {
+      bucketCount=buckets.size();
+      vertices=&mesh->vboBuffer();
+      indices=&mesh->ibo8Buffer();
+      firstMeshlet=mesh->firstMeshlet();
+      pageBytes=residency.stats().landscapePageUsedBytes+residency.stats().landscapePageFreeBytes;
+      }
+    else {
+      require(buckets.size()==bucketCount,"republishing a landscape must reuse invalidated buckets");
+      require(&mesh->vboBuffer()==vertices && &mesh->ibo8Buffer()==indices && mesh->firstMeshlet()==firstMeshlet,
+              "republishing must reuse the completed page range and its GPU buffers");
+      }
+    update({100,100,100});
+    require(view.drawBuckets().buckets().at(bucketIndex).staticMesh==mesh,
+            "a published landscape's StaticMesh must remain stable between residency updates");
+    update({1000000,0,1000000});
+    require(residency.desired(size_t(0))==ChunkResidency::State::Outside && residency.stats().released==cycle+1,
+            "Outside must release the streaming landscape");
+    for(const auto& bucket:view.drawBuckets().buckets())
+      require(bucket.staticMesh==nullptr && bucket.animMesh==nullptr,
+              "Outside must not leave mesh pointers in draw buckets");
+    require(residency.stats().landscapePageUsedBytes==0 && residency.stats().landscapePageRetiredBytes==usedBytes &&
+            residency.stats().landscapePageFreeBytes+usedBytes==pageBytes,
+            "Outside must retire its occupied range until the consuming frame completes");
+    Resources::resetRecycled(1);
+    view.finishLandscapeUpdate();
+    require(residency.stats().landscapePageRetiredBytes==usedBytes,
+            "another frame slot must not release retired landscape ranges");
+    device.waitIdle();
+    Resources::resetRecycled(0);
+    view.finishLandscapeUpdate();
+    require(residency.stats().landscapePageUsedBytes==0 && residency.stats().landscapePageRetiredBytes==0 &&
+            residency.stats().landscapePageFreeBytes==pageBytes && residency.stats().landscapePageCount==1,
+            "the completed recycle slot must return the full page range for reuse");
+    if(cycle==0)
+      releasedBuffers=tempestProbeGpuBufferCount();
+    else
+      require(tempestProbeGpuBufferCount()==releasedBuffers,
+              "publish/release cycles must not accumulate live buffers while the view remains alive");
+    }
+
+  std::filesystem::last_write_time(chunkFile,std::filesystem::last_write_time(chunkFile)+std::chrono::seconds(1));
+  const Tempest::Vec3 farPosition={25600,100,100};
+  update(farPosition,100000);
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(!view.landscapeReady() && std::chrono::steady_clock::now()<deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    update(farPosition,100000);
+    }
+  update(farPosition,100000); // Consume the worker's error even if readiness settled first.
+  require(residency.desired(size_t(0))==ChunkResidency::State::Far && view.landscapeReady() &&
+          residency.stats().pending==0 && residency.stats().published==2,
+          "a failed Far chunk must settle readiness without being published or queued again");
+  update({100,100,100});
+  require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==3,
+          "a failed Far chunk required Near must retry the current file and publish normally");
+  }
+  {
+  // A first synchronous Near read must also recover from a changed source.
+  auto reloadWorld=readWorldChunks(directory);
+  ChunkResidency residency(table);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(reloadWorld),residency,0);
+  const auto update=[&](const Tempest::Vec3& position) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,1000);
+    view.finishLandscapeUpdate();
+    };
+  update({100,100,100});
+  require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+          "a synchronous Near packing error must retry the current file without throwing");
+  update({1000000,0,1000000});
+  const auto bytes=gothicglb::readFile(chunkFile);
+  textFile(chunkFile,"permanently broken landscape chunk");
+  size_t errors=0;
+  Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+    if(mode==Tempest::Log::Error && std::string_view(text).find("Landscape chunk ")!=std::string_view::npos)
+      ++errors;
+    });
+  try {
+    update({100,100,100});
+    require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+            "a corrupt Near chunk must fail without throwing or blocking readiness");
+    update({100,100,100});
+    update({1000000,0,1000000});
+    update({100,100,100});
+    gothicglb::writeFile(chunkFile,bytes.data(),bytes.size());
+    update({1000000,0,1000000});
+    update({100,100,100});
+    }
+  catch(...) {
+    Tempest::Log::setOutputCallback({});
+    throw;
+    }
+  Tempest::Log::setOutputCallback({});
+  require(errors==1 && view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+          "an exhausted Near retry must log once and never retry on later frames or residency changes");
+  }
+  {
+  // The catalogue start (worldchunkcatalogue.h): no stitched mesh; the Near chunk comes from its .wcb into the
+  // same page range.
+  cookWorldChunks(directory);
+  ChunkTable catalogueTable;
+  auto landscape=startWorldChunks(directory,{},readWorldChunkManifest(directory),catalogueTable,true);
+  (void)WorldCloth::extract(landscape,&catalogueTable);
+  require(catalogueTable.source && catalogueTable.source->catalogue() && landscape.polygons.material_indices.empty(),
+          "a cooked world must take the catalogue start");
+  ChunkResidency residency(catalogueTable);
+  // The view as the world load makes it (graphics/landscapestart.h): the stitched landscape's bounds, as the start
+  // without the catalogue gives them (packed.bbox() also holds the meshlets' padding).
+  const auto made=streamingWorldView(landscape,catalogueTable,"CONTRACT.ZEN");
+  auto& view=*made;
+  const auto bounds=view.bbox(), expected=PackedMesh::landscapeBbox(readWorldChunks(directory));
+  require(bounds.first.x==expected.first.x && bounds.first.y==expected.first.y && bounds.first.z==expected.first.z &&
+          bounds.second.x==expected.second.x && bounds.second.y==expected.second.y && bounds.second.z==expected.second.z,
+          "the catalogue start's view must take the stitched landscape's bounds");
+  view.startLandscapeStreaming(std::move(landscape),residency,0);
+  view.prepareLandscapeWork();
+  residency.update({100,100,100},{100,100,100},1000);
+  view.finishLandscapeUpdate();
+  require(view.landscapeReady() && residency.stats().published==1 && catalogueTable.source->reads().cooked==1 &&
+          residency.stats().landscapePageUsedBytes==packed.vertices.size()*sizeof(packed.vertices[0])+packed.indices8.size(),
+          "the catalogue start must publish the Near chunk from its .wcb into the same page range");
+  }
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  require(tempestProbeGpuBufferCount()==baseline,"destroying the streaming view must return live page buffers to baseline");
+  if(Shaders::options().doBindless) {
+    SceneGlobals scene;
+    StaticMesh firstMesh(packed),secondMesh(packed);
+    VisualObjects grouped(scene,packed.bbox());
+    auto animated=Resources::loadMaterial(packed.subMeshes[0].material,true);
+    animated.frames={animated.tex,&Resources::fallbackTexture()};
+    animated.texAniFPSInv=100;
+    const auto& sub=packed.subMeshes[0];
+    auto first=grouped.get(firstMesh,animated,sub.iboOffset,sub.iboLength,packed.meshletBounds.data(),DrawCommands::Landscape);
+    auto second=grouped.get(secondMesh,animated,sub.iboOffset,sub.iboLength,packed.meshletBounds.data(),DrawCommands::Landscape);
+    require(grouped.drawCommands()[0].isBindless() && grouped.drawCommands()[0].maxPayload==2*packed.meshletBounds.size(),
+            "animated landscape chunks must share one bindless draw command across mesh buckets");
+    device.waitIdle();
+    }
+  std::cout << "landscape streaming lifetime: 2 Near/Outside cycles, live_buffers=" << baseline << '\n';
+}
+
+// -rt 1 (reports/render-features/2026-11-08-rt-revisit/step-1c.md): a chunk brings its landscape BLAS into the ray
+// scene when it is published and takes them out when it goes Outside; a teleport away and back publishes it again
+// into the same pages and ranges, and the live buffers and structures come back to where they were. The ray scene
+// is chosen from the command line once, by Shaders, so this is the test's last case.
+void landscapeRtLifetime(const Fixture& fixture) {
+  TestApi api;
+  Tempest::Device device(api);
+  if(!device.properties().raytracing.rayQuery) {
+    std::cout << "landscape ray scene lifetime: skipped, the GPU has no ray query\n";
+    return;
+    }
+  static const std::string root=fixture.root.string();
+  static const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","1"};
+  static CommandLine rtCommandLine(5,args);
+  {
+  Resources resources(device);
+  Shaders shaders;
+  shaders.waitCompiler();
+  fixture.mount();
+  require(Shaders::options().doRtScene,"-rt 1 on a GPU with ray query must turn the ray scene on");
+  const auto source=loadGltfMesh(fixture.root/"meshes/test/opaque.glb");
+  // a triangle in each of the chunks (0,0) and (1,0)
+  asset::WorldMesh world;
+  world.materials={source.sub_meshes[0].mat};
+  world.vertices={{100,100,100},{100,200,100},{200,100,100},{6500,100,100},{6500,200,100},{6600,100,100}};
+  world.features={{{0,0},0xffffffffu,{0,0,1}},{{0,1},0xffffffffu,{0,0,1}},{{1,0},0xffffffffu,{0,0,1}}};
+  world.polygons.vertex_indices={0,1,2,3,4,5};
+  world.polygons.feature_indices={0,1,2,0,1,2};
+  world.polygons.material_indices={0,0};
+  world.polygons.lightmap_indices={-1,-1};
+  world.polygons.flags.resize(2);
+  PackedMesh packed(world,PackedMesh::PK_VisualLnd);
+  for(const auto& sub:packed.subMeshes)
+    require(Resources::loadMaterial(sub.material,true).alpha==Material::Solid,"the ray scene fixture must be solid");
+  Gothic gothic;
+  const auto directory=fixture.root/"landscape-rt-lifetime";
+  writeWorldChunks(world,{"CONTRACT.ZEN",0,0},directory);
+  ChunkTable table;
+  world=readWorldChunks(directory,{},&table);
+  require(table.entries.size()==2,"the ray scene fixture must span two chunks");
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  const auto baselineBuffers=tempestProbeGpuBufferCount();
+  const auto baselineStructures=tempestProbeAccelerationStructureCount();
+  {
+  ChunkResidency residency(table);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(world),residency,0);
+  uint8_t frame=0;
+  // a frame: residency, then the ray scene as the renderer updates it, and the frame's recycle slot once it completed
+  const auto update=[&](const Tempest::Vec3& position) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,1000);
+    view.finishLandscapeUpdate();
+    auto command=device.commandBuffer();
+    {
+    auto encoder=command.startEncoding(device);
+    view.updateRtScene(encoder,frame);
+    }
+    device.submit(command).wait();
+    frame=uint8_t((frame+1)%Resources::MaxFramesInFlight);
+    Resources::resetRecycled(frame);
+    };
+  const auto& scene=view.sceneGlobals().rtScene;
+  size_t structures=0,buffers=0;
+  uint32_t entries=0;
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update({150,100,150});
+    require(residency.stats().published==2*(cycle+1) && residency.stats().landscapePageCount==1,
+            "Near must publish both chunks into one page");
+    const auto stats=scene.stats();
+    require(stats.landscapeSlots==2 && stats.landscapeShown==2,
+            "every published chunk must hold its solid BLAS as an active landscape instance");
+    require(residency.stats().landscapePageUsedBytes==2*(PackedMesh::MaxVert*sizeof(Resources::Vertex)+PackedMesh::MaxPrim*4+
+                                                            PackedMesh::MaxInd*sizeof(uint32_t)),
+            "with the ray scene a page keeps the meshlets' 32-bit indices as well");
+    if(cycle==0)
+      entries=stats.entries;
+    else
+      require(stats.entries==entries,"chunks published again must reuse the ranges of rtDesc");
+    // The second chunk of the page reads its triangles from its own range: its 32-bit indices count from the page's
+    // first vertex, and its geometry starts at its first meshlet (a chunk-local index would build the first chunk's).
+    {
+    std::vector<const StaticMesh*> meshes;
+    for(const auto& bucket:view.drawBuckets().buckets())
+      if(bucket.staticMesh!=nullptr && std::find(meshes.begin(),meshes.end(),bucket.staticMesh)==meshes.end())
+        meshes.push_back(bucket.staticMesh);
+    require(meshes.size()==2,"both published chunks must register their meshes in draw buckets");
+    std::vector<uint32_t> indices(2*PackedMesh::MaxInd);
+    device.readBytes(meshes[0]->rtIbo(),indices.data(),indices.size()*sizeof(uint32_t));
+    for(const auto* mesh:meshes) {
+      require(&mesh->rtIbo()==&meshes[0]->rtIbo() && mesh->firstMeshlet()<2,"both chunks must share the page's indices");
+      const auto first=mesh->firstMeshlet();
+      require(mesh->rtFirstIndex(0)==first*PackedMesh::MaxInd,"a chunk's geometry for rays must start at its first meshlet");
+      for(size_t i=first*PackedMesh::MaxInd;i<(first+1)*PackedMesh::MaxInd;++i)
+        require(indices[i]>=first*PackedMesh::MaxVert && indices[i]<(first+1)*PackedMesh::MaxVert,
+                "a chunk's 32-bit indices must address its own vertices in the page");
+      }
+    }
+    // a teleport away: both chunks go Outside, their instances leave at once and their BLAS after the fence
+    update({1000000,0,1000000});
+    require(residency.stats().released==2*(cycle+1),"Outside must release both chunks");
+    require(scene.stats().landscapeSlots==0 && scene.stats().landscapeShown==0,
+            "released chunks must leave no landscape instance in the ray scene");
+    // the frames in flight may still trace the released BLAS: Resources::recycle keeps them until their frame slot
+    const auto released=tempestProbeAccelerationStructureCount();
+    for(uint8_t i=0;i<Resources::MaxFramesInFlight;++i)
+      update({1000000,0,1000000});
+    device.waitIdle();
+    require(released>=tempestProbeAccelerationStructureCount()+2,
+            "a released chunk's BLAS must outlive the frames in flight in Resources::recycle");
+    if(cycle==0) {
+      structures=tempestProbeAccelerationStructureCount();
+      buffers=tempestProbeGpuBufferCount();
+      }
+    else {
+      require(tempestProbeAccelerationStructureCount()==structures && tempestProbeGpuBufferCount()==buffers,
+              "publish/release cycles must not accumulate BLAS or buffers while the view remains alive");
+      }
+    }
+  require(structures>baselineStructures,"the view must keep its TLAS while it is alive");
+  }
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  require(tempestProbeAccelerationStructureCount()==baselineStructures && tempestProbeGpuBufferCount()==baselineBuffers,
+          "destroying the streaming view must return the live structures and buffers to baseline");
+  std::cout << "landscape ray scene lifetime: 2 Near/Outside cycles of 2 chunks, structures=" << baselineStructures
+            << " buffers=" << baselineBuffers << '\n';
+  }
+  device.waitIdle();
+  }
+
+void staticVobLifetime(Tempest::Device& device) {
+  setenv("OPENGOTHIC_VOB_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","0",1);
+  Resources::configureTextures("0","0");
+  Gothic gothic;
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{6400,1000,6400},1});
+  ChunkResidency residency(table);
+  WorldView view(std::pair{Tempest::Vec3{0,0,0},Tempest::Vec3{6400,1000,6400}},"CONTRACT.ZEN");
+  view.setTextureResidency(&residency);
+  view.startVobStreaming(residency);
+  const auto* proto=Resources::loadMesh("OWN_OPAQUE.3DS");
+  asset::VisualDecal decal;
+  decal.name="VOB_DECAL.TGA";
+  decal.dimension={50,50};
+  const auto* decalProto=Resources::decalMesh(decal);
+  require(proto!=nullptr && decalProto!=nullptr,"static vob lifetime requires mesh and decal prototypes");
+  const std::array textures={proto->attach[0].sub[0].material.tex,decalProto->attach[0].sub[0].material.tex};
+  require(std::all_of(textures.begin(),textures.end(),[](auto* texture) { return texture!=nullptr && texture->w()==4; }),
+          "static vob lifetime must use resident mesh and decal textures");
+  ObjVisual meshVisual,decalVisual;
+  MeshGltfTest::attach(meshVisual,view,proto,{100,100,100});
+  MeshGltfTest::attach(decalVisual,view,decalProto,{200,100,100});
+  require(!MeshGltfTest::drawable(meshVisual) && !MeshGltfTest::drawable(decalVisual),
+          "Outside registration must retain prototypes without creating draw instances");
+  const auto update=[&](const Tempest::Vec3& position, float range=1000) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,range);
+    view.finishLandscapeUpdate();
+    Resources::updateTextures(&residency);
+    };
+  const auto textureWidth=[&](const Tempest::Vec3& position, int width, float range=1000) {
+    const auto matches=[&] {
+      return std::all_of(textures.begin(),textures.end(),[&](auto* texture) { return texture->w()==width; });
+      };
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!matches() && std::chrono::steady_clock::now()<deadline) {
+      update(position,range);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(matches(),width==1 ? "Outside must release all mesh/decal texture demand" :
+                                "Resident Near/Far visuals must restore mesh/decal texture demand");
+    };
+  const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
+  update({25600,100,100},100000);
+  require(residency.stats().vobFar==2 && residency.stats().vobPending==2 &&
+          residency.stats().vobNearMissing==0 && !view.landscapeReady(),
+          "Far readiness must account for unpublished mesh and decal instances");
+  size_t clusters=0;
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update(near);
+    const auto& stats=residency.stats();
+    require(MeshGltfTest::drawable(meshVisual) && MeshGltfTest::drawable(decalVisual) &&
+            stats.vobNear==2 && stats.vobCreated==2*(cycle+1) && stats.vobNearMissing==0 &&
+            stats.vobNearMissingSeconds==0,
+            "Near must synchronously publish both static visuals without a missing interval");
+    textureWidth(near,4);
+    if(cycle==0)
+      clusters=view.clusters().size();
+    else
+      require(view.clusters().size()==clusters,"republishing static vobs must reuse their draw-instance slots");
+    update(outside);
+    require(!MeshGltfTest::drawable(meshVisual) && !MeshGltfTest::drawable(decalVisual) &&
+            stats.vobOutside==2 && stats.vobReleased==2*(cycle+1) && stats.vobPending==0 &&
+            meshVisual.protoMesh()==proto && decalVisual.protoMesh()==decalProto,
+            "Outside must release draw instances while retaining both prototypes");
+    textureWidth(outside,1);
+    auto changed=Tempest::Matrix4x4::mkIdentity();
+    changed.translate(300.f+float(cycle),200,100);
+    meshVisual.setObjMatrix(changed);
+    }
+  update(near);
+  textureWidth(near,4);
+  const auto matrix=MeshGltfTest::matrix(meshVisual);
+  require(close(matrix[3][0],301) && close(matrix[3][1],200) && close(matrix[3][2],100) &&
+          view.clusters().size()==clusters && residency.stats().vobNearMissing==0,
+          "returning Near must restore the latest deferred transform without accumulating instances");
+  // A vob-only cell has no Far landscape, but its published draw instances
+  // must keep texture demand until the vob cell itself leaves Far.
+  table.entries[0].triangleCount=0;
+  const Tempest::Vec3 far={25600,100,100};
+  const auto createdBeforeFar=residency.stats().vobCreated;
+  const auto releasedBeforeFar=residency.stats().vobReleased;
+  update(far,100000);
+  require(MeshGltfTest::drawable(meshVisual) && MeshGltfTest::drawable(decalVisual) &&
+          residency.stats().vobCreated==createdBeforeFar && residency.stats().vobReleased==releasedBeforeFar,
+          "Near to Far must retain vob-only cell views without releasing or recreating instances");
+  textureWidth(far,4,100000);
+  for(size_t frame=0;frame<32;++frame)
+    update(far,100000);
+  require(residency.stats().vobFar==2 && MeshGltfTest::drawable(meshVisual) &&
+          MeshGltfTest::drawable(decalVisual) && textures[0]->w()==4 && textures[1]->w()==4,
+          "published Far vobs in a cell without landscape must retain their texture demand");
+  update(outside);
+  textureWidth(outside,1);
+  device.waitIdle();
+  unsetenv("OPENGOTHIC_VOB_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  Resources::configureTextures();
+  std::cout << "static vob streaming lifetime: 2 Near/Outside/Near cycles, texture demand released\n";
+  }
+
+void itemVobLifetime(Tempest::Device& device) {
+  setenv("OPENGOTHIC_VOB_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","0",1);
+  Resources::configureTextures("0","0");
+  Gothic gothic;
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{6400,1000,6400},1});
+  ChunkResidency residency(table);
+  WorldView view(std::pair{Tempest::Vec3{0,0,0},Tempest::Vec3{6400,1000,6400}},"CONTRACT.ZEN");
+  view.setTextureResidency(&residency);
+  view.startVobStreaming(residency);
+  const auto* proto=Resources::loadMesh("OWN_OPAQUE.3DS");
+  require(proto!=nullptr,"world item lifetime requires a mesh prototype");
+  const auto* texture=proto->attach[0].sub[0].material.tex;
+  require(texture!=nullptr,"world item lifetime requires a resident texture");
+  auto immediate=view.addView(proto,3);
+  const auto material=immediate.node(0).material();
+  immediate={};
+  ObjVisual visual;
+  MeshGltfTest::attach(visual,view,proto,{100,100,100},true,3);
+  require(!MeshGltfTest::drawable(visual),"Outside world item registration must not create a view");
+  const auto update=[&](const Tempest::Vec3& position, float range=1000) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,range);
+    view.finishLandscapeUpdate();
+    Resources::updateTextures(&residency);
+    };
+  const auto textureWidth=[&](const Tempest::Vec3& position, int width) {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(texture->w()!=width && std::chrono::steady_clock::now()<deadline) {
+      update(position);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(texture->w()==width,"world item view residency must control its texture demand");
+    };
+  const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
+  update({25600,100,100},100000);
+  require(residency.stats().vobFar==1 && residency.stats().vobPending==1 &&
+          !MeshGltfTest::drawable(visual),"Far world item views must use the publication queue");
+  size_t clusters=0;
+  auto deferred=Tempest::Matrix4x4::mkIdentity();
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update(near);
+    textureWidth(near,4);
+    require(MeshGltfTest::drawable(visual) && residency.stats().vobNear==1 &&
+            residency.stats().vobNearMissing==0 && residency.stats().vobNearMissingSeconds==0 &&
+            MeshGltfTest::material(visual)==material,
+            "Near must publish the world item synchronously with its original material");
+    if(cycle==0)
+      clusters=view.clusters().size();
+    else
+      require(view.clusters().size()==clusters,"world item cycles must reuse draw-instance slots");
+    update(outside);
+    textureWidth(outside,1);
+    require(!MeshGltfTest::drawable(visual) && visual.protoMesh()==proto &&
+            residency.stats().vobReleased==cycle+1 && residency.stats().vobPending==0,
+            "Outside must release only the world item view and retain its CPU prototype");
+    deferred.identity();
+    deferred.translate(300.f+float(cycle),200,100);
+    deferred.rotateOY(35);
+    visual.setObjMatrix(deferred);
+    }
+  ObjVisual moved(std::move(visual));
+  update(near);
+  textureWidth(near,4);
+  const auto matrix=MeshGltfTest::matrix(moved);
+  require(matrix==deferred &&
+          MeshGltfTest::material(moved)==material && view.clusters().size()==clusters,
+          "moving the item owner must retain registration, deferred pose and material");
+  auto distant=matrix;
+  distant.set(3,0,outside.x);
+  distant.set(3,2,outside.z);
+  moved.setObjMatrix(distant);
+  update(near);
+  require(!MeshGltfTest::drawable(moved) && residency.stats().vobOutside==1 && residency.stats().vobNear==0,
+          "a moving world item must release its view when crossing into an Outside cell");
+  textureWidth(near,1);
+  moved.setObjMatrix(matrix);
+  update(near);
+  require(MeshGltfTest::drawable(moved) && residency.stats().vobNear==1 && residency.stats().vobNearMissing==0,
+          "a moving world item must publish synchronously when crossing back into Near");
+  moved=ObjVisual();
+  update(near);
+  textureWidth(near,1);
+  require(residency.stats().vobNear==0 && residency.stats().vobOutside==0 && residency.stats().vobPending==0,
+          "pickup must remove the item from residency and release its texture demand");
+  MeshGltfTest::attach(moved,view,proto,near,true,3);
+  update(near);
+  textureWidth(near,4);
+  require(MeshGltfTest::drawable(moved) && residency.stats().vobNear==1 &&
+          residency.stats().vobNearMissing==0 && view.clusters().size()==clusters,
+          "a dropped item must register in its current cell without leaking draw-instance slots");
+  moved=ObjVisual();
+  update(near);
+  textureWidth(near,1);
+  device.waitIdle();
+  unsetenv("OPENGOTHIC_VOB_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  Resources::configureTextures();
+  std::cout << "world item streaming lifetime: 2 Near/Outside/Near cycles, move, pickup/drop, texture demand released\n";
+  }
+
+void mobsiVobLifetime(Tempest::Device& device) {
+  setenv("OPENGOTHIC_VOB_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","0",1);
+  Resources::configureTextures("0","0");
+  Gothic gothic;
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{6400,1000,6400},1});
+  ChunkResidency residency(table);
+  WorldView view(std::pair{Tempest::Vec3{0,0,0},Tempest::Vec3{6400,1000,6400}},"CONTRACT.ZEN");
+  view.setTextureResidency(&residency);
+  view.startVobStreaming(residency);
+  const auto* proto=Resources::loadMesh("OWN_MODEL_ROTATION.MDL");
+  require(proto!=nullptr && proto->skeleton!=nullptr && proto->attach.size()==1 && !proto->submeshId.empty(),
+          "mobsi lifetime requires a model with a skeleton and a drawable attachment");
+  const auto* skeleton=proto->skeleton.get();
+  const auto root=skeleton->findNode(proto->attach[0].name),slot=skeleton->findNode("ZS_POS0");
+  require(root<skeleton->nodes.size() && slot<skeleton->nodes.size(),
+          "mobsi lifetime requires a body bone and a logical usage attachment point");
+  const auto* texture=proto->attach[0].sub[0].material.tex;
+  require(texture!=nullptr,"mobsi lifetime must use a real texture demand");
+  Animation::Sequence sequence;
+  sequence.name="T_MOBSI_TEST";
+  sequence.data=std::make_shared<Animation::AnimData>();
+  sequence.data->fpsRate=1;
+  sequence.data->numFrames=2;
+  sequence.data->nodeIndex={uint32_t(root)};
+  sequence.data->samples={{{0,0,0},{1,0,0,0}},{{0,0,0},{.70710678f,0,.70710678f,0}}};
+  ObjVisual visual;
+  const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
+  MeshGltfTest::attachModel(visual,view,proto,near);
+  const auto* slotProto=Resources::loadMesh("OWN_SLOT.3DS");
+  require(slotProto!=nullptr && slotProto->attach.size()==1 && slotProto->attach[0].sub.size()==1,
+          "mobsi slot fixture must have a textured mesh");
+  auto slotView=view.addView("OWN_SLOT.3DS",1,0,1);
+  require(!slotView.isEmpty(),"mobsi slot fixture must create the requested material variant");
+  const auto* slotTexture=slotView.node(0).material().tex;
+  require(slotTexture==Resources::loadMaterialAlbedo("SLOT_V1.TGA") &&
+          slotTexture!=slotProto->attach[0].sub[0].material.tex,
+          "mobsi slot fixture must select a texture distinct from its prototype's default material");
+  visual.setSlotItem(MeshGltfTest::slotItem(std::move(slotView),1),"ZS_POS0");
+  const std::array textures={texture,slotTexture};
+  auto* pose=&MeshGltfTest::modelPose(visual);
+  require(!MeshGltfTest::modelDrawable(visual) && !MeshGltfTest::modelSlotDrawable(visual) &&
+          MeshGltfTest::modelSlotProto(visual)==slotProto && pose->boneCount()==skeleton->nodes.size() &&
+          MeshGltfTest::startModelAnimation(visual,sequence),
+          "Outside must retain a usable skeleton, solver and slot item without creating draw instances");
+  pose->update(0,true);
+  const auto initialSlot=visual.bone(slot);
+  const auto update=[&](const Tempest::Vec3& position) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,1000);
+    view.finishLandscapeUpdate();
+    Resources::updateTextures(&residency);
+    };
+  const auto textureWidth=[&](const Tempest::Vec3& position, int width) {
+    const auto matches=[&] {
+      return std::all_of(textures.begin(),textures.end(),[&](auto* item) { return item->w()==width; });
+      };
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!matches() && std::chrono::steady_clock::now()<deadline) {
+      update(position);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(matches(),width==1 ? "Outside mobsi must release body and slot variant texture demand" :
+                                "Near mobsi must restore body and slot variant texture demand");
+    };
+  size_t clusters=0;
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update(near);
+    require(MeshGltfTest::modelDrawable(visual) && MeshGltfTest::modelSlotDrawable(visual) && residency.stats().vobNear==1 &&
+            residency.stats().vobCreated==cycle+1 && residency.stats().vobNearMissing==0 &&
+            residency.stats().vobNearMissingSeconds==0,
+            "Near must synchronously publish mobsi and include it in the missing-view counters");
+    sameMatrix(MeshGltfTest::modelMatrix(visual),visual.bone(root),
+               "a newly published mobsi body must use its current bone pose");
+    sameMatrix(MeshGltfTest::modelSlotMatrix(visual),visual.bone(slot),
+               "an item inserted outside residency must appear on its current posed attachment point");
+    require(MeshGltfTest::modelSlotTexture(visual)==slotTexture,
+            "republishing a mobsi slot item must preserve its selected material variant");
+    textureWidth(near,4);
+    if(cycle==0)
+      clusters=view.clusters().size();
+    else
+      require(view.clusters().size()==clusters,"republishing mobsi must reuse its draw-instance slots");
+    update(outside);
+    require(!MeshGltfTest::modelDrawable(visual) && !MeshGltfTest::modelSlotDrawable(visual) && residency.stats().vobOutside==1 &&
+            residency.stats().vobReleased==cycle+1 && residency.stats().vobPending==0 &&
+            visual.protoMesh()==proto && &MeshGltfTest::modelPose(visual)==pose &&
+            pose->isInAnim(sequence.name) && MeshGltfTest::modelSlotProto(visual)==slotProto,
+            "Outside must release mobsi and slot draw instances while retaining proto, pose and animation state");
+    textureWidth(outside,1);
+    require(pose->update(500*(cycle+1),true) && pose->isInAnim(sequence.name),
+            "mobsi pose must continue animating while its body is absent");
+    }
+  const auto currentSlot=visual.bone(slot);
+  require(!close(currentSlot.at(3,0),initialSlot.at(3,0)) || !close(currentSlot.at(3,2),initialSlot.at(3,2)),
+          "logical usage attachment points must follow the animation outside residency");
+  const auto animationState=visual.animNames();
+  update(near);
+  textureWidth(near,4);
+  sameMatrix(MeshGltfTest::modelMatrix(visual),visual.bone(root),
+             "returning Near must restore the current animated body rather than its initial frame");
+  sameMatrix(MeshGltfTest::modelSlotMatrix(visual),visual.bone(slot),
+             "returning Near must restore the slot item at its current animated attachment point");
+  require(view.clusters().size()==clusters && residency.stats().vobNearMissing==0 &&
+          &MeshGltfTest::modelPose(visual)==pose && visual.animNames()==animationState &&
+          MeshGltfTest::modelSlotTexture(visual)==slotTexture,
+          "recreating a mobsi body must neither accumulate instances nor reset its animation");
+  update(outside);
+  textureWidth(outside,1);
+  device.waitIdle();
+  unsetenv("OPENGOTHIC_VOB_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  Resources::configureTextures();
+  std::cout << "mobsi streaming lifetime: 2 Near/Outside/Near cycles, resident animated pose, texture demand released\n";
+  }
+
+void treeHiZBoundsCases() {
+  using Tempest::Vec3;
+  const auto spruce = [](float crownX, float barkHeight) {
+    asset::StaticMesh mesh;
+    mesh.positions = {{10,100,20},{25,100,22},{12,barkHeight,24},
+                      {crownX,700,80},{crownX+120,600,110},{crownX+50,1000,60}};
+    mesh.bbox = {{10,100,20},{crownX+120,barkHeight,110}};
+    for(const auto* name : {"HIZ_TREE_BARK.TGA", "HIZ_TREE_CROWN.TGA"}) {
+      const auto first = uint16_t(mesh.sub_meshes.size()*3);
+      auto& part = mesh.sub_meshes.emplace_back();
+      part.mat.name = part.mat.texture = name;
+      part.wedges = {{{0,0,1},{0,0},first},{{0,0,1},{1,0},uint16_t(first+1)},{{0,0,1},{0,1},uint16_t(first+2)}};
+      part.triangles.push_back({{0,1,2}});
+      }
+    return mesh;
+    };
+
+  PackedMesh packed(spruce(220,1200),PackedMesh::PK_Visual,true);
+  packed.addLevel(spruce(160,1100),150);
+  const StaticMesh mesh(packed);
+  const auto box = [&](size_t material, uint8_t stage, float height) {
+    const auto level = mesh.pickLevel(stage,height,false);
+    const auto& sub = mesh.sub.at(material);
+    const auto [first,count] = mesh.levelMeshlets(sub.iboOffset,sub.iboLength,level.glb);
+    const auto* bounds = mesh.treeHiZBox(first,count);
+    require(bounds!=nullptr,"the HiZ box must exist for the selected material and meshlet slice");
+    return *bounds;
+    };
+  const auto bark = box(0,0,151), coarseBark = box(0,0,149);
+  const auto crown = box(1,0,151), coarseCrown = box(1,0,149);
+  require(bark.min==Vec3(10,100,20) && bark.max==Vec3(25,1200,24) &&
+          crown.min==Vec3(220,600,60) && crown.max==Vec3(340,1000,110) &&
+          coarseBark.min==bark.min && coarseBark.max==Vec3(25,1100,24) &&
+          coarseCrown.min==Vec3(160,600,60) && coarseCrown.max==Vec3(280,1000,110),
+          "the rest boxes must exclude the other material, the other level and meshlet padding");
+
+  const uint32_t bits = FoliageWind::pack(mesh.sub[1].material.foliage,FoliageWind::Both);
+  const float reach = mesh.bbox.bbox[1].y;
+  const Vec3 axes[3] = {Vec3(1,0,0),Vec3(0,1.2f,0),Vec3(0.96f,0,0.28f)};
+  const float full = FoliageTree::travel(bits,reach);
+  const auto growAt = [&](float distance, float px) {
+    return FoliageTree::travel(bits,reach,FoliageTree::fade(bits,reach,axes[1].length(),distance,px));
+    };
+  const float partial = growAt(10000,1080);
+  require(growAt(1000,1080)==full && partial>0.f && partial<full && growAt(50000,1080)==0.f &&
+          growAt(50000,0)==full,"the box must follow the vertex wind fade and keep full travel with the fade off");
+  for(const float distance : {1000.f,10000.f,50000.f}) {
+    const auto fade = FoliageTree::fade(bits,reach,axes[1].length(),distance,1080);
+    for(int i=0; i<64; ++i) {
+      const float phase = float(i)/64.f, angle = 2.f*float(M_PI)*phase;
+      FoliageWind::Scene wind;
+      wind.wind = {std::sin(angle),std::cos(angle),1,1};
+      wind.phase = {phase,phase,phase,phase};
+      wind.swing = {phase,0,0,0};
+      const auto moved = FoliageTree::bend(crown.max,0xFFB04BFFu,bits,reach,axes,Vec3(),wind,{},false,fade);
+      require((moved-crown.max).length()<=growAt(distance,1080)+0.001f,
+              "the faded box must contain the wind's travel throughout the gust");
+      }
+    }
   }
 
 void maskBc1Policy(const Fixture& fixture) {
@@ -1353,8 +2937,12 @@ void maskBc1Policy(const Fixture& fixture) {
   textFile(fixture.root/"materials/materials.json",R"({
     "OWN_TEST_BARREL_WOOD.TGA":{"albedo":"transparent-bc1.dds"},
     "ORIGINAL.TGA":{"albedo":"transparent-bc1.dds"},
+    "SLOT_V0.TGA":{"albedo":"transparent-bc1.dds"},
+    "SLOT_V1.TGA":{"albedo":"opaque-bc3.dds"},
     "OPAQUE_BC1.TGA":{"albedo":"opaque-bc1.dds"},
-    "OPAQUE_BC3.TGA":{"albedo":"opaque-bc3.dds"}
+    "OPAQUE_BC3.TGA":{"albedo":"opaque-bc3.dds"},
+    "HIZ_TREE_BARK.TGA":{"albedo":"opaque-bc1.dds","foliage":{"anchor":"tree","wind":4,"flutter":0}},
+    "HIZ_TREE_CROWN.TGA":{"albedo":"opaque-bc3.dds","foliage":{"anchor":"tree","wind":4,"flutter":4}}
   })");
   for(const bool hi:{false,true}) {
     zenkit::Font font;
@@ -1374,6 +2962,11 @@ void maskBc1Policy(const Fixture& fixture) {
   options.alpha = "MASK";
   glbFile(fixture.root/"meshes/test/own.glb",options);
   glbFile(fixture.root/"meshes/test/opaque.glb");
+  const auto colorPath = fixture.root/"meshes/test/vertex-color.glb";
+  colorGlbFile(colorPath,2);
+  options = {};
+  options.texture = "SLOT_V0.TGA";
+  glbFile(fixture.root/"meshes/test/slot.glb",options);
   options = {};
   options.rotated = true;
   glbFile(fixture.root/"meshes/test/oblique.glb",options);
@@ -1388,19 +2981,23 @@ void maskBc1Policy(const Fixture& fixture) {
   fixture.index(R"({
     "OWN_MESH":{"glb":"test/own.glb"},
     "OWN_OPAQUE":{"glb":"test/opaque.glb"},
+    "OWN_COLOR":{"glb":"test/vertex-color.glb"},
+    "OWN_SLOT":{"glb":"test/slot.glb"},
     "OWN_MODEL_ROTATION":{"glb":"test/opaque.glb"},
     "OWN_MODEL_MASK":{"glb":"test/own.glb"},
     "OWN_MODEL_SCALED":{"glb":"test/oblique.glb"},
     "OWN_MODEL_REFLECTED":{"glb":"test/oblique.glb"}
   })");
 
-  Tempest::VulkanApi api;
+  TestApi api;
   Tempest::Device device(api);
   {
     Resources resources(device);
     Shaders shaders;
     shaders.waitCompiler();
     fixture.mount();
+    treeHiZBoundsCases();
+    resourceColorCase(device,colorPath);
     const auto& font=Resources::font("ORIGINAL.extra.tga",Resources::FontType::Normal,1.25f);
     require(font.pixelSize()==21 && font.textSize("A B")==Tempest::Size(35,21),
             "native font must retain scaled source advances and height");
@@ -1499,6 +3096,10 @@ void maskBc1Policy(const Fixture& fixture) {
     require(legacyPolicy.alpha==Material::AlphaTest && forcedPolicy.alpha==Material::AlphaTest,
             "material equality fixture must have the same visible alpha classification");
     require(!(legacyPolicy==forcedPolicy),"material equality must distinguish native and forced MASK policies");
+    landscapeLifetime(fixture,device);
+    staticVobLifetime(device);
+    itemVobLifetime(device);
+    mobsiVobLifetime(device);
     }
   multiModelGpuCases(fixture,device);
   device.waitIdle();
@@ -1580,14 +3181,14 @@ std::vector<std::pair<std::string,std::shared_ptr<T>>> originalRecords(Gothic& g
                                                                        std::string_view cls) {
   auto script = gothic.loadScript(dat,ScriptLang::NONE);
   T::register_(script);
-  zenkit::DaedalusVm vm(std::move(script),zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  daedalus::DaedalusVm vm(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   gothic.setupVmCommonApi(vm);
-  std::vector<zenkit::DaedalusSymbol*> symbols;
-  vm.enumerate_instances_by_class_name(cls,[&symbols](zenkit::DaedalusSymbol& sym) { symbols.push_back(&sym); });
+  std::vector<daedalus::DaedalusSymbol*> symbols;
+  vm.enumerate_instances_by_class_name(cls,[&symbols](daedalus::DaedalusSymbol& sym) { symbols.push_back(&sym); });
   std::vector<std::pair<std::string,std::shared_ptr<T>>> records;
   for(auto* sym:symbols) {
     try { records.emplace_back(sym->name(),vm.init_instance<T>(sym)); }
-    catch(const zenkit::DaedalusScriptError&) {}
+    catch(const daedalus::DaedalusScriptError&) {}
     }
   return records;
   }
@@ -1600,9 +3201,9 @@ void effectCases(const std::string& game, const std::string& base) {
   setenv("OPENGOTHIC_TEXTURES","",1);
   unsetenv("OPENGOTHIC_CENSUS");
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
-  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2"};
-  CommandLine commandLine(4,args);
-  Tempest::VulkanApi api;
+  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str()};
+  CommandLine commandLine(3,args);
+  TestApi api;
   Tempest::Device device(api);
   {
     std::string censusPath=(std::filesystem::temp_directory_path()/"gothic-music-wiring-XXXXXX").string();
@@ -1611,14 +3212,14 @@ void effectCases(const std::string& game, const std::string& base) {
     ::close(file);
     setenv("OPENGOTHIC_CENSUS",censusPath.c_str(),1);
     try {
-      {
+      for(int pass=0;pass<2;++pass) {
       Resources resources(device);
       Gothic gothic;
       auto* segment=Resources::loadMusicSegment("NW_DayStd.sgt");
       require(segment!=nullptr,"native GK music segment must load through Resources");
       DmSegment_release(segment);
-      const auto patterns=Resources::loadDxMusic("NW_DayStd.sgt");
-      require(patterns.size()>0,"native Dx8 music must produce patterns through Resources");
+      const auto patterns=loadDxMusic("NW_DayStd.sgt");
+      require(patterns.size()>0,"native Dx8 music must produce patterns through the Gothic source");
       require(Resources::writeCensus(),"music wiring census must be writable");
       const auto bytes=gothicglb::readFile(censusPath);
       rapidjson::Document census;
@@ -1634,8 +3235,12 @@ void effectCases(const std::string& game, const std::string& base) {
                 "native music wiring must not open original VFS or host music files");
         }
       const auto index=MusicData::readIndex(std::filesystem::path(base)/"music");
-      size_t gk=0,dx8=0,replacements=0;
+      size_t gk=0,dx8=0,dx8Styles=0,dx8Dls=0,replacements=0;
       for(const auto& row:music["selections"].GetArray()) {
+        if(std::string_view(row["provider"].GetString())=="dx8") {
+          dx8Styles+=std::string_view(row["kind"].GetString())=="style";
+          dx8Dls+=std::string_view(row["kind"].GetString())=="dls";
+          }
         if(std::string_view(row["kind"].GetString())!="segment") continue;
         require(std::string_view(row["request"].GetString())=="NW_DayStd.sgt","music wiring segment request must retain its spelling");
         const bool isGk=std::string_view(row["provider"].GetString())=="gk";
@@ -1665,7 +3270,9 @@ void effectCases(const std::string& game, const std::string& base) {
         replacements+=std::string_view(row["kind"].GetString())=="basemusic";
       require(gk==1 && dx8==1 && replacements==music["selections"].Size(),
               "both Resources music providers must record one segment and every verified native read");
-      std::cout << "p16-music wiring: both native providers selected NW_DayStd.sgt with zero original music opens\n";
+      require(dx8Styles>0 && dx8Dls>0,"each Resources instance must reread Dx8 styles and DLS records");
+      std::cout << "p16-music wiring: both native providers selected NW_DayStd.sgt with zero original music opens; pass "
+                << pass+1 << ": Dx8 " << dx8Styles << " styles, " << dx8Dls << " DLS records\n";
       }
       }
     catch(...) {
@@ -1688,7 +3295,7 @@ void effectCases(const std::string& game, const std::string& base) {
 
     // Cases: the first original record (symbol order) with each property.
     std::string looping, mesh, keyed, linked;
-    for(const auto& [name,pfx]:originalRecords<zenkit::IParticleEffect>(gothic,"ParticleFx.dat","C_PARTICLEFX")) {
+    for(const auto& [name,pfx]:originalRecords<daedalus::IParticleEffect>(gothic,"ParticleFx.dat","C_PARTICLEFX")) {
       if(looping.empty() && pfx->pps_is_looping!=0)
         looping = name;
       if(mesh.empty() && pfx->shp_type_s=="MESH" && !pfx->shp_mesh_s.empty())
@@ -1697,7 +3304,7 @@ void effectCases(const std::string& game, const std::string& base) {
     auto vfxScript = gothic.loadScript("VisualFx.dat",ScriptLang::NONE);
     const auto has = [&vfxScript](const std::string& sym) { return vfxScript.find_symbol_by_name(sym)!=nullptr; };
     std::string anyKey;
-    for(const auto& [name,fx]:originalRecords<zenkit::IEffectBase>(gothic,"VisualFx.dat","CFX_BASE")) {
+    for(const auto& [name,fx]:originalRecords<daedalus::IEffectBase>(gothic,"VisualFx.dat","CFX_BASE")) {
       const bool key = has(name+"_KEY_OPEN") || has(name+"_KEY_INIT") || has(name+"_KEY_CAST") ||
                        has(name+"_KEY_INVEST") || has(name+"_KEY_COLLIDE");
       if(anyKey.empty() && key)
@@ -1737,33 +3344,205 @@ void effectCases(const std::string& game, const std::string& base) {
     }
   device.waitIdle();
   }
+
+// Real world, renderer instances, equipment and save loader, with a synthetic
+// head only. No screenshots or original assets are written by this contract.
+void heroHeadGameCases(const std::string& game, const std::string& base) {
+  Fixture fixture;
+  std::filesystem::create_directories(fixture.root/"characters/hero");
+  std::filesystem::create_directories(fixture.root/"materials");
+  headGlbFile(fixture.root/"characters/hero/head.glb",true);
+  // the hero without a face profile, an npc with one (and a gesture), the control npc not listed
+  textFile(fixture.root/"characters/characters.json",
+           R"({"PC_HERO":{"head":"hero/head.glb"},"NONE_100_XARDAS":{"head":"hero/head.glb","face":"hero/head.face.json"}})");
+  textFile(fixture.root/"characters/hero/head.face.json",
+           R"({"version":1,"mouth":["smile"],"anims":{"S_FRIENDLY":{"layer":1,"blend_in_ms":1000,"blend_out_ms":1000,)"
+           R"("duration_ms":-1,"frame_ms":1000,"frames":[{"smile":0.5}]}},"cues":{"flash":{"zone":"upper","parts":)"
+           R"([{"weights":{"normalOnly":0.6},"delay_ms":0,"on_ms":100,"hold_ms":80,"off_ms":160}]}}})");
+  alphaDdsFile(fixture.root/"materials/head.dds",false);
+  textFile(fixture.root/"materials/materials.json",R"({"OWN_TEST_BARREL_WOOD.TGA":{"albedo":"head.dds"}})");
+  setenv("OPENGOTHIC_BASE",base.c_str(),1);
+  unsetenv("OPENGOTHIC_CENSUS");
+  setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
+  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro"};
+  CommandLine commandLine(4,args);
+  TestApi api;
+  Tempest::Device device(api);
+  {
+    Resources resources(device);
+    Shaders shaders;
+    shaders.waitCompiler();
+    Gothic gothic;
+    gothic.isNpcInDialogFn=[](const Npc*) { return false; };
+    gothic.setupGlobalScripts();
+    GameMusic music;
+    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+    auto* hero=gothic.world()->player();
+    require(hero!=nullptr,"head contract needs the actual PC_HERO");
+    const auto* data=MeshGltfTest::visual(*hero).headMesh();
+    const auto checkHead=[&](Npc& npc) {
+      require(MeshGltfTest::visual(npc).headMesh()==data && data!=nullptr,
+              "hero must keep the same custom head and target data");
+      const auto& mesh=MeshGltfTest::head(npc);
+      require(mesh.nodesCount()==1 && !mesh.isEmpty() && mesh.protoMesh()->morph.empty(),
+              "merged glTF head must have a drawable rigid mesh and no MMB animations");
+      const auto bone=npc.visualSkeleton()->findNode("BIP01 HEAD");
+      require(MeshGltfTest::headBone(npc)==bone,"custom head must bind to BIP01 HEAD");
+      npc.updateTransform();
+      sameMatrix(mesh.node(0).position(),npc.renderedBone(bone),"custom head must follow the rendered head bone");
+      };
+    checkHead(*hero);
+    require(data->parts.size()==2 && data->mesh.positions.size()==6 && data->targets.size()==2,
+            "in-game head must retain all synthetic parts and targets");
+    for(const auto& target:data->targets) {
+      require(target.vertices.size()==2,"step 3 probe must expose both parts' affected vertices");
+      std::cout << "hero-head target " << target.name << " vertices=" << target.vertices.size() << '\n';
+      }
+
+    auto& visual=MeshGltfTest::visual(*hero);
+    for(const auto* name:{"R_EYESBLINK","S_ANGRY","VISEME","T_HURT"}) {
+      visual.startFaceAnim(*hero,name,1,100);
+      visual.startMMAnim(*hero,name,"BIP01 HEAD");
+      require(visual.faceWeight(*hero,name)==0,"without a face profile original face names must leave the new head unchanged");
+      }
+    MeshGltfTest::head(*hero).setMMShape("VISEME",0,1,.5f,1);
+    visual.updateBlink(*hero,16);
+    visual.updateMouth(*hero,16);
+
+    auto& world=*gothic.world();
+    const auto* npcSymbol=world.script().findSymbol("PC_ROCKEFELLER");
+    require(npcSymbol!=nullptr,"original game scripts must provide the control NPC");
+    const auto npcId=npcSymbol->index();
+    auto* npc=world.addNpc(npcId,hero->position());
+    require(npc!=nullptr,"control NPC must spawn");
+    npc->setVisualBody(0,0,0,0,"HUM_BODY_NAKED0","Hum_Head_Pony");
+    // The mesh cache keys on the name as spelled, so ask with the spelling the NPC's head got.
+    const auto* original=Resources::loadMesh("Hum_Head_Pony.MMB");
+    require(original!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original &&
+            MeshGltfTest::visual(*npc).headMesh()==nullptr,"NPC Hum_Head_Pony must remain HUM_HEAD_PONY.MMB");
+
+    // an npc listed in characters.json: its own head and face profile, the same contract as the hero's
+    const auto* mageSymbol=world.script().findSymbol("NONE_100_XARDAS");
+    require(mageSymbol!=nullptr,"original game scripts must provide the listed NPC");
+    const auto mageId=mageSymbol->index();
+    auto* mage=world.addNpc(mageId,hero->position());
+    require(mage!=nullptr,"listed NPC must spawn");
+    mage->setVisualBody(0,0,0,0,"HUM_BODY_NAKED0","Hum_Head_Pony");
+    const auto* mageHead=Resources::loadCharacterHead("NONE_100_XARDAS");
+    const auto checkMage=[&](Npc& n) {
+      require(mageHead!=nullptr && MeshGltfTest::head(n).protoMesh()==mageHead && MeshGltfTest::visual(n).headMesh()==mageHead->head.get() &&
+              mageHead->face!=nullptr && MeshGltfTest::face(n).isActive(),"a listed NPC must get its own head and face profile");
+      require(MeshGltfTest::headBone(n)==n.visualSkeleton()->findNode("BIP01 HEAD"),"its head must bind to BIP01 HEAD");
+      };
+    checkMage(*mage);
+    MeshGltfTest::refreshBody(*mage);
+    checkMage(*mage);
+    require(mage->startCue("flash",0) && mage->cueWeight("flash")>=0 && !hero->startCue("flash",0),
+            "a gesture of the profile must start on the NPC's head, and not on a head without cues");
+
+    const auto* armorSymbol=world.script().findSymbol("ITAR_MIL_L");
+    require(armorSymbol!=nullptr,"original game scripts must provide the test armor");
+    const auto armorId=armorSymbol->index();
+    auto* armor=hero->addItem(armorId,1);
+    require(armor!=nullptr,"test armor must enter the hero's inventory");
+    hero->useItem(armorId,Item::NSLOT,true);
+    require(hero->currentArmor()==armor,"the test must actually equip a different armor");
+    MeshGltfTest::refreshBody(*hero);
+    checkHead(*hero);
+    // the listed npc in the same armor: its own head and FaceRig stay
+    auto* mageArmor=mage->addItem(armorId,1);
+    require(mageArmor!=nullptr,"test armor must enter the listed NPC's inventory");
+    mage->useItem(armorId,Item::NSLOT,true);
+    require(mage->currentArmor()==mageArmor,"the test must actually equip the armor on the listed NPC");
+    MeshGltfTest::refreshBody(*mage);
+    checkMage(*mage);
+
+    std::vector<uint8_t> bytes;
+    {
+      Tempest::MemWriter writer(bytes);
+      Serialize out(writer);
+      Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+      std::memset(preview.data(),0,4);
+      gothic.gameSession()->save(out,"synthetic hero head",preview);
+    }
+    gothic.clearGame().reset();
+    {
+      Tempest::MemReader reader(bytes);
+      Serialize in(reader);
+      gothic.setGame(std::make_unique<GameSession>(in));
+    }
+    hero=gothic.world()->player();
+    require(hero!=nullptr && hero->currentArmor()!=nullptr && hero->currentArmor()->clsId()==armorId,
+            "save reload must restore the equipped armor");
+    checkHead(*hero);
+    npc=gothic.world()->findNpcByInstance(npcId);
+    require(npc!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original,
+            "control NPC must retain the original head across save reload");
+    mage=gothic.world()->findNpcByInstance(mageId);
+    require(mage!=nullptr,"listed NPC must survive save reload");
+    checkMage(*mage);
+
+    const char* offArgs[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro","--no-hero-head"};
+    CommandLine off(5,offArgs);
+    MeshGltfTest::refreshBody(*hero);
+    require(MeshGltfTest::visual(*hero).headMesh()==nullptr && MeshGltfTest::head(*hero).protoMesh()==original,
+            "--no-hero-head must restore the original hero head");
+    MeshGltfTest::refreshBody(*mage);
+    // (the reload may find the world's own Xardas: his original head, whichever it is)
+    const auto* mageOriginal=MeshGltfTest::head(*mage).protoMesh();
+    require(MeshGltfTest::visual(*mage).headMesh()==nullptr && mageOriginal!=nullptr && mageOriginal!=mageHead &&
+            mageOriginal->head==nullptr && !mageOriginal->morph.empty() && !MeshGltfTest::face(*mage).isActive(),
+            "--no-hero-head must restore the original head of a listed NPC too");
+    std::cout << "hero-head game: GLB, head bone, armor, setVisualBody, save reload, original and listed NPC, flag OFF passed\n";
+    gothic.clearGame().reset();
+  }
+  device.waitIdle();
+  }
 }
 
 int main() {
   try {
+    if(const char* mode=std::getenv("GOTHIC_MESH_LEVELS_CHILD")) {
+      if(std::string_view(mode)!="bough-cut")
+        return levelSwitchChild(mode);
+      treeBoughCutCases();
+      std::cout << "{\"test\":\"tree_bough_cut\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+      return 0;
+      }
     // The effect receipt uses the caller's installation and base: read them before the fixture
     // points the environment at its own toy installation.
     const char* gameDir = std::getenv("GOTHIC_DIR");
     const char* baseDir = std::getenv("OPENGOTHIC_BASE");
     const std::string game = gameDir!=nullptr ? gameDir : "";
     const std::string base = baseDir!=nullptr ? baseDir : "";
-    if(!game.empty() && !base.empty())
+    if(!game.empty() && !base.empty()) {
       effectCases(game,base);
+      heroHeadGameCases(game,base);
+      }
     Fixture fixture;
     const auto root=fixture.root.string();
-    const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str()};
-    CommandLine commandLine(3,args);
+    // -rt 0: the toy fixture's cases count the landscape's pages as they are without the ray scene, whose indices add
+    // pages of their own; on an RTX the device rule would turn the ray scene on and break those counts. The ray scene
+    // is checked by landscapeRtLifetime, which passes its own -rt 1.
+    const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str(),"-rt","0"};
+    CommandLine commandLine(5,args);
     fixture.index();
     resourcePaths(fixture,true);
-    resourcePaths(fixture,true,false);
     converterCases(fixture);
+    colorCases(fixture.root/"meshes/test/color.glb");
+    headConverterCases(fixture);
+    headManifestCases(fixture);
     generatedBarrel(fixture);
     rejectionCases(fixture);
     indexCases(fixture);
+    levelCases(fixture);
+    clusterHierarchyCases(fixture);
+    treeBoughCutCases();
     fractureCache(fixture);
     modelCases(fixture);
     setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
     maskBc1Policy(fixture);
+    landscapeRtLifetime(fixture);
     std::cout << "{\"test\":\"mesh_gltf\",\"passed\":true,\"assertions\":" << assertions << "}\n";
     return 0;
     }

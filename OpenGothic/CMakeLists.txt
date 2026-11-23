@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(OpenGothic LANGUAGES C CXX)
+include(cmake/CompilerCache.cmake)
 set(CMAKE_CXX_STANDARD 20)
 set(BUILD_SHARED_LIBS OFF)
 
@@ -21,19 +22,16 @@ endif()
 if(OPENGOTHIC_ENABLE_APP_CADENCE)
   target_compile_definitions(${PROJECT_NAME} PUBLIC OPENGOTHIC_ENABLE_APP_CADENCE=1)
 endif()
-if(ANDROID)
-  add_library(Gothic2Notr SHARED)
-  add_library(Spacer SHARED)
-else()
-  add_executable(Gothic2Notr)
-  add_executable(Spacer)
-endif()
+add_executable(Gothic2Notr)
 
 if(MSVC)
   add_definitions(-D_USE_MATH_DEFINES)
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
   add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
   add_definitions(-D_ITERATOR_DEBUG_LEVEL=0)
+  # std::stable_sort of Jolt's 16-byte aligned contacts (physics/collisionworld.cpp) needs the conforming
+  # aligned_storage; without this MSVC stops with C2338 instead of choosing a layout silently
+  add_definitions(-D_ENABLE_EXTENDED_ALIGNED_STORAGE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4800")
 endif()
 
@@ -64,16 +62,11 @@ if(WIN32)
   else()
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mwindows -lstdc++fs")
   endif()
-elseif(IOS)
-  enable_language(OBJCXX)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0)
 elseif(APPLE)
   enable_language(OBJCXX)
 endif()
 
-if(IOS)
-  file(GLOB_RECURSE ObjCSOURCES "common/*.mm")
-elseif(APPLE)
+if(APPLE)
   target_link_libraries(${PROJECT_NAME} "-framework AppKit")
   file(GLOB_RECURSE ObjCSOURCES "common/*.mm")
 endif()
@@ -82,19 +75,25 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source sha256 baseimport basesources worldchunks worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
-               dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/dlscollection dmusic/wave dmusic/soundfont
-               dmusic/hydra videodata bink/video bink/frame)
+               dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
+               dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
+               videodata videoimport bink/video bink/frame)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/${source}.cpp")
 endforeach()
+list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/graphics/mesh/clusterlod.cpp")
+list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/npchelperdefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/asset/npchelperdefinitions.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/common/import/npchelperdefinitions.cpp")
+list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/meshclusterlod.cpp")
 if(NOT OPENGOTHIC_ENABLE_FRAME_PROFILE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/frameprofile.cpp")
 endif()
 if(NOT OPENGOTHIC_ENABLE_APP_CADENCE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/appcadence.cpp")
 endif()
-file(GLOB_RECURSE SPACER_SOURCES "spacer/*.h" "spacer/*.cpp")
+# The society stand's core is its own library (society-core below), not part of the engine yet.
+list(FILTER OPENGOTHIC_SOURCES EXCLUDE REGEX "/common/society/")
 
 target_sources(${PROJECT_NAME} PRIVATE ${OPENGOTHIC_SOURCES} ${ObjCSOURCES})
 
@@ -109,17 +108,24 @@ configure_file(common/physics/fracturedata.h.in generated/fracturedata.h @ONLY)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-vobs.csv")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-vobs.csv" CLOTH_VOBS_DATA)
 configure_file(common/graphics/clothdata.h.in generated/clothdata.h @ONLY)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-world.csv")
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/data/cloth-world.csv" CLOTH_WORLD_DATA)
-configure_file(common/physics/clothworlddata.h.in generated/clothworlddata.h @ONLY)
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# The census builder digest is generated at build time, without reconfiguring
+# after an implementation edit. Only placedcensuscache.cpp includes the header.
+include(cmake/PlacedCensusBuilder.cmake)
+set(PLACED_CENSUS_BUILDER_DEPENDS ${PLACED_CENSUS_BUILDER_INPUTS})
+list(TRANSFORM PLACED_CENSUS_BUILDER_DEPENDS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+set(PLACED_CENSUS_BUILDER_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/placedcensusbuilder.h")
+add_custom_command(OUTPUT "${PLACED_CENSUS_BUILDER_HEADER}"
+  COMMAND "${CMAKE_COMMAND}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DOUTPUT=${PLACED_CENSUS_BUILDER_HEADER}"
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PlacedCensusBuilder.cmake"
+  DEPENDS ${PLACED_CENSUS_BUILDER_DEPENDS}
+  VERBATIM)
+target_sources(${PROJECT_NAME} PRIVATE "${PLACED_CENSUS_BUILDER_HEADER}")
 
 # shaders
 add_subdirectory(shader)
 target_link_libraries(${PROJECT_NAME} GothicShaders)
-
-# editor icons and such
-add_subdirectory(spacer/assets)
 
 include_directories("common")
 
@@ -133,9 +139,8 @@ if(WIN32)
 endif()
 
 if(WIN32)
-  target_link_libraries(${PROJECT_NAME} shlwapi DbgHelp)
-elseif(ANDROID)
-  target_link_libraries(${PROJECT_NAME} dl)
+  # ws2_32: the hand motion receiver's socket (common/input/handmotion.cpp)
+  target_link_libraries(${PROJECT_NAME} shlwapi DbgHelp ws2_32)
 elseif(UNIX)
   target_link_libraries(${PROJECT_NAME} -lpthread -ldl)
 endif()
@@ -146,7 +151,6 @@ set(ZK_ENABLE_ASAN             OFF CACHE INTERNAL "")
 set(ZK_ENABLE_DEPRECATION      OFF CACHE INTERNAL "")
 
 add_subdirectory(lib/ZenKit)
-target_link_libraries(${PROJECT_NAME} zenkit)
 
 # dmusic
 set(DM_BUILD_STATIC            ON  CACHE INTERNAL "")
@@ -170,6 +174,10 @@ else()
   set(TEMPEST_BUILD_SHARED OFF CACHE INTERNAL "")
 endif()
 add_subdirectory(lib/Tempest/Engine)
+if(OPENGOTHIC_ENABLE_FRAME_PROFILE)
+  target_compile_definitions(Tempest PRIVATE OPENGOTHIC_ENABLE_FRAME_PROFILE=1)
+  target_include_directories(Tempest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/common)
+endif()
 include_directories(lib/Tempest/Engine/include)
 target_link_libraries(${PROJECT_NAME} Tempest)
 
@@ -179,8 +187,27 @@ add_definitions(-DMINIZ_NO_STDIO)
 add_library(miniz STATIC EXCLUDE_FROM_ALL "lib/miniz/miniz.h" "lib/miniz/miniz.c")
 target_link_libraries(${PROJECT_NAME} miniz)
 include(cmake/BaseImport.cmake)
+# Runtime manifest reading, cooked chunks, world cloth and the MSVC flag: one list for every build with the base.
+include(cmake/BaseRuntime.cmake)
 include(cmake/VideoImport.cmake)
-target_link_libraries(${PROJECT_NAME} gothic-base-import gothic-video-import)
+# Compile the builder with a replaceable simplifier call in the CPU test only.
+add_executable(gothic-cluster-lod-test EXCLUDE_FROM_ALL tests/cluster_lod_test.cpp common/graphics/mesh/clusterlod.cpp)
+target_include_directories(gothic-cluster-lod-test PRIVATE common)
+target_link_libraries(gothic-cluster-lod-test PRIVATE meshoptimizer)
+target_compile_definitions(gothic-cluster-lod-test PRIVATE
+  meshopt_simplifyWithAbsoluteAttributes=clusterLodTestSimplifyWithAbsoluteAttributes)
+if(NOT MSVC)
+  target_compile_options(gothic-cluster-lod-test PRIVATE -Wall -Wconversion -Werror -ffp-contract=off)
+endif()
+add_subdirectory(common/daedalus)
+target_link_libraries(${PROJECT_NAME} gothic-daedalus)
+target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/convert/CMakeLists.txt")
+  add_subdirectory(../scripts/convert content-convert)
+  add_dependencies(Gothic2Notr content-convert)
+else()
+  message(STATUS "content-convert is not built: scripts/convert is not available")
+endif()
 target_link_libraries(${PROJECT_NAME} zlibstatic)
 target_include_directories(${PROJECT_NAME} PRIVATE
   lib/Tempest/Engine/thirdparty/zlib ${CMAKE_BINARY_DIR}/lib/Tempest/thirdparty/zlib)
@@ -256,7 +283,7 @@ if(WIN32)
 endif()
 
 # in debug mode, enable sanitizers
-if(${CMAKE_BUILD_TYPE} MATCHES "Debug" AND NOT ANDROID)
+if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
   add_compile_options(-fsanitize=address)
   add_compile_options(-fsanitize=leak)
   add_link_options   (-fsanitize=address)
@@ -264,17 +291,6 @@ if(${CMAKE_BUILD_TYPE} MATCHES "Debug" AND NOT ANDROID)
 endif()
 
 # the game
-if(IOS)
-  set_directory_properties("${CMAKE_SOURCE_DIR}" PROPERTIES
-    PROPERTY XCODE_STARTUP_PROJECT "Gothic2Notr")
-  set_target_properties(Gothic2Notr PROPERTIES
-    MACOSX_BUNDLE_INFO_PLIST "Info.plist.in"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "opengothic.gothic2"
-    MACOSX_BUNDLE_BUNDLE_VERSION 1
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
-    XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "iPhone Developer")
-endif()
-
 target_sources(Gothic2Notr PRIVATE game/main.cpp)
 if(WIN32)
   target_sources(Gothic2Notr PRIVATE icon.rc)
@@ -286,40 +302,184 @@ add_subdirectory(ai_bridge)
 target_link_libraries(Gothic2Notr PRIVATE AiBridge)
 
 # Uses the shared engine/CPU simulation without constructing a window or graphics/audio device.
-if(UNIX AND NOT IOS AND NOT ANDROID)
-  add_executable(gothic-body-runner game/bodyrunner.cpp)
+if(UNIX)
+  add_executable(gothic-body-runner game/bodyrunner.cpp game/societyexport.cpp)
   target_link_libraries(gothic-body-runner PRIVATE OpenGothic AiBridge)
+  # --society-export names the engine's commit: refreshed on every build of the runner, the header is
+  # rewritten only when the commit changes ("unknown" in a copy without .git).
+  add_custom_target(gothic-engine-commit
+    COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/engine-commit/enginecommit.h
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EngineCommit.cmake
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/engine-commit/enginecommit.h)
+  add_dependencies(gothic-body-runner gothic-engine-commit)
+  target_include_directories(gothic-body-runner PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/engine-commit)
   # Pure production resolver/command gates: no assets, simulation or rendering device.
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
+  add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp)
+  target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-npc-day-contract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   # Real NPC/world fixture for growing and shrinking the live observation subscription.
   add_executable(gothic-body-watch-test tests/body_watch_test.cpp)
   target_link_libraries(gothic-body-watch-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-body-watch-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-body-watch-test PRIVATE -Wall -Wconversion -Werror)
+  # The worker pool (utils/workers): OPENGOTHIC_WORKERS_GRAIN, short arrays on the caller, the serial mode; a process
+  # per grain. No engine or game data.
+  add_executable(gothic-workers-test EXCLUDE_FROM_ALL tests/workers_test.cpp common/utils/workers.cpp)
+  target_include_directories(gothic-workers-test PRIVATE common)
+  target_link_libraries(gothic-workers-test PRIVATE Tempest)
+  set_source_files_properties(tests/workers_test.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wconversion;-Werror")
+  # The loops after the animation pass (world/animationtail) against the full loops they replace; stand-in items.
+  add_executable(gothic-anim-tail-test EXCLUDE_FROM_ALL tests/anim_tail_test.cpp common/world/animationtail.cpp)
+  target_include_directories(gothic-anim-tail-test PRIVATE common)
+  target_compile_options(gothic-anim-tail-test PRIVATE -Wall -Wconversion -Werror)
+  if(OPENGOTHIC_ENABLE_FRAME_PROFILE)
+    # Standalone recorder capacity and late-callback checks; no engine or game data.
+    add_executable(gothic-frame-profile-test EXCLUDE_FROM_ALL tests/frame_profile_test.cpp common/frameprofile.cpp)
+    target_include_directories(gothic-frame-profile-test PRIVATE common)
+    target_compile_definitions(gothic-frame-profile-test PRIVATE OPENGOTHIC_ENABLE_FRAME_PROFILE=1)
+    target_compile_options(gothic-frame-profile-test PRIVATE -Wall -Wconversion -Werror)
+  endif()
   # Real Resources/material loading with temporary DDS files; no game assets or window.
   add_executable(gothic-material-texture-test EXCLUDE_FROM_ALL tests/material_texture_test.cpp)
   target_link_libraries(gothic-material-texture-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-material-texture-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-material-texture-test PRIVATE -Wall -Wconversion -Werror)
+  # Skinned normals that follow the bones (graphics/mesh/submesh/packedmesh): rest frames fitted from a synthetic skin.
+  add_executable(gothic-skin-normal-test EXCLUDE_FROM_ALL tests/skin_normal_test.cpp)
+  target_link_libraries(gothic-skin-normal-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-skin-normal-test PRIVATE -Wall -Wconversion -Werror)
+  # TAA by the camera (graphics/taa): jitter, reprojection of the history, the camera jump rule; CPU only.
+  add_executable(gothic-taa-test EXCLUDE_FROM_ALL tests/taa_test.cpp)
+  target_link_libraries(gothic-taa-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-taa-test PRIVATE -Wall -Wconversion -Werror)
+  # Who gets ray tracing by default (graphics/raytracingrule): the device table and who decides over it; CPU only.
+  add_executable(gothic-raytracing-rule-test EXCLUDE_FROM_ALL tests/raytracing_rule_test.cpp)
+  target_link_libraries(gothic-raytracing-rule-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-raytracing-rule-test PRIVATE -Wall -Wconversion -Werror)
+  # The grass system (graphics/grass, graphics/foliagefront.h): the record, the placement on synthetic ground, the
+  # wind's travelling front; CPU only, no device or game data.
+  add_executable(gothic-grass-test EXCLUDE_FROM_ALL tests/grass_test.cpp tests/grass_cover_test.cpp)
+  target_link_libraries(gothic-grass-test PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-grass-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include ${PROJECT_SOURCE_DIR}/shader)
+  target_compile_options(gothic-grass-test PRIVATE -Wall -Wconversion -Werror)
+  # Windows that glow at night (graphics/windowglow.h) and the house they go out with (graphics/houselights.h); CPU only.
+  add_executable(gothic-window-glow-test EXCLUDE_FROM_ALL tests/window_glow_test.cpp)
+  target_link_libraries(gothic-window-glow-test PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-window-glow-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_compile_options(gothic-window-glow-test PRIVATE -Wall -Wconversion -Werror)
+  # The own head's face (graphics/mesh/facerig): a synthetic head and profile, the bridge's say cues; CPU only, no device or game data.
+  add_executable(gothic-facerig-test EXCLUDE_FROM_ALL tests/facerig_test.cpp)
+  target_link_libraries(gothic-facerig-test PRIVATE OpenGothic AiBridge)
+  target_include_directories(gothic-facerig-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_compile_options(gothic-facerig-test PRIVATE -Wall -Wconversion -Werror)
+  # Our render skeleton under a Gothic one (graphics/mesh/renderrig): synthetic skeletons and rig table; CPU only.
+  add_executable(gothic-render-rig-test EXCLUDE_FROM_ALL tests/render_rig_test.cpp)
+  target_link_libraries(gothic-render-rig-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-render-rig-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
   add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
-  target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)
   target_include_directories(gothic-mesh-gltf-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_definitions(gothic-mesh-gltf-test PRIVATE
     GOTHIC_TEST_BARREL_SCRIPT="${PROJECT_SOURCE_DIR}/../scripts/meshes/make_test_barrel.py")
   target_compile_options(gothic-mesh-gltf-test PRIVATE -Wall -Wconversion -Werror)
+  # The platform draws a glTF mesh into a frame without a window, Gothic, its base or sound (engine layers 8.4).
+  add_executable(gothic-platform-draw-test EXCLUDE_FROM_ALL tests/platform_draw_test.cpp)
+  target_link_libraries(gothic-platform-draw-test PRIVATE OpenGothic)
+  target_include_directories(gothic-platform-draw-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_compile_options(gothic-platform-draw-test PRIVATE -Wall -Wconversion -Werror)
 endif()
 
+# The society stand's core (common/society/README.md): the standard library and rapidjson only. Its include path
+# is set alone, without the engine's directories, so an engine header does not compile there.
+  file(GLOB SOCIETY_CORE_SOURCES common/society/*.cpp)
+  add_library(society-core STATIC ${SOCIETY_CORE_SOURCES})
+  set_property(TARGET society-core PROPERTY INCLUDE_DIRECTORIES "")
+  target_include_directories(society-core SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/rapidjson/include)
+  target_include_directories(society-core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/common)
+  if(NOT MSVC)
+    target_compile_options(society-core PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  # Plays N days of an export by the routine: the journal, the 5-minute marks and the time.
+  add_executable(gothic-society-day game/societyday.cpp)
+  target_link_libraries(gothic-society-day PRIVATE society-core)
+  if(NOT MSVC)
+    target_compile_options(gothic-society-day PRIVATE -Wall -Wconversion -Werror)
+  endif()
+
 # Asset-free contracts; run explicitly with their check-* targets.
-if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-navpolicy-contract EXCLUDE_FROM_ALL
     tests/navpolicy_contract.cpp common/navpolicy.cpp common/game/navigationmemory.cpp)
   target_include_directories(gothic-navpolicy-contract PRIVATE
     common lib/Tempest/Engine/include lib/Tempest/Engine
     lib/Tempest/Engine/thirdparty/zlib ${CMAKE_BINARY_DIR}/lib/Tempest/thirdparty/zlib)
   target_link_libraries(gothic-navpolicy-contract PRIVATE zlibstatic)
+  add_executable(gothic-navsim-memory-bench EXCLUDE_FROM_ALL
+    tests/navsim_memory_bench.cpp common/navpolicy.cpp common/game/navigationmemory.cpp)
+  target_include_directories(gothic-navsim-memory-bench PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  # Engine reference for scripts/navsim/gpumem (loaded through ctypes).
+  add_library(gothic-navsim-memory-ref MODULE EXCLUDE_FROM_ALL
+    tests/navsim_memory_ref.cpp common/navpolicy.cpp common/game/navigationmemory.cpp)
+  target_include_directories(gothic-navsim-memory-ref PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
   find_package(Python3 COMPONENTS Interpreter QUIET)
+  add_executable(gothic-bodypolicy-contract EXCLUDE_FROM_ALL
+    tests/bodypolicy_contract.cpp common/game/bodypolicy.cpp common/nets/smallnet.cpp)
+  target_include_directories(gothic-bodypolicy-contract PRIVATE
+    common lib/Tempest/Engine/thirdparty/zlib ${CMAKE_BINARY_DIR}/lib/Tempest/thirdparty/zlib)
+  target_include_directories(gothic-bodypolicy-contract SYSTEM BEFORE PRIVATE lib/rapidjson/include)
+  target_link_libraries(gothic-bodypolicy-contract PRIVATE zlibstatic)
+  find_program(BODY_POLICY_UV_EXECUTABLE NAMES uv HINTS "$ENV{HOME}/.local/bin")
+  if(BODY_POLICY_UV_EXECUTABLE)
+    set(BODY_POLICY_PYTHON ${BODY_POLICY_UV_EXECUTABLE} run --no-project --with numpy python)
+  elseif(Python3_Interpreter_FOUND)
+    set(BODY_POLICY_PYTHON ${Python3_EXECUTABLE})
+  endif()
+  if(BODY_POLICY_PYTHON)
+    add_custom_command(OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/fixture.bodynet
+        ${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/golden.jsonl.gz
+      COMMAND ${CMAKE_COMMAND} -E env
+        OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+        ${BODY_POLICY_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/body_net.py
+        fixture ${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture
+      DEPENDS ../scripts/body_net.py ../scripts/body_net_numpy.py
+        ../scripts/body_policy_net_check.py ../scripts/body_trajectory_dataset.py
+      VERBATIM)
+    add_custom_target(gothic-body-engine-fixture DEPENDS
+      ${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/fixture.bodynet
+      ${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/golden.jsonl.gz)
+    if(UNIX)
+    add_executable(gothic-body-engine-test EXCLUDE_FROM_ALL tests/body_engine_test.cpp)
+    target_link_libraries(gothic-body-engine-test PRIVATE OpenGothic AiBridge zlibstatic)
+    target_include_directories(gothic-body-engine-test SYSTEM BEFORE PRIVATE lib/rapidjson/include)
+    target_include_directories(gothic-body-engine-test PRIVATE lib/Tempest/Engine/thirdparty/zlib
+      ${CMAKE_BINARY_DIR}/lib/Tempest/thirdparty/zlib)
+    target_compile_options(gothic-body-engine-test PRIVATE -Wall -Wconversion -Werror)
+    target_compile_definitions(gothic-body-engine-test PRIVATE
+      GOTHIC_BODY_ENGINE_NET="${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/fixture.bodynet"
+      GOTHIC_BODY_ENGINE_GOLDEN="${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/golden.jsonl.gz")
+    add_dependencies(gothic-body-engine-test gothic-body-engine-fixture)
+    endif()
+    if(TARGET gothic-body-watch-test)
+      target_compile_definitions(gothic-body-watch-test PRIVATE
+        GOTHIC_BODY_ENGINE_NET="${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/fixture.bodynet")
+      add_dependencies(gothic-body-watch-test gothic-body-engine-fixture)
+    endif()
+    add_custom_target(check-bodypolicy
+      COMMAND ${CMAKE_COMMAND} -E env
+        OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+        ${BODY_POLICY_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/body_net.py
+        fixture ${CMAKE_CURRENT_BINARY_DIR}/bodypolicy-fixture
+      COMMAND $<TARGET_FILE:gothic-bodypolicy-contract>
+        ${CMAKE_CURRENT_BINARY_DIR}/bodypolicy-fixture/fixture.bodynet
+        ${CMAKE_CURRENT_BINARY_DIR}/bodypolicy-fixture/golden.jsonl.gz
+      DEPENDS gothic-bodypolicy-contract USES_TERMINAL)
+  endif()
   if(Python3_Interpreter_FOUND)
     add_custom_target(check-navpolicy
       COMMAND ${CMAKE_COMMAND} -E env
@@ -331,6 +491,16 @@ if(NOT ANDROID AND NOT IOS)
         ${CMAKE_CURRENT_BINARY_DIR}/navpolicy-fixture/parity.bin.gz
       DEPENDS gothic-navpolicy-contract USES_TERMINAL)
   endif()
+  add_executable(gothic-navreward-contract EXCLUDE_FROM_ALL
+    tests/navreward_contract.cpp common/navreward.cpp)
+  target_include_directories(gothic-navreward-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-navreward-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-navreward
+    COMMAND $<TARGET_FILE:gothic-navreward-contract>
+    DEPENDS gothic-navreward-contract USES_TERMINAL)
   add_executable(gothic-navkeyteacher-contract EXCLUDE_FROM_ALL
     tests/navkeyteacher_contract.cpp common/navkeyteacher.cpp)
   target_include_directories(gothic-navkeyteacher-contract PRIVATE
@@ -381,62 +551,270 @@ if(NOT ANDROID AND NOT IOS)
     COMMAND $<TARGET_FILE:gothic-navoracle-contract>
     DEPENDS gothic-navoracle-contract USES_TERMINAL)
   add_executable(gothic-aim-contract EXCLUDE_FROM_ALL tests/aim_contract.cpp)
-  target_link_libraries(gothic-aim-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-aim-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-aim
     COMMAND $<TARGET_FILE:gothic-aim-contract>
     DEPENDS gothic-aim-contract USES_TERMINAL)
+  add_executable(gothic-archery-contract EXCLUDE_FROM_ALL tests/archery_contract.cpp)
+  target_link_libraries(gothic-archery-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_custom_target(check-archery
+    COMMAND $<TARGET_FILE:gothic-archery-contract>
+    DEPENDS gothic-archery-contract USES_TERMINAL)
   add_executable(gothic-aimwalk-contract EXCLUDE_FROM_ALL tests/aimwalk_contract.cpp)
-  target_link_libraries(gothic-aimwalk-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-aimwalk-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-aimwalk
     COMMAND $<TARGET_FILE:gothic-aimwalk-contract>
     DEPENDS gothic-aimwalk-contract USES_TERMINAL)
-  add_executable(gothic-physics-contract EXCLUDE_FROM_ALL tests/physics_contract.cpp)
-  target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge)
+  add_executable(gothic-physics-contract EXCLUDE_FROM_ALL
+    tests/physics_contract.cpp
+    tests/physics_contract_common.cpp
+    tests/physics_contract_rays.cpp
+    tests/physics_contract_npc.cpp
+    tests/physics_contract_items.cpp
+    tests/physics_contract_movables.cpp
+    tests/physics_contract_noise.cpp
+    tests/physics_bonds_contract.cpp)
+  target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL
+    tests/placed_items_contract.cpp tests/npc_live_fixture.cpp)
+  target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  # The society stand's world (docs/society-sim.md): runs gothic-body-runner --society-export twice on the
+  # game's data (GOTHIC_DIR) and checks it against evals/npc-decisions/day_people.json and places.json.
+  # Only where the runner exists (UNIX, see above).
+  if(TARGET gothic-body-runner)
+    add_executable(gothic-society-export-contract EXCLUDE_FROM_ALL tests/society_export_contract.cpp)
+    add_dependencies(gothic-society-export-contract gothic-body-runner)
+    target_include_directories(gothic-society-export-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+    target_compile_definitions(gothic-society-export-contract PRIVATE
+      SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
+      SOCIETY_REPO="${CMAKE_CURRENT_SOURCE_DIR}/..")
+    target_compile_options(gothic-society-export-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  # The society stand's core over that export (docs/society-sim.md, «Интерфейсы → 2»): loads it, plays a day by
+  # the routine and checks the 5-minute marks, the journal's repeat and snapshot, the speed and gothic-society-day;
+  # then the same with the needs of data/society/config.json.
+  if(TARGET gothic-body-runner)
+    add_executable(gothic-society-core-contract EXCLUDE_FROM_ALL tests/society_core_contract.cpp)
+    add_dependencies(gothic-society-core-contract gothic-body-runner gothic-society-day)
+    target_link_libraries(gothic-society-core-contract PRIVATE society-core)
+    get_filename_component(SOCIETY_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../data/society/config.json" ABSOLUTE)
+    target_compile_definitions(gothic-society-core-contract PRIVATE
+      SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
+      SOCIETY_DAY="$<TARGET_FILE:gothic-society-day>"
+      SOCIETY_CONFIG="${SOCIETY_CONFIG_FILE}")
+    target_compile_options(gothic-society-core-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_executable(gothic-bodyimpact-contract EXCLUDE_FROM_ALL tests/bodyimpact_contract.cpp)
+  target_include_directories(gothic-bodyimpact-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-bodyimpact-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-bodyimpact
+    COMMAND $<TARGET_FILE:gothic-bodyimpact-contract>
+    DEPENDS gothic-bodyimpact-contract USES_TERMINAL)
+  add_executable(gothic-meleestamina-contract EXCLUDE_FROM_ALL
+    tests/meleestamina_contract.cpp common/game/meleestamina.cpp)
+  target_include_directories(gothic-meleestamina-contract PRIVATE common)
+  add_custom_target(check-meleestamina
+    COMMAND $<TARGET_FILE:gothic-meleestamina-contract>
+    DEPENDS gothic-meleestamina-contract USES_TERMINAL)
+  add_executable(gothic-healing-contract EXCLUDE_FROM_ALL
+    tests/healing_contract.cpp common/game/healing.cpp)
+  target_include_directories(gothic-healing-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-healing-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-healing
+    COMMAND $<TARGET_FILE:gothic-healing-contract>
+    DEPENDS gothic-healing-contract USES_TERMINAL)
+  add_executable(gothic-meleefighter-contract EXCLUDE_FROM_ALL
+    tests/meleefighter_contract.cpp common/game/meleefighter.cpp)
+  target_include_directories(gothic-meleefighter-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-meleefighter-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-meleefighter
+    COMMAND $<TARGET_FILE:gothic-meleefighter-contract>
+    DEPENDS gothic-meleefighter-contract USES_TERMINAL)
+  add_executable(gothic-meleeparry-contract EXCLUDE_FROM_ALL
+    tests/meleeparry_contract.cpp common/game/meleeparry.cpp)
+  target_include_directories(gothic-meleeparry-contract PRIVATE common)
+  add_custom_target(check-meleeparry
+    COMMAND $<TARGET_FILE:gothic-meleeparry-contract>
+    DEPENDS gothic-meleeparry-contract USES_TERMINAL)
+  add_executable(gothic-meleeai-contract EXCLUDE_FROM_ALL
+    tests/meleeai_contract.cpp common/game/meleeai.cpp)
+  target_include_directories(gothic-meleeai-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-meleeai-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-meleeai
+    COMMAND $<TARGET_FILE:gothic-meleeai-contract>
+    DEPENDS gothic-meleeai-contract USES_TERMINAL)
+  add_executable(gothic-meleedodge-contract EXCLUDE_FROM_ALL
+    tests/meleedodge_contract.cpp common/game/meleedodge.cpp common/game/meleestamina.cpp common/game/meleeimpact.cpp)
+  target_include_directories(gothic-meleedodge-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-meleedodge-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-meleedodge
+    COMMAND $<TARGET_FILE:gothic-meleedodge-contract>
+    DEPENDS gothic-meleedodge-contract USES_TERMINAL)
+  add_executable(gothic-stopfoot-contract EXCLUDE_FROM_ALL
+    tests/stopfoot_contract.cpp common/graphics/mesh/stopfoot.cpp)
+  target_include_directories(gothic-stopfoot-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-stopfoot-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-stopfoot
+    COMMAND $<TARGET_FILE:gothic-stopfoot-contract>
+    DEPENDS gothic-stopfoot-contract USES_TERMINAL)
+  add_executable(gothic-animsample-contract EXCLUDE_FROM_ALL
+    tests/animsample_contract.cpp common/graphics/mesh/animsample.cpp)
+  target_include_directories(gothic-animsample-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-animsample-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-animsample
+    COMMAND $<TARGET_FILE:gothic-animsample-contract>
+    DEPENDS gothic-animsample-contract USES_TERMINAL)
+  add_executable(gothic-leanaccel-contract EXCLUDE_FROM_ALL
+    tests/leanaccel_contract.cpp common/graphics/mesh/leanaccel.cpp)
+  target_include_directories(gothic-leanaccel-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-leanaccel-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-leanaccel
+    COMMAND $<TARGET_FILE:gothic-leanaccel-contract>
+    DEPENDS gothic-leanaccel-contract USES_TERMINAL)
+  add_executable(gothic-meleecharge-contract EXCLUDE_FROM_ALL
+    tests/meleecharge_contract.cpp common/game/meleecharge.cpp common/game/meleestamina.cpp)
+  target_include_directories(gothic-meleecharge-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-meleecharge-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-meleecharge
+    COMMAND $<TARGET_FILE:gothic-meleecharge-contract>
+    DEPENDS gothic-meleecharge-contract USES_TERMINAL)
+  add_executable(gothic-furniture-parts-contract EXCLUDE_FROM_ALL tests/furniture_parts_contract.cpp)
+  target_link_libraries(gothic-furniture-parts-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-physics
     COMMAND $<TARGET_FILE:gothic-physics-contract>
     DEPENDS gothic-physics-contract
     USES_TERMINAL)
   add_executable(gothic-cloth-contract EXCLUDE_FROM_ALL tests/cloth_contract.cpp)
-  target_link_libraries(gothic-cloth-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-cloth-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-clothgeometry-contract EXCLUDE_FROM_ALL
     tests/clothgeometry_contract.cpp common/physics/clothgeometry.cpp)
   target_include_directories(gothic-clothgeometry-contract PRIVATE common)
   add_executable(gothic-worldcloth-contract EXCLUDE_FROM_ALL tests/worldcloth_contract.cpp)
   target_link_libraries(gothic-worldcloth-contract PRIVATE OpenGothic AiBridge)
   add_executable(gothic-worldbase-contract EXCLUDE_FROM_ALL tests/worldbase_contract.cpp)
-  target_link_libraries(gothic-worldbase-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-worldbase-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  add_executable(gothic-wcb-contract EXCLUDE_FROM_ALL tests/wcb_contract.cpp)
+  target_link_libraries(gothic-wcb-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-wcb-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  add_executable(gothic-wcb-source-contract EXCLUDE_FROM_ALL tests/wcb_source_contract.cpp)
+  target_link_libraries(gothic-wcb-source-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-wcb-source-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  # The catalogue start (worldchunkcatalogue.h): the same table, materials, bounds, cloth, collision and cells.
+  add_executable(gothic-world-catalogue-contract EXCLUDE_FROM_ALL tests/world_catalogue_contract.cpp)
+  target_link_libraries(gothic-world-catalogue-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-world-catalogue-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  if(NOT MSVC)
+    target_compile_options(gothic-world-catalogue-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  if(TARGET content-convert)
+    add_executable(gothic-worldcloth-cooked-contract EXCLUDE_FROM_ALL tests/worldcloth_cooked_contract.cpp)
+    target_link_libraries(gothic-worldcloth-cooked-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+    target_include_directories(gothic-worldcloth-cooked-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+    target_compile_definitions(gothic-worldcloth-cooked-contract PRIVATE GOTHIC_CONTENT_CONVERT="$<TARGET_FILE:content-convert>")
+    add_dependencies(gothic-worldcloth-cooked-contract content-convert)
+    if(NOT MSVC)
+      target_compile_options(gothic-worldcloth-cooked-contract PRIVATE -Wall -Wconversion -Werror)
+    endif()
+  endif()
+  add_executable(gothic-worldcollision-chunks-contract EXCLUDE_FROM_ALL tests/worldcollision_chunks_contract.cpp)
+  target_link_libraries(gothic-worldcollision-chunks-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-worldcollision-chunks-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  add_executable(gothic-collisioncache-cpu-contract EXCLUDE_FROM_ALL tests/collisioncache_cpu_contract.cpp)
+  target_link_libraries(gothic-collisioncache-cpu-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-collisioncache-cpu-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   add_executable(gothic-asset-digest EXCLUDE_FROM_ALL tests/asset_digest.cpp)
-  target_link_libraries(gothic-asset-digest PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-asset-digest PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-asset-digest SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   add_executable(gothic-worlddata-contract EXCLUDE_FROM_ALL tests/worlddata_contract.cpp)
-  target_link_libraries(gothic-worlddata-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-worlddata-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-worlddata-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  add_executable(gothic-wayheights-contract EXCLUDE_FROM_ALL tests/wayheights_contract.cpp)
+  target_link_libraries(gothic-wayheights-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  add_executable(gothic-settings-test EXCLUDE_FROM_ALL tests/settings_test.cpp)
+  target_link_libraries(gothic-settings-test PRIVATE OpenGothic AiBridge)
+  if(NOT MSVC)
+    target_compile_options(gothic-settings-test PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  if(UNIX)
+    # The hand motion receiver (docs/hand-motion.md) over a real loopback socket; the test's sender is POSIX.
+    add_executable(gothic-hand-motion-test EXCLUDE_FROM_ALL tests/hand_motion_test.cpp)
+    target_link_libraries(gothic-hand-motion-test PRIVATE OpenGothic AiBridge)
+    target_compile_options(gothic-hand-motion-test PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  if(TARGET content-convert)
+    add_executable(gothic-vob-layer-test EXCLUDE_FROM_ALL tests/vob_layer_test.cpp)
+    target_link_libraries(gothic-vob-layer-test PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+    target_include_directories(gothic-vob-layer-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+    target_compile_definitions(gothic-vob-layer-test PRIVATE
+      GOTHIC_VOB_FIXTURE_SCRIPT="${PROJECT_SOURCE_DIR}/../scripts/vob_layer_fixture.py"
+      GOTHIC_CONTENT_CONVERT="$<TARGET_FILE:content-convert>"
+      GOTHIC_BASE_FORMAT_SHA256="${BASE_FORMAT_SHA256}")
+    add_dependencies(gothic-vob-layer-test content-convert)
+    if(NOT MSVC)
+      target_compile_options(gothic-vob-layer-test PRIVATE -Wall -Wconversion -Werror)
+    endif()
+  endif()
   add_executable(gothic-basecontent-contract EXCLUDE_FROM_ALL tests/basecontent_contract.cpp)
-  target_link_libraries(gothic-basecontent-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-basecontent-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-basecontent-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   if(UNIX)
     add_executable(gothic-video-contract EXCLUDE_FROM_ALL tests/video_contract.cpp)
-    target_link_libraries(gothic-video-contract PRIVATE OpenGothic AiBridge)
+    target_link_libraries(gothic-video-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
     target_compile_options(gothic-video-contract PRIVATE -Wall -Wconversion -Werror)
-    add_executable(gothic-base-store-contract EXCLUDE_FROM_ALL tests/basestore_contract.cpp)
-    target_link_libraries(gothic-base-store-contract PRIVATE OpenGothic AiBridge)
+    add_executable(gothic-base-store-contract EXCLUDE_FROM_ALL tests/basestore_contract.cpp common/zenkitlog.cpp)
+    target_link_libraries(gothic-base-store-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
     target_include_directories(gothic-base-store-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
     target_compile_options(gothic-base-store-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   if(NOT MSVC)
     target_compile_options(gothic-worlddata-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-wayheights-contract PRIVATE -Wall -Wconversion -Werror)
     target_compile_options(gothic-basecontent-contract PRIVATE -Wall -Wconversion -Werror)
     target_compile_options(gothic-worldbase-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-wcb-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-wcb-source-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-worldcollision-chunks-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-collisioncache-cpu-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   add_custom_target(check-cloth
     COMMAND $<TARGET_FILE:gothic-cloth-contract>
     COMMAND $<TARGET_FILE:gothic-clothgeometry-contract>
     COMMAND $<TARGET_FILE:gothic-worldcloth-contract>
     DEPENDS gothic-cloth-contract gothic-clothgeometry-contract gothic-worldcloth-contract USES_TERMINAL)
-  add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp)
-  target_link_libraries(gothic-ragdoll-contract PRIVATE OpenGothic AiBridge)
+  add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp tests/physics_ragdoll_brace_contract.cpp)
+  target_link_libraries(gothic-ragdoll-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-bump-contract EXCLUDE_FROM_ALL tests/bump_contract.cpp common/game/bumpsignal.cpp)
+  target_include_directories(gothic-bump-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-bump-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_executable(gothic-reach-contract EXCLUDE_FROM_ALL tests/reach_contract.cpp common/game/reachsignal.cpp)
+  target_include_directories(gothic-reach-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-reach-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
   add_executable(gothic-ragdoll-save-contract EXCLUDE_FROM_ALL tests/ragdoll_save_contract.cpp)
-  target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-ragdoll-save
     COMMAND $<TARGET_FILE:gothic-ragdoll-save-contract>
     DEPENDS gothic-ragdoll-save-contract USES_TERMINAL)
@@ -449,22 +827,18 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-instance-storage
     COMMAND $<TARGET_FILE:gothic-instance-storage-contract>
     DEPENDS gothic-instance-storage-contract USES_TERMINAL)
-endif()
 
 # editor
 
-if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-npc-deeds-contract EXCLUDE_FROM_ALL tests/npc_deeds_contract.cpp)
   target_include_directories(gothic-npc-deeds-contract PRIVATE common)
   add_custom_target(check-npc-deeds
     COMMAND $<TARGET_FILE:gothic-npc-deeds-contract>
     DEPENDS gothic-npc-deeds-contract USES_TERMINAL)
-endif()
 
 # Navigation eye has an independent contract block to keep parallel navigation work isolated.
-if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-navigation-eye-contract EXCLUDE_FROM_ALL tests/navigation_eye_contract.cpp)
-  target_link_libraries(gothic-navigation-eye-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-navigation-eye-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-navigation-eye
     COMMAND $<TARGET_FILE:gothic-navigation-eye-contract>
     DEPENDS gothic-navigation-eye-contract USES_TERMINAL)
@@ -480,18 +854,21 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-navigation-roads
     COMMAND $<TARGET_FILE:gothic-navigation-roads-contract>
     DEPENDS gothic-navigation-roads-contract USES_TERMINAL)
-endif()
-
-target_sources(Spacer PRIVATE ${SPACER_SOURCES} spacer/main.cpp)
-target_include_directories(Spacer PRIVATE "spacer")
-target_link_libraries(Spacer PRIVATE OpenGothic SpacerAssets)
-
-if(ANDROID)
-  add_android_apk(OpenGothic-apk
-    PACKAGE_NAME org.opengothic.app
-    CODE Gothic2Notr
-    MANIFEST android/AndroidManifest.xml)
-endif()
+  add_executable(gothic-followtrail-contract EXCLUDE_FROM_ALL
+    tests/followtrail_contract.cpp common/game/followtrail.cpp common/game/navigationpassage.cpp)
+  target_include_directories(gothic-followtrail-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-followtrail-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-followtrail
+    COMMAND $<TARGET_FILE:gothic-followtrail-contract>
+    DEPENDS gothic-followtrail-contract USES_TERMINAL)
 
 # installation
-install(TARGETS Gothic2Notr Spacer DESTINATION bin)
+install(TARGETS Gothic2Notr DESTINATION bin)
+
+include(cmake/ZenKitGuard.cmake)
+include(cmake/EngineLayerGuard.cmake)
+include(cmake/EnginePlatform.cmake)
+include(cmake/Island.cmake)

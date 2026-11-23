@@ -426,15 +426,16 @@ class IncidentDesk:
         self.planner = planner
         planner.on_escalate = self.on_planner_escalate
 
-    def on_planner_escalate(self, npc: str, level: float, reaction: Decision | None, flight: Flight) -> None:
+    def on_planner_escalate(self, npc: str, level: float, reaction: Decision | None, flight: Flight) -> bool:
         """The behavioral model says how much a free npc's moment calls for its own words: from the planner's
         `escalate_level` on, or when the danger it spoke about is over, the conversational model speaks for
-        it, on the move, if the hero hears it, not too often and within the budget."""
+        it, on the move, if the hero hears it, not too often and within the budget. Return whether a
+        speech turn was scheduled."""
         assert self.planner is not None
         npc = npc.upper()
         rec = self.planner.npcs.get(npc)
         if rec is None or npc in self.attached:  # a controlled npc's incidents are handled above
-            return
+            return False
         now = self.clock()
         alive = [s for s in rec.stimuli if s.alive(self.planner.clock())]
         about = reasons(alive)
@@ -446,15 +447,15 @@ class IncidentDesk:
             and any(policy(kind).threat for kind, _ in spoke_about)
         )
         if level < self.planner.cfg.escalate_level and not settles:
-            return
+            return False
         if {kind for kind, _ in about} <= {"player_speech"} and self.speaks_up_there(npc):
-            return  # only the hero's words: the conversation asks it whether it speaks up, by its character
+            return False  # only the hero's words: the conversation asks whether it speaks up
         gap = FREE_NEW_REASON_S if new else FREE_COOLDOWN_S
         if not hears(rec.distance_cm, rec.in_view) or now - spoke_at < gap:
-            return
+            return False
         if not self.budget.allow(npc):
             log.info("%s: no budget for words (escalate %.1f)", npc, level)
-            return
+            return False
         self._spoke[npc] = (now, about)
         happened = "; ".join(describe_ru(s) for s in alive) or "что-то случилось"
         # its own kill: the scripts already ended the fight with a stock line, nothing of ours was done
@@ -476,6 +477,7 @@ class IncidentDesk:
         self._spawn(self._free_turn(npc, f"[Событие: {happened}.{done}{after}]"))
         if npc not in self._calming:
             self._spawn(self._calm_later(npc))
+        return True
 
     async def _free_turn(self, npc: str, cue: str) -> None:
         """A free npc's words on the move. A turn of its still running is let finish first: an event that

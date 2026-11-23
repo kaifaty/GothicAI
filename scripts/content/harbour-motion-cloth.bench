@@ -1,0 +1,23 @@
+# harbour-motion: which cloth of the harbour moves in play. The hero stands on waypoints where a player
+# walks; the wind is the game's own. `cloth checkpoint` lists every cloth body with active, weight and
+# max_speed_cm_s; cloth is simulated within 40 m of the hero (common/physics/cloth.h).
+cheat god
+clear 1000000
+set time 12 0
+overlay off
+view full
+goto SHIP_DECK_16
+wait 8000
+cloth checkpoint ship-deck-16
+goto SHIP_CREW_05
+wait 8000
+cloth checkpoint ship-crew-05
+goto NW_WAITFOR_SHIP_05
+wait 8000
+cloth checkpoint mole
+goto NW_CITY_PALCAMP_01
+wait 8000
+cloth checkpoint crane-c
+goto NW_CITY_MERCHANT_PATH_03
+wait 8000
+cloth checkpoint banners-street

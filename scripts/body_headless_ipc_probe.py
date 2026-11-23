@@ -56,9 +56,9 @@ def main() -> int:
     for name in ("runner", "assets", "save", "scenario", "reference", "output"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--engine-library", type=Path,
-                        help="record reused engine library hash; entry-point fix must not rebuild it")
+                        help="directory containing all reused engine build archives")
     parser.add_argument("--expected-library-sha256",
-                        help="reject if the reused engine library changed since full mechanics evidence")
+                        help="reject if the engine library set changed since full mechanics evidence")
     args = parser.parse_args()
     if sys.platform != "linux":
         parser.error("native simulations run only on Linux dev-ubuntu, never the Mac")
@@ -82,11 +82,10 @@ def main() -> int:
         if args.expected_library_sha256 and args.engine_library is None:
             raise RuntimeError("--expected-library-sha256 requires --engine-library")
         if args.engine_library is not None:
-            digest = suite.sha256(args.engine_library)
-            result["provenance"]["engine_library_sha256"] = digest
+            result["provenance"].update(suite.engine_library_provenance(args.engine_library))
             if args.expected_library_sha256:
-                check(digest == args.expected_library_sha256,
-                      "engine library differs from the recorded full mechanics build")
+                check(result["provenance"]["engine_library_sha256"] == args.expected_library_sha256,
+                      "engine library set differs from the recorded full mechanics build")
         workdir = args.output / "run"
         workdir.mkdir()
         (workdir / "Gothic.ini").write_bytes(settings.read_bytes())
@@ -102,7 +101,7 @@ def main() -> int:
         result["environment"] = {name: environment[name] for name in
                                  ("DISPLAY", "WAYLAND_DISPLAY", "GOTHIC_AI", "VK_DRIVER_FILES",
                                   "VK_ICD_FILENAMES", "OPENGOTHIC_BODY_ANIMATION_RNG")}
-        runner = suite.Runner([str(args.runner), "-g", str(args.assets), "-g2", "-devmode",
+        runner = suite.Runner([str(args.runner), "-g", str(args.assets), "-devmode",
                               "--save", str(args.save), "--scenario", str(args.scenario),
                               "--output", str(lockstep), "--mode", "lockstep", "--stdio"],
                              workdir, args.output, timeout_s=5, environment=environment)

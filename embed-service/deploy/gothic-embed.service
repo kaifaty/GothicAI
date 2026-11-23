@@ -1,0 +1,13 @@
+[Unit]
+Description=Gothic AI: NPC memory embeddings (FRIDA, HTTP port 47837)
+After=network-online.target
+
+[Service]
+EnvironmentFile=-%h/gothic-ai/gothic-ai.env
+ExecStart=%h/gothic-ai/embed/deploy/run.sh
+CPUAffinity=2-11
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

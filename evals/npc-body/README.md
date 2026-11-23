@@ -45,8 +45,7 @@ scripts/body-baseline-remote.sh collect melee-reference-repeat
 
 Run names identify immutable output directories; choose a new name for each attempt. `sync`,
 `toolchain` and `build` are available as separate actions. The game starts from a copied save and
-silent `Gothic.ini`; the Linux launch explicitly selects Gothic II (`-g2`) rather than relying on
-asset auto detection. The launcher refuses to start while another game/runner is active.
+silent `Gothic.ini`; the engine uses Gothic II Night of the Raven data. The launcher refuses to start while another game/runner is active.
 
 ## Generate a report
 

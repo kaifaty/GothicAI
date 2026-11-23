@@ -5,7 +5,7 @@
 // outputunits/outputunits.json index that maps the engine's, the server's and storygraph's original
 // choices to it. Each consumer derives its own view from the same record.
 
-#include "baseimport.h"
+#include "baseidentity.h"
 #include "worlddata.h"
 
 #include <cstdint>

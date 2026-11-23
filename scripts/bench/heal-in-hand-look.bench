@@ -1,0 +1,185 @@
+# Look of drinking and eating with a weapon in hand (step 7 part B: reports/Питьё с оружием в руке.md), video takes
+# for the user's acceptance: the hero drinks with fists, 1H and 2H, eats bread, an apple and meat, drinks while
+# walking, and a bandit's hit cuts a drink. Every take starts at the sunlit spot of melee-ai-look, 16 m into the
+# field from the fixture; the bandit waits 8 m away except in the hit take. Slow takes run the game 4x slower.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=ryzen TIMEOUT=900 TEMPEST_WINDOW_SIZE=1280x720
+# OPENGOTHIC_CONTENT=/abs/content-staging/anim-uses-1
+seed 73013
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+turn 180
+immortal BDT_1013_BANDIT_L on
+wait 600
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin drink-1h-left ItPo_Health_01 600
+healing arm 1h
+wait 900
+cam follow 230 25 300
+rec drink-1h-left
+wait 300
+healing use direct
+wait 2000
+stop
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin drink-1h-right ItPo_Health_01 600
+healing arm 1h
+wait 900
+cam follow 230 25 60
+rec drink-1h-right
+wait 300
+healing use direct
+wait 2000
+stop
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin drink-2h ItPo_Health_01 600
+healing arm 2h
+wait 900
+cam follow 240 25 300
+rec drink-2h
+wait 300
+healing use direct
+wait 2000
+stop
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin drink-fist ItPo_Health_01 600
+healing arm fist
+wait 900
+cam follow 230 25 300
+rec drink-fist
+wait 300
+healing use direct
+wait 2000
+stop
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin eat-bread-1h ItFo_Bread 600
+healing arm 1h
+wait 900
+cam follow 230 25 300
+rec eat-bread-1h
+wait 300
+healing use direct
+wait 2000
+stop
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin eat-apple-fist ItFo_Apple 600
+healing arm fist
+wait 900
+cam follow 230 25 300
+rec eat-apple-fist
+wait 300
+healing use direct
+wait 2000
+stop
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin eat-meat-2h ItFoMutton 600
+healing arm 2h
+wait 900
+cam follow 240 25 300
+rec eat-meat-2h
+wait 300
+healing use direct
+wait 2000
+stop
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin walk-drink-1h ItPo_Health_01 600
+healing arm 1h
+wait 900
+cam follow 330 45 270
+rec walk-drink-1h
+wait 300
+healing use direct
+healing move forward
+wait 1900
+release all
+wait 600
+stop
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin walk-side-drink-1h ItPo_Health_01 600
+healing arm 1h
+wait 900
+cam follow 330 45 0
+rec walk-side-drink-1h
+wait 300
+healing use direct
+healing move side
+wait 1900
+release all
+wait 600
+stop
+
+# A bandit's hit cuts the drink: no heal, the potion stays in the bag (part A).
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61796 2195 -13461
+face npc BDT_1013_BANDIT_L
+healing begin hit-1h ItPo_Health_01 600
+healing arm 1h
+wait 900
+cam follow 300 50 300
+rec hit-1h
+wait 300
+healing use direct
+healing hit 600
+wait 2500
+stop
+
+# The same drinks 4x slower.
+slowmo 4
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin drink-1h-left-slow ItPo_Health_01 600
+healing arm 1h
+wait 900
+cam follow 230 25 300
+rec drink-1h-left-slow
+wait 300
+healing use direct
+wait 2000
+stop
+
+put-at BDT_1013_BANDIT_L 62250 2190 -14000
+put-at player 61737 2198 -13323
+healing begin drink-2h-slow ItPo_Health_01 600
+healing arm 2h
+wait 900
+cam follow 240 25 300
+rec drink-2h-slow
+wait 300
+healing use direct
+wait 2000
+stop
+slowmo 1

@@ -1,0 +1,153 @@
+# Functional smoke for the two-level human posture; run this same scenario with MELEE_STAGGER=1 and 0.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local MELEE_POSTURE=1 OPENGOTHIC_BODY_TRACE=1
+# `strike` uses the ordinary human melee damage/posture path, without timing the scale fill to a MAN.
+seed 73013
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+stats hp 100000 hpmax 100000
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+turn 180
+pin BDT_1013_BANDIT_L 140 0 0
+wait 300
+pin off
+rec light novideo
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+# A real side swing must leave the posture-stunned bandit standing, with the damage bonus in the blade log.
+pin BDT_1013_BANDIT_L 125 0 0
+press action
+tap left
+wait 600
+release all
+pin off
+wait 2000
+stop
+# Wait through recovery and the four-second posture cap in either mode.
+wait 8000
+rec heavy novideo
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+strike BDT_1013_BANDIT_L
+wait 34
+melee-shadow weapon 2h
+pin BDT_1013_BANDIT_L 140 0 0
+wait 100
+press action
+tap left
+wait 700
+release all
+pin off
+wait 8000
+stop
+# A two-hander must not knock down either other stun reason.
+rec other-stuns novideo
+stun BDT_1013_BANDIT_L parried
+strike BDT_1013_BANDIT_L
+wait 1200
+stun BDT_1013_BANDIT_L guard_break
+strike BDT_1013_BANDIT_L
+wait 1200
+stun player parried
+strike player BDT_1013_BANDIT_L
+wait 1200
+stop
+# Hit the hero during a two-handed wind-up, then fill posture before its blade window ends.
+# Super armor preserves the swing on the first hit; a full scale still stuns the hero.
+rec super-armor novideo
+melee-shadow weapon 2h
+press action
+tap left
+wait 67
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+strike player BDT_1013_BANDIT_L
+wait 1500
+release all
+stop

@@ -5,7 +5,7 @@
 #include <cctype>
 #include <optional>
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 
 #include "game/gamescript.h"
 #include "game/herodeed.h"
@@ -22,7 +22,7 @@
 #include "textcodec.h"
 
 using namespace Tempest;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 using storygraph::Value;
 
 static std::string upper(std::string_view s) {
@@ -64,14 +64,14 @@ const Teaching* teaching(std::string_view kind) {
   return nullptr;
   }
 
-int32_t intConst(zenkit::DaedalusVm& vm, std::string_view name) {
+int32_t intConst(daedalus::DaedalusVm& vm, std::string_view name) {
   auto* s = vm.find_symbol_by_name(name);
   return s!=nullptr && s->type()==DaedalusDataType::INT ? s->get_int(0) : 0;
   }
 
 }
 
-std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm, StoryEffect& e) {
+std::string StoryEffect::read(const rapidjson::Value& x, daedalus::DaedalusVm* vm, StoryEffect& e) {
   e.kind   = std::string(JsonRead::str(x,"do"));
   e.item   = upper(JsonRead::str(x,"item"));
   e.chest  = upper(JsonRead::str(x,"chest"));
@@ -93,6 +93,22 @@ std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm,
   e.toHero = JsonRead::str(x,"to")!="self" && !e.toNpc;
   auto* item = vm ? vm->find_symbol_by_name(e.item) : nullptr;
   auto* var  = vm ? vm->find_symbol_by_name(e.var) : nullptr;
+  if(e.kind=="knockout" || e.kind=="wound") {
+    e.by = upper(JsonRead::str(x,"by"));
+    if(e.by.empty())
+      return e.kind+": needs by";
+    const auto loss = x.FindMember("loss");
+    if(loss==x.MemberEnd() || !loss->value.IsInt64() || loss->value.GetInt64()<0)
+      return e.kind+": loss must be a nonnegative integer";
+    e.loss = loss->value.GetInt64();
+    if(e.kind=="wound") {
+      const auto byLoss = x.FindMember("by_loss");
+      if(byLoss==x.MemberEnd() || !byLoss->value.IsInt64() || byLoss->value.GetInt64()<0)
+        return "wound: by_loss must be a nonnegative integer";
+      e.byLoss = byLoss->value.GetInt64();
+      }
+    return {};
+    }
   if(e.kind=="give" || e.kind=="create" || e.kind=="chest_take") {
     if(vm && (item==nullptr || item->type()!=DaedalusDataType::INSTANCE))
       return e.kind + ": no item " + e.item;
@@ -134,7 +150,7 @@ std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm,
       for(auto name:{"AIV_NPCSAWPLAYERCOMMIT","AIV_NPCSAWPLAYERCOMMITDAY","AIV_CRIMEABSOLUTIONLEVEL"}) {
         auto* s = vm->find_symbol_by_name(name);
         if(s==nullptr || !s->is_const() || s->type()!=DaedalusDataType::INT ||
-           s->get_int(0)<0 || uint32_t(s->get_int(0))>=zenkit::INpc::aivar_count)
+           s->get_int(0)<0 || uint32_t(s->get_int(0))>=daedalus::INpc::aivar_count)
           return std::string("crime_memory: no AIV constant ")+name;
         }
       if(vm->find_symbol_by_name("B_GETCURRENTABSOLUTIONLEVEL")==nullptr)
@@ -176,7 +192,7 @@ std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm,
     }
   if(e.kind=="knows") {
     auto* i = vm ? vm->find_symbol_by_name(e.info) : nullptr;
-    if(vm && (i==nullptr || i->type()!=DaedalusDataType::INSTANCE || !i->is_instance_of<zenkit::IInfo>()))
+    if(vm && (i==nullptr || i->type()!=DaedalusDataType::INSTANCE || !i->is_instance_of<daedalus::IInfo>()))
       return "knows: no dialog " + e.info;
     return e.info.empty() ? "knows: needs a dialog" : "";
     }
@@ -190,7 +206,7 @@ std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm,
   return "unknown effect " + e.kind;
   }
 
-void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string_view who) const {
+void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::string_view who) const {
   auto call = [&](const char* fn, std::vector<Value> args) {
     std::string err;
     auto* s = vm.find_symbol_by_name(fn);
@@ -208,8 +224,8 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
   auto* other = vm.global_other();
   auto  prevSelf  = self->get_instance();
   auto  prevOther = other->get_instance();
-  self->set_instance(npc.handlePtr());
-  other->set_instance(player.handlePtr());
+  self->set_instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+  other->set_instance(std::static_pointer_cast<daedalus::INpc>(player.handlePtr()));
 
   if(kind=="chest_take") {
     // v48: an outcome far from the hero. Direct transfer sends neither perceptions nor npc_deed;
@@ -227,7 +243,7 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
     auto* t = vm.find_symbol_by_name(target);
     auto  inst = t!=nullptr ? t->get_instance() : nullptr;
     if(s!=nullptr && inst!=nullptr)
-      call("B_GIVEINVITEMS",{Value::instance(npc.handlePtr()),Value::instance(inst),
+      call("B_GIVEINVITEMS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::instance(inst),
                              Value::integer(int32_t(s->index())),Value::integer(count)}); else
       Log::e("[story] ",who,": give to ",target,": no such npc in the world");
     }
@@ -235,20 +251,20 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
     if(auto* s = vm.find_symbol_by_name(item)) {
       auto& from = toHero ? npc : player;
       auto& to   = toHero ? player : npc;
-      call("B_GIVEINVITEMS",{Value::instance(from.handlePtr()),Value::instance(to.handlePtr()),
+      call("B_GIVEINVITEMS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(from.handlePtr())),Value::instance(std::static_pointer_cast<daedalus::INpc>(to.handlePtr())),
                              Value::integer(int32_t(s->index())),Value::integer(count)});
       }
     }
   else if(kind=="create") {
     // into the npc's own hands first: a thing it keeps elsewhere (the server's stash), given after this
     if(auto* s = vm.find_symbol_by_name(item))
-      call("CREATEINVITEMS",{Value::instance(npc.handlePtr()),Value::integer(int32_t(s->index())),
+      call("CREATEINVITEMS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::integer(int32_t(s->index())),
                              Value::integer(count)});
     }
   else if(kind=="teach") {
     // the scripts' teacher function, as a teacher's dialog calls it: it takes the learning points itself
     if(auto* t = teaching(teach)) {
-      std::vector<Value> args = {Value::instance(npc.handlePtr()),Value::instance(player.handlePtr())};
+      std::vector<Value> args = {Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::instance(std::static_pointer_cast<daedalus::INpc>(player.handlePtr()))};
       if(teach=="circle")
         args.push_back(Value::integer(count)); else
         args.push_back(Value::integer(intConst(vm,arg)));
@@ -271,7 +287,7 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
   else if(kind=="crime_memory") {
     // B_MemorizePlayerCrime also writes PETZ counters. Project only its NPC-local fields, with
     // the current native absolution stamp so a new deed after payment remains readable.
-    auto level = call("B_GETCURRENTABSOLUTIONLEVEL",{Value::instance(npc.handlePtr())});
+    auto level = call("B_GETCURRENTABSOLUTIONLEVEL",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()))});
     if(level) {
       auto& aiv = npc.handlePtr()->aivar;
       aiv[size_t(intConst(vm,"AIV_NPCSAWPLAYERCOMMIT"))] = count;
@@ -286,18 +302,18 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
       call("B_LOGENTRY",{Value::str(topic),Value::str(text)});
     }
   else if(kind=="end") {
-    call("AI_STOPPROCESSINFOS",{Value::instance(npc.handlePtr())});
+    call("AI_STOPPROCESSINFOS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()))});
     }
   else if(kind=="attack") {
     // the scripts' own attack: the reason decides how far it goes (AR_NONE: until the hero is down)
-    call("B_ATTACK",{Value::instance(npc.handlePtr()),Value::instance(player.handlePtr()),
+    call("B_ATTACK",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::instance(std::static_pointer_cast<daedalus::INpc>(player.handlePtr())),
                      Value::integer(constant(reason,0)),Value::integer(0)});
     }
   else if(kind=="calm") {
     // the npc calls off its fight with the hero (v20, talked down: "Воу, ты чего, спокуха") and keeps to it:
     // its attitude to him as the scripts set it (B_SetAttitude), so their B_AssessEnemy sees no enemy in
     // him any more; and a fight with him ends now, the npc back to its routine
-    call("B_SETATTITUDE",{Value::instance(npc.handlePtr()),Value::integer(constant(attitude,2))});
+    call("B_SETATTITUDE",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::integer(constant(attitude,2))});
     auto* target = npc.target();
     if(target!=nullptr && (target==&player || HeroDeed::aivar(*target,"AIV_PARTYMEMBER")!=0) && !npc.isDown()) {
       npc.clearAiQueue();
@@ -310,7 +326,7 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
   else if(kind=="knows") {
     // the dialog counts as heard, as when it is played: the menu no longer offers it, conditions see it
     auto* s    = vm.find_symbol_by_name(info);
-    auto  dlg  = s!=nullptr ? std::dynamic_pointer_cast<zenkit::IInfo>(s->get_instance()) : nullptr;
+    auto  dlg  = s!=nullptr ? std::dynamic_pointer_cast<daedalus::IInfo>(s->get_instance()) : nullptr;
     auto* w    = Gothic::inst().world();
     if(dlg!=nullptr && w!=nullptr)
       w->script().setNpcInfoKnown(player.handle(),*dlg); else
@@ -320,16 +336,16 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
     // the npc goes with the hero (v30), as a companion's dialog marks it: whom it kills gives him the
     // experience (ZS_Dead), its blows at him are friendly fire
     const int32_t aiv = intConst(vm,"AIV_PARTYMEMBER");
-    if(aiv>=0 && uint32_t(aiv)<zenkit::INpc::aivar_count)
+    if(aiv>=0 && uint32_t(aiv)<daedalus::INpc::aivar_count)
       npc.handlePtr()->aivar[size_t(aiv)] = count!=0 ? 1 : 0;
     }
   else if(kind=="refuse_talk") {
-    call("NPC_SETREFUSETALK",{Value::instance(npc.handlePtr()),Value::integer(count)});
+    call("NPC_SETREFUSETALK",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::integer(count)});
     }
   else if(kind=="routine") {
     // as the dialogs do it (B_StartOtherRoutine): the symbol holds the npc the world made of it
     auto* s    = target.empty() ? nullptr : vm.find_symbol_by_name(target);
-    auto  inst = s!=nullptr ? s->get_instance() : npc.handlePtr();
+    auto  inst = s!=nullptr ? s->get_instance() : std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
     if(inst!=nullptr)
       call("B_STARTOTHERROUTINE",{Value::instance(inst),Value::str(routine)}); else
       Log::e("[story] ",who,": routine of ",target,": no such npc in the world");
@@ -339,7 +355,7 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
   other->set_instance(prevOther);
   }
 
-int32_t StoryEffect::learnCost(zenkit::DaedalusVm& vm, Npc& player, std::string& error) const {
+int32_t StoryEffect::learnCost(daedalus::DaedalusVm& vm, Npc& player, std::string& error) const {
   auto* t = teaching(teach);
   if(t==nullptr) {
     error = "teach: unknown teaching " + teach;
@@ -347,7 +363,7 @@ int32_t StoryEffect::learnCost(zenkit::DaedalusVm& vm, Npc& player, std::string&
     }
   // as the teacher function itself asks it (B_Teach*: disassembled from GOTHIC.DAT)
   const char*        fn   = teach=="attribute" ? "B_GETLEARNCOSTATTRIBUTE" : "B_GETLEARNCOSTTALENT";
-  std::vector<Value> args = {Value::instance(player.handlePtr())};
+  std::vector<Value> args = {Value::instance(std::static_pointer_cast<daedalus::INpc>(player.handlePtr()))};
   if(teach=="attribute") {
     args.push_back(Value::integer(intConst(vm,arg)));
     }

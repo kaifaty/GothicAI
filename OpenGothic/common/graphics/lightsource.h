@@ -3,7 +3,8 @@
 #include <Tempest/Point>
 #include <vector>
 #include <string>
-#include <zenkit/Misc.hh>
+#include "asset/math.h"
+#include "graphics/pfx/pfxmotion.h"
 
 class LightSource final {
   public:
@@ -16,7 +17,7 @@ class LightSource final {
     const Tempest::Vec3& color() const { return clr; }
     void                 setColor(const Tempest::Vec3& cl);
     void                 setColor(const std::vector<uint32_t>&      cl, float fps, bool smooth);
-    void                 setColor(const std::vector<zenkit::Color>& cl, float fps, bool smooth);
+    void                 setColor(const std::vector<asset::Color>& cl, float fps, bool smooth);
     void                 setColor(const std::vector<Tempest::Vec3>& cl, float fps, bool smooth);
 
     void                 setPosition(const Tempest::Vec3& p) { pos = p; }
@@ -33,8 +34,15 @@ class LightSource final {
     bool                 isEnabled() const;
     float                currentRange() const { return curRgn; }
     const Tempest::Vec3& currentColor() const { return curClr; }
+    const Tempest::Vec3& currentPosition() const { return flicker.active() ? curPos : pos; }
+
+    // the brightness follows a flame's signal at the world time and the position trembles by jitterCm
+    // (vobs.d "flicker_from", "jitter_cm"): the same signal as the emitter's particles
+    // swayHz: the trembling's own frequency ("sway_hz"), 0: the signal's
+    void                 setFlicker(const PfxMotion::Flicker& f, float jitterCm, float swayHz = 0);
 
     void                 setTimeOffset(uint64_t t);
+    void                 setKeysOnce(bool once) { keysOnce = once; }
 
     uint64_t             effectPrefferedTime() const;
 
@@ -56,6 +64,7 @@ class LightSource final {
     std::vector<float> rangeAniScale;
     uint64_t           rangeAniFPSInv = 0;
     bool               rangeSmooth = false;
+    bool               keysOnce    = false; // the range and colour keys play once and hold the last (an own effect's fire)
 
     std::vector<Tempest::Vec3> colorAniList;
     uint64_t                   colorAniListFpsInv = 0;
@@ -63,6 +72,11 @@ class LightSource final {
 
     Tempest::Vec3      curClr;
     float              curRgn = 0;
+    Tempest::Vec3      curPos;
+
+    PfxMotion::Flicker flicker;
+    float              flickerJitterCm = 0;
+    float              flickerSwayHz   = 0;
 
     bool               enable = true;
   };

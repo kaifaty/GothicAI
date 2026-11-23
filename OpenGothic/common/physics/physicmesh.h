@@ -12,6 +12,7 @@ class PhysicMesh final {
     PhysicMesh()=default;
     PhysicMesh(const ProtoMesh& proto, DynamicWorld& owner, bool movable);
 
+    size_t probeCpuBytes() const { return sub.capacity()*sizeof(sub[0]); }
     bool   isEmpty() const;
 
     void   setObjMatrix  (const Tempest::Matrix4x4& m);

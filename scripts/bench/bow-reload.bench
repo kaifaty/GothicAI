@@ -1,0 +1,158 @@
+# Reload from the quiver (reports/archery/2026-11-05-quiver-reload): the clips for the user and the rails. Onar's
+# field, 16:00, the sun from the side; still cameras: the camera at -80 (in front on the right (the drawing hand, the quiver, the
+# face), -140 the right side from behind (the quiver's turn, the draw past the flank). slowmo 4: three reloads a take;
+# to 60 fps of game time: ffmpeg setpts=0.25*PTS (real time), 0.5*PTS (half speed).
+# Content (OPENGOTHIC_CONTENT): the reload's clips T_BOWRELOADQ (scripts/content/anim/reload_quiver.py), the quiver's
+# meshes and materials. Before | after: the same run with OPENGOTHIC_QUIVERRELOAD=0 (G2's reload) and `quiver lift
+# off` for the fletching. TEMPEST_WINDOW_SIZE=1280x720, TIMEOUT=2400.
+# Columns: rq_* (BowDraw: the points in the chest's frame, the hand, the forearm, the arrow out of the trunk and the
+# tube, the arrow off the axis), qv_fletch, qv_line, qv_drawout, qv_lift (the quiver's lift); rails.py next to the
+# report reads them.
+cheat god
+set time 16 0
+view clean
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 90
+wait 500
+manual on
+equip ItRw_Bow_L_01
+equip ITAR_Leather_L
+arrows player 40
+insert BAU_904_BAUER
+wait 300
+immortal BAU_904_BAUER on
+pin BAU_904_BAUER 1200 0 0
+aimat BAU_904_BAUER body
+tap bow
+cam look 120
+wait 1500
+
+# the length of the reload at x0.85 and x1.6 on each talent step (stats: reload ms)
+stats str 30 dex 0 bow 10 talent 0
+stats str 30 dex 150 bow 10 talent 0
+stats str 60 dex 0 bow 40 talent 1
+stats str 60 dex 150 bow 40 talent 1
+stats str 120 dex 0 bow 100 talent 2
+stats str 120 dex 150 bow 100 talent 2
+
+# the fletching against the flank in the aim, the three steps: the lift off (as before) and on
+cam follow 170 120 -80
+quiver lift off
+stats str 30 dex 10 bow 10 talent 0
+volley 1 300
+rec fletch_t0_off_fr
+volley 1 1200
+stop
+cam follow 170 120 -140
+rec fletch_t0_off_back
+volley 1 1200
+stop
+quiver lift on
+cam follow 170 120 -80
+rec fletch_t0_on_fr
+volley 1 1200
+stop
+cam follow 170 120 -140
+rec fletch_t0_on_back
+volley 1 1200
+stop
+stats str 60 dex 60 bow 40 talent 1
+quiver lift off
+volley 1 300
+rec fletch_t1_off_back
+volley 1 1200
+stop
+quiver lift on
+rec fletch_t1_on_back
+volley 1 1200
+stop
+stats str 120 dex 150 bow 100 talent 2
+quiver lift off
+volley 1 300
+rec fletch_t2_off_back
+volley 1 1200
+stop
+quiver lift on
+rec fletch_t2_on_back
+volley 1 1200
+stop
+
+# the slow archer (talent 0, dexterity 10) and the quick one (talent 2, dexterity 150), light leather
+slowmo 4
+stats str 30 dex 10 bow 10 talent 0
+volley 1 300
+cam follow 280 125 -80
+rec slow_A
+volley 3 300
+wait 300
+stop
+cam follow 280 125 -140
+rec slow_B
+volley 3 300
+wait 300
+stop
+stats str 120 dex 150 bow 100 talent 2
+volley 1 300
+cam follow 280 125 -80
+rec fast_A
+volley 3 300
+wait 300
+stop
+cam follow 280 125 -140
+rec fast_B
+volley 3 300
+wait 300
+stop
+
+# the quick archer in the bandit's, the militia's armour and the fire mage's robe
+equip ITAR_BDT_H
+volley 1 300
+cam follow 280 125 -80
+rec fast_bdt_A
+volley 3 300
+wait 300
+stop
+equip ITAR_MIL_M
+volley 1 300
+rec fast_mil_A
+volley 3 300
+wait 300
+stop
+equip ITAR_KDF_H
+volley 1 300
+rec fast_kdf_A
+volley 3 300
+wait 300
+stop
+equip ITAR_Leather_L
+
+# down to the last arrow: the quiver shows fewer and none
+arrows player 6
+volley 1 300
+cam follow 190 115 -140
+rec last_arrows_B
+volley 6 300
+wait 600
+stop
+slowmo 1
+arrows player 40
+
+# an npc bowman aiming by hand (light leather), shooting at the peasant (pinned beside the hero, the peasant free)
+insert BDT_1000_BANDIT_L
+wait 300
+immortal BDT_1000_BANDIT_L on
+npcequip BDT_1000_BANDIT_L ItRw_Bow_L_01
+npcequip BDT_1000_BANDIT_L ITAR_Leather_L
+arrows BDT_1000_BANDIT_L 30
+pin BDT_1000_BANDIT_L 500 -90 0
+watch BDT_1000_BANDIT_L
+archer BDT_1000_BANDIT_L at BAU_904_BAUER
+wait 2500
+slowmo 4
+cam follow 280 125 -80
+rec npc_A
+wait 12000
+stop
+slowmo 1
+archer off

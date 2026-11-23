@@ -1,0 +1,60 @@
+# Fixed performance viewpoints for Claude's comparison on Mac.
+# Run with OPENGOTHIC_VOB_STREAMING=0 and =1; wait for Far and texture publication.
+# Deterministic: the world stands still while `streaming wait` waits, then takes 16 fixed steps
+# from fresh TAA, SSAO and active probe GI histories. Compare the four waited shots as RGBA.
+seed 73013
+deterministic on
+cheat god
+world-check NEWWORLD.ZEN
+set time 12 0
+overlay off
+ui off
+view full
+cam lift off
+watch player
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+cam look 120
+cam world 700 280 0
+wait 10000
+cam hold
+streaming wait
+shot perf-market
+wait 34
+goto pos 5391 320 -5822
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+streaming wait
+shot perf-harbour
+wait 34
+goto NW_FOREST_PATH_16
+cam look 150
+cam world 500 230 0
+wait 10000
+cam hold
+streaming wait
+shot perf-forest
+wait 34
+# Above the lighthouse, looking inland across the city towards the distant forest.
+# Horizontal eye position is approximately (-1500, 15800) cm; range is 300-800 m.
+goto pos 30000 4000 -12000
+cam look 120
+cam world 42000 6500 138.5
+wait 10000
+cam hold
+streaming wait
+shot perf-island
+wait 34
+# Leave the city's Far range for one update, then capture the first return frame.
+# No streaming wait between the return teleport and the screenshot.
+goto pos 200000 10000 200000
+cam look 120
+cam world 700 280 0
+wait 34
+goto NW_CITY_MERCHANT_TRADE_04
+cam look 120
+cam world 700 280 0
+shot perf-market-teleport
+wait 34

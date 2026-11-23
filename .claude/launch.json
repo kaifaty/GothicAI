@@ -14,33 +14,14 @@
     },
     {
       "name": "site",
-      "runtimeExecutable": "uv",
+      "runtimeExecutable": "bun",
       "runtimeArgs": [
         "run",
-        "--project",
+        "--cwd",
         "site",
-        "gothic-site",
-        "serve",
-        "--port",
-        "47860"
+        "dev"
       ],
       "port": 47860
-    },
-    {
-      "name": "voice-studio",
-      "runtimeExecutable": "uv",
-      "runtimeArgs": [
-        "run",
-        "--project",
-        "shorts",
-        "gothic-shorts",
-        "studio",
-        "dice",
-        "--no-browser",
-        "--port",
-        "47871"
-      ],
-      "port": 47871
     }
   ]
 }

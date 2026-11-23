@@ -120,6 +120,8 @@ def macos_window_size(size: str) -> str:
 
 
 def render(args) -> int:
+    subprocess.run(["bash", str(Path(__file__).with_name("base-ensure.sh")), str(args.assets.resolve())],
+                   env=dict(os.environ, GAME_BIN=str(args.game.resolve())), check=True)
     failures = 0
     macos = sys.platform == "darwin"
     window_size = macos_window_size(args.size) if macos else args.size
@@ -138,7 +140,7 @@ def render(args) -> int:
                "OPENGOTHIC_BENCH": str(out/"scene.bench"), "OPENGOTHIC_BENCH_OUT": str(out)}
         for key in ("DISPLAY", "WAYLAND_DISPLAY"):
             env.pop(key, None)
-        argv = [str(args.game.resolve()), "-g", str(args.assets.resolve()), "-g2", "-window", "-devmode", "-save", "1"]
+        argv = [str(args.game.resolve()), "-g", str(args.assets.resolve()), "-window", "-devmode", "-save", "1"]
         if macos:
             # The macOS engine selects Metal itself. Do not inherit Linux's software renderer
             # or null audio device. Full resolution prevents each realtime screenshot from

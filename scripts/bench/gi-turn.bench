@@ -1,0 +1,29 @@
+# Reflected light (GI) through a turn of the camera: the probes of -gi 1 live on while they are off the screen (step 2b
+# of the ray-tracing revisit, reports/render-features/2026-11-08-rt-revisit/step-2b.md). The plank hut of gi-clips at
+# noon, view hut-day-2: the camera stands 1 s, turns 180 degrees round the hero at once, stands 3 s, turns back and
+# stands 2 s. `uv run scripts/gi_compare.py --turn <out>/hut-turn.mp4` compares the frame before the turn with the
+# first frame after the return, cell by cell.
+#   OPENGOTHIC_RT=1 OPENGOTHIC_GI=1 TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh gi-turn
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+
+set time 12 0
+goto NW_CITY_HABOUR_POOR_AREA_HUT_01_IN
+clear 3000
+watch player
+cam look 110
+cam world 180 170 180
+wait 10000
+rec hut-turn
+wait 1000
+cam cut
+cam world 180 170 0
+wait 3000
+cam cut
+cam world 180 170 180
+wait 2000
+stop

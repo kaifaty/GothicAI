@@ -280,6 +280,12 @@ async def test_scene_instead_of_a_silent_pass(tmp_path):
     assert "Рассказчик — Лобарт." in brief and "Слушатель — Хильда." in brief
     assert f"Новость (знает Лобарт, не знает Хильда): {NEWS}" in brief
     assert "Лобарт сам уличил героя сегодня." in brief
+    fame = Rumor(
+        "F1", "fame", "PLAYER", "герой", "Вернул чужое", text="Вернул кошель без награды.",
+        known={LOBART: 0, HILDA: 0}, since={LOBART: 1, HILDA: 1},
+    )
+    assert g.desk._source(fame, LOBART, "Лобарт") == "сам видел это сегодня"
+    assert g.desk._source(fame, HILDA, "Хильда") == "сама видела это сегодня"
     assert "- он уже лгал тебе: «Убрать поле репы»" in brief  # what Lobart knows of his word
     assert "Герой стоит в 8 м от них. Лобарт видит его; Хильда видит его." in brief
     # both remember what was said, never as their own replies

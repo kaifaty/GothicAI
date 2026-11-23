@@ -12,6 +12,18 @@ if [[ -n "$expect_existing" && "$stage" != record-follow-below-gate ]]; then
   echo 'Existing corpus regression requires record-follow-below-gate' >&2; exit 2
 fi
 export GQ_OWNER=nav-demos-v4
+# Validate the shared settings before creating task directories or queue jobs.
+game_env=()
+for key in OPENGOTHIC_VIDEOS_FINGERPRINT ${!OPENGOTHIC_BASE@}; do
+  [[ -z "${!key+x}" ]] || game_env+=("$key=${!key}")
+done
+printf -v game_command '%q ' env ${game_env[@]+"${game_env[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")"
+game_settings="$(ssh -o ConnectTimeout=10 ryzen "$game_command")"
+eval "$game_settings"
+game_env=()
+for key in OPENGOTHIC_VIDEOS_FINGERPRINT ${!OPENGOTHIC_BASE@}; do
+  [[ -z "${!key+x}" ]] || game_env+=("$key=${!key}")
+done
 task="$(ssh -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-demos-v4" "$HOME"')"
 ssh ryzen 'df -h "$HOME"'
 ssh ryzen "mkdir -p '$task/source' '$task/input'"
@@ -38,6 +50,8 @@ ssh ryzen "cat > '$task/phase.sh'" <<'PHASE'
 #!/usr/bin/env bash
 set -euo pipefail
 task="$(cd "$(dirname "$0")" && pwd)"
+game_settings="$(python3 "$task/source/scripts/ryzen_game.py")"
+eval "$game_settings"
 stage="${1:?phase}"
 expect_existing="${2:-}"
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
@@ -48,18 +62,20 @@ cd "$task/source"
 if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv "$task/.venv"; fi
 uv pip install --python "$task/.venv/bin/python" numpy pytest
 if [[ "$stage" == build-validate || "$stage" == retry ]]; then
+  source "$task/source/scripts/ryzen-build.sh"
   cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+    "${RYZEN_CMAKE_FLAGS[@]}" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-  cmake --build "$task/build" --target Gothic2Notr gothic-body-runner \
+  cmake --build "$task/build" --target gothic-body-runner \
     check-navmemoryteacher check-navkeyteacher --parallel 3
 fi
 if [[ "$stage" == record || "$stage" == record-follow-below-gate || "$stage" == record-chain ]]; then
   "$task/.venv/bin/python" -m pytest -q scripts/tests/test_nav_demos_v4_collect.py \
     scripts/tests/test_nav_demos_v4_budget.py scripts/tests/test_nav_demos_v4_chain.py
   if [[ "$stage" == record-chain ]]; then
-    exec "$task/.venv/bin/python" -I "$task/source/scripts/nav_demos_v4_chain.py" --task "$task"
+    exec "$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_demos_v4_chain.py" --task "$task"
   fi
   follow=(--include-follow auto)
   if [[ "$stage" == record-follow-below-gate ]]; then
@@ -69,20 +85,20 @@ if [[ "$stage" == record || "$stage" == record-follow-below-gate || "$stage" == 
     NAV_DEMOS_V4_CORPUS_TASK="$task" NAV_DEMOS_V4_CORPUS_EXPECT="$expect_existing" \
       "$task/.venv/bin/python" -m pytest -q -s scripts/tests/test_nav_demos_v4_corpus.py
   fi
-  "$task/.venv/bin/python" -I scripts/nav_demos_v4_collect.py --task "$task" "${follow[@]}" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_demos_v4_collect.py --task "$task" "${follow[@]}" \
     --wall-minutes 100 --max-new 2000 --max-bytes 15000000000
 else
   "$task/.venv/bin/python" -m pytest -q scripts/tests/test_nav_demos_v4.py \
     scripts/tests/test_nav_teacher_v3.py scripts/tests/test_nav_teacher_v3_oracle.py \
     scripts/tests/test_nav_demos.py scripts/tests/test_nav_follow_analysis.py
   if [[ -f "$task/validation/attempt-1/metrics.json" ]]; then
-    "$task/.venv/bin/python" -I scripts/nav_follow_analysis.py "$task/validation/attempt-1" \
+    "$task/.venv/bin/python" -X faulthandler -I scripts/nav_follow_analysis.py "$task/validation/attempt-1" \
       --output "$task/analysis/attempt-1-follow.json"
   fi
   validation=(--task "$task" --parallel 3)
   if [[ "$stage" == retry ]]; then validation+=(--attempt 2 --episodes-per-kind 10); fi
-  "$task/.venv/bin/python" -I scripts/nav_demos_v4.py validate-moving "${validation[@]}"
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_demos_v4.py validate-moving "${validation[@]}"
 fi
 PHASE
 "$ROOT/scripts/gq" submit --class batch --threads 12 --cpu-quota 1200% --mem 8G --max 2h \
-  --name "nav demos v4 $stage" -- bash "$task/phase.sh" "$stage" "$expect_existing"
+  --name "nav demos v4 $stage" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$stage" "$expect_existing"

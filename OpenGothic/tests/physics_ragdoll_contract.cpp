@@ -7,6 +7,7 @@
 #include "physics/physicmeshshape.h"
 #include "graphics/bounds.h"
 #include "graphics/mesh/hitzones.h"
+#include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/animmath.h"
@@ -23,6 +24,7 @@
 #include <zenkit/ModelHierarchy.hh>
 #include <zenkit/ModelScript.hh>
 #include <zenkit/Stream.hh>
+#include <zenkit/Vfs.hh>
 
 #include <algorithm>
 #include <cmath>
@@ -372,6 +374,177 @@ void testKinematicPoseAndInteraction() {
     }
   }
 
+void testRagdollBirthGuard() {
+  Fixture fixture;
+  const auto posed=[&](const Tempest::Matrix4x4& object) {
+    auto pose=fixture.skeleton.tr;
+    for(auto& bone:pose) bone=object*bone;
+    return pose;
+    };
+  const auto living=[&](CollisionWorld& world, const Tempest::Matrix4x4& object) {
+    const auto pose=posed(object);
+    auto body=world.createKinematicBody(fixture.skeleton,fixture.zones,pose.data(),pose.size(),object);
+    require(bool(body),"birth guard checks need a complete native living rig");
+    return body;
+    };
+  const auto move=[&](Ragdoll& body, const Tempest::Matrix4x4& object) {
+    const auto pose=posed(object);
+    require(body.moveKinematic(pose.data(),pose.size(),object,1.f/60.f),
+            "birth guard checks must queue the actual native living pose");
+    };
+  const auto speed=[](const Ragdoll& body) {
+    float peak=0;
+    for(const auto& part:body.state().parts) peak=std::max(peak,part.linearVelocityMeters.length());
+    return peak;
+    };
+  const auto lying=[](float x) {
+    auto object=at(x,20,0); object.rotateOX(90.f);
+    return object;
+    };
+
+  const char* meleeValue=std::getenv("OPENGOTHIC_MELEE_BENCH");
+  const bool hadMelee=meleeValue!=nullptr;
+  const std::string previousMelee=hadMelee ? meleeValue : "";
+  setenv("OPENGOTHIC_MELEE_BENCH","1",1);
+  for(const int substeps:{0,2}) {
+    float peaks[2]={};
+    for(const bool enabled:{false,true}) {
+      CollisionWorld world;
+      world.setRagdollBirthGuardEnabled(enabled);
+      if(substeps!=0) world.configureMeleeBench(substeps);
+      auto object=at(0,300,-10);
+      auto rig=living(world,object);
+      auto body=fixture.create(world,at(0,300,0));
+      if(substeps!=0) require(body->restore(body->state()),"restoring native parts before birth must retain the registered guard group");
+      // A zero-delta broad-phase rebuild must leave the first solve pending.
+      world.tick(0);
+      for(int frame=0;frame<18;++frame) {
+        object.set(3,2,-10.f+20.f*float(frame+1));
+        move(*rig,object);
+        world.tick(frame%3==2 ? 16 : 17);
+        peaks[enabled ? 1 : 0]=std::max(peaks[enabled ? 1 : 0],speed(*body));
+        }
+      }
+    std::printf("ragdoll birth guard substeps=%d rig_m_s=12 duration_ms=300 peak_on_m_s=%.9g peak_off_m_s=%.9g\n",
+                substeps,double(peaks[1]),double(peaks[0]));
+    require(peaks[0]>8.f,"the unguarded overlapping fast rig must reproduce a ragdoll launch above 8 m/s");
+    require(peaks[1]<=4.f,"a newborn ragdoll inside a 12 m/s living rig must stay below 4 m/s");
+    }
+  if(hadMelee) setenv("OPENGOTHIC_MELEE_BENCH",previousMelee.c_str(),1); else unsetenv("OPENGOTHIC_MELEE_BENCH");
+
+  {
+    CollisionWorld world;
+    auto object=at(0,300,-10);
+    auto rig=living(world,object);
+    auto body=fixture.create(world,at(0,300,0));
+    world.tick(17);
+    world.setRagdollBirthGuardEnabled(false);
+    world.setRagdollBirthGuardEnabled(true);
+    float peak=0;
+    for(int frame=0;frame<18;++frame) {
+      object.set(3,2,-10.f+20.f*float(frame+1));
+      move(*rig,object);
+      world.tick(frame%3==2 ? 16 : 17);
+      peak=std::max(peak,speed(*body));
+      }
+    std::printf("ragdoll birth guard cleared rig_m_s=12 peak_m_s=%.9g\n",double(peak));
+    require(peak>8.f,"disabling must clear birth guards and reenabling must leave existing bodies unguarded");
+    }
+
+  {
+    CollisionWorld world,control;
+    control.setRagdollBirthGuardEnabled(false);
+    auto ground=floor(world),referenceGround=floor(control);
+    auto rig=living(world,lying(0)),referenceRig=living(control,lying(-300));
+    auto body=fixture.create(world,lying(0)),reference=fixture.create(control,lying(0));
+    for(int frame=0;frame<600;++frame) { world.tick(frame%3==2 ? 16 : 17); control.tick(frame%3==2 ? 16 : 17); }
+    require(body->isSleeping() && reference->isSleeping(),"separation controls must settle naturally before the returning push");
+    // Sleeping overlap cannot prove separation. Wake the isolated ragdolls for
+    // the first solve with the rig away, then return the same group slowly.
+    move(*rig,lying(-180)); move(*referenceRig,lying(-180));
+    body->activate(); reference->activate();
+    world.tick(17); control.tick(17);
+    const auto start=position(body->pelvisTransform()),referenceStart=position(reference->pelvisTransform());
+    near((start-referenceStart).length(),0,.01f,"sensor-only birth must preserve the unpushed lying control");
+    float maxError=0;
+    for(int frame=0;frame<240;++frame) {
+      const auto object=lying(-180.f+float(frame+1)*.8f);
+      move(*rig,object); move(*referenceRig,object);
+      world.tick(frame%3==2 ? 16 : 17); control.tick(frame%3==2 ? 16 : 17);
+      maxError=std::max(maxError,(position(body->pelvisTransform())-position(reference->pelvisTransform())).length());
+      }
+    const float displacement=(position(body->pelvisTransform())-start).length();
+    const float controlDisplacement=(position(reference->pelvisTransform())-referenceStart).length();
+    std::printf("ragdoll birth guard separated rig_m_s=0.48 pelvis_error_cm=%.9g displacement_cm=%.9g control_displacement_cm=%.9g\n",
+                double(maxError),double(displacement),double(controlDisplacement));
+    require(controlDisplacement>5.f,"the slow returning living rig must genuinely push the unguarded corpse");
+    require(maxError<=1.f,"a separated birth rig must push the corpse like the unguarded control within one centimetre");
+    }
+
+  {
+    CollisionWorld world,control;
+    control.setRagdollBirthGuardEnabled(false);
+    auto ground=floor(world),referenceGround=floor(control);
+    auto rig=living(world,lying(-180)),referenceRig=living(control,lying(-180));
+    auto body=fixture.create(world,lying(0)),reference=fixture.create(control,lying(0));
+    const auto initialPose=posed(lying(0));
+    std::vector<HitZones::Posed> capsules;
+    fixture.zones.posed(initialPose.data(),initialPose.size(),1.f,capsules);
+    float left=std::numeric_limits<float>::infinity(),right=-left;
+    for(const auto& capsule:capsules) {
+      left=std::min(left,std::min(capsule.a.x,capsule.b.x)-capsule.r);
+      right=std::max(right,std::max(capsule.a.x,capsule.b.x)+capsule.r);
+      }
+    const float birthGap=left-(right-180.f);
+    require(birthGap>1.f,"the unrelated living rig's complete capsule bounds must be separated at birth");
+    for(int frame=0;frame<600;++frame) { world.tick(frame%3==2 ? 16 : 17); control.tick(frame%3==2 ? 16 : 17); }
+    const auto start=position(reference->pelvisTransform());
+    float maxError=0;
+    for(int frame=0;frame<60;++frame) {
+      const auto object=lying(-180.f+float(frame+1)*1.5f);
+      move(*rig,object); move(*referenceRig,object);
+      world.tick(frame%3==2 ? 16 : 17); control.tick(frame%3==2 ? 16 : 17);
+      const auto actual=body->state(),expected=reference->state();
+      for(size_t part=0;part<actual.parts.size();++part)
+        maxError=std::max(maxError,(actual.parts[part].centerOfMassMeters-expected.parts[part].centerOfMassMeters).length());
+      }
+    const float displacement=(position(reference->pelvisTransform())-start).length();
+    std::printf("ragdoll birth guard unrelated rig_m_s=0.9 frames=60 birth_gap_cm=%.9g max_part_error_m=%.9g displacement_cm=%.9g\n",
+                double(birthGap),double(maxError),double(displacement));
+    require(displacement>5.f,"a living rig absent at birth must genuinely push the lying corpse");
+    require(maxError<=.001f,"a living rig absent at birth must preserve every part trajectory within one millimetre");
+    }
+
+  {
+    CollisionWorld world;
+    auto ground=floor(world);
+    auto object=lying(0);
+    auto rig=living(world,object);
+    auto body=fixture.create(world,object);
+    for(int frame=0;frame<600 && !body->isSleeping();++frame) world.tick(frame%3==2 ? 16 : 17);
+    require(body->isSleeping(),"a guarded corpse must fall asleep while overlapping a stationary living rig");
+    // Give native sleeping contacts time to disappear before moving the rig.
+    for(int frame=0;frame<60;++frame) world.tick(frame%3==2 ? 16 : 17);
+    require(body->isSleeping(),"stationary protected overlap must retain native sleep");
+    size_t centersInside=0;
+    for(const auto& part:body->state().parts) {
+      const auto center=part.centerOfMassMeters*100.f;
+      const auto hit=world.rayCast(center,center+Tempest::Vec3(0,1,0),1u<<DynamicWorld::C_LivingBody);
+      if(hit.hasHit && hit.fraction==0.f) ++centersInside;
+      }
+    require(centersInside>0,"the sleeping corpse must still have a native part center inside the stationary living geometry");
+    float peak=0;
+    for(int frame=0;frame<18;++frame) {
+      object.set(3,0,10.f*float(frame+1));
+      move(*rig,object);
+      world.tick(frame%3==2 ? 16 : 17);
+      peak=std::max(peak,speed(*body));
+      }
+    std::printf("ragdoll birth guard sleeping rig_m_s=6 duration_ms=300 centers_inside=%zu peak_m_s=%.9g\n",centersInside,double(peak));
+    require(peak<=4.f,"sleep inside protected overlap must not allow a subsequent 6 m/s rig launch");
+    }
+  }
+
 void testLocalMotorReactions() {
   Fixture fixture;
   for(const size_t hitBone:{size_t(6),size_t(13),size_t(3)}) {
@@ -535,6 +708,21 @@ void testScaledMassAndInertia() {
   }
 
 void testItemMassImpulseAndWake() {
+  Resources resources;
+  const auto tetrahedron=[](float scale) {
+    asset::StaticMesh mesh;
+    mesh.positions={{-10*scale,-20*scale,-30*scale},{10*scale,-20*scale,-30*scale},
+                    {-10*scale,20*scale,-30*scale},{-10*scale,-20*scale,30*scale}};
+    mesh.bbox={{-10*scale,-20*scale,-30*scale},{10*scale,20*scale,30*scale}};
+    mesh.sub_meshes.resize(1);
+    auto& part=mesh.sub_meshes[0];
+    part.mat.group=asset::MaterialGroup::WOOD;
+    for(size_t i=0;i<mesh.positions.size();++i)
+      part.wedges.push_back({{0,1,0},{0,0},uint16_t(i)});
+    part.triangles={{{0,2,1}},{{0,1,3}},{{0,3,2}},{{1,2,3}}};
+    return mesh;
+    };
+  ProtoMesh proto(PackedMesh(tetrahedron(1),PackedMesh::PK_Visual),"CONTRACT_ITEM.MRM");
   DynamicWorld::Item empty;
   require(empty.mass()==0 && empty.isSleeping() && empty.velocity().quadLength()==0 && !empty.addImpulse({1,0,0}),
           "an empty item handle must safely reject impulse and report no dynamic state");
@@ -552,9 +740,27 @@ void testItemMassImpulseAndWake() {
             "static and animation-driven handles must never accept dynamic impulses");
   Bounds bounds; bounds.bbox[0]={-10,-20,-30}; bounds.bbox[1]={10,20,30};
   auto matrix=at(0,300,0); matrix.rotateOY(31); matrix.scale(.5f,2.f,3.f);
-  auto body=world.addDynamicObj(matrix,bounds,asset::MaterialGroup::WOOD);
-  const float expected=.2f*.4f*.6f*700.f*3.f;
-  near(body.mass(),expected,.001f,"native item mass must include material density, source volume and nonuniform object scale");
+  auto body=world.addDynamicObj(matrix,bounds,asset::MaterialGroup::WOOD,&proto,"contract_item.mrm");
+  // This tetrahedron occupies exactly one sixth of its bounds. Keep the old
+  // tolerance while replacing the bounds-volume oracle with the actual hull.
+  const float expected=.2f*.4f*.6f/6.f*700.f*3.f;
+  near(body.mass(),expected,.001f,"native item mass must use hull volume, material density and the nonuniform scale determinant");
+  const auto& hull=world.itemHullShape(proto,"CONTRACT_ITEM.MRM");
+  require(hull.shape!=nullptr && hull.fallbackReason.empty(),"four noncoplanar mesh points must build an item hull");
+  near(hull.volume,.2f*.4f*.6f/6.f,.000001f,"item hull volume must be the tetrahedron volume rather than its bounds");
+  near(hull.originalShape->GetVolume(),hull.volume,.000001f,"item mass and water must retain the uninflated hull volume");
+  const auto originalBounds=hull.originalShape->GetLocalBounds();
+  const auto collisionBounds=hull.shape->GetLocalBounds();
+  const auto originalCenter=hull.originalShape->GetCenterOfMass(),collisionCenter=hull.shape->GetCenterOfMass();
+  for(int axis=0;axis<3;++axis) {
+    near(collisionBounds.mMin[axis]+collisionCenter[axis],originalBounds.mMin[axis]+originalCenter[axis]-.01f,.0001f,
+         "the Item collision shell must extend one centimetre below each source axis bound");
+    near(collisionBounds.mMax[axis]+collisionCenter[axis],originalBounds.mMax[axis]+originalCenter[axis]+.01f,.0001f,
+         "the Item collision shell must extend one centimetre above each source axis bound");
+    }
+  require(&hull==&world.itemHullShape(proto,"CoNtRaCt_ItEm.MrM"),"item hull cache keys must be case insensitive");
+  auto legacy=world.addDynamicObj(at(700,300,0),bounds,asset::MaterialGroup::WOOD,&proto,"CONTRACT_ITEM.MRM",false);
+  near(legacy.mass(),.2f*.4f*.6f*700.f,.001f,"item_hulls=0 must preserve the previous bounds-volume material mass");
   require(!body.addImpulse({std::numeric_limits<float>::quiet_NaN(),0,0}) &&
           !body.addImpulse({0,std::numeric_limits<float>::infinity(),0}) && !body.addImpulse({0,0,0}),
           "nonfinite or zero item impulses must be harmless no-ops");
@@ -565,9 +771,71 @@ void testItemMassImpulseAndWake() {
   require(body.isSleeping(),"a dropped item must settle and retain a queryable sleeping native body");
   require(body.addImpulse({expected,0,0}) && !body.isSleeping(),"a spell-sized impulse must awaken the sleeping native item immediately");
   near(body.velocity().x,100,.001f,"the woken item's mass must still govern its actual native velocity");
-  Bounds tiny; tiny.bbox[0]={-1,-1,-1}; tiny.bbox[1]={1,1,1};
-  auto small=world.addDynamicObj(at(500,300,0),tiny,asset::MaterialGroup::WOOD);
-  near(small.mass(),.02f*.02f*.02f*700.f,.000001f,"minimum collision padding must not inflate a small item's material mass");
+  Bounds tiny; tiny.bbox[0]={-1,-2,-3}; tiny.bbox[1]={1,2,3};
+  ProtoMesh tinyProto(PackedMesh(tetrahedron(.1f),PackedMesh::PK_Visual),"CONTRACT_TINY_ITEM.MRM");
+  auto small=world.addDynamicObj(at(500,102,0),tiny,asset::MaterialGroup::WOOD,&tinyProto,"CONTRACT_TINY_ITEM.MRM");
+  auto oldSmall=world.addDynamicObj(at(-500,102,0),tiny,asset::MaterialGroup::WOOD,&tinyProto,"CONTRACT_TINY_ITEM.MRM",false);
+  near(small.mass(),.05f,.000001f,"small hull items must keep the fifty gram minimum mass");
+  int sleepFrames=-1,oldSleepFrames=-1;
+  for(int frame=0;frame<600 && (sleepFrames<0 || oldSleepFrames<0);++frame) {
+    world.tick(frame%3==2 ? 16 : 17);
+    if(sleepFrames<0 && small.isSleeping())sleepFrames=frame+1;
+    if(oldSleepFrames<0 && oldSmall.isSleeping())oldSleepFrames=frame+1;
+    }
+  std::printf("Small item hull: mass %.9g kg, sleep ON %.3f s, OFF %.3f s\n",
+              double(small.mass()),double(sleepFrames)/60.,double(oldSleepFrames)/60.);
+  require(sleepFrames>0 && oldSleepFrames>0 && sleepFrames<=oldSleepFrames,
+          "a small mesh hull must sleep no later than the legacy body in the same drop");
+  auto lowest=std::numeric_limits<float>::max();
+  const auto settled=small.matrix();
+  const auto& smallHull=world.itemHullShape(tinyProto,"CONTRACT_TINY_ITEM.MRM");
+  for(auto point:smallHull.vertices) {
+    settled.project(point);
+    lowest=std::min(lowest,point.y);
+    }
+  std::printf("Small item hull: support gap %.9g cm, extra padding %.9g cm, inner radius %.9g cm\n",
+              double(lowest),double(smallHull.extraPaddingCm),double(smallHull.shape->GetInnerRadius()*100.f));
+  near(smallHull.shape->GetInnerRadius(),.03f,.0001f,
+       "a thin Item collision shell must have three centimetres from COM to its nearest support plane");
+  require(lowest>=-1.05f && lowest<=1.05f+smallHull.extraPaddingCm,
+          "a sleeping item's visible hull must stay within the authorised one centimetre range plus its thin-shell padding");
+  for(int frame=0;frame<60;++frame) world.tick(frame%3==2 ? 16 : 17);
+  require(small.isSleeping(),"a small sleeping hull must not wake or jitter on level ground");
+  for(int c=0;c<4;++c)
+    for(int r=0;r<4;++r)
+      exact(small.matrix().at(c,r),settled.at(c,r),"a sleeping item hull must retain its exact transform");
+  near(oldSmall.mass(),.02f*.04f*.06f*700.f,.000001f,"item_hulls=0 must retain even a sub-fifty-gram legacy mass");
+  auto triangle=tetrahedron(1);
+  triangle.positions.resize(3);
+  triangle.sub_meshes[0].wedges.resize(3);
+  triangle.sub_meshes[0].triangles={{{0,2,1}}};
+  ProtoMesh incomplete(PackedMesh(triangle,PackedMesh::PK_Visual),"CONTRACT_TRIANGLE.MRM");
+  const auto& fallback=world.itemHullShape(incomplete,"CONTRACT_TRIANGLE.MRM");
+  require(fallback.shape==nullptr && !fallback.fallbackReason.empty(),"fewer than four referenced mesh vertices must report a box fallback");
+  auto boxed=world.addDynamicObj(at(-700,300,0),bounds,asset::MaterialGroup::WOOD,&incomplete,"CONTRACT_TRIANGLE.MRM");
+  near(boxed.mass(),.2f*.4f*.6f*700.f,.001f,"a failed hull must preserve the legacy box and its material mass");
+
+  auto cube=tetrahedron(1);
+  cube.positions={{-20,-20,-20},{20,-20,-20},{20,20,-20},{-20,20,-20},
+                  {-20,-20,20},{20,-20,20},{20,20,20},{-20,20,20}};
+  cube.bbox={{-20,-20,-20},{20,20,20}};
+  auto& part=cube.sub_meshes[0];part.wedges.clear();
+  for(size_t i=0;i<cube.positions.size();++i)
+    part.wedges.push_back({{0,1,0},{0,0},uint16_t(i)});
+  part.triangles={{{0,2,1}},{{0,3,2}},{{4,5,6}},{{4,6,7}},{{0,1,5}},{{0,5,4}},
+                  {{3,7,6}},{{3,6,2}},{{0,4,7}},{{0,7,3}},{{1,2,6}},{{1,6,5}}};
+  ProtoMesh cubeProto(PackedMesh(cube,PackedMesh::PK_Visual),"CONTRACT_SLOP_ITEM.MRM");
+  Bounds cubeBounds;cubeBounds.assign(cubeProto.bboxMesh);
+  DynamicWorld contactWorld(nullptr,ground);
+  auto precise=contactWorld.addDynamicObj(at(-100,14,0),cubeBounds,asset::MaterialGroup::WOOD,&cubeProto,"CONTRACT_SLOP_ITEM.MRM");
+  auto ordinary=contactWorld.addDynamicObj(at(100,14,0),cubeBounds,asset::MaterialGroup::WOOD);
+  for(int frame=0;frame<360;++frame)contactWorld.tick(frame%3==2 ? 16 : 17);
+  const float preciseGap=precise.position().y-20.f,ordinaryGap=ordinary.position().y-20.f;
+  std::printf("Item contact slop: hull gap %.9g cm, ordinary gap %.9g cm\n",double(preciseGap),double(ordinaryGap));
+  require(precise.isSleeping() && ordinary.isSleeping(),"penetration slop fixtures must reach genuine native sleep");
+  // One centimetre of padding centres the unchanged two centimetre slop range.
+  near(preciseGap,-1.f,.05f,"a deeply penetrating Item shell must retain one centimetre of visible penetration");
+  near(ordinaryGap,-2.f,.05f,"an ordinary body must retain main's two centimetre penetration allowance");
   }
 
 void testCorpseRayMetadata() {
@@ -693,19 +961,23 @@ void testProjectileWorldStopOptIn() {
     world.deleteObj(arrow);
     }
 
-  // The old speed*fraction gate moves to the wall but does not count, reflect,
-  // collide or stop for this near-contact sample. Attachment must not widen it.
+  // A touch at the very start of a step glances like any other first hard impact, with attachment ON or OFF.
   for(const bool enabled:{false,true}) {
     DynamicWorld world(nullptr,wallAt(100,asset::MaterialGroup::STONE));
     Callback callback; callback.enabled=enabled;
     auto* arrow=world.bulletObj(&callback); callback.body=arrow;
-    arrow->setPosition({95,500,0}); arrow->setDirection(direction);
+    const Tempest::Vec3 nearFrom{95,500,0};
+    const auto nearTo=nearFrom+direction*100.f-Tempest::Vec3(0,.5f*DynamicWorld::gravity*100.f*100.f,0);
+    const auto expected=world.ray(nearFrom,nearTo);
+    require(expected.hasCol && expected.mat==asset::MaterialGroup::STONE,"near contact must hit the stone wall");
+    arrow->setPosition(nearFrom); arrow->setDirection(direction);
     world.tick(100);
-    require(callback.worlds==0 && callback.materials==0 && callback.stops==0 && callback.moves==1 && callback.order=="M",
-            "near hard contact must retain the original no-callback speed/fraction gate");
-    require(arrow->hitCount()==0 && arrow->pathLength()==0,"near-contact gate must preserve hit and distance counters");
-    near((arrow->direction()-direction).length(),0,0,"near-contact gate must preserve incoming direction");
-    near(arrow->position().x,100,.0001f,"near-contact gate must still reach the original wall point");
+    require(callback.worlds==0 && callback.stops==0 && callback.materials==1 && callback.moves==1 && callback.order=="CM",
+            "near hard contact must glance as the first reflection");
+    require(arrow->hitCount()==1,"near hard contact must count one hit");
+    near(arrow->pathLength(),(nearTo-nearFrom).length()*expected.hitFraction,.0001f,"near contact must add travelled distance");
+    near((arrow->direction()-Tempest::Vec3(-1.5f,0,0)).length(),0,.000001f,"near contact must reflect at half speed");
+    near(arrow->position().x,100,.0001f,"near contact must reach the wall point");
     world.deleteObj(arrow);
     }
 
@@ -2016,7 +2288,7 @@ void testPoseActualDriverSave() {
   const char* args[]={"gothic-ragdoll-contract","-g",game.c_str()};
   CommandLine commandLine(3,args);
   Resources resources;
-  Resources::loadVdfs({},false);
+  Resources::loadBase();
   auto ownScript=asset::fromZenKit(script);
   Animation animation(ownScript,"POSE_RETURN",false);
   Skeleton skeleton(asset::fromZenKit(source),&animation,"POSE_RETURN.MDS");
@@ -2818,6 +3090,9 @@ bool benchmarkTwentyBodies(const char* output, bool preflight) {
 
 }
 
+zenkit::ModelHierarchy ragdollContractHierarchy() { return hierarchy(); }
+void testFallBrace(); // physics_ragdoll_brace_contract.cpp
+
 int main(int argc, const char** argv) {
   try {
     if(argc==3 && (std::string_view(argv[1])=="--benchmark20" || std::string_view(argv[1])=="--preflight20")) {
@@ -2839,6 +3114,7 @@ int main(int argc, const char** argv) {
     require(argc==1,"usage: gothic-ragdoll-contract [--water | --benchmark20 output.json | --preflight20 output.json | --replay-creation captured.jsonl]");
     testInvalidCreationAndScale();
     testKinematicPoseAndInteraction();
+    testRagdollBirthGuard();
     testLocalMotorReactions();
     testLimpBoneImpulseOnce();
     testScaledMassAndInertia();
@@ -2868,6 +3144,7 @@ int main(int argc, const char** argv) {
     testStateRoundTripAndAtomicRejection();
     testMovedStateRebaseAndReference();
     testAnatomicalKneeWithLongitudinalBoneAxis();
+    testFallBrace();
     std::puts("Ragdoll contracts passed");
     return EXIT_SUCCESS;
     } catch(const std::exception& error) {

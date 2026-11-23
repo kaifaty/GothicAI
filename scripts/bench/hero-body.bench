@@ -1,0 +1,46 @@
+# The hero's body in full height and in motion (reports/content/2026-11-hero-body/ingame.md): the original
+# ARMOR_PRISONER and a test content root that replaces it, judged side by side from the same cameras.
+# A new game; the hero puts on ITAR_PRISONER (Armor_Prisoner.asc), the outfit the concept was drawn from. Noon at the market: still shots around the hero,
+# a walk from the side, a run from behind.
+#   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=<root or empty> \
+#     scripts/bench.sh scripts/bench/hero-body.bench <out>
+seed 73013
+cheat god
+equip ITAR_PRISONER
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 3000
+watch player
+overlay off
+cam follow 330 95 0
+wait 1500
+shot front
+cam follow 330 95 35
+wait 1200
+shot quarter
+cam follow 330 95 90
+wait 1200
+shot side
+cam follow 330 95 180
+wait 1200
+shot back
+cam follow 170 150 20
+wait 1200
+shot upper
+walkmode walk
+cam follow 380 95 90
+wait 500
+rec walk_side
+walkto NW_CITY_MERCHANT_PATH_09
+wait 5000
+stop
+goto NW_CITY_MERCHANT_TRADE_04
+wait 2000
+walkmode run
+cam look 150
+cam follow 340 170 180
+wait 1500
+rec run_behind
+walkto NW_CITY_MERCHANT_PATH_09
+wait 6000
+stop

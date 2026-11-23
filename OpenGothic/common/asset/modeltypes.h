@@ -20,22 +20,22 @@ struct ModelDate {
 struct ModelHierarchyNode {
   int16_t parent_index;
   std::string name;
-  zenkit::Mat4 transform;
+  Mat4 transform;
   };
 
 struct ModelHierarchy {
   std::vector<ModelHierarchyNode> nodes {};
-  zenkit::AxisAlignedBoundingBox bbox {};
-  zenkit::AxisAlignedBoundingBox collision_bbox {};
-  zenkit::Vec3 root_translation {};
+  Aabb bbox {};
+  Aabb collision_bbox {};
+  Vec3 root_translation {};
   uint32_t checksum;
   ModelDate source_date;
   std::string source_path;
   };
 
 struct AnimationSample {
-  zenkit::Vec3 position;
-  zenkit::Quat rotation;
+  Vec3 position;
+  Quat rotation;
 
   bool operator==(const AnimationSample&) const noexcept = default;
   };
@@ -80,7 +80,7 @@ struct ModelAnimation {
   float fps_source {};
   float sample_position_min {};
   float sample_position_scale {};
-  zenkit::AxisAlignedBoundingBox bbox {};
+  Aabb bbox {};
   uint32_t checksum {};
   std::string source_path {};
   ModelDate source_date {};
@@ -134,7 +134,10 @@ enum class AnimationFlags : uint8_t {
   QUEUE = 4,
   FLY = 8,
   IDLE = 16,
-  INPLACE = 32
+  INPLACE = 32,
+  // ours, set only by own content: a transition that brings the body to rest gives way to any other animation
+  // once its root has stopped (graphics/mesh/stopfoot.h); the base's clips never carry it
+  SETTLE = 64
   };
 
 constexpr bool operator&(AnimationFlags a, AnimationFlags b) {
@@ -288,7 +291,7 @@ struct MorphAnimation {
   uint8_t flags;
   uint32_t frame_count;
   std::vector<uint32_t> vertices;
-  std::vector<zenkit::Vec3> samples;
+  std::vector<Vec3> samples;
   };
 
 struct MorphSource {
@@ -299,7 +302,7 @@ struct MorphSource {
 struct MorphMesh {
   std::string name {};
   StaticMesh mesh {};
-  std::vector<zenkit::Vec3> morph_positions {};
+  std::vector<Vec3> morph_positions {};
   std::vector<MorphAnimation> animations {};
   std::vector<MorphSource> sources {};
   };

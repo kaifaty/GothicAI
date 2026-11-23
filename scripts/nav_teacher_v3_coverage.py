@@ -15,6 +15,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -161,7 +162,7 @@ def prepare(args):
 
 def query_truth(args):
     worker = SimpleNamespace(output=args.output / "runner", runner=args.runner or args.task / "build/opengothic/gothic-body-runner",
-                             assets=args.assets or args.task.parent / "game", save=args.save or args.task / "input/save.sav",
+                             assets=args.assets or Path(os.environ.get("GOTHIC_DIR", Path.home() / "gothic-ai/game-settings")), save=args.save or args.task / "input/save.sav",
                              cache=args.cache or args.task / "cache", links=args.links or args.task / "input/accepted-links.txt",
                              roads=args.roads or args.task / "input/places.json", ini=None, npc="BAU_954_MALETH", seed=args.seed,
                              physics="cv", watchdog_seconds=3600)
@@ -481,6 +482,8 @@ def main(argv=None):
     for field in ("runner", "assets", "save", "cache", "links", "roads", "truth"):
         parser.add_argument(f"--{field}", type=Path)
     args = parser.parse_args(argv)
+    if args.stage in ("all", "truth"):
+        os.environ.update(v3.module("ryzen_game").game_environment(assets=args.assets))
     for field in ("task", "data", "output"):
         value = getattr(args, field)
         if not value.is_absolute():

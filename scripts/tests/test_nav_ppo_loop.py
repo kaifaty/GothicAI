@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import signal
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -168,7 +169,7 @@ def test_parameter_change_keeps_budget_best_checkpoint_and_absolute_kl_deadline(
 
 
 def test_interrupt_unwinds_active_wait_before_reaping(tmp_path, monkeypatch):
-    args = SimpleNamespace(work=tmp_path, threads=1, workers=8)
+    args = SimpleNamespace(work=tmp_path, threads=1, workers=8, python=Path(sys.executable))
     driver = loop.Loop(args)
     calls = []
     class Process:
@@ -190,9 +191,15 @@ def test_interrupt_unwinds_active_wait_before_reaping(tmp_path, monkeypatch):
             self.returncode = 143
             return 143
     process = Process()
-    monkeypatch.setattr(loop.subprocess, "Popen", lambda *a, **kw: process)
+    def popen(command, **kwargs):
+        separator = command.index("--")
+        assert command[separator + 1:separator + 8] == [sys.executable, "-I",
+            str(driver.script / "nav_job.py"), "--max-seconds", "7200", "--", sys.executable]
+        assert command[separator + 8:separator + 10] == ["-X", "faulthandler"]
+        return process
+    monkeypatch.setattr(loop.subprocess, "Popen", popen)
     with pytest.raises(SystemExit) as result:
-        driver.queued("test", ["never-executed"], tmp_path / "launcher.log")
+        driver.queued("test", [sys.executable, "never-executed"], tmp_path / "launcher.log")
     assert result.value.code == 143
     assert calls == ["wait", ("signal", signal.SIGTERM), "wait"]
     assert driver.process is None

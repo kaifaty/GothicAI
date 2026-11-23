@@ -37,7 +37,7 @@ import tempfile
 import time
 from typing import Any
 
-from .base import ChunkCallback, TtsError, Voice
+from .base import ChunkCallback, TtsError, Voice, WordsCallback
 
 log = logging.getLogger(__name__)
 
@@ -93,7 +93,9 @@ class CodexRealtime:
             await self._session(self.voice)
         self._schedule_close()
 
-    async def synthesize(self, text: str, voice: Voice, on_chunk: ChunkCallback) -> float:
+    async def synthesize(
+        self, text: str, voice: Voice, on_chunk: ChunkCallback, on_words: WordsCallback | None = None,
+    ) -> float:
         try:
             return await self._synthesize(text, voice, on_chunk)
         finally:

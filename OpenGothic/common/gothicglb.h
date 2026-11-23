@@ -35,14 +35,14 @@ uint32_t bits(float v);
 // Gothic strings are single-byte: each byte maps to the code point of the same value.
 std::string jsonString(std::string_view s);
 std::string jsonFloat(float v); // 9 significant digits: every float round-trips
-std::string jsonVec2(const zenkit::Vec2& v);
+std::string jsonVec2(const asset::Vec2& v);
 
 const Json&  member(const Json& obj, const char* name);
 float        jsonToFloat(const Json& v, const char* name);
 int64_t      jsonToInt(const Json& v, const char* name);
 bool         jsonToBool(const Json& v, const char* name);
 std::string  jsonToString(const Json& v, const char* name);
-zenkit::Vec2 jsonToVec2(const Json& v, const char* name);
+asset::Vec2 jsonToVec2(const Json& v, const char* name);
 
 template<class E>
 E jsonToEnum(const Json& obj, const char* name) {

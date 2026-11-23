@@ -19,6 +19,12 @@ bool VFence::wait(uint64_t time) {
 
 void VFence::setStatus(VkResult st) {
   status = st;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  if(profileQueries!=nullptr && (st==VK_SUCCESS || st<0)) {
+    profileQueries->complete(st==VK_SUCCESS);
+    profileQueries.reset();
+    }
+#endif
   if(st < 0 || st==VK_SUCCESS || st==VK_TIMEOUT) {
     holdRes.clear();
     }

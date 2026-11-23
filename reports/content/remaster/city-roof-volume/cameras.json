@@ -1,0 +1,158 @@
+{
+ "cameras": [
+  {
+   "name": "harbour-overhead",
+   "eye": [
+    -1800,
+    1901,
+    -5000
+   ],
+   "target": [
+    2400,
+    100,
+    -2000
+   ],
+   "note": "ROOF_01 of the harbour from above (city-roofs harbour-overhead)"
+  },
+  {
+   "name": "puff",
+   "eye": [
+    2983,
+    335,
+    -3075
+   ],
+   "target": [
+    1683,
+    489,
+    -3075
+   ],
+   "note": "brothel B032 from the lane, 13 m, eye 4.5 m above the ground"
+  },
+  {
+   "name": "hafenkneipe",
+   "eye": [
+    2588,
+    618,
+    -1549
+   ],
+   "target": [
+    1366,
+    450,
+    -1104
+   ],
+   "note": "harbour tavern B034 from the lane, 13 m, eye 8 m above the ground"
+  },
+  {
+   "name": "huts-south",
+   "eye": [
+    4030,
+    334,
+    -4643
+   ],
+   "target": [
+    3580,
+    290,
+    -5422
+   ],
+   "note": "huts HAFEN07, HAFEN08 from the lane, 9 m, eye 4.5 m above the ground"
+  },
+  {
+   "name": "matteo",
+   "eye": [
+    7058,
+    720,
+    -4143
+   ],
+   "target": [
+    6212,
+    875,
+    -4451
+   ],
+   "note": "Matteo's shop across the chunk border 0_-1 / 1_-1, 9 m, eye 4.5 m above the path"
+  },
+  {
+   "name": "bogner",
+   "eye": [
+    8982,
+    760,
+    -5153
+   ],
+   "target": [
+    7732,
+    1015,
+    -2988
+   ],
+   "note": "house of Bosper and Gritta B048 from the street, 25 m, eye at 1.7 m"
+  },
+  {
+   "name": "market-house",
+   "eye": [
+    5485,
+    768,
+    3375
+   ],
+   "target": [
+    7985,
+    1015,
+    3375
+   ],
+   "note": "house at the market B052 (no inside skin: closed holes), 25 m, eye 4.5 m above the path"
+  },
+  {
+   "name": "stadtkneipe",
+   "eye": [
+    8666,
+    831,
+    348
+   ],
+   "target": [
+    8216,
+    902,
+    1127
+   ],
+   "note": "town tavern B053 from the street, 9 m, eye at 1.7 m"
+  },
+  {
+   "name": "lagerhaus",
+   "eye": [
+    2465,
+    751,
+    3644
+   ],
+   "target": [
+    2153,
+    363,
+    1871
+   ],
+   "note": "warehouse and KARTEN B035, 18 m, eye 4.5 m above the ground"
+  },
+  {
+   "name": "merchant-overhead",
+   "eye": [
+    11000,
+    2470,
+    4000
+   ],
+   "target": [
+    7900,
+    500,
+    1000
+   ],
+   "note": "ROOF_01 and ROOF_04 of the lower town from above (city-roofs merchant-overhead)"
+  },
+  {
+   "name": "tavern-inside",
+   "eye": [
+    2113,
+    -75,
+    -1051
+   ],
+   "target": [
+    1636,
+    534,
+    -699
+   ],
+   "note": "inside of the harbour tavern: the holes from under the roof (city-roofs roof-inside)"
+  }
+ ]
+}

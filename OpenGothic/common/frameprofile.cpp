@@ -5,25 +5,57 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
+#include <new>
 #include <string>
 
 namespace {
-constexpr size_t Zones=size_t(FrameProfile::Zone::Count), Amounts=size_t(FrameProfile::Amount::Count), MaxAttempts=20000, MaxActors=20;
+constexpr size_t Zones=size_t(FrameProfile::Zone::Count), Amounts=size_t(FrameProfile::Amount::Count), MaxActors=20;
+constexpr size_t RecordsPerChunk=4096, MaxChunks=64, MaxAttempts=RecordsPerChunk*MaxChunks;
+// five events a load; a flythrough on textures four times larger makes about 4000 loads
+constexpr size_t MaxTextureEvents=100000;
+const char* textureNames[]={"read","upload","complete","ready","publish"};
 const char* names[Zones]={"tick","finish_step","camera","observations","bench","fence_poll","recycle","ui",
   "encode","submit","present","limiter","world_logic","prepare","physics","sync","world_misc",
   "parallel_animation","native_export","forced_sync_animation","actor_animation_elapsed_sum","pose_elapsed_sum","palette_elapsed_sum",
-  "storage_join","storage_commit","storage_pack","storage_dispatch","storage_grow","storage_upload_execution_elapsed"};
+  "storage_join","storage_commit","storage_pack","storage_dispatch","storage_grow","storage_upload_execution_elapsed",
+  "bodynet","cloth","water","destruction","ai_bridge","sound","vob_sound_load",
+  "texture_update","texture_demand_elapsed_sum","bindless_rebuild","bindless_patch",
+  "npc_full_tick","npc_simplified_tick","npc_logic_shadow",
+  "encode_shadows","encode_main","encode_water","encode_post","encode_ui",
+  "animation_npc_pass","melee_shadow","melee_contacts","interactive_animation","logical_body_sync",
+  "pfx_prepare","upload_wait","rt_scene",
+  "npc_pre_tick","npc_sort","npc_policy","collision_zones","interactive_tick","triggers_tick","npc_tick_near","npc_perception"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
-  "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes"};
+  "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls",
+  "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots",
+  "npc_full","npc_simplified","npc_tier_transitions",
+  "npc_logic_samples","npc_logic_body_mismatch","npc_logic_weapon_mismatch",
+  "npc_logic_early","npc_logic_late","npc_logic_events","npc_logic_event_mismatch",
+  "npc_logic_wait_early","npc_logic_wait_late","npc_logic_reanchored","npc_logic_body_samples","npc_logic_weapon_samples",
+  "npc_anim_deferred","npc_anim_catchup","npc_anim_sync_on_read","npc_tail_shadow","npc_tail_logic","npc_tail_full",
+  "rt_tlas_builds","rt_dirty_slots","gi_probes_live","gi_probes_traced","gi_probes_from_hits","gi_probes_freed",
+  "main_clusters","main_meshlets","main_canopy_clusters","main_canopy_meshlets",
+  "mesh_level0","mesh_level1","mesh_level2","mesh_level3","mesh_level4","mesh_impostors",
+  "hiz_history_early_clusters","hiz_history_early_meshlets","hiz_history_tested_clusters",
+  "hiz_history_rejected_clusters","hiz_history_rejected_meshlets",
+  "tree_bough_nodes","tree_bough_source_cards","tree_bough_parent_cards","tree_bough_triangles","tree_bough_height_mpx",
+  "tree_bough_active_bands","tree_bough_version_pairs","tree_bough_band_triangles","tree_level_bands","tree_shadow_bands",
+  "npc_simplified_ticked","npc_simplified_deferred","npc_simplified_native"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }
 struct Counter {
   std::atomic<uint64_t> sum{0}, calls{0}, first{0}, last{0};
+  };
+struct TextureRecord {
+  std::atomic<uint64_t> begin{0}, end{0};
+  FrameProfile::TextureActivity activity=FrameProfile::TextureActivity::Read;
   };
 struct Record {
   uint64_t begin=0,end=0,observer=0,dt=0,frame=0;
@@ -32,11 +64,20 @@ struct Record {
   FrameProfile::Outcome outcome=FrameProfile::Outcome::Unfinished;
   char segment[64]={};
   Counter zones[Zones];
+  Counter npcAnimation[16];
   std::atomic<uint64_t> amounts[Amounts]{};
+  std::atomic<uint64_t> gpuNs{0};
+  std::atomic<uint32_t> gpuBuffers{0}, gpuCompleted{0}, gpuValid{0};
+  std::atomic<uint64_t> triangles{0};
+  std::atomic<uint32_t> geometryBuffers{0}, geometryCompleted{0}, geometryValid{0};
+  std::mutex gpuPassMutex;
+  std::vector<FrameProfile::GpuPass> gpuPasses;
   };
 struct Recorder {
   std::string path;
-  std::unique_ptr<Record[]> records;
+  std::array<std::byte*,MaxChunks> chunks{};
+  std::unique_ptr<TextureRecord[]> textures;
+  std::atomic<size_t> textureCount{0}, textureOverflow{0};
   size_t count=0,overflow=0;
   std::atomic<bool> closed{false};
   std::atomic<Record*> current{nullptr};
@@ -45,26 +86,85 @@ struct Recorder {
   size_t actorCount=0;
   Recorder() {
     const auto* value=std::getenv("OPENGOTHIC_FRAME_PROFILE");
-    if(value!=nullptr && value[0]!=0) { path=value; records=std::make_unique<Record[]>(MaxAttempts); }
+    if(value!=nullptr && value[0]!=0) {
+      path=value;
+      textures=std::make_unique<TextureRecord[]>(MaxTextureEvents);
+      }
+    }
+  Record& recordAt(size_t index) {
+    return *std::launder(reinterpret_cast<Record*>(chunks[index/RecordsPerChunk]+sizeof(Record)*(index%RecordsPerChunk)));
     }
   void flush() {
     if(path.empty() || closed.exchange(true)) return;
-    current.store(nullptr); latest.store(nullptr);
-    // All render/worker work has finished. This is the only output operation.
+    const auto closedAt=ns();
+    current.store(nullptr,std::memory_order_relaxed); latest.store(nullptr,std::memory_order_relaxed);
+    // Rendering has stopped; late GPU callbacks may still update their records.
+    // This is the only output operation.
     if(auto* file=std::fopen(path.c_str(),"w")) {
       std::fprintf(file,"attempt,cmd_id,dt,segment,frame,begin_ns,observer_ns,end_ns,outcome,flags,overflow");
       for(const auto* name:names) std::fprintf(file,",%s_ns,%s_calls,%s_first_ns,%s_last_ns",name,name,name,name);
       for(const auto* name:amountNames) std::fprintf(file,",%s",name);
-      std::fprintf(file,"\n");
+      for(const auto* tier:{"full","simplified"})
+        for(const auto* policy:{"player","normal","far","far2"})
+          for(const auto* visible:{"out","in"})
+            std::fprintf(file,",npc_anim_%s_%s_%s_n,npc_anim_%s_%s_%s_ns",tier,policy,visible,tier,policy,visible);
+      std::fprintf(file,",gpu_ns,gpu_done,gpu_buffers,triangles,geometry_done\n");
       for(size_t i=0;i<count;++i) {
-        const auto& r=records[i];
+        const auto& r=recordAt(i);
         std::fprintf(file,"%zu,%u,%llu,%s,%llu,%llu,%llu,%llu,%u,%u,%zu",i,unsigned(r.commandId),
           (unsigned long long)r.dt,r.segment,(unsigned long long)r.frame,(unsigned long long)r.begin,
           (unsigned long long)r.observer,(unsigned long long)r.end,unsigned(r.outcome),r.flags,overflow);
         for(const auto& z:r.zones) std::fprintf(file,",%llu,%llu,%llu,%llu",(unsigned long long)z.sum.load(),
           (unsigned long long)z.calls.load(),(unsigned long long)z.first.load(),(unsigned long long)z.last.load());
         for(const auto& amount:r.amounts) std::fprintf(file,",%llu",(unsigned long long)amount.load());
-        std::fprintf(file,"\n");
+        for(const auto& cell:r.npcAnimation)
+          std::fprintf(file,",%llu,%llu",(unsigned long long)cell.calls.load(),(unsigned long long)cell.sum.load());
+        const auto completed=r.gpuCompleted.load(std::memory_order_acquire);
+        const auto buffers=r.gpuBuffers.load(std::memory_order_relaxed);
+        const bool done=buffers>0 && completed==buffers && r.gpuValid.load(std::memory_order_relaxed)==buffers;
+        std::fprintf(file,",%llu,%u,%u",(unsigned long long)(done ? r.gpuNs.load(std::memory_order_relaxed) : 0),
+                     unsigned(done),unsigned(buffers));
+        const auto geometryCompleted=r.geometryCompleted.load(std::memory_order_acquire);
+        const auto geometryBuffers=r.geometryBuffers.load(std::memory_order_relaxed);
+        const bool geometryDone=geometryBuffers>0 && geometryCompleted==geometryBuffers &&
+                                r.geometryValid.load(std::memory_order_relaxed)==geometryBuffers;
+        std::fprintf(file,",%llu,%u\n",(unsigned long long)r.triangles.load(std::memory_order_relaxed),unsigned(geometryDone));
+        }
+      std::fclose(file);
+      }
+    if(auto* file=std::fopen((path+".texture.csv").c_str(),"w")) {
+      std::fprintf(file,"event,kind,begin_ns,end_ns,complete,overflow\n");
+      const auto events=std::min(textureCount.load(),MaxTextureEvents);
+      for(size_t i=0;i<events;++i) {
+        const auto& event=textures[i];
+        const auto begin=event.begin.load(std::memory_order_acquire);
+        if(begin==0 || begin>closedAt)
+          continue;
+        const auto end=event.end.load(std::memory_order_acquire);
+        std::fprintf(file,"%zu,%s,%llu,%llu,%u,%zu\n",i,textureNames[size_t(event.activity)],
+                     (unsigned long long)begin,(unsigned long long)(end!=0 ? end : closedAt),
+                     unsigned(end!=0),textureOverflow.load());
+        }
+      std::fclose(file);
+      }
+    // GPU callbacks append only in memory. Write the pass sidecar after rendering
+    // has stopped, just like the main frame profile, without per-frame disk I/O.
+    if(auto* file=std::fopen((path+".gpu.csv").c_str(),"w")) {
+      std::fprintf(file,"attempt,cmd_id,segment,frame,encoder,type,labels,gpu_ns,vertex_ns,fragment_ns,draw_calls,dispatch_calls,valid\n");
+      for(size_t i=0;i<count;++i) {
+        auto& r=recordAt(i);
+        std::lock_guard guard(r.gpuPassMutex);
+        for(size_t j=0;j<r.gpuPasses.size();++j) {
+          const auto& p=r.gpuPasses[j];
+          std::fprintf(file,"%zu,%u,%s,%llu,%zu,%s,\"",i,unsigned(r.commandId),r.segment,(unsigned long long)r.frame,j,p.type.c_str());
+          for(char ch:p.labels) {
+            if(ch=='\"') std::fputc('\"',file);
+            std::fputc(ch,file);
+            }
+          std::fprintf(file,"\",%llu,%llu,%llu,%llu,%llu,%u\n",(unsigned long long)p.gpuNs,
+                       (unsigned long long)p.vertexNs,(unsigned long long)p.fragmentNs,
+                       (unsigned long long)p.drawCalls,(unsigned long long)p.dispatchCalls,unsigned(p.valid));
+          }
         }
       std::fclose(file);
       }
@@ -73,36 +173,50 @@ struct Recorder {
 // Process-lifetime storage protects a late async upload scope during shutdown.
 // The bounded diagnostic buffer is explicitly flushed after rendering stops.
 Recorder& recorder() { static Recorder* value=new Recorder; return *value; }
+TextureRecord* textureRecord(FrameProfile::TextureActivity activity) {
+  auto& recorder=::recorder();
+  if(recorder.textures==nullptr || recorder.closed.load())
+    return nullptr;
+  const auto index=recorder.textureCount.fetch_add(1,std::memory_order_relaxed);
+  if(index>=MaxTextureEvents) {
+    recorder.textureOverflow.fetch_add(1,std::memory_order_relaxed);
+    return nullptr;
+    }
+  auto* record=&recorder.textures[index];
+  record->activity=activity;
+  record->begin.store(ns(),std::memory_order_release);
+  return record;
+  }
 thread_local unsigned actorDepth=0;
 }
 
-bool FrameProfile::enabled() { return recorder().records!=nullptr && !recorder().closed.load(); }
+bool FrameProfile::enabled() { return !recorder().path.empty() && !recorder().closed.load(); }
 bool FrameProfile::actorContext() { return actorDepth>0; }
 bool FrameProfile::watchedActor(const Npc* actor) {
   const auto& r=recorder();
-  if(r.records==nullptr || r.closed.load() || actor==nullptr) return false;
+  if(r.path.empty() || r.closed.load() || actor==nullptr) return false;
   for(size_t i=0;i<r.actorCount;++i) if(r.actors[i]==actor) return true;
   return false;
   }
 void FrameProfile::setActors(const std::vector<Npc*>& actors) {
-  auto& r=recorder(); if(r.records==nullptr || r.closed.load()) return;
+  auto& r=recorder(); if(r.path.empty() || r.closed.load()) return;
   r.actorCount=std::min(actors.size(),MaxActors);
   for(size_t i=0;i<r.actorCount;++i) r.actors[i]=actors[i];
   }
 void FrameProfile::observer(uint64_t dt, std::chrono::steady_clock::time_point now) {
-  auto* r=recorder().current.load(std::memory_order_relaxed); if(r==nullptr) return;
+  auto* r=recorder().current.load(std::memory_order_acquire); if(r==nullptr) return;
   r->dt=dt; r->observer=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count());
   }
 void FrameProfile::sample(std::string_view segment, uint64_t frame) {
-  auto* r=recorder().current.load(std::memory_order_relaxed); if(r==nullptr) return;
+  auto* r=recorder().current.load(std::memory_order_acquire); if(r==nullptr) return;
   const auto length=std::min(segment.size(),sizeof(r->segment)-1);
   std::memcpy(r->segment,segment.data(),length); r->segment[length]=0; r->frame=frame;
   }
 FrameProfile::Scope::Scope(Zone zone, bool include):zone(zone) {
   if(!include || !enabled()) return;
-  if(include) record=recorder().current.load(std::memory_order_relaxed);
+  if(include) record=recorder().current.load(std::memory_order_acquire);
   if(include && record==nullptr && zone==Zone::StorageUploadWorker)
-    record=recorder().latest.load(std::memory_order_relaxed);
+    record=recorder().latest.load(std::memory_order_acquire);
   if(record!=nullptr) begin=ns();
   if(record!=nullptr && zone==Zone::ActorAnimationCpu) { ++actorDepth; inActor=true; }
   }
@@ -124,11 +238,17 @@ void FrameProfile::Scope::add(Amount amount,uint64_t value) {
   if(record!=nullptr) static_cast<Record*>(record)->amounts[size_t(amount)].fetch_add(value,std::memory_order_relaxed);
   }
 FrameProfile::Attempt::Attempt(uint8_t commandId) {
-  auto& r=recorder(); if(r.records==nullptr || r.closed.load()) return;
+  auto& r=recorder(); if(r.path.empty() || r.closed.load()) return;
   if(r.count==MaxAttempts) { ++r.overflow; return; }
-  record=&r.records[r.count++]; auto* value=static_cast<Record*>(record);
-  value->begin=ns(); value->commandId=commandId; r.current.store(value,std::memory_order_relaxed);
-  r.latest.store(value,std::memory_order_relaxed);
+  auto*& chunk=r.chunks[r.count/RecordsPerChunk];
+  // Reserve raw, aligned storage only; touch and construct just this attempt.
+  // Chunks live for the process lifetime so late GPU callbacks keep their address.
+  if(r.count%RecordsPerChunk==0)
+    chunk=static_cast<std::byte*>(::operator new(sizeof(Record)*RecordsPerChunk,std::align_val_t{alignof(Record)}));
+  auto* value=new(chunk+sizeof(Record)*(r.count%RecordsPerChunk)) Record;
+  record=value; ++r.count;
+  value->begin=ns(); value->commandId=commandId; r.current.store(value,std::memory_order_release);
+  r.latest.store(value,std::memory_order_release);
   }
 FrameProfile::Attempt::~Attempt() {
   if(record==nullptr) return;
@@ -139,10 +259,90 @@ void FrameProfile::Attempt::outcome(Outcome value) { if(record!=nullptr) static_
 void FrameProfile::Attempt::flag(Flag value) { if(record!=nullptr) static_cast<Record*>(record)->flags|=uint32_t(value); }
 void FrameProfile::add(Amount amount,uint64_t value) {
   if(!enabled()) return;
-  auto* r=recorder().current.load(std::memory_order_relaxed);
-  if(r==nullptr && amount==Amount::UploadBytes) r=recorder().latest.load(std::memory_order_relaxed);
+  auto* r=recorder().current.load(std::memory_order_acquire);
+  if(r==nullptr && amount==Amount::UploadBytes) r=recorder().latest.load(std::memory_order_acquire);
   if(r!=nullptr) r->amounts[size_t(amount)].fetch_add(value,std::memory_order_relaxed);
   }
+void FrameProfile::npcAnimation(size_t tier,size_t policy,bool visible,uint64_t elapsedNs) {
+  if(!enabled()) return;
+  if(auto* r=recorder().current.load(std::memory_order_acquire)) {
+    auto& cell=r->npcAnimation[(tier*4+policy)*2+size_t(visible)];
+    cell.calls.fetch_add(1,std::memory_order_relaxed);
+    cell.sum.fetch_add(elapsedNs,std::memory_order_relaxed);
+    }
+  }
 void FrameProfile::flush() { recorder().flush(); }
+
+FrameProfile::TextureWork::TextureWork(TextureActivity activity):record(textureRecord(activity)) {
+  }
+FrameProfile::TextureWork::~TextureWork() {
+  finish();
+  }
+void FrameProfile::TextureWork::finish() {
+  if(record==nullptr)
+    return;
+  static_cast<TextureRecord*>(record)->end.store(ns(),std::memory_order_release);
+  record=nullptr;
+  }
+void FrameProfile::textureEvent(TextureActivity activity) {
+  if(auto* record=textureRecord(activity))
+    record->end.store(record->begin.load(std::memory_order_relaxed),std::memory_order_release);
+  }
+
+void* FrameProfile::gpuSubmitted() {
+  auto& r=recorder();
+  if(r.closed.load(std::memory_order_relaxed)) return nullptr;
+  auto* record=r.current.load(std::memory_order_acquire);
+  if(record!=nullptr) record->gpuBuffers.fetch_add(1,std::memory_order_relaxed);
+  return record;
+  }
+void FrameProfile::gpuCompleted(void* record, double startSeconds, double endSeconds) {
+  const bool valid=std::isfinite(startSeconds) && std::isfinite(endSeconds) && startSeconds>0 && endSeconds>=startSeconds;
+  gpuCompletedNs(record,valid ? uint64_t((endSeconds-startSeconds)*1e9) : 0,valid);
+  }
+void FrameProfile::gpuCompletedNs(void* record, uint64_t gpuNs, bool valid) {
+  if(record==nullptr) return;
+  auto& r=*static_cast<Record*>(record);
+  if(valid) {
+    r.gpuNs.fetch_add(gpuNs,std::memory_order_relaxed);
+    r.gpuValid.fetch_add(1,std::memory_order_relaxed);
+    }
+  // Publish the sum only after every captured buffer has completed. The records
+  // live for the process lifetime, including callbacks arriving after flush.
+  r.gpuCompleted.fetch_add(1,std::memory_order_release);
+  }
+
+void* FrameProfile::geometrySubmitted() {
+  if(!enabled()) return nullptr;
+  auto* record=recorder().current.load(std::memory_order_acquire);
+  if(record!=nullptr) record->geometryBuffers.fetch_add(1,std::memory_order_relaxed);
+  return record;
+  }
+
+void FrameProfile::geometryCompleted(void* record, uint64_t triangles, bool valid) {
+  if(record==nullptr) return;
+  auto& r=*static_cast<Record*>(record);
+  if(valid) {
+    r.triangles.fetch_add(triangles,std::memory_order_relaxed);
+    r.geometryValid.fetch_add(1,std::memory_order_relaxed);
+    }
+  r.geometryCompleted.fetch_add(1,std::memory_order_release);
+  }
+
+void* FrameProfile::gpuPassesSubmitted() {
+  if(!enabled()) return nullptr;
+  return recorder().current.load(std::memory_order_acquire);
+  }
+
+void FrameProfile::gpuPassesCompleted(void* record, std::vector<GpuPass>&& passes) {
+  if(record==nullptr) return;
+  auto& r=*static_cast<Record*>(record);
+  std::lock_guard guard(r.gpuPassMutex);
+  if(r.gpuPasses.empty())
+    r.gpuPasses=std::move(passes);
+  else
+    for(auto& pass:passes)
+      r.gpuPasses.emplace_back(std::move(pass));
+  }
 
 #endif

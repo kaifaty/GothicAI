@@ -93,6 +93,7 @@ class VPipeline : public AbstractGraphicsApi::Pipeline {
                                  const PushBlock& pb, const LayoutDesc& layout);
 
   friend class VCompPipeline;
+  friend class VCommandBuffer;
   };
 
 class VCompPipeline : public AbstractGraphicsApi::CompPipeline {

@@ -143,7 +143,9 @@ void ShaderReflection::getVertexDecl(std::vector<Decl::ComponentType>& data, spi
 void ShaderReflection::getBindings(std::vector<Binding>& lay, spirv_cross::Compiler& comp, const uint32_t* source, const size_t size) {
   const Stage s = getExecutionModel(comp);
 
-  spirv_cross::ShaderResources resources = comp.get_shader_resources();
+  // Only variables the entry point reaches: a declared but unused binding must not enter the layout.
+  // On Metal every array binding there costs useResources for all of its resources.
+  spirv_cross::ShaderResources resources = comp.get_shader_resources(comp.get_active_interface_variables());
   for(auto &resource : resources.sampled_images) {
     auto&    t       = typeFromVariable(comp, resource.id);
     unsigned binding = comp.get_decoration(resource.id, spv::DecorationBinding);

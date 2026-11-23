@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
+#include <string>
 #include <vector>
 
 class Npc;
@@ -16,13 +17,66 @@ enum class Zone : size_t {
   Encode, Submit, Present, Limiter, WorldLogic, Prepare, Physics, Sync, WorldMisc,
   ParallelAnimation, NativeExport, ForcedSyncAnimation, ActorAnimationCpu,
   PoseCpu, PaletteCpu, StorageJoin, StorageCommit, StoragePack, StorageDispatch,
-  StorageGrow, StorageUploadWorker, Count
+  StorageGrow, StorageUploadWorker,
+  BodyNet, Cloth,
+  // Main-thread buoyancy preparation/finish plus the synchronous Jolt step
+  // listener (possibly a worker): elapsed sum, overlapping Physics wall time.
+  Water, Destruction, AiBridge, Sound, VobSoundLoad,
+  TextureUpdate,
+  // Demand elapsed sums include animation workers and can overlap.
+  TextureDemand,
+  BindlessRebuild, BindlessPatch,
+  // Npc::tick inside WorldLogic, split by simulation tier (world/npcsimtier.h);
+  // calls count runs of consecutive same-tier NPCs, not NPCs.
+  NpcFullTick, NpcSimplifiedTick, NpcLogicShadow,
+  EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi,
+  // Parts of ParallelAnimation: the NPC worker pass and the serial passes after it.
+  AnimationNpcPass, MeleeShadow, MeleeContacts, InteractiveAnimation, LogicalBodySync,
+  // PfxObjects::preFrameUpdate, and the CPU wait of a synchronous buffer upload (Metal).
+  PfxPrepare, UploadWait,
+  // WorldView::updateRtScene: the changed objects into their slots of the ray scene, and in a frame with changes their
+  // upload and the TLAS build recorded into it (pass RT-TLAS); new descriptor arrays included. A chunk's landscape
+  // BLAS are built at its publication, outside this zone.
+  RtScene,
+  // WorldLogic outside Npc::tick; scopes enclose whole loops, never an individual NPC.
+  NpcPreTick, NpcSort, NpcPolicy, CollisionZones, InteractiveTick, TriggersTick, NpcTickNear, NpcPerception,
+  Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
-  PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, Count };
+  PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls,
+  BindlessTextureSlots, BindlessBufferSlots, BindlessPatchedSlots,
+  NpcFull, NpcSimplified, NpcTierTransitions,
+  NpcLogicSamples, NpcLogicBodyMismatch, NpcLogicWeaponMismatch,
+  NpcLogicEarly, NpcLogicLate, NpcLogicEvents, NpcLogicEventMismatch,
+  NpcLogicWaitEarly, NpcLogicWaitLate, NpcLogicReanchored, NpcLogicBodySamples, NpcLogicWeaponSamples,
+  NpcAnimDeferred, NpcAnimCatchUp, NpcAnimSyncOnRead,
+  // WorldObjects::updateAnimationTail: shadow and logical-body steps run, 1 if a change made its plan stale
+  NpcTailShadow, NpcTailLogic, NpcTailFull,
+  // RtScene::commit: builds of the TLAS in the frame, slots of the ray scene written into it
+  RtTlasBuilds, RtDirtySlots,
+  // -gi 1 (Renderer::readGiStats): live probes, probes traced in a frame (new), of them allocated at the hits of other
+  // probes' rays, and probes freed in the frame; of a frame slot one or two frames back
+  GiProbesLive, GiProbesTraced, GiProbesFromHits, GiProbesFreed,
+  // DrawCommands::visibilityStats: clusters and meshlets of the main view the visibility pass let through, and of them
+  // those of the crowns of trees (BK_CANOPY); of a frame slot one or two frames back
+  MainClusters, MainMeshlets, MainCanopyClusters, MainCanopyMeshlets,
+  // VisualObjects::preFrameUpdateLevels: objects of meshes with levels of detail (graphics/meshlevels.h) drawn at the
+  // mesh itself and at its levels 1 through 4 in the frame, an object once by its first submesh
+  MeshLevel0, MeshLevel1, MeshLevel2, MeshLevel3, MeshLevel4, MeshImpostors,
+  HiZHistoryEarlyClusters, HiZHistoryEarlyMeshlets, HiZHistoryTestedClusters,
+  HiZHistoryRejectedClusters, HiZHistoryRejectedMeshlets,
+  TreeBoughNodes, TreeBoughSourceCards, TreeBoughParentCards, TreeBoughTriangles, TreeBoughHeightPx,
+  TreeBoughActiveBands, TreeBoughVersionPairs, TreeBoughBandTriangles,
+  // VisualObjects::updateLevelBand: objects of trees with a bough hierarchy inside a band of their own GLBs in the main
+  // view and inside a band of the shadow scale (graphics/treelevelband.h)
+  TreeLevelBands, TreeShadowBands,
+  // WorldObjects::tickNpcs (world/npcsimtick.h): Simplified NPCs that ticked, that waited for their turn, and
+  // that execute native movement (Npc::usesSimplifiedMovement false)
+  NpcSimplifiedTicked, NpcSimplifiedDeferred, NpcSimplifiedNative, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };
+enum class TextureActivity : uint8_t { Read, Upload, Complete, Ready, Publish };
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
 bool enabled();
 bool watchedActor(const Npc* actor);
@@ -31,7 +85,38 @@ void setActors(const std::vector<Npc*>& actors);
 void observer(uint64_t dt, std::chrono::steady_clock::time_point now);
 void sample(std::string_view segment, uint64_t frame);
 void add(Amount amount, uint64_t value);
+void npcAnimation(size_t tier, size_t policy, bool visible, uint64_t elapsedNs);
 void flush();
+// Separate timestamps preserve worker overlap across submitted-frame boundaries.
+void textureEvent(TextureActivity activity);
+class TextureWork final {
+  public:
+    explicit TextureWork(TextureActivity activity);
+    ~TextureWork();
+    void finish();
+    TextureWork(const TextureWork&)=delete;
+    TextureWork& operator=(const TextureWork&)=delete;
+  private:
+    void* record=nullptr;
+  };
+// Capture the attempt at submission, never look up a reused cmdId on completion.
+void* gpuSubmitted();
+void gpuCompleted(void* record, double startSeconds, double endSeconds);
+// Vulkan: the buffer's span from its timestamp queries; invalid leaves the attempt without gpu_ns.
+void gpuCompletedNs(void* record, uint64_t gpuNs, bool valid);
+void* geometrySubmitted();
+void geometryCompleted(void* record, uint64_t triangles, bool valid);
+
+// Native encoder intervals may overlap on the GPU. Labels sharing an encoder
+// stay joined; the sampler never splits a render pass for attribution.
+struct GpuPass {
+  std::string type, labels;
+  uint64_t gpuNs=0, vertexNs=0, fragmentNs=0;
+  uint64_t drawCalls=0, dispatchCalls=0;
+  bool valid=false;
+  };
+void* gpuPassesSubmitted();
+void gpuPassesCompleted(void* record, std::vector<GpuPass>&& passes);
 
 class Scope final {
   public:
@@ -66,7 +151,21 @@ constexpr void setActors(const std::vector<Npc*>&) noexcept {}
 constexpr void observer(uint64_t, std::chrono::steady_clock::time_point) noexcept {}
 constexpr void sample(std::string_view, uint64_t) noexcept {}
 constexpr void add(Amount, uint64_t) noexcept {}
+constexpr void npcAnimation(size_t, size_t, bool, uint64_t) noexcept {}
 constexpr void flush() noexcept {}
+constexpr void textureEvent(TextureActivity) noexcept {}
+class TextureWork final {
+  public:
+    constexpr explicit TextureWork(TextureActivity) noexcept {}
+    constexpr ~TextureWork() noexcept {}
+    constexpr void finish() noexcept {}
+    TextureWork(const TextureWork&)=delete;
+    TextureWork& operator=(const TextureWork&)=delete;
+  };
+constexpr void* gpuSubmitted() noexcept { return nullptr; }
+constexpr void gpuCompleted(void*, double, double) noexcept {}
+constexpr void* geometrySubmitted() noexcept { return nullptr; }
+constexpr void geometryCompleted(void*, uint64_t, bool) noexcept {}
 
 class Scope final {
   public:

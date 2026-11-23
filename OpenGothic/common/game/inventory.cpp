@@ -1,14 +1,14 @@
 #include "inventory.h"
-
 #include <Tempest/Log>
 
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/objects/interactive.h"
 #include "world/world.h"
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "serialize.h"
-#include "gothic.h"
+#include "settings.h"
+#include "game/gamehost.h"
 
 using namespace Tempest;
 
@@ -241,7 +241,7 @@ Item* Inventory::addItem(std::unique_ptr<Item> &&p) {
   }
 
 Item* Inventory::addItem(std::string_view name, size_t count, World &owner) {
-  auto&  vm = owner.script();
+  auto&  vm = owner.rules();
   size_t id = vm.findSymbolIndex(name);
   if(id!=size_t(-1))
     return addItem(id,count,owner);
@@ -395,7 +395,7 @@ void Inventory::unequip(Item *it, Npc &owner) {
   }
 
 bool Inventory::setSlot(Item *&slot, Item* next, Npc& owner, bool force) {
-  GameScript& vm = owner.world().script();
+  GameRules& vm = owner.world().rules();
 
   if(next!=nullptr) {
     int32_t atr=0,nValue=0,plMag=0,itMag=0;
@@ -423,16 +423,16 @@ bool Inventory::setSlot(Item *&slot, Item* next, Npc& owner, bool force) {
     slot=nullptr;
 
     if(flag & ITM_SHIELD){
-      owner.setShield(MeshObjects::Mesh());
+      owner.setShield(ItemView());
       }
     else if(mainFlag & ITM_CAT_ARMOR){
       owner.updateArmor();
       }
     else if(mainFlag & ITM_CAT_NF){
-      owner.setSword(MeshObjects::Mesh());
+      owner.setSword(ItemView());
       }
     else if(mainFlag & ITM_CAT_FF){
-      owner.setRangedWeapon(MeshObjects::Mesh());
+      owner.setRangedWeapon(ItemView());
       }
     vm.invokeItem(&owner,uint32_t(itData.on_unequip));
     }
@@ -459,6 +459,10 @@ bool Inventory::setSlot(Item *&slot, Item* next, Npc& owner, bool force) {
   }
 
 void Inventory::updateView(Npc& owner) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   auto& world = owner.world();
 
   updateArmorView (owner);
@@ -468,17 +472,18 @@ void Inventory::updateView(Npc& owner) {
   updateRuneView  (owner);
 
   for(auto& i:mdlSlots) {
-    auto  vbody  = world.addView(i.item->handle());
+    auto  vbody  = ItemView(world,i.item->handle());
     owner.setSlotItem(std::move(vbody),i.slot);
     }
   if(ammotSlot.item!=nullptr) {
-    auto  vbody  = world.addView(ammotSlot.item->handle());
+    auto  vbody  = ItemView(world,ammotSlot.item->handle());
     owner.setAmmoItem(std::move(vbody),ammotSlot.slot);
     }
   if(stateSlot.item!=nullptr) {
-    auto  vitm   = world.addView(stateSlot.item->handle());
+    auto  vitm   = ItemView(world,stateSlot.item->handle());
     owner.setStateItem(std::move(vitm),stateSlot.slot);
     }
+  owner.updateQuiver();
   }
 
 void Inventory::updateArmorView(Npc& owner) {
@@ -492,37 +497,49 @@ void Inventory::updateArmorView(Npc& owner) {
   }
 
 void Inventory::updateSwordView(Npc &owner) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   if(melee==nullptr) {
-    owner.setSword(MeshObjects::Mesh());
+    owner.setSword(ItemView());
     return;
     }
 
-  auto  vbody  = owner.world().addView(melee->handle());
+  auto  vbody  = ItemView(owner.world(),melee->handle());
   owner.setSword(std::move(vbody));
   }
 
 void Inventory::updateBowView(Npc &owner) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   if(range==nullptr) {
-    owner.setRangedWeapon(MeshObjects::Mesh());
+    owner.setRangedWeapon(ItemView());
     return;
     }
 
   auto flag = range->mainFlag();
   if(flag & ITM_CAT_FF){
-    auto  vbody  = owner.world().addView(range->handle());
+    auto  vbody  = ItemView(owner.world(),range->handle());
     owner.setRangedWeapon(std::move(vbody));
     }
   }
 
 void Inventory::updateShieldView(Npc& owner) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   if(shield==nullptr) {
-    owner.setShield(MeshObjects::Mesh());
+    owner.setShield(ItemView());
     return;
     }
 
   auto flag = ItmFlags(shield->itemFlag());
   if(flag & ITM_SHIELD){
-    auto  vbody  = owner.world().addView(shield->handle());
+    auto  vbody  = ItemView(owner.world(),shield->handle());
     owner.setShield(std::move(vbody));
     }
   }
@@ -535,7 +552,7 @@ void Inventory::updateRuneView(Npc &owner) {
   if(!sp->isSpellOrRune())
     return;
 
-  const VisualFx* vfx = owner.world().script().spellVfx(sp->spellId());
+  const VisualFx* vfx = owner.world().rules().spellVfx(sp->spellId());
   owner.setMagicWeapon(Effect(*vfx,owner.world(),owner,SpellFxKey::Init));
   }
 
@@ -551,17 +568,17 @@ void Inventory::equipBestRangedWeapon(Npc &owner) {
     setSlot(range,a,owner,false);
   }
 
-void Inventory::unequipWeapons(GameScript &, Npc &owner) {
+void Inventory::unequipWeapons(GameRules &, Npc &owner) {
   setSlot(melee, nullptr,owner,false);
   setSlot(range, nullptr,owner,false);
   setSlot(shield,nullptr,owner,false);
   }
 
-void Inventory::unequipArmor(GameScript &, Npc &owner) {
+void Inventory::unequipArmor(GameRules &, Npc &owner) {
   setSlot(armor,nullptr,owner,false);
   }
 
-void Inventory::clear(GameScript&, Npc&, bool includeMissionItm) {
+void Inventory::clear(GameRules&, Npc&, bool includeMissionItm) {
   std::vector<std::unique_ptr<Item>> used;
   for(auto& i:items)
     if(i->isEquipped() || (i->isMission() && !includeMissionItm)){
@@ -570,7 +587,7 @@ void Inventory::clear(GameScript&, Npc&, bool includeMissionItm) {
   items = std::move(used); // Gothic don't clear items, which are in use
   }
 
-void Inventory::clear(GameScript& vm, Interactive& owner, bool includeMissionItm) {
+void Inventory::clear(GameRules& vm, Interactive& owner, bool includeMissionItm) {
   std::vector<std::unique_ptr<Item>> used;
   for(auto& i:items)
     if(i->isMission() && !includeMissionItm){
@@ -691,6 +708,10 @@ void Inventory::putCurrentToSlot(Npc& owner, std::string_view slot) {
   }
 
 void Inventory::putToSlot(Npc& owner, size_t cls, std::string_view slot) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   clearSlot(owner,slot,false);
 
   Item* it=findByClass(cls);
@@ -701,7 +722,7 @@ void Inventory::putToSlot(Npc& owner, size_t cls, std::string_view slot) {
     if(i.slot==slot) {
       i.item = it;
 
-      auto  vitm   = owner.world().addView(it->handle());
+      auto  vitm   = ItemView(owner.world(),it->handle());
       owner.setSlotItem(std::move(vitm),slot);
       return;
       }
@@ -709,7 +730,7 @@ void Inventory::putToSlot(Npc& owner, size_t cls, std::string_view slot) {
   MdlSlot& sl = mdlSlots.back();
   sl.slot = slot;
   sl.item = it;
-  auto  vitm   = owner.world().addView(it->handle());
+  auto  vitm   = ItemView(owner.world(),it->handle());
   owner.setSlotItem(std::move(vitm),slot);
   }
 
@@ -737,33 +758,41 @@ bool Inventory::clearSlot(Npc& owner, std::string_view slot, bool remove) {
   }
 
 void Inventory::putAmmunition(Npc& owner, size_t cls, std::string_view slot) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   Item* it = (cls==0 ? nullptr : findByClass(cls));
   if(it==nullptr) {
     ammotSlot.slot.clear();
     ammotSlot.item = nullptr;
-    owner.setAmmoItem(MeshObjects::Mesh(),"");
+    owner.setAmmoItem(ItemView(),"");
     return;
     }
 
   ammotSlot.slot = slot;
   ammotSlot.item = it;
   auto& itData = it->handle();
-  auto  vitm   = owner.world().addView(itData);
+  auto  vitm   = ItemView(owner.world(),itData);
   owner.setAmmoItem(std::move(vitm),slot);
   }
 
 void Inventory::implPutState(Npc& owner, size_t cls, std::string_view slot) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   Item* it = (cls==0 ? nullptr : findByClass(cls));
   if(it==nullptr) {
     stateSlot.slot.clear();
     stateSlot.item = nullptr;
-    owner.setStateItem(MeshObjects::Mesh(),"");
+    owner.setStateItem(ItemView(),"");
     return;
     }
 
   stateSlot.slot = slot;
   stateSlot.item = it;
-  auto  vitm   = owner.world().addView(it->handle());
+  auto  vitm   = ItemView(owner.world(),it->handle());
   owner.setStateItem(std::move(vitm),slot);
   }
 
@@ -792,7 +821,7 @@ void Inventory::moveItem(Npc& owner, Inventory& invNpc, Interactive& mobsi) {
   auto& world = owner.world();
   auto& slot  = invNpc.mdlSlots.back();
 
-  auto  vbody  = world.addView(slot.item->handle());
+  auto  vbody  = ItemView(world,slot.item->handle());
   mobsi.setSlotItem(std::move(vbody), zsSlot);
 
   mobsi.inventory().mdlSlots.resize(1);
@@ -889,15 +918,15 @@ bool Inventory::use(size_t cls, Npc &owner, uint8_t slotHint, bool force) {
       }
     }
 
-  if(!owner.setAnimItem(itData.scheme_name,-1))
+  const auto& physics = Settings::physicsFlags();
+  const bool deferred = ((mainflag & ITM_CAT_POTION) && physics.meleeHealInterrupt) ||
+                        ((mainflag & ITM_CAT_FOOD) && physics.foodOverTime);
+  if(!owner.startItemUse(*it,deferred))
     return false;
 
   // owner.stopDlgAnim();
   setCurrentItem(it->clsId());
-  if(itData.on_state[0]!=0){
-    auto& vm = owner.world().script();
-    vm.invokeItem(&owner,uint32_t(itData.on_state[0]));
-    }
+  owner.beginItemUseEffect(*it);
 
   if(deleteLater)
     owner.delItem(cls,1);
@@ -1021,7 +1050,7 @@ Item *Inventory::bestRangedWeapon(Npc &owner) {
 void Inventory::applyWeaponStats(Npc& owner, const Item &weapon, int sgn) {
   auto& hnpc = owner.handle();
   //hnpc.damagetype = sgn>0 ? weapon.handle()->damageType : (1 << GEngineClasses::DAM_INDEX_BLUNT);
-  for(size_t i=0; i<zenkit::DamageType::NUM; ++i){
+  for(size_t i=0; i<DamageType::NUM; ++i){
     hnpc.damage[i] += sgn*weapon.handle().damage[i];
     if(weapon.handle().damage_type & (1<<i)) {
       hnpc.damage[i] += sgn*weapon.handle().damage_total;
@@ -1029,7 +1058,7 @@ void Inventory::applyWeaponStats(Npc& owner, const Item &weapon, int sgn) {
     }
 
   // assert inconsistent plus/minus
-  for(size_t i=0; i<zenkit::DamageType::NUM; ++i) {
+  for(size_t i=0; i<DamageType::NUM; ++i) {
     assert(hnpc.damage[i]>=0);
     }
   }
@@ -1066,7 +1095,7 @@ bool Inventory::less(const Item &il, const Item &ir) {
   }
 
 int Inventory::orderId(const Item& i) {
-  auto& invCatOrder = Gothic::invCatOrder();
+  auto& invCatOrder = GameHost::inst().inventoryCategoryOrder();
   auto  mflg        = ItmFlags(i.mainFlag());
 
   for(size_t i=0; i<invCatOrder.size(); ++i)

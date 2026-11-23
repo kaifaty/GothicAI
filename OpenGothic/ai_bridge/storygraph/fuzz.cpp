@@ -14,9 +14,9 @@
 #include "model.h"
 #include "vocab.h"
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 #include <zenkit/Logger.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 
 #include <cstdio>
 #include <functional>
@@ -25,7 +25,7 @@
 #include <set>
 
 using namespace storygraph;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 namespace {
 
@@ -38,7 +38,7 @@ struct Domain final {
   std::set<std::string>    insts;    // instances and instance variables
   };
 
-void collect(zenkit::DaedalusVm& vm, const Bytecode& code, uint32_t fnSymbol, Domain& d, std::set<uint32_t>& seen,
+void collect(daedalus::DaedalusVm& vm, const Bytecode& code, uint32_t fnSymbol, Domain& d, std::set<uint32_t>& seen,
              std::set<int32_t>& ints, std::set<std::string>& strs) {
   auto* fn = vm.find_symbol_by_index(fnSymbol);
   if(fn==nullptr || !Bytecode::hasCode(*fn) || !seen.insert(fnSymbol).second)
@@ -55,12 +55,12 @@ void collect(zenkit::DaedalusVm& vm, const Bytecode& code, uint32_t fnSymbol, Do
   for(uint32_t pc=fn->address(), end=code.codeEnd(pc); pc<end;) {
     auto  in = vm.instruction_at(pc);
     auto* s  = vm.find_symbol_by_index(in.symbol);
-    if(in.op==zenkit::DaedalusOpcode::PUSHI) {
+    if(in.op==daedalus::DaedalusOpcode::PUSHI) {
       for(int32_t k : {-1, 0, 1})
         ints.insert(int32_t(uint32_t(in.immediate) + uint32_t(k)));
       }
-    else if((in.op==zenkit::DaedalusOpcode::PUSHV || in.op==zenkit::DaedalusOpcode::PUSHVV) && s && s->is_const()) {
-      auto i = uint16_t(in.op==zenkit::DaedalusOpcode::PUSHVV ? in.index : 0);
+    else if((in.op==daedalus::DaedalusOpcode::PUSHV || in.op==daedalus::DaedalusOpcode::PUSHVV) && s && s->is_const()) {
+      auto i = uint16_t(in.op==daedalus::DaedalusOpcode::PUSHVV ? in.index : 0);
       if(s->type()==DaedalusDataType::INT && i<s->count())
         for(int32_t k : {-1, 0, 1})
           ints.insert(int32_t(uint32_t(s->get_int(i)) + uint32_t(k)));
@@ -74,7 +74,7 @@ void collect(zenkit::DaedalusVm& vm, const Bytecode& code, uint32_t fnSymbol, Do
       collect(vm, code, callee->index(), d, seen, ints, strs);
   }
 
-Domain domainOf(zenkit::DaedalusVm& vm, const Bytecode& code, uint32_t condition) {
+Domain domainOf(daedalus::DaedalusVm& vm, const Bytecode& code, uint32_t condition) {
   Domain                d;
   std::set<uint32_t>    seen;
   std::set<int32_t>     ints = {-1, 0, 1, 2};
@@ -88,9 +88,9 @@ Domain domainOf(zenkit::DaedalusVm& vm, const Bytecode& code, uint32_t condition
 // The engine answers at random, the same answer for the same question within a round.
 class FuzzWorld final : public Externals {
   public:
-    explicit FuzzWorld(zenkit::DaedalusVm& vm) : vm(vm) {}
+    explicit FuzzWorld(daedalus::DaedalusVm& vm) : vm(vm) {}
 
-    Value call(const zenkit::DaedalusSymbol& fn, const std::vector<Value>& args) override {
+    Value call(const daedalus::DaedalusSymbol& fn, const std::vector<Value>& args) override {
       if(!fn.has_return())
         return {};
       if(setup || domain==nullptr)
@@ -133,23 +133,23 @@ class FuzzWorld final : public Externals {
       }
 
     // an npc built from its instance, one per instance
-    std::shared_ptr<zenkit::INpc> npc(uint32_t symbol) {
+    std::shared_ptr<daedalus::INpc> npc(uint32_t symbol) {
       auto* sym = vm.find_symbol_by_index(symbol);
       if(sym!=nullptr && sym->type()==DaedalusDataType::INSTANCE && !sym->is_const()) {
         // an instance variable (Hlp_GetNpc(Attila)): the npc it holds. Its "constructor" address is junk:
         // building an instance from it runs whatever bytes are there
-        return std::dynamic_pointer_cast<zenkit::INpc>(sym->get_instance());
+        return std::dynamic_pointer_cast<daedalus::INpc>(sym->get_instance());
         }
       auto it = npcs.find(symbol);
       if(it!=npcs.end())
         return it->second;
       npcs[symbol] = nullptr;  // an instance function asking for itself
-      std::shared_ptr<zenkit::INpc> r;
+      std::shared_ptr<daedalus::INpc> r;
       if(sym!=nullptr && sym->type()==DaedalusDataType::INSTANCE && isNpc(*sym)) {
         bool was = setup;
         setup = true;
         try {
-          r = vm.init_instance<zenkit::INpc>(sym);
+          r = vm.init_instance<daedalus::INpc>(sym);
           }
         catch(const std::exception&) {
           r = nullptr;
@@ -160,7 +160,7 @@ class FuzzWorld final : public Externals {
       }
 
     // an instance of C_NPC (an item or a dialog built as an npc would write past its object)
-    bool isNpc(const zenkit::DaedalusSymbol& sym) const {
+    bool isNpc(const daedalus::DaedalusSymbol& sym) const {
       auto* s = &sym;
       for(int i=0; i<8 && s!=nullptr && s->type()!=DaedalusDataType::CLASS; ++i)
         s = vm.find_symbol_by_index(s->parent());
@@ -176,15 +176,15 @@ class FuzzWorld final : public Externals {
       return rng()%2 ? std::string() : domain->strs[rng()%domain->strs.size()];
       }
 
-    zenkit::DaedalusVm&                                         vm;
+    daedalus::DaedalusVm&                                         vm;
     std::mt19937                                                rng;
     const Domain*                                               domain = nullptr;
     std::map<std::string,Value>                                 memo;
-    std::shared_ptr<zenkit::INpc>                               hero, self;
+    std::shared_ptr<daedalus::INpc>                               hero, self;
     bool                                                        setup = true;
 
   private:
-    std::unordered_map<uint32_t,std::shared_ptr<zenkit::INpc>>  npcs;
+    std::unordered_map<uint32_t,std::shared_ptr<daedalus::INpc>>  npcs;
   };
 
 struct Mismatch final {
@@ -195,8 +195,8 @@ struct Mismatch final {
 
 
 // The draws of one round: the variables the function reads, and the members of the instances it reads.
-void draw(zenkit::DaedalusVm& vm, FuzzWorld& world, const Domain& d,
-          const std::vector<std::shared_ptr<zenkit::DaedalusInstance>>& owners) {
+void draw(daedalus::DaedalusVm& vm, FuzzWorld& world, const Domain& d,
+          const std::vector<std::shared_ptr<daedalus::DaedalusInstance>>& owners) {
   world.memo.clear();
   for(auto& v : d.vars) {
     auto* s = vm.find_symbol_by_name(v);
@@ -227,9 +227,9 @@ void draw(zenkit::DaedalusVm& vm, FuzzWorld& world, const Domain& d,
   }
 
 // instances whose members are drawn: the npc, the hero and the instance variables the function reads
-std::vector<std::shared_ptr<zenkit::DaedalusInstance>> ownersOf(zenkit::DaedalusVm& vm, const FuzzWorld& world,
+std::vector<std::shared_ptr<daedalus::DaedalusInstance>> ownersOf(daedalus::DaedalusVm& vm, const FuzzWorld& world,
                                                                 const Domain& d) {
-  std::vector<std::shared_ptr<zenkit::DaedalusInstance>> owners = {world.self, world.hero};
+  std::vector<std::shared_ptr<daedalus::DaedalusInstance>> owners = {world.self, world.hero};
   for(auto& name : d.insts)
     if(auto* s = vm.find_symbol_by_name(name); s && s->type()==DaedalusDataType::INSTANCE && s->get_instance() &&
        !s->is_const())
@@ -239,11 +239,11 @@ std::vector<std::shared_ptr<zenkit::DaedalusInstance>> ownersOf(zenkit::Daedalus
 
 // The VM over FuzzWorld, with the hero and the npc globals set up as at the start of a game.
 struct Fuzz final {
-  std::unique_ptr<zenkit::DaedalusVm> vm;
+  std::unique_ptr<daedalus::DaedalusVm> vm;
   std::unique_ptr<FuzzWorld>          world;
   std::string                         vmFault;
 
-  bool open(const char* datPath, const std::function<void(zenkit::DaedalusVm&, FuzzWorld&)>& bind) {
+  bool open(const char* datPath, const std::function<void(daedalus::DaedalusVm&, FuzzWorld&)>& bind) {
     zenkit::Logger::use_logger([](zenkit::LogLevel, const std::string&){});
     vm = loadVm(datPath);
     if(vm==nullptr) {
@@ -252,11 +252,11 @@ struct Fuzz final {
       }
     world = std::make_unique<FuzzWorld>(*vm);
     bind(*vm, *world);
-    vm->register_exception_handler([this](zenkit::DaedalusVm&, const zenkit::DaedalusScriptError& e,
-                                          const zenkit::DaedalusInstruction&) {
+    vm->register_exception_handler([this](daedalus::DaedalusVm&, const daedalus::DaedalusScriptError& e,
+                                          const daedalus::DaedalusInstruction&) {
       if(vmFault.empty())
         vmFault = e.what();
-      return zenkit::DaedalusVmExceptionStrategy::RETURN;
+      return daedalus::DaedalusVmExceptionStrategy::RETURN;
       });
     if(auto* h = vm->find_symbol_by_name("PC_HERO"))
       world->hero = world->npc(h->index());
@@ -274,7 +274,7 @@ namespace storygraph {
 
 int fuzzConditions(const char* datPath, const Model& m, uint32_t rounds, const char* only, bool verbose) {
   Fuzz fz;
-  if(!fz.open(datPath, [](zenkit::DaedalusVm& v, FuzzWorld& w){ bindExternals(v, w); }))
+  if(!fz.open(datPath, [](daedalus::DaedalusVm& v, FuzzWorld& w){ bindExternals(v, w); }))
     return 1;
   auto&        vm      = fz.vm;
   FuzzWorld&   world   = *fz.world;
@@ -313,7 +313,7 @@ int fuzzConditions(const char* datPath, const Model& m, uint32_t rounds, const c
     auto* infoSym = vm->find_symbol_by_name(n.id);
     if(infoSym==nullptr)
       continue;
-    auto info = vm->init_instance<zenkit::IInfo>(infoSym);
+    auto info = vm->init_instance<daedalus::IInfo>(infoSym);
     if(info->condition==0)
       continue;
     auto* cond = vm->find_symbol_by_index(uint32_t(info->condition));
@@ -395,7 +395,7 @@ int fuzzConditions(const char* datPath, const Model& m, uint32_t rounds, const c
 int fuzzEffects(const char* datPath, const Model& m, uint32_t rounds, const char* only, bool verbose) {
   std::unique_ptr<EffectCheck> fx;
   Fuzz fz;
-  bool ok = fz.open(datPath, [&fx](zenkit::DaedalusVm& v, FuzzWorld& w) {
+  bool ok = fz.open(datPath, [&fx](daedalus::DaedalusVm& v, FuzzWorld& w) {
     fx = std::make_unique<EffectCheck>(v, w);
     bindExternals(v, fx->engine());
     });
@@ -445,7 +445,7 @@ int fuzzEffects(const char* datPath, const Model& m, uint32_t rounds, const char
 int fuzzExec(const char* datPath, const Model& m, uint32_t rounds, const char* only, bool verbose) {
   std::unique_ptr<ExecCheck> xc;
   Fuzz fz;
-  bool ok = fz.open(datPath, [&xc](zenkit::DaedalusVm& v, FuzzWorld& w) {
+  bool ok = fz.open(datPath, [&xc](daedalus::DaedalusVm& v, FuzzWorld& w) {
     xc = std::make_unique<ExecCheck>(v, w);
     bindExternals(v, xc->engine());
     });
@@ -455,7 +455,7 @@ int fuzzExec(const char* datPath, const Model& m, uint32_t rounds, const char* o
   FuzzWorld&  world = *fz.world;
   Bytecode    code(*vm);
   xc->vmFault = &fz.vmFault;
-  xc->npcOf   = [&world](uint32_t s) -> std::shared_ptr<zenkit::DaedalusInstance> { return world.npc(s); };
+  xc->npcOf   = [&world](uint32_t s) -> std::shared_ptr<daedalus::DaedalusInstance> { return world.npc(s); };
   // every npc is built now: built during a run, its constructor would change the state of that run only
   for(uint32_t i=0; i<vm->symbols().size(); ++i)
     if(auto* s = vm->find_symbol_by_index(i); s && s->type()==DaedalusDataType::INSTANCE && s->is_const() && world.isNpc(*s))

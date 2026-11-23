@@ -61,7 +61,7 @@ class Volumes final {
       struct Double3 {
         double x,y,z;
         explicit Double3(const Tempest::Vec3& v):x(v.x),y(v.y),z(v.z) {}
-        explicit Double3(const zenkit::Vec3& v):x(v.x),y(v.y),z(v.z) {}
+        explicit Double3(const asset::Vec3& v):x(v.x),y(v.y),z(v.z) {}
         Double3(double x,double y,double z):x(x),y(y),z(z) {}
         Double3 operator-(const Double3& b) const { return {x-b.x,y-b.y,z-b.z}; }
         double dot(const Double3& b) const { return x*b.x+y*b.y+z*b.z; }

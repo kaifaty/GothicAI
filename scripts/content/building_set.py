@@ -29,21 +29,29 @@ with a staging set as base, it is that set with only these entries replaced.
 
 `compose SET PART...` joins the sets of several assets into one staging set for the game:
 each texture belongs to exactly one part, so a shared texture lives in its own asset. Meshes of a
-part (a prop's GLB) come along.
+part (a prop's GLB with its `.convex-parts`, `.fracture`, `.debris.glb` and `.clod`), particle descriptions
+(`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`) come along. A part may be a composed set: the working
+set plus one new part keeps the names of the working set's parts. `--without PART` leaves a part of such a
+composed set behind, so that a new part takes its place.
 
 `enable SET` copies a staging set into the working content `~/.local/share/gothic-ai/content`, which
-the game reads by default; only on the user's word (gate `enable`).
+the game reads by default; only on the user's word (gate `enable`). A movable table or cupboard GLB
+(`movable-vobs.csv`) needs its fresh `.convex-parts` first (`scripts/convex-parts.sh content <set>`),
+a destructible one (`destructible-vobs.csv`) its fresh `.fracture` (`scripts/fracture.sh content <set>`).
 """
 from __future__ import annotations
 
 import argparse
 from copy import deepcopy
 from datetime import datetime, timezone
+import fnmatch
 from io import BytesIO
 import json
 from pathlib import Path
 import shutil
+import struct
 import sys
+import zlib
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -60,6 +68,24 @@ import remaster
 from seam_fix import seamless
 
 LUMINANCE = np.array([.2126, .7152, .0722])
+# Caches the engine reads beside an own GLB, checked by the GLB's size and CRC32 (docs/physics.md):
+# suffix → accepted headers, the table of OpenGothic/data and its classes that need the cache, the command that cuts it.
+# DynamicWorld loads offline convex parts only for tables and cupboards; FractureMesh breaks a destructible
+# only with its pieces, and scripts/fracture.sh content cuts these four classes.
+CACHES = {
+    '.convex-parts': (('GOTHIC_CONVEX_PARTS 1',), 'movable-vobs.csv', ('table', 'cupboard'), 'scripts/convex-parts.sh content'),
+    '.fracture': (('GOTHIC_FRACTURE 2', 'GOTHIC_FRACTURE 3'), 'destructible-vobs.csv', ('crate', 'barrel', 'pot', 'fence'),
+                  'scripts/fracture.sh content'),
+}
+# A destructible's debris (its pieces as parts, reports/content/2026-11-wood-fracture) travels with its GLB;
+# beside it the `.fracture` must be version 3, cut from that debris.
+DEBRIS, DEBRIS_TAG = '.debris.glb', 'GOTHIC_FRACTURE 3'
+CLUSTER_LOD = '.clod'
+# Match the format, GLB loader and builder revisions in OpenGothic/common/meshclusterlod.cpp.
+CLOD_HEADER = struct.Struct('<4s11I')
+CLOD_SIGNATURE = (b'GCLD', 2, 1, 1)
+SIDECARS = (*CACHES, DEBRIS, CLUSTER_LOD)
+CACHE_COMMANDS = {suffix: args[3] for suffix, args in CACHES.items()} | {CLUSTER_LOD: 'content-convert cook-mesh-lod'}
 MODES = ('target', 'group', 'match')
 
 
@@ -344,35 +370,84 @@ def pack(records: list[dict], spec: dict, derived_root: Path) -> dict:
     return dict(entries=len(index), replaced=sorted(names), unchanged_entries=len(index) - len(names))
 
 
-def compose(name: str, parts: list[str]) -> dict:
+def entry_maps(entry: dict) -> list[str]:
+    """The files a record of materials.json names: its own maps (a particle texture has only an albedo) and those
+    of its layers - a rock's `fringe`, a meadow's `ground.sward`, `ground.earth` and `ground.border`, a road's
+    `track.crust`, `track.loose` and `track.ribbon` (tint, normal, mask). A record of fields alone (`grass`,
+    `verge`) names none."""
+    ground, track = entry.get('ground') or {}, entry.get('track') or {}
+    holders = [entry, entry.get('fringe'), ground.get('sward'), ground.get('earth'), ground.get('border'),
+               track.get('crust'), track.get('loose'), track.get('ribbon')]
+    return [holder[channel] for holder in holders if isinstance(holder, dict)
+            for channel in ('albedo', 'normal', 'orm', 'tint', 'mask') if channel in holder]
+
+
+def compose(name: str, parts: list[str], without: tuple[str, ...] = ()) -> dict:
     """Join the staging sets `parts` into a new set; a texture or a visual may come from one part only.
 
     A part's meshes (`meshes/meshes.json` and its GLB files, a prop like the barrel) come along with its
     materials. Entries of one part may share files: the barrel's wood and iron use one atlas. A part's
-    world chunk edits (`worlds/<WORLD>/chunks/*.glb`, like the harbour stairs) come along too; such a part
-    may have no materials at all."""
+    world chunk edits (`worlds/<WORLD>/chunks/*.glb`, like the harbour stairs) and vob layer files
+    (`worlds/<WORLD>/vobs.d/*.json`, like the harbour's traces of life) and its houses
+    (`worlds/<WORLD>/houses.d/*.json`, OpenGothic/common/graphics/houselights.h) and its patches of ground for the
+    grass system (`worlds/<WORLD>/grass.d/*.json`, the rye of a crop field) come along too; such a part may have no
+    materials at all. Particle descriptions (`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`)
+    come along as well; file and effect names must belong to one part only. A part may be a composed set
+    itself: `compose working-16 working-15 torch-fire-1` is the working set with one more part, its files byte
+    for byte with their caches, and `composition.json` lists the parts of `working-15` by their own names.
+
+    `without` names parts of such a composed set that stay behind: `compose working-20 working-19 market-16`
+    with `without=('market-15',)` is the working set with a new part in the place of an old one."""
     if len(parts) < 2 or len(set(parts)) != len(parts):
         raise ValueError('compose needs two or more distinct parts')
     staging = remaster.data_root() / 'content-staging'
-    indexes, meshes, chunks, owner = {}, {}, {}, {}
+    indexes, meshes, chunks, particles, trees, owner, dropped = {}, {}, {}, {}, {}, {}, {}
+    inner_names = {inner for part in parts if (staging / part / 'composition.json').is_file()
+                   for inner in json.loads((staging / part / 'composition.json').read_text())['parts']}
+    if missing := sorted(set(without) - inner_names):
+        raise ValueError(f'{", ".join(missing)}: no such part in a composed set to leave behind')
     for part in parts:
         material_index = staging / part / 'materials/materials.json'
         indexes[part] = json.loads(material_index.read_text()) if material_index.is_file() else {}
         worlds = staging / part / 'worlds'
-        chunks[part] = sorted(f.relative_to(worlds) for f in worlds.rglob('*.glb')) if worlds.is_dir() else []
+        chunks[part] = sorted(f.relative_to(worlds) for f in worlds.rglob('*') if f.is_file() and (
+            f.suffix == '.glb' or f.suffix == '.json' and f.parent.name in ('vobs.d', 'houses.d', 'grass.d'))) if worlds.is_dir() else []
         mesh_index = staging / part / 'meshes/meshes.json'
         meshes[part] = json.loads(mesh_index.read_text()) if mesh_index.is_file() else {}
-        if not material_index.is_file() and not meshes[part] and not chunks[part]:
-            raise ValueError(f'{part}: no materials, meshes or world chunks')
+        particle_dir = staging / part / 'particles.d'
+        particles[part] = sorted(p.name for p in particle_dir.glob('*.json') if p.is_file())
+        tree_dir = staging / part / 'vobtrees.d'
+        trees[part] = sorted(p.name for p in tree_dir.glob('*.json') if p.is_file())
+        if not material_index.is_file() and not meshes[part] and not chunks[part] and not particles[part] and not trees[part]:
+            raise ValueError(f'{part}: no materials, meshes, world chunks, particle descriptions or vob trees')
+        inner = staging / part / 'composition.json'
+        inner_parts = json.loads(inner.read_text())['parts'] if inner.is_file() else {}
+        for name_out in without:
+            for entry in inner_parts.get(name_out, []):
+                dropped.setdefault(part, {}).setdefault(name_out, []).append(entry)
+                indexes[part].pop(entry, None)
+                meshes[part].pop(entry, None)
+                chunks[part] = [c for c in chunks[part] if f'worlds/{c.as_posix()}' != entry]
+                particles[part] = [f for f in particles[part] if f'particles.d/{f}' != entry]
+                trees[part] = [f for f in trees[part] if f'vobtrees.d/{f}' != entry]
         # the engine finds a visual by name without case
         for key in [*indexes[part], *(f'visual {visual.upper()}' for visual in meshes[part]),
-                    *(f'chunk {chunk.as_posix().upper()}' for chunk in chunks[part])]:
+                    *(f'chunk {chunk.as_posix().upper()}' for chunk in chunks[part]),
+                    *(f'vob tree file {filename.upper()}' for filename in trees[part])]:
             if key in owner:
                 raise ValueError(f'{key}: in both {owner[key]} and {part}')
             owner[key] = part
+        for filename in particles[part]:
+            definitions = json.loads((particle_dir / filename).read_text())
+            keys = [f'particle file {filename}',
+                    *(f'particle effect {effect["name"].upper()}' for effect in definitions['effects'])]
+            for key in keys:
+                if key in owner:
+                    raise ValueError(f'{key}: in both {owner[key]} and {part}')
+                owner[key] = part
     output = new_staging(name)
     (output / 'materials').mkdir(parents=True)
-    copied, digests = {}, {'materials': {}, 'meshes': {}, 'worlds': {}}
+    copied, digests = {}, {'materials': {}, 'meshes': {}, 'worlds': {}, 'particles.d': {}, 'vobtrees.d': {}}
 
     def take(part: str, kind: str, relative: Path) -> None:
         key = f'{kind}/{relative}'
@@ -391,51 +466,144 @@ def compose(name: str, parts: list[str]) -> dict:
     index, mesh_index = {}, {}
     for part, part_index in indexes.items():
         for texture, entry in part_index.items():
-            for channel in ('albedo', 'normal', 'orm'):
-                take(part, 'materials', Path(entry[channel]))
+            for path in entry_maps(entry):
+                take(part, 'materials', Path(path))
             index[texture] = entry
         for visual, entry in meshes[part].items():
             take(part, 'meshes', Path(entry['glb']))
+            for suffix in SIDECARS:
+                sidecar = Path(entry['glb']).with_suffix(suffix)
+                if (staging / part / 'meshes' / sidecar).is_file():
+                    take(part, 'meshes', sidecar)
             mesh_index[visual] = entry
         for chunk in chunks[part]:
             take(part, 'worlds', chunk)
+        for filename in particles[part]:
+            take(part, 'particles.d', Path(filename))
+        for filename in trees[part]:
+            take(part, 'vobtrees.d', Path(filename))
+        licences = staging / part / 'licences'  # third-party terms a part's files travel with (Hunyuan3D-Omni)
+        for source in sorted(licences.rglob('*')) if licences.is_dir() else []:
+            target = output / 'licences' / source.relative_to(licences)
+            if not source.is_file() or target.exists() and target.read_bytes() == source.read_bytes():
+                continue
+            if target.exists():
+                raise ValueError(f'licences/{source.relative_to(licences)}: differs between parts')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
     (output / 'materials/materials.json').write_text(json.dumps(index, indent=2) + '\n')
     if mesh_index:
         (output / 'meshes/meshes.json').write_text(json.dumps(mesh_index, indent=2) + '\n')
-    composition = dict(set=name, date=datetime.now(timezone.utc).strftime('%Y-%m-%d'),
-                       parts={part: sorted(part_index) + sorted(meshes[part]) + [f'worlds/{c.as_posix()}' for c in chunks[part]]
-                              for part, part_index in indexes.items()},
+    # A part that is a composed set itself (the working set, joined with one new part) keeps the names of its parts
+    record = {}
+    for part, part_index in indexes.items():
+        listing = (sorted(part_index) + sorted(meshes[part]) + [f'worlds/{c.as_posix()}' for c in chunks[part]]
+                   + [f'particles.d/{f}' for f in particles[part]] + [f'vobtrees.d/{f}' for f in trees[part]])
+        inner = staging / part / 'composition.json'
+        entries = json.loads(inner.read_text())['parts'] if inner.is_file() else {part: listing}
+        entries = {inner_part: names for inner_part, names in entries.items() if inner_part not in dropped.get(part, {})}
+        if sorted(entry for names in entries.values() for entry in names) != sorted(listing):
+            raise ValueError(f'{part}: composition.json does not list what the set holds')
+        for inner_part, names in entries.items():
+            if inner_part in record:
+                raise ValueError(f'{inner_part}: a part twice')
+            record[inner_part] = names
+    composition = dict(set=name, date=datetime.now(timezone.utc).strftime('%Y-%m-%d'), parts=record,
                        dds_sha256=digests['materials'])
     if mesh_index:
         composition['glb_sha256'] = digests['meshes']
     if digests['worlds']:
         composition['world_sha256'] = digests['worlds']
+    if digests['particles.d']:
+        composition['particles_sha256'] = digests['particles.d']
+    if digests['vobtrees.d']:
+        composition['vobtrees_sha256'] = digests['vobtrees.d']
     (output / 'composition.json').write_text(json.dumps(composition, indent=2) + '\n')
     result = dict(set=name, entries=len(index), meshes=len(mesh_index),
-                  parts={part: len(i) + len(meshes[part]) + len(chunks[part]) for part, i in indexes.items()})
+                  parts={part: len(i) + len(meshes[part]) + len(chunks[part]) + len(particles[part]) + len(trees[part])
+                         for part, i in indexes.items()})
     if digests['worlds']:
         result['chunks'] = len(digests['worlds'])
+    if digests['particles.d']:
+        result['particles'] = len(digests['particles.d'])
+    if digests['vobtrees.d']:
+        result['vobtrees'] = len(digests['vobtrees.d'])
     return result
+
+
+def fresh_clod(glb: Path, cache: Path) -> bool:
+    with cache.open('rb') as stream:
+        header = stream.read(CLOD_HEADER.size)
+        if len(header) != CLOD_HEADER.size:
+            return False
+        magic, version, loader, builder, size, crc, payload_crc, *counts = CLOD_HEADER.unpack(header)
+        if (magic, version, loader, builder) != CLOD_SIGNATURE or size != glb.stat().st_size:
+            return False
+        if sum(count * stride for count, stride in zip(counts, (36, 4, 1, 48, 20))) != cache.stat().st_size - CLOD_HEADER.size:
+            return False
+        actual_crc = 0
+        for chunk in iter(lambda: stream.read(1 << 20), b''):
+            actual_crc = zlib.crc32(chunk, actual_crc)
+    return actual_crc == payload_crc and zlib.crc32(glb.read_bytes()) == crc
+
+
+def stale_caches(content: Path) -> dict[str, list[str]]:
+    """Visuals of a content folder by cache suffix whose GLB lacks a fresh adjacent cache it needs: without
+    `.convex-parts` a table or cupboard gets one hull instead of the compound, without `.fracture` a
+    destructible never breaks. Cluster LOD is optional, but an existing `.clod` must match its GLB."""
+    index = content / 'meshes/meshes.json'
+    if not index.is_file():
+        return {}
+    entries = sorted(json.loads(index.read_text()).items())
+    stale = {}
+    for suffix, (tags, table, classes, _) in CACHES.items():
+        rules = [line.split(',')[:2] for line in (remaster.ROOT / 'OpenGothic/data' / table).read_text().splitlines()
+                 if line and not line.startswith('#')]
+        for visual, entry in entries:
+            key = Path(visual).stem.upper()
+            if next((cls for pattern, cls in rules if fnmatch.fnmatchcase(key, pattern.upper())), None) not in classes:
+                continue
+            glb = content / 'meshes' / entry['glb']
+            source, cache = glb.read_bytes(), glb.with_suffix(suffix)
+            header = []
+            if cache.is_file():
+                with cache.open('rb') as stream:  # a .fracture runs to megabytes; only its first two lines matter
+                    header = [stream.readline().decode('ascii', 'replace').rstrip('\n') for _ in range(2)]
+            # beside its debris a GLB's pieces are cut only into version 3
+            wanted = (DEBRIS_TAG,) if suffix == '.fracture' and glb.with_suffix(DEBRIS).is_file() else tags
+            if len(header) != 2 or header[0] not in wanted or header[1] != f'source {len(source)} {zlib.crc32(source):08x}':
+                stale.setdefault(suffix, []).append(key)
+    for visual, entry in entries:
+        glb = content / 'meshes' / entry['glb']
+        cache = glb.with_suffix(CLUSTER_LOD)
+        if cache.is_file() and not fresh_clod(glb, cache):
+            stale.setdefault(CLUSTER_LOD, []).append(Path(visual).stem.upper())
+    return stale
 
 
 def enable(name: str) -> dict:
     """Make the staging set `name` the game's working content: `<data>/content`, which the engine reads
-    when OPENGOTHIC_CONTENT is unset. Only its `materials/`, `meshes/` and `worlds/` are replaced, other folders
-    there stay; `enabled.json` records the set. Enabling is the user's decision (gate `enable`)."""
+    when OPENGOTHIC_CONTENT is unset. Its `materials/`, `meshes/`, `worlds/`, `particles.d/` and `vobtrees.d/` are replaced; other folders
+    there stay; `enabled.json` records the set. Enabling is the user's decision (gate `enable`). A set whose
+    tables or cupboards lack a fresh `.convex-parts`, or whose destructibles lack a fresh `.fracture`, is
+    refused, as is a set with a stale cluster LOD graph."""
     staging = remaster.data_root() / 'content-staging' / name
     if not (staging / 'materials/materials.json').is_file():
         raise ValueError(f'{staging}: no materials/materials.json')
+    if stale := stale_caches(staging):
+        raise ValueError(f'{name}: ' + '; '.join(f'no fresh {suffix} for {", ".join(keys)}; run {CACHE_COMMANDS[suffix]} {staging}'
+                                                 for suffix, keys in stale.items()))
     live = remaster.data_root() / 'content'
     incoming = live / '.enable'
     shutil.rmtree(incoming, ignore_errors=True)
     incoming.mkdir(parents=True)
-    kinds = [kind for kind in ('materials', 'meshes', 'worlds') if (staging / kind).is_dir()]
+    kinds = [kind for kind in ('materials', 'meshes', 'worlds', 'particles.d', 'vobtrees.d') if (staging / kind).is_dir()]
     for kind in kinds:
         shutil.copytree(staging / kind, incoming / kind)
         for source in (staging / kind).rglob('*'):
             if source.is_file() and pilot.file_digest(source) != pilot.file_digest(incoming / kind / source.relative_to(staging / kind)):
                 raise ValueError(f'{source}: copy differs')
-    for kind in ('materials', 'meshes', 'worlds'):
+    for kind in ('materials', 'meshes', 'worlds', 'particles.d', 'vobtrees.d'):
         shutil.rmtree(live / kind, ignore_errors=True)
         if kind in kinds:
             (incoming / kind).rename(live / kind)
@@ -515,10 +683,12 @@ def main(argv=None) -> int:
     parser.add_argument('command', choices=('prepare', 'build', 'compose', 'enable'))
     parser.add_argument('asset', help='asset, the new set name for compose, or the set to enable')
     parser.add_argument('parts', nargs='*', help='compose: staging sets to join')
+    parser.add_argument('--without', action='append', default=[], metavar='PART',
+                        help='compose: a part of a composed set among the parts that stays behind (a new part takes its place)')
     args = parser.parse_args(argv)
     try:
         if args.command == 'compose':
-            print(json.dumps(compose(args.asset, args.parts), sort_keys=True), flush=True)
+            print(json.dumps(compose(args.asset, args.parts, tuple(args.without)), sort_keys=True), flush=True)
             return 0
         if args.command == 'enable':
             print(json.dumps(enable(args.asset), sort_keys=True, ensure_ascii=False), flush=True)

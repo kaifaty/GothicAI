@@ -7,8 +7,6 @@
 #include "sceneglobals.h"
 #include "visualobjects.h"
 
-class Item;
-
 class InventoryRenderer {
   public:
     InventoryRenderer();
@@ -16,7 +14,7 @@ class InventoryRenderer {
     void draw(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     void reset(bool full=false);
-    void drawItem(int x, int y, int w, int h, const Item &item);
+    void drawItem(int x, int y, int w, int h, const ProtoMesh& mesh, int32_t material, const Tempest::Matrix4x4& mat);
 
   private:
     struct PerFrame {

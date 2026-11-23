@@ -1,0 +1,191 @@
+# Research for the quiver's place and motion (reports/archery/2026-11-04-quiver-mount/research.md): the hero in
+# light leather walking with the bow on the back. First the swing as it is (the angle in metrics.csv: qv_swing,
+# qv_back, qv_outward; slowmo 2, a row is 1/60 s of the game), walking and running; then the quiver held at rest
+# (`quiver still on`) in the candidate places (`quiver place`), walking, from the right side and from behind on
+# the right: frames, not clips (the hand at the hip mid-step is picked from them). qv_arm: cm the arm goes in
+cheat god
+set time 12 0
+view clean
+goto NW_XARDAS_TOWER_VALLEY_091   # flat open ground
+face -106
+wait 500
+equip ItRw_Bow_L_01
+equip ITAR_Leather_L
+arrows player 20
+cam look 95
+slowmo 2
+wait 600
+walkmode walk
+cam follow 230 100 -90
+wait 300
+rec swing_walk
+hold forward 4200
+wait 4000
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+walkmode run
+rec swing_run
+hold forward 3200
+wait 3000
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+walkmode walk
+quiver still on
+
+# --- now
+quiver place off
+cam follow 230 100 -90
+wait 200
+hold forward 2600
+wait 800
+rec place_now_side
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 230 110 -140
+wait 200
+hold forward 2600
+wait 800
+rec place_now_backside
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+
+# --- now_upright
+quiver place 0 22 5 3
+cam follow 230 100 -90
+wait 200
+hold forward 2600
+wait 800
+rec place_now_upright_side
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 230 110 -140
+wait 200
+hold forward 2600
+wait 800
+rec place_now_upright_backside
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+
+# --- behind30
+quiver place 30 20 15 6
+cam follow 230 100 -90
+wait 200
+hold forward 2600
+wait 800
+rec place_behind30_side
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 230 110 -140
+wait 200
+hold forward 2600
+wait 800
+rec place_behind30_backside
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+
+# --- behind30_upright
+quiver place 30 20 5 3
+cam follow 230 100 -90
+wait 200
+hold forward 2600
+wait 800
+rec place_behind30_upright_side
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 230 110 -140
+wait 200
+hold forward 2600
+wait 800
+rec place_behind30_upright_backside
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+
+# --- behind60
+quiver place 60 17 12 8
+cam follow 230 100 -90
+wait 200
+hold forward 2600
+wait 800
+rec place_behind60_side
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 230 110 -140
+wait 200
+hold forward 2600
+wait 800
+rec place_behind60_backside
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+
+# --- lumbar
+quiver place 90 16 8 0 -55 108 6
+cam follow 230 100 -90
+wait 200
+hold forward 2600
+wait 800
+rec place_lumbar_side
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 230 110 -140
+wait 200
+hold forward 2600
+wait 800
+rec place_lumbar_backside
+wait 1100
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+quiver place off
+quiver still off

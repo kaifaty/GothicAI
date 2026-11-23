@@ -45,8 +45,6 @@ class DirectMusic final {
     StyleList                   styles;
     DlsList                     dls;
     std::vector<std::u16string> path;
-
-    Tempest::RFile              implOpen(const char16_t* file);
   };
 
 }

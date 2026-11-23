@@ -1,0 +1,284 @@
+{
+ "cameras": [
+  {
+   "name": "cauldron-harbour",
+   "eye": [
+    2399,
+    -14,
+    1308
+   ],
+   "target": [
+    2681,
+    -134,
+    1205
+   ],
+   "note": "cauldron over the ground fire, harbour; vob 20817 CAULDRON_OC"
+  },
+  {
+   "name": "cauldron-poor",
+   "eye": [
+    2548,
+    52,
+    -5981
+   ],
+   "target": [
+    2421,
+    -68,
+    -6253
+   ],
+   "note": "cauldron over the ground fire, poor quarter; vob 21096 CAULDRON_OC"
+  },
+  {
+   "name": "pan-fishers",
+   "eye": [
+    -5675,
+    -79,
+    -10591
+   ],
+   "target": [
+    -5599,
+    -189,
+    -10428
+   ],
+   "note": "frying pan on its stand over a stone ring; vob 20223 PAN_OC"
+  },
+  {
+   "name": "tripod-quay",
+   "eye": [
+    -2131,
+    735,
+    -8966
+   ],
+   "target": [
+    -1688,
+    635,
+    -8889
+   ],
+   "note": "tripod with hanging pot over the campfire; vob 19865 OC_FIREPLACE_V5"
+  },
+  {
+   "name": "tripod-canal",
+   "eye": [
+    5943,
+    -468,
+    4841
+   ],
+   "target": [
+    6393,
+    -568,
+    4863
+   ],
+   "note": "tripod campfire below the city; vob 24715 OC_FIREPLACE_V5"
+  },
+  {
+   "name": "brazier-poor",
+   "eye": [
+    2972,
+    -9,
+    -4245
+   ],
+   "target": [
+    2845,
+    -139,
+    -4517
+   ],
+   "note": "fire basket with a pot, poor quarter; vob 23401 DT_FIREPLACE_V1"
+  },
+  {
+   "name": "brazier-town",
+   "eye": [
+    7132,
+    467,
+    2752
+   ],
+   "target": [
+    7005,
+    337,
+    2481
+   ],
+   "note": "fire basket with a pot, lower town; vob 25248 DT_FIREPLACE_V1"
+  },
+  {
+   "name": "stove-harbour",
+   "eye": [
+    2733,
+    -13,
+    -334
+   ],
+   "target": [
+    2860,
+    -83,
+    -85
+   ],
+   "note": "kitchen stove with hood, harbour house; vob 25413 STOVE_NW_CITY_01"
+  },
+  {
+   "name": "stove-town",
+   "eye": [
+    7943,
+    295,
+    1705
+   ],
+   "target": [
+    8166,
+    225,
+    1873
+   ],
+   "note": "kitchen stove with hood, lower town; vob 22941 STOVE_NW_CITY_01"
+  },
+  {
+   "name": "stove-upper",
+   "eye": [
+    12719,
+    1069,
+    -4600
+   ],
+   "target": [
+    12632,
+    999,
+    -4866
+   ],
+   "note": "kitchen stove with hood, upper quarter; vob 21993 STOVE_NW_CITY_01"
+  },
+  {
+   "name": "hearth-harbour",
+   "eye": [
+    1533,
+    -15,
+    -705
+   ],
+   "target": [
+    1724,
+    -65,
+    -377
+   ],
+   "note": "small fireplace, harbour house; vob 23159 NW_CITY_FIREPLACE_NORMAL_01"
+  },
+  {
+   "name": "hearth-town",
+   "eye": [
+    7930,
+    437,
+    -2117
+   ],
+   "target": [
+    7929,
+    387,
+    -2497
+   ],
+   "note": "small fireplace, lower town; vob 23141 NW_CITY_FIREPLACE_NORMAL_01"
+  },
+  {
+   "name": "hearth-large-town",
+   "eye": [
+    5944,
+    438,
+    -344
+   ],
+   "target": [
+    5526,
+    408,
+    -176
+   ],
+   "note": "large fireplace, lower town; vob 24050 NW_CITY_FIREPLACE_LARGE_01"
+  },
+  {
+   "name": "hearth-large-upper",
+   "eye": [
+    13463,
+    1496,
+    -4173
+   ],
+   "target": [
+    13910,
+    1466,
+    -4125
+   ],
+   "note": "large fireplace, upper quarter; vob 21123 NW_CITY_FIREPLACE_LARGE_01"
+  },
+  {
+   "name": "hearth-wide-upper",
+   "eye": [
+    14384,
+    1066,
+    -4171
+   ],
+   "target": [
+    14529,
+    1036,
+    -4649
+   ],
+   "note": "wide fireplace, upper quarter; vob 22857 NW_CITY_FIREPLACE_LARGE_02"
+  },
+  {
+   "name": "cauldron-close",
+   "eye": [
+    2484,
+    32,
+    -6117
+   ],
+   "target": [
+    2421,
+    -68,
+    -6253
+   ],
+   "note": "cauldron close, poor quarter; vob 21097 CAULDRON_OC"
+  },
+  {
+   "name": "stove-close",
+   "eye": [
+    8047,
+    285,
+    1766
+   ],
+   "target": [
+    8166,
+    215,
+    1873
+   ],
+   "note": "kitchen stove close, lower town; vob 22942 STOVE_NW_CITY_01"
+  },
+  {
+   "name": "lamp-close",
+   "eye": [
+    8359,
+    612,
+    -4483
+   ],
+   "target": [
+    8279,
+    582,
+    -4622
+   ],
+   "note": "street lamp head close, lower town; vob 24120 FIREPLACE_NW_LAMP_01"
+  },
+  {
+   "name": "lamp-town",
+   "eye": [
+    8504,
+    562,
+    -4232
+   ],
+   "target": [
+    8279,
+    532,
+    -4622
+   ],
+   "note": "street lamp, lower town; vob 24119 FIREPLACE_NW_LAMP_01"
+  },
+  {
+   "name": "lamp-upper",
+   "eye": [
+    11634,
+    1193,
+    2826
+   ],
+   "target": [
+    11409,
+    1163,
+    2436
+   ],
+   "note": "street lamp, upper quarter; vob 24193 FIREPLACE_NW_LAMP_01"
+  }
+ ]
+}

@@ -1,0 +1,88 @@
+stage=session_begin stage_ms=-1.0 t_ms=0.0 rss_mb=169.5 footprint_mb=131.1 gpu_mb=45.8 tex_n=20 tex_mb=0.7 tex_ms=13.5 
+stage=scripts_vm stage_ms=164.3 t_ms=164.4 rss_mb=209.0 footprint_mb=210.6 gpu_mb=68.4 tex_n=20 tex_mb=0.7 tex_ms=13.5 
+stage=world_begin stage_ms=-1.0 t_ms=164.4 rss_mb=209.1 footprint_mb=210.6 gpu_mb=68.4 tex_n=20 tex_mb=0.7 tex_ms=13.5 world=NEWWORLD.ZEN
+stage=world_index stage_ms=-1.0 t_ms=180.2 rss_mb=210.8 footprint_mb=211.9 gpu_mb=68.4 tex_n=20 tex_mb=0.7 tex_ms=13.5 
+stage=world_data_read stage_ms=459.8 t_ms=640.0 rss_mb=293.9 footprint_mb=292.9 gpu_mb=68.4 tex_n=20 tex_mb=0.7 tex_ms=13.5 vobs=23 waypoints=2959
+stage=voblayer stage_ms=0.1 t_ms=640.1 rss_mb=293.9 footprint_mb=292.9 gpu_mb=68.4 tex_n=20 tex_mb=0.7 tex_ms=13.5 
+stage=mesh_chunks_read stage_ms=695.1 t_ms=1335.2 rss_mb=497.9 footprint_mb=409.2 gpu_mb=68.4 tex_n=20 tex_mb=0.7 tex_ms=13.5 chunks=403 tris=478472
+stage=world_read_total stage_ms=1170.9 t_ms=1335.3 rss_mb=498.0 footprint_mb=409.2 gpu_mb=68.4 tex_n=20 tex_mb=0.7 tex_ms=13.5 
+stage=landscape_pack stage_ms=183.0 t_ms=1528.0 rss_mb=618.5 footprint_mb=528.9 gpu_mb=68.4 tex_n=20 tex_mb=0.7 tex_ms=13.5 vertices=757824 indices=2273472 meshlet_bytes=36375552
+stage=landscape_view stage_ms=1059.7 t_ms=2404.7 rss_mb=623.7 footprint_mb=733.0 gpu_mb=269.3 tex_n=447 tex_mb=161.0 tex_ms=824.1 wait_ms=1059.710333
+stage=physics_static stage_ms=311.0 t_ms=2404.7 rss_mb=623.7 footprint_mb=733.0 gpu_mb=269.3 tex_n=447 tex_mb=161.0 tex_ms=824.1 wait_ms=0.000958
+stage=cloth_surfaces stage_ms=112.3 t_ms=2517.1 rss_mb=627.8 footprint_mb=737.0 gpu_mb=270.4 tex_n=447 tex_mb=161.0 tex_ms=824.1 surfaces=17
+stage=waynet stage_ms=3.7 t_ms=2520.8 rss_mb=627.8 footprint_mb=737.0 gpu_mb=270.4 tex_n=447 tex_mb=161.0 tex_ms=824.1 
+stage=vobs stage_ms=2604.3 t_ms=5125.1 rss_mb=757.1 footprint_mb=924.3 gpu_mb=329.5 tex_n=741 tex_mb=205.7 tex_ms=1218.9 items=2331 mobsi=996
+stage=movable_vobs stage_ms=96.7 t_ms=5221.8 rss_mb=755.1 footprint_mb=924.7 gpu_mb=329.5 tex_n=741 tex_mb=205.7 tex_ms=1218.9 
+stage=waynet_index stage_ms=744.2 t_ms=5966.0 rss_mb=697.5 footprint_mb=942.8 gpu_mb=329.5 tex_n=741 tex_mb=205.7 tex_ms=1218.9 
+stage=world_end stage_ms=5813.2 t_ms=5977.6 rss_mb=425.9 footprint_mb=634.3 gpu_mb=329.5 tex_n=741 tex_mb=205.7 tex_ms=1218.9 
+stage=dialogs stage_ms=131.0 t_ms=6108.7 rss_mb=454.3 footprint_mb=660.9 gpu_mb=329.5 tex_n=741 tex_mb=205.7 tex_ms=1218.9 
+stage=player_postinit stage_ms=204.6 t_ms=6313.4 rss_mb=465.5 footprint_mb=674.3 gpu_mb=332.0 tex_n=747 tex_mb=208.0 tex_ms=1234.9 
+stage=scripts_startup stage_ms=3425.5 t_ms=9739.0 rss_mb=429.0 footprint_mb=942.7 gpu_mb=437.0 tex_n=986 tex_mb=302.5 tex_ms=1944.8 npcs=1053
+stage=trigger_start stage_ms=0.1 t_ms=9739.1 rss_mb=429.1 footprint_mb=942.7 gpu_mb=437.0 tex_n=986 tex_mb=302.5 tex_ms=1944.8 
+stage=session_end stage_ms=-1.0 t_ms=9739.1 rss_mb=429.1 footprint_mb=942.7 gpu_mb=437.0 tex_n=986 tex_mb=302.5 tex_ms=1944.8 
+stage=change_begin stage_ms=-1.0 t_ms=125964.4 rss_mb=441.9 footprint_mb=1070.8 gpu_mb=503.2 tex_n=987 tex_mb=302.6 tex_ms=1947.3 to=addonworld.zen
+stage=change_store_old stage_ms=671.1 t_ms=126635.5 rss_mb=514.3 footprint_mb=1092.0 gpu_mb=503.2 tex_n=987 tex_mb=302.6 tex_ms=1947.3 stored_bytes=9750827
+stage=change_free_old stage_ms=202.4 t_ms=126838.0 rss_mb=508.9 footprint_mb=895.6 gpu_mb=442.7 tex_n=987 tex_mb=302.6 tex_ms=1947.3 
+stage=world_begin stage_ms=-1.0 t_ms=126838.9 rss_mb=508.9 footprint_mb=895.6 gpu_mb=442.7 tex_n=987 tex_mb=302.6 tex_ms=1947.3 world=addonworld.zen
+stage=world_index stage_ms=-1.0 t_ms=126865.9 rss_mb=509.8 footprint_mb=896.4 gpu_mb=442.7 tex_n=987 tex_mb=302.6 tex_ms=1947.3 
+stage=world_data_read stage_ms=340.8 t_ms=127206.7 rss_mb=526.2 footprint_mb=889.3 gpu_mb=442.7 tex_n=987 tex_mb=302.6 tex_ms=1947.3 vobs=13 waypoints=1510
+stage=voblayer stage_ms=0.0 t_ms=127211.8 rss_mb=526.2 footprint_mb=889.3 gpu_mb=442.7 tex_n=987 tex_mb=302.6 tex_ms=1947.3 
+stage=mesh_chunks_read stage_ms=1025.9 t_ms=128237.7 rss_mb=810.5 footprint_mb=1162.1 gpu_mb=442.7 tex_n=987 tex_mb=302.6 tex_ms=1947.3 chunks=371 tris=331888
+stage=world_read_total stage_ms=1398.9 t_ms=128237.8 rss_mb=810.5 footprint_mb=1162.1 gpu_mb=442.7 tex_n=987 tex_mb=302.6 tex_ms=1947.3 
+stage=landscape_pack stage_ms=117.5 t_ms=128357.3 rss_mb=852.3 footprint_mb=1203.8 gpu_mb=442.7 tex_n=987 tex_mb=302.6 tex_ms=1947.3 vertices=488960 indices=1466880 meshlet_bytes=23470080
+stage=landscape_view stage_ms=477.8 t_ms=128718.6 rss_mb=853.4 footprint_mb=1277.3 gpu_mb=515.4 tex_n=1119 tex_mb=350.1 tex_ms=2271.4 wait_ms=478.985375
+stage=physics_static stage_ms=271.5 t_ms=128718.6 rss_mb=853.4 footprint_mb=1277.3 gpu_mb=515.4 tex_n=1119 tex_mb=350.1 tex_ms=2271.4 wait_ms=0.000833
+stage=cloth_surfaces stage_ms=0.0 t_ms=128718.6 rss_mb=853.4 footprint_mb=1277.3 gpu_mb=515.4 tex_n=1119 tex_mb=350.1 tex_ms=2271.4 surfaces=0
+stage=waynet stage_ms=6.5 t_ms=128725.1 rss_mb=853.4 footprint_mb=1277.3 gpu_mb=515.4 tex_n=1119 tex_mb=350.1 tex_ms=2271.4 
+stage=vobs stage_ms=1928.9 t_ms=130654.1 rss_mb=858.5 footprint_mb=1289.1 gpu_mb=524.3 tex_n=1161 tex_mb=355.3 tex_ms=2356.3 items=1751 mobsi=275
+stage=movable_vobs stage_ms=6.4 t_ms=130660.6 rss_mb=858.5 footprint_mb=1289.1 gpu_mb=524.3 tex_n=1161 tex_mb=355.3 tex_ms=2356.3 
+stage=waynet_index stage_ms=387.3 t_ms=131047.9 rss_mb=858.5 footprint_mb=1289.1 gpu_mb=524.3 tex_n=1161 tex_mb=355.3 tex_ms=2356.3 
+stage=world_end stage_ms=4209.8 t_ms=131048.7 rss_mb=858.5 footprint_mb=1289.1 gpu_mb=524.3 tex_n=1161 tex_mb=355.3 tex_ms=2356.3 
+stage=change_restore_state stage_ms=0.0 t_ms=131049.0 rss_mb=858.5 footprint_mb=1289.1 gpu_mb=524.3 tex_n=1161 tex_mb=355.3 tex_ms=2356.3 bytes=0
+stage=scripts_startup stage_ms=1307.7 t_ms=132362.2 rss_mb=874.3 footprint_mb=1336.6 gpu_mb=541.0 tex_n=1195 tex_mb=369.7 tex_ms=2482.2 first=1 npcs=512
+stage=trigger_start stage_ms=0.0 t_ms=132362.2 rss_mb=874.3 footprint_mb=1336.6 gpu_mb=541.0 tex_n=1195 tex_mb=369.7 tex_ms=2482.2 
+stage=change_end stage_ms=-1.0 t_ms=132362.3 rss_mb=874.3 footprint_mb=1336.6 gpu_mb=541.0 tex_n=1195 tex_mb=369.7 tex_ms=2482.2 
+stage=change_begin stage_ms=-1.0 t_ms=133562.8 rss_mb=879.2 footprint_mb=1372.2 gpu_mb=551.0 tex_n=1197 tex_mb=369.8 tex_ms=2486.2 to=oldworld.zen
+stage=change_store_old stage_ms=299.7 t_ms=133862.6 rss_mb=881.0 footprint_mb=1373.5 gpu_mb=551.0 tex_n=1197 tex_mb=369.8 tex_ms=2486.2 stored_bytes=14348430
+stage=change_free_old stage_ms=53.0 t_ms=133917.9 rss_mb=880.9 footprint_mb=1367.6 gpu_mb=516.7 tex_n=1197 tex_mb=369.8 tex_ms=2486.2 
+stage=world_begin stage_ms=-1.0 t_ms=133929.3 rss_mb=880.9 footprint_mb=1367.6 gpu_mb=516.7 tex_n=1197 tex_mb=369.8 tex_ms=2486.2 world=oldworld.zen
+stage=world_index stage_ms=-1.0 t_ms=133953.7 rss_mb=878.9 footprint_mb=1339.5 gpu_mb=516.7 tex_n=1197 tex_mb=369.8 tex_ms=2486.2 
+stage=world_data_read stage_ms=347.2 t_ms=134301.0 rss_mb=881.7 footprint_mb=1342.3 gpu_mb=516.7 tex_n=1197 tex_mb=369.8 tex_ms=2486.2 vobs=3 waypoints=1408
+stage=voblayer stage_ms=0.0 t_ms=134301.1 rss_mb=881.7 footprint_mb=1342.3 gpu_mb=516.7 tex_n=1197 tex_mb=369.8 tex_ms=2486.2 
+stage=mesh_chunks_read stage_ms=309.4 t_ms=134610.5 rss_mb=881.9 footprint_mb=1342.5 gpu_mb=516.7 tex_n=1197 tex_mb=369.8 tex_ms=2486.2 chunks=429 tris=87963
+stage=world_read_total stage_ms=681.3 t_ms=134610.6 rss_mb=881.9 footprint_mb=1342.5 gpu_mb=516.7 tex_n=1197 tex_mb=369.8 tex_ms=2486.2 
+stage=landscape_pack stage_ms=39.4 t_ms=134650.8 rss_mb=888.5 footprint_mb=1349.1 gpu_mb=516.7 tex_n=1197 tex_mb=369.8 tex_ms=2486.2 vertices=157184 indices=471552 meshlet_bytes=7544832
+stage=landscape_view stage_ms=473.5 t_ms=135085.0 rss_mb=889.2 footprint_mb=1354.7 gpu_mb=550.4 tex_n=1411 tex_mb=394.8 tex_ms=2890.4 wait_ms=473.784834
+stage=physics_static stage_ms=72.1 t_ms=135085.1 rss_mb=889.2 footprint_mb=1354.7 gpu_mb=550.4 tex_n=1411 tex_mb=394.8 tex_ms=2890.4 wait_ms=0.000750
+stage=cloth_surfaces stage_ms=0.0 t_ms=135085.1 rss_mb=889.2 footprint_mb=1354.7 gpu_mb=550.4 tex_n=1411 tex_mb=394.8 tex_ms=2890.4 surfaces=0
+stage=waynet stage_ms=1.0 t_ms=135086.1 rss_mb=889.2 footprint_mb=1354.7 gpu_mb=550.4 tex_n=1411 tex_mb=394.8 tex_ms=2890.4 
+stage=vobs stage_ms=1569.3 t_ms=136655.4 rss_mb=894.1 footprint_mb=1358.0 gpu_mb=555.4 tex_n=1445 tex_mb=397.4 tex_ms=2948.5 items=940 mobsi=277
+stage=movable_vobs stage_ms=13.6 t_ms=136669.0 rss_mb=894.1 footprint_mb=1358.0 gpu_mb=555.4 tex_n=1445 tex_mb=397.4 tex_ms=2948.5 
+stage=waynet_index stage_ms=286.2 t_ms=136955.2 rss_mb=893.5 footprint_mb=1357.4 gpu_mb=555.4 tex_n=1445 tex_mb=397.4 tex_ms=2948.5 
+stage=world_end stage_ms=3026.8 t_ms=136956.1 rss_mb=893.5 footprint_mb=1357.4 gpu_mb=555.4 tex_n=1445 tex_mb=397.4 tex_ms=2948.5 
+stage=change_restore_state stage_ms=0.0 t_ms=136956.1 rss_mb=893.5 footprint_mb=1357.4 gpu_mb=555.4 tex_n=1445 tex_mb=397.4 tex_ms=2948.5 bytes=0
+stage=scripts_startup stage_ms=1561.0 t_ms=138518.7 rss_mb=901.8 footprint_mb=1407.5 gpu_mb=566.2 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 first=1 npcs=714
+stage=trigger_start stage_ms=0.0 t_ms=138518.7 rss_mb=901.8 footprint_mb=1407.5 gpu_mb=566.2 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=change_end stage_ms=-1.0 t_ms=138518.7 rss_mb=901.8 footprint_mb=1407.5 gpu_mb=566.2 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=change_begin stage_ms=-1.0 t_ms=139624.1 rss_mb=908.9 footprint_mb=1425.9 gpu_mb=578.3 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 to=newworld.zen
+stage=change_store_old stage_ms=195.3 t_ms=139819.5 rss_mb=908.7 footprint_mb=1425.7 gpu_mb=578.3 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 stored_bytes=19096667
+stage=change_free_old stage_ms=55.4 t_ms=139874.9 rss_mb=908.1 footprint_mb=1423.2 gpu_mb=558.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=world_begin stage_ms=-1.0 t_ms=139876.6 rss_mb=908.1 footprint_mb=1423.2 gpu_mb=558.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 world=NEWWORLD.ZEN
+stage=world_index stage_ms=-1.0 t_ms=139904.3 rss_mb=909.9 footprint_mb=1425.0 gpu_mb=558.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=world_data_read stage_ms=565.5 t_ms=140469.9 rss_mb=947.8 footprint_mb=1448.6 gpu_mb=558.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 vobs=23 waypoints=2959
+stage=voblayer stage_ms=0.0 t_ms=140469.9 rss_mb=947.8 footprint_mb=1448.6 gpu_mb=558.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=mesh_chunks_read stage_ms=930.9 t_ms=141400.8 rss_mb=1003.3 footprint_mb=1475.2 gpu_mb=558.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 chunks=403 tris=478472
+stage=world_read_total stage_ms=1524.5 t_ms=141401.1 rss_mb=1003.3 footprint_mb=1475.2 gpu_mb=558.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=landscape_pack stage_ms=402.4 t_ms=141814.4 rss_mb=1069.2 footprint_mb=1534.3 gpu_mb=558.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 vertices=757824 indices=2273472 meshlet_bytes=36375552
+stage=landscape_view stage_ms=447.6 t_ms=141860.5 rss_mb=1069.2 footprint_mb=1572.6 gpu_mb=596.0 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 wait_ms=449.140958
+stage=physics_static stage_ms=605.2 t_ms=142016.9 rss_mb=1069.9 footprint_mb=1573.3 gpu_mb=596.0 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 wait_ms=156.363250
+stage=cloth_surfaces stage_ms=163.6 t_ms=142180.6 rss_mb=1071.4 footprint_mb=1575.1 gpu_mb=596.8 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 surfaces=17
+stage=waynet stage_ms=5.8 t_ms=142186.4 rss_mb=1071.4 footprint_mb=1575.1 gpu_mb=596.8 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=vobs stage_ms=988.2 t_ms=143174.7 rss_mb=1076.3 footprint_mb=1580.2 gpu_mb=597.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 items=2330 mobsi=996
+stage=movable_vobs stage_ms=173.2 t_ms=143348.0 rss_mb=1076.5 footprint_mb=1580.4 gpu_mb=597.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=waynet_index stage_ms=1440.4 t_ms=144788.4 rss_mb=1076.5 footprint_mb=1580.0 gpu_mb=597.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=world_end stage_ms=4913.0 t_ms=144789.6 rss_mb=1076.5 footprint_mb=1580.0 gpu_mb=597.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=change_restore_state stage_ms=536.7 t_ms=145326.4 rss_mb=1094.2 footprint_mb=1597.6 gpu_mb=597.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 bytes=9750827
+stage=scripts_startup stage_ms=856.8 t_ms=146185.4 rss_mb=1095.1 footprint_mb=1598.5 gpu_mb=597.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 first=0 npcs=1047
+stage=trigger_start stage_ms=0.0 t_ms=146185.4 rss_mb=1095.1 footprint_mb=1598.5 gpu_mb=597.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 
+stage=change_end stage_ms=-1.0 t_ms=146185.5 rss_mb=1095.1 footprint_mb=1598.5 gpu_mb=597.1 tex_n=1464 tex_mb=406.4 tex_ms=3013.8 

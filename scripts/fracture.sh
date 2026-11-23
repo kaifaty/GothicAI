@@ -2,8 +2,9 @@
 # Offline fixed-seed fracture of crates, barrels, pots and fences.
 # Stock mode requires a legally installed Gothic II; its geometry stays in the
 # local cache outside git. Content mode reads only our indexed GLBs and writes
-# adjacent sidecars, without using the installation or stock fracture cache.
-# No game, GPU or model is started.
+# adjacent sidecars, without using the installation or stock fracture cache:
+# version 3 (the pieces of model.debris.glb, scripts/fracture/debris.py) when
+# that file lies beside model.glb, else version 2. No game, GPU or model is started.
 #
 # scripts/fracture.sh [all|extract|cut|verify]
 # scripts/fracture.sh content <content-dir> [--verify]

@@ -1,0 +1,38 @@
+# Authored candle-lit harbour house containing NW_CITY_TABLE_PEASANT_01.
+# The table and its candle/books remain in the native world; no fixture props.
+seed 73013
+cheat god
+set time 22 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+goto pos 3924 -73 -6663
+watch player
+cam look 110
+cam world 160 170 0
+# Ten real seconds after the teleport for loading and native simulation.
+wait 10000
+cam hold
+perf sample perf-interior/view-1
+wait 8000
+perf stop
+cam world 160 170 90
+wait 34
+cam hold
+perf sample perf-interior/view-2
+wait 8000
+perf stop
+cam world 160 170 180
+wait 34
+cam hold
+perf sample perf-interior/view-3
+wait 8000
+perf stop
+cam world 160 170 270
+wait 34
+cam hold
+perf sample perf-interior/view-4
+wait 8000
+perf stop

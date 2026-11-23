@@ -12,7 +12,8 @@ crate(P, zones, base, size, R, cfg, rng): base is the centre of the bottom, size
 (length, width, height) along the crate's own x, y, z, R its 3x3 rotation. cfg keys
 (all optional): post [width, thick], batten [width, thick], plank, gap [min, max],
 plank_width (target width in m), tilt_deg, proud, rope [radius, sides, segments],
-rope_ends ("both", "one", "none"), nails (bool), nail_radius, nail, broken (bool),
+rope_ends ("both", "one", "none"), nails (bool), nail_radius, nail, nail_jitter (m), nail_skip (share), lid_nails (bool: the harbour lids
+have none, their heads read as dark dots from above), broken (bool),
 lid_shift (m, one plank), lid_offset [dx, dy] (m, the whole lid pushed aside). zones: {"plank", "brace", "inner", "rope",
 "nail"} material indices; "nail" may be None when nails are off. The dark core takes "inner": it is
 seen only through the gaps, so it has its own colour target and does not pull the planks' mean
@@ -59,8 +60,13 @@ def crate(P, zones, base, size, R, cfg, rng, tile):
     turned = lambda axis, normal: Matrix.Rotation(rng.uniform(-tilt, tilt), 3, normal) @ axis
 
     def nail(spot, normal_w, a_w):
-        if nails:
-            P.nail(spot, a_w, normal_w.cross(a_w), normal_w, nail_r, nail_h, NAIL)
+        # driven by hand: a little off the mark, now and then one missing (in a fixed grid the heads read
+        # as a regular pattern of dark dots on the lids, fifth review)
+        if nails and rng.uniform() >= cfg.get("nail_skip", 0.0):
+            j = cfg.get("nail_jitter", 0.0)
+            b_w = normal_w.cross(a_w)
+            spot = spot + a_w * rng.uniform(-j, j) + b_w * rng.uniform(-j, j)
+            P.nail(spot, a_w, b_w, normal_w, nail_r * rng.uniform(0.8, 1.1), nail_h, NAIL)
 
     # --- long sides: horizontal planks running between the posts, upright batten in the middle ---
     broken_side = int(rng.integers(0, 2)) if cfg.get("broken", True) else -1
@@ -116,7 +122,7 @@ def crate(P, zones, base, size, R, cfg, rng, tile):
         length = 2 * x_end - 0.004 - abs(shift)
         P.wood(at(ox + shift / 2, y + w / 2, lid_top - pt / 2 + rng.uniform(-proud, proud)), turned(ex, ez), ey, ez,
                length, w, pt, PLANK, tile)
-        for xe in (-x_end + 0.03, x_end - 0.03):
+        for xe in (-x_end + 0.03, x_end - 0.03) if cfg.get("lid_nails", True) else ():
             nail(at(ox + xe, y + w / 2, lid_top), ez, ex)
         y += w + (gaps[k] if k < len(gaps) else 0)
 

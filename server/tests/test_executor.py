@@ -45,17 +45,20 @@ def test_intent_targets_must_be_around():
     assert intent is None and "ORC_WARRIOR" in reason and "PC_THIEF (Диего, 6 м)" in reason
 
 
-def test_hero_fight_reason_is_checked_after_target_normalisation():
+def test_fight_reason_is_checked_after_target_normalisation():
     intent, reason = executor.check_intent(
-        Intent("fight", target="player"), SNAP, fight_reason=lambda: "сначала потребуй — ultimatum",
+        Intent("fight", target="player"), SNAP, fight_reason=lambda target: "сначала потребуй — ultimatum",
     )
     assert intent is None and reason == "сначала потребуй — ultimatum"
-    intent, reason = executor.check_intent(Intent("fight", target="PLAYER"), SNAP, fight_reason=lambda: None)
-    assert intent is not None and reason is None
     intent, reason = executor.check_intent(
-        Intent("fight", target="PC_THIEF"), SNAP, fight_reason=lambda: "must not be checked",
+        Intent("fight", target="PLAYER"), SNAP, fight_reason=lambda target: None,
     )
     assert intent is not None and reason is None
+    intent, reason = executor.check_intent(
+        Intent("fight", target="pc_thief"), SNAP,
+        fight_reason=lambda target: "companion needs a cause" if target == "PC_THIEF" else None,
+    )
+    assert intent is None and reason == "companion needs a cause"
 
 
 def test_intent_actions():
@@ -120,7 +123,8 @@ async def test_a_rejected_give_comes_back_within_the_turn_and_never_reaches_the_
     assert not [m for m in fake.received if m["type"] == "action"]
     assert fake.said[-1] == "Хотя нет, такого свитка у меня нет."
     history = dialogue.conversations[XARDAS].history
-    assert history[-1].content == "Держи свиток огненного шара. Хотя нет, такого свитка у меня нет."
+    assert history[-2].content == "Держи свиток огненного шара. Хотя нет, такого свитка у меня нет."
+    assert history[-1].content.startswith("[give_item не прошёл: У тебя нет предмета ITSC_FIREBALL")
 
 
 async def test_a_rejection_before_any_words_keeps_its_original_output():

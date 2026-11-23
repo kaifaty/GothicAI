@@ -1,0 +1,40 @@
+# Our own temporal upscale after a stop (graphics plan 1г, reports/render-features/2026-11-05-upscale/step-1g-1-taau.md):
+# the market at noon as in upscale-walk.bench, but the hero goes by the forward key and the key is let go, so he
+# stops on the same cobbles. Stills: standing (`stand`), in full stride as the key is let go (`stop-0`) and 0.1,
+# 0.25, 0.5, 1, 2 and 4 s later (the hero stands from about 0.5 s): how soon the picture of a stop is as sharp as
+# one that stood. Lockstep, so a run at 100 % is the truth for the others:
+#   uv run --with numpy --with pillow python -I reports/render-features/2026-11-05-upscale/stills.py walk <100 % dir> <dir> ...
+# Lothar is frozen: his greeting would hold the hero in a dialog.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui on
+view full
+cam lift off
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+watch player
+walkmode walk
+face wp NW_CITY_MERCHANT_PATH_09
+cam look 120
+cam follow 380 170 160
+wait 10000
+shot stand
+press forward
+wait 4000
+release forward
+shot stop-0
+wait 100
+shot stop-1
+wait 150
+shot stop-2
+wait 250
+shot stop-3
+wait 500
+shot stop-4
+wait 1000
+shot stop-5
+wait 2000
+shot stop-6
+wait 500

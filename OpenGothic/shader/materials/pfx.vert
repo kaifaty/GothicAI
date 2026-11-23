@@ -8,6 +8,7 @@
 const int PfxOrientationNone       = 0;
 const int PfxOrientationVelocity   = 1;
 const int PfxOrientationVelocity3d = 2;
+const int PfxOrientationStretch    = 3; // own streak (pfxbucket.cpp, particles.d "stretch")
 
 struct Particle {
   vec3  pos;
@@ -44,6 +45,13 @@ struct Vertex {
   uint  color;
   };
 
+#if defined(FORWARD)
+vec3 unpackRgb9e5(uint v) {
+  const float scale = exp2(float(v >> 27u) - 15.0 - 9.0);
+  return vec3(v & 511u, (v >> 9u) & 511u, (v >> 18u) & 511u) * scale;
+  }
+#endif
+
 Vertex pullVertex(uint id) {
   Vertex ret;
   ret.pos    = pfx[id].pos;
@@ -70,6 +78,7 @@ void rotate(out vec3 rx, out vec3 ry, float a, in vec3 x, in vec3 y) {
   }
 
 vec4 processVertex(out Varyings shOut, in Vertex v, uint instanceId, uint vboOffset) {
+  float energy = 1.0; // own least size on screen: the alpha that keeps the sprite's light as it grows
   // Bilboards
   {
     const float U[6]   = { 0, 1, 0,  0, 1, 1};
@@ -127,6 +136,43 @@ vec4 processVertex(out Varyings shOut, in Vertex v, uint instanceId, uint vboOff
       top  = -v.dir;
       left = -cross(top,depth);
       }
+    else if(visOrientation==PfxOrientationStretch && bitfieldExtract(v.bits0, 6, 1)!=0) {
+      // a leaning flame card (pfxbucket.cpp, particles.d "lean"): it stands on its lower edge, dir is the way to
+      // its upper edge in card heights. The card faces the camera about that way as seen on screen; seen along
+      // the flame (from behind a runner) it keeps the share size.z of its height (three quarters by default): a
+      // flame's body glows through; a flying bolt keeps less and is a compact fire when it comes at the camera
+      const vec3  base  = v.pos - vec3(0, v.size.y*0.5, 0);
+      const vec3  tip   = v.dir*v.size.y;
+      const vec3  tp    = tip - dot(tip,depth)*depth;
+      const float lp    = length(tp);
+      const vec3  up    = lp>1e-3 ? tp/lp : -scene.pfxTop;
+      const float len   = max(lp, v.size.z*v.size.y);
+      vec3        side  = cross(up,depth);
+      const float ls    = length(side);
+      side = ls>1e-4 ? side/ls : left;
+      if(dot(side,left)<0.0)
+        side = -side;
+      left     = side;
+      top      = -up;
+      v.pos    = base + up*(len*0.5);
+      v.size.y = len;
+      v.size.z = 0.1*v.size.x;
+      }
+    else if(visOrientation==PfxOrientationStretch) {
+      // a card facing the camera along the velocity as seen on screen: size.y plus the path size.z (cm) foreshortened,
+      // its head at the particle and the streak behind it
+      const float speed = length(v.dir);
+      const vec3  dn    = speed>0.0 ? v.dir/speed : vec3(0);
+      const vec3  dp    = dn - dot(dn,depth)*depth;
+      const float lp    = length(dp);
+      if(lp>1e-4) {
+        top  = -dp/lp;
+        left = -cross(top,depth);
+        }
+      v.pos    -= dn*(v.size.z*0.5);
+      v.size.y += v.size.z*lp;
+      v.size.z  = 0.1*v.size.x;
+      }
     else if(visOrientation==PfxOrientationVelocity) {
       vec3  dir  = (m * vec4(v.dir,0)).xyz;
       float ldir = length(dir);
@@ -144,6 +190,17 @@ vec4 processVertex(out Varyings shOut, in Vertex v, uint instanceId, uint vboOff
       }
     else {
       // nope
+      }
+
+    // own least size on screen (pfxbucket.cpp, particles.d "minPixels"; 1/16 px in bits 7..14 without a flipbook):
+    // a smaller sprite is drawn that size and its alpha falls by the area, so its light stays and TAA keeps it
+    const uint minPx16 = bitfieldExtract(v.bits0, 6, 1)!=0 ? 0u : bitfieldExtract(v.bits0, 7, 8);
+    if(minPx16!=0u && !isTrail) {
+      const float w     = max((scene.viewProject*vec4(v.pos,1.0)).w, 1e-3);
+      const float pxPer = abs(scene.project[1][1])*0.5*float(scene.screenRes.y)/w;
+      const vec2  k     = max(vec2(1.0), (float(minPx16)/16.0)/max(v.size.xy*pxPer, vec2(1e-4)));
+      v.size.xy *= k;
+      energy     = 1.0/(k.x*k.y);
       }
 
     if(visTexIsQuadPoly)
@@ -166,6 +223,23 @@ vec4 processVertex(out Varyings shOut, in Vertex v, uint instanceId, uint vboOff
 #endif
 #if defined(MAT_COLOR)
   shOut.color = unpackUnorm4x8(v.color);
+  shOut.color.a *= energy;
+#endif
+#if defined(MAT_UV)
+  shOut.flip = vec3(0, 0, -1);
+  if(bitfieldExtract(v.bits0, 6, 1)!=0) {
+    // own atlas flipbook (pfxbucket.cpp): this frame and the next, cols x rows cells from the top left
+    const uvec2 grid  = uvec2(bitfieldExtract(v.bits0, 7, 3), bitfieldExtract(v.bits0, 10, 3)) + 1u;
+    const uint  f0    = bitfieldExtract(v.bits0, 13, 6);
+    const uint  f1    = bitfieldExtract(v.bits0, 19, 6);
+    const vec2  cell  = vec2(1.0)/vec2(grid);
+    shOut.uv   = (vec2(f0 % grid.x, f0 / grid.x) + v.uv) * cell;
+    shOut.flip = vec3((vec2(f1 % grid.x, f1 / grid.x) + v.uv) * cell, float(bitfieldExtract(v.bits0, 25, 7))/127.0);
+    }
+#endif
+#if defined(FORWARD)
+  // billboards carry their point-light irradiance in colorB; a trail uses it for its second colour
+  shOut.pointLight = bitfieldExtract(v.bits0, 3, 1)!=0 ? vec3(0) : unpackRgb9e5(pfx[instanceId].colorB);
 #endif
 
   return scene.viewProject*vec4(v.pos,1.0);

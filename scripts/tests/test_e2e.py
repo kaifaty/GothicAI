@@ -144,22 +144,80 @@ sleep() { printf 'sleep %s\n' "$1" >> "$CALLS"; }
 
 
 class SoakControlTests(unittest.TestCase):
+    def test_off_and_default_auto_are_forwarded_and_removed_backend_is_rejected(self):
+        source = SCRIPT.read_text()
+        selection = source[source.index('SCENARIO="${SCENARIO:-m0}"'):source.index('ASR="${ASR:-fake}"')]
+        launch = source[source.index('(cd "$ROOT/server" && exec uv run gothic-ai serve'):
+                        source.index('GAME=""')]
+        for llm in ("off", None):
+            with self.subTest(llm=llm), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                (root / "server").mkdir()
+                uv = root / "uv"
+                uv.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@"\n')
+                uv.chmod(0o755)
+                env = {"PATH": f"{root}:{os.environ['PATH']}", "ROOT": str(root), "LOG_DIR": str(root),
+                       "PORT": "47827", "SCENARIO": "graph"}
+                if llm is not None:
+                    env["LLM"] = llm
+                done = subprocess.run(
+                    ["bash", "-euc", selection + '\nVOICE_ARGS=(--no-voice) TTS_ARGS=(--no-tts) '
+                     'BRAIN_ARGS=(--no-brain) QUICK_ARGS=(--no-quick) SVM_ARGS=() FEAT_ARGS=()\n'
+                     + launch + '\nwait "$SRV"'],
+                    check=False, env=env, capture_output=True, text=True, timeout=5,
+                )
+                self.assertEqual(done.returncode, 0, done.stderr)
+                args = (root / "server.log").read_text().splitlines()
+                self.assertEqual(args[args.index("--llm") + 1], llm or "auto")
+        rejected = subprocess.run(
+            ["bash", "-euc", selection], check=False,
+            env={"PATH": os.environ["PATH"], "SCENARIO": "graph", "LLM": "fake"},
+            capture_output=True, text=True, timeout=5,
+        )
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("LLM=fake is gone: scenarios pick their group (docs/e2e.md)", rejected.stderr)
+
     def test_control_selects_native_body_without_relaxing_other_launch_requirements(self):
         source = SCRIPT.read_text()
         selection = source[source.index('SCENARIO="${SCENARIO:-m0}"'):source.index('ASR="${ASR:-fake}"')]
         cases = [
-            ("neural-soak", "1", "", "", "fake", 0, "--no-neural-body"),
-            ("neural-soak", "1", "tcp://policy:47835", "", "fake", 0, "--no-neural-body"),
-            ("neural-soak", "0", "tcp://policy:47835", "", "fake", 0, "--neural-body"),
-            ("neural-soak", "0", "", "", "fake", 2, None),
-            ("neural-soak", "1", "", "/tmp/save.sav", "fake", 2, None),
-            ("neural-soak", "1", "", "", "chatgpt", 2, None),
-            ("neural-load", "1", "tcp://policy:47835", "", "fake", 2, None),
+            ("memprobe", "0", "", "", "off", 0, "--no-neural-body", None),
+            ("neural-soak", "1", "", "", "off", 0, "--no-neural-body", None),
+            ("neural-soak", "1", "tcp://policy:47835", "", "off", 0, "--no-neural-body", None),
+            ("neural-soak", "0", "tcp://policy:47835", "", "off", 0,
+             "--neural-body--body-policyengine", None),
+            ("neural-soak", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
+            ("neural-soak", "0", "", "", "off", 2, None, "service"),
+            ("neural-soak", "1", "", "/tmp/save.sav", "off", 2, None, None),
+            ("neural-load", "1", "tcp://policy:47835", "", "off", 2, None, None),
+            ("bandit_parley", "0", "", "", None, 0, "--no-neural-body", None),
+            ("feats", "0", "", "", None, 0, "--no-neural-body", None),
+            ("feat_fame", "0", "", "", None, 0, "--no-neural-body", None),
+            ("feats", "0", "", "", "off", 0, "--no-neural-body", None),
+            ("feat_fame", "0", "", "", "off", 0, "--no-neural-body", None),
+            ("bandit_parley", "0", "", "", "off", 0, "--no-neural-body", None),
+            ("bandit_bounty", "0", "", "", "off", 0, "--no-neural-body", None),
+            ("bandit_parley", "0", "", "/tmp/save.sav", "off", 2, None, None),
+            ("road_bandits", "0", "", "", None, 0, "--no-neural-body", None),
+            ("road_bandits", "0", "", "", "off", 0, "--no-neural-body", None),
+            ("road_bandits", "0", "", "/tmp/save.sav", "off", 2, None, None),
         ]
-        for scenario, control, url, save, llm, status, body_flag in cases:
-            with self.subTest(scenario=scenario, control=control, url=url, save=save, llm=llm):
+        cases += [
+            (scenario, "0", "", "", "off", 0, "--neural-body--body-policyengine", None)
+            for scenario in ("neural", "neural-companion", "neural-group", "neural-talk",
+                             "neural-load", "neural-still")
+        ]
+        for scenario, control, url, save, llm, status, body_flag, policy in cases:
+            with self.subTest(scenario=scenario, control=control, url=url, save=save, llm=llm, policy=policy):
                 env = dict(os.environ, SCENARIO=scenario, GOTHIC_SOAK_CONTROL=control,
-                           GOTHIC_BODY_URL=url, SAVE=save, LLM=llm, GOTHIC_TTS_RECORD="0")
+                           GOTHIC_BODY_URL=url, SAVE=save, GOTHIC_TTS_RECORD="0")
+                if llm is None:
+                    env.pop("LLM", None)
+                else:
+                    env["LLM"] = llm
+                env.pop("GOTHIC_BODY_POLICY", None)
+                if policy is not None:
+                    env["GOTHIC_BODY_POLICY"] = policy
                 result = subprocess.run(
                     ["bash", "-euc", selection + '\nprintf "%s" "${BODY_ARGS[@]}"'],
                     check=False,
@@ -168,6 +226,43 @@ class SoakControlTests(unittest.TestCase):
                 self.assertEqual(result.returncode, status, result.stdout + result.stderr)
                 if body_flag is not None:
                     self.assertEqual(result.stdout, body_flag)
+
+
+class RunDefaultsTests(unittest.TestCase):
+    def test_declared_timeout_and_save_fill_only_unset_values(self):
+        source = SCRIPT.read_text()
+        selection = source[source.index('source "$ROOT/scripts/e2e-services.sh"\n# Unset TIMEOUT'):
+                           source.index('ASR="${ASR:-fake}"')]
+        cases = [
+            # scenario, environment, TIMEOUT, SAVE (None: unset), RUN queried
+            ("errand", {}, "1500", "save_slot_1.sav", True),
+            ("errand", {"TIMEOUT": "300", "SAVE": ""}, "300", "", False),
+            ("check_walk", {}, "240", None, True),
+            ("haggle", {}, "1200", None, True),
+        ]
+        for scenario, options, timeout, save, queried in cases:
+            with self.subTest(scenario=scenario, options=options), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp).resolve()
+                (root / "scripts").mkdir()
+                (root / "server").mkdir()
+                (root / "scripts/e2e-services.sh").write_text(SCRIPT.with_name("e2e-services.sh").read_text())
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                uv = root / "uv"
+                # A stand-in for RUN: errand is declared with a save, check_walk without one, haggle is LIVE.
+                uv.write_text('#!/bin/sh\nprintf \'%s\\n\' "$*" >>"$TEST_CALLS"\ncat >/dev/null\n'
+                              'case "$4" in errand) echo "1500 1" ;; check_walk) echo "240 0" ;; esac\n')
+                uv.chmod(0o755)
+                env = {"PATH": f"{root}:{os.environ['PATH']}", "ROOT": str(root), "SCENARIO": scenario,
+                       "TEST_CALLS": str(root / "calls"), **options}
+                done = subprocess.run(
+                    ["bash", "-euc", selection + '\nprintf "%s|%s" "$TIMEOUT" "${SAVE-<unset>}"'],
+                    check=False, env=env, capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(done.returncode, 0, done.stderr)
+                expected = "<unset>" if save is None else str(root / save) if save == "save_slot_1.sav" else save
+                self.assertEqual(done.stdout, f"{timeout}|{expected}")
+                calls = (root / "calls").read_text().splitlines() if (root / "calls").exists() else []
+                self.assertEqual(calls, [f"run python - {scenario}"] if queried else [])
 
 
 class SoakVideoTests(unittest.TestCase):
@@ -186,7 +281,7 @@ class SoakVideoTests(unittest.TestCase):
                 runtime.write_text("#!/bin/sh\nexit 0\n")
                 runtime.chmod(0o755 if executable else 0o644)
                 game = run / "game.sh"
-                game.write_text('#!/bin/bash\nexec "$RYZEN_GAME_BIN" "$@" -g2 -window\n')
+                game.write_text('#!/bin/bash\nexec "$RYZEN_GAME_BIN" "$@" -window\n')
             else:
                 runtime = None
                 game = root / "OpenGothic/build/opengothic/Gothic2Notr"

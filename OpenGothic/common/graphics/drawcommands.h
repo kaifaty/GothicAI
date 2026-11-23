@@ -2,6 +2,8 @@
 
 #include <Tempest/RenderPipeline>
 #include <Tempest/StorageBuffer>
+#include <iosfwd>
+#include <memory>
 #include <vector>
 
 #include "sceneglobals.h"
@@ -9,9 +11,19 @@
 class VisualObjects;
 class DrawBuckets;
 class DrawClusters;
+class TreeBoughRender;
 
 class DrawCommands {
   public:
+    // Meshlet-page pairs the VSM visibility pass may emit a frame: VSM_MAX_MESHLETS in vsm_common.glsl
+    static constexpr uint32_t VsmMaxMeshlets = 512*1024;
+    // workgroups of vsm_cull_meshlets.comp: each takes the candidates one after another
+    static constexpr uint32_t VsmCullGroups  = 2048;
+    static uint32_t vsmPairCap(); // VsmMaxMeshlets, or OPENGOTHIC_VSM_PAIRS for a study
+    // the sun's virtual shadow map for a forward-lit draw, or the 1x1x1 table that sends it to the cascades
+    static void bindSunVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene,
+                           uint32_t tblSlot, uint32_t atlasSlot);
+
     enum Type : uint8_t {
       Landscape,
       Static,
@@ -21,12 +33,19 @@ class DrawCommands {
       Morph,
       };
     static uint32_t hiddenTypes; // debug (test bench): a bit per Type that is not drawn
+    static bool     hidePfxObjects; // debug (test bench), `view hide pfx` only: the particles of PfxObjects too
+
+    enum class HistoryDraw : uint8_t { Off, Unfiltered, Early, EarlyVerify, Filtered };
+    static bool treeHistoryEnabled();
 
     struct DrawCmd {
       const Tempest::RenderPipeline* pMain        = nullptr;
       const Tempest::RenderPipeline* pShadow      = nullptr;
       const Tempest::RenderPipeline* pVsm         = nullptr;
       const Tempest::RenderPipeline* pHiZ         = nullptr;
+      const Tempest::RenderPipeline* pHistoryGBuffer = nullptr;
+      const Tempest::RenderPipeline* pHistoryDepth   = nullptr;
+      const Tempest::RenderPipeline* pHistoryVerify  = nullptr;
       Type                           type         = Type::Landscape;
 
       Material::AlphaFunc            alpha        = Material::Solid;
@@ -48,17 +67,33 @@ class DrawCommands {
     ~DrawCommands();
 
     const DrawCmd& operator[](size_t i) const { return cmd[i]; }
-    size_t   maxMeshlets() const { return maxPayload; }
 
     void     commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    uint16_t commandId(const Material& m, Type type, uint32_t bucketId);
+    uint16_t commandId(const Material& m, Type type, uint32_t bucketId, bool shadowOnly = false);
     void     addClusters(uint16_t cmdId, uint32_t meshletCount);
+    void     addBough(const StaticMesh& mesh, uint32_t cluster, uint16_t main, uint16_t impostor,
+                      uint32_t first, uint32_t count);
+    void     removeBough(uint32_t cluster);
+    void     setBoughTransform(uint32_t cluster, const Tempest::Matrix4x4& transform);
 
-    void     visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
-    void     visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void     visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass, bool history = false);
+    void     visibilityStats(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void     writeTreeOcclusionDecisions(std::ostream& out);
+    void     visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::StorageBuffer* geometryStats);
 
     void     drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    void     drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, SceneGlobals::VisCamera viewId, Material::AlphaFunc func);
+    void     drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, SceneGlobals::VisCamera viewId, Material::AlphaFunc func,
+                        HistoryDraw history = HistoryDraw::Off);
+
+    bool prepareHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& winners, uint8_t fId);
+    bool hasHistory() const { return history.previousCount!=0; }
+    void classifyHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& depth,
+                         float depthRoundoff, bool late, bool reset);
+    void compactHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool early);
+    void finishHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& winners, uint8_t fId);
+    void finishBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool late);
+    const Tempest::StorageBuffer& historyStatus() const { return history.status; }
+    uint32_t historyClusterCount() const;
 
     void     drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
@@ -74,6 +109,7 @@ class DrawCommands {
       T_HiZ        = 7,
       T_VsmPages   = 8,
       T_CmdOffsets = 9,
+      T_Order      = T_Lights, // visibility_pass*_ordered.comp: the clusters in their canonical order
       };
 
     enum UboLinkpackage : uint8_t {
@@ -95,6 +131,16 @@ class DrawCommands {
       L_CmdOffsets = 14,
       L_Normal     = 15,
       L_Orm        = 16,
+      L_FogLut     = 17,
+      L_FogLutMs   = 18,
+      L_VsmPageTbl = 19,
+      L_VsmPageAtlas = 20,
+      L_InstancePrev = 21, // the instance buffer after the previous frame (motion vectors, G-buffer pass)
+      L_FogOcc     = 22, // the sun's bits along the ray of the fog (fog3d.comp), for the fog of translucent under GI
+      L_FringeMain   = 23, // the fringe's maps without bindless (material_projection.glsl); with it, in the arrays
+      L_FringeNormal = 24,
+      L_FringeOrm    = 25,
+      L_GrassBorder  = 26, // the meadows' borders with a verge, bindless only (shader/grass/grass_border.glsl)
       L_VsmPages   = L_Shadow0,
       L_Lights     = L_Shadow1,
       };
@@ -114,8 +160,10 @@ class DrawCommands {
       };
 
     bool                     isViewEnabled(SceneGlobals::VisCamera v) const;
+    const Tempest::StorageBuffer& orderedClusters();
 
     void                     setBindings(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const DrawCmd& cx, SceneGlobals::VisCamera viewId);
+    void                     sampleHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& owners, uint32_t phase);
 
     VisualObjects&           owner;
     DrawBuckets&             buckets;
@@ -128,6 +176,39 @@ class DrawCommands {
     bool                     cmdDurtyBit = false;
     View                     views[SceneGlobals::V_Count];
 
+    struct HistoryCommand {
+      uint32_t first, blocks, flags, pad;
+      bool operator==(const HistoryCommand&) const = default;
+      };
+    static_assert(sizeof(HistoryCommand)==4*sizeof(uint32_t));
+    struct {
+      View view;
+      std::vector<HistoryCommand> uploadedCommands;
+      Tempest::StorageBuffer commands, blocks, compactScratch, status, stats, counts[2];
+      Tempest::StorageBuffer read[Resources::MaxFramesInFlight];
+      bool written[Resources::MaxFramesInFlight] = {};
+      bool dirty = true;
+      uint32_t blockCount = 0;
+      uint32_t previousCount = 0;
+      uint32_t readIndex = 0;
+      } history;
+
     const bool               vsmSupported;
+
+    // bench `deterministic on`: cluster ids sorted by what they draw, not by the order they were allocated in
+    std::vector<uint32_t>    orderIds, orderNext;
+    Tempest::StorageBuffer   orderSsbo;
+    Tempest::StorageBuffer   treeOcclusionDecisions;
     Tempest::StorageBuffer   vsmIndirectCmd;
+    Tempest::StorageBuffer   vsmCandidates; // vsm_visibility_pass.comp: a cluster and a page entry, for the meshlets' pass
+
+    // the frame profile's counters of the main view (visibility_stats.comp): the GPU's sums, and per frame slot their
+    // host-visible copy and whether it holds a frame not read yet
+    Tempest::StorageBuffer   statsSum;
+    Tempest::StorageBuffer   statsRead[Resources::MaxFramesInFlight];
+    bool                     statsWritten[Resources::MaxFramesInFlight] = {};
+    std::unique_ptr<TreeBoughRender> boughs;
+    bool                     boughExpanded = false;
+    uint32_t                 boughHistoryToken = 0;
+    friend class TreeBoughRender;
   };

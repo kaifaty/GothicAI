@@ -1,7 +1,7 @@
 """Live-body regressions for Cavalorn's fights reported on 2026-10-18.
 
-The default decision and speech models are scripted, as in m5. DECIDER_URL can replace the
-decision fixture. All perceptions, voice starts, weapon animations, strikes and damage come
+The default decisions are explicit givens. DECIDER_URL can replace the
+decision fixture. All perceptions, native cries, weapon animations, strikes and damage come
 from the game; an accepted fight command alone never passes a combat check.
 """
 
@@ -40,9 +40,16 @@ from .protocol import (
     ThreatControlCmd,
     TriggerFired,
 )
-from .scenarios.common import FixedDecider, _until
+from .scenarios.common import FixedDecider, SharedBodyWatch, _until, model_off
 from .talk import TalkDesk
 from .triggers import STATE, removal, trigger
+
+SCENARIOS = {
+    "fight_reactions_wolf": ("GIVEN", {"save": False, "timeout": 180, "exclusive": True}),
+    "fight_reactions_sight": ("OFF", {"save": False, "timeout": 180, "exclusive": True}),
+    "fight_reactions_bandits": ("GIVEN", {"save": False, "timeout": 300, "exclusive": True}),
+    "fight_reactions_flee": ("GIVEN", {"save": False, "timeout": 180, "exclusive": True}),
+}
 
 log = logging.getLogger(__name__)
 
@@ -376,6 +383,24 @@ async def fight_reactions(
     """
     await link.wait_world()
     results: dict[str, str] = {}
+    event_turn = dialogue.event_turn
+
+    def silent_combat(npc: str, cue: str, *args: Any, **kwargs: Any) -> asyncio.Task[None] | None:
+        turn = event_turn(npc, cue, *args, **kwargs)
+        if turn is not None and npc in {CAVALORN, *BANDITS}:
+            reason = next((text for text in (
+                "нападает на тебя", "нападает на героя", "нападает на:", "убил:",
+                "напал на тебя", "враждебен и бежит на тебя с обнажённым оружием",
+                "рядом драка:", "идёт на тебя", "расправился с монстром",
+            ) if text in cue), None)
+            if reason is not None:
+                model_off(dialogue).silent(
+                    f"дано: {npc} молчит ({cue})", who=npc, when=reason,
+                )
+        return turn
+
+    if case != "sight":
+        dialogue.event_turn = silent_combat  # type: ignore[method-assign]
 
     def check(name: str, ok: bool, detail: object) -> None:
         results[name] = f"{'done' if ok else 'failed'} ({detail})"
@@ -383,6 +408,11 @@ async def fight_reactions(
 
     runner: asyncio.Task[None] | None = None
     if planner is None:
+        for bandit in BANDITS:
+            log.info(
+                "дано: %s %s; escalation=3.6", bandit,
+                "flees Cavalorn" if case == "flee" else "fights Cavalorn",
+            )
         planner = NpcPlanner(
             FixedDecider(
                 {"react": ("flee", "continue") if case == "flee" else ("fight", "continue")},
@@ -443,7 +473,7 @@ async def fight_reactions(
     link.listeners.append(trace.message)
     link.raw_body_listeners.append(trace.body)
     send = link.send
-    body_watch = link.body_watch
+    body_watch = SharedBodyWatch(link, "fight_reactions setup")
 
     async def recorded(cmd: Any) -> None:
         if isinstance(cmd, ActionCmd | NpcActCmd):
@@ -612,7 +642,8 @@ async def fight_reactions(
         await link.debug("player_goto", pos=point(-900))
         if not await _until(lambda: CAVALORN in talk.people, 10):
             raise GameError("fight_reactions setup: Cavalorn absent from roster")
-        dialogue.open(CAVALORN, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
+        if case != "sight":
+            dialogue.open(CAVALORN, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
 
         if case in {"wolf", "sight"}:
             monster = f"DIR_NPC_FIGHT_{case.upper()}"
@@ -684,7 +715,7 @@ async def fight_reactions(
             await link.story_effect(CAVALORN, [{"do": "party", "value": 1}])
             symbols = await link.story_eval(CAVALORN, [["sym", n] for n in (CAVALORN, monster, "PC_HERO")])
             trace.symbols = dict(zip(symbols, (CAVALORN, monster, "PLAYER"), strict=True))
-            await link.body_watch([CAVALORN, monster, "PLAYER"])
+            await body_watch.watch([CAVALORN, monster, "PLAYER"])
             if not await _until(lambda: all(n in trace.positions for n in (CAVALORN, monster, "PLAYER")), 5):
                 raise GameError("fight_reactions setup: missing body observations")
             if case == "wolf":
@@ -950,30 +981,11 @@ async def fight_reactions(
             if not await talk.hold(BANDITS[1], "listen"):
                 raise GameError("fight_reactions setup: cannot hold listening bandit")
             watch = [CAVALORN, *BANDITS, "PLAYER"]
-            watched: tuple[tuple[str, ...], int] | None = None
-            watch_stats: dict[str, Any] = {}
-
-            async def passive_body_watch(
-                npcs: list[str], rate_hz: int = 20, timeout: float = 5.0,
-            ) -> dict[str, Any]:
-                nonlocal watched, watch_stats
-                # The pilot shares one native subscription with this passive trace. Keep
-                # all four actors and their order when it watches or unwatches one fighter.
-                actors = list(dict.fromkeys([*watch, *(npc.upper() for npc in npcs)]))
-                if len(actors) > 4:
-                    raise GameError("fight_reactions setup: passive body watch exceeds four actors")
-                signature = (tuple(actors), rate_hz)
-                if watched != signature or watch_stats.get("generation") != link.body_generation:
-                    watch_stats = await body_watch(actors, rate_hz=rate_hz, timeout=timeout)
-                    watched = signature
-                return watch_stats
-
-            link.body_watch = passive_body_watch  # type: ignore[method-assign]
             symbols = await link.story_eval(
                 CAVALORN, [["sym", "PC_HERO" if n == "PLAYER" else n] for n in watch]
             )
             trace.symbols = dict(zip(symbols, watch, strict=True))
-            await link.body_watch(watch)
+            await body_watch.watch(watch)
             if not await _until(lambda: all(n in trace.positions for n in watch), 5):
                 raise GameError("fight_reactions setup: missing bandit body observations")
 
@@ -1288,32 +1300,17 @@ async def fight_reactions(
                         ),
                         None,
                     )
-                    voices = [
-                        m
-                        for t, m in trace.events
-                        if t >= charge_started and isinstance(m, LineStarted) and m.npc == bandit and m.voiced
-                    ]
                     armed = trace.armed.get(bandit)
-                    # Game time is authoritative for draw/strike/damage. Voice events carry wall time;
-                    # compare those with the arrival time of the first actual damage observation.
-                    hit_wall = next(iter(trace.damage_wall.get(bandit, [])), None)
-                    voice_before = hit_wall is not None and any(
-                        charge_started <= t < hit_wall
-                        and isinstance(m, LineStarted)
-                        and m.npc == bandit
-                        and m.voiced
-                        for t, m in trace.events
-                    )
                     shouts = combat_shouts(Path(log_dir) / "game.log", bandit)
                     native_voice_before = hit is not None and any(t < hit for t in shouts)
                     check(
                         f"{bandit}_prepares",
                         threat is not None
-                        and (voice_before or native_voice_before)
+                        and native_voice_before
                         and hit is not None
                         and armed is not None
                         and armed < hit,
-                        f"threat={threat is not None}, voiced={len(voices)}, native_shout_game_ms={shouts}, "
+                        f"threat={threat is not None}, native_shout_game_ms={shouts}, "
                         f"draw_game_ms={armed}, first_hit_game_ms={hit}",
                     )
                     window_end = min(first, hit + 3000) if first is not None else hit + 3000
@@ -1364,13 +1361,16 @@ async def fight_reactions(
                     f"hero_damage={trace.damage.get('PLAYER', [])}",
                 )
     finally:
-        link.body_watch = body_watch  # type: ignore[method-assign]
-        for npc in parked:
-            await link.detach(npc)
-        link.send = send  # type: ignore[method-assign]
-        link.listeners.remove(trace.message)
-        link.raw_body_listeners.remove(trace.body)
-        await link.body_watch([])
+        dialogue.event_turn = event_turn  # type: ignore[method-assign]
+        try:
+            for npc in parked:
+                await link.detach(npc)
+            link.send = send  # type: ignore[method-assign]
+            link.listeners.remove(trace.message)
+            link.raw_body_listeners.remove(trace.body)
+            await body_watch.watch([])
+        finally:
+            body_watch.close()
         planner.builder.traits = old_traits
         planner.allow = old_allow
         if runner is not None:

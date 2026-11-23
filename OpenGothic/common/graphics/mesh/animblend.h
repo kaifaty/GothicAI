@@ -9,7 +9,7 @@
 
 #include "animation.h"
 
-class Serialize;
+class SaveArchive;
 
 // Transitions between animations by inertialization (D. Bollo, "Inertialization: High-Performance
 // Animation Transitions in Gears of War", GDC 2018). When a bone switches to another animation, the
@@ -47,6 +47,17 @@ class AnimBlend final {
       // the velocity across the offset (Bollo drops it too) swings the bone aside and back, up to
       // this * offset / blend time: aside up to ~20% of the offset
       float sideSpeed = 1.f;
+      // a switch into a blow (an animation with an optimal frame) of a body that holds a weapon is not
+      // longer, s: the MDS starts a blow at once, and its arc decides the hit. t_1hAttackR starts wound up
+      // behind the left shoulder and crosses the front by its third frame; blended the usual 0.3 s from
+      // the stance, it crossed with the arm still pulled to the stance, a palm short of the body
+      float blowTime  = 0.08f;
+      // an animation stopped at ease (easeOut: the hands of one whose voice is over come to rest): its bones go
+      // back as fast at most as the MDS's blend out, a linear fade, would turn them. The quintic curve is 1.875
+      // times as fast at its middle as a linear fade of the same length, so it takes this many times as long;
+      // maxTime does not cut it (that limit is for legs: these bones carry no weight), easeMax does
+      float easeScale = 1.875f;
+      float easeMax   = 1.f;
       };
 
     // For the test bench
@@ -65,19 +76,31 @@ class AnimBlend final {
 
     void           reset(size_t numBones);
     void           setLog(bool l) { log = l; }  // switches to the log (the hero, OPENGOTHIC_ANIBLEND_LOG=1)
+    // the body holds a weapon (its skeleton has the slot): its blows switch in blowTime at most
+    void           setWeaponBody(bool w) { weaponBody = w; }
+    // This animation is being stopped at ease: the bones that switch from it at the next apply blend over
+    // easeScale times its blend out (Params), apart from the other switches of that frame
+    void           easeOut(const Animation::Sequence* seq) { easeSeq = seq; }
 
     // What drives a bone this frame: the animation and when it started (a switch is a change of
-    // either), and the key frames around the time, a then b (the velocity of the animation)
+    // either), and the key frames around the time, a then b (the velocity of the animation). smooth: the
+    // animation is sampled on the curve through its keys (animsample.h), t of the way from a to b, with the
+    // keys before a and after b (null where the clip has none): its velocity is the curve's there
     void           drive(size_t bone, const Animation::Sequence& seq, uint64_t sAnim,
-                         const Sample& a, const Sample& b, float fpsRate) {
-      auto& d = cur[bone];
-      d.seq   = &seq;
-      d.sAnim = sAnim;
-      d.in    = seq.blendIn;
-      d.out   = seq.blendOut;
-      d.a     = &a;
-      d.b     = &b;
-      d.rate  = fpsRate;
+                         const Sample& a, const Sample& b, float fpsRate,
+                         const Sample* before=nullptr, const Sample* after=nullptr, float t=0, bool smooth=false) {
+      auto& d  = cur[bone];
+      d.seq    = &seq;
+      d.sAnim  = sAnim;
+      d.in     = seq.blendIn;
+      d.out    = seq.blendOut;
+      d.a      = &a;
+      d.b      = &b;
+      d.rate   = fpsRate;
+      d.before = before;
+      d.after  = after;
+      d.t      = t;
+      d.smooth = smooth;
       }
 
     // out = what the animations give (raw) with the offsets of the bones that switched; bones nothing
@@ -94,8 +117,8 @@ class AnimBlend final {
     // The common driverless transition curve, also used for an affine bone's stretch/shear.
     float          externalWeight(uint64_t now) const;
     // Only the driverless external transition; written in the optional ragdoll save entry.
-    void           saveExternal(Serialize& fout) const;
-    void           loadExternal(Serialize& fin, size_t expectedBones, bool hasVelocityState=true);
+    void           saveExternal(SaveArchive& fout) const;
+    void           loadExternal(SaveArchive& fin, size_t expectedBones, bool hasVelocityState=true);
     void           probe(Probe& p);
 
   private:
@@ -107,6 +130,10 @@ class AnimBlend final {
       const Sample*              a     = nullptr;
       const Sample*              b     = nullptr;
       float                      rate  = 0;
+      const Sample*              before = nullptr;
+      const Sample*              after  = nullptr;
+      float                      t      = 0;
+      bool                       smooth = false;
       };
 
     // x(t) from x0 with velocity v0 to 0 at t1, zero velocity and acceleration there
@@ -136,6 +163,7 @@ class AnimBlend final {
       Tempest::Vec3 turn, dturn, move, dmove;
       float         angle = 0, len = 0;
       float         time  = 0;  // from the MDS
+      bool          ease  = false;  // out of an animation stopped at ease
       };
 
     void           prepare(size_t bone, const Sample& target, const Sample& shown, float dtShown, float dtNow);
@@ -153,6 +181,8 @@ class AnimBlend final {
     uint64_t            lastTime = 0;
     uint32_t            started  = 0;
     bool                log      = false;
+    bool                weaponBody = false;
+    const Animation::Sequence* easeSeq = nullptr;  // stopped at ease since the last apply
     float               lastBlend = 0;
     bool                externalDriven = false;
     Curve               externalFade;

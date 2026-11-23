@@ -12,6 +12,8 @@ class Serialize;
 
 class Vob {
   public:
+    size_t probeBaseBytes() const;
+
     struct AttachmentSnapshot {
       uint32_t zenId = uint32_t(-1), parentZenId = uint32_t(-1);
       std::string visual;
@@ -70,6 +72,7 @@ class Vob {
     // Physics poses are transient: pos/local retain the authored save identity.
     Tempest::Matrix4x4                pos, local, physicsPos;
     bool                              hasPhysicsPos = false;
+    bool                              layerObject = false;
     Vob*                              parent = nullptr;
 
     void          recalculateTransform();

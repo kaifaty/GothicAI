@@ -148,8 +148,10 @@ async def capture(args) -> int:
 
     if sys.platform != "darwin":
         raise RuntimeError("live capture with game audio requires macOS")
-    if any(os.environ.get(name, "fake") != "fake" for name in ("LLM", "ASR", "TTS")):
-        raise RuntimeError("LLM, ASR and TTS must be fake")
+    if os.environ.get("LLM", "off") != "off" or any(
+        os.environ.get(name, "fake") != "fake" for name in ("ASR", "TTS")
+    ):
+        raise RuntimeError("LLM must be off; ASR and TTS must be fake")
     body_url = tomllib.loads(args.settings.read_text()).get("llm", {}).get("body_url")
     if not body_url:
         raise RuntimeError("settings contain no body_url")
@@ -166,6 +168,8 @@ async def capture(args) -> int:
     shutil.copy(args.save, run / "save_slot_1.sav")
     (run / "Gothic.ini").write_text("[INTERNAL]\nvidResIndex=0\n[GAME]\nUSEGOTHIC1CONTROLS=0\n[SOUND]\n"
                                    "soundVolume=1\nmusicVolume=0\nmusicEnabled=0\nworldSounds=0\n")
+    subprocess.run(["bash", str(Path(__file__).with_name("base-ensure.sh")), str(args.assets)],
+                   env=dict(os.environ, GAME_BIN=str(args.game.resolve())), check=True)
     session_done = asyncio.Event()
     errors: list[Exception] = []
 
@@ -209,7 +213,7 @@ async def capture(args) -> int:
     game = None
     try:
         await server.started.wait()
-        env = {**os.environ, "LLM": "fake", "ASR": "fake", "TTS": "fake",
+        env = {**os.environ, "LLM": "off", "ASR": "fake", "TTS": "fake",
                "GOTHIC_AI_URL": f"ws://127.0.0.1:{server.port}", "GOTHIC_AI": "1",
                "TEMPEST_BACKGROUND": "1", "TEMPEST_WINDOW_SIZE": macos_window_size("1920x1080"),
                "TEMPEST_AUDIO_LOOPBACK": "48000", "OPENGOTHIC_BENCH_REALTIME": "1",
@@ -225,7 +229,7 @@ async def capture(args) -> int:
         game_guard()
         with (out / "game.log").open("w") as log:
             game = await asyncio.create_subprocess_exec(str(args.game.resolve()), "-g", str(args.assets),
-                "-g2", "-window", "-devmode", "-save", "1", cwd=run, env=env,
+                "-window", "-devmode", "-save", "1", cwd=run, env=env,
                 stdout=log, stderr=asyncio.subprocess.STDOUT)
             await asyncio.wait_for(game.wait(), timeout=180)
         await asyncio.wait_for(session_done.wait(), timeout=5)

@@ -1,4 +1,5 @@
 #include "navigationeyebench.h"
+#include "game/navigationeyeworld.h"
 #include "navigationeye.h"
 
 #include "game/gamescript.h"
@@ -6,6 +7,7 @@
 #include "world/world.h"
 #include "world/objects/npc.h"
 #include "gothic.h"
+#include "settings.h"
 #include "camera.h"
 
 #include <rapidjson/stringbuffer.h>
@@ -60,7 +62,7 @@ struct Cost {
   size_t actor=0;
   double microseconds=0;
   size_t casts=0,nearCasts=0,farCasts=0;
-  bool far=false;
+  bool farUpdated=false;
 };
 
 struct State {
@@ -111,7 +113,7 @@ std::string setup(World& world,Npc& player,const std::string& scene,size_t count
   if(scene!="market" && scene!="lobart" && !fence) throw std::runtime_error("eye scene must be market, lobart or lobart-fence");
   if(count!=1 && count!=10 && count!=20 && count!=50)
     throw std::runtime_error("eye actors must be 1, 10, 20 or 50");
-  Gothic::settingsSetI("GAME","living_bodies",1);
+  Settings::setI("GAME","living_bodies",1);
   for(auto* actor:state.actors) world.removeNpc(*actor);
   state.actors.clear();state.eyes.clear();
   state.scene=fence?"lobart":scene;
@@ -285,8 +287,8 @@ std::string end(World& world) {
     double sum=0;
     uint64_t casts=0,nearCasts=0,farCasts=0;
     for(const auto& sample:state.costs) {
-      if(subset==1 && sample.far) continue;
-      if(subset==2 && !sample.far) continue;
+      if(subset==1 && sample.farUpdated) continue;
+      if(subset==2 && !sample.farUpdated) continue;
       values.push_back(sample.microseconds);sum+=sample.microseconds;
       casts+=sample.casts;nearCasts+=sample.nearCasts;farCasts+=sample.farCasts;
     }
@@ -324,7 +326,7 @@ std::string end(World& world) {
            << ",\"ray_count\":" << state.eyes.front()->rayCount() << ",\"center_range_cm\":" << state.config.centerRangeCm
            << ",\"game_ms\":" << sample.time << ",\"actor\":" << sample.actor << ",\"wall_us\":" << sample.microseconds
            << ",\"casts\":" << sample.casts << ",\"near_casts\":" << sample.nearCasts << ",\"far_casts\":" << sample.farCasts
-           << ",\"far_updated\":" << (sample.far?"true":"false") << "}\n";
+           << ",\"far_updated\":" << (sample.farUpdated?"true":"false") << "}\n";
   if(!timing) throw std::runtime_error("eye timing journal write failed");
   state.costs.clear();return out.str();
 }
@@ -352,7 +354,7 @@ std::string wall(World& world) {
     const float yaw=float(angle)*Pi/12.f;
     const Vec3 direction(std::cos(yaw),0,std::sin(yaw));
     const Vec3 source=floor+Vec3(0,165,0);
-    const auto hit=world.physic()->navigationRay(source,source+direction*1500.f,&npc);
+    const auto hit=navigationRay(*world.physic(),source,source+direction*1500.f,&npc);
     if(!hit.hasCol || std::abs(hit.normal.y)>.12f ||
        (hit.kind!=DynamicWorld::NavigationHit::World && hit.kind!=DynamicWorld::NavigationHit::StaticVob)) continue;
     Vec3 normal=hit.normal;normal.y=0;normal*=1.f/normal.length();

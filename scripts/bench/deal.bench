@@ -1,5 +1,5 @@
 # The deal window (docs/npc-tools.md) with an AI server (GOTHIC_AI_URL) whose scenario offers a deal
-# (`serve --scenario deal_demo --llm fake --no-tts`): Xardas offers a thing for 50 gold the hero lacks, then
+# (`serve --scenario deal_demo --llm off --no-tts`): Xardas offers a thing for 50 gold the hero lacks, then
 # for 30, and the hero accepts. The interface is in the frames; the camera at Xardas, from the side.
 cheat god
 watch nearest

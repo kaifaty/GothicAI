@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import logging
 import os
 import sys
 from pathlib import Path
 
+from . import originals
 from .audio import to_wav
 from .loudness import TARGET_LUFS, Leveler
 from .providers import PROVIDERS, TtsError, TtsProvider, Voice, make_provider
 from .providers.inworld import InworldTTS
-from .service import DEFAULT_ORIGINAL_VOICES, TtsService, load_original_voices
+from .service import DEFAULT_ORIGINAL_VOICES, ORIGINAL_SAMPLES, TtsService, load_original_voices
 from .synthesizer import Synthesizer
 
 log = logging.getLogger("gothic_tts")
@@ -95,6 +97,15 @@ async def say(args: argparse.Namespace) -> int:
 
 
 async def clone_originals(args: argparse.Namespace) -> int:
+    if args.game_dir is not None:
+        def progress(done: int, total: int) -> None:
+            log.info("original voices: snapshots %d/%d", done, total)
+
+        try:
+            await asyncio.to_thread(originals.prepare, args.game_dir, args.dir, progress=progress)
+        except Exception as err:
+            print(f"error: original voice snapshots: {err}", file=sys.stderr)
+            return 1
     voices = load_original_voices(args.dir)
     if not voices:
         print(
@@ -118,14 +129,41 @@ async def clone_originals(args: argparse.Namespace) -> int:
         for voice in selected.values():
             cid = voice.id.removesuffix("@original")
             try:
-                voice_id = await provider.clone(voice)
-                print(f"{cid} → {voice_id}")
+                audio = await asyncio.to_thread(Path(voice.sample).read_bytes)
+                digest = hashlib.sha1(audio).hexdigest()[:16]
+                expected = ORIGINAL_SAMPLES.get(cid)
+                if expected is not None and digest != expected:
+                    log.warning(
+                        "original voice %s sample hash %s differs from expected %s; "
+                        "update original_samples.json",
+                        cid, digest, expected,
+                    )
+                voice_id, source = await provider.clone_with_source(voice)
+                print(f"{cid} → {voice_id} ({source})")
             except (TtsError, OSError) as err:
                 print(f"error: {cid}: {err}", file=sys.stderr)
                 failed = True
+        try:
+            await provider.tag_cached_voices()
+        except (TtsError, OSError) as err:
+            print(f"error: voice tags: {err}", file=sys.stderr)
+            failed = True
     finally:
         await provider.aclose()
     return int(failed)
+
+
+async def tag_voices() -> int:
+    provider = InworldTTS()
+    try:
+        tagged, already_tagged, missing = await provider.tag_cached_voices()
+        print(f"Voice tags: {tagged} tagged, {already_tagged} already tagged, {missing} not found")
+    except (TtsError, OSError) as err:
+        print(f"error: voice tags: {err}", file=sys.stderr)
+        return 1
+    finally:
+        await provider.aclose()
+    return 0
 
 
 def _write(path: str, data: bytes) -> None:
@@ -174,9 +212,12 @@ def main() -> None:
     p.add_argument("--no-original-voices", action="store_true")
     _add_provider_args(p)
 
-    p = sub.add_parser("clone-originals", help="clone the original game voices into the Inworld cache")
+    p = sub.add_parser("clone-originals", help="prepare the original game voices in Inworld")
     p.add_argument("--dir", type=Path, default=DEFAULT_ORIGINAL_VOICES)
+    p.add_argument("--game-dir", type=Path, help="Gothic II folder for original voice snapshots")
     p.add_argument("ids", metavar="ID", nargs="*")
+
+    sub.add_parser("tag-voices", help="tag cached Inworld clones and designed voices in the workspace")
 
     p = sub.add_parser("say", help="speak lines and measure latency")
     p.add_argument("text", nargs="+")
@@ -206,6 +247,8 @@ def main() -> None:
                 code = asyncio.run(say(args))
             case "clone-originals":
                 code = asyncio.run(clone_originals(args))
+            case "tag-voices":
+                code = asyncio.run(tag_voices())
             case _:
                 code = 2
     except ValueError as err:

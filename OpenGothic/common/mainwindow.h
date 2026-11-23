@@ -26,6 +26,7 @@
 #include "world/focus.h"
 #include "game/playercontrol.h"
 #include "graphics/renderer.h"
+#include "ui/gameframe.h"
 #include "ui/dialogmenu.h"
 #include "ui/inventorymenu.h"
 #include "ui/chapterscreen.h"
@@ -34,6 +35,7 @@
 #include "ui/menuroot.h"
 #include "ui/consolewidget.h"
 #include "ui/touchinput.h"
+#include "input/handmotion.h"
 
 #include "utils/keycodec.h"
 #include "resources.h"
@@ -69,8 +71,12 @@ class MainWindow : public Tempest::Window {
     void paintFocus     (Tempest::Painter& p, Tempest::Rect rect);
     void paintCrosshair (Tempest::Painter& p, const Tempest::Matrix4x4& vp);
 
-    void drawBar(Tempest::Painter& p, const Tempest::Texture2d *bar, int x, int y, float v, Tempest::AlignFlag flg);
+    void drawBar(Tempest::Painter& p, const Tempest::Texture2d *bar, int x, int y, float v, Tempest::AlignFlag flg,
+                 float height = 1.f, const Tempest::Color& tint = Tempest::Color(1,1,1,1), float mark = -1.f);
+    int  barHeight() const;
+    void drawStamina(Tempest::Painter& p, const Npc& pl, bool aboveHealth);
     void drawMsg(Tempest::Painter& p);
+    void drawChunks(Tempest::Painter& p, const World& world, const Camera& camera);
     void drawProgress(Tempest::Painter& p, int x, int y, int w, int h, float v);
     void drawLoading (Tempest::Painter& p,int x,int y,int w,int h);
     void drawSaving  (Tempest::Painter& p);
@@ -99,7 +105,11 @@ class MainWindow : public Tempest::Window {
 
     void render() override;
     // the test bench: the frame as the player sees it, the interface on top
-    Tempest::Attachment screenshotWithUi();
+    Tempest::Attachment screenshotWithUi(Tempest::Attachment&& reuse);
+    // the image render() draws the frame into: the swapchain's, or with TEMPEST_OFFSCREEN=1 our own
+    Tempest::Attachment& frameImage();
+    uint32_t             frameW() const;
+    uint32_t             frameH() const;
 
     uint64_t tick();
     void     tickCamera(uint64_t dt);
@@ -118,6 +128,9 @@ class MainWindow : public Tempest::Window {
 
     Tempest::Device&      device;
     Tempest::Swapchain    swapchain;
+    // TEMPEST_OFFSCREEN=1 (Linux): no swapchain, the frame goes into this image of the window's size
+    Tempest::Attachment   offscreen;
+    Tempest::Attachment   captureImage; // filming: the image of the last video frame, drawn into again
     Tempest::TextureAtlas atlas;
     Shaders               shaders;
     Renderer              renderer;
@@ -162,6 +175,8 @@ class MainWindow : public Tempest::Window {
     Tempest::Widget*          uiKeyUp=nullptr;
     Tempest::Point            dMouse;
     PlayerControl             player;
+    // hand motion over local UDP (docs/hand-motion.md): read every frame, no consumer before step 2
+    HandMotionReceiver        handMotion;
     uint64_t                  lastTick=0;
 
     Tempest::Shortcut         funcKey[11];
@@ -182,4 +197,9 @@ class MainWindow : public Tempest::Window {
     Fps           fps;
     BenchmarkData benchmark;
     uint64_t      maxFpsInv = 0;
+    // TEMPEST_OFFSCREEN_FPS: nothing presents offscreen, so the limiter holds a frame this long (ms, 0: no limit)
+    uint64_t      offscreenFrameInv = 0;
+    // One early pipeline-cache write after the first seconds of play, so a crash still leaves a cache.
+    uint64_t      pipelineCacheSaveAt = 0;
+    bool          pipelineCacheSaved  = false;
   };

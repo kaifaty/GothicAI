@@ -173,9 +173,11 @@ D3D12_BLEND_DESC DxPipeline::getBlend(const RenderState& st) const {
 
   D3D12_BLEND_DESC d = {};
   d.AlphaToCoverageEnable  = FALSE;
-  d.IndependentBlendEnable = FALSE;
-  for(auto& i:d.RenderTarget)
-    i = b;
+  d.IndependentBlendEnable = st.hasColorWriteMask() ? TRUE : FALSE;
+  for(size_t i=0; i<8; ++i) {
+    d.RenderTarget[i] = b;
+    d.RenderTarget[i].RenderTargetWriteMask = st.colorWriteMask(i); // RenderState::ColorMask bits match D3D12_COLOR_WRITE_ENABLE_*
+    }
 
   return d;
   }

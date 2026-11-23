@@ -128,6 +128,7 @@ namespace Tempest {
     DXT5,
     R11G11B10UF,
     RGBA16F,
+    RG16F,
     Last
     };
 
@@ -159,6 +160,7 @@ namespace Tempest {
       case DXT5:        return "DXT5";
       case R11G11B10UF: return "R11G11B10UF";
       case RGBA16F:     return "RGBA16F";
+      case RG16F:       return "RG16F";
       case Last:
         break;
       }
@@ -333,6 +335,18 @@ namespace Tempest {
     uint32_t firstInstance = 0;
     };
 
+  // One frame of a temporal upscale (Encoder::upscaleTemporal, MetalFX Temporal); offsets are in input pixels
+  struct TemporalUpscaleDesc {
+    float    jitterX       = 0;     // the camera's jitter this frame: pixel centre minus the sample point, -0.5..0.5
+    float    jitterY       = 0;
+    float    motionScaleX  = 1;     // motion texture units to input pixels
+    float    motionScaleY  = 1;
+    uint32_t inputW        = 0;     // the rendered part of the input; 0 is the whole texture
+    uint32_t inputH        = 0;
+    bool     reset         = false; // the history is not of this view: a cut, a jump, the first frame
+    bool     depthReversed = false; // far is 0
+    };
+
   enum class AccessOp : uint8_t {
     Discard,
     Preserve,
@@ -474,6 +488,8 @@ namespace Tempest {
           bool     storeAndAtomicFs  = false;
 
           bool     memoryModel       = false;
+          bool     spatialUpscale    = false;
+          bool     temporalUpscale   = false;
 
           bool     hasSamplerFormat(TextureFormat f) const;
           bool     hasAttachFormat (TextureFormat f) const;
@@ -495,6 +511,16 @@ namespace Tempest {
           uint64_t atomFormat=0;
         };
 
+      // Device memory of this process (Device::memoryBudget); every number in bytes.
+      struct MemoryBudget {
+        uint64_t budget   = 0;     // how much this process may hold on the device before allocations fail or slow down
+        uint64_t usage    = 0;     // how much this process holds on the device now
+        uint64_t unused   = 0;     // of `usage`, what it holds but does not use: free space in its allocator's pages
+        bool     shared   = false; // the memory is shared with the CPU (an integrated GPU, Apple silicon)
+        bool     measured = false; // read from the driver; false: estimated from the heap size and own allocations
+        bool     known    = false; // false: nothing readable, the numbers are zero
+        };
+
       struct NoCopy {
         NoCopy()=default;
         virtual ~NoCopy() = default;
@@ -511,6 +537,10 @@ namespace Tempest {
       struct Device:NoCopy {
         virtual ~Device()=default;
         virtual void        waitIdle() = 0;
+        // Writes the on-disk pipeline cache now (no-op when the backend has none or it is off).
+        virtual void        savePipelineCache() {}
+        // Cheap enough for once a second on the thread that owns the device; the default: nothing readable.
+        virtual MemoryBudget memoryBudget() { return {}; }
         };
       struct Fence:NoCopy {
         virtual ~Fence()=default;
@@ -530,6 +560,7 @@ namespace Tempest {
         };
       struct Texture:Shared  {
         virtual uint32_t      mipCount() const = 0;
+        virtual bool          uploadReady() { return true; }
         virtual NonUniqResId  syncId() const = 0;
         };
       struct Pipeline:Shared {
@@ -545,6 +576,7 @@ namespace Tempest {
       struct Buffer:Shared   {
         virtual ~Buffer()=default;
         virtual void  update  (const void* data, size_t off, size_t size)=0;
+        virtual void  updateAsync(const void* data, size_t off, size_t size) { update(data,off,size); }
         virtual void  read    (      void* data, size_t off, size_t size)=0;
         };
 
@@ -560,7 +592,9 @@ namespace Tempest {
         };
       struct BlasBuildCtx {};
       struct AccelerationStructure:Shared {};
-      struct DescArray:NoCopy {};
+      struct DescArray:NoCopy {
+        virtual void setTexture(size_t index, Texture* texture);
+        };
       struct BarrierDesc {
         const Texture*   texture   = nullptr;
         const Swapchain* swapchain = nullptr;
@@ -586,6 +620,9 @@ namespace Tempest {
 
         virtual void generateMipmap(Texture& image, uint32_t texWidth, uint32_t texHeight, uint32_t mipLevels) = 0;
         virtual void copy(Buffer& dest, size_t offset, Texture& src, uint32_t width, uint32_t height, uint32_t mip) = 0;
+        virtual void upscale(Texture& src, Texture& dst);
+        virtual void upscaleTemporal(Texture& color, Texture& depth, Texture& motion, Texture& dst,
+                                     const TemporalUpscaleDesc& desc);
 
         virtual bool isRecording() const = 0;
         virtual void begin(Detail::SyncHint hint);
@@ -614,12 +651,17 @@ namespace Tempest {
                                   size_t firstInstance, size_t instanceCount) = 0;
 
         virtual void drawIndirect(const Buffer& indirect, size_t offset) = 0;
+        virtual void drawIndexedIndirect(const Buffer& ibo, Detail::IndexClass cls, const Buffer& indirect, size_t offset) = 0;
 
         virtual void dispatchMesh(size_t x, size_t y, size_t z);
         virtual void dispatchMeshIndirect(const Buffer& indirect, size_t offset);
 
         virtual void dispatch(size_t x, size_t y, size_t z) = 0;
         virtual void dispatchIndirect(const Buffer& indirect, size_t offset) = 0;
+
+        // Build of a top-level structure made by createTopAccelerationStruct(d, capacity) in this command buffer;
+        // instances may be null when count is 0.
+        virtual void buildTlas(AccelerationStructure& tlas, const Buffer* instances, size_t count);
         };
 
       using PBuffer       = Detail::DSharedPtr<Buffer*>;
@@ -651,12 +693,20 @@ namespace Tempest {
 
       virtual PBuffer    createBuffer (Device* d, const void* mem, size_t size, MemUsage usage, BufferHeap flg) = 0;
       virtual PTexture   createTexture(Device* d, const Pixmap& p, TextureFormat frm, uint32_t mips) = 0;
+      virtual PTexture   createTextureAsync(Device* d, const Pixmap& p, TextureFormat frm, uint32_t mips);
       virtual PTexture   createTexture(Device* d, const uint32_t w, const uint32_t h, uint32_t mips, TextureFormat frm) = 0;
       virtual PTexture   createStorage(Device* d, const uint32_t w, const uint32_t h, uint32_t mips, TextureFormat frm) = 0;
       virtual PTexture   createStorage(Device* d, const uint32_t w, const uint32_t h, const uint32_t depth, uint32_t mips, TextureFormat frm) = 0;
 
       virtual PRtAs      createBottomAccelerationStruct(Device* d, const RtGeometry* geom, size_t geomSize);
       virtual PRtAs      createTopAccelerationStruct(Device* d, const RtInstance* geom, AccelerationStructure*const* as, size_t geomSize);
+      // Top-level structure with its own memory for `capacity` instances, built by CommandBuffer::buildTlas.
+      virtual PRtAs      createTopAccelerationStruct(Device* d, size_t capacity);
+      // Size of one instance in the backend's layout, and packing of one instance of `tlas` into its slot
+      // (Device::packRtInstance): `as` is the BLAS of `inst`, null for an inactive instance.
+      virtual size_t     rtInstanceSize() const;
+      virtual void       packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                                        AccelerationStructure* as, void* slot);
 
       virtual void       readPixels   (Device* d, Pixmap& out, const PTexture t,
                                        TextureFormat frm, const uint32_t w, const uint32_t h, uint32_t mip, bool storageImg) = 0;

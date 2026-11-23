@@ -14,6 +14,8 @@ from .basics import m6_knows as m6_knows
 from .basics import svm_lines as svm_lines
 from .basics import tts_lines as tts_lines
 from .basics import websocket as websocket
+from .blood_found import blood_found as blood_found
+from .body_found import body_found as body_found
 from .cheat import cheat_scenario as cheat_scenario
 from .combat import combat_barks as combat_barks
 from .combat import hero_yield as hero_yield
@@ -34,7 +36,6 @@ from .conversation import gossip_demo as gossip_demo
 from .conversation import gossip_scenario as gossip_scenario
 from .conversation import group_scenario as group_scenario
 from .conversation import interject_scenario as interject_scenario
-from .conversation import write_cards as write_cards
 from .cover import cover_scenario as cover_scenario
 from .cover import cover_subject_scenario as cover_subject_scenario
 from .crime_ally import crime_ally as crime_ally
@@ -46,6 +47,11 @@ from .deals import deal_demo as deal_demo
 from .deals import deal_window as deal_window
 from .deals import haggle as haggle
 from .deals import xardas_money as xardas_money
+from .face_cues import face_brows_demo as face_brows_demo
+from .face_cues import face_cues_demo as face_cues_demo
+from .face_cues import face_eyes_demo as face_eyes_demo
+from .face_cues import face_listen_demo as face_listen_demo
+from .feats import feat_fame as feat_fame
 from .feats import feats as feats
 from .frame import frame as frame
 from .gate import gate_scenario as gate_scenario
@@ -60,10 +66,15 @@ from .lies import vanilla_lie as vanilla_lie
 from .lies import vanilla_spare as vanilla_spare
 from .lies import witness_check as witness_check
 from .lies import xardas_wrath as xardas_wrath
+from .live_deals import live_deals as live_deals
+from .live_director import live_director as live_director
+from .live_lies import live_lies as live_lies
+from .live_npc import live_npc as live_npc
 from .load import load_rewind as load_rewind
 from .memprobe import memprobe_scenario as memprobe_scenario
 from .neural_load import neural_load_scenario as neural_load_scenario
 from .neural_soak import neural_soak_scenario as neural_soak_scenario
+from .neural_still import neural_still_scenario as neural_still_scenario
 from .npc_deeds import npc_deeds as npc_deeds
 from .npc_director import npc_director as npc_director
 from .npc_far import npc_far as npc_far
@@ -84,6 +95,8 @@ from .perception import remembers_scenario as remembers_scenario
 from .perception import see_perception as see_perception
 from .perception import seen_memory as seen_memory
 from .perception import trace_memory as trace_memory
+from .quest_law import quest_law as quest_law
+from .road_bandits import road_bandits as road_bandits
 from .story import author_chain as author_chain
 from .story import authored_quest as authored_quest
 from .story import book_requires as book_requires
