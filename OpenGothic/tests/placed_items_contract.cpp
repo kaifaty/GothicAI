@@ -82,10 +82,14 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
 #include "storygraph/eval.h"
 namespace {
 
-void require(bool condition, const char* message) {
-  if(!condition)
-    throw std::runtime_error(message);
-  }
+using NpcWorldFixture::activityNpc;
+using NpcWorldFixture::activityQueue;
+using NpcWorldFixture::companionPlayerPerceptions;
+using NpcWorldFixture::diegoRouteBoundaries;
+using NpcWorldFixture::fightSoundPerceptions;
+using NpcWorldFixture::loadSavedNpc;
+using NpcWorldFixture::require;
+using NpcWorldFixture::savedNpc;
 
 Tempest::Matrix4x4 at(float x, float y, float z = 0) {
   auto result = Tempest::Matrix4x4::mkIdentity();
@@ -659,17 +663,6 @@ ArchiveEntries archiveEntries(const std::vector<uint8_t>& bytes) {
     require(mz_zip_reader_extract_to_mem(&zip,index,payload.data(),payload.size(),0),"extract NPC equality archive entry");
     }
   return entries;
-  }
-
-std::vector<uint8_t> savedNpc(Npc& npc) {
-  std::vector<uint8_t> bytes;
-  {
-    Tempest::MemWriter writer(bytes);
-    Serialize out(writer);
-    out.setContext(&npc.world());
-    npc.save(out,0,"/npc/");
-    }
-  return bytes;
   }
 
 ArchiveEntries npcState(Npc& npc) {
@@ -1593,19 +1586,6 @@ std::vector<std::string> activityEngine(World& world,Npc& npc,const char* positi
   return events;
   }
 
-// The NPC's queue as text, front first, without taking it.
-std::vector<std::string> activityQueue(const Npc& npc) {
-  auto queue=NpcDefinitionContract::queue(npc);
-  std::vector<std::string> actions;
-  while(queue.size()>0) {
-    const auto a=queue.pop();
-    actions.push_back(std::string(AiQueue::actionName(uint32_t(a.act)))+" "+std::to_string(a.i0)+" "+std::to_string(a.i1)+" "+
-                      a.s0+" "+(a.point ? a.point->name : "")+" "+(a.target ? std::string(a.target->displayName()) : "")+" "+
-                      std::to_string(a.func.ptr));
-    }
-  return actions;
-  }
-
 // Commands the queue received for walking to `point`.
 size_t activityWalks(const std::vector<std::string>& events,const std::string& point) {
   return size_t(std::count_if(events.begin(),events.end(),[&](const auto& e) {
@@ -1827,14 +1807,6 @@ void activityDefinitionsSynthetic(World& world) {
   activityEventsSynthetic(world,*npc,anvil,roast);
   world.removeNpc(*npc);
   std::printf("Activity counters: ZS_SMITH_ANVIL 3 phases from the record, ZS_TEST_ROAST 3 from the VM; %zu equal events\n",events);
-  }
-
-Npc* activityNpc(World& world,const char* name) {
-  const auto symbol=world.script().findSymbolIndex(name);
-  for(uint32_t i=0;i<world.npcCount();++i)
-    if(world.npcById(i)->instanceSymbol()==symbol)
-      return world.npcById(i);
-  return nullptr;
   }
 
 // The accepted activities of NEWWORLD, with the object scheme and the approach threshold their

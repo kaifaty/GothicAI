@@ -441,6 +441,10 @@ class GameScript final : public GameRules {
     void runDamageReaction();
     int32_t runEnemyReaction();
     void runPlayerAssessment();
+    void runFollowerPlayerAssessment();
+    void runGuidePlayerAssessment();
+    void runCompanionFightSound(bool follower);
+    int32_t diegoRouteBoundary(int32_t tolerance);
     void runPropertyCrime(bool usingMob);
     void runMoveMobReaction();
     void runSurpriseReaction();
@@ -727,6 +731,8 @@ class GameScript final : public GameRules {
     ScriptFn                                                    damageCallback;
     ScriptFn                                                    enemyCallback;
     ScriptFn                                                    playerCallback;
+    ScriptFn                                                    followPlayerCallback, guidePlayerCallback;
+    ScriptFn                                                    followFightSoundCallback, guideFightSoundCallback;
     ScriptFn                                                    theftCallback;
     ScriptFn                                                    useMobCallback;
     ScriptFn                                                    moveMobCallback;

@@ -18,15 +18,6 @@ const WayPoint* activityRow(Npc& npc,size_t init,std::string& name,gtime* start=
 
 bool activityCandidate(Npc& npc) { return !npc.isPlayer() && npc.isHuman() && !npc.isDead(); }
 
-void loadSavedNpc(Npc& npc,const std::vector<uint8_t>& bytes) {
-  Tempest::MemReader reader(bytes);
-  Serialize in(reader);
-  in.setContext(&npc.world());
-  npc.load(in,0,"/npc/");
-  npc.postValidate();
-  npc.setSimTier(NpcSimTier::Full);
-  }
-
 struct EventActor {
   Npc*            npc=nullptr;
   ActivityPhases  phases;
@@ -713,6 +704,7 @@ void guardCampfireChange(Gothic& gothic) {
   const auto* row=world.findWayPoint("OW_DJG_ROCKCAMP_01");
   const auto* fire=world.findPoint("FP_CAMPFIRE_DJG_ROCKCAMP_01",false);
   require(npc && row && fire,"Gestath and his camp must be in OLDWORLD");
+  diegoRouteBoundaries(world,*npc);
   EventActor guard;
   guard.state="ZS_STAND_GUARDING";
   guard.phases=activityPhases(script,guard.state.c_str());
@@ -2071,80 +2063,6 @@ void warnPerception(World& world,Npc& npc,Npc& hero) {
   std::puts("Warn: source, victim and busy-listener gates match the original callback");
   }
 
-void fightSoundPerceptions(World& world,Npc& npc,Npc& hero) {
-  using Contract=NpcDefinitionContract;
-  auto& script=world.script();
-  auto& vm=script.getVm();
-  auto& enabled=Contract::activityEventsOn(script);
-  const auto savedEnabled=enabled;
-  auto* victim=activityNpc(world,"BAU_934_BABERA");
-  require(victim && victim!=&npc && !victim->isDead(),"fight sound: a third living participant exists");
-  const auto savedListener=savedNpc(npc);
-  const auto savedVictim=savedNpc(*victim);
-  const auto savedHero=savedNpc(hero);
-  const auto restore=[&] {
-    loadSavedNpc(npc,savedListener);
-    loadSavedNpc(*victim,savedVictim);
-    loadSavedNpc(hero,savedHero);
-    };
-  const auto here=npc.position();
-  const auto nearby=hero.position();
-  const auto attack=script.findFunction("ZS_ATTACK");
-  const auto watch=script.findFunction("ZS_WATCHFIGHT");
-  const auto sound=script.findFunction("B_ASSESSFIGHTSOUND");
-  const auto guideSound=script.findFunction("B_ASSESSGUIDEFIGHTSOUND");
-  const auto soundPc=vm.find_symbol_by_name("B_ASSESSFIGHTSOUND")->address();
-  enum class Case { NoVictim, Distant, Nailed, Monster, Room, Watch, Guide };
-  for(auto kind : {Case::NoVictim,Case::Distant,Case::Nailed,Case::Monster,Case::Room,Case::Watch,Case::Guide}) {
-    std::vector<std::string> original;
-    for(bool native : {false,true}) {
-      enabled=native;
-      restore();
-      npc.setProcessPolicy(NpcProcessPolicy::AiNormal);
-      npc.setExternalControl(false);
-      npc.clearAiQueue();
-      npc.aiPush(AiQueue::aiWait(713));
-      npc.setAttitude(ATT_FRIENDLY);
-      Contract::aiState(npc).funcIni=script.findFunction("ZS_STAND_WP");
-      npc.handle().guild=GIL_BAU;
-      npc.handle().aivar[61]=0;
-      hero.handle().guild=GIL_NONE;
-      hero.handle().fight_tactic=0;
-      hero.handle().aivar[9]=kind==Case::Room ? script.intSymbol("AR_CLEARROOM",0) : 0;
-      victim->handle().guild=kind==Case::Monster ? int32_t(GIL_WOLF) : int32_t(GIL_BAU);
-      victim->handle().fight_tactic=kind==Case::Nailed ? script.intSymbol("FAI_NAILED",1) : 0;
-      victim->handle().aivar[9]=0;
-      victim->setPosition(kind==Case::Distant ? here+Tempest::Vec3(2000,0,0) : nearby);
-      hero.setPosition(kind==Case::Distant ? here+Tempest::Vec3(2200,0,0) : nearby);
-      npc.setPerceptionEnable(PERC_ASSESSFIGHTSOUND,(kind==Case::Guide ? guideSound : sound).ptr);
-
-      size_t instructions=0;
-      vm.observe_instructions([&](const auto&) { instructions+=vm.pc()==soundPc; });
-      const auto delivered=npc.passPerception(hero,kind==Case::NoVictim ? nullptr : victim,PERC_ASSESSFIGHTSOUND);
-      vm.observe_instructions({});
-      require(delivered && instructions==size_t(!native),"fight sound: direct and nested dispatch use the selected root");
-      const auto* next=npc.aiQueueFront();
-      const bool startsAttack=kind==Case::Monster || kind==Case::Room;
-      const bool startsWatch=kind==Case::Watch || kind==Case::Guide;
-      require(next && (startsAttack || startsWatch ? next->act==AI_StartState && next->func==(startsAttack ? attack : watch) &&
-                       next->target==&hero && next->victim==victim && next->i0==0 && !npc.hasPerc(PERC_ASSESSFIGHTSOUND)
-                     : next->act==AI_Wait && npc.hasPerc(PERC_ASSESSFIGHTSOUND)),
-              "fight sound: the listener preserves the original queue outcome, source and victim");
-      if(startsAttack) {
-        const auto reason=kind==Case::Monster ? "AR_MONSTERVSHUMAN" : "AR_GUARDCALLEDTOROOM";
-        require(npc.target()==victim && npc.handle().aivar[9]==script.intSymbol(reason,-1),
-                "fight sound: the attack chooses the victim with the correct reason");
-        }
-      auto queue=activityQueue(npc);
-      if(native) require(original==queue,"fight sound: stock and native queues agree");
-      else original=std::move(queue);
-      }
-    }
-  restore();
-  enabled=savedEnabled;
-  std::puts("Fight sound: direct and guide perception preserve source, victim, attack choice and watch");
-  }
-
 void damagePerceptions(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -3271,6 +3189,7 @@ void quietSoundRooms(Gothic& gothic) {
   observePlayerPhases(world,*npc,hero,false);
   drawWeaponPerceptions(world,*npc,hero);
   warnPerception(world,*npc,hero);
+  companionPlayerPerceptions(world,*npc,hero);
   fightSoundPerceptions(world,*npc,hero);
   damagePerceptions(world,*npc,hero);
   humanAttackPhases(world,*npc,hero);
