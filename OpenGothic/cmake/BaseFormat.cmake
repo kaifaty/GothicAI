@@ -52,7 +52,8 @@ list(APPEND BASE_FORMAT_INPUTS ${BASE_SOURCES} ${BASE_NATIVE_IO}
   lib/Tempest/Engine/include/Tempest/Platform lib/cgltf/cgltf.h lib/miniz/miniz.h lib/miniz/miniz.c
   common/itemdefinitions.h common/routinedefinitions.h common/npcdefinitions.h common/asset/npcdefinitions.h common/import/npcdefinitions.cpp common/placementdefinitions.h common/import/placementdefinitions.cpp common/activitydefinitions.h common/import/activitydefinitions.cpp cmake/NpcSnapshot.cmake cmake/BaseImport.cmake cmake/BaseFormat.cmake)
 list(APPEND BASE_FORMAT_INPUTS common/npchelperdefinitions.h common/import/npchelperdefinitions.cpp common/definitionjson.h
-  common/game/definitions/fightdefinitiondata.h common/game/definitions/fightdefinitioncapture.h common/game/fighttactic.h common/records/definitions.h)
+  common/game/definitions/fightdefinitiondata.h common/game/definitions/fightdefinitioncapture.h common/game/fighttactic.h common/records/definitions.h
+  common/import/gameplaydefinitions.cpp common/game/definitions/gameplaydefinitions.h)
 list(REMOVE_DUPLICATES BASE_FORMAT_INPUTS)
 list(SORT BASE_FORMAT_INPUTS)
 set(BASE_FORMAT_SUMS "")

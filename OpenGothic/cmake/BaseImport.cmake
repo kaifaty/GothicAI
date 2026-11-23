@@ -58,7 +58,8 @@ target_include_directories(gothic-base-runtime PUBLIC "${NPC_SNAPSHOT_GENERATED_
 add_library(gothic-npc-snapshot STATIC "${BASE_ROOT}/common/import/npcsnapshot.cpp"
   "${BASE_ROOT}/common/import/npcdefinitions.cpp" "${BASE_ROOT}/common/import/placementdefinitions.cpp"
   "${BASE_ROOT}/common/import/activitydefinitions.cpp")
-target_sources(gothic-npc-snapshot PRIVATE "${BASE_ROOT}/common/import/npchelperdefinitions.cpp")
+target_sources(gothic-npc-snapshot PRIVATE "${BASE_ROOT}/common/import/npchelperdefinitions.cpp"
+  "${BASE_ROOT}/common/import/gameplaydefinitions.cpp")
 target_include_directories(gothic-npc-snapshot PUBLIC "${BASE_ROOT}/common/import" "${NPC_SNAPSHOT_GENERATED_DIR}")
 target_include_directories(gothic-npc-snapshot SYSTEM PRIVATE "${BASE_ROOT}/lib/rapidjson/include")
 target_link_libraries(gothic-npc-snapshot PUBLIC gothic-daedalus gothic-base-runtime)

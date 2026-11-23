@@ -3,9 +3,11 @@
 #include "daedalus/vm.h"
 #include "daedalus/classes.h"
 
+class GameplayDefinitions;
+
 class SpellDefinitions final {
   public:
-    SpellDefinitions(daedalus::DaedalusVm &vm);
+    SpellDefinitions(daedalus::DaedalusVm& vm, const GameplayDefinitions* records = nullptr);
     ~SpellDefinitions();
 
     const daedalus::ISpell& find(std::string_view instanceName) const;

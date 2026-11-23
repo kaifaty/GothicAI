@@ -11,6 +11,7 @@
 #include <sstream>
 
 #include "game/definitions/basescripts.h"
+#include "game/definitions/gameplaydefinitions.h"
 #include "game/definitions/spelldefinitions.h"
 #include "game/serialize.h"
 #include "game/herodeed.h"
@@ -26,6 +27,7 @@
 #include "settings.h"
 #include "loadprobe.h"
 #include "outputunits.h"
+#include "programdata.h"
 #include "navdemos.h"
 
 using namespace Tempest;
@@ -337,13 +339,18 @@ void GameScript::initCommon() {
 
   // vm.validateExternals();
 
-  spells               = std::make_unique<SpellDefinitions>(vm);
-  svm                  = std::make_unique<SvmDefinitions>(vm);
+  const auto gameplay = nativeRoutineProgram && NpcDefinitionRuntime::enabled() ?
+                        GameplayDefinitions::load(baseProgramIndex().dir.parent_path()) : nullptr;
+  spells               = std::make_unique<SpellDefinitions>(vm,gameplay.get());
+  svm                  = std::make_unique<SvmDefinitions>(vm,gameplay);
 
-  cFocusNorm           = findFocus("Focus_Normal");
-  cFocusMelee          = findFocus("Focus_Melee");
-  cFocusRange          = findFocus("Focus_Ranged");
-  cFocusMage           = findFocus("Focus_Magic");
+  const auto focus = [&](std::string_view name) {
+    return gameplay ? *gameplay->init<daedalus::IFocus>(vm,vm.find_symbol_by_name(name)) : findFocus(name);
+    };
+  cFocusNorm           = focus("FOCUS_NORMAL");
+  cFocusMelee          = focus("FOCUS_MELEE");
+  cFocusRange          = focus("FOCUS_RANGED");
+  cFocusMage           = focus("FOCUS_MAGIC");
 
   ZS_Dead              = aiState(findSymbolIndex("ZS_Dead")).funcIni;
   ZS_Unconscious       = aiState(findSymbolIndex("ZS_Unconscious")).funcIni;
@@ -389,7 +396,7 @@ void GameScript::initCommon() {
 
   auto id = vm.find_symbol_by_name("Gil_Values");
   if(id!=nullptr){
-    cGuildVal = vm.init_instance<daedalus::IGuildValues>(id);
+    cGuildVal = gameplay ? gameplay->init<daedalus::IGuildValues>(vm,id) : vm.init_instance<daedalus::IGuildValues>(id);
     for(size_t i=0;i<Guild::GIL_PUBLIC;++i){
       cGuildVal->water_depth_knee   [i]=cGuildVal->water_depth_knee   [Guild::GIL_HUMAN];
       cGuildVal->water_depth_chest  [i]=cGuildVal->water_depth_chest  [Guild::GIL_HUMAN];

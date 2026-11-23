@@ -8,6 +8,9 @@
 #include "baseimport.h"
 #include "commandline.h"
 #include "game/definitions/basescripts.h"
+#include "game/definitions/gameplaydefinitions.h"
+#include "game/definitions/spelldefinitions.h"
+#include "game/definitions/svmdefinitions.h"
 #include "game/gamesession.h"
 #include "game/npcactivityhost.h"
 #include "gothic.h"
@@ -27,6 +30,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cctype>
 #include <cstdio>
@@ -1063,7 +1067,67 @@ static void heroControls(World& world) {
   std::puts("Hero controls: stock messages, Claw, RNG, potion keys and map match the engine");
   }
 
+static void gameplayDefinitionParity(World& world) {
+  if(!world.script().usesVerifiedNpcProgram())
+    return;
+  const auto records = GameplayDefinitions::load(baseProgramIndex().dir.parent_path());
+  if(!records)
+    return; // Older imported bases retain the original initialization path.
+
+  auto& gothic = Gothic::inst();
+  auto original = gothic.createPhoenixVm(gothic.defaultGameDatFile());
+  auto imported = gothic.createPhoenixVm(gothic.defaultGameDatFile());
+  size_t instructions=0, definitions=0, fields=0;
+  imported->observe_instructions([&](const auto&) { ++instructions; });
+
+  auto compare = [&](const daedalus::DaedalusSymbol& symbol, const daedalus::DaedalusInstance& old,
+                     const daedalus::DaedalusInstance& now) {
+    require(imported->find_symbol_by_instance(now)==&symbol,"gameplay definition must keep its original symbol binding");
+    for(auto* member : imported->find_class_members(GameplayDefinitions::instanceClass(*imported,symbol))) {
+      const auto* expected = original->find_symbol_by_name(member->name());
+      for(uint16_t i=0; i<member->count(); ++i) {
+        using Type = daedalus::DaedalusDataType;
+        bool equal=false;
+        switch(member->type()) {
+          case Type::INT: equal=expected->get_int(i,&old)==member->get_int(i,&now); break;
+          case Type::FLOAT: equal=std::bit_cast<uint32_t>(expected->get_float(i,&old))==
+                                 std::bit_cast<uint32_t>(member->get_float(i,&now)); break;
+          case Type::STRING: equal=expected->get_string(i,&old)==member->get_string(i,&now); break;
+          default: break;
+          }
+        require(equal,("gameplay definition differs: "+symbol.name()+" "+member->name()).c_str());
+        ++fields;
+        }
+      }
+    ++definitions;
+    };
+
+  SpellDefinitions spells(*imported,records.get());
+  imported->enumerate_instances_by_class_name("C_SPELL",[&](auto& symbol) {
+    compare(symbol,*original->init_instance<daedalus::ISpell>(symbol.name()),spells.find(std::string_view(symbol.name()).substr(6)));
+    });
+  for(auto name : GameplayDefinitions::focusNames) {
+    auto* symbol = imported->find_symbol_by_name(name);
+    compare(*symbol,*original->init_instance<daedalus::IFocus>(name),*records->init<daedalus::IFocus>(*imported,symbol));
+    }
+  auto* guild = imported->find_symbol_by_name("GIL_VALUES");
+  compare(*guild,*original->init_instance<daedalus::IGuildValues>(guild->name()),
+          *records->init<daedalus::IGuildValues>(*imported,guild));
+
+  SvmDefinitions voices(*imported,records);
+  imported->enumerate_instances_by_class_name("C_SVM",[&](auto& symbol) {
+    require(symbol.get_instance()==nullptr,"SVM instance must stay lazy until its first lookup");
+    const auto id = std::stoi(symbol.name().substr(4));
+    voices.find("$MISSING_CONTRACT_LINE",id); // Unknown lines still trigger the first voice lookup.
+    compare(symbol,*original->init_opaque_instance(original->find_symbol_by_name(symbol.name())),*symbol.get_instance());
+    voices.find("$MISSING_CONTRACT_LINE",id);
+    });
+  require(definitions==78 && instructions==0,"all stock gameplay definitions must load without VM instructions");
+  std::printf("Gameplay definitions: %zu instances, %zu fields match, no native VM instructions\n",definitions,fields);
+  }
+
 void oldWorldNpcCases(World& world,Npc& npc) {
+  gameplayDefinitionParity(world);
   oldWorldEntry(world,npc);
   diegoRouteBoundaries(world,npc);
   heroControls(world);

@@ -1,4 +1,5 @@
 #include "spelldefinitions.h"
+#include "gameplaydefinitions.h"
 #include "utils/string_frm.h"
 
 #include <Tempest/Log>
@@ -6,9 +7,9 @@
 
 using namespace Tempest;
 
-SpellDefinitions::SpellDefinitions(daedalus::DaedalusVm& vm) : vm(vm) {
-  vm.enumerate_instances_by_class_name("C_Spell", [this, &vm](daedalus::DaedalusSymbol& sym){
-    spl.push_back(vm.init_instance<daedalus::ISpell>(&sym));
+SpellDefinitions::SpellDefinitions(daedalus::DaedalusVm& vm, const GameplayDefinitions* records) : vm(vm) {
+  vm.enumerate_instances_by_class_name("C_Spell", [this, &vm, records](daedalus::DaedalusSymbol& sym) {
+    spl.push_back(records ? records->init<daedalus::ISpell>(vm,&sym) : vm.init_instance<daedalus::ISpell>(&sym));
     });
   }
 

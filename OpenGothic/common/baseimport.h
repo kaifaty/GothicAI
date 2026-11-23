@@ -26,6 +26,7 @@ int convertPrograms(const std::filesystem::path& gothic, const std::filesystem::
 // D2: definitions/<program SHA>/items.json, verified against fresh constructor executions.
 int convertItemDefinitions(const std::filesystem::path& base);
 void convertFightDefinitions(const std::filesystem::path& base);
+void convertGameplayDefinitions(const std::filesystem::path& base);
 // D3a: definitions/<program SHA>/routines.json, verified against fresh function executions.
 int convertRoutineDefinitions(const std::filesystem::path& base);
 // D3b: definitions/<program SHA>/npcs.json, verified against fresh constructor executions.
