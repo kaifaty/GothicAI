@@ -377,10 +377,10 @@ int32_t GameScript::botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self
   if(npc_isplayer(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance())) && self->type==NpcType::G2_FRIEND)
     return 0;
   const bool melee = npc_isinfightmode(other,int(FightMode::FMODE_MELEE));
-  const bool toughGuy = vm.call_function<int32_t>("C_NPCISTOUGHGUY",self)!=0;
+  const bool toughGuy = isToughGuy(self);
   if(melee && toughGuy)
     return 0;
-  if(npc_getattitude(self,other)==ATT_FRIENDLY || vm.call_function<int32_t>("C_NPCISGATEGUARD",self)!=0 ||
+  if(npc_getattitude(self,other)==ATT_FRIENDLY || isGateGuard(self) ||
      npc_isinfightmode(other,int(FightMode::FMODE_FIST)))
     return 0;
   const auto spellCategory = npc_getactivespellcat(other);
@@ -409,7 +409,7 @@ int32_t GameScript::runDrawWeaponReaction() {
 
 void GameScript::startHumanWarning(const std::shared_ptr<daedalus::INpc>& self, ScriptFn state) {
   npc_clearaiqueue(self);
-  vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+  clearPerceptions(self);
   ai_startstate(self,int(state.ptr),0,"");
   }
 
@@ -474,7 +474,7 @@ void GameScript::runDamageReaction() {
   const auto none = findSymbol("AR_NONE")->get_int();
   const auto attacker = other();
   if((attacker==nullptr || attacker->aivar[attackReason]==none) && !npc_isplayer(attacker)) {
-    vm.call_function<void>("B_ATTACK",self,attacker,none,0);
+    startNpcAttack(self,attacker,none,0);
     return;
     }
 
@@ -490,7 +490,7 @@ void GameScript::runDamageReaction() {
       return;
       }
     }
-  vm.call_function<void>("B_ATTACK",self,attacker,findSymbol("AR_REACTTODAMAGE")->get_int(),0);
+  startNpcAttack(self,attacker,findSymbol("AR_REACTTODAMAGE")->get_int(),0);
   }
 
 bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
@@ -523,15 +523,15 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
   const auto hero = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance()); };
   const auto constant = [&](std::string_view name) { return findSymbol(name)->get_int(); };
-  const auto absolution = [&] { return vm.call_function<int32_t>("B_GETCURRENTABSOLUTIONLEVEL",self); };
+  const auto absolution = [&] { return currentAbsolutionLevel(self); };
   const auto bodyState = [&](int32_t body) { return vm.call_function<int32_t>("C_BODYSTATECONTAINS",other(),body)!=0; };
   const auto targetDown = [&] { return vm.call_function<int32_t>("C_NPCISDOWN",other())!=0; };
   const auto stopPursuit = [&] {
     npc_clearaiqueue(self);
     ai_standup(self);
     };
-  const auto turnToTarget = [&] { vm.call_function<void>("B_TURNTONPC",self,other()); };
-  const auto say = [&](std::string_view line) { vm.call_function<void>("B_SAY",self,other(),line); };
+  const auto turnToTarget = [&] { turnToNpc(self,other()); };
+  const auto say = [&](std::string_view line) { sayToNpc(self,other(),line); };
   const auto start = [&](std::string_view state) { ai_startstate(self,int(findFunction(state).ptr),0,""); };
   const auto targetValue = [&](size_t slot) { const auto target = other(); return target ? target->aivar[slot] : 0; };
   const auto guild = [](const std::shared_ptr<daedalus::INpc>& actor) { return actor ? int32_t(actor->guild) : 0; };
@@ -539,13 +539,13 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
   const std::string_view name = symbol.name();
   if(name=="ZS_ATTACK") {
     result = 0;
-    vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+    setPerceptionPreset(false);
     npc_percenable(self,PERC_ASSESSSURPRISE,int(findFunction("B_ASSESSSURPRISE").ptr));
     vm.call_function<void>("B_VALIDATEOTHER");
     aivar[lastTarget] = hlp_getinstanceid(other());
     if(vm.call_function<int32_t>("C_WANTTOFLEE",self,other())!=0) {
       npc_clearaiqueue(self);
-      vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+      clearPerceptions(self);
       npc_settarget(self,other());
       start("ZS_FLEE");
       return true;
@@ -557,7 +557,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
       ai_equipbestmeleeweapon(self);
       }
     ai_standup(self);
-    vm.call_function<void>("B_STOPLOOKAT",self);
+    stopLookAtNpc(self);
     turnToTarget();
     ai_setwalkmode(self,constant("NPC_RUN"));
     aivar[guardPassageStatus] = constant("GP_NONE");
@@ -659,7 +659,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
       npc_perceiveall(self);
       npc_getnexttarget(self);
       }
-    const bool fakeBandit = vm.call_function<int32_t>("C_PLAYERISFAKEBANDIT",self,other())!=0;
+    const bool fakeBandit = isPlayerFakeBandit(self,other());
     const bool vulnerable = targetValue(invincible)==0;
     const bool nearHeight = npc_getheighttonpc(self,other())<constant("PERC_DIST_HEIGHT");
     const bool nearDistance = npc_getdisttonpc(self,other())<constant("PERC_DIST_INTERMEDIAT");
@@ -740,13 +740,13 @@ bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symb
   const auto other = [&] { return vm.global_other()->get_instance(); };
   const auto otherNpc = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(other()); };
   const auto say = [&](std::string_view line) {
-    vm.call_function<void>("B_SAY",self,other(),line);
+    sayToNpc(self,otherNpc(),line);
     };
   const auto turnToOther = [&] {
-    vm.call_function<void>("B_TURNTONPC",self,other());
+    turnToNpc(self,otherNpc());
     };
   const auto stopLook = [&] {
-    vm.call_function<void>("B_STOPLOOKAT",self);
+    stopLookAtNpc(self);
     };
   const auto inFightMode = [&](FightMode mode) {
     return npc_isinfightmode(otherNpc(),int(mode));
@@ -758,15 +758,15 @@ bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symb
   if(name=="ZS_REACTTODAMAGE" || name=="ZS_REACTTOWEAPON") {
     result = 0;
     if(weapon) {
-      vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+      setPerceptionPreset(false);
       npc_percenable(self,PERC_ASSESSFIGHTSOUND,int(findFunction("B_ASSESSFIGHTSOUND").ptr));
       if(vm.call_function<int32_t>("B_ASSESSENEMY")!=0)
         return true;
       ai_standup(self);
       } else {
-      vm.call_function<void>("PERCEPTION_SET_NORMAL");
+      setPerceptionPreset(true);
       }
-    vm.call_function<void>("B_LOOKATNPC",self,other());
+    lookAtNpc(self,otherNpc());
     vm.call_function<void>("B_SELECTWEAPON",self,other());
     turnToOther();
     if(weapon) {
@@ -816,7 +816,7 @@ bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symb
         aivar[repeatedWarning] = 1;
         }
       if(npc_getstatetime(self)>10)
-        vm.call_function<void>("B_ATTACK",self,other(),findSymbol("AR_REACTTOWEAPON")->get_int(),0);
+        startNpcAttack(self,otherNpc(),findSymbol("AR_REACTTOWEAPON")->get_int(),0);
       result = LOOP_CONTINUE;
       } else {
       result = npc_getstatetime(self)>10 ? LOOP_END : LOOP_CONTINUE;

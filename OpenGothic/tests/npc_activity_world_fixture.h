@@ -1573,7 +1573,7 @@ void humanReactionPhases(World& world,Npc& npc,Npc& hero) {
     require(next && next->act==AI_StartState && next->func==script.findFunction("ZS_OBSERVEPLAYER") &&
             next->i0==1 && next->target==&hero,"human reactions: weapon End queues observation of the same player");
     hero.setToFistMode();
-    require(invoke(weapon.loop,11000)==LOOP_CONTINUE && attacks==1 && npc.target()==&hero &&
+    require(invoke(weapon.loop,11000)==LOOP_CONTINUE && attacks==size_t(!native) && npc.target()==&hero &&
             aivar[9]==weaponReason && aivar[1]==attackCrime,
             "human reactions: escalation enters the shared attack policy and records the crime");
     hero.closeWeapon(true);
