@@ -58,7 +58,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
 
   if(state=="ZS_SMALLTALK") {
     if(init) {
-      vm.call_function<void>("PERCEPTION_SET_NORMAL");
+      setPerceptionPreset(true);
       reset();
       ai_setwalkmode(self,1);
       goIfFar(false);
@@ -98,7 +98,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
     }
   else if(state=="ZS_DANCE") {
     if(init) {
-      vm.call_function<void>("PERCEPTION_SET_NORMAL");
+      setPerceptionPreset(true);
       reset();
       ai_setwalkmode(self,1);
       goIfFar(true);
@@ -116,7 +116,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
   else if(state=="ZS_ANNOUNCE_HEROLD" || state=="ZS_PREACH_VATRAS") {
     const bool herald = state=="ZS_ANNOUNCE_HEROLD";
     if(init) {
-      vm.call_function<void>("PERCEPTION_SET_NORMAL");
+      setPerceptionPreset(true);
       npc_percdisable(self,PERC_ASSESSQUIETSOUND);
       reset();
       ai_setwalkmode(self,1);
@@ -194,7 +194,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
       std::pair{"PIR_1396_ADDON_INEXTREMO_FLEX",          "ITMI_IEDUDELBLAU"},
       };
     if(init) {
-      vm.call_function<void>("PERCEPTION_SET_NORMAL");
+      setPerceptionPreset(true);
       reset();
       ai_setwalkmode(self,1);
       goIfFar(false);
@@ -268,7 +268,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
     }
   else if(state=="ZS_CIRCLE") {
     if(init) {
-      vm.call_function<void>("PERCEPTION_SET_NORMAL");
+      setPerceptionPreset(true);
       reset();
       npc_setperctime(self,0.3f);
       ai_standup(self);
@@ -320,7 +320,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
     const bool lares = ranger && matches("LARES");
     if(init) {
       if(ranger) {
-        vm.call_function<void>("PERCEPTION_SET_MINIMAL");
+        setPerceptionPreset(false);
         reset();
         self->senses = 7;
         self->senses_range = 500;
