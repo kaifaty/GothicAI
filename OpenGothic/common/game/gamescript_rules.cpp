@@ -1074,7 +1074,7 @@ void GameScript::runPlayerAssessment() {
   const auto fakeGuild = [&] { return vm.call_function<int32_t>("C_PLAYERHASFAKEGUILD",self,other())!=0; };
   const auto assessTalk = [&] {
     self->aivar[startedTalk] = 1;
-    vm.call_function<void>("B_ASSESSTALK");
+    vm.unsafe_call_bl(findSymbol("B_ASSESSTALK"));
     };
 
   const auto inspector = hlp_getnpc(int(findSymbolIndex("PC_LEVELINSPEKTOR")));
@@ -2731,7 +2731,7 @@ void GameScript::closeQuestTopic(std::string_view topic, int32_t mission, int32_
     status=Status::Success;
   else if(mission==int32_t(Status::Obsolete) || mission==int32_t(Status::Failed))
     status=Status(mission);
-  else if((common==0 || mission==int32_t(Status::Running)) && findSymbol("KAPITEL")->get_int()>=endChapter)
+  else if((common==0 || mission==int32_t(Status::Running)) && storyChapter>=endChapter)
     status=Status::Obsolete;
   if(status!=Status::Running) {
     vm.push_reference(savedTopic);

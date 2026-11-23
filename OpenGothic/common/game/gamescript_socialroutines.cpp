@@ -574,7 +574,7 @@ bool GameScript::refusesTalk(const std::shared_ptr<daedalus::INpc>& self, const 
   findSymbol("C_REFUSETALK.SLF")->set_instance(self);
 
   const bool noPass = !self || self->aivar[guardPassageStatus]==0;
-  const bool guard = vm.call_function<int32_t>("C_NPCISGATEGUARD",self)!=0;
+  const bool guard = isGateGuard(self);
   const bool refused = npc_refusetalk(self);
   if(noPass && guard && refused)
     return true;
@@ -596,7 +596,7 @@ void GameScript::runAssessTalk() {
   const auto guild = [&] { const auto actor=self(); return actor ? actor->guild : int32_t(GIL_NONE); };
   const auto started = [&] { const auto actor=self(); return actor ? actor->aivar[startedTalk] : 0; };
   const auto attack = [&](std::string_view reason) {
-    vm.call_function<void>("B_ATTACK",self(),other(),findSymbol(reason)->get_int(),0);
+    startNpcAttack(self(),other(),findSymbol(reason)->get_int(),0);
     };
 
   findSymbol("B_ASSESSTALK.PCL")->set_instance(hlp_getnpc(int(findSymbolIndex("PC_LEVELINSPEKTOR"))));
@@ -609,14 +609,14 @@ void GameScript::runAssessTalk() {
     vm.unsafe_call_bl(findSymbol("B_ASSESSENEMY"));
     if(vm.pop_int()!=0)
       return;
-    const bool wantsAttack = vm.call_function<int32_t>("C_WANTTOATTACKMURDER",self(),other())!=0;
-    const bool murder = vm.call_function<int32_t>("B_GETPLAYERCRIME",self())==findSymbol("CRIME_MURDER")->get_int();
+    const bool wantsAttack = wantsToAttackMurderer(self(),other());
+    const bool murder = playerCrime(self())==findSymbol("CRIME_MURDER")->get_int();
     if(wantsAttack && murder) {
       attack("AR_HUMANMURDEREDHUMAN");
       return;
       }
     const bool notBandit = guild()!=int32_t(GIL_BDT);
-    const bool fakeBandit = vm.call_function<int32_t>("C_PLAYERISFAKEBANDIT",self(),other())==1;
+    const bool fakeBandit = isPlayerFakeBandit(self(),other());
     if(notBandit && fakeBandit) {
       attack("AR_GUILDENEMY");
       return;
@@ -626,7 +626,7 @@ void GameScript::runAssessTalk() {
         npc_clearaiqueue(self());
         ai_startstate(self(),int(findFunction("ZS_COMMENTFAKEGUILD").ptr),1,"");
         } else {
-        vm.call_function<void>("B_SAY",self(),other(),std::string_view{"$NOTNOW"});
+        sayToNpc(self(),other(),"$NOTNOW");
         }
       return;
       }
@@ -635,7 +635,7 @@ void GameScript::runAssessTalk() {
   if(started()==0) {
     const auto body = npc_getbodystate(self());
     if(ActivityDefinitions::bodyStateContains(body,BS_RUN) || ActivityDefinitions::bodyStateContains(body,BS_WALK)) {
-      vm.call_function<void>("B_SAY",other(),self(),std::string_view{"$SC_HEYWAITASECOND"});
+      sayToNpc(other(),self(),"$SC_HEYWAITASECOND");
       } else if(!npc_canseenpc(self(),other())) {
       const auto roll = hlp_random(100);
       findSymbol("B_ASSESSTALK.RND")->set_int(roll);
@@ -644,11 +644,11 @@ void GameScript::runAssessTalk() {
         };
       const auto line = std::ranges::find_if(greetings,[&](const auto& entry) { return roll<=entry.first; });
       if(line!=std::end(greetings))
-        vm.call_function<void>("B_SAY",other(),self(),line->second);
+        sayToNpc(other(),self(),line->second);
       }
     }
   npc_clearaiqueue(self());
-  vm.call_function<void>("B_CLEARPERCEPTIONS",self());
+  clearPerceptions(self());
 
   const bool seated = ActivityDefinitions::bodyStateContains(npc_getbodystate(self()),BS_SIT);
   const bool quick = started()==1;

@@ -256,7 +256,7 @@ bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::Daedalus
       }
     else if(spell==id("SPL_ICECUBE") || spell==id("SPL_ICEWAVE")) {
       npc.clearAiQueue();
-      clearNpcPerceptions(self);
+      clearPerceptions(self);
       ai_startstate(self,int(findFunction("ZS_MAGICFREEZE").ptr),0,"");
       }
     }
