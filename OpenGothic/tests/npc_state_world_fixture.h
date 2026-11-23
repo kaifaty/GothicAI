@@ -480,6 +480,89 @@ void shrinkSpellCast(World& world) {
   std::puts("Shrink cast: stock mana, target eligibility, perceptions, queued state and saved locals match");
   }
 
+void stockSpellSummons(World& world) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  auto& hero=*world.player();
+  auto& armyLevel=*script.findSymbol("SPELL_CAST_ARMYOFDARKNESS.SPELLLEVEL");
+  auto& heroSymbol=*script.findSymbol("PC_HERO");
+  const auto previousEvents=events;
+  const auto previousLevel=armyLevel.get_int();
+  const auto previousHero=heroSymbol.get_instance();
+  const auto* point=world.findWayPoint("NW_FARM4_BALTHASAR");
+  auto& perceptions=Contract::passivePerceptions(world);
+  const auto passiveCount=perceptions.size();
+  require(point!=nullptr,"spell summons: the fixture needs a stock spawn point");
+  const struct Spell {
+    const char* item;
+    const char* cast;
+    const char* creature;
+    int32_t cost, selection;
+    uint32_t count;
+    bool player;
+    } spells[] = {
+    {"ITSC_SUMWOLF", "SPELL_CAST_SUMMONWOLF", "SUMMONED_WOLF",5,1,1,true},
+    {"ITRU_SUMSKEL", "SPELL_CAST_SUMMONSKELETON", "SKELETON",60,1,1,false},
+    {"ITRU_SUMMONGUARDIAN", "SPELL_CAST_SUMMONGUARDIAN", "STONEGUARDIAN",60,2,1,false},
+    {"ITSC_ARMYOFDARKNESS", "SPELL_CAST_ARMYOFDARKNESS", "SUMMONED_SKELETON",5,1,6,true},
+    };
+  for(const auto& row:spells) {
+    auto& itemSymbol=*script.findSymbol(row.item);
+    auto& creature=*script.findSymbol(row.creature);
+    const auto oldItem=itemSymbol.get_instance(), oldCreature=creature.get_instance();
+    const auto oldCurrent=vm.global_item()->get_instance();
+    const auto castPc=script.findSymbol(row.cast)->address();
+    std::vector<Tempest::Vec3> stock;
+    for(bool native:{false,true}) {
+      auto* caster=world.addNpc(heroSymbol.index(),point->position());
+      require(caster!=nullptr,"spell summons: the stock caster must spawn");
+      caster->setProcessPolicy(row.player ? NpcProcessPolicy::Player : NpcProcessPolicy::AiNormal);
+      require(caster->isPlayer()==row.player,"spell summons: the caster must have the intended engine role");
+      auto* item=caster->addItem(itemSymbol.index(),1);
+      require(item && caster->drawSpell(item->spellId()) && caster->activeWeapon()==item,
+              "spell summons: the actual rune or scroll must be active");
+      events=native;
+      caster->handle().attribute[ATR_MANA]=3;
+      caster->handle().aivar[20]=9;
+      armyLevel.set_int(71);
+      const auto before=world.npcCount();
+      const auto callSelf=vm.global_self()->get_instance(), callOther=vm.global_other()->get_instance(), callGi=vm.unsafe_get_gi();
+      size_t castEntries=0;
+      vm.observe_instructions([&](const auto&) { castEntries+=vm.pc()==castPc; });
+      vm.push_int(0x12345678);
+      script.invokeSpell(*caster,row.player ? nullptr : &hero,*item);
+      const auto marker=vm.pop_int();
+      vm.observe_instructions({});
+      require(castEntries==size_t(!native) && world.npcCount()==before+row.count && marker==0x12345678 &&
+              caster->attribute(ATR_MANA)==3-row.cost && caster->handle().aivar[20]==9+row.selection &&
+              armyLevel.get_int()==(row.count==6 ? 0 : 71),
+              "spell summons: cast keeps the original mana, selection, level and number of spawns");
+      require(vm.global_self()->get_instance()==callSelf && vm.global_other()->get_instance()==callOther && vm.unsafe_get_gi()==callGi,
+              "spell summons: the callback restores its caller's actor context");
+      for(uint32_t i=0;i<row.count;++i) {
+        auto* spawned=world.npcById(before);
+        require(spawned && spawned->instanceSymbol()==creature.index(),"spell summons: the engine spawns the stock creature for this caster");
+        if(native)
+          require(spawned->position()==stock[i],"spell summons: each creature is placed at the stock position in the original order");
+        else
+          stock.push_back(spawned->position());
+        world.removeNpc(*spawned);
+        }
+      world.removeNpc(*caster);
+      heroSymbol.set_instance(previousHero);
+      creature.set_instance(oldCreature);
+      itemSymbol.set_instance(oldItem);
+      vm.global_item()->set_instance(oldCurrent);
+      perceptions.resize(passiveCount);
+      }
+    }
+  events=previousEvents;
+  armyLevel.set_int(previousLevel);
+  std::puts("Spell summons: hero, NPC, selection and Army of Darkness match the VM");
+  }
+
 void stockSpellCastAccounting(World& world) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -573,6 +656,7 @@ void stockSpellCastAccounting(World& world) {
   activeSpell.set_int(oldActiveSpell);
   events=previousEvents;
   std::puts("Spell accounting: mana admission, rune, scroll, level and counter-only callbacks match both executors");
+  stockSpellSummons(world);
   }
 
 void stockSpellCollisionParity(World& world) {

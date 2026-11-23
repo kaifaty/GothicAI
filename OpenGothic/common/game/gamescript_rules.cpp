@@ -3857,11 +3857,21 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
      ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return false;
 
+  enum class Selection { After, Before, Both };
+  struct Summon {
+    std::string_view forHero, forNpc;
+    int32_t count = 1;
+    float lifeTime = 500.f;
+    Selection selection = Selection::After;
+    };
   struct Cast {
     std::string_view function, runeCost = {}, levelParameter = {};
+    Summon summon = {};
     };
-  // These stock bodies only save an optional argument, debit mana, and advance selection.
+  // Stock spell accounting and the summoned instances used by the ordinary world spawn call.
   static constexpr Cast casts[] = {
+    {"SPELL_CAST_ARMYOFDARKNESS",   "SPL_COST_ARMYOFDARKNESS", "SPELL_CAST_ARMYOFDARKNESS.SPELLLEVEL",
+     {"SUMMONED_SKELETON","SKELETON",6,800.f}},
     {"SPELL_CAST_BREATHOFDEATH",    "SPL_COST_BREATHOFDEATH", "SPELL_CAST_BREATHOFDEATH.SPELLLEVEL"},
     {"SPELL_CAST_CHARM",            "SPL_COST_CHARM"},
     {"SPELL_CAST_CONCUSSIONBOLT",   "SPL_COST_CONCUSSIONBOLT"},
@@ -3890,6 +3900,14 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
     {"SPELL_CAST_PALREPELEVIL",     "SPL_COST_PALREPELEVIL"},
     {"SPELL_CAST_SLEEP"},
     {"SPELL_CAST_SUCKENERGY",       "SPL_COST_SUCKENERGY"},
+    {"SPELL_CAST_SUMMONDEMON",      "SPL_COST_SUMMONDEMON", {}, {"SUMMONED_DEMON","DEMON",1,1000.f}},
+    {"SPELL_CAST_SUMMONGOBLINSKELETON", "SPL_COST_SUMMONGOBLINSKELETON", {}, {"SUMMONED_GOBBO_SKELETON","GOBBO_SKELETON"}},
+    {"SPELL_CAST_SUMMONGOLEM",      "SPL_COST_SUMMONGOLEM", {}, {"SUMMONED_GOLEM","STONEGOLEM"}},
+    {"SPELL_CAST_SUMMONGUARDIAN",   "SPL_COST_SUMMONGUARDIAN", {}, {"SUMMONED_GUARDIAN","STONEGUARDIAN",1,500.f,Selection::Both}},
+    {"SPELL_CAST_SUMMONMUD",        "SPL_COST_SUMMONMUD", {}, {"SUMMONED_MUD","UNDEAD_MUD",1,1000.f}},
+    {"SPELL_CAST_SUMMONSKELETON",   "SPL_COST_SUMMONSKELETON", {}, {"SUMMONED_SKELETON","SKELETON",1,500.f,Selection::Before}},
+    {"SPELL_CAST_SUMMONWOLF",       "SPL_COST_SUMMONWOLF", {}, {"SUMMONED_WOLF","WOLF"}},
+    {"SPELL_CAST_SUMMONZOMBIE",     "SPL_COST_SUMMONZOMBIE", {}, {"SUMMONED_ZOMBIE","ZOMBIE01"}},
     {"SPELL_CAST_SWARM"},
     {"SPELL_CAST_THUNDERSTORM",     "SPL_COST_THUNDERSTORM"},
     {"SPELL_CAST_WATERFIST",        "SPL_COST_WATERFIST"},
@@ -3901,12 +3919,29 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
     return false;
   if(!cast->levelParameter.empty())
     findSymbol(cast->levelParameter)->set_int(level);
+  const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
   if(!cast->runeCost.empty()) {
-    const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
     const auto cost=findSymbol(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : cast->runeCost)->get_int();
-    caster.handle().attribute[ATR_MANA]-=cost;
+    self->attribute[ATR_MANA]-=cost;
     }
-  ++caster.handle().aivar[20]; // AIV_SELECTSPELL
+  auto& selection = self->aivar[20]; // AIV_SELECTSPELL
+  const auto& summon = cast->summon;
+  if(!summon.forHero.empty()) {
+    // Instance creation may execute callbacks with the caster as the caller's context.
+    struct RestoreContext {
+      daedalus::DaedalusVm& vm;
+      std::shared_ptr<daedalus::DaedalusInstance> caller;
+      ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+      } restore{vm,vm.unsafe_get_gi()};
+    vm.unsafe_set_gi(self);
+    if(summon.selection!=Selection::After)
+      ++selection;
+    const auto instance = findSymbolIndex(npc_isplayer(self) ? summon.forHero : summon.forNpc);
+    wld_spawnnpcrange(self,int(instance),summon.count,summon.lifeTime);
+    if(summon.selection==Selection::Before)
+      return true;
+    }
+  ++selection;
   return true;
   }
 
