@@ -15,8 +15,8 @@
 
 #include "game/gamescript.h"
 
-#include "expr.h"
-#include "program.h"
+#include "storygraph/expr.h"
+#include "storygraph/program.h"
 #include "storyeffects.h"
 #include "storyruntime.h"
 
