@@ -76,7 +76,7 @@ int32_t fixedTalentLearnCost(int32_t talent, int32_t skill) {
     }
   }
 
-bool hasStockAttributeRaiseArguments(daedalus::DaedalusVm& vm) {
+bool hasStockNpcThreeArguments(daedalus::DaedalusVm& vm) {
   using Type = daedalus::DaedalusDataType;
   try {
     // The stock BL sites pass global integer references or immediate integer values.
@@ -115,7 +115,7 @@ static constexpr struct AttributeRaise {
   {ATR_HITPOINTSMAX, "PRINT_LEARNHITPOINTS_MAX", {}},
   };
 
-std::span<daedalus::DaedalusSymbol> bindAttributeRaise(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
+std::span<daedalus::DaedalusSymbol> bindNpcThreeArguments(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
   auto args = vm.find_parameters_for_function(&helper);
   const auto caller = vm.unsafe_get_gi();
   vm.set_int(caller,&args[2],0,vm.pop_int());
@@ -124,7 +124,7 @@ std::span<daedalus::DaedalusSymbol> bindAttributeRaise(daedalus::DaedalusVm& vm,
   return args;
   }
 
-void increaseAttribute(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& learner,
+void increaseNpcField(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& learner,
                        daedalus::DaedalusSymbol& points, const char* field, uint16_t index) {
   const auto npc = learner.get_instance();
   vm.unsafe_set_gi(npc);
@@ -135,17 +135,17 @@ void increaseAttribute(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& learn
   }
 
 void raiseRealAttributeLearnCounter(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
-  const auto args = bindAttributeRaise(vm,helper);
+  const auto args = bindNpcThreeArguments(vm,helper);
   const auto row = std::ranges::find(attributeRaises,args[1].get_int(),&AttributeRaise::attribute);
   if(row!=std::end(attributeRaises) && row->trainingSlot) {
     RestoreContext restore{vm,vm.unsafe_get_gi()};
-    increaseAttribute(vm,args[0],args[2],"C_NPC.AIVAR",*row->trainingSlot);
+    increaseNpcField(vm,args[0],args[2],"C_NPC.AIVAR",*row->trainingSlot);
     }
   }
 
 void raiseAttribute(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper,
                     const daedalus::DaedalusSymbol& counter) {
-  const auto args = bindAttributeRaise(vm,helper);
+  const auto args = bindNpcThreeArguments(vm,helper);
   const auto id = args[1].get_int();
   const auto row = std::ranges::find(attributeRaises,id,&AttributeRaise::attribute);
   RestoreContext restore{vm,vm.unsafe_get_gi()};
@@ -153,7 +153,7 @@ void raiseAttribute(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& he
   if(row!=std::end(attributeRaises)) {
     const auto symbol = [&](std::string_view name) { return vm.find_symbol_by_name(name); };
     auto& learner = args[0];
-    increaseAttribute(vm,learner,args[2],"C_NPC.ATTRIBUTE",uint16_t(id));
+    increaseNpcField(vm,learner,args[2],"C_NPC.ATTRIBUTE",uint16_t(id));
     const auto print = [&](daedalus::DaedalusSymbol* text,int32_t y) {
       vm.push_reference(text);
       vm.push_int(-1);
@@ -199,6 +199,27 @@ void raiseAttribute(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& he
     (void)vm.pop_int();
   }
 
+bool printLessonNotice(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* text) {
+  vm.push_reference(text);
+  vm.push_int(-1);
+  vm.push_int(-1);
+  vm.push_reference(vm.find_symbol_by_name("FONT_SCREEN"));
+  vm.push_int(2);
+  return vm.unsafe_call_external(vm.find_symbol_by_name("PRINTSCREEN"));
+  }
+
+void refuseLesson(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* notice, daedalus::DaedalusSymbol* teacher,
+                  daedalus::DaedalusSymbol* learner, std::string_view speech) {
+  const bool printed=printLessonNotice(vm,notice);
+  vm.push_reference(teacher);
+  vm.push_reference(learner);
+  vm.push_reference(vm.find_symbol_by_name(speech));
+  vm.unsafe_call_bl(vm.find_symbol_by_name("B_SAY"));
+  if(printed)
+    (void)vm.pop_int(); // The script discards PRINTSCREEN's result on return.
+  vm.push_reference(vm.find_symbol_by_name("FALSE"));
+  }
+
 void teachAttributePoints(daedalus::DaedalusVm& vm) {
   const auto symbol = [&](std::string_view name) { return vm.find_symbol_by_name(name); };
   const auto caller = vm.unsafe_get_gi();
@@ -237,20 +258,6 @@ void teachAttributePoints(daedalus::DaedalusVm& vm) {
   // The price uses the trained value, while the teacher compares the current attribute.
   const auto value = vm.get_int(student,symbol("C_NPC.ATTRIBUTE"),uint16_t(id));
   vm.set_int(student,symbol("B_TEACHATTRIBUTEPOINTS.REALATTRIBUTE"),0,value);
-  const auto refuse = [&](daedalus::DaedalusSymbol* notice, std::string_view speech) {
-    vm.push_reference(notice);
-    vm.push_int(-1);
-    vm.push_int(-1);
-    vm.push_reference(symbol("FONT_SCREEN"));
-    vm.push_int(2);
-    vm.unsafe_call_external(symbol("PRINTSCREEN"));
-    vm.push_reference(teacher);
-    vm.push_reference(learner);
-    vm.push_reference(symbol(speech));
-    vm.unsafe_call_bl(symbol("B_SAY"));
-    (void)vm.pop_int(); // The script discards PRINTSCREEN's result on return.
-    vm.push_reference(failure);
-    };
   const auto limit = maximum->get_int();
   const bool alreadyAtLimit = value>=limit;
   if(alreadyAtLimit || std::bit_cast<int32_t>(uint32_t(value)+uint32_t(points->get_int()))>limit) {
@@ -261,12 +268,12 @@ void teachAttributePoints(daedalus::DaedalusVm& vm) {
     auto* notice = symbol("B_TEACHATTRIBUTEPOINTS.CONCATTEXT");
     vm.set_string(student,notice,0,vm.pop_string());
     // Stock speech IDs for being at the limit and crossing it in this request.
-    refuse(notice,alreadyAtLimit ? "$27344" : "$27345");
+    refuseLesson(vm,notice,teacher,learner,alreadyAtLimit ? "$27344" : "$27345");
     return;
     }
   auto* lp = symbol("C_NPC.LP");
   if(vm.get_int(student,lp,0)<cost) {
-    refuse(symbol("PRINT_NOTENOUGHLP"),"$27346");
+    refuseLesson(vm,symbol("PRINT_NOTENOUGHLP"),teacher,learner,"$27346");
     return;
     }
   const auto balance = std::bit_cast<int32_t>(uint32_t(vm.get_int(student,lp,0))-uint32_t(cost));
@@ -275,6 +282,112 @@ void teachAttributePoints(daedalus::DaedalusVm& vm) {
   vm.push_reference(attribute);
   vm.push_reference(points);
   vm.unsafe_call_bl(symbol("B_RAISEATTRIBUTE"));
+  vm.push_reference(symbol("TRUE"));
+  }
+
+static constexpr struct FightLesson {
+  uint8_t counter;
+  int32_t pairedTalent;
+  const char* talentSymbol;
+  const char* singleNotice;
+  const char* pairedNotice;
+  } fightLessons[] = {
+  {84,TALENT_2H,       "NPC_TALENT_1H",       "PRINT_LEARN1H",       "PRINT_LEARN1H_AND_2H"},
+  {85,TALENT_1H,       "NPC_TALENT_2H",       "PRINT_LEARN2H",       "PRINT_LEARN2H_AND_1H"},
+  {86,TALENT_CROSSBOW, "NPC_TALENT_BOW",      "PRINT_LEARNBOW",      "PRINT_LEARNBOW_AND_CROSSBOW"},
+  {87,TALENT_BOW,      "NPC_TALENT_CROSSBOW", "PRINT_LEARNCROSSBOW", "PRINT_LEARNCROSSBOW_AND_BOW"},
+  };
+
+void raiseRealFightTalent(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
+  const auto args=bindNpcThreeArguments(vm,helper);
+  const auto talent=args[1].get_int();
+  if(TALENT_1H<=talent && talent<=TALENT_CROSSBOW) {
+    RestoreContext restore{vm,vm.unsafe_get_gi()};
+    increaseNpcField(vm,args[0],args[2],"C_NPC.AIVAR",fightLessons[size_t(talent-TALENT_1H)].counter);
+    }
+  }
+
+void raiseFightTalent(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
+  const auto args=bindNpcThreeArguments(vm,helper);
+  for(const auto* child:{ "B_RAISEREALFIGHTTALENTPERCENT", "B_ADDFIGHTSKILL" }) {
+    for(auto& arg:args)
+      vm.push_reference(&arg);
+    vm.unsafe_call_bl(vm.find_symbol_by_name(child));
+    }
+  }
+
+void teachFightTalent(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
+  const auto symbol=[&](std::string_view name) { return vm.find_symbol_by_name(name); };
+  auto args=vm.find_parameters_for_function(&helper);
+  auto& teacher=args[0];
+  auto& learner=args[1];
+  auto& talent=args[2];
+  auto& percent=args[3];
+  auto& maximum=args[4];
+  const auto caller=vm.unsafe_get_gi();
+  for(auto* arg:{&maximum,&percent,&talent})
+    vm.set_int(caller,arg,0,vm.pop_int());
+  learner.set_instance(vm.pop_instance());
+  teacher.set_instance(vm.pop_instance());
+
+  vm.push_reference(&percent);
+  vm.push_reference(&learner);
+  vm.push_reference(&talent);
+  vm.push_int(1);
+  vm.unsafe_call_bl(symbol("B_GETLEARNCOSTTALENT"));
+  const auto unitPrice=vm.pop_int();
+  const auto cost=std::bit_cast<int32_t>(uint32_t(unitPrice)*uint32_t(vm.pop_int()));
+  vm.set_int(caller,symbol("B_TEACHFIGHTTALENTPERCENT.KOSTEN"),0,cost);
+  const auto id=talent.get_int();
+  if(id<TALENT_1H || id>TALENT_CROSSBOW) {
+    vm.push_reference(symbol("$27347")); // Stock wrong-parameter message.
+    vm.unsafe_call_external(symbol("PRINT"));
+    vm.push_reference(symbol("FALSE"));
+    return;
+    }
+
+  RestoreContext restore{vm,caller};
+  const auto student=learner.get_instance();
+  vm.unsafe_set_gi(student);
+  const auto value=vm.get_int(student,symbol("C_NPC.HITCHANCE"),uint16_t(id));
+  vm.set_int(student,symbol("B_TEACHFIGHTTALENTPERCENT.REALHITCHANCE"),0,value);
+  const auto limit=maximum.get_int();
+  const bool alreadyAtLimit=value>=limit;
+  if(alreadyAtLimit || std::bit_cast<int32_t>(uint32_t(value)+uint32_t(percent.get_int()))>limit) {
+    vm.push_reference(symbol("PRINT_NOLEARNOVERPERSONALMAX"));
+    vm.push_reference(&maximum);
+    vm.unsafe_call_external(symbol("INTTOSTRING"));
+    vm.unsafe_call_external(symbol("CONCATSTRINGS"));
+    auto* notice=symbol("B_TEACHFIGHTTALENTPERCENT.CONCATTEXT");
+    vm.set_string(student,notice,0,vm.pop_string());
+    refuseLesson(vm,notice,&teacher,&learner,alreadyAtLimit ? "$27348" : "$27349");
+    return;
+    }
+
+  auto* lp=symbol("C_NPC.LP");
+  const auto balance=vm.get_int(student,lp,0);
+  if(balance<cost) {
+    refuseLesson(vm,symbol("PRINT_NOTENOUGHLP"),&teacher,&learner,"$27350");
+    return;
+    }
+  vm.set_int(student,lp,0,std::bit_cast<int32_t>(uint32_t(balance)-uint32_t(cost)));
+  const auto raise=[&](const FightLesson& lesson) {
+    vm.push_reference(&learner);
+    vm.push_reference(symbol(lesson.talentSymbol));
+    vm.push_reference(&percent);
+    vm.unsafe_call_bl(symbol("B_RAISEFIGHTTALENT"));
+    };
+  const auto& lesson=fightLessons[size_t(id-TALENT_1H)];
+  const auto& pairedLesson=fightLessons[size_t(lesson.pairedTalent-TALENT_1H)];
+  raise(lesson);
+  auto* counters=symbol("C_NPC.AIVAR");
+  // Pairing uses trained skill after the increase, including the exact 30-point boundary.
+  const auto pairedLimit=std::bit_cast<int32_t>(uint32_t(vm.get_int(student,counters,pairedLesson.counter))+30u);
+  const bool paired=vm.get_int(student,counters,lesson.counter)>=pairedLimit;
+  if(paired)
+    raise(pairedLesson);
+  if(printLessonNotice(vm,symbol(paired ? lesson.pairedNotice : lesson.singleNotice)))
+    (void)vm.pop_int();
   vm.push_reference(symbol("TRUE"));
   }
 
@@ -568,7 +681,7 @@ void GameScript::loadNativeTrainingHelpers() {
     },enabled);
   auto* raise = findSymbol("B_RAISEATTRIBUTE");
   auto* counter = findSymbol("B_RAISEREALATTRIBUTELEARNCOUNTER");
-  const auto canRaise = [this,enabled] { return enabled() && hasStockAttributeRaiseArguments(vm); };
+  const auto canRaise = [this,enabled] { return enabled() && hasStockNpcThreeArguments(vm); };
   vm.override_function(raise->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
     [raise,counter](auto& machine) -> daedalus::DaedalusNakedCall {
       raiseAttribute(machine,*raise,*counter);
@@ -587,6 +700,43 @@ void GameScript::loadNativeTrainingHelpers() {
       return {};
       }
     },enabled);
+  auto* fightLesson=findSymbol("B_TEACHFIGHTTALENTPERCENT");
+  vm.override_function(fightLesson->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [fightLesson](auto& machine) -> daedalus::DaedalusNakedCall {
+      teachFightTalent(machine,*fightLesson);
+      return {};
+      }
+    },enabled);
+  auto* raiseFight=findSymbol("B_RAISEFIGHTTALENT");
+  vm.override_function(raiseFight->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [raiseFight](auto& machine) -> daedalus::DaedalusNakedCall {
+      raiseFightTalent(machine,*raiseFight);
+      return {};
+      }
+    },canRaise);
+  auto* realFight=findSymbol("B_RAISEREALFIGHTTALENTPERCENT");
+  vm.override_function(realFight->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+    [realFight](auto& machine) -> daedalus::DaedalusNakedCall {
+      raiseRealFightTalent(machine,*realFight);
+      return {};
+      }
+    },canRaise);
+  auto* addFight=findSymbol("B_ADDFIGHTSKILL");
+  if(npcDefinitions.helpers.helpers.contains(addFight->index())) {
+    const auto student=[this] {
+      const auto& frame=vm.stack_frame(2);
+      const auto actor=frame.reference ? std::get<daedalus::DaedalusSymbol*>(frame.value)->get_instance() :
+                                        std::get<std::shared_ptr<daedalus::DaedalusInstance>>(frame.value);
+      return std::static_pointer_cast<daedalus::INpc>(actor);
+      };
+    vm.override_function(addFight->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
+      [this,addFight,student](auto& machine) -> daedalus::DaedalusNakedCall {
+        RestoreContext restore{machine,machine.unsafe_get_gi()};
+        NpcHelperRuntime::invoke(machine,student(),addFight,npcDefinitions.helpers);
+        return {};
+        }
+      },[canRaise,student] { return NpcHelperRuntime::enabled() && canRaise() && student()!=nullptr; });
+    }
   }
 
 auto GameScript::buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol& {

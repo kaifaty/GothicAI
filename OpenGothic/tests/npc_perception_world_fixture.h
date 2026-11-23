@@ -269,6 +269,88 @@ void stockTeachAttribute(GameScript& script, Npc& npc, Npc& player) {
   enabled=saved;
   }
 
+void stockTeachFight(GameScript& script, Npc& npc, Npc& player) {
+  using Contract=NpcDefinitionContract;
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool saved=enabled;
+  const auto teacher=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto student=std::static_pointer_cast<daedalus::INpc>(player.handlePtr());
+  const auto queue=Contract::queue(npc);
+  const auto order=Contract::outputOrder(script);
+  const auto awaitQueue=Contract::activityEvents(npc).awaitQueue;
+  const auto context=vm.unsafe_get_gi();
+  const auto chance=std::to_array(student->hitchance);
+  const auto aivar=std::to_array(student->aivar);
+  const auto skill1=player.talentSkill(TALENT_1H);
+  const auto skill2=player.talentSkill(TALENT_2H);
+  const auto lp=student->lp;
+  auto* teacherFn=script.findSymbol("B_TEACHFIGHTTALENTPERCENT");
+  auto* raise=script.findSymbol("B_RAISEFIGHTTALENT");
+  auto* counter=script.findSymbol("B_RAISEREALFIGHTTALENTPERCENT");
+  auto* add=script.findSymbol("B_ADDFIGHTSKILL");
+  const bool nativeSkill=NpcHelperRuntime::enabled() && Contract::definitions(script).helpers.helpers.contains(add->index());
+  static constexpr struct {
+    int current,trained,pairedTrained,points,limit,lp,price;
+    bool accepted,paired;
+    } cases[] = {
+    {20,29,5,5,40,5,5, true,false},
+    {29,29,4,5,40,5,5, true,true},
+    {40,20,5,1,40,90,1,false,false},
+    {39,20,5,2,40,90,2,false,false},
+    {20,60,5,3,40,8,9, false,false},
+    };
+  for(bool native:{false,true}) {
+    if(native && (!saved || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
+      continue;
+    enabled=native;
+    for(const auto& [current,trained,pairedTrained,points,limit,available,price,accepted,paired]:cases) {
+      Contract::queue(npc)=queue;
+      Contract::outputOrder(script)=order;
+      Contract::activityEvents(npc).awaitQueue=awaitQueue;
+      student->hitchance[TALENT_1H]=current;
+      student->hitchance[TALENT_2H]=27;
+      student->aivar[84]=trained;
+      student->aivar[85]=pairedTrained;
+      student->lp=available;
+      size_t roots=0,raises=0,adds=0,notices=0;
+      vm.observe_instructions([&](const auto&) {
+        roots+=vm.pc()==teacherFn->address();
+        raises+=vm.pc()==raise->address() || vm.pc()==counter->address();
+        adds+=vm.pc()==add->address();
+        });
+      vm.observe_externals([&](const auto& fn) { notices+=fn.name()=="PRINTSCREEN"; });
+      using storygraph::Value;
+      std::string error;
+      const auto result=storygraph::callFunction(vm,*teacherFn,{Value::instance(teacher),Value::instance(student),
+          Value::integer(TALENT_1H),Value::integer(points),Value::integer(limit)},error);
+      vm.observe_instructions({});
+      vm.observe_externals({});
+      const size_t count=accepted ? 1+size_t(paired) : 0;
+      require(result && result->i==int(accepted) && roots==size_t(!native) && raises==(native ? 0u : count*2u) &&
+              adds==(native && nativeSkill ? 0u : count) && notices==1 && vm.unsafe_get_gi()==context,
+              "fight lesson: use the selected executor and issue one notice");
+      require(Contract::queue(npc).size()==queue.size()+size_t(!accepted) && Contract::outputOrder(script)==order+int(!accepted),
+              "fight lesson: queue the teacher's refusal in order");
+      require(student->lp==available-(accepted ? price : 0) &&
+              student->hitchance[TALENT_1H]==current+(accepted ? points : 0) &&
+              student->hitchance[TALENT_2H]==27+(paired ? points : 0) &&
+              student->aivar[84]==trained+(accepted ? points : 0) && student->aivar[85]==pairedTrained+(paired ? points : 0) &&
+              (!paired || (player.talentSkill(TALENT_1H)==1 && player.talentSkill(TALENT_2H)==1)),
+              "fight lesson: preserve real and effective skills, paired thresholds and learning points");
+      }
+    }
+  Contract::queue(npc)=queue;
+  Contract::outputOrder(script)=order;
+  Contract::activityEvents(npc).awaitQueue=awaitQueue;
+  std::ranges::copy(chance,student->hitchance);
+  std::ranges::copy(aivar,student->aivar);
+  player.setTalentSkill(TALENT_1H,skill1);
+  player.setTalentSkill(TALENT_2H,skill2);
+  student->lp=lp;
+  enabled=saved;
+  }
+
 void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -276,6 +358,7 @@ void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
   stockLearnCostAttribute(script,npc,player);
   stockLearnCostTalent(script,npc,player);
   stockTeachAttribute(script,npc,player);
+  stockTeachFight(script,npc,player);
   auto& vm=script.getVm();
   auto& events=Contract::activityEventsOn(script);
   const bool savedEvents=events;
