@@ -433,6 +433,22 @@ async def graph_programs(
         f"{old_attitude} -> {written_attitude}, loaded {loaded_attitude}, expected {target_attitude}",
     )
 
+    # Compare the state queries with the engine's independent routine report after loading.
+    routine = await link.routine(npc)
+    state_args = [["inst", "SELF"], ["sym", routine.current]]
+    state_queries = [
+        ["call", "NPC_ISINSTATE", *state_args],
+        ["call", "NPC_WASINSTATE", ["inst", "SELF"], ["int", -2]],
+        ["call", "NPC_ISINROUTINE", *state_args],
+    ]
+    state_results = await link.story_eval(npc, state_queries) if routine.current else []
+    scheduled = bool(routine.entries) and all(entry.state == routine.current for entry in routine.entries)
+    check(
+        "npc_state_conditions",
+        len(state_results) == 3 and state_results[:2] == [1, 0] and (not scheduled or state_results[2] == 1),
+        f"{routine.current}: {state_results}, all-day activity={scheduled}",
+    )
+
     live = await link.check_conditions()
     counts = live.get("programs") or {}
     check("counters", counts.get("replaced", 0) >= 1 and counts.get("failed") == 0, str(counts))

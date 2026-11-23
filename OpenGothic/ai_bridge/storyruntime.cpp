@@ -28,8 +28,9 @@ class LiveStoryExternals final : public storygraph::Externals {
       using storygraph::Value;
       const std::string_view name=fn.name();
       const bool deadQuery=name=="NPC_ISDEAD";
-      const bool query=(deadQuery || name=="NPC_KNOWSINFO" || name=="NPC_HASITEMS") &&
-                       fn.has_return() && fn.rtype()==DaedalusDataType::INT;
+      const bool query=fn.has_return() && fn.rtype()==DaedalusDataType::INT &&
+                       (deadQuery || name=="NPC_KNOWSINFO" || name=="NPC_HASITEMS" ||
+                        name=="NPC_ISINSTATE" || name=="NPC_WASINSTATE" || name=="NPC_ISINROUTINE");
       const bool effect=effects && (name=="NPC_SETREFUSETALK" || name=="NPC_SETATTITUDE") && !fn.has_return();
       if((!query && !effect) || args.size()!=(deadQuery ? 1u : 2u) || args[0].type!=Value::Inst ||
          (!deadQuery && args[1].type!=Value::Int))
@@ -49,6 +50,12 @@ class LiveStoryExternals final : public storygraph::Externals {
         return Value::integer(script.doesNpcKnowInfo(npc->handle(),uint32_t(value)));
       if(name=="NPC_HASITEMS")
         return Value::integer(int32_t(npc->itemCount(uint32_t(value))));
+      if(name=="NPC_ISINSTATE")
+        return Value::integer(npc->isInState(uint32_t(value)));
+      if(name=="NPC_WASINSTATE")
+        return Value::integer(npc->wasInState(uint32_t(value)));
+      if(name=="NPC_ISINROUTINE")
+        return Value::integer(npc->isInRoutine(uint32_t(value)));
       if(name=="NPC_SETREFUSETALK")
         npc->setRefuseTalkSeconds(value);
       else
