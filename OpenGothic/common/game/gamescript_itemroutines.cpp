@@ -1103,6 +1103,7 @@ bool GameScript::applyEquipmentStatEffect(Npc& npc, uint32_t callback) {
     return false;
   const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto* protection = findSymbol("C_NPC.PROTECTION");
+  auto* attribute = findSymbol("C_NPC.ATTRIBUTE");
   const auto& effect = it->second;
   for(const auto& change : effect.changes) {
     const auto amount = uint32_t(vm.find_symbol_by_index(change.amount)->get_int());
@@ -1110,6 +1111,12 @@ bool GameScript::applyEquipmentStatEffect(Npc& npc, uint32_t callback) {
     if(const auto* index = std::get_if<Protection>(&change.stat)) {
       const auto current = uint32_t(vm.get_int(actor,protection,*index));
       vm.set_int(actor,protection,*index,std::bit_cast<int32_t>(current+delta));
+      }
+    else if(const auto* write = std::get_if<ItemDefinitionRuntime::EquipmentAttributeWrite>(&change.stat)) {
+      const auto current = vm.get_int(actor,attribute,write->attribute);
+      const bool belowMinimum = !effect.equip && write->minimum && int64_t(current)-int64_t(amount)<*write->minimum;
+      const auto value = belowMinimum ? *write->minimum : std::bit_cast<int32_t>(uint32_t(current)+delta);
+      vm.set_int(actor,attribute,write->attribute,value);
       }
     else {
       npc_changeattribute(actor,std::get<Attribute>(change.stat),std::bit_cast<int32_t>(delta));

@@ -750,7 +750,8 @@ auto stockArmorSetEffects(World& world, bool native) {
   const auto observer=vm.add_call_observer([&](const auto& fn) {
     armorCalls+=fn.name()=="EQUIP_ITAR_MIL_L" || fn.name()=="UNEQUIP_ITAR_MIL_L";
     accessoryCalls+=fn.name()=="EQUIP_ITRI_PROT_TOTAL_01" || fn.name()=="UNEQUIP_ITRI_PROT_TOTAL_01" ||
-                    fn.name()=="EQUIP_ITAM_DEX_STRG_01" || fn.name()=="UNEQUIP_ITAM_DEX_STRG_01";
+                    fn.name()=="EQUIP_ITAM_DEX_STRG_01" || fn.name()=="UNEQUIP_ITAM_DEX_STRG_01" ||
+                    fn.name()=="EQUIP_ITRI_HP_MANA_01" || fn.name()=="UNEQUIP_ITRI_HP_MANA_01";
     });
   require(hero.addItem(belt,1) && hero.addItem(armor,1),"armor sets: add the actual stock equipment");
   hero.useItem(belt);
@@ -806,8 +807,26 @@ auto stockArmorSetEffects(World& world, bool native) {
   mika->handle().attribute[ATR_STRENGTH]=beforeMika[ATR_STRENGTH];
   hero.delItem(ring,1);
   mika->delItem(amulet,1);
+  const auto pools=script.findSymbolIndex("ITRI_HP_MANA_01");
+  require(hero.addItem(pools,1),"equipment stats: add the stock health and mana ring");
+  auto& heroAttributes=hero.handle().attribute;
+  const auto beforePools=std::to_array(heroAttributes);
+  heroAttributes[ATR_HITPOINTS]=55;
+  heroAttributes[ATR_HITPOINTSMAX]=100;
+  heroAttributes[ATR_MANA]=20;
+  heroAttributes[ATR_MANAMAX]=35;
+  hero.useItem(pools);
+  require(hero.getItem(pools)->isEquipped() && heroAttributes[ATR_HITPOINTS]==85 && heroAttributes[ATR_HITPOINTSMAX]==130 &&
+          heroAttributes[ATR_MANA]==30 && heroAttributes[ATR_MANAMAX]==45,
+          "equipment stats: the ring adds distinct health and mana bonuses");
+  hero.unequipItem(pools);
+  require(heroAttributes[ATR_HITPOINTS]==55 && heroAttributes[ATR_HITPOINTSMAX]==100 &&
+          heroAttributes[ATR_MANA]==0 && heroAttributes[ATR_MANAMAX]==35,
+          "equipment stats: unequipping the mixed ring debits its health bonus from current mana");
+  std::copy(beforePools.begin(),beforePools.end(),heroAttributes);
+  hero.delItem(pools,1);
   vm.remove_call_observer(observer);
-  require(armorCalls==(native ? 0u : 5u) && accessoryCalls==(native ? 0u : 4u),
+  require(armorCalls==(native ? 0u : 5u) && accessoryCalls==(native ? 0u : 6u),
           "armor sets and equipment stats: Mika and the hero must use the selected callback executor");
   return std::pair{withSet,beltOnly};
   }

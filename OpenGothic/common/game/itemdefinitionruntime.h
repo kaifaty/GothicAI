@@ -36,8 +36,12 @@ struct FightSkillEffect {
   int32_t delta;
   bool    playerOnly;
   };
+struct EquipmentAttributeWrite {
+  Attribute attribute;
+  std::optional<int32_t> minimum{};
+  };
 struct EquipmentStatChange {
-  std::variant<Protection,Attribute> stat;
+  std::variant<Protection,Attribute,EquipmentAttributeWrite> stat;
   uint32_t amount;
   };
 struct EquipmentStatEffect {

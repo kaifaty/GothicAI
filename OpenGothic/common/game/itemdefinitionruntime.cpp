@@ -251,8 +251,11 @@ void ItemDefinitionRuntime::registerStockFightSkillEffects(Definitions& definiti
   }
 
 void ItemDefinitionRuntime::registerStockEquipmentStatEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
+  constexpr EquipmentAttributeWrite hp{ATR_HITPOINTS,2}, maxHp{ATR_HITPOINTSMAX};
+  constexpr EquipmentAttributeWrite mana{ATR_MANA,0}, maxMana{ATR_MANAMAX};
+  constexpr EquipmentAttributeWrite strength{ATR_STRENGTH}, dexterity{ATR_DEXTERITY};
   struct Change {
-    std::variant<Protection,Attribute> stat;
+    decltype(EquipmentStatChange::stat) stat;
     std::string_view amount;
     };
   static constexpr struct Pair {
@@ -303,21 +306,41 @@ void ItemDefinitionRuntime::registerStockEquipmentStatEffects(Definitions& defin
     {"ITRI_DEX_STRG_01", {{ATR_STRENGTH, "RI_DEXSTRG_STRG"}, {ATR_DEXTERITY, "RI_DEXSTRG_DEX"}}},
     {"ITRI_STR_01", {{ATR_STRENGTH, "RI_STRG"}}},
     {"ITRI_STR_02", {{ATR_STRENGTH, "RI_STRG02"}}},
+    {"ITAM_ADDON_FRANCO", {{strength,"STR_FRANCO"}, {dexterity,"DEX_FRANCO"},
+                           {maxHp,"HP_ITAM_ADDON_FRANCO"}, {hp,"HP_ITAM_ADDON_FRANCO"}}},
+    {"ITAM_HP_01", {{maxHp,"AM_HP"}, {hp,"AM_HP"}}},
+    {"ITAM_MANA_01", {{maxMana,"AM_MANA"}, {mana,"AM_MANA"}}},
+    {"ITAM_MANA_ANGAR", {{maxMana,"AM_MANA"}, {mana,"AM_MANA"}}},
+    {"ITRI_HP_01", {{maxHp,"RI_HP"}, {hp,"RI_HP"}}},
+    {"ITRI_HP_02", {{maxHp,"RI_HP02"}, {hp,"RI_HP02"}}},
+    {"ITRI_MANA_01", {{maxMana,"RI_MANA"}, {mana,"RI_MANA"}}},
+    {"ITRI_MANA_02", {{maxMana,"RI_MANA02"}, {mana,"RI_MANA02"}}},
+    {"ITRI_TENGRON", {{maxHp,"RI_HP"}, {hp,"RI_HP"}}},
     };
-  for(const auto& row : stock) {
+  const auto bind = [&](std::string_view callback,bool equip,std::initializer_list<Change> source) {
     std::vector<EquipmentStatChange> changes;
-    changes.reserve(row.changes.size());
-    for(const auto& [stat,amount] : row.changes) {
+    changes.reserve(source.size());
+    for(const auto& [stat,amount] : source) {
       const auto* value = program.find_symbol_by_name(amount);
       if(value==nullptr || value->type()!=daedalus::DaedalusDataType::INT || !value->is_const())
         throw std::runtime_error("stock equipment stat: invalid amount "+std::string(amount));
       changes.push_back({stat,value->index()});
       }
-    for(bool equip : {true,false}) {
-      const auto name = std::string(equip ? "EQUIP_" : "UNEQUIP_").append(row.callback);
-      const auto* function = program.find_symbol_by_name(name);
-      if(function==nullptr || !definitions.equipmentStatEffects.emplace(function->index(),EquipmentStatEffect{changes,equip}).second)
-        throw std::runtime_error("stock equipment stat: invalid callback "+name);
-      }
-    }
+    const auto name = std::string(equip ? "EQUIP_" : "UNEQUIP_").append(callback);
+    const auto* function = program.find_symbol_by_name(name);
+    if(function==nullptr || !definitions.equipmentStatEffects.emplace(function->index(),EquipmentStatEffect{std::move(changes),equip}).second)
+      throw std::runtime_error("stock equipment stat: invalid callback "+name);
+    };
+  for(const auto& row : stock)
+    for(bool equip : {true,false})
+      bind(row.callback,equip,row.changes);
+  bind("ITAM_HP_MANA_01",true, {{hp,"AM_HPMANA_HP"}, {maxHp,"AM_HPMANA_HP"},
+                               {mana,"AM_HPMANA_MANA"}, {maxMana,"AM_HPMANA_MANA"}});
+  bind("ITAM_HP_MANA_01",false,{{maxMana,"AM_HPMANA_MANA"}, {maxHp,"AM_HPMANA_HP"},
+                               {hp,"AM_HPMANA_HP"}, {mana,"AM_HPMANA_MANA"}});
+  bind("ITRI_HP_MANA_01",true, {{mana,"RI_HPMANA_MANA"}, {maxMana,"RI_HPMANA_MANA"},
+                               {hp,"RI_HPMANA_HP"}, {maxHp,"RI_HPMANA_HP"}});
+  // The stock ring subtracts its health bonus from current mana when removed.
+  bind("ITRI_HP_MANA_01",false,{{maxMana,"RI_HPMANA_MANA"}, {maxHp,"RI_HPMANA_HP"},
+                               {hp,"RI_HPMANA_HP"}, {mana,"RI_HPMANA_HP"}});
   }
