@@ -11,7 +11,7 @@ from gothic_ai import daylife, gossip
 from gothic_ai import dialogue as dialogue_module
 from gothic_ai.bodies import Bodies
 from gothic_ai.brain.apply import Decision, GameApplier
-from gothic_ai.brain.day import DayMenu, DayOption
+from gothic_ai.brain.day import DayMenu, DayOption, Habit
 from gothic_ai.brain.planner import NpcPlanner, NpcRecord
 from gothic_ai.budget import Budget
 from gothic_ai.chronicle import Chronicle, Fact
@@ -298,6 +298,27 @@ def _take(d: D, npc: str = VINO, key: str = "chat", at: str = "10:00") -> DayOpt
     option = _menu(d, npc, at).do[key]
     d.desk.take(Decision(npc, "plan", key, 0.9, {}, args=option.args), _rec(d, npc, at), option)
     return option
+
+
+async def test_both_day_menus_use_the_loaded_event_catalog(tmp_path):
+    async with _day(tmp_path) as d:
+        reading = routine_entries(PEOPLE_BY[XARDAS])[0]
+        scripted = reading.model_copy(update={"state": "ZS_SIT_BENCH"})
+        standing = reading.model_copy(update={"state": "ZS_STAND_WP"})
+        habits = [Habit("sit on a chair", "ZS_SIT_CHAIR"), Habit("stand quietly", "ZS_STAND_ARMSCROSSED")]
+        info = RoutineInfo(
+            type="routine", npc=XARDAS, entries=[reading, scripted, standing],
+            event_activities=["ZS_STAND_WP", "ZS_STAND_ARMSCROSSED"],
+        )
+        rec = _rec(d, XARDAS)
+        menu = d.desk.menu(rec, info, 10, 0, habits)
+        args = {"waypoint": reading.waypoint, "minutes": 60, "catalog_only": True}
+        expected = {"a1": dict(args, state="ZS_STAND_WP"), "h2": dict(args, state="ZS_STAND_ARMSCROSSED")}
+        assert menu.plan[1] == expected
+        assert {k: o.args for k, o in menu.do.items() if o.args is not None} == expected
+
+        empty = d.desk.menu(rec, info.model_copy(update={"event_activities": []}), 10, 0, habits)
+        assert not empty.plan[1] and list(empty.do) == ["keep_routine"]
 
 
 async def _over(d: D, timeout: float = 5.0) -> tuple[str, DayOption, str]:

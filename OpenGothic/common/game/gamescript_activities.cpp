@@ -2,6 +2,8 @@
 
 #include "world/objects/npc.h"
 
+#include <algorithm>
+
 void GameScript::runPointGesture(Npc& npc, const ActivityDefinitions::PointActivity& point) {
   const auto& loop=findSymbol(npc.aiState.funcLoop.ptr)->name();
   auto draw=[&](int32_t range,const char* variable) {
@@ -50,4 +52,13 @@ const ActivityEvents::Record* GameScript::eventActivity(ScriptFn init) {
      !ActivityDefinitionRuntime::accepted(vm.find_symbol_by_index(uint32_t(init.ptr))->name())))
     return nullptr;
   return &phase->record;
+  }
+
+std::vector<std::string_view> GameScript::eventActivityNames() {
+  std::vector<std::string_view> names;
+  for(const auto& [id,phase]:activityDefinitions.phases)
+    if(phase.phase==ActivityDefinitions::Phase::Init && eventActivity(ScriptFn(id)))
+      names.push_back(symbolName(id));
+  std::sort(names.begin(),names.end());
+  return names;
   }

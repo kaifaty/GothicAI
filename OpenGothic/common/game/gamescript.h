@@ -216,6 +216,7 @@ class GameScript final : public GameRules {
     StartupFloor& startupFloor() { return floorDefer; }
 
     const ActivityEvents::Record* eventActivity(ScriptFn init) override;
+    std::vector<std::string_view> eventActivityNames();
     void         runPointGesture(Npc& npc, const ActivityDefinitions::PointActivity& point) override;
 
   private:
