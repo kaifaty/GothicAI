@@ -13,6 +13,16 @@
 #include <string>
 #include <vector>
 
+namespace {
+
+struct RestoreContext {
+  daedalus::DaedalusVm& vm;
+  std::shared_ptr<daedalus::DaedalusInstance> caller;
+  ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
+  };
+
+} // namespace
+
 bool GameScript::applyCumulativeFoodEffect(std::string_view callback) {
   const bool apple = callback=="USE_APPLE";
   if(!apple && callback!="USE_MUSHROOM_01")
@@ -127,11 +137,6 @@ bool GameScript::applyStockItemUseEffect(std::string_view callback) {
     const auto secondId = vm.pop_int();
     const auto firstId = vm.pop_int();
     return firstId==secondId;
-    };
-  struct RestoreContext {
-    daedalus::DaedalusVm& vm;
-    std::shared_ptr<daedalus::DaedalusInstance> caller;
-    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
     };
 
   if(callback=="USE_MEATSOUP") {
@@ -1788,6 +1793,81 @@ void spawnAtMob(daedalus::DaedalusVm& vm, const MobSpawn& spawn) {
   vm.unsafe_call_external(vm.find_symbol_by_name("WLD_INSERTNPC"));
   }
 
+void runOldCampGateAttack(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* opened, int32_t truth) {
+  static constexpr MobSpawn attackers[] = {
+    // OC_TO_GUARD
+    {"ORCELITE_ROAM","$52091"},
+    {"ORCWARRIOR_ROAM","$52092"},
+    {"ORCELITE_ROAM","$52093"},
+    {"ORCWARRIOR_ROAM","$52094"},
+    {"ORCSHAMAN_SIT","$52095"},
+    {"ORCELITE_ROAM","$52096"},
+    // OC_GUARD_ENTRANCE
+    {"WARG","$52097"},
+    {"ORCELITE_ROAM","$52098"},
+    {"WARG","$52099"},
+    {"ORCELITE_ROAM","$52100"},
+    // OC_TRAIN_03
+    {"ORCWARRIOR_ROAM","$52101"},
+    {"ORCELITE_ROAM","$52102"},
+    {"ORCWARRIOR_ROAM","$52103"},
+    {"ORCELITE_ROAM","$52104"},
+    // OC_TRAIN_04
+    {"ORCWARRIOR_ROAM","$52105"},
+    {"ORCELITE_ROAM","$52106"},
+    // OC_CAMPFIRE_OUT_01
+    {"ORCWARRIOR_ROAM","$52107"},
+    {"WARG","$52108"},
+    {"WARG","$52109"},
+    {"ORCELITE_ROAM","$52110"},
+    // OC_CENTER_02
+    {"ORCWARRIOR_ROAM","$52111"},
+    {"ORCELITE_ROAM","$52112"},
+    // OC_CENTER_03
+    {"ORCWARRIOR_ROAM","$52113"},
+    {"ORCELITE_ROAM","$52114"},
+    // OC_KITCHEN_ENTRANCE
+    {"ORCWARRIOR_ROAM","$52115"},
+    {"ORCELITE_ROAM","$52116"},
+    {"ORCSHAMAN_SIT","$52117"},
+    {"ORCELITE_ROAM","$52118"},
+    // OC_EBR_HALL_THRONE
+    {"ORCWARRIOR_ROAM","$52119"},
+    {"ORCSHAMAN_SIT","$52120"},
+    {"WARG","$52121"},
+    };
+  for(const auto& spawn:attackers)
+    spawnAtMob(vm,spawn);
+
+  static constexpr const char* victims[] = {
+    "VLK_4143_HAUPTTORWACHE","VLK_4145_WAFFENKNECHT","VLK_4146_WAFFENKNECHT",
+    "VLK_4147_WAFFENKNECHT","VLK_4101_WAFFENKNECHT","VLK_4102_WAFFENKNECHT",
+    "VLK_4103_WAFFENKNECHT","VLK_4104_WAFFENKNECHT","VLK_4105_WAFFENKNECHT",
+    "VLK_4108_ENGOR",
+    };
+  const auto symbol=[&](std::string_view name) { return vm.find_symbol_by_name(name); };
+  for(const auto* name:victims) {
+    vm.push_int(int32_t(symbol(name)->index()));
+    vm.unsafe_call_bl(symbol("B_KILLNPC"));
+    }
+
+  RestoreContext restore{vm,vm.unsafe_get_gi()};
+  auto* flags=symbol("C_NPC.FLAGS");
+  const auto setFlags=[&](const char* name,int32_t value) {
+    const auto npc=symbol(name)->get_instance();
+    vm.unsafe_set_gi(npc);
+    vm.set_int(npc,flags,0,value);
+    };
+  setFlags("GAROND",0);
+  setFlags("BRUTUS",symbol("NPC_FLAG_IMMORTAL")->get_int());
+
+  vm.push_reference(symbol("$52122")); // ORCATTACK.BIK
+  const bool videoResult=vm.unsafe_call_external(symbol("PLAYVIDEO"));
+  vm.set_int(vm.unsafe_get_gi(),opened,0,truth);
+  if(videoResult)
+    (void)vm.pop_int();
+  }
+
 bool runMobEvent(daedalus::DaedalusVm& vm, std::string_view name) {
   const auto symbol=[&](std::string_view name) { return vm.find_symbol_by_name(name); };
   const auto context=vm.unsafe_get_gi();
@@ -1863,6 +1943,12 @@ bool runMobEvent(daedalus::DaedalusVm& vm, std::string_view name) {
     return true;
     }
 
+  if(name=="EVT_OC_MAINGATE_FUNC_S1") {
+    auto* flag=symbol("MIS_OCGATEOPEN");
+    if(flag->get_int()==falsity)
+      runOldCampGateAttack(vm,flag,truth);
+    return true;
+    }
   if(name=="EVT_ORKOBERST_SWITCH_S1") {
     mark(symbol("EVT_ORKOBERST_SWITCH_FOUND"));
     return true;

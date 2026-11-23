@@ -1955,28 +1955,34 @@ void sleepRoutineWorld(Gothic& gothic,bool events,bool deep) {
   vm.remove_call_observer(observer);
 
   auto* library=vm.find_symbol_by_name("EVT_OPEN_DOOR_LIBRARY_S1_ONETIME");
+  auto* oldCampGate=vm.find_symbol_by_name("MIS_OCGATEOPEN");
   auto* glyph=vm.find_symbol_by_name("BOOKSTANDMAYAART");
   auto* studied=vm.find_symbol_by_name("BOOKSTANDMAYAHIERCHARY_1_PERMANENT");
   auto* glyphHero=vm.find_symbol_by_name("INITUSE_BOOKSTANDMAYA.HER");
   const auto savedLibrary=library->get_int(),savedGlyph=glyph->get_int(),savedStudied=studied->get_int();
   const auto savedGlyphHero=glyphHero->get_instance();
+  const auto savedOldCampGate=oldCampGate->get_int();
   library->set_int(1);
+  oldCampGate->set_int(1);
   glyph->set_int(-51);
   studied->set_int(1);
   glyphHero->set_instance(nullptr);
   size_t bytecode=0,worldEffects=0;
   vm.observe_instructions([&](const auto&) { ++bytecode; });
   vm.observe_externals([&](const auto& fn) {
-    worldEffects+=fn.name()=="WLD_INSERTNPC" || fn.name()=="SND_PLAY" || fn.name().starts_with("DOC_");
+    worldEffects+=fn.name()=="WLD_INSERTNPC" || fn.name()=="SND_PLAY" || fn.name()=="PLAYVIDEO" || fn.name().starts_with("DOC_");
     });
   world.script().useInteractive(matteo->handlePtr(),"EVT_OPEN_DOOR_LIBRARY_S1");
+  world.script().useInteractive(matteo->handlePtr(),"EVT_OC_MAINGATE_FUNC_S1");
   world.script().useInteractive(matteo->handlePtr(),"USE_BOOKSTANDMAYAHIERCHARY_01_S1");
   vm.observe_externals({});
   vm.observe_instructions({});
   require((bytecode==0)==events && library->get_int()==1 && glyph->get_int()==0 && studied->get_int()==1 &&
-          glyphHero->get_instance()==hero && worldEffects==0 && vm.global_self()->get_instance()==beforeSelf,
-          "quest objects: NPC use preserves the one-time door and studied tablet state");
+          oldCampGate->get_int()==1 && glyphHero->get_instance()==hero && worldEffects==0 &&
+          vm.global_self()->get_instance()==beforeSelf,
+          "quest objects: NPC use preserves the one-time doors and studied tablet state");
   library->set_int(savedLibrary);
+  oldCampGate->set_int(savedOldCampGate);
   glyph->set_int(savedGlyph);
   studied->set_int(savedStudied);
   glyphHero->set_instance(savedGlyphHero);
