@@ -228,13 +228,7 @@ void GameScript::castShrink(Npc& caster, Npc* target) {
     if(victim->aivar[shrinkStage]==0 && victim->guild>int32_t(GIL_SEPERATOR_HUM) &&
        !undead && victim->flags!=NpcFlag::IMMORTAL) {
       npc_clearaiqueue(victim);
-      findSymbol("B_CLEARPERCEPTIONS.SLF")->set_instance(victim);
-      for(const auto type:{PERC_ASSESSPLAYER, PERC_ASSESSENEMY, PERC_ASSESSBODY, PERC_ASSESSMAGIC,
-                           PERC_ASSESSDAMAGE, PERC_ASSESSMURDER, PERC_ASSESSTHEFT, PERC_ASSESSUSEMOB,
-                           PERC_ASSESSENTERROOM, PERC_ASSESSTHREAT, PERC_DRAWWEAPON, PERC_ASSESSFIGHTSOUND,
-                           PERC_ASSESSQUIETSOUND, PERC_ASSESSWARN, PERC_ASSESSTALK, PERC_MOVEMOB,
-                           PERC_ASSESSOTHERSDAMAGE, PERC_ASSESSSTOPMAGIC, PERC_ASSESSSURPRISE})
-        npc_percdisable(victim,type);
+      clearNpcPerceptions(victim);
       ai_startstate(victim,int(findFunction("ZS_MAGICSHRINK").ptr),0,"");
       }
     }
@@ -356,4 +350,56 @@ void GameScript::raisePaladinZombie(Npc& npc) {
   body.bodystate_interruptable_override = 0;
   body.start_aistate = int32_t(findFunction(monsterScheduler).ptr);
   body.aivar[32] = -1; // AIV_MM_RESTSTART = ONLYROUTINE
+  }
+
+void GameScript::clearNpcPerceptions(const std::shared_ptr<daedalus::INpc>& npc) {
+  findSymbol("B_CLEARPERCEPTIONS.SLF")->set_instance(npc);
+  for(const auto type:{PERC_ASSESSPLAYER, PERC_ASSESSENEMY, PERC_ASSESSBODY, PERC_ASSESSMAGIC,
+                       PERC_ASSESSDAMAGE, PERC_ASSESSMURDER, PERC_ASSESSTHEFT, PERC_ASSESSUSEMOB,
+                       PERC_ASSESSENTERROOM, PERC_ASSESSTHREAT, PERC_DRAWWEAPON, PERC_ASSESSFIGHTSOUND,
+                       PERC_ASSESSQUIETSOUND, PERC_ASSESSWARN, PERC_ASSESSTALK, PERC_MOVEMOB,
+                       PERC_ASSESSOTHERSDAMAGE, PERC_ASSESSSTOPMAGIC, PERC_ASSESSSURPRISE})
+    npc_percdisable(npc,type);
+  }
+
+void GameScript::assessMagic(Npc& npc) {
+  const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  if(npc_getlasthitspellcat(self)==SPELL_BAD) {
+    vm.push_instance(self);
+    vm.push_int(PERC_ASSESSFIGHTSOUND);
+    vm.push_instance(self);
+    vm.push_instance(vm.global_other()->get_instance());
+    vm.unsafe_call_external(findSymbol("NPC_SENDPASSIVEPERC"));
+    }
+
+  constexpr int32_t fear=32, fireRain=42; // SPL_FEAR and SPL_FIRERAIN.
+  const auto spell=npc_getlasthitspellid(self);
+  std::string_view next;
+  switch(spell) {
+    case 71: next="ZS_WHIRLWIND"; break;
+    case 86: next="ZS_SUCKENERGY"; break;
+    case 82: next="ZS_GREENTENTACLE"; break;
+    case 81: next="ZS_SWARM"; break;
+    case 39:
+    case 33: next="ZS_MAGICFREEZE"; break;
+    case 34: next="ZS_SHORTZAPPED"; break;
+    case fear: break;
+    case fireRain: next="ZS_MAGICBURNSHORT"; break;
+    default: return;
+    }
+
+  npc_clearaiqueue(self);
+  if(spell!=fireRain)
+    clearNpcPerceptions(self);
+  if(spell==fear) {
+    npc_settarget(self,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()));
+    const auto guild=self->guild;
+    if(guild<int32_t(GIL_SEPERATOR_HUM) && guild!=int32_t(GIL_PAL) && guild!=int32_t(GIL_KDF))
+      next="ZS_MAGICFLEE";
+    else if(guild>int32_t(GIL_SEPERATOR_HUM) && guild!=int32_t(GIL_FIREGOLEM) && guild!=int32_t(GIL_ICEGOLEM) &&
+            guild!=int32_t(GIL_STONEGOLEM) && guild!=int32_t(GIL_TROLL) && guild!=int32_t(GIL_DRAGON))
+      next="ZS_MM_FLEE";
+    }
+  if(!next.empty())
+    ai_startstate(self,int(findFunction(next).ptr),0,"");
   }

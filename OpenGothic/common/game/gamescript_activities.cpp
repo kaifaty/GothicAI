@@ -164,12 +164,14 @@ bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& s
 bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol,
                                               NpcActivityProbe::Phase& phase) {
   const std::string_view name = symbol.name();
-  if((name!="B_STOPMAGICFLEE" && name!="B_STOPMAGICSLEEP" && name!="B_ASSESSMAGICSLEEPTALK" &&
+  if((name!="B_ASSESSMAGIC" && name!="B_STOPMAGICFLEE" && name!="B_STOPMAGICSLEEP" && name!="B_ASSESSMAGICSLEEPTALK" &&
       name!="B_PAL_ZOMBIE_RISE" && name!="B_RESTARTFREEZE" && name!="B_RESTARTWHIRLWIND") ||
      !nativeRoomReactionsEnabled())
     return false;
   phase.fromRecord();
-  if(name=="B_STOPMAGICFLEE")
+  if(name=="B_ASSESSMAGIC")
+    assessMagic(npc);
+  else if(name=="B_STOPMAGICFLEE")
     stopMagicFear(npc);
   else if(name=="B_STOPMAGICSLEEP")
     stopMagicSleep(npc);

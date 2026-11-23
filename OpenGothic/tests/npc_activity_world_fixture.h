@@ -3090,6 +3090,112 @@ std::vector<std::vector<std::string>> spellVictimPhasesWorld(Gothic& gothic, boo
   return actions;
   }
 
+void assessMagicPerception(World& world) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=Contract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto* actor=script.findSymbol("VLK_408_JORA");
+  auto* clearLocal=script.findSymbol("B_CLEARPERCEPTIONS.SLF");
+  auto* callback=script.findSymbol("B_ASSESSMAGIC");
+  auto* caster=world.player();
+  const auto* wp=world.findWayPoint("NW_CITY_PATH_HABOUR_03");
+  require(actor && clearLocal && callback && caster && wp,"the magic perception fixture needs its stock actors and callback");
+  const auto originalActor=actor->get_instance(), originalClear=clearLocal->get_instance();
+  auto* npc=world.addNpc(actor->index(),wp->position());
+  require(npc!=nullptr,"the magic perception fixture needs a live victim");
+  const auto victim=std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+  const auto oldSelf=vm.global_self()->get_instance(), oldOther=vm.global_other()->get_instance();
+  const auto oldGi=vm.unsafe_get_gi();
+
+  const struct Case {
+    const char* spell;
+    int32_t guild;
+    std::string_view state;
+    bool clear, fear;
+    } cases[]={
+    {"SPL_WHIRLWIND",GIL_VLK,"ZS_WHIRLWIND",true,false},
+    {"SPL_SUCKENERGY",GIL_VLK,"ZS_SUCKENERGY",true,false},
+    {"SPL_GREENTENTACLE",GIL_VLK,"ZS_GREENTENTACLE",true,false},
+    {"SPL_SWARM",GIL_VLK,"ZS_SWARM",true,false},
+    {"SPL_ICEWAVE",GIL_VLK,"ZS_MAGICFREEZE",true,false},
+    {"SPL_ICECUBE",GIL_VLK,"ZS_MAGICFREEZE",true,false},
+    {"SPL_CHARGEZAP",GIL_VLK,"ZS_SHORTZAPPED",true,false},
+    {"SPL_FEAR",GIL_VLK,"ZS_MAGICFLEE",true,true},
+    {"SPL_FEAR",GIL_WOLF,"ZS_MM_FLEE",true,true},
+    {"SPL_FEAR",GIL_PAL,"",true,true},
+    {"SPL_FEAR",GIL_KDF,"",true,true},
+    {"SPL_FEAR",GIL_TROLL,"",true,true},
+    {"SPL_FEAR",GIL_SEPERATOR_HUM,"",true,true},
+    {"SPL_FIRERAIN",GIL_VLK,"ZS_MAGICBURNSHORT",false,false},
+    {"SPL_FIREBOLT",GIL_VLK,"",false,false},
+    {"SPL_PALLIGHT",GIL_VLK,"",false,false}
+    };
+  for(const auto& c:cases) {
+    auto* spell=script.findSymbol(c.spell);
+    require(spell!=nullptr,"the magic perception fixture needs each original spell ID");
+    const auto spellId=spell->get_int();
+    const auto run=[&](bool native) {
+      events=native;
+      npc->handle().guild=c.guild;
+      Contract::lastHitSpell(*npc)=spellId;
+      npc->setTarget(nullptr);
+      npc->clearAiQueue();
+      const auto wait=AiQueue::aiWait(713);
+      npc->aiPush(AiQueue::AiAction(wait));
+      for(int i=1;i<PERC_Count;++i)
+        npc->setPerceptionEnable(PercType(i),callback->index());
+      clearLocal->set_instance(nullptr);
+
+      size_t instructions=0, fightSounds=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      vm.observe_externals([&](const auto& fn) {
+        if(fn.name()=="NPC_SENDPASSIVEPERC") {
+          ++fightSounds;
+          const auto* next=npc->aiQueueFront();
+          require(next && next->act==wait.act && npc->hasPerc(PERC_ASSESSMAGIC),
+                  "fight sound must be sent before changing the queue or perceptions");
+          }
+        });
+      require(npc->perceptionProcess(*caster,nullptr,0,PERC_ASSESSMAGIC),
+              "the real magic perception must dispatch its configured callback");
+      vm.observe_instructions({});
+      vm.observe_externals({});
+      require((instructions==0)==native && vm.global_self()->get_instance()==oldSelf &&
+              vm.global_other()->get_instance()==oldOther && vm.unsafe_get_gi()==oldGi,
+              "the selected perception executor must restore the script context");
+      require(fightSounds==(script.spellDesc(spellId).spell_type==SPELL_BAD ? 1u : 0u),
+              "bad spells must report one fight sound before the state reaction");
+      require(npc->target()==(c.fear ? caster : nullptr) && clearLocal->get_instance()==(c.clear ? victim : nullptr),
+              "the original fear target and saved perception local must be kept");
+
+      const auto* next=npc->aiQueueFront();
+      if(!c.state.empty())
+        require(next && next->act==AI_StartState && next->func==script.findFunction(c.state) &&
+                next->i0==0 && next->target==caster && next->s0.empty(),"spell perception must queue the exact original state");
+      else if(c.fear)
+        require(next==nullptr,"immune targets must clear their old queue without starting a state");
+      else
+        require(next && next->act==wait.act && next->i0==wait.i0,"an unrelated spell must leave the old queue");
+
+      std::array<bool,PERC_Count> enabled{};
+      for(int i=1;i<PERC_Count;++i)
+        enabled[size_t(i)]=npc->hasPerc(PercType(i));
+      require(enabled[PERC_ASSESSITEM] && enabled[PERC_ASSESSMAGIC]!=c.clear,
+              "only the stock perception subset may be cleared");
+      return std::pair(activityQueue(*npc),enabled);
+      };
+    const auto stock=run(false);
+    require(run(true)==stock,"the stock and native magic perception must match the queue and all subscriptions");
+    }
+  world.removeNpc(*npc);
+  actor->set_instance(originalActor);
+  clearLocal->set_instance(originalClear);
+  events=previousEvents;
+  std::puts("Magic perception: root dispatch, fear exceptions, fight sound, queue and perception cleanup match");
+  }
+
 void pointActivitiesInBothModes(Gothic& gothic) {
   const auto* configuredEvents=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
   const std::optional<std::string> previousEvents=configuredEvents ? std::optional<std::string>(configuredEvents) : std::nullopt;
@@ -3099,8 +3205,9 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
     const auto save=pointActivitiesWorld(gothic,events);
     itemRoutinePhasesWorld(gothic,events);
-    if(events && NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256==
-                 "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
+    const bool stockMagic=events && NpcSnapshot::load(baseProgramIndex().dir.parent_path()).sha256==
+                                    "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c";
+    if(stockMagic) {
       shrinkSpellStates(*gothic.world());
       magicHurtStates(*gothic.world());
       }
@@ -3110,6 +3217,7 @@ void pointActivitiesInBothModes(Gothic& gothic) {
     auto spellActions=spellVictimPhasesWorld(gothic,events);
     if(events) require(spellActions==vmSpellActions,"spell victim: both executors queue the same commands in order");
     else vmSpellActions=std::move(spellActions);
+    if(stockMagic) assessMagicPerception(*gothic.world());
     gothic.clearGame().reset();
     seatedActivitiesWorld(gothic,events);
     if(events) {

@@ -270,6 +270,8 @@ class GameScript final : public GameRules {
     bool usesNativeShrinkSpell(const Item* item) const;
     int runShrinkMana(Npc& caster, int mana, bool release);
     void castShrink(Npc& caster, Npc* target);
+    void assessMagic(Npc& npc);
+    void clearNpcPerceptions(const std::shared_ptr<daedalus::INpc>& npc);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);
     void beginMonsterRoutine(Npc& npc, bool desynchronize = true, WalkBit mode = WalkBit::WM_Walk);
