@@ -1585,7 +1585,7 @@ void workMobActivitiesWorld(ActivityEventsWorld& test,bool events) {
     Site{"ZS_SIT_THRONE","BAU_910_MARIA","THRONE",65547,0},
     Site{"ZS_SAW","BAU_964_BAUER","BAUMSAEGE",32784,15},
     Site{"ZS_REPAIR_HUT","VLK_480_FELLAN","REPAIR",32784,5},
-    Site{"ZS_PRAY_INNOS","PAL_299_SERGIO","INNOS",32784,5},
+    Site{"ZS_PRAY_INNOS","PAL_299_SERGIO","INNOS",BS_MOBINTERACT,0},
     Site{"ZS_ROAST_SCAVENGER",nullptr,"BARBQ",32784,0},
     };
   auto& world=test.world();
@@ -1622,6 +1622,14 @@ void workMobActivitiesWorld(ActivityEventsWorld& test,bool events) {
              (!events || test.stage(npc)==ActivityEvents::Stage::Hold);
       },activity.state+" holds the real object");
     const auto loop=activity.state+"_LOOP";
+    if(std::string_view(site.state)=="ZS_PRAY_INNOS") {
+      // The shrine holds the non-interruptible body state, outside the Loop's timer guard.
+      npc.setStateTime(6000);
+      Contract::aiState(npc).loopNextTime=world.tickCount();
+      Contract::tickRoutine(npc);
+      require(npc.stateTime()==6000,"the shrine's actual pose keeps the original timer untouched");
+      npc.clearAiQueue();
+      }
     if(site.seconds>0) {
       const auto boundary=uint64_t(site.seconds+1)*1000;
       npc.setStateTime(boundary-1);
