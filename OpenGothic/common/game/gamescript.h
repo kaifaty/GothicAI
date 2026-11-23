@@ -487,6 +487,10 @@ class GameScript final : public GameRules {
     bool isEvilNpc(const std::shared_ptr<daedalus::INpc>& npc);
     void loadNativeTalkReaction();
     void endProductionDialog();
+    bool canPickpocket(int32_t dexterity, int32_t gold);
+    void attemptPickpocket();
+    void givePickpocketXp();
+    void decrementPickpocketVictimCount();
     bool canRunNativeTalkReaction();
     bool invokeNativeTalkPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase);
     void runAssessTalk();

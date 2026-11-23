@@ -518,6 +518,12 @@ void GameScript::loadNativeHumanPerceptions() {
     return wantsToCallGuards(npc);
     }},enabled);
   vm.override_function("B_CALLGUARDS",std::function<void()>{[this] { callGuards(); }},enabled);
+  vm.override_function("C_BEKLAUEN",std::function<int32_t(int32_t,int32_t)>{[this](int32_t dexterity, int32_t gold) {
+    return canPickpocket(dexterity,gold);
+    }},enabled);
+  vm.override_function("B_BEKLAUEN",std::function<void()>{[this] { attemptPickpocket(); }},enabled);
+  vm.override_function("B_GIVETHIEFXP",std::function<void()>{[this] { givePickpocketXp(); }},enabled);
+  vm.override_function("B_RESETTHIEFLEVEL",std::function<void()>{[this] { decrementPickpocketVictimCount(); }},enabled);
   vm.override_function("C_WANTTOFLEE",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     rememberFleeCheck(self,other);
     return 0;

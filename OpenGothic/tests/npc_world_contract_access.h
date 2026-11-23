@@ -27,6 +27,7 @@ struct NpcDefinitionContract {
   static void saveChapter(GameScript& script, Serialize& out) { script.saveSym(out,*script.findSymbol("KAPITEL")); }
   static auto& crimeAbsolutionLevels(GameScript& script) { return script.crimeAbsolutionLevels; }
   static auto& crimeCounters(GameScript& script) { return script.petzCrimeCounters; }
+  static auto& questLog(GameScript& script) { return script.quests; }
   static void saveCrimeGlobal(GameScript& script, Serialize& out, daedalus::DaedalusSymbol& symbol) { script.saveSym(out,symbol); }
   static auto& activities(GameScript& script) { return script.activityDefinitions; }
   static auto& aiState(Npc& npc) { return npc.aiState; }

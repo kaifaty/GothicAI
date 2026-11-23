@@ -387,6 +387,172 @@ void guildGreetingRoutes(World& world,Npc& npc,Npc& hero) {
   std::puts("Guild greetings: faction lines, ambient quest lines and weather draws match the VM");
   }
 
+void stockPickpocket(World& world,Npc& npc,Npc& hero) {
+  using Contract=NpcDefinitionContract;
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& enabled=Contract::activityEventsOn(script);
+  const bool wasEnabled=enabled;
+  const auto symbol=[&](std::string_view name) -> daedalus::DaedalusSymbol& { return *vm.find_symbol_by_name(name); };
+  auto& required=symbol("THEFTDEXGLOB");
+  auto& reward=symbol("THEFTGOLDGLOB");
+  auto& possessed=symbol("NPCOBSESSEDBYDMT");
+  auto& victims=symbol("VICTIMCOUNT");
+  auto& nextLevel=symbol("VICTIMLEVEL");
+  auto& level=symbol("THIEFLEVEL");
+  auto& dexParameter=symbol("C_BEKLAUEN.THEFTDEX");
+  auto& goldParameter=symbol("C_BEKLAUEN.THEFTGOLD");
+  std::array slots={&required,&reward,&possessed,&victims,&nextLevel,&level,&dexParameter,&goldParameter};
+  std::array<int32_t,slots.size()> savedSlots;
+  std::ranges::transform(slots,savedSlots.begin(),[](auto* slot) { return slot->get_int(); });
+  const auto savedContext=vm.unsafe_get_gi();
+  const auto savedItem=vm.global_item()->get_instance();
+  const auto savedOrder=Contract::outputOrder(script);
+  const auto savedNpcVars=std::to_array(npc.handle().aivar);
+  const auto savedHeroVars=std::to_array(hero.handle().aivar);
+  const auto savedQueue=Contract::queue(npc);
+  const auto savedTarget=npc.target();
+  const auto savedState=Contract::aiState(npc).funcIni;
+  const auto savedTalent=hero.talentSkill(TALENT_PICKPOCKET);
+  const auto savedDexterity=hero.handle().attribute[ATR_DEXTERITY];
+  const auto savedXp=hero.handle().exp;
+  const auto savedXpLimit=hero.handle().exp_next;
+  const auto savedHeroLevel=hero.handle().level;
+  const auto savedCrimes=Contract::crimeCounters(script);
+  const auto savedQuests=script.questLog();
+  const auto info=std::dynamic_pointer_cast<daedalus::IInfo>(symbol("DIA_HILDA_PICKPOCKET").get_instance());
+  require(info!=nullptr,"pickpocket: Hilda's info is initialized");
+  const auto savedChoices=info->choices;
+  const auto gold=script.findSymbolIndex("ITMI_GOLD");
+  const auto savedHeroGold=hero.itemCount(gold);
+  const auto savedNpcGold=npc.itemCount(gold);
+  const auto setGold=[&](Npc& owner,size_t amount) {
+    const auto before=owner.itemCount(gold);
+    if(before<amount) owner.addItem(gold,uint32_t(amount-before));
+    if(before>amount) owner.delItem(gold,uint32_t(before-amount));
+    };
+  const auto restore=[&] {
+    Contract::queue(npc)=savedQueue;
+    npc.setTarget(savedTarget);
+    Contract::aiState(npc).funcIni=savedState;
+    std::copy(savedNpcVars.begin(),savedNpcVars.end(),npc.handle().aivar);
+    std::copy(savedHeroVars.begin(),savedHeroVars.end(),hero.handle().aivar);
+    hero.setTalentSkill(TALENT_PICKPOCKET,savedTalent);
+    hero.handle().attribute[ATR_DEXTERITY]=savedDexterity;
+    hero.handle().exp=savedXp;
+    hero.handle().exp_next=savedXpLimit;
+    hero.handle().level=savedHeroLevel;
+    Contract::crimeCounters(script)=savedCrimes;
+    Contract::questLog(script)=savedQuests;
+    info->choices=savedChoices;
+    setGold(npc,savedNpcGold);
+    setGold(hero,savedHeroGold);
+    for(size_t i=0;i<slots.size();++i)
+      slots[i]->set_int(savedSlots[i]);
+    vm.global_item()->set_instance(savedItem);
+    vm.unsafe_set_gi(savedContext);
+    Contract::outputOrder(script)=savedOrder;
+    };
+  StoryRuntime story(nullptr);
+  story.ensureLifter();
+  StoryRuntime::Bind binding(vm,&npc,&hero);
+  auto& interpreter=story.interpreter(vm);
+  constexpr auto conditionName="DIA_HILDA_PICKPOCKET_CONDITION";
+  constexpr auto attemptName="DIA_HILDA_PICKPOCKET_DOIT";
+  const auto condition=storygraph::liftProgram(vm,story.bytecode(),symbol(conditionName).index());
+  const auto attempt=storygraph::liftProgram(vm,story.bytecode(),symbol(attemptName).index());
+  require(condition.error.empty() && attempt.error.empty(),"pickpocket: the real Hilda dialogue must be available");
+  const auto talk=script.findFunction("ZS_TALK");
+  const auto check=[&] {
+    const auto result=interpreter.run(condition);
+    require(result.ok,result.error.c_str());
+    return result.returned.i;
+    };
+  const auto questStates=[&] {
+    std::vector<std::pair<std::string,QuestLog::Status>> ret;
+    const auto& log=script.questLog();
+    for(size_t i=0;i<log.questCount();++i)
+      ret.emplace_back(log.quest(i).name,log.quest(i).status);
+    return ret;
+    };
+  for(bool success:{false,true}) {
+    std::vector<std::string> original;
+    auto originalQuests=questStates();
+    auto originalCrimes=savedCrimes;
+    for(bool native:{false,true}) {
+      restore();
+      enabled=native;
+      Contract::queue(npc).clear();
+      Contract::aiState(npc).funcIni={};
+      hero.handle().attribute[ATR_DEXTERITY]=26;
+      hero.setTalentSkill(TALENT_PICKPOCKET,1);
+      npc.handle().aivar[6]=0;
+      possessed.set_int(0);
+      required.set_int(-1);
+      reward.set_int(-1);
+      size_t bytecode=0;
+      const std::array entries={symbol("C_BEKLAUEN").address(),symbol("B_BEKLAUEN").address(),
+                                symbol("B_GIVETHIEFXP").address(),symbol("B_RESETTHIEFLEVEL").address()};
+      vm.observe_instructions([&](const auto&) { bytecode+=std::ranges::find(entries,vm.pc())!=entries.end(); });
+      require(check()==1 && required.get_int()==-1 && reward.get_int()==-1,
+              "pickpocket: the menu preview leaves the previous offer intact outside ZS_TALK");
+      Contract::aiState(npc).funcIni=talk;
+      possessed.set_int(1);
+      require(check()==0 && required.get_int()==-1 && reward.get_int()==-1 &&
+              dexParameter.get_int()==26 && goldParameter.get_int()==35,
+              "pickpocket: possession suppresses the offer and retains both original input slots");
+      possessed.set_int(0);
+      vm.push_int(20);
+      vm.push_int(7);
+      vm.unsafe_call_bl(&symbol("C_BEKLAUEN"));
+      require(vm.pop_int()==1 && required.get_int()==10 && reward.get_int()==7,
+              "pickpocket: a low-dexterity offer uses the original threshold of ten");
+      hero.handle().attribute[ATR_DEXTERITY]=success ? 26 : 16;
+      require(check()==1 && required.get_int()==26 && reward.get_int()==35,
+              "pickpocket: the real Hilda offer is visible ten points below its execution requirement");
+      victims.set_int(success ? 1 : 2);
+      nextLevel.set_int(0);
+      level.set_int(success ? 0 : 1);
+      setGold(npc,50);
+      hero.handle().exp=100;
+      hero.handle().exp_next=500;
+      hero.handle().level=1;
+      const auto result=interpreter.run(attempt);
+      vm.observe_instructions({});
+      require(result.ok,result.error.c_str());
+      require(bytecode==(native ? 0u : 6u) && vm.unsafe_get_gi()==savedContext && possessed.get_int()==0,
+              "pickpocket: the selected executor and original story context are retained from condition to choice");
+      auto queue=Contract::queue(npc);
+      require(queue.size()==2 && level.get_int()==1,"pickpocket: both outcomes preserve the correct thief level and command count");
+      if(success) {
+        require(npc.itemCount(gold)==15 && hero.itemCount(gold)==savedHeroGold+35 &&
+                npc.handle().aivar[6]==1 && hero.handle().exp==160 && victims.get_int()==2 && nextLevel.get_int()==3 &&
+                queue.pop().act==AI_PrintScreen && queue.pop().act==AI_PrintScreen,
+                "pickpocket: the real successful choice pays gold, marks the victim and awards the promoted experience");
+        } else {
+        require(npc.itemCount(gold)==50 && hero.itemCount(gold)==savedHeroGold &&
+                npc.handle().aivar[6]==0 && hero.handle().exp==100 && victims.get_int()==1 && nextLevel.get_int()==0 &&
+                queue.pop().act==AI_StopProcessInfo,"pickpocket: failure removes one victim and stops the dialogue before the attack");
+        const auto attack=queue.pop();
+        require(attack.act==AI_StartState && attack.func==script.findFunction("ZS_ATTACK") && attack.target==&hero &&
+                npc.handle().aivar[9]==script.intSymbol("AR_THEFT",-1) && npc.handle().aivar[23]==1,
+                "pickpocket: failure queues the original theft attack and warning delay");
+        }
+      if(native) {
+        require(original==activityQueue(npc) && originalQuests==questStates() && originalCrimes==Contract::crimeCounters(script),
+                "pickpocket: both outcomes keep the original localized queue, quests and crime memory");
+        } else {
+        original=activityQueue(npc);
+        originalQuests=questStates();
+        originalCrimes=Contract::crimeCounters(script);
+        }
+      }
+    }
+  restore();
+  enabled=wasEnabled;
+  std::puts("Pickpocket: Hilda's original offer, reward and failed theft match both executors");
+  }
+
 void playerAssessmentRoutes(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -441,4 +607,5 @@ void playerAssessmentRoutes(World& world,Npc& npc,Npc& hero) {
   std::puts("Player assessment: direct and follower routes preserve room priority");
   fakeGuildAssessment(world,npc,hero);
   guildGreetingRoutes(world,npc,hero);
+  stockPickpocket(world,npc,hero);
   }

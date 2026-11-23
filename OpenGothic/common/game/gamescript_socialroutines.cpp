@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 
 namespace {
 std::string numberedLine(std::string_view prefix, int number) {
@@ -539,6 +540,70 @@ void GameScript::endProductionDialog() {
   if(self)
     self->aivar[invincible] = 0;
   findSymbol("PLAYER_MOBSI_PRODUCTION")->set_int(findSymbol("MOBSI_NONE")->get_int());
+  }
+
+bool GameScript::canPickpocket(int32_t dexterity, int32_t gold) {
+  constexpr size_t pickedPocket = 6; // AIV_PLAYERHASPICKEDMYPOCKET
+  findSymbol("C_BEKLAUEN.THEFTGOLD")->set_int(gold);
+  findSymbol("C_BEKLAUEN.THEFTDEX")->set_int(dexterity);
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const bool possessed = findSymbol("NPCOBSESSEDBYDMT")->get_int()!=0;
+  const auto difference = findSymbol("THEFTDIFF")->get_int();
+  const auto minimum = std::bit_cast<int32_t>(uint32_t(dexterity)-uint32_t(difference));
+  const auto playerDexterity = other ? other->attribute[ATR_DEXTERITY] : 0;
+  const bool robbed = self && self->aivar[pickedPocket]!=0;
+  const bool trained = npc_gettalentskill(other,TALENT_PICKPOCKET)==1;
+  if(possessed || playerDexterity<minimum || robbed || !trained)
+    return false;
+  if(npc_isinstate(self,int(ZS_Talk))) {
+    findSymbol("THEFTDEXGLOB")->set_int(dexterity<=20 ? 10 : dexterity);
+    findSymbol("THEFTGOLDGLOB")->set_int(gold);
+    }
+  return true;
+  }
+
+void GameScript::attemptPickpocket() {
+  constexpr size_t pickedPocket = 6; // AIV_PLAYERHASPICKEDMYPOCKET
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto playerDexterity = other ? other->attribute[ATR_DEXTERITY] : 0;
+  if(playerDexterity>=findSymbol("THEFTDEXGLOB")->get_int()) {
+    giveInventoryItems(self,other,int32_t(findSymbolIndex("ITMI_GOLD")),findSymbol("THEFTGOLDGLOB")->get_int());
+    if(self)
+      self->aivar[pickedPocket] = 1;
+    givePickpocketXp();
+    snd_play("Geldbeutel");
+    return;
+    }
+  decrementPickpocketVictimCount();
+  ai_stopprocessinfos(self);
+  if(self)
+    startNpcAttack(self,other,findSymbol("AR_THEFT")->get_int(),1);
+  }
+
+void GameScript::givePickpocketXp() {
+  auto& victims = *findSymbol("VICTIMCOUNT");
+  auto& nextLevel = *findSymbol("VICTIMLEVEL");
+  auto& level = *findSymbol("THIEFLEVEL");
+  const auto count = std::bit_cast<int32_t>(uint32_t(victims.get_int())+1u);
+  victims.set_int(count);
+  if(nextLevel.get_int()==0)
+    nextLevel.set_int(2);
+  if(count>=nextLevel.get_int()) {
+    const auto next = std::bit_cast<int32_t>(uint32_t(level.get_int())+1u);
+    level.set_int(next);
+    nextLevel.set_int(std::bit_cast<int32_t>(uint32_t(count)+uint32_t(next)));
+    }
+  const auto amount = std::bit_cast<int32_t>(10u*uint32_t(level.get_int())+uint32_t(findSymbol("THIEFXP")->get_int()));
+  vm.push_int(amount);
+  vm.unsafe_call_bl(findSymbol("B_GIVEPLAYERXP"));
+  }
+
+void GameScript::decrementPickpocketVictimCount() {
+  auto& victims = *findSymbol("VICTIMCOUNT");
+  if(victims.get_int()>findSymbol("THIEFLEVEL")->get_int())
+    victims.set_int(victims.get_int()-1);
   }
 
 void GameScript::loadNativeTalkReaction() {
