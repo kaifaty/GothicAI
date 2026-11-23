@@ -28,12 +28,155 @@ bool GameScript::usesNativeQuietSound(ScriptFn callback) const {
          ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
   }
 
+bool GameScript::nativeRoomReactionsEnabled() const {
+  return nativeRoutineProgram && activityEvents && !floorDefer.active() &&
+         ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  }
+
+bool GameScript::invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase) {
+  const std::string_view name = symbol.name();
+  if((name!="B_EXITIFROOMLEFT" && name!="B_ASSESSPORTALCOLLISION" && name!="B_CLEARROOMTALK") ||
+     !nativeRoomReactionsEnabled())
+    return false;
+  phase.fromRecord();
+  if(name=="B_EXITIFROOMLEFT")
+    phase.result = runExitIfRoomLeft();
+  else if(name=="B_ASSESSPORTALCOLLISION")
+    runPortalCollisionReaction();
+  else
+    runClearRoomTalk();
+  return true;
+  }
+
 void GameScript::loadNativeRoomReaction() {
   if(!nativeRoutineProgram)
     return;
   vm.override_function("B_ASSESSENTERROOM",std::function<int32_t()>{[this] { return runEnterRoomReaction(); }},[this] {
-    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+    return nativeRoomReactionsEnabled();
     });
+  }
+
+void GameScript::setPerceptionPreset(bool normal) {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  if(self==nullptr)
+    return;
+  self->senses = int32_t(SensesBit::SENSE_SEE | SensesBit::SENSE_HEAR);
+  self->senses_range = findSymbol("PERC_DIST_ACTIVE_MAX")->get_int();
+  if(normal) {
+    const bool gateGuard = isGateGuard(self);
+    const bool knowsInfo = npc_knowsinfo(self,1);
+    npc_setperctime(self,gateGuard || knowsInfo ? 0.3f : 1.f);
+    }
+
+  static constexpr struct {
+    PercType perception;
+    std::string_view callback;
+    bool normalOnly;
+    } callbacks[] = {
+    {PERC_ASSESSPLAYER,    "B_ASSESSPLAYER",          true},
+    {PERC_ASSESSENEMY,     "B_ASSESSENEMY",           true},
+    {PERC_ASSESSMAGIC,     "B_ASSESSMAGIC",           false},
+    {PERC_ASSESSDAMAGE,    "B_ASSESSDAMAGE",          false},
+    {PERC_ASSESSMURDER,    "B_ASSESSMURDER",          false},
+    {PERC_ASSESSTHEFT,     "B_ASSESSTHEFT",           false},
+    {PERC_ASSESSUSEMOB,    "B_ASSESSUSEMOB",          false},
+    {PERC_ASSESSENTERROOM, "B_ASSESSPORTALCOLLISION", false},
+    {PERC_ASSESSTHREAT,    "B_ASSESSTHREAT",          true},
+    {PERC_DRAWWEAPON,      "B_ASSESSDRAWWEAPON",      true},
+    {PERC_ASSESSFIGHTSOUND,"B_ASSESSFIGHTSOUND",      true},
+    {PERC_ASSESSQUIETSOUND,"B_ASSESSQUIETSOUND",      true},
+    {PERC_ASSESSWARN,      "B_ASSESSWARN",            true},
+    {PERC_ASSESSTALK,      "B_ASSESSTALK",            true},
+    {PERC_MOVEMOB,         "B_MOVEMOB",               true},
+    };
+  for(const auto& entry : callbacks) {
+    if(normal || !entry.normalOnly)
+      npc_percenable(self,entry.perception,int(findFunction(entry.callback).ptr));
+    }
+  }
+
+void GameScript::clearPerceptions(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("B_CLEARPERCEPTIONS.SLF")->set_instance(self);
+  static constexpr PercType clear[] = {
+    PERC_ASSESSPLAYER, PERC_ASSESSENEMY, PERC_ASSESSBODY, PERC_ASSESSMAGIC, PERC_ASSESSDAMAGE, PERC_ASSESSMURDER,
+    PERC_ASSESSTHEFT, PERC_ASSESSUSEMOB, PERC_ASSESSENTERROOM, PERC_ASSESSTHREAT, PERC_DRAWWEAPON,
+    PERC_ASSESSFIGHTSOUND, PERC_ASSESSQUIETSOUND, PERC_ASSESSWARN, PERC_ASSESSTALK, PERC_MOVEMOB,
+    PERC_ASSESSOTHERSDAMAGE, PERC_ASSESSSTOPMAGIC, PERC_ASSESSSURPRISE,
+    };
+  for(const auto perception : clear)
+    npc_percdisable(self,perception);
+  }
+
+bool GameScript::isGateGuard(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("C_NPCISGATEGUARD.SLF")->set_instance(self);
+  return npc_isinstate(self,int(findFunction("ZS_GUARD_PASSAGE").ptr));
+  }
+
+bool GameScript::isBotheredByPlayerRoomGuild(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("C_NPCISBOTHEREDBYPLAYERROOMGUILD.SLF")->set_instance(self);
+  const auto portalGuild = wld_getplayerportalguild();
+  findSymbol("C_NPCISBOTHEREDBYPLAYERROOMGUILD.PORTALGUILD")->set_int(portalGuild);
+  const auto npcGuild = self ? int32_t(self->guild) : int32_t(GIL_NONE);
+  const bool allied = wld_getguildattitude(npcGuild,portalGuild)==ATT_FRIENDLY;
+  return (allied || npcGuild==portalGuild) && portalGuild>int32_t(GIL_NONE);
+  }
+
+bool GameScript::isPlayerFakeBandit(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("C_PLAYERISFAKEBANDIT.OTH")->set_instance(other);
+  findSymbol("C_PLAYERISFAKEBANDIT.SLF")->set_instance(self);
+  constexpr size_t ignoresArmor = 73; // AIV_IGNORESARMOR in the verified program
+  constexpr size_t ignoresFakeGuild = 70; // AIV_IGNORESFAKEGUILD
+  const auto guild = self ? self->guild : GIL_NONE;
+  if(self && (self->aivar[ignoresArmor]==1 || self->aivar[ignoresFakeGuild]==1 || guild==GIL_PIR))
+    return false;
+
+  if(npc_hasequippedarmor(other)) {
+    const auto armor = npc_getequippedarmor(other);
+    findSymbol("C_PLAYERISFAKEBANDIT.ITM")->set_instance(armor);
+    const bool heavyBandit = hlp_isitem(armor,int(findSymbolIndex("ITAR_BDT_H")));
+    const bool thorus = hlp_isitem(armor,int(findSymbolIndex("ITAR_THORUS_ADDON")));
+    const bool mediumBandit = hlp_isitem(armor,int(findSymbolIndex("ITAR_BDT_M")));
+    return heavyBandit || thorus || mediumBandit;
+    }
+
+  return findSymbol("PLAYER_HASTALKEDTOBANDITCAMP")->get_int()==1 &&
+         findSymbol("CURRENTLEVEL")->get_int()==findSymbol("ADDONWORLD_ZEN")->get_int() && guild==GIL_BDT;
+  }
+
+void GameScript::desynchronizeNpc() {
+  const auto delay = hlp_random(1000);
+  findSymbol("B_MM_DESYNCHRONIZE.MSEC")->set_int(delay);
+  ai_waitms(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()),delay);
+  }
+
+void GameScript::sayToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
+                         std::string_view line) {
+  auto& text = *findSymbol("B_SAY.TEXT");
+  text.set_string(line);
+  findSymbol("B_SAY.OTH")->set_instance(other);
+  findSymbol("B_SAY.SLF")->set_instance(self);
+  ai_outputsvm(self,other,text.get_string());
+  }
+
+void GameScript::turnToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("B_TURNTONPC.OTH")->set_instance(other);
+  findSymbol("B_TURNTONPC.SLF")->set_instance(self);
+  ai_turntonpc(self,other);
+  }
+
+void GameScript::lookAtNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
+  findSymbol("B_LOOKATNPC.OTH")->set_instance(other);
+  findSymbol("B_LOOKATNPC.SLF")->set_instance(self);
+  stopLookAtNpc(self);
+  ai_lookatnpc(self,other);
+  }
+
+void GameScript::stopLookAtNpc(const std::shared_ptr<daedalus::INpc>& self) {
+  findSymbol("B_STOPLOOKAT.SLF")->set_instance(self);
+  const auto target = npc_getlookattarget(self);
+  findSymbol("B_STOPLOOKAT.TARGET")->set_instance(target);
+  if(hlp_isvalidnpc(target))
+    ai_stoplookat(self);
   }
 
 int32_t GameScript::runEnterRoomReaction() {
@@ -56,7 +199,7 @@ int32_t GameScript::runEnterRoomReaction() {
   const bool listenerInRoom = npc_getportalguild(self)>=int32_t(GIL_NONE);
   if(listenerInRoom && !npc_isinplayersroom(self))
     return 0;
-  if(npc_isinstate(self,int(ZS_Attack)) || vm.call_function<int32_t>("C_NPCISGATEGUARD",self)!=0 || !npc_isplayer(other()))
+  if(npc_isinstate(self,int(ZS_Attack)) || isGateGuard(self) || !npc_isplayer(other()))
     return 0;
   if(int32_t(self->type)==findSymbol("NPCTYPE_FRIEND")->get_int() || npc_getattitude(self,other())==ATT_FRIENDLY)
     return 0;
@@ -80,7 +223,7 @@ int32_t GameScript::runEnterRoomReaction() {
     if(inState("ZS_OBSERVEPLAYER"))
       return 0;
     if(hasBodyState(self,BS_LIE))
-      vm.call_function<void>("B_MM_DESYNCHRONIZE");
+      desynchronizeNpc();
     static constexpr std::string_view interruptible[] = {
       "ZS_STAND_WP", "ZS_STAND_GUARDING", "ZS_STAND_EATING", "ZS_STAND_DRINKING", "ZS_STAND_ARMSCROSSED",
       "ZS_SMOKE_JOINT", "ZS_SMALLTALK", "ZS_SLEEP", "ZS_SIT_THRONE", "ZS_SIT_CHAIR", "ZS_SIT_CAMPFIRE",
@@ -89,17 +232,67 @@ int32_t GameScript::runEnterRoomReaction() {
     if(!std::ranges::any_of(interruptible,inState))
       return 0;
     }
-  else if(vm.call_function<int32_t>("C_NPCISBOTHEREDBYPLAYERROOMGUILD",self)==0) {
+  else if(!isBotheredByPlayerRoomGuild(self)) {
     return 0;
     }
 
   npc_clearaiqueue(self);
-  vm.call_function<void>("B_CLEARPERCEPTIONS",self);
+  clearPerceptions(self);
   if(publicRoom)
     ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),hasBodyState(self,BS_SIT) ? 0 : 1,"");
   else
     ai_startstate(self,int(findFunction("ZS_CLEARROOM").ptr),1,"");
   return 1;
+  }
+
+void GameScript::runPortalCollisionReaction() {
+  auto& former = *findSymbol("B_ASSESSPORTALCOLLISION.FORMERPORTALGUILD");
+  former.set_int(wld_getformerplayerportalguild());
+  if(runEnterRoomReaction()!=0)
+    return;
+
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto body = npc_getbodystate(other);
+  const bool onFeet = ActivityDefinitions::bodyStateContains(body,BS_STAND) ||
+                      ActivityDefinitions::bodyStateContains(body,BS_SNEAK);
+  const bool visible = npc_canseenpc(self,other);
+  if(onFeet && !visible)
+    return;
+
+  npc_perceiveall(self);
+  // On success the original query replaces OTHER with the NPC already clearing the room.
+  if(wld_detectnpcex(self,-1,int(findFunction("ZS_CLEARROOM").ptr),-1,0))
+    return;
+
+  const int32_t guild = int32_t(self->guild);
+  const int32_t formerGuild = former.get_int();
+  const bool alliedToFormerRoom = wld_getguildattitude(guild,formerGuild)==ATT_FRIENDLY;
+  if(!alliedToFormerRoom && guild!=formerGuild)
+    return;
+  const bool friendOfPlayer = self->type==NpcType::G2_FRIEND && npc_isplayer(other);
+  const int32_t otherGuild = other ? int32_t(other->guild) : int32_t(GIL_NONE);
+  if(friendOfPlayer || wld_getguildattitude(guild,otherGuild)==ATT_FRIENDLY || guild==GIL_NONE)
+    return;
+
+  if(alliedToFormerRoom && (formerGuild==GIL_SLD || formerGuild==GIL_MIL)) {
+    const auto reason = findSymbol("AR_LEFTPORTALROOM")->get_int();
+    vm.call_function<void>("B_ATTACK",self,other,reason,0);
+    return;
+    }
+
+  constexpr size_t seenLeftRoom = 21; // AIV_SEENLEFTROOM in the verified program
+  self->aivar[seenLeftRoom] = 1;
+  npc_clearaiqueue(self);
+  clearPerceptions(self);
+  ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),0,"");
+  }
+
+void GameScript::runClearRoomTalk() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const bool wantsAttack = vm.call_function<int32_t>("C_WANTTOATTACKROOMINTRUDER",self)!=0;
+  sayToNpc(self,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),
+           wantsAttack ? "$GETOUTOFHERE" : "$WHYAREYOUINHERE");
   }
 
 void GameScript::runQuietSoundReaction(Npc& listener) {
@@ -111,10 +304,12 @@ void GameScript::runQuietSoundReaction(Npc& listener) {
      (height>quietSound.indoorHeightLimit && wld_getplayerportalguild()>=int32_t(GIL_NONE)))
     return;
 
-  if(runEnterRoomReaction()!=0 || listener.isInState(findFunction("ZS_GUARD_PASSAGE")))
+  const bool roomReaction = runEnterRoomReaction()!=0;
+  const auto self = std::static_pointer_cast<daedalus::INpc>(listener.handlePtr());
+  const bool gateGuard = isGateGuard(self);
+  if(roomReaction || gateGuard)
     return;
 
-  const auto self = std::static_pointer_cast<daedalus::INpc>(listener.handlePtr());
   const auto hostileToSource = [&] {
     const auto* other = findNpc(vm.global_other());
     return other!=nullptr && personAttitude(listener,*other)==ATT_HOSTILE;
@@ -126,7 +321,8 @@ void GameScript::runQuietSoundReaction(Npc& listener) {
 
   constexpr size_t enemyOverride = 61; // AIV_ENEMYOVERRIDE in the verified program
   const bool bandit = listener.handle().guild==GIL_BDT;
-  const auto fakeBandit = vm.call_function<int32_t>("C_PLAYERISFAKEBANDIT",vm.global_self()->get_instance(),vm.global_other()->get_instance())!=0;
+  const auto currentSelf = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const bool fakeBandit = isPlayerFakeBandit(currentSelf,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()));
   const bool overrideEnemy = listener.handle().aivar[enemyOverride]==1;
   const bool stillHostile = hostileToSource();
   if(((bandit && fakeBandit) || overrideEnemy) && stillHostile)
@@ -135,7 +331,7 @@ void GameScript::runQuietSoundReaction(Npc& listener) {
     return;
 
   listener.clearAiQueue();
-  vm.call_function<void>("B_CLEARPERCEPTIONS",vm.global_self()->get_instance());
+  clearPerceptions(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
   ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),1,"");
   }
 
@@ -144,25 +340,24 @@ bool GameScript::runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symb
   constexpr size_t turnInterval = 68; // AIV_STATETIME in the verified program
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   // Read OTHER from the live script context after each shared helper.
-  const auto other = [&] { return vm.global_other()->get_instance(); };
-  const auto otherNpc = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(other()); };
+  const auto otherNpc = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
   const auto hasBodyState = [&](const std::shared_ptr<daedalus::INpc>& actor, int32_t state) {
     return ActivityDefinitions::bodyStateContains(npc_getbodystate(actor),state);
     };
   const auto say = [&](std::string_view line) {
-    vm.call_function<void>("B_SAY",self,other(),line);
+    sayToNpc(self,otherNpc(),line);
     };
   const auto turnToOther = [&] {
-    vm.call_function<void>("B_TURNTONPC",self,other());
+    turnToNpc(self,otherNpc());
     };
 
   const std::string_view name = symbol.name();
   if(name=="ZS_OBSERVEPLAYER") {
-    vm.call_function<void>("PERCEPTION_SET_NORMAL");
+    setPerceptionPreset(true);
     const bool seated = hasBodyState(self,BS_SIT);
     if(!seated)
       ai_standup(self);
-    vm.call_function<void>("B_LOOKATNPC",self,other());
+    lookAtNpc(self,otherNpc());
     if(!seated)
       turnToOther();
     if(npc_wasinstate(self,int(findFunction("ZS_SLEEP").ptr)))
@@ -210,7 +405,99 @@ bool GameScript::runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symb
     }
 
   if(name=="ZS_OBSERVEPLAYER_END") {
-    vm.call_function<void>("B_STOPLOOKAT",self);
+    stopLookAtNpc(self);
+    result = 0;
+    return true;
+    }
+  return false;
+  }
+
+int32_t GameScript::runExitIfRoomLeft() {
+  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto guild = wld_getplayerportalguild();
+  findSymbol("B_EXITIFROOMLEFT.PORTALGUILD")->set_int(guild);
+  const bool bothered = isBotheredByPlayerRoomGuild(self);
+  if(guild!=int32_t(GIL_PUBLIC) && bothered)
+    return 0;
+
+  npc_clearaiqueue(self);
+  ai_standup(self);
+  stopLookAtNpc(self);
+  const bool wantsAttack = vm.call_function<int32_t>("C_WANTTOATTACKROOMINTRUDER",self)!=0;
+  sayToNpc(self,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),
+           wantsAttack ? "$YESGOOUTOFHERE" : "$WISEMOVE");
+  ai_continueroutine(self);
+  return 1;
+  }
+
+bool GameScript::runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  if(!nativeRoomReactionsEnabled())
+    return false;
+  constexpr size_t routinePosition = 19; // AIV_TAPOSITION in the verified program
+  constexpr int32_t notInPosition = 1;
+  constexpr int32_t inPosition = 0;
+  const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  const auto other = [&] { return vm.global_other()->get_instance(); };
+  const auto otherNpc = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(other()); };
+  const auto gotoOther = [&] { ai_gotowp(self,npc_getnearestwp(otherNpc())); };
+  const auto turnToOther = [&] { turnToNpc(self,otherNpc()); };
+  const auto say = [&](std::string_view line) { sayToNpc(self,otherNpc(),line); };
+  const auto wantsAttack = [&] { return vm.call_function<int32_t>("C_WANTTOATTACKROOMINTRUDER",self)!=0; };
+
+  const std::string_view name = symbol.name();
+  if(name=="ZS_CLEARROOM") {
+    setPerceptionPreset(false);
+    npc_percenable(self,PERC_ASSESSENTERROOM,int(findFunction("B_EXITIFROOMLEFT").ptr));
+    npc_percenable(self,PERC_MOVEMOB,int(findFunction("B_MOVEMOB").ptr));
+    npc_percenable(self,PERC_ASSESSTALK,int(findFunction("B_CLEARROOMTALK").ptr));
+    ai_standup(self);
+    lookAtNpc(self,otherNpc());
+    ai_setwalkmode(self,int(WalkBit::WM_Run));
+    if(!npc_isinplayersroom(self))
+      gotoOther();
+    self->aivar[routinePosition] = notInPosition;
+    result = 0;
+    return true;
+    }
+
+  if(name=="ZS_CLEARROOM_LOOP") {
+    if(self->aivar[routinePosition]==notInPosition) {
+      turnToOther();
+      if(wantsAttack()) {
+        vm.call_function<void>("B_SELECTWEAPON",self,other());
+        say("$GETOUTOFHERE");
+        } else if(npc_getattitude(otherNpc(),self)!=ATT_FRIENDLY) {
+        say("$WHYAREYOUINHERE");
+        }
+      npc_setstatetime(self,0);
+      self->aivar[routinePosition] = inPosition;
+      }
+    if(runExitIfRoomLeft()!=0) {
+      result = LOOP_END;
+      return true;
+      }
+    if(wantsAttack()) {
+      if(npc_getstatetime(self)>5) {
+        const auto reason = findSymbol("AR_CLEARROOM")->get_int();
+        vm.call_function<void>("B_ATTACK",self,other(),reason,0);
+        result = LOOP_END;
+        return true;
+        }
+      } else if(npc_getstatetime(self)>=2) {
+      if(!npc_canseenpcfreelos(self,otherNpc())) {
+        gotoOther();
+        turnToOther();
+        } else if(!npc_canseenpc(self,otherNpc())) {
+        turnToOther();
+        }
+      npc_setstatetime(self,0);
+      }
+    result = LOOP_CONTINUE;
+    return true;
+    }
+
+  if(name=="ZS_CLEARROOM_END") {
+    stopLookAtNpc(self);
     result = 0;
     return true;
     }

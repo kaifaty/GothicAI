@@ -1086,7 +1086,7 @@ void GameScript::invokeState(const std::shared_ptr<NpcRecord>& hnpc, const std::
     phase.fromRecord();
     runQuietSoundReaction(*npc);
     }
-  else if(npc==nullptr || !invokeNativeRoutine(*npc,*id,phase))
+  else if(npc==nullptr || !(invokeNativeRoutine(*npc,*id,phase) || invokeNativeMonsterPerception(*id,phase)))
     vm.call_function<void>(id);
   }
 
@@ -1123,6 +1123,9 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
   else if(npc!=nullptr && usesNativeQuietSound(fn)) {
     phase.fromRecord();
     runQuietSoundReaction(*npc);
+    }
+  else if(sym!=nullptr && npc!=nullptr && (invokeNativeRoomPerception(*sym,phase) || invokeNativeMonsterPerception(*sym,phase))) {
+    // The perception ran in the engine.
     }
   else if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
     ret = vm.call_function<int>(sym);

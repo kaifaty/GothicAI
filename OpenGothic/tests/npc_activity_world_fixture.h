@@ -1400,6 +1400,10 @@ void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
   const auto beforeState=Contract::previousState(npc);
   const auto beforeRoom=npc.handle().aivar[21];
   const auto beforeDelay=npc.handle().aivar[68];
+  const auto beforeSenses=npc.handle().senses;
+  const auto beforeRange=npc.handle().senses_range;
+  auto& vm=script.getVm();
+  auto& speech=*vm.find_symbol_by_name("B_SAY.TEXT");
   require(ActivityDefinitions::bodyStateContains(int32_t(npc.bodyState()),BS_SIT)==seated &&
           npc.qDistTo(hero)<1000.f*1000.f,"observation: the fixture holds the intended nearby pose");
   std::vector<std::string> original;
@@ -1408,8 +1412,34 @@ void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
     npc.clearAiQueue();
     npc.aiPush(AiQueue::aiStopLookAt());
     Contract::nextAiAction(npc);
-    Contract::previousState(npc)=ScriptFn();
+    Contract::previousState(npc)=script.findFunction("ZS_SLEEP");
     npc.handle().aivar[21]=0;
+    npc.handle().senses=0;
+    npc.handle().senses_range=0;
+    speech.set_string("");
+    size_t normalCalls=0,speechCalls=0,lookCalls=0,stopCalls=0,turnCalls=0;
+    const auto helperProbe=vm.add_call_observer([&](const auto& symbol) {
+      normalCalls+=symbol.name()=="PERCEPTION_SET_NORMAL";
+      speechCalls+=symbol.name()=="B_SAY";
+      lookCalls+=symbol.name()=="B_LOOKATNPC";
+      stopCalls+=symbol.name()=="B_STOPLOOKAT";
+      turnCalls+=symbol.name()=="B_TURNTONPC";
+      });
+    script.invokeState(&npc,&hero,nullptr,uint32_t(phases.init));
+    vm.remove_call_observer(helperProbe);
+    auto speechQueue=Contract::queue(npc);
+    require(speechQueue.size()==(seated ? 2u : 4u),"observation: waking adds one queued voice line");
+    for(size_t i=0;i<(seated ? 1u : 3u);++i)
+      speechQueue.pop();
+    const auto line=speechQueue.pop();
+    require(line.act==AI_OutputSvm && line.target==&hero && line.s0=="$YOUDISTURBEDMYSLUMBER" &&
+            speech.get_string()==line.s0 && npc.handle().senses==3 && npc.handle().senses_range==2000 &&
+            npc.hasPerc(PERC_ASSESSQUIETSOUND) &&
+            normalCalls==size_t(!native) && speechCalls==size_t(!native) && lookCalls==size_t(!native) &&
+            stopCalls==size_t(!native) && turnCalls==size_t(!native && !seated),
+            "observation: native and scripted helpers produce the same senses, look and speech without native VM calls");
+    npc.clearAiQueue();
+    Contract::previousState(npc)=ScriptFn();
     npc.setStateTime(0);
     script.setSeed(73106);
     auto expected=Contract::random(script);
@@ -1456,6 +1486,8 @@ void observePlayerPhases(World& world,Npc& npc,Npc& hero,bool seated) {
   enabled=wasEnabled;
   npc.handle().aivar[21]=beforeRoom;
   npc.handle().aivar[68]=beforeDelay;
+  npc.handle().senses=beforeSenses;
+  npc.handle().senses_range=beforeRange;
   Contract::previousState(npc)=beforeState;
   npc.setStateTime(int64_t(beforeTime));
   std::printf("D5.2 %s observation: Init, timed Loop, End and random stream match the VM\n",seated ? "seated" : "standing");
@@ -1494,13 +1526,14 @@ void quietSoundRooms(Gothic& gothic) {
   const auto clear=script.findFunction("ZS_CLEARROOM");
   const auto roomPc=vm.find_symbol_by_name("B_ASSESSENTERROOM")->address();
   const auto portalCollision=script.findFunction("B_ASSESSPORTALCOLLISION");
+  const auto portalPc=vm.find_symbol_by_index(portalCollision.ptr)->address();
   auto& leftRoomComment=*vm.find_symbol_by_name("PLAYER_LEFTROOMCOMMENT");
   const int32_t savedComment=leftRoomComment.get_int();
   const auto setPrivateRoom=[&](bool privateRoom) {
     const auto guild=privateRoom ? int32_t(npc->handle().guild) : int32_t(GIL_PUBLIC);
     world.assignRoomToGuild("FARM01",guild);
     require(world.guildOfRoom(npc->portalName())==guild &&
-            (!privateRoom || (guild>GIL_NONE && guild!=GIL_PUBLIC && world.guildOfRoom(hero.portalName())==guild)),
+            (!privateRoom || (guild>int32_t(GIL_NONE) && guild!=int32_t(GIL_PUBLIC) && world.guildOfRoom(hero.portalName())==guild)),
             "enter room: the fixture changes the guild of the occupied portal");
     };
   EventActor activity;
@@ -1583,6 +1616,10 @@ void quietSoundRooms(Gothic& gothic) {
         require(!npc->canSeeSource(),"quiet sound: the outside source is unseen");
         npc->aiPush(AiQueue::aiWait(173));
         }
+      auto& fakeBanditActor=*vm.find_symbol_by_name("C_PLAYERISFAKEBANDIT.SLF");
+      fakeBanditActor.set_instance(nullptr);
+      auto& checkedGuild=*vm.find_symbol_by_name("C_NPCISBOTHEREDBYPLAYERROOMGUILD.PORTALGUILD");
+      checkedGuild.set_int(-123);
       size_t quietCalls=0,roomCalls=0,fakeBanditCalls=0,clearCalls=0;
       const auto observer=vm.add_call_observer([&](const auto& symbol) {
         quietCalls+=symbol.name()=="B_ASSESSQUIETSOUND";
@@ -1600,8 +1637,14 @@ void quietSoundRooms(Gothic& gothic) {
         const auto* queued=npc->aiQueueFront();
         require(queued && queued->act==AI_StartState && queued->func==(site.privateRoom ? clear : observe) &&
                 queued->target==&hero && queued->i0==1 && !npc->hasPerc(PERC_ASSESSQUIETSOUND) &&
-                clearCalls==1 && fakeBanditCalls==(site.sameRoom ? 0u : 1u),
+                clearCalls==size_t(!native) && fakeBanditCalls==size_t(!native && !site.sameRoom),
                 "quiet sound: the room or unseen source queues its transition and clears perceptions");
+        if(site.privateRoom)
+          require(checkedGuild.get_int()==int32_t(npc->handle().guild),
+                  "enter room: both guild checks remember the private room's owner");
+        if(!site.sameRoom)
+          require(fakeBanditActor.get_instance()==std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()),
+                  "quiet sound: the original fake-bandit helper and the native check store the same listener");
         }
       if(site.friendly) {
         const auto* queued=npc->aiQueueFront();
@@ -1632,19 +1675,17 @@ void quietSoundRooms(Gothic& gothic) {
       leftRoomComment.set_int(1);
       npc->setPerceptionEnable(PERC_ASSESSENTERROOM,portalCollision.ptr);
       npc->aiPush(AiQueue::aiWait(173));
-      size_t roomCalls=0,portalCalls=0,roomBytecode=0;
-      const auto count=vm.add_call_observer([&](const auto& symbol) {
-        roomCalls+=symbol.name()=="B_ASSESSENTERROOM";
-        portalCalls+=symbol.name()=="B_ASSESSPORTALCOLLISION";
+      size_t portalBytecode=0,roomBytecode=0;
+      vm.observe_instructions([&](const auto&) {
+        portalBytecode+=vm.pc()==portalPc;
+        roomBytecode+=vm.pc()==roomPc;
         });
-      vm.observe_instructions([&](const auto&) { roomBytecode+=vm.pc()==roomPc; });
       events=native;
       const bool delivered=npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM);
       events=enabled;
       vm.observe_instructions({});
-      vm.remove_call_observer(count);
-      require(delivered && portalCalls==1 && roomCalls==1 && roomBytecode==(native ? 0u : 1u),
-              "enter room: the stock portal callback dispatches once and the room bytecode runs only in VM mode");
+      require(delivered && portalBytecode==(native ? 0u : 1u) && roomBytecode==portalBytecode,
+              "enter room: the callback and the entering reaction execute bytecode only on the legacy path");
       const auto* queued=npc->aiQueueFront();
       require(queued && queued->act==AI_StartState && queued->func==(privateRoom ? clear : observe) &&
               queued->target==&hero && queued->i0==1 &&
@@ -1665,6 +1706,167 @@ void quietSoundRooms(Gothic& gothic) {
       leftRoomComment.set_int(savedComment);
       }
     std::printf("D5.3 %s entry: perception, action queue and room comment match the VM\n",privateRoom ? "private" : "public");
+    }
+
+  std::vector<std::string> originalDeparture;
+  for(bool native:{false,true}) {
+    prepare(true);
+    const auto heroGuild=hero.handle().guild;
+    const auto seenLeft=npc->handle().aivar[21];
+    const auto leaveLanding=otherRoom->groundPos;
+    test.only({&hero});
+    test.moveHero(leaveLanding,hero.rotation());
+    test.stepUntil(120,[&] { return hero.portalName()!=portal && world.guildOfRoom(hero.portalName())>=0; },
+                   "portal departure: the hero finds the other room's tagged floor");
+    const std::string formerPortal(hero.portalName());
+    const auto formerGuild=world.guildOfRoom(formerPortal);
+    const auto separator=formerPortal.find('_');
+    require(formerPortal.starts_with("S:") && separator!=std::string::npos && separator>2,
+            "portal departure: the fixture needs a named former room");
+    const std::string_view formerRoom(formerPortal.data()+2,separator-2);
+    world.assignRoomToGuild(formerRoom,int32_t(npc->handle().guild));
+    test.moveHero(*inside,hero.rotation());
+    test.stepUntil(120,[&] { return hero.portalName()==portal && hero.formerPortalName()==formerPortal; },
+                   "portal departure: crossing back preserves the actual former room");
+    test.only({npc,&hero});
+    npc->setDirection(hero.position()-npc->position());
+    npc->updateTransform();
+    // The entrance policy considers personal attitude; the departure policy uses guild attitude.
+    npc->setAttitude(ATT_FRIENDLY);
+    hero.handle().guild=GIL_BDT;
+    npc->handle().aivar[21]=0;
+    npc->setPerceptionEnable(PERC_ASSESSENTERROOM,portalCollision.ptr);
+    size_t portalBytecode=0;
+    vm.observe_instructions([&](const auto&) { portalBytecode+=vm.pc()==portalPc; });
+    events=native;
+    const bool delivered=npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM);
+    events=enabled;
+    vm.observe_instructions({});
+    const auto* queued=npc->aiQueueFront();
+    require(delivered && portalBytecode==(native ? 0u : 1u) && npc->handle().aivar[21]==1 &&
+            queued && queued->act==AI_StartState && queued->func==observe && queued->target==&hero && queued->i0==0 &&
+            !npc->hasPerc(PERC_ASSESSENTERROOM),
+            "portal departure: a witness of the hero leaving its guild's room records it and observes");
+    if(native) require(activityQueue(*npc)==originalDeparture,"portal departure: original and native commands match");
+    else originalDeparture=activityQueue(*npc);
+    world.assignRoomToGuild(formerRoom,formerGuild);
+    hero.handle().guild=heroGuild;
+    npc->handle().aivar[21]=seenLeft;
+    }
+  std::puts("D5.5 former-room witness and observation queue match the VM");
+
+  const auto roomPhases=activityPhases(script,"ZS_CLEARROOM");
+  const auto roomExit=script.findFunction("B_EXITIFROOMLEFT");
+  const auto roomTalk=script.findFunction("B_CLEARROOMTALK");
+  const auto roomTalkPc=vm.find_symbol_by_index(roomTalk.ptr)->address();
+  const auto attack=script.findFunction("ZS_ATTACK");
+  const auto attackReason=vm.find_symbol_by_name("AR_CLEARROOM")->get_int();
+  const auto roomCode=std::array{vm.find_symbol_by_index(roomPhases.init)->address(),
+                                 vm.find_symbol_by_index(roomPhases.loop)->address(),
+                                 vm.find_symbol_by_index(roomPhases.end)->address(),
+                                 vm.find_symbol_by_index(roomExit.ptr)->address()};
+  std::vector<uint8_t> roomSave;
+  std::vector<std::string> roomPending;
+  const auto saysTo=[](const Npc& speaker,const Npc& target,std::string_view line) {
+    auto queue=Contract::queue(speaker);
+    while(queue.size()!=0) {
+      const auto action=queue.pop();
+      if(action.act==AI_OutputSvm && action.target==&target && action.s0==line) return true;
+      }
+    return false;
+    };
+  const auto depart=otherRoom->groundPos;
+  for(bool hostile:{false,true}) {
+    std::vector<std::string> originalInit,originalAttack;
+    for(bool native:{false,true}) {
+      prepare(true);
+      const auto guild=npc->handle().guild;
+  const auto aivar=std::to_array(npc->handle().aivar);
+      if(hostile) npc->handle().guild=GIL_MIL;
+      setPrivateRoom(true);
+      events=native;
+      npc->setPerceptionEnable(PERC_ASSESSENTERROOM,portalCollision.ptr);
+      require(npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM) &&
+              npc->aiQueueFront() && npc->aiQueueFront()->func==clear,
+              "clear room: the stock portal event starts the private-room reaction");
+      std::array<size_t,4> vmEntries{};
+      size_t roomTalkBytecode=0;
+      vm.observe_instructions([&](const auto&) {
+        for(size_t i=0;i<roomCode.size();++i)
+          vmEntries[i]+=vm.pc()==roomCode[i];
+        roomTalkBytecode+=vm.pc()==roomTalkPc;
+        });
+      Contract::nextAiAction(*npc);
+      Contract::tickRoutine(*npc);
+      require(npc->isInState(clear) && Contract::aiState(*npc).started && npc->stateOther()==&hero &&
+              npc->handle().aivar[19]==1 && npc->hasPerc(PERC_ASSESSENTERROOM) &&
+              npc->hasPerc(PERC_MOVEMOB) && npc->hasPerc(PERC_ASSESSTALK),
+              "clear room: Init keeps the guest and installs the stock perceptions");
+      if(native) require(activityQueue(*npc)==originalInit,"clear room: the initial commands match the VM");
+      else originalInit=activityQueue(*npc);
+
+      npc->clearAiQueue();
+      require(npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSTALK) &&
+              roomTalkBytecode==(native ? 0u : 1u) &&
+              saysTo(*npc,hero,hostile ? "$GETOUTOFHERE" : "$WHYAREYOUINHERE"),
+              "clear room: addressing the owner repeats the appropriate warning through the selected callback");
+      const auto loop=[&] { return script.invokeState(npc,&hero,&hero,ScriptFn(roomPhases.loop)); };
+      npc->clearAiQueue();
+      npc->setStateTime(2600);
+      require(loop()==LOOP_CONTINUE && npc->handle().aivar[19]==0 && npc->stateTime()==0 &&
+              saysTo(*npc,hero,hostile ? "$GETOUTOFHERE" : "$WHYAREYOUINHERE"),
+              "clear room: the first Loop warns and resets the timer once");
+      if(hostile) {
+        npc->clearAiQueue();
+        npc->setStateTime(5999);
+        require(loop()==LOOP_CONTINUE && npc->isAiQueueEmpty() && npc->stateTime()==5999,
+                "clear room: the fifth whole second still allows the guest to leave");
+        npc->setStateTime(6000);
+        require(loop()==LOOP_END && npc->handle().aivar[9]==attackReason && npc->aiQueueFront() &&
+                npc->aiQueueFront()->act==AI_StartState && npc->aiQueueFront()->func==attack &&
+                npc->aiQueueFront()->target==&hero,"clear room: the sixth second queues the original attack reason");
+        if(native) require(activityQueue(*npc)==originalAttack,"clear room: the escalation queue matches the VM");
+        else originalAttack=activityQueue(*npc);
+        }
+      else {
+        npc->setStateTime(1250);
+        if(native) {
+          roomPending=activityQueue(*npc);
+          Tempest::MemWriter writer(roomSave);
+          Serialize out(writer);
+          Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+          std::memset(preview.data(),0,4);
+          gothic.gameSession()->save(out,"guest warned in private room",preview);
+          }
+        test.only({&hero});
+        test.moveHero(depart,hero.rotation());
+        test.stepUntil(120,[&] { return world.guildOfRoom(hero.portalName())!=int32_t(npc->handle().guild); },
+                       "clear room: the guest moves from the private room to another portal");
+        test.only({npc,&hero});
+        require(npc->perceptionProcess(hero,&hero,npc->qDistTo(hero),PERC_ASSESSENTERROOM) &&
+                saysTo(*npc,hero,"$WISEMOVE") && !saysTo(*npc,hero,"$WHYAREYOUINHERE"),
+                "clear room: the registered departure callback replaces the warning with the exit line");
+        auto queue=Contract::queue(*npc);
+        require(queue.size()==3 && queue.pop().act==AI_StandUp && queue.pop().act==AI_OutputSvm &&
+                queue.pop().act==AI_ContinueRoutine,"clear room: the departure queue resumes the routine after the exit line");
+        }
+      npc->clearAiQueue();
+      npc->aiPush(AiQueue::aiLookAtNpc(&hero));
+      Contract::nextAiAction(*npc);
+      npc->clearState(false);
+      require(npc->aiQueueFront() && npc->aiQueueFront()->act==AI_StopLookAt,
+              "clear room: End stops the current look");
+      vm.observe_instructions({});
+      const auto expected=hostile ? std::array<size_t,4>{1,3,1,3} : std::array<size_t,4>{1,1,1,2};
+      require(vmEntries==(native ? std::array<size_t,4>{} : expected),
+              "clear room: Init, Loop, End and the exit callback use the selected executor");
+      npc->handle().guild=guild;
+      std::ranges::copy(aivar,std::begin(npc->handle().aivar));
+      npc->setTarget(nullptr);
+      setPrivateRoom(false);
+      events=enabled;
+      }
+    std::printf("D5.4 %s clear-room warning and response match the VM\n",hostile ? "hostile" : "neutral");
     }
 
   prepare(true);
@@ -1726,6 +1928,39 @@ void quietSoundRooms(Gothic& gothic) {
           "observation: the seated witness can enter the stock sitting pose");
   loaded.stepUntil(120,[&] { return listener->animProgress("S_SIT")>=0; },"observation: the seated witness settles");
   observePlayerPhases(restored,*listener,guest,true);
+
+  gothic.clearGame().reset();
+  {
+    Tempest::MemReader reader(roomSave);
+    Serialize in(reader);
+    gothic.setGame(std::make_unique<GameSession>(in));
+  }
+  ActivityEventsWorld roomLoaded(gothic);
+  auto& roomWorld=roomLoaded.world();
+  auto* owner=activityNpc(roomWorld,"BAU_951_HILDA");
+  auto& intruder=*roomWorld.player();
+  require(owner && owner->isInState(clear) && Contract::aiState(*owner).started && owner->stateOther()==&intruder &&
+          owner->stateTime()==1250 && owner->handle().aivar[19]==0 && owner->hasPerc(PERC_ASSESSENTERROOM) &&
+          roomWorld.guildOfRoom(intruder.portalName())==int32_t(owner->handle().guild) && activityQueue(*owner)==roomPending,
+          "clear room: ordinary load restores the private room, guest, timer and pending warning");
+  roomLoaded.only({owner,&intruder});
+  auto& roomVm=roomWorld.script().getVm();
+  size_t roomVmCalls=0,initCalls=0,endCalls=0;
+  {
+    ActivityStream stream(roomWorld,*owner);
+    const auto count=roomVm.add_call_observer([&](const auto& symbol) {
+      roomVmCalls+=symbol.name().starts_with("ZS_CLEARROOM");
+      });
+    roomLoaded.moveHero(depart,intruder.rotation());
+    roomLoaded.stepUntil(360,[&] { return owner->isInState(stand) && Contract::aiState(*owner).started; },
+                         "clear room: the loaded listener returns to the standing routine after the guest leaves");
+    roomVm.remove_call_observer(count);
+    initCalls=activityCount(stream.events,"phase ZS_CLEARROOM");
+    endCalls=activityCount(stream.events,"phase ZS_CLEARROOM_END");
+  }
+  require(roomVmCalls==0 && initCalls==0 && endCalls==1,
+          "clear room: the loaded reaction ends through the engine without repeating Init");
+  std::puts("D5.4 ordinary load restored the warning and finished the reaction after departure");
   }
 
 void quietSoundAtPost(Gothic& gothic) {
@@ -2464,15 +2699,555 @@ struct RoutineWitness {
   };
 
 struct MonsterRoutineSave {
+  uint32_t                 npc;
+  const char*              state;
   std::vector<std::string> queue;
   uint64_t                 stateTime;
   int32_t                  stage;
+  uint32_t                 target;
+  uint32_t                 other;
   };
 
 constexpr const char* MonsterSaveActor = "BALTHASAR_SHEEP1";
 constexpr const char* MonsterScheduler = "ZS_MM_ALLSCHEDULER";
 
-MonsterRoutineSave monsterRoutinesWorld(Gothic& gothic) {
+void monsterAttackPhases(World& world, Npc& monster, Npc& hero) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto originalVars=std::to_array(monster.handle().aivar);
+  const auto phases=activityPhases(script,"ZS_MM_ATTACK");
+  std::vector<std::vector<std::string>> original;
+  const auto previousEvents=events;
+  auto& invincible=hero.handle().aivar[4];
+  const auto previousInvincible=invincible;
+  invincible=0;
+  for(bool native:{false,true}) {
+    events=native;
+    std::copy(originalVars.begin(),originalVars.end(),monster.handle().aivar);
+    monster.setTarget(&hero);
+    monster.handle().aivar[23]=0;
+    monster.handle().aivar[27]=2;
+    monster.handle().aivar[28]=0;
+    size_t step=0;
+    for(const auto& [function,time] : {std::pair{phases.init,0u},std::pair{phases.loop,2000u},
+                                     std::pair{phases.loop,3000u},std::pair{phases.loop,4000u},std::pair{phases.end,4000u}}) {
+      monster.clearAiQueue();
+      monster.setStateTime(time);
+      size_t instructions=0,phaseEntries=0;
+      const auto phaseAddress=vm.find_symbol_by_index(uint32_t(function))->address();
+      vm.observe_instructions([&](const auto&) {
+        ++instructions;
+        phaseEntries+=vm.pc()==phaseAddress;
+        });
+      const auto result=script.invokeState(&monster,&hero,nullptr,ScriptFn(function));
+      vm.observe_instructions({});
+      require(phaseEntries==(native ? 0u : 1u),"monster attack: only the VM branch executes the original phase");
+      if(native && function!=phases.end)
+        require(instructions==0,"monster attack: Init and the active pursuit run no bytecode in this wolf encounter");
+
+      auto witness=activityQueue(monster);
+      witness.push_back(std::to_string(result));
+      witness.push_back(std::to_string(monster.stateTime()));
+      for(size_t slot:{7,8,19,20,22,23,65,68,69})
+        witness.push_back(std::to_string(monster.handle().aivar[slot]));
+      if(native)
+        require(witness==original[step],"monster attack: queue, result and pursuit state must match the VM");
+      else
+        original.push_back(std::move(witness));
+
+      if(step==0)
+        require(monster.target()==&hero && monster.hasPerc(PERC_ASSESSSURPRISE),"monster attack: Init keeps the target and enables surprise perception");
+      if(step==1)
+        require(result==LOOP_CONTINUE && monster.aiQueueFront() && monster.aiQueueFront()->act==AI_Attack,
+                "monster attack: the wolf still attacks at the exact pursuit limit");
+      if(step==2)
+        require(result==LOOP_CONTINUE && monster.handle().aivar[8]==1 && monster.handle().aivar[68]==3,
+                "monster attack: pursuing past the limit enters the warning state");
+      if(step==3)
+        require(result==LOOP_CONTINUE && monster.handle().aivar[8]==0 && monster.stateTime()==0,
+                "monster attack: a stationary target ends the warning on the next second");
+      ++step;
+      }
+    }
+  events=previousEvents;
+  invincible=previousInvincible;
+  std::copy(originalVars.begin(),originalVars.end(),monster.handle().aivar);
+  monster.clearAiQueue();
+  std::puts("Monster attack: original and native Init, attack, warning, resumed pursuit and End agree");
+  }
+
+void monsterThreatAndFleePhases(World& world, Npc& monster, Npc& hero) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  auto& random=NpcDefinitionContract::random(script);
+  const auto initialRandom=random;
+  const auto previousEvents=events;
+  const auto previousPosition=hero.position();
+  const auto threat=activityPhases(script,"ZS_MM_THREATENENEMY");
+  const auto flee=activityPhases(script,"ZS_MM_FLEE");
+  const auto attack=script.findFunction("ZS_MM_ATTACK");
+  auto& lastTarget=monster.handle().aivar[7];
+  auto& loadedTarget=monster.handle().aivar[65];
+  const auto savedLastTarget=lastTarget;
+  const auto savedLoadedTarget=loadedTarget;
+  auto* delay=script.findSymbol("B_MM_DESYNCHRONIZE.MSEC");
+  const auto savedDelay=delay->get_int();
+  const auto placeHero=[&](int distance) {
+    const auto centerOffset=hero.centerPosition()-hero.position();
+    hero.setPosition(monster.centerPosition()-centerOffset+Tempest::Vec3(float(distance)+0.25f,0,0));
+    hero.updateTransform();
+    require(int(std::sqrt(monster.qDistTo(hero)))==distance,"monster combat: the target must be at the fixture distance");
+    };
+
+  struct Step { size_t function; int distance; uint64_t time; int result; };
+  const std::array steps={Step{threat.init,950,0,0},Step{threat.loop,950,3999,LOOP_CONTINUE},
+                          Step{threat.loop,700,0,LOOP_END},Step{threat.loop,950,4000,LOOP_END},
+                          Step{threat.loop,1501,4000,LOOP_END},Step{threat.end,1501,0,0},
+                          Step{flee.init,1999,0,0},Step{flee.loop,1999,999,LOOP_CONTINUE},
+                          Step{flee.loop,1999,1000,LOOP_CONTINUE},Step{flee.loop,2000,1000,LOOP_END},
+                          Step{flee.end,2000,0,0}};
+  std::array<std::vector<std::string>,steps.size()> original;
+  for(bool native:{false,true}) {
+    events=native;
+    random=initialRandom;
+    lastTarget=int32_t(hero.instanceSymbol());
+    loadedTarget=0;
+    delay->set_int(savedDelay);
+    monster.setPerceptionDisable(PERC_ASSESSBODY);
+    monster.setPerceptionDisable(PERC_ASSESSMAGIC);
+    for(size_t i=0;i<steps.size();++i) {
+      const auto& step=steps[i];
+      placeHero(step.distance);
+      monster.clearAiQueue();
+      if(i==4 || i==9)
+        monster.aiPush(AiQueue::aiWait(100));
+      monster.setTarget(i>6 ? &hero : nullptr);
+      monster.setStateTime(step.time);
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      const auto result=script.invokeState(&monster,i==6 ? nullptr : &hero,nullptr,ScriptFn(step.function));
+      vm.observe_instructions({});
+      require(result==step.result && (instructions==0)==native,"monster combat: result and executor must agree at the distance and time boundary");
+      auto witness=activityQueue(monster);
+      witness.push_back(std::to_string(monster.stateTime()));
+      witness.push_back(std::to_string(lastTarget));
+      witness.push_back(std::to_string(loadedTarget));
+      witness.push_back(std::to_string(delay->get_int()));
+      if(native)
+        require(witness==original[i],"monster combat: original and native leave the same queue, timer and target bookkeeping");
+      else
+        original[i]=std::move(witness);
+
+      const auto* front=monster.aiQueueFront();
+      if(i==0)
+        require(monster.hasPerc(PERC_ASSESSBODY) && monster.hasPerc(PERC_ASSESSMURDER),"monster threat: Init enables its perceptions");
+      if(i==1)
+        require(front && front->act==AI_TurnToNpc && front->target==&hero,"monster threat: warning turns towards the target");
+      if(i==2 || i==3)
+        require(front && front->act==AI_StartState && front->func==attack && front->target==&hero && monster.target()==&hero,
+                "monster threat: close range or elapsed warning queues attack against the same target");
+      if(i==6)
+        require(monster.target()==&hero && loadedTarget==1,"monster flee: Init restores the previous target with no OTHER supplied");
+      if(i==7 || i==8)
+        require(front && front->act==AI_Flee && monster.stateTime()==(i==7 ? 999u : 0u),"monster flee: Loop queues fleeing and resets elapsed seconds");
+      if(i==4 || i==9)
+        require(!front,"monster combat: leaving range clears the queue and ends the state");
+      }
+    }
+  events=previousEvents;
+  random=initialRandom;
+  lastTarget=savedLastTarget;
+  loadedTarget=savedLoadedTarget;
+  delay->set_int(savedDelay);
+  hero.setPosition(previousPosition);
+  hero.updateTransform();
+  monster.clearAiQueue();
+  std::puts("Monster threat and flee: original and native phases agree at the pursuit distance and warning time boundaries");
+  }
+
+void monsterEnemyPerception(World& world, Npc& wolf, Npc& sheep, Npc& hero) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  const auto handler=script.findFunction("B_MM_ASSESSENEMY");
+  const auto sleepingHandler=script.findFunction("B_MM_ASSESSQUIETSOUND_SLEEP");
+  const auto handlerPc=script.findSymbol(size_t(handler.ptr))->address();
+  const auto sleepingPc=script.findSymbol(size_t(sleepingHandler.ptr))->address();
+  const auto origin=wolf.position()+Tempest::Vec3(0,500,0);
+  const std::array actors={&wolf,&sheep,&hero};
+  struct ActorState {
+    Tempest::Vec3 position;
+    int32_t sensesRange;
+    bool externalControl;
+    decltype(std::to_array(wolf.handle().aivar)) vars;
+    };
+  std::array<ActorState,actors.size()> saved;
+  for(size_t i=0;i<actors.size();++i) {
+    auto& npc=*actors[i];
+    auto& handle=npc.handle();
+    saved[i]={npc.position(),handle.senses_range,npc.isExternalControl(),std::to_array(handle.aivar)};
+    npc.setExternalControl(false);
+    handle.senses_range=2000;
+    for(auto slot:{4,15,61,71})
+      handle.aivar[slot]=0;
+    handle.aivar[26]=1;
+    }
+  struct Scene { Npc& listener; Npc& source; int distance; const char* next; };
+  const std::array scenes={Scene{wolf,sheep,250,nullptr},Scene{wolf,hero,250,"ZS_MM_ATTACK"},
+                           Scene{wolf,hero,250,"ZS_MM_THREATENENEMY"},Scene{wolf,sheep,250,"ZS_MM_HUNT"},
+                           Scene{sheep,wolf,250,"ZS_MM_FLEE"},Scene{sheep,wolf,400,nullptr}};
+  for(size_t i=0;i<scenes.size();++i) {
+    const auto& scene=scenes[i];
+    auto& listener=scene.listener;
+    auto& source=scene.source;
+    listener.setPosition(origin);
+    listener.updateTransform();
+    source.setPosition(origin+Tempest::Vec3(float(scene.distance),0,0));
+    source.updateTransform();
+    require(listener.canSeeNpc(source,true),"monster enemy perception: the target must be visible to the listener");
+    std::vector<std::string> original;
+    for(bool native:{false,true}) {
+      events=native;
+      source.handle().aivar[71]=i==0 ? 1 : 0;
+      listener.handle().aivar[26]=i==1 ? 0 : 1;
+      listener.setTarget(nullptr);
+      listener.clearAiQueue();
+      listener.aiPush(AiQueue::aiWait(173));
+      listener.setPerceptionEnable(PERC_ASSESSENEMY,handler.ptr);
+      size_t handlerEntries=0;
+      vm.observe_instructions([&](const auto&) { handlerEntries+=vm.pc()==handlerPc; });
+      const bool delivered=listener.perceptionProcess(source,nullptr,listener.qDistTo(source),PERC_ASSESSENEMY);
+      vm.observe_instructions({});
+      require(delivered && handlerEntries==(native ? 0u : 1u),"monster enemy perception: the world uses the selected handler");
+      const auto* front=listener.aiQueueFront();
+      if(scene.next) {
+        require(front && front->act==AI_StartState && front->func==script.findFunction(scene.next) && front->target==&source &&
+                !listener.hasPerc(PERC_ASSESSENEMY),"monster enemy perception: the reaction replaces the queue and clears perceptions");
+        require(listener.target()==(i==2 ? nullptr : &source),"monster enemy perception: threatening leaves the current target unchanged");
+        }
+      else
+        require(front && front->act==AI_Wait && listener.hasPerc(PERC_ASSESSENEMY),"monster enemy perception: rejecting the source leaves the queue and perceptions intact");
+      const auto queue=activityQueue(listener);
+      if(native)
+        require(queue==original,"monster enemy perception: original and native leave the same queue");
+      else
+        original=queue;
+      }
+    source.handle().aivar[71]=0;
+    }
+  require(script.guildAttitude(wolf,hero)==ATT_HOSTILE,"monster enemy perception: the sleeping wolf must treat the hero as hostile");
+  for(bool native:{false,true}) {
+    events=native;
+    hero.handle().aivar[71]=1;
+    size_t sleepingEntries=0,enemyEntries=0;
+    vm.observe_instructions([&](const auto&) {
+      sleepingEntries+=vm.pc()==sleepingPc;
+      enemyEntries+=vm.pc()==handlerPc;
+      });
+    script.invokeState(&wolf,&hero,nullptr,sleepingHandler);
+    vm.observe_instructions({});
+    require(sleepingEntries==1 && enemyEntries==(native ? 0u : 1u),
+            "monster enemy perception: the sleeping callback must use the same handler through a nested VM call");
+    }
+  events=previousEvents;
+  for(size_t i=0;i<actors.size();++i) {
+    auto& npc=*actors[i];
+    npc.setPosition(saved[i].position);
+    npc.updateTransform();
+    npc.handle().senses_range=saved[i].sensesRange;
+    npc.setExternalControl(saved[i].externalControl);
+    std::copy(saved[i].vars.begin(),saved[i].vars.end(),npc.handle().aivar);
+    if(!npc.isPlayer()) {
+      npc.clearAiQueue();
+      npc.setTarget(nullptr);
+      }
+    }
+  std::puts("Monster enemy perception: original and native reject, attack, threaten, hunt and flee identically");
+  }
+
+void monsterHuntAndEatBodyPhases(World& world, Npc& monster, Npc& target) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  auto& ai=monster.handle().aivar;
+  const auto previousVars=std::to_array(ai);
+  const auto hunt=activityPhases(script,"ZS_MM_HUNT");
+  const auto eat=activityPhases(script,"ZS_MM_EATBODY");
+  struct Step { size_t function; Npc* other; int result; };
+  const std::array steps={Step{hunt.init,&target,0},Step{hunt.loop,&target,LOOP_END},Step{hunt.end,&target,0},
+                          Step{eat.init,&target,0},Step{eat.loop,&target,LOOP_CONTINUE},
+                          Step{eat.loop,nullptr,LOOP_END},Step{eat.end,nullptr,0}};
+  constexpr std::array perceptions={PERC_ASSESSENEMY,PERC_ASSESSBODY,PERC_ASSESSMAGIC,PERC_ASSESSDAMAGE,
+                                    PERC_ASSESSOTHERSDAMAGE,PERC_ASSESSMURDER,PERC_ASSESSWARN};
+  std::array<std::vector<std::string>,steps.size()> original;
+  for(bool native:{false,true}) {
+    events=native;
+    std::copy(previousVars.begin(),previousVars.end(),ai);
+    ai[29]=99;
+    for(const auto perception:perceptions)
+      monster.setPerceptionDisable(perception);
+    for(size_t i=0;i<steps.size();++i) {
+      const auto& step=steps[i];
+      monster.clearAiQueue();
+      if(i==3)
+        monster.setPerceptionDisable(PERC_ASSESSENEMY);
+      if(i==5)
+        monster.aiPush(AiQueue::aiWait(100));
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      const auto result=script.invokeState(&monster,step.other,nullptr,ScriptFn(step.function));
+      vm.observe_instructions({});
+      require(result==step.result && (instructions==0)==native,"monster hunt and eat body: phase result and selected executor must agree");
+      auto witness=activityQueue(monster);
+      for(auto slot:{19,29,44})
+        witness.push_back(std::to_string(ai[slot]));
+      for(const auto perception:perceptions)
+        witness.push_back(std::to_string(monster.hasPerc(perception)));
+      if(native)
+        require(witness==original[i],"monster hunt and eat body: original and native leave the same commands, perceptions and state");
+      else
+        original[i]=std::move(witness);
+      const auto* front=monster.aiQueueFront();
+      if(i==0)
+        require(monster.hasPerc(PERC_ASSESSENEMY) && monster.hasPerc(PERC_ASSESSWARN),"monster hunt: Init restores its ambient perceptions");
+      if(i==3)
+        require(front && front->act==AI_GoToNpc && front->target==&target && !monster.hasPerc(PERC_ASSESSENEMY) && ai[19]==1 &&
+                ai[29]==0 && ai[44]==int32_t(target.instanceSymbol()),"monster eat body: Init walks to the target and records it");
+      if(i==4)
+        require(monster.hasPerc(PERC_ASSESSENEMY) && ai[19]==0,"monster eat body: the first Loop restores enemy perception");
+      if(i==5)
+        require(!front,"monster eat body: a missing target clears the existing queue");
+      if(i==6)
+        require(front && front->s0=="T_EAT_2_STAND","monster eat body: End queues the standing animation");
+      }
+    }
+  events=previousEvents;
+  std::copy(previousVars.begin(),previousVars.end(),ai);
+  monster.clearAiQueue();
+  std::puts("Monster hunt and eat body: original and native approach, perception and missing-target phases agree");
+  }
+
+void monsterBodyPerception(World& world, Npc& monster, Npc& body) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  const auto previousEvents=events;
+  const auto externalControl=monster.isExternalControl();
+  auto& ai=monster.handle().aivar;
+  const auto previousVars=std::to_array(ai);
+  const auto previousGuild=monster.handle().guild;
+  const auto previousBodyGuild=body.handle().guild;
+  const auto previousBodyPosition=body.position();
+  auto& hitPoints=body.handle().attribute[ATR_HITPOINTS];
+  const auto previousHitPoints=hitPoints;
+  body.setPosition(monster.position()+Tempest::Vec3(100,0,0));
+  body.updateTransform();
+  hitPoints=0;
+  monster.setExternalControl(false);
+  const auto handler=script.findFunction("B_MM_ASSESSBODY");
+  const auto eat=script.findFunction("ZS_MM_EATBODY");
+  const auto handlerPc=script.findSymbol(size_t(handler.ptr))->address();
+  const auto wantsToEatPc=script.findSymbol("C_WANTTOEAT")->address();
+  const auto boar=script.findSymbol("ID_KEILER")->get_int();
+  struct Scene { Guild monster; Guild body; int party; int realId; int priority; bool eat; };
+  const std::array scenes={Scene{GIL_WOLF,GIL_SHEEP,0,0,0,true},Scene{GIL_WOLF,GIL_SHEEP,1,0,0,false},
+                           Scene{GIL_WOLF,GIL_SHEEP,0,boar,0,false},Scene{GIL_WOLF,GIL_SHEEP,0,0,1,false},
+                           Scene{GIL_GIANT_BUG,GIL_MINECRAWLER,0,0,0,true},Scene{GIL_SCAVENGER,GIL_SCAVENGER,0,0,0,false},
+                           Scene{GIL_GIANT_RAT,GIL_SCAVENGER,0,0,0,true}};
+  for(const auto& scene:scenes) {
+    monster.handle().guild=scene.monster;
+    body.handle().guild=scene.body;
+    ai[15]=scene.party;
+    ai[29]=scene.priority;
+    ai[43]=scene.realId;
+    std::vector<std::string> original;
+    for(bool native:{false,true}) {
+      events=native;
+      monster.clearAiQueue();
+      monster.aiPush(AiQueue::aiWait(100));
+      monster.setPerceptionEnable(PERC_ASSESSBODY,handler.ptr);
+      size_t handlerEntries=0,wantsToEatEntries=0;
+      vm.observe_instructions([&](const auto&) {
+        handlerEntries+=vm.pc()==handlerPc;
+        wantsToEatEntries+=vm.pc()==wantsToEatPc;
+        });
+      const bool delivered=monster.perceptionProcess(body,nullptr,monster.qDistTo(body),PERC_ASSESSBODY);
+      vm.observe_instructions({});
+      require(delivered && handlerEntries==(native ? 0u : 1u) && wantsToEatEntries==(!native && scene.priority==0 ? 1u : 0u),
+              "monster body perception: the handler and prey predicate run bytecode only in VM mode");
+      const auto* front=monster.aiQueueFront();
+      if(scene.eat)
+        require(front && front->act==AI_StartState && front->func==eat && front->target==&body && !monster.hasPerc(PERC_ASSESSBODY),
+                "monster body perception: an eligible corpse replaces the queue with feeding");
+      else
+        require(front && front->act==AI_Wait && monster.hasPerc(PERC_ASSESSBODY),"monster body perception: rejection preserves the queue");
+      const auto queue=activityQueue(monster);
+      if(native)
+        require(queue==original,"monster body perception: original and native leave the same queue");
+      else
+        original=queue;
+      }
+    }
+  events=previousEvents;
+  monster.setExternalControl(externalControl);
+  monster.handle().guild=previousGuild;
+  body.handle().guild=previousBodyGuild;
+  body.setPosition(previousBodyPosition);
+  body.updateTransform();
+  hitPoints=previousHitPoints;
+  std::copy(previousVars.begin(),previousVars.end(),ai);
+  monster.clearAiQueue();
+  std::puts("Monster body perception: original and native feeding eligibility and interruption agree");
+  }
+
+void specialMonsterRoutines(GameSession& session, World& world, Npc& wolf, Npc& sheep, Npc& hero) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& events=NpcDefinitionContract::activityEventsOn(script);
+  auto& random=NpcDefinitionContract::random(script);
+  const auto initialRandom=random;
+  const auto previousEvents=events;
+  const auto previousTime=world.time();
+  auto* shepherd=activityNpc(world,"BAU_932_BALTHASAR");
+  const auto* destination=world.findWayPoint("NW_BIGMILL_FARM3_BALTHASAR");
+  require(shepherd && destination,"monster routines: the sheep fixture needs Balthasar and the destination");
+  auto* alias=script.findSymbol("BALTHASAR");
+  const auto previousAlias=alias->get_instance();
+  alias->set_instance(std::static_pointer_cast<daedalus::INpc>(shepherd->handlePtr()));
+  const std::array actors={&wolf,&sheep,&hero,shepherd};
+  struct ActorState { Tempest::Vec3 position; std::string waypoint; uint64_t timer; };
+  std::array<ActorState,actors.size()> saved;
+  for(size_t i=0;i<actors.size();++i)
+    saved[i]={actors[i]->position(),actors[i]->handle().wp,actors[i]->stateTime()};
+  auto& wolfHandle=wolf.handle();
+  const auto wolfVars=std::to_array(wolfHandle.aivar);
+  const auto sheepVars=std::to_array(sheep.handle().aivar);
+  const auto wolfGuild=wolfHandle.guild;
+  const auto wolfHealth=wolfHandle.attribute[ATR_HITPOINTS];
+  const auto attitude=wolf.attitude();
+  const auto tempAttitude=wolf.tempAttitude();
+  const auto dragon=activityPhases(script,"ZS_MM_RTN_DRAGONREST");
+  const auto playerFollow=activityPhases(script,"ZS_MM_RTN_FOLLOW_SHEEP");
+  const auto balthasarFollow=activityPhases(script,"ZS_MM_RTN_FOLLOW_SHEEP_BALTHASAR");
+  const auto summoned=activityPhases(script,"ZS_MM_RTN_SUMMONED");
+  const auto place=[](Npc& npc,Tempest::Vec3 position) {
+    npc.setPosition(position);
+    npc.updateTransform();
+    };
+  const auto restore=[&] {
+    for(size_t i=0;i<actors.size();++i) {
+      place(*actors[i],saved[i].position);
+      actors[i]->handle().wp=saved[i].waypoint;
+      actors[i]->setStateTime(saved[i].timer);
+      }
+    std::copy(wolfVars.begin(),wolfVars.end(),wolfHandle.aivar);
+    std::copy(sheepVars.begin(),sheepVars.end(),sheep.handle().aivar);
+    wolfHandle.guild=wolfGuild;
+    wolfHandle.attribute[ATR_HITPOINTS]=wolfHealth;
+    wolf.setAttitude(attitude);
+    wolf.setTempAttitude(tempAttitude);
+    };
+
+  std::vector<std::vector<std::string>> original;
+  for(bool native:{false,true}) {
+    restore();
+    random=initialRandom;
+    events=native;
+    size_t index=0;
+    auto invoke=[&](Npc& actor,size_t phase,int expected) {
+      actor.clearAiQueue();
+      size_t instructions=0;
+      vm.observe_instructions([&](const auto&) { ++instructions; });
+      const auto result=script.invokeState(&actor,nullptr,nullptr,ScriptFn(phase));
+      vm.observe_instructions({});
+      require(result==expected && (instructions==0)==native,"monster routines: original bytecode executes only in VM mode");
+      auto witness=activityQueue(actor);
+      witness.push_back(actor.handle().wp);
+      witness.push_back(std::to_string(actor.stateTime()));
+      for(auto slot:{15,19,29,62})
+        witness.push_back(std::to_string(actor.handle().aivar[slot]));
+      witness.push_back(std::to_string(actor.handle().attribute[ATR_HITPOINTS]));
+      witness.push_back(std::to_string(actor.attitude()));
+      witness.push_back(std::to_string(actor.tempAttitude()));
+      auto nextRandom=random;
+      witness.push_back(std::to_string(nextRandom()));
+      if(native)
+        require(witness==original[index],"monster routines: commands, timers, attitude and random draw agree");
+      else
+        original.push_back(std::move(witness));
+      ++index;
+      };
+
+    session.setTime(gtime(0,23,0));
+    wolfHandle.guild=GIL_DRAGON;
+    wolfHandle.aivar[32]=22;
+    wolfHandle.aivar[33]=6;
+    wolfHandle.attribute[ATR_HITPOINTS]=wolfHandle.attribute[ATR_HITPOINTSMAX]-2;
+    const auto injured=wolfHandle.attribute[ATR_HITPOINTS];
+    invoke(wolf,dragon.init,0);
+    invoke(wolf,dragon.loop,LOOP_CONTINUE);
+    invoke(wolf,dragon.loop,LOOP_CONTINUE);
+    require(wolfHandle.attribute[ATR_HITPOINTS]==injured+1 && wolfHandle.aivar[19]==0,"dragon rest: the second beat regenerates one HP");
+    session.setTime(gtime(1,6,0));
+    invoke(wolf,dragon.loop,LOOP_END);
+    require(wolf.aiQueueFront() && wolf.aiQueueFront()->func==script.findFunction(MonsterScheduler),"dragon rest: the rest window returns to the dispatcher");
+    invoke(wolf,dragon.end,0);
+    wolfHandle.guild=wolfGuild;
+    wolfHandle.attribute[ATR_HITPOINTS]=wolfHealth;
+
+    invoke(sheep,playerFollow.init,0);
+    sheep.handle().aivar[15]=0;
+    invoke(sheep,playerFollow.loop,LOOP_CONTINUE);
+    require(sheep.aiQueueFront() && sheep.aiQueueFront()->s0.starts_with("R_ROAM"),"sheep follow: a sheep out of the party plays a roaming gesture");
+    sheep.handle().aivar[15]=1;
+    place(hero,sheep.position()+Tempest::Vec3(800,0,0));
+    invoke(sheep,playerFollow.loop,LOOP_CONTINUE);
+    place(hero,sheep.position()+Tempest::Vec3(250,0,0));
+    invoke(sheep,playerFollow.loop,LOOP_CONTINUE);
+    require(sheep.aiQueueFront() && sheep.aiQueueFront()->target==&hero,"sheep follow: a close party sheep faces the hero");
+    invoke(sheep,playerFollow.end,0);
+
+    invoke(sheep,balthasarFollow.init,0);
+    place(*shepherd,destination->position()+Tempest::Vec3(1200,0,0));
+    place(sheep,shepherd->position()+Tempest::Vec3(250,0,0));
+    invoke(sheep,balthasarFollow.loop,LOOP_CONTINUE);
+    require(sheep.aiQueueFront() && sheep.aiQueueFront()->target==shepherd,"sheep follow: the flock faces Balthasar while he is away from the destination");
+    place(*shepherd,destination->position());
+    invoke(sheep,balthasarFollow.loop,LOOP_CONTINUE);
+    const auto* roam=sheep.aiQueueFront();
+    require(roam && roam->func==script.findFunction("ZS_MM_RTN_ROAM") && roam->i0==1 && roam->s0==destination->name,
+            "sheep follow: arrival queues roaming at Balthasar's destination");
+    invoke(sheep,balthasarFollow.end,0);
+
+    wolfHandle.aivar[62]=0;
+    invoke(wolf,summoned.init,0);
+    require(wolfHandle.aivar[15]==1 && wolf.attitude()==ATT_FRIENDLY && wolf.tempAttitude()==ATT_FRIENDLY,
+            "summoned routine: Init makes the creature a friendly party member");
+    place(hero,wolf.position()+Tempest::Vec3(800,0,0));
+    wolf.setStateTime(1000);
+    invoke(wolf,summoned.loop,LOOP_CONTINUE);
+    require(wolfHandle.aivar[62]==0 && wolf.stateTime()==1000 && wolf.aiQueueFront() && wolf.aiQueueFront()->target==&hero,
+            "summoned routine: finding a far hero queues approach before the timer advances");
+    place(hero,wolf.position()+Tempest::Vec3(250,0,0));
+    invoke(wolf,summoned.loop,LOOP_CONTINUE);
+    require(wolfHandle.aivar[62]==1 && wolf.stateTime()==0,"summoned routine: the timer advances close to the hero");
+    invoke(wolf,summoned.end,0);
+    }
+  restore();
+  session.setTime(previousTime);
+  random=initialRandom;
+  events=previousEvents;
+  alias->set_instance(previousAlias);
+  wolf.clearAiQueue();
+  sheep.clearAiQueue();
+  std::puts("Special monster routines: original and native dragon rest, both sheep followers and summoned creature agree");
+  }
+
+std::array<MonsterRoutineSave,2> monsterRoutinesWorld(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   ActivityEventsWorld test(gothic);
   auto& world=test.world();
@@ -2616,11 +3391,37 @@ MonsterRoutineSave monsterRoutinesWorld(Gothic& gothic) {
   std::copy(vars.begin(),vars.end(),sheep.handle().aivar);
   sheep.handle().aivar[34]=-1;
   session.setTime(originalTime);
+  auto* wolf=activityNpc(world,"WOLF");
+  const auto* site=world.findWayPoint("NW_FARM4_BALTHASAR");
+  require(wolf && site && world.player(),"monster attack: the fixture needs the wolf, hero and way point");
+  auto& hero=*world.player();
+  test.stop(*wolf);
+  wolf->setProcessPolicy(NpcProcessPolicy::AiNormal);
+  wolf->setPosition(site->position());
+  test.moveHero(site->position()+Tempest::Vec3(450,0,0),0);
+  monsterAttackPhases(world,*wolf,hero);
+  monsterThreatAndFleePhases(world,*wolf,hero);
+  monsterEnemyPerception(world,*wolf,sheep,hero);
+  monsterHuntAndEatBodyPhases(world,*wolf,sheep);
+  monsterBodyPerception(world,*wolf,sheep);
+  specialMonsterRoutines(session,world,*wolf,sheep,hero);
+  const auto attack=script.findFunction("ZS_MM_ATTACK");
+  require(wolf->startState(attack,site->name),"the wolf must enter attack before saving");
+  wolf->setTarget(&hero);
+  wolf->setOther(&hero);
+  wolf->handle().aivar[27]=2;
+  Contract::tickRoutine(*wolf);
+  wolf->setStateTime(1500);
+  require(Contract::aiState(*wolf).started && !wolf->isAiQueueEmpty(),"the fixture must save an active attack with pending commands");
   require(sheep.startState(roam,"NW_FARM4_BALTHASAR"),"the fixture sheep must enter roam before saving");
   Contract::tickRoutine(sheep);
   sheep.setStateTime(1500);
   require(!sheep.isAiQueueEmpty(),"the fixture must save a pending monster command");
-  return {activityQueue(sheep),sheep.stateTime(),sheep.handle().aivar[19]};
+  const auto snapshot=[&](Npc& actor,const char* state) {
+    return MonsterRoutineSave{world.npcId(&actor),state,activityQueue(actor),actor.stateTime(),actor.handle().aivar[19],
+                              world.npcId(actor.target()),world.npcId(actor.stateOther())};
+    };
+  return {snapshot(sheep,"ZS_MM_RTN_ROAM"),snapshot(*wolf,"ZS_MM_ATTACK")};
   }
 
 void ravenStoneGuardianRoutines(World& world) {
@@ -2669,7 +3470,7 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
   gothic.setGame(std::make_unique<GameSession>(worldName));
   std::vector<RoutineWitness> result(sites.size());
   std::vector<uint8_t> save;
-  std::optional<MonsterRoutineSave> monster;
+  std::optional<std::array<MonsterRoutineSave,2>> monster;
   {
     ActivityEventsWorld test(gothic);
     auto& world=test.world();
@@ -2733,20 +3534,25 @@ std::vector<RoutineWitness> remainingRoutineRun(Gothic& gothic,const char* world
     std::map<std::string,size_t> vmCalls;
     const auto observer=vm.add_call_observer([&](const auto& function) { ++vmCalls[function.name()]; });
     if(monster) {
-      auto* sheep=activityNpc(world,MonsterSaveActor);
-      const auto roam=ScriptFn(script.findSymbolIndex("ZS_MM_RTN_ROAM"));
-      require(sheep && sheep->isInState(roam) && Contract::aiState(*sheep).started &&
-              activityQueue(*sheep)==monster->queue && sheep->stateTime()==monster->stateTime &&
-              sheep->handle().aivar[19]==monster->stage,
-              "ordinary load must restore the monster's state, timer, stage and pending commands");
-      sheep->clearAiQueue();
-      sheep->setProcessPolicy(NpcProcessPolicy::AiNormal);
-      ActivityStream stream(world,*sheep);
-      Contract::tickRoutine(*sheep);
-      require(sheep->isInState(roam) && stream.records==1 && vmCalls["ZS_MM_RTN_ROAM_LOOP"]==0,
-              "the loaded monster must resume in its native loop without rerunning Init");
-      std::puts("Monster routine ZS_MM_RTN_ROAM: ordinary load restored the pending commands and resumed native Loop");
-    }
+      for(const auto& saved:*monster) {
+        auto* actor=world.npcById(saved.npc);
+        const auto state=script.findFunction(saved.state);
+        const auto loop=std::string(saved.state)+"_LOOP";
+        require(actor && actor->isInState(state) && Contract::aiState(*actor).started &&
+                activityQueue(*actor)==saved.queue && actor->stateTime()==saved.stateTime &&
+                actor->handle().aivar[19]==saved.stage && world.npcId(actor->target())==saved.target &&
+                world.npcId(actor->stateOther())==saved.other,
+                "ordinary load must restore the monster's state, timer, stage, target and pending commands");
+        actor->clearAiQueue();
+        actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
+        ActivityStream stream(world,*actor);
+        Contract::tickRoutine(*actor);
+        require(actor->isInState(state) && stream.records==1 && vmCalls[loop]==0 &&
+                activityCount(stream.events,"phase "+loop)==1,
+                "the loaded monster must resume in its native loop without rerunning Init");
+        std::printf("Monster state %s: ordinary load restored the pending commands and resumed native Loop\n",saved.state);
+        }
+      }
     for(size_t i=0;i<sites.size();++i) {
       const auto& site=sites[i];
       auto* actor=activityNpc(world,site.actor);

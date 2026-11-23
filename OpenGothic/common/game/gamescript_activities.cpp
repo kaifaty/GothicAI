@@ -9,6 +9,10 @@ void GameScript::loadNativeRoutines() {
   if(!nativeRoutineProgram || !activityEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return;
 
+  vm.override_function("B_MM_ASSESSENEMY",std::function<void()>{[this] { runMonsterAssessEnemy(); }},[this] {
+    return nativeMonsterPerceptionsEnabled();
+    });
+
   static constexpr NativeRoutinePhase routines[] = {
     {"ZS_GOTOBED",            &GameScript::runMovementRoutine},
     {"ZS_SLEEP",              &GameScript::runMovementRoutine, 0, RoutineWake::Sleep},
@@ -43,7 +47,17 @@ void GameScript::loadNativeRoutines() {
     {"ZS_STAND_DEMENTOR",     &GameScript::runSocialRoutine},
     {"ZS_STAND_RANGERMEETING",&GameScript::runSocialRoutine},
     {"ZS_OBSERVEPLAYER",      &GameScript::runObservePlayer},
+    {"ZS_CLEARROOM",          &GameScript::runClearRoom},
     {monsterScheduler,       &GameScript::runMonsterScheduler},
+    {"ZS_MM_ATTACK",         &GameScript::runMonsterAttack},
+    {"ZS_MM_THREATENENEMY",   &GameScript::runMonsterThreat},
+    {"ZS_MM_FLEE",            &GameScript::runMonsterFlee},
+    {"ZS_MM_HUNT",            &GameScript::runMonsterHunt},
+    {"ZS_MM_EATBODY",         &GameScript::runMonsterEatBody},
+    {"ZS_MM_RTN_DRAGONREST",  &GameScript::runMonsterDragonRest},
+    {"ZS_MM_RTN_FOLLOW_SHEEP", &GameScript::runMonsterSheepFollow},
+    {"ZS_MM_RTN_FOLLOW_SHEEP_BALTHASAR", &GameScript::runMonsterSheepFollow},
+    {"ZS_MM_RTN_SUMMONED",    &GameScript::runMonsterSummoned},
     {"ZS_MM_RTN_SLEEP",       &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_REST",        &GameScript::runMonsterRoutine},
     {"ZS_MM_RTN_ROAM",        &GameScript::runRoamingRoutine},
@@ -103,12 +117,8 @@ void GameScript::enableMonsterRoutinePerceptions(Npc& npc) {
 
 void GameScript::beginMonsterRoutine(Npc& npc, bool desynchronize, WalkBit mode) {
   npc.aiPush(AiQueue::aiSetWalkMode(mode));
-  if(desynchronize) {
-    const auto delay = rollRandom(1000,&npc,true);
-    findSymbol("B_MM_DESYNCHRONIZE.MSEC")->set_int(int32_t(delay));
-    if(delay>0)
-      npc.aiPush(AiQueue::aiWait(delay));
-    }
+  if(desynchronize)
+    desynchronizeNpc();
   const auto& waypoint = npc.handle().wp;
   if(NpcEngineCalls::nearestWaypoint(world(),npc)!=waypoint)
     NpcEngineCalls::gotoWaypoint(world(),npc,waypoint);
