@@ -337,6 +337,7 @@ void GameScript::loadNativeWorldEntry() {
   for(const auto& [name,field]:ghostFlags)
     findSymbol(name)->bind_global_int(ghostProgress.*field);
 
+  loadKhorinisChapter3();
   static constexpr std::pair<const char*,ChapterWorld> worlds[]={
     {"B_ENTER_NEWWORLD",ChapterWorld::New}, {"B_ENTER_OLDWORLD",ChapterWorld::Old}, {"B_ENTER_ADDONWORLD",ChapterWorld::Addon},
     };
@@ -616,6 +617,181 @@ void GameScript::loadNativeWorldEntry() {
 
   vm.override_function("B_KAPITELWECHSEL",std::function<void(int32_t,int32_t)>{
     [this](int32_t chapter,int32_t level) { changeChapter(chapter,level); }},PlacementDefinitionRuntime::enabled);
+  }
+
+void GameScript::loadKhorinisChapter3() {
+  constexpr auto section = "B_ENTER_NEWWORLD_KAPITEL_3";
+  const auto start = findSymbol(section)->address();
+  // Offsets identify strictly literal runs in this verified stock function.
+  enum PlacementGroup { Diego, Gorn, FirstSeeker, Bugs, SekobFarm, ChapterPopulation, Mercenaries, BlessedStones, VinoRitual };
+  static constexpr std::pair<uint32_t,size_t> runs[] = {
+    {116,1}, {161,1}, {227,1}, {293,3}, {479,4}, {625,61}, {1824,8}, {1965,2}, {2092,4},
+    };
+  std::array<std::vector<LiteralPlacement>,std::size(runs)> placements;
+  for(size_t i=0;i<placements.size();++i) {
+    auto [offset,count] = runs[i];
+    auto pc = start+offset;
+    placements[i].reserve(count);
+    for(size_t row=0;row<count;++row)
+      placements[i].push_back(readLiteralPlacement(vm,pc,section));
+    }
+
+  vm.override_function(section,std::function<void()>{[this,placements=std::move(placements)] {
+    const auto number = [this](std::string_view symbol) { return findSymbol(symbol)->get_int(); };
+    auto* entered = findSymbol("ENTERNW_KAPITEL3");
+    if(entered->get_int()!=number("FALSE"))
+      return;
+
+    const auto assignTrue = [&](std::string_view flag) { findSymbol(flag)->set_int(number("TRUE")); };
+    const auto dead = [this](std::string_view actor) {
+      vm.push_reference(findSymbol(actor));
+      vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
+      return vm.pop_int();
+      };
+    const auto member = [this](std::string_view actor) {
+      auto context = findSymbol(actor)->get_instance();
+      vm.unsafe_set_gi(context);
+      return context;
+      };
+    const auto guild = [&](std::string_view name) {
+      const auto hero = member("HERO");
+      return vm.get_int(hero,findSymbol("C_NPC.GUILD"),0)==number(name);
+      };
+    const auto guildEither = [&](std::string_view first,std::string_view second) {
+      const bool a = guild(first);
+      const bool b = guild(second);
+      return a || b;
+      };
+    const auto place = [&](PlacementGroup group) {
+      for(const auto& row : placements[group]) {
+        vm.push_int(int32_t(row.instance->index()));
+        vm.push_reference(row.point);
+        vm.unsafe_call_external(row.external);
+        }
+      };
+    const auto routine = [this](std::string_view actor,std::string_view name) {
+      vm.push_reference(findSymbol(actor));
+      vm.push_reference(findSymbol(name));
+      vm.unsafe_call_bl(findSymbol("B_STARTOTHERROUTINE"));
+      };
+    const auto lifecycle = [this](std::string_view action,std::string_view actor) {
+      vm.push_int(int32_t(findSymbolIndex(actor)));
+      vm.unsafe_call_bl(findSymbol(action));
+      };
+    const auto grant = [this](std::string_view actor,std::string_view item) {
+      vm.push_reference(findSymbol(actor));
+      vm.push_int(int32_t(findSymbolIndex(item)));
+      vm.push_int(1);
+      vm.unsafe_call_external(findSymbol("CREATEINVITEMS"));
+      };
+
+    if(dead("SALANDRIL")==number("FALSE")) {
+      const auto salandril = member("SALANDRIL");
+      vm.set_int(salandril,findSymbol("C_NPC.AIVAR"),uint16_t(number("AIV_TOUGHGUY")),number("TRUE"));
+      }
+    auto* flags = findSymbol("C_NPC.FLAGS");
+    vm.set_int(member("CORNELIUS"),flags,0,0);
+    if(dead("HODGES")==0)
+      routine("HODGES","$28119");
+    if(dead("DIEGONW")!=0) {
+      place(Diego);
+      routine("DIEGONW","$28121");
+      }
+    if(dead("GORNNW_VOR_DJG")!=0) {
+      place(Gorn);
+      routine("GORNNW_VOR_DJG","$28123");
+      }
+    if(dead("LARES")==number("FALSE"))
+      routine("LARES","$28124");
+    place(FirstSeeker);
+    lifecycle("B_KILLNPC","PAL_297_RITTER");
+    lifecycle("B_KILLNPC","PAL_298_RITTER");
+    if(guild("GIL_KDF"))
+      lifecycle("B_KILLNPC","ULF");
+    place(Bugs);
+
+    if(dead("SEKOB")==number("FALSE")) {
+      for(const auto& [actor,point] : {std::pair{"SEKOB","$28129"}, {"ROSI","$28130"}, {"TILL","$28131"},
+                                      {"BALTHASAR","$28132"}, {"BAU_933_REGA","$28133"}, {"BAU_934_BABERA","$28134"},
+                                      {"BAU_937_BAUER","$28135"}, {"BAU_938_BAUER","$28136"}})
+        routine(actor,point);
+      place(SekobFarm);
+      vm.set_int(member("SEKOB"),flags,0,number("NPC_FLAG_IMMORTAL"));
+      }
+    for(const auto& [actor,point] : {std::pair{"LESTER","$28141"}, {"BENNET","$28142"},
+                                    {"SERGIO","$28143"}, {"PECK","$28144"}})
+      routine(actor,point);
+    lifecycle("B_REMOVENPC","PAL_203_LOTHAR");
+    place(ChapterPopulation);
+
+    constexpr auto obsessionBook = "ITWR_DEMENTOROBSESSIONBOOK_MIS";
+    if(dead("MALAK")==number("FALSE")) {
+      routine("MALAK","$28206");
+      assignTrue("MALAK_ISALIVE_KAP3");
+      for(const auto& [actor,point] : {std::pair{"BAU_962_BAUER","$28207"}, {"BAU_964_BAUER","$28208"},
+                                      {"BAU_965_BAUER","$28209"}, {"BAU_966_BAUER","$28210"}, {"BAU_967_BAUER","$28211"},
+                                      {"BAU_968_BAUER","$28212"}, {"BAU_969_BAUER","$28213"}})
+        routine(actor,point);
+      if(guild("GIL_KDF"))
+        grant("MALAK",obsessionBook);
+      }
+    if(guildEither("GIL_PAL","GIL_MIL"))
+      routine("HILDA","$28214");
+    if(guildEither("GIL_DJG","GIL_SLD"))
+      place(Mercenaries);
+    if(guild("GIL_KDF")) {
+      place(BlessedStones);
+      routine("HILDA","$28225");
+      if(dead("VINO")==number("FALSE")) {
+        routine("VINO","$28226");
+        grant("VINO",obsessionBook);
+        assignTrue("VINO_ISALIVE_KAP3");
+        routine("LOBART","$28227");
+        place(VinoRitual);
+        lifecycle("B_KILLNPC","YGIANT_BUG_VINORITUAL1");
+        lifecycle("B_KILLNPC","YGIANT_BUG_VINORITUAL2");
+        }
+      if(dead("BROMOR")==number("FALSE"))
+        grant("BROMOR",obsessionBook);
+      }
+
+    const bool cantharAlive = dead("CANTHAR")==number("FALSE");
+    const bool unpaid = number("CANTHAR_PAY")==number("FALSE");
+    const bool blackmailKnown = number("MIS_CANTHARS_KOMPROBRIEF")!=number("FALSE");
+    const bool blackmailUnresolved = number("MIS_CANTHARS_KOMPROBRIEF")!=number("LOG_SUCCESS");
+    if(cantharAlive && unpaid && blackmailKnown && blackmailUnresolved) {
+      lifecycle("B_REMOVENPC","SARAH");
+      routine("CANTHAR","$28232");
+      vm.push_reference(findSymbol("CANTHAR"));
+      vm.push_reference(findSymbol("$28233"));
+      vm.unsafe_call_external(findSymbol("AI_TELEPORT"));
+      assignTrue("CANTHAR_SPERRE");
+      assignTrue("CANTHAR_WIEDERRAUS");
+      }
+    grant("LESTER","ITMW_1H_BAU_AXE");
+    grant("EHNIM","ITMI_MOLERATLUBRIC_MIS");
+    for(const auto* shrine : {"SHRINEISOBSESSED_NW_TROLLAREA_PATH_37","SHRINEISOBSESSED_NW_FARM1_CONNECT_XARDAS",
+                              "SHRINEISOBSESSED_NW_TROLLAREA_PATH_66","SHRINEISOBSESSED_NW_TROLLAREA_PATH_04",
+                              "SHRINEISOBSESSED_SAGITTA","SHRINEISOBSESSED_NW_BIGMILL_MALAKSVERSTECK_02",
+                              "SHRINEISOBSESSED_NW_FARM3_BIGWOOD_02"})
+      assignTrue(shrine);
+
+    const auto introduce = [this](std::string_view image,std::string_view sound) {
+      for(const auto* symbol : {"KAPWECHSEL_3","KAPWECHSEL_3_TEXT"})
+        vm.push_reference(findSymbol(symbol));
+      vm.push_reference(findSymbol(image));
+      vm.push_reference(findSymbol(sound));
+      vm.push_int(6000);
+      vm.unsafe_call_external(findSymbol("INTRODUCECHAPTER"));
+      };
+    if(guildEither("GIL_PAL","GIL_MIL"))
+      introduce("$28234","$28235");
+    else if(guild("GIL_KDF"))
+      introduce("$28236","$28237");
+    else
+      introduce("$28238","$28239");
+    entered->set_int(number("TRUE"));
+    }},PlacementDefinitionRuntime::enabled);
   }
 
 void GameScript::enterChapterWorld(ChapterWorld region) {
