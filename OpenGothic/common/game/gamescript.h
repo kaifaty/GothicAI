@@ -252,6 +252,7 @@ class GameScript final : public GameRules {
     bool runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
+    bool runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
     bool runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);

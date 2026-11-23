@@ -2040,8 +2040,22 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
             "unconscious: recovery queues self-healing with the original other");
     return activityQueue(npc);
     };
+  auto save=[&](std::vector<uint8_t>& bytes,std::string_view label) {
+    Tempest::MemWriter writer(bytes);
+    Serialize out(writer);
+    Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+    std::memset(preview.data(),0,4);
+    gothic.gameSession()->save(out,label,preview);
+    };
+  const auto potionQueue=[](const Npc& npc,uint32_t potion) {
+    auto queue=Contract::queue(npc);
+    require(queue.size()==1,"healing: a single potion use is queued");
+    const auto use=queue.pop();
+    require(use.act==AI_UseItem && uint32_t(use.i0)==potion && npc.itemCount(potion)>0,
+            "healing: enqueue the strongest available potion through the item-use pipeline");
+    };
   std::vector<std::string> originalInit,originalEnd;
-  std::vector<uint8_t> knockedOut;
+  std::vector<uint8_t> knockedOut,healing;
   int32_t originalXp=0;
   for(bool native:{false,true}) {
     gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
@@ -2063,10 +2077,11 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     const auto beforeXp=hero.experience();
     const auto wakeAt=int64_t(script.findSymbol("HAI_TIME_UNCONSCIOUS")->get_int())*1000;
     auto& vm=script.getVm();
-    size_t phaseCalls=0,rewards=0;
+    size_t phaseCalls=0,rewards=0,minimalCalls=0;
     const auto observer=vm.add_call_observer([&](const auto& symbol) {
       phaseCalls+=symbol.name().starts_with("ZS_UNCONSCIOUS");
       rewards+=symbol.name()=="B_GIVEPLAYERXP";
+      minimalCalls+=symbol.name()=="PERCEPTION_SET_MINIMAL";
       });
     npc->changeAttribute(ATR_HITPOINTS,-npc->attribute(ATR_HITPOINTS),true);
     npc->setOther(&hero);
@@ -2089,13 +2104,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       Contract::tickRoutine(*npc);
       require(npc->isUnconscious() && npc->isAiQueueEmpty() && npc->handle().aivar[10]==1,
               "unconscious: the last millisecond before the deadline still waits");
-      if(native) {
-        Tempest::MemWriter writer(knockedOut);
-        Serialize out(writer);
-        Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
-        std::memset(preview.data(),0,4);
-        gothic.gameSession()->save(out,"unconscious before recovery",preview);
-        }
+      if(native) save(knockedOut,"unconscious before recovery");
       npc->setStateTime(wakeAt);
       Contract::tickRoutine(*npc);
       require(!npc->isUnconscious() && npc->handle().aivar[10]==0 && rewards==1 &&
@@ -2105,6 +2114,48 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
       const auto end=recoveryQueue(*npc,script.findFunction("ZS_HEALSELF"),hero);
       if(native) require(end==originalEnd,"unconscious: End queue matches Daedalus");
       else originalEnd=end;
+      }
+
+    const auto heal=script.findFunction("ZS_HEALSELF");
+    const std::array potions={script.findSymbolIndex("ITPO_HEALTH_03"),
+                              script.findSymbolIndex("ITPO_HEALTH_02"),script.findSymbolIndex("ITPO_HEALTH_01")};
+    {
+      ActivityStream stream(world,*npc);
+      for(const auto item:potions) {
+        npc->delItem(item,uint32_t(npc->itemCount(item)));
+        npc->addItem(item,1);
+        }
+      npc->handle().senses=0;
+      npc->handle().senses_range=0;
+      require(npc->startState(heal,"",gtime::endOfTime(),true),"healing: enter the recovery state");
+      npc->setPerceptionEnable(PERC_ASSESSTALK,script.findFunction("B_ASSESSTALK").ptr);
+      Contract::tickRoutine(*npc);
+      require(npc->handle().senses==3 && npc->handle().senses_range==2000 && npc->hasPerc(PERC_ASSESSMAGIC) &&
+              npc->hasPerc(PERC_ASSESSDAMAGE) && npc->hasPerc(PERC_ASSESSMURDER) && npc->hasPerc(PERC_ASSESSTHEFT) &&
+              npc->hasPerc(PERC_ASSESSUSEMOB) && npc->hasPerc(PERC_ASSESSENTERROOM) && npc->hasPerc(PERC_ASSESSTALK),
+              "healing: Init enables the six minimal perceptions and leaves other callbacks alone");
+      for(const auto item:potions) {
+        Contract::tickRoutine(*npc);
+        require(npc->isInState(heal),"healing: keep the state active while a potion is available");
+        potionQueue(*npc,item);
+        if(native && item==potions.front()) save(healing,"healing with a queued potion");
+        npc->clearAiQueue();
+        npc->delItem(item,1);
+        }
+      npc->aiPush(AiQueue::aiWait(500));
+      Contract::tickRoutine(*npc);
+      require(!npc->isInState(heal) && npc->isAiQueueEmpty(),"healing: no potion ends the state and clears the queue");
+
+      npc->changeAttribute(ATR_HITPOINTS,npc->attribute(ATR_HITPOINTSMAX),true);
+      npc->addItem(potions.front(),1);
+      require(npc->startState(heal,"",gtime::endOfTime(),true),"healing: enter the state at full health");
+      Contract::tickRoutine(*npc);
+      npc->aiPush(AiQueue::aiWait(500));
+      Contract::tickRoutine(*npc);
+      require(!npc->isInState(heal) && npc->isAiQueueEmpty() && npc->itemCount(potions.front())==1 &&
+              activityCount(stream.events,"phase ZS_HEALSELF_END")==2 && stream.records==(native ? 9u : 0u) &&
+              minimalCalls==(native ? 0u : 2u),
+              "healing: full health clears the queue, preserves the potion and uses the selected executor");
       }
     vm.remove_call_observer(observer);
     gothic.clearGame().reset();
@@ -2133,6 +2184,28 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   }
   gothic.clearGame().reset();
   std::puts("Unconscious lifecycle: native Init, deadline and recovery match Daedalus across ordinary load");
+
+  Tempest::MemReader healingReader(healing);
+  Serialize healingIn(healingReader);
+  gothic.setGame(std::make_unique<GameSession>(healingIn));
+  auto& healingWorld=*gothic.world();
+  auto& healingScript=healingWorld.script();
+  auto* recovering=activityNpc(healingWorld,actor);
+  const auto strongest=healingScript.findSymbolIndex("ITPO_HEALTH_03");
+  require(recovering && recovering->isInState(healingScript.findFunction("ZS_HEALSELF")) &&
+          Contract::aiState(*recovering).started && recovering->attribute(ATR_HITPOINTS)==1,
+          "healing: ordinary load restores the active state and the wounded NPC");
+  potionQueue(*recovering,strongest);
+  recovering->clearAiQueue();
+  {
+    ActivityStream stream(healingWorld,*recovering);
+    Contract::tickRoutine(*recovering);
+    potionQueue(*recovering,strongest);
+    require(stream.records==1 && activityCount(stream.events,"phase ZS_HEALSELF_LOOP")==1,
+            "healing: ordinary load resumes the native Loop");
+  }
+  gothic.clearGame().reset();
+  std::puts("Healing lifecycle: native preferences, exits and ordinary load match Daedalus");
   }
 
 void seatedGestureAtObject(Npc& npc,uint32_t range) {

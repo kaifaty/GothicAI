@@ -424,6 +424,41 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
   return true;
   }
 
+bool GameScript::runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+  result = 0;
+  if(symbol.name()=="ZS_HEALSELF") {
+    // The stock minimal perception setup only enables these entries.
+    npc.handle().senses = int32_t(SensesBit::SENSE_SEE|SensesBit::SENSE_HEAR);
+    npc.handle().senses_range = findSymbol("PERC_DIST_ACTIVE_MAX")->get_int();
+    npc.setPerceptionEnable(PERC_ASSESSMAGIC,findFunction("B_ASSESSMAGIC").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSDAMAGE,findFunction("B_ASSESSDAMAGE").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSMURDER,findFunction("B_ASSESSMURDER").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSTHEFT,findFunction("B_ASSESSTHEFT").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSUSEMOB,findFunction("B_ASSESSUSEMOB").ptr);
+    npc.setPerceptionEnable(PERC_ASSESSENTERROOM,findFunction("B_ASSESSPORTALCOLLISION").ptr);
+    return true;
+    }
+  if(symbol.name()=="ZS_HEALSELF_END")
+    return true;
+  if(symbol.name()!="ZS_HEALSELF_LOOP")
+    return false;
+
+  if(npc.attribute(ATR_HITPOINTS)!=npc.attribute(ATR_HITPOINTSMAX)) {
+    static constexpr std::string_view potions[] = {"ITPO_HEALTH_03", "ITPO_HEALTH_02", "ITPO_HEALTH_01"};
+    for(const auto potion : potions) {
+      const auto item = findSymbol(potion)->index();
+      if(int(npc.itemCount(item))>0) {
+        npc.aiPush(AiQueue::aiUseItem(int32_t(item)));
+        result = LOOP_CONTINUE;
+        return true;
+        }
+      }
+    }
+  npc.clearAiQueue();
+  result = LOOP_END;
+  return true;
+  }
+
 int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {
   auto* symbol = findSymbol(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT)
