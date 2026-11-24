@@ -92,7 +92,7 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
   endif()
   set(guard_sources)
   foreach(target OpenGothic gothic-base-runtime gothic-video-runtime gothic-script-data gothic-script-state gothic-daedalus
-                 AiBridge StoryGraphLift StoryGraph Gothic2Notr gothic-body-runner)
+                 AiBridge StoryGraphRuntime StoryGraphLift StoryGraph Gothic2Notr gothic-body-runner)
     if(NOT TARGET ${target})
       continue()
     endif()

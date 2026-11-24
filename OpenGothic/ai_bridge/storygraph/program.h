@@ -6,13 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace daedalus {
-  class DaedalusScript;
-  }
-
 namespace storygraph {
-
-class Bytecode;
 
 // One step of a program: a call, a store, a branch, a return; in programs the director writes also a line said,
 // and in its own dialogs a choice offered (as Info_AddChoice) or the choices cleared (as Info_ClearChoices).
@@ -48,10 +42,6 @@ struct Program final {
   std::vector<Step> steps;
   };
 
-Program     liftProgram(const daedalus::DaedalusScript& script, const Bytecode& code, uint32_t fnSymbol);
-
-// readable, UTF-8: one step per line, branches indented
-std::string describe(const Program& p);
 // steps as JSON: {"do":"call","call":<expr>}, {"do":"set","target":..,"value":..}, {"do":"if","cond":..,"then":[..],
 // "else":[..]}, {"do":"return","value":..}, {"do":"say","speaker":"self"|"other","line"|"text":..},
 // {"do":"choice","id":..,"text":..,"steps":[..]}, {"do":"clear_choices"}; expressions as in the model

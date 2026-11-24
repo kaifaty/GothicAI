@@ -116,7 +116,7 @@ const Program& ExecCheck::program(uint32_t fnSymbol) {
     rapidjson::Document doc;
     doc.Parse(toJson(p).c_str());
     auto back = readProgram(doc, p.returns);
-    if(back.error.empty() && describe(back)!=describe(p))
+    if(back.error.empty() && describeProgram(back)!=describeProgram(p))
       back.error = "reads back otherwise";
     if(!back.error.empty())
       back.error = "json: " + back.error;

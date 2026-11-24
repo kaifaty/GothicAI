@@ -52,7 +52,7 @@ file(GLOB_RECURSE BASE_FORMAT_INPUTS ${BASE_FORMAT_CONFIGURE_DEPENDS} RELATIVE "
 # Runtime chunk reading (worldchunksruntime.*) is deliberately outside this
 # fingerprint: changing residency metadata or reading must not reimport the base.
 list(APPEND BASE_FORMAT_INPUTS ${BASE_SOURCES} ${BASE_NATIVE_IO}
-  common/sha256.h common/baseimport.h common/baseidentity.h common/basemusic.h common/worldchunks.h common/worlddata.h common/modeldata.h common/fontdata.h common/programdata.h common/outputunits.h common/audiodata.h common/basemesh.h
+  common/sha256.h common/baseimport.h common/baseidentity.h common/basemusic.h common/worldchunks.h common/worlddata.h common/modeldata.h common/fontdata.h common/programdata.h common/programdatajson.h common/import/programcodec.cpp common/outputunits.h common/audiodata.h common/basemesh.h
   common/gothicglb.h common/gltfmesh.h common/utils/fileutil.h common/dmusic/sourcefile.h common/dmusic/riff.h common/dmusic/segment.h
   common/dmusic/track.h common/dmusic/style.h common/dmusic/band.h common/dmusic/reference.h common/dmusic/info.h common/dmusic/pattern.h
   common/dmusic/structs.h common/dmusic/dlscollection.h common/dmusic/wave.h common/dmusic/soundfont.h common/dmusic/hydra.h
@@ -76,7 +76,7 @@ list(APPEND BASE_FORMAT_INPUTS common/game/definitions/symbolcatalog.h common/ga
   common/game/definitions/deathtrophydefinitions.h
   ai_bridge/storygraph/bytecode.h ai_bridge/storygraph/bytecode.cpp
   ai_bridge/storygraph/program.h ai_bridge/storygraph/program.cpp ai_bridge/storygraph/vocab.h
-  ai_bridge/storygraph/expr.h ai_bridge/storygraph/expr.cpp ai_bridge/storygraph/exprjson.h ai_bridge/storygraph/exprjson.cpp
+  ai_bridge/storygraph/expr.h ai_bridge/storygraph/expr.cpp ai_bridge/storygraph/exprjson.h ai_bridge/storygraph/exprjson.cpp ai_bridge/storygraph/exprjsonwrite.h
   ai_bridge/textcodec.h ai_bridge/textcodec.cpp)
 list(APPEND BASE_FORMAT_INPUTS ai_bridge/storygraph/graphjson.h ai_bridge/storygraph/graphjson.cpp
   ai_bridge/storygraph/lifter.h ai_bridge/storygraph/lifter.cpp

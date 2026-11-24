@@ -12,7 +12,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>
 
 GameScript::StockPrograms::StockPrograms(GameScript& script)
   : script(script), vm(script.getVm()) {
@@ -269,22 +268,16 @@ std::optional<storygraph::NativeFunction> GameScript::storyFunction(std::string_
 bool GameScript::invokeStockProgram(uint32_t id, int32_t& result, bool* failed) {
   if(!nativeRoutineProgram)
     return false;
-  const auto* enabled = std::getenv("GOTHIC_AI_STORYEXEC");
-  if(vm.has_legacy_dispatcher() && enabled!=nullptr && std::string_view(enabled)=="0")
-    return false;
   return storyPrograms().run(id,result,failed,false);
   }
 
 bool GameScript::invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly) {
   if(!nativeRoutineProgram)
     return false;
-  const auto* enabled = std::getenv("GOTHIC_AI_STORYEXEC");
-  if(vm.has_legacy_dispatcher() && enabled!=nullptr && std::string_view(enabled)=="0")
-    return false;
   return storyPrograms().run(fn.index(),result,failed,preparedOnly);
   }
 
-int32_t GameScript::dialogFunction(uint32_t id, bool returns) {
+int32_t GameScript::dialogFunction(uint32_t id) {
   if(id==0)
     return 0;
   auto& gothic = Gothic::inst();
@@ -298,13 +291,6 @@ int32_t GameScript::dialogFunction(uint32_t id, bool returns) {
     gothic.dialogStockResultFn(ran,failed);
   if(ran)
     return result;
-  if(!vm.has_legacy_dispatcher()) {
-    Tempest::Log::e("[story] no native dialog program for ",id);
-    return 0;
-    }
-  auto* symbol = vm.find_symbol_by_index(id);
-  if(returns)
-    return vm.call_function<int32_t>(symbol);
-  vm.call_function(symbol);
+  Tempest::Log::e("[story] no native dialog program for ",id);
   return 0;
   }

@@ -317,7 +317,7 @@ static int run(int argc, char** argv) {
       }
     for(auto f : fns) {
       auto* s = dat.find_symbol_by_index(f);
-      std::printf("%s:\n%s\n", s ? ident(s->name()).c_str() : "?", describe(liftProgram(dat, code, f)).c_str());
+      std::printf("%s:\n%s\n", s ? ident(s->name()).c_str() : "?", describeProgram(liftProgram(dat, code, f)).c_str());
       }
     return 0;
     }

@@ -43,6 +43,14 @@ using namespace FileUtil;
 Gothic* Gothic::instance = nullptr;
 
 Gothic::Gothic() {
+  for(const auto* name : {"OPENGOTHIC_ACTIVITY_EVENTS", "OPENGOTHIC_ACTIVITY_RECORDS",
+                          "OPENGOTHIC_ITEM_RECORDS", "OPENGOTHIC_NPC_HELPER_RECORDS",
+                          "OPENGOTHIC_NPC_RECORDS", "OPENGOTHIC_PLACEMENT_RECORDS",
+                          "OPENGOTHIC_ROUTINE_RECORDS", "GOTHIC_AI_STORYEXEC"}) {
+    if(const auto* value=std::getenv(name); value!=nullptr && std::string_view(value)=="0")
+      throw BaseStore::Error(std::string(name)+"=0 is unavailable in the native game. Unset it to play.");
+    }
+
   instance = this;
   BodyEnginePolicy::initialize();
   if(!Resources::isHeadless())

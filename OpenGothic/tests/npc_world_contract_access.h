@@ -238,7 +238,7 @@ struct NpcDefinitionContract {
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
   static const auto& dialogInfos(const GameScript& script) { return script.dialogsInfo; }
   static const auto& transferVariables(const GameScript& script) { return script.inventoryTransferVariables; }
-  static int32_t dialogCondition(GameScript& script,daedalus::DaedalusSymbol* fn) { return script.dialogFunction(fn->index(),true); }
+  static int32_t dialogCondition(GameScript& script,daedalus::DaedalusSymbol* fn) { return script.dialogFunction(fn->index()); }
   static bool hasPreparedStockProgram(const GameScript& script, const daedalus::DaedalusSymbol& fn) {
     if(!script.stockPrograms || !script.stockPrograms->prepared)
       return false;

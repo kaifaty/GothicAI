@@ -532,7 +532,7 @@ bool GameScript::npc_checkinfo(std::shared_ptr<daedalus::INpc> npcRef, int imp) 
       continue;
     bool valid=false;
     if(info->condition)
-      valid = dialogFunction(uint32_t(info->condition),true)!=0;
+      valid = dialogFunction(uint32_t(info->condition))!=0;
     if(Gothic::inst().dialogFilterFn)
       Gothic::inst().dialogFilterFn(*info,valid);
     if(valid) {

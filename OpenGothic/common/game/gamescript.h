@@ -877,8 +877,8 @@ class GameScript final : public GameRules {
     void exitsession         ();
 
     void sort(std::vector<DlgChoice>& dlg);
-    // a dialog's condition, information or choice: the story graph runs it if it takes it, else the VM
-    int32_t dialogFunction(uint32_t function, bool returns);
+    // Run a dialog condition, answer or choice through the native story executor.
+    int32_t dialogFunction(uint32_t function);
     void rememberStoryDialog(std::string_view name, daedalus::IInfo& info);
     const daedalus::IInfo* storyDialog(std::string_view name) const;
 

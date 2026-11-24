@@ -12,7 +12,6 @@
 #include "game/definitions/stockstoryprograms.h"
 #include "game/gamescript.h"
 #include "gothic.h"
-#include "predicates.h"
 #include "programdata.h"
 #include "world/world.h"
 
@@ -253,7 +252,7 @@ void StoryRuntime::clear() {
   varsMade.clear();
   varsFor = nullptr;
   reported.clear();
-  lifted.reset();
+  preparedHelpers.clear();
   preparedConditions.clear();
   preparedFor = nullptr;
   }
@@ -326,8 +325,15 @@ void StoryRuntime::ensurePredicates() {
     Log::e("[story] prepared queries unavailable: ",e.what());
     }
   preparedConditions = std::move(queries.conditions);
-  lifted = std::make_unique<storygraph::Predicates>(std::move(queries.helpers));
+  preparedHelpers = std::move(queries.helpers);
   preparedFor = sc;
+  }
+
+std::string StoryRuntime::checkPredicate(const ExprP& e) const {
+  return storygraph::checkPredicate(e, [this](const std::string& name) -> const storygraph::Helper* {
+    const auto it = preparedHelpers.find(name);
+    return it==preparedHelpers.end() ? nullptr : &it->second;
+    });
   }
 
 storygraph::Program StoryRuntime::originalProgram(uint32_t fn) {
@@ -342,7 +348,7 @@ storygraph::Program StoryRuntime::originalProgram(uint32_t fn) {
 ExprP StoryRuntime::originalCondition(std::string_view dialog) {
   ensurePredicates();
   const auto entry = preparedConditions.find(dialog);
-  if(entry==preparedConditions.end() || !lifted->whyNotLifted(entry->second).empty())
+  if(entry==preparedConditions.end() || !checkPredicate(entry->second).empty())
     return {};
   return entry->second;
   }
@@ -352,7 +358,7 @@ std::string StoryRuntime::checkExpr(const ExprP& e) {
   if(sc==nullptr)
     return {}; // Deferred patch validation.
   ensurePredicates();
-  if(auto err = lifted->whyNotLifted(e); !err.empty())
+  if(auto err = checkPredicate(e); !err.empty())
     return err;
   auto host = sc->makeStoryHost(nullptr,nullptr);
   std::string error;
@@ -376,7 +382,7 @@ std::string StoryRuntime::checkExpr(const ExprP& e) {
           error = x.name + " takes " + std::to_string(fn->parameters.size()) + " arguments";
         break;
       case Expr::Fn:
-        if(const auto& helper = lifted->helper(x.name); helper.params!=x.args.size())
+        if(const auto& helper = preparedHelpers.at(x.name); helper.params!=x.args.size())
           error = x.name + " takes " + std::to_string(helper.params) + " arguments";
         break;
       default:
@@ -424,11 +430,11 @@ std::optional<storygraph::NativeValue> StoryRuntime::evaluate(const ExprP& e, st
     return std::nullopt;
     }
   ensurePredicates();
-  error = lifted->whyNotLifted(e);
+  error = checkPredicate(e);
   if(!error.empty())
     return std::nullopt;
   auto host = sc->makeStoryHost(self,other);
-  auto result = Query(*host,lifted->helpers()).read(e,error);
+  auto result = Query(*host,preparedHelpers).read(e,error);
   if(resultingActors!=nullptr)
     *resultingActors = sc->storyActors();
   if(instanceName!=nullptr && result && result->type==storygraph::NativeValue::Inst && result->inst!=0) {

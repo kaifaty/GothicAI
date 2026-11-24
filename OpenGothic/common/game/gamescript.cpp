@@ -877,7 +877,7 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
           valid = hero!=nullptr && npc!=nullptr && bennetOffer(*bennet,*hero,*npc);
           }
         } else if(info.condition) {
-        valid = dialogFunction(uint32_t(info.condition),true)!=0;
+        valid = dialogFunction(uint32_t(info.condition))!=0;
         }
       if(Gothic::inst().dialogFilterFn)
         Gothic::inst().dialogFilterFn(info,valid);
@@ -994,7 +994,7 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
       pickpocket->pickedPocketBefore = HeroDeed::aivar(npc,"AIV_PLAYERHASPICKEDMYPOCKET");
       }
     }
-  dialogFunction(dlg.scriptFn,false);
+  dialogFunction(dlg.scriptFn);
   Gothic::inst().onDialogChosen(dlg,player,npc);
   if(pickpocket!=nullptr) {
     pickpocket->inventoryAfter = HeroDeed::inventory(player);

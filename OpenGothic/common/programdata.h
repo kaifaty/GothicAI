@@ -75,6 +75,7 @@ const Source* visualFxProgram(const Index& index);
 // unsupported data.
 Index readIndex(const std::filesystem::path& dir);   // dir/programs.json
 
+// The full program and symbol codecs below are linked only by offline tools and contracts.
 struct Encoded {
   std::string          name;    // hex SHA-256 of the version byte followed by bin
   std::string          json;
@@ -93,8 +94,6 @@ std::string recordSha256(const std::filesystem::path& file);
 std::filesystem::path symbolMetadataPath(const std::filesystem::path& base, std::string_view sourceProgramSha256);
 std::filesystem::path symbolMetadataPayloadPath(std::filesystem::path file);
 asset::ProgramRecord readSymbolMetadata(const std::filesystem::path& file, std::string_view sourceProgramSha256);
-// Called after base manifest verification by the native game profile.
-void validateSymbolProjection(const std::filesystem::path& base, std::string_view expectedProgram);
 // Returns the fixed sibling that holds the encoded symbol section.
 std::filesystem::path writeSymbolMetadata(const std::filesystem::path& file, std::string_view sourceProgramSha256,
                                           const asset::ProgramRecord& program);

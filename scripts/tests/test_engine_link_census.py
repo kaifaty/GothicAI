@@ -162,16 +162,30 @@ def test_native_game_check_on_linked_targets(tmp_path):
     (source / "dispatch.cpp").write_text(
         "namespace daedalus { struct DaedalusVm { void exec(); }; void DaedalusVm::exec() {} }\n"
         "int main() { daedalus::DaedalusVm vm; vm.exec(); return 0; }\n")
+    (source / "lift_copy.cpp").write_text(
+        "namespace storygraph { void liftProgram() {} }\n"
+        "namespace ProgramData { void readSymbolMetadata() {} }\n"
+        "int main() { storygraph::liftProgram(); ProgramData::readSymbolMetadata(); return 0; }\n")
+    lift_source = source / "ai_bridge/storygraph/bytecode.cpp"
+    lift_source.parent.mkdir(parents=True)
+    lift_source.write_text("int bytecodeFixture() { return 0; }\n")
+    (source / "native_story.cpp").write_text("int nativeStory() { return 0; }\n")
     (source / "CMakeLists.txt").write_text(
         "cmake_minimum_required(VERSION 3.15)\n"
         "project(LinkCensusTest LANGUAGES CXX)\n"
         "set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)\n"
         "add_library(gothic-daedalus STATIC common/daedalus/vm_bytecode.cpp)\n"
+        "add_library(StoryGraphRuntime STATIC native_story.cpp)\n"
+        "add_library(StoryGraphLift STATIC ai_bridge/storygraph/bytecode.cpp)\n"
         "add_executable(Gothic2Notr main.cpp)\n"
         "target_link_libraries(Gothic2Notr PRIVATE gothic-daedalus)\n"
         "add_executable(gothic-body-runner main.cpp common/daedalus/vm.cpp)\n"
+        "target_link_libraries(gothic-body-runner PRIVATE StoryGraphRuntime)\n"
         "add_executable(direct-vm main.cpp common/daedalus/vm_bytecode.cpp)\n"
-        "add_executable(embedded-dispatch dispatch.cpp)\n")
+        "add_executable(embedded-dispatch dispatch.cpp)\n"
+        "add_executable(embedded-offline lift_copy.cpp)\n"
+        "add_executable(offline-archive main.cpp)\n"
+        "target_link_libraries(offline-archive PRIVATE StoryGraphLift)\n")
     subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja"], capture_output=True, check=True)
     subprocess.run(["cmake", "--build", str(build)], capture_output=True, check=True)
 
@@ -193,6 +207,14 @@ def test_native_game_check_on_linked_targets(tmp_path):
     status, embedded = run("embedded-dispatch")
     assert status == 1 and embedded["opcode_dispatch_symbols"] == ["_ZN8daedalus10DaedalusVm4execEv"]
     assert not embedded["daedalus_archives"] and not embedded["vm_objects"]
+    status, embedded_offline = run("embedded-offline")
+    assert status == 1 and embedded_offline["offline_symbols"] == [
+        "_ZN10storygraph11liftProgramEv", "_ZN11ProgramData18readSymbolMetadataEv"]
+    assert not embedded_offline["offline_archives"] and not embedded_offline["offline_objects"]
+    status, offline = run("offline-archive")
+    assert status == 1 and offline["offline_archives"] == ["libStoryGraphLift.a"]
+    assert offline["offline_objects"] == ["CMakeFiles/StoryGraphLift.dir/ai_bridge/storygraph/bytecode.cpp.o"]
+    assert not offline["offline_symbols"]
     status, missing = run("missing")
     assert status == 2 and missing["status"] == "error"
     if strip := shutil.which("strip"):

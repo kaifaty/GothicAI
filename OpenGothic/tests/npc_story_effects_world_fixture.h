@@ -110,27 +110,15 @@ void nestedStockDialogue(World& world, Npc& npc, Npc& player) {
   struct Restore {
     decltype(gothic.dialogScriptFn)& hook;
     decltype(gothic.dialogScriptFn) savedHook;
-    std::optional<std::string> setting;
-    ~Restore() {
-      hook = std::move(savedHook);
-      if(setting)
-        setenv("GOTHIC_AI_STORYEXEC",setting->c_str(),1);
-      else
-        unsetenv("GOTHIC_AI_STORYEXEC");
-      }
-    };
-  const auto* configured=std::getenv("GOTHIC_AI_STORYEXEC");
-  Restore restore{gothic.dialogScriptFn,std::exchange(gothic.dialogScriptFn,{}),
-                  configured ? std::optional<std::string>(configured) : std::nullopt};
+    ~Restore() { hook = std::move(savedHook); }
+    } restore{gothic.dialogScriptFn,std::exchange(gothic.dialogScriptFn,{})};
   StockOracleActors context(vm,&npc,&player);
   size_t entries=0,instructions=0;
   vm.observe_instructions([&](const auto&) { ++instructions; entries+=vm.pc()==helper->address(); });
 
-  setenv("GOTHIC_AI_STORYEXEC","0",1);
-  const auto original=NpcDefinitionContract::dialogCondition(script,condition);
-  require(entries==1 && instructions>0,"the compatibility switch must run the original dialogue bytecode");
+  const auto original=vm.call_function<int32_t>(condition);
+  require(entries==1 && instructions>0,"the dialogue oracle must run the original nested bytecode");
 
-  unsetenv("GOTHIC_AI_STORYEXEC");
   instructions=0;
   const auto stock=NpcDefinitionContract::dialogCondition(script,condition);
   require(stock==original && instructions==0,"the game session must resolve nested stock dialogue without a bridge");
