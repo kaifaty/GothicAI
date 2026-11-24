@@ -18,8 +18,98 @@
 #include <vector>
 void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled);
 
+#if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
+namespace BennetLookupAudit {
+  inline thread_local size_t depth = 0;
+  inline thread_local size_t scopes = 0;
+  inline thread_local size_t lookups = 0;
+
+  struct Rejected : std::runtime_error {
+    using std::runtime_error::runtime_error;
+    };
+
+  inline void check(const char* method) {
+    if(depth==0)
+      return;
+    ++lookups;
+    throw Rejected(std::string("Bennet ore branch queried the full symbol table: ")+method);
+    }
+}
+#endif
+
+#if defined(GOTHIC_BENNET_LOOKUP_WRAPPERS)
+// The linker redirects references from the game objects to these out-of-line lookups.
+#define GOTHIC_WRAP_LOOKUP(abi, script_type, key_type, symbol_type, method) \
+  extern "C" symbol_type* __real_##abi(script_type*, key_type); \
+  extern "C" symbol_type* __wrap_##abi(script_type* script, key_type key) { \
+    BennetLookupAudit::check(#method); \
+    return __real_##abi(script,key); \
+    }
+
+GOTHIC_WRAP_LOOKUP(_ZN8daedalus14DaedalusScript19find_symbol_by_nameESt17basic_string_viewIcSt11char_traitsIcEE,
+                   daedalus::DaedalusScript, std::string_view, daedalus::DaedalusSymbol, find_symbol_by_name)
+GOTHIC_WRAP_LOOKUP(_ZNK8daedalus14DaedalusScript19find_symbol_by_nameESt17basic_string_viewIcSt11char_traitsIcEE,
+                   const daedalus::DaedalusScript, std::string_view, const daedalus::DaedalusSymbol, find_symbol_by_name)
+GOTHIC_WRAP_LOOKUP(_ZN8daedalus14DaedalusScript20find_symbol_by_indexEj,
+                   daedalus::DaedalusScript, uint32_t, daedalus::DaedalusSymbol, find_symbol_by_index)
+GOTHIC_WRAP_LOOKUP(_ZNK8daedalus14DaedalusScript20find_symbol_by_indexEj,
+                   const daedalus::DaedalusScript, uint32_t, const daedalus::DaedalusSymbol, find_symbol_by_index)
+GOTHIC_WRAP_LOOKUP(_ZN8daedalus14DaedalusScript22find_symbol_by_addressEj,
+                   daedalus::DaedalusScript, uint32_t, daedalus::DaedalusSymbol, find_symbol_by_address)
+GOTHIC_WRAP_LOOKUP(_ZNK8daedalus14DaedalusScript22find_symbol_by_addressEj,
+                   const daedalus::DaedalusScript, uint32_t, const daedalus::DaedalusSymbol, find_symbol_by_address)
+
+#undef GOTHIC_WRAP_LOOKUP
+#endif
+
 // Test-only access keeps the production creation entry point unchanged.
 struct NpcDefinitionContract {
+#if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
+  static void watchBennetLookups(GameScript& script) {
+    BennetLookupAudit::depth = 0;
+    BennetLookupAudit::scopes = 0;
+    BennetLookupAudit::lookups = 0;
+    script.bennetLookupScope=[](bool enter) {
+      if(enter) {
+        ++BennetLookupAudit::depth;
+        ++BennetLookupAudit::scopes;
+        } else {
+        --BennetLookupAudit::depth;
+        }
+      };
+    }
+
+  static size_t bennetLookupCount() { return BennetLookupAudit::lookups; }
+  static size_t bennetLookupScopeCount() { return BennetLookupAudit::scopes; }
+  static bool isBennetOreDialog(const GameScript& script, const daedalus::IInfo& info) {
+    return script.isBennetOreDialog(info);
+    }
+  static auto& bennetAnswer(GameScript& script) { return script.bennetOre->answer; }
+  static auto& bennetTransferObserver(GameScript& script) { return script.bennetTransferObserver; }
+
+  static void checkBennetLookupProbe(GameScript& script) {
+    auto& writable = static_cast<daedalus::DaedalusScript&>(script.getVm());
+    const auto& readable = writable;
+    const auto rejects=[](auto lookup) {
+      struct Scope {
+        Scope() { ++BennetLookupAudit::depth; }
+        ~Scope() { --BennetLookupAudit::depth; }
+        } scope;
+      try {
+        lookup();
+        }
+      catch(const BennetLookupAudit::Rejected&) { return; }
+      throw std::runtime_error("Bennet ore lookup audit missed an intentional symbol lookup");
+      };
+    rejects([&] { (void)writable.find_symbol_by_name("DIA_BENNET_BRINGORE"); });
+    rejects([&] { (void)readable.find_symbol_by_name("DIA_BENNET_BRINGORE"); });
+    rejects([&] { (void)writable.find_symbol_by_index(23822); });
+    rejects([&] { (void)readable.find_symbol_by_index(23822); });
+    rejects([&] { (void)writable.find_symbol_by_address(0); });
+    rejects([&] { (void)readable.find_symbol_by_address(0); });
+    }
+#endif
+
   static auto& definitions(GameScript& script) { return script.npcDefinitions; }
   static auto& placements(GameScript& script) { return script.placementDefinitions; }
   static int32_t& storyChapter(GameScript& script) { return script.storyChapter; }

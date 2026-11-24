@@ -126,6 +126,7 @@ class GameScript final : public GameRules {
 
     inline auto& getVm() { return vm; }
     bool         usesVerifiedNpcProgram() const { return nativeRoutineProgram; }
+    bool         ownsNativeBennetProgram(uint32_t function) const;
     // The caller binds script context. A rejected root can use the compatibility VM.
     bool         invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed = nullptr,
                                     bool preparedOnly = false);
@@ -293,6 +294,7 @@ class GameScript final : public GameRules {
     friend class StoryRuntime;
     friend class GameStoryExternals;
     class StockPrograms;
+    struct BennetOre;
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
     bool invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -847,6 +849,12 @@ class GameScript final : public GameRules {
     // a dialog's condition, information or choice: the story graph runs it if it takes it, else the VM
     int32_t dialogFunction(daedalus::DaedalusSymbol* fn, bool returns);
 
+    static constexpr uint32_t BennetOreInfoId = 23822;
+    void initBennetOre();
+    bool isBennetOreDialog(const daedalus::IInfo& info) const;
+    bool bennetOffer(Npc& player, Npc& npc);
+    bool bennetExecute(Npc& player, Npc& npc);
+
     void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
 
     void onWldInstanceRemoved(const daedalus::DaedalusInstance* obj);
@@ -897,12 +905,18 @@ class GameScript final : public GameRules {
       int32_t attackWarn=0;
       } ghostProgress;
     InventoryTransfer::Variables                                inventoryTransferVariables;
+    int32_t                                                     bennetOreMission = 0;
     struct PointGestureRolls {
       int32_t guard = 0, crossedArms = 0, waypoint = 0, portal = 0, earthquake = 0;
       } pointGestureRolls;
     OwnSymbols                                                  own;
     daedalus::DaedalusVm                                          vm;
     std::unique_ptr<StockPrograms>                                stockPrograms;
+    std::unique_ptr<BennetOre>                                    bennetOre;
+    daedalus::DaedalusSymbol*                                     bennetConditionSymbol = nullptr;
+    daedalus::DaedalusSymbol*                                     bennetInfoSymbol = nullptr;
+    std::function<void(bool)>                                    bennetLookupScope;
+    std::function<void(Npc&,Npc&)>                               bennetTransferObserver;
     StartupFloor                                                floorDefer{*this};
     int32_t                                                     vmLang = -1;
     std::mt19937                                                randGen;

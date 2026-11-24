@@ -36,6 +36,7 @@
 #include "world/objects/interactive.h"
 #include "world/waypoint.h"
 #include "game/gamesession.h"
+#include "game/savegameheader.h"
 #include "sha256.h"
 #include "loadprobe.h"
 #include "world/objects/item.h"
@@ -59,6 +60,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <array>
 #include <bit>
@@ -3676,18 +3678,6 @@ void arrowEffects(Gothic& gothic) {
               worldPins,bodyPins);
   }
 
-// [GAME] itemEffects read the working way (Settings::getI, ItemView::enabled) when neither Gothic.ini has it: 1, as Gothic
-void itemEffectsDefault() {
-  require(!Settings::exists(),"the default of itemEffects needs Settings of its own");
-  const auto dir=std::filesystem::temp_directory_path()/("item-effects-ini-"+std::to_string(getpid()));
-  Settings settings;
-  settings.load((dir/"SystemPack.ini").u16string(),(dir/"Gothic.ini").u16string());
-  const auto* env=std::getenv("OPENGOTHIC_ITEM_EFFECTS");
-  require(!Settings::has("GAME","itemEffects") && Settings::getI("GAME","itemEffects")==1 &&
-          (ItemView::enabled() || (env!=nullptr && std::string_view(env)=="0")),
-          "[GAME] itemEffects must be 1 by default, as in Gothic");
-  }
-
 void compareLegacyPlacedStartup(Gothic& gothic) {
   pointActivitiesInBothModes(gothic);
   dragonIslandPlacement(gothic);
@@ -3825,8 +3815,16 @@ void moverChildSave(bool nativeOnly) {
 
 }
 
-int main() {
+int main(int argc, const char** argv) {
   try {
+    const auto* native=std::getenv("OPENGOTHIC_CONTRACT_NATIVE_STOCK");
+    const bool nativeOnly=native && std::strcmp(native,"1")==0;
+    if(argc==4 && std::string_view(argv[1])=="--bennet-ore") {
+      bennetOreContract(argv[2],argv[3],nativeOnly);
+      std::puts("Bennet ore contract passed");
+      return EXIT_SUCCESS;
+      }
+    require(argc==1,"usage: gothic-placed-items-contract [--bennet-ore OLD_SAVE CASE_DIR]");
     census();
     rootedAndStack();
     censusCache();
@@ -3835,8 +3833,7 @@ int main() {
     groundBelowSupport();
     asymmetricLowestPoint();
     irregularSupport();
-    const auto* native=std::getenv("OPENGOTHIC_CONTRACT_NATIVE_STOCK");
-    if(native && std::strcmp(native,"1")==0) {
+    if(nativeOnly) {
       moverChildSave(true);
       } else {
       npcLiveSynthetic(npcDefinitions,npcDefinitionsDisabled,placementDefinitions,placementDefinitionsDisabled,

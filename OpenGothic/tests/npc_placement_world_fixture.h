@@ -574,6 +574,18 @@ void routineSwitchWorld(World& world) {
   std::puts("Routine switch: saved aliases, same-instance rule, validity, schedule and queue match stock");
   }
 
+// [GAME] itemEffects read the working way (Settings::getI, ItemView::enabled) when neither Gothic.ini has it: 1, as Gothic
+void itemEffectsDefault() {
+  require(!Settings::exists(),"the default of itemEffects needs Settings of its own");
+  const auto dir=std::filesystem::temp_directory_path()/("item-effects-ini-"+std::to_string(getpid()));
+  Settings settings;
+  settings.load((dir/"SystemPack.ini").u16string(),(dir/"Gothic.ini").u16string());
+  const auto* env=std::getenv("OPENGOTHIC_ITEM_EFFECTS");
+  require(!Settings::has("GAME","itemEffects") && Settings::getI("GAME","itemEffects")==1 &&
+          (ItemView::enabled() || (env!=nullptr && std::string_view(env)=="0")),
+          "[GAME] itemEffects must be 1 by default, as in Gothic");
+  }
+
 void startNativePlacementWorld(Gothic& gothic) {
   for(const auto& file : std::filesystem::directory_iterator(baseProgramIndex().dir))
     require(file.path().filename()=="programs.json","native stock contract requires a base without program payloads");

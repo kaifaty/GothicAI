@@ -1,13 +1,16 @@
 #include "gamescript_inventorytransfer.h"
 
+#include "daedalus/classes.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 
 namespace InventoryTransfer {
 
 Result run(Npc* giver, Npc* taker, uint32_t item, int32_t amount,
-           std::string_view previousItemName, const Text& text) {
+           std::string_view previousItemName, const Text& text, const daedalus::IItem* prepared) {
   Result result;
+  if(prepared!=nullptr && prepared->symbol_index()!=item)
+    return result;
   const bool giving = giver!=nullptr && giver->isPlayer();
   if(giving && amount>int32_t(giver->itemCount(item)))
     return result;
@@ -20,7 +23,13 @@ Result run(Npc* giver, Npc* taker, uint32_t item, int32_t amount,
       giver->delItem(item,uint32_t(amount));
     // An NPC giver can grant the full amount even with fewer items in inventory.
     if(taker!=nullptr) {
-      result.item = taker->addItem(item,size_t(amount));
+      if(prepared!=nullptr && taker->getItem(item)==nullptr) {
+        auto stack = std::make_unique<Item>(taker->world(),std::make_shared<daedalus::IItem>(*prepared),item);
+        stack->setCount(size_t(amount));
+        result.item = taker->addItem(std::move(stack));
+        } else {
+        result.item = taker->addItem(item,size_t(amount));
+        }
       result.itemChanged = true;
       }
     }
