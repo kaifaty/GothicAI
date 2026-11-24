@@ -56,7 +56,7 @@
 //   content-convert no-programs-fixture <ready stock base> <new dir>
 //       Copy a ready base for metadata tests, extracting stock game symbols and omitting executable programs.
 //   content-convert native-base <ready stock base> <new dir>
-//       Publish the native script profile using the stock base's verified prepared metadata.
+//       Publish the native profile with runtime bindings and without full symbol tables.
 //   content-convert stress-base <ready base> <out dir> --subdivide 0..3 | verify-stress-base <base> <copy>
 //       A copy of a ready base with every world triangle split in four N times (stressbase.h).
 //   content-convert cook-world|verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
@@ -96,6 +96,7 @@
 #include "game/definitions/particlecontent.h"
 #include "game/definitions/sfxdefinitiondata.h"
 #include "game/definitions/stockstoryprograms.h"
+#include "game/definitions/runtimebindings.h"
 #include "gothicglb.h"
 #include "stressbase.h"
 #include "npcsnapshot.h"
@@ -203,6 +204,8 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
       programs.insert(path);
       continue;
       }
+    if(native && BaseStore::isFullSymbolFile(path))
+      continue;
     kept.emplace(path,record["sha256"].GetString());
     }
   require(kept.contains("programs/programs.json") && kept.contains("storygraph/story.json"),
@@ -253,11 +256,10 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
 
   auto program=NpcSnapshot::load(base);
   require(program.sha256==game->recordSha256,"projection requires the stock runtime program selection");
-  program.data.bytecode.clear();
   const auto sourceSymbols=ProgramData::symbolMetadataPath(base,program.sha256);
   const auto sourcePayload=ProgramData::symbolMetadataPayloadPath(sourceSymbols);
   const auto hasSymbols=kept.contains(sourceSymbols.lexically_relative(base).generic_string());
-  if(native || hasSymbols || kept.contains(sourcePayload.lexically_relative(base).generic_string())) {
+  if(hasSymbols || kept.contains(sourcePayload.lexically_relative(base).generic_string())) {
     bound(sourceSymbols);
     bound(sourcePayload);
     }
@@ -290,16 +292,25 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
       fs::create_directories(target.parent_path());
       fs::copy_file(from,target);
       }
-    const auto symbols=ProgramData::symbolMetadataPath(out,program.sha256);
-    if(!hasSymbols) {
-      fs::create_directories(symbols.parent_path());
-      const auto payload=ProgramData::writeSymbolMetadata(symbols,program.sha256,program.data);
-      for(const auto& file:{symbols,payload})
-        kept.emplace(file.lexically_relative(out).generic_string(),BaseImport::sha256File(file));
+    if(native) {
+      RuntimeBindings::write(out,program.sha256,program.data,RuntimeBindings::collect(out,program.data));
+      const auto file=RuntimeBindings::path(out,program.sha256);
+      kept.emplace(file.lexically_relative(out).generic_string(),BaseImport::sha256File(file));
+      } else {
+      program.data.bytecode.clear();
+      const auto symbols=ProgramData::symbolMetadataPath(out,program.sha256);
+      if(!hasSymbols) {
+        fs::create_directories(symbols.parent_path());
+        const auto payload=ProgramData::writeSymbolMetadata(symbols,program.sha256,program.data);
+        for(const auto& file:{symbols,payload})
+          kept.emplace(file.lexically_relative(out).generic_string(),BaseImport::sha256File(file));
+        }
+      const auto difference=ProgramData::compare(program.data,ProgramData::readSymbolMetadata(symbols,program.sha256));
+      require(difference.empty(),"projection program symbol metadata round trip: "+difference);
       }
-    const auto difference=ProgramData::compare(program.data,ProgramData::readSymbolMetadata(symbols,program.sha256));
-    require(difference.empty(),"projection program symbol metadata round trip: "+difference);
     BaseImport::writeBaseMetadata(out,identity);
+    if(native)
+      RuntimeBindings::validate(out,program.sha256);
     const auto outputManifest=fixtureJson(out/"base-files.json");
     require(outputManifest["files"].Size()==kept.size(),"projection manifest file count differs");
     for(const auto& record:outputManifest["files"].GetArray())
@@ -322,7 +333,7 @@ BaseStore::Selection resolveNativeBase(const fs::path& gothic, const BaseImport:
                                       const BaseImport::Progress& progress, bool explicitBase) {
   BaseStore::Profile profile{.stockProgram=StockStoryPrograms::stockProgram,
                              .projectedOnly=true,
-                             .validateProgramMetadata=ProgramData::validateSymbolProjection};
+                             .validateProgramMetadata=RuntimeBindings::validate};
   if(explicitBase)
     return BaseStore::resolve(gothic,archives,progress,{},profile);
 
@@ -1059,7 +1070,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> args(argv+1,argv+argc);
     if(args.size()==1 && args[0]=="formats") {
       std::cout << "{\"base\":\"" << BaseFormatSha256 << "\",\"videos\":\"" << VideoData::formatSha256()
-                << "\",\"script_base\":\"native\"}\n";
+                << "\",\"script_base\":\"native\",\"runtime_recipe\":\"" << RuntimeBindings::recipe() << "\"}\n";
       return 0;
       }
     if(args.size()==1 && args[0]=="--self-test")

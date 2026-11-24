@@ -113,6 +113,7 @@ list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/def
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/deathtrophydefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/deathtrophydefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/symbolcatalog.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/runtimebindings.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/stockstoryprograms.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/storygraph.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/meshclusterlod.cpp")

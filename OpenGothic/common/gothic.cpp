@@ -20,7 +20,7 @@
 
 #include "game/definitions/definitiontypes.h"
 #include "game/definitions/gameplaydefinitions.h"
-#include "programdata.h"
+#include "game/definitions/runtimebindings.h"
 #include "game/bodyenginepolicy.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
@@ -100,7 +100,7 @@ Gothic::Gothic() {
 
   Resources::loadBase({.stockProgram=GameplayDefinitions::stockProgram,
                        .projectedOnly=true,
-                       .validateProgramMetadata=ProgramData::validateSymbolProjection});
+                       .validateProgramMetadata=RuntimeBindings::validate});
 
   Settings::inst().onSettingsChanged.bind(this,&Gothic::setupSettings);
   setupSettings();

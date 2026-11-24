@@ -492,6 +492,26 @@ auto storyAndPointRollsBeforeSave(World& world, bool nativeOnly) {
     };
   }
 
+#if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
+void requireNativeQuestBase() {
+  const auto& programs = baseProgramIndex().dir;
+  require(std::filesystem::is_regular_file(programs/"programs.json"),"the native quest base must contain its program index");
+  for(const auto& file : std::filesystem::directory_iterator(programs))
+    require(file.path().filename()=="programs.json","the native quest base must contain no executable program payloads");
+
+  for(const auto& section : std::filesystem::directory_iterator(programs.parent_path()/"definitions")) {
+    if(!section.is_directory())
+      continue;
+    for(const auto* name : {"program-symbols.json","program-symbols.symbols","symbols.json"}) {
+      const auto file = section.path()/name;
+      require(!std::filesystem::exists(std::filesystem::symlink_status(file)),
+              ("the native quest base must not contain " + file.string()).c_str());
+      }
+    }
+  std::puts("Native quest base: no executable program payloads or full symbol files");
+  }
+#endif
+
 void bennetOreContract(const std::filesystem::path& caseDir) {
 #if !defined(GOTHIC_BENNET_LOOKUP_AUDIT)
   (void)caseDir;
@@ -519,6 +539,7 @@ void bennetOreContract(const std::filesystem::path& caseDir) {
   CommandLine commandLine(3,args);
   Resources resources;
   Gothic gothic;
+  requireNativeQuestBase();
   gothic.isNpcInDialogFn = [](const Npc*) { return false; };
   gothic.setupGlobalScripts();
   GameMusic music;
@@ -640,8 +661,6 @@ void bennetOreContract(const std::filesystem::path& caseDir) {
     return std::pair{activityQueue(hero),activityQueue(bennet)};
     };
 
-  for(const auto& file : std::filesystem::directory_iterator(baseProgramIndex().dir))
-    require(file.path().filename()=="programs.json","Bennet contract requires a base without program payloads");
   gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
   auto [hero,bennet]=actors();
   auto& original=hero->world().script();
@@ -836,6 +855,7 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
   constexpr auto authored = "DIR_NATIVE_STORY";
   constexpr auto continuation = "DIR_NATIVE_STORY_CONTINUE";
   constexpr auto topic = "Native StoryGraph contract";
+  constexpr std::array banditNames={"BDT_1013_BANDIT_L","BDT_1014_BANDIT_L","BDT_1015_BANDIT_L"};
   require(caseDir.is_absolute(),"native StoryGraph contract case directory must be absolute");
   const auto* game=std::getenv("GOTHIC_DIR");
   require(game && *game,"GOTHIC_DIR must point to prepared Gothic II settings");
@@ -844,6 +864,7 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
   CommandLine commandLine(3,args);
   Resources resources;
   Gothic gothic;
+  requireNativeQuestBase();
   gothic.isNpcInDialogFn=[](const Npc*) { return false; };
   gothic.setupGlobalScripts();
   GameMusic music;
@@ -861,14 +882,13 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
             "native StoryGraph contract needs stock Cavalorn and no bytecode");
     Contract::checkBennetLookupProbe(script);
 
-    constexpr std::array names={"BDT_1013_BANDIT_L","BDT_1014_BANDIT_L","BDT_1015_BANDIT_L"};
     constexpr std::array aliases={"AMBUSHER_1013","AMBUSHER_1014","AMBUSHER_1015"};
-    std::array<Npc*,names.size()> bandits={};
+    std::array<Npc*,banditNames.size()> bandits={};
     std::array<daedalus::DaedalusSymbol*,aliases.size()> aliasSlots={};
     for(size_t i=0;i<bandits.size();++i) {
-      bandits[i]=activityNpc(world,names[i]);
+      bandits[i]=activityNpc(world,banditNames[i]);
       if(bandits[i]==nullptr)
-        bandits[i]=world.addNpc(script.findSymbolIndex(names[i]),actor->position());
+        bandits[i]=world.addNpc(script.findSymbolIndex(banditNames[i]),actor->position());
       aliasSlots[i]=vm.find_symbol_by_name(aliases[i]);
       require(bandits[i] && aliasSlots[i] && !bandits[i]->isDead(),"the ambush fixture needs three live actors");
       aliasSlots[i]->set_instance(nullptr);
@@ -989,10 +1009,26 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
   std::ifstream saved(savePath,std::ios::binary);
   require(bool(saved),"could not reopen the native StoryGraph save");
   const std::string savedBytes{std::istreambuf_iterator<char>{saved},std::istreambuf_iterator<char>{}};
+  {
+    Tempest::MemReader reader(savedBytes.data(),savedBytes.size());
+    Serialize in(reader);
+    SaveGameHeader header;
+    require(in.setEntry("header"),"the native StoryGraph save must have the normal save header");
+    in.read(header);
+    require(header.version==Serialize::Current,"the StoryGraph contract must reload a newly written current save");
+  }
   Tempest::MemReader reader(savedBytes.data(),savedBytes.size());
   Serialize in(reader);
   gothic.setGame(std::make_unique<GameSession>(in));
-  auto& script=gothic.world()->script();
+  auto& world=*gothic.world();
+  auto& script=world.script();
+  const auto* cavalorn=activityNpc(world,actorName);
+  const auto* waypoint=cavalorn ? cavalorn->currentTaPoint() : nullptr;
+  require(waypoint && waypoint->name=="NW_XARDAS_BANDITS_LEFT" &&
+          std::ranges::all_of(banditNames,[&](const char* name) {
+            auto* bandit=activityNpc(world,name);
+            return bandit!=nullptr && bandit->handle().aivar[61]==0;
+            }),"ordinary reload must restore Cavalorn's changed waypoint and the ambush actors' flags");
   const auto& journal=script.questLog();
   const auto* directorEntry=script.ownSymbols().find(directorNpc);
   require(directorEntry && directorEntry->like==actorName && script.storyNpcId(directorNpc)==directorNpcId,

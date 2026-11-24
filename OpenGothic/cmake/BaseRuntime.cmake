@@ -5,6 +5,21 @@
 # (BaseFormat.cmake): a runtime source or a flag must not change the base fingerprint.
 include(${CMAKE_CURRENT_LIST_DIR}/ClusterLod.cmake)
 target_link_libraries(gothic-base-runtime PRIVATE gothic-cluster-lod)
+include(${CMAKE_CURRENT_LIST_DIR}/RuntimeBindingRecipe.cmake)
+set(RUNTIME_BINDING_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/runtime-bindings-generated")
+file(CONFIGURE OUTPUT "${RUNTIME_BINDING_GENERATED_DIR}/runtimebindingroots.h" CONTENT [=[
+#pragma once
+
+#include <array>
+#include <string_view>
+
+inline constexpr std::string_view RuntimeBindingRootsSha256 = "@RUNTIME_BINDING_ROOTS_SHA@";
+inline constexpr std::array<std::string_view,@RUNTIME_BINDING_NAME_COUNT@> RuntimeBindingLiteralNames = {
+    @RUNTIME_BINDING_NAME_ROWS@
+    };
+]=] @ONLY)
+target_sources(gothic-base-runtime PRIVATE "${RUNTIME_BINDING_CODEC}")
+target_include_directories(gothic-base-runtime PUBLIC "${RUNTIME_BINDING_GENERATED_DIR}")
 # Keep contraction off in the chunk reader's position and attribute calculations.
 set_property(SOURCE "${BASE_ROOT}/common/worldchunksruntime.cpp"
   APPEND PROPERTY COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/fp:precise,-ffp-contract=off>")

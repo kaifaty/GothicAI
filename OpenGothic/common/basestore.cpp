@@ -1,4 +1,5 @@
 #include "basestore.h"
+#include "runtimebindingroots.h"
 #include "videodata.h"
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -109,6 +110,11 @@ namespace {
 using BaseStore::Lock;
 
 std::atomic_bool publicationEnabled{true};
+std::string_view nativeProjectionSalt() {
+  static const auto salt="native-script-base-v"+std::to_string(BaseStore::nativeProjectionVersion)+"\n"+
+                         std::string(RuntimeBindingRootsSha256);
+  return salt;
+  }
 
 bool fingerprintName(std::string_view name) {
   return name.size()==64 && name.find_first_not_of("0123456789abcdef")==std::string_view::npos;
@@ -258,6 +264,15 @@ std::string_view projectionSource(const BaseImport::Identity& identity, const ra
   return fingerprint;
   }
 
+std::string_view nativeProjectionSource(const BaseImport::Identity& identity, const rapidjson::Value& binding) {
+  const auto source=projectionSource(identity,binding,BaseStore::nativeProjectionVersion,nativeProjectionSalt());
+  const auto recipe=binding.FindMember("runtime_recipe");
+  if(recipe==binding.MemberEnd() || !recipe->value.IsString() ||
+     std::string_view(recipe->value.GetString(),recipe->value.GetStringLength())!=RuntimeBindingRootsSha256)
+    throw std::runtime_error("native projection runtime bindings recipe differs");
+  return source;
+  }
+
 bool requireRunnableBase(const BaseImport::Identity& identity, BaseStore::Profile profile) {
   rapidjson::Document doc;
   doc.Parse(identity.json.c_str());
@@ -270,7 +285,7 @@ bool requireRunnableBase(const BaseImport::Identity& identity, BaseStore::Profil
     }
   if(profile.stockProgram.empty())
     throw std::runtime_error("this prepared base has no executable program records required by this offline operation");
-  projectionSource(identity,doc["native_script_base"],1,"native-script-base-v1");
+  nativeProjectionSource(identity,doc["native_script_base"]);
   return true;
   }
 
@@ -284,7 +299,7 @@ rapidjson::Document sourceIdentity(const BaseImport::Identity& identity) {
   rapidjson::Document doc;
   doc.Parse(identity.json.data(),identity.json.size());
   if(doc.IsObject() && doc.HasMember("native_script_base")) {
-    const auto fingerprint = projectionSource(identity,doc["native_script_base"],1,"native-script-base-v1");
+    const auto fingerprint = nativeProjectionSource(identity,doc["native_script_base"]);
     doc["fingerprint"].SetString(fingerprint.data(),rapidjson::SizeType(fingerprint.size()),doc.GetAllocator());
     doc.RemoveMember("native_script_base");
     }
@@ -305,10 +320,14 @@ bool matchesBase(const fs::path& base, const BaseImport::Identity& identity, Bas
   if(profile.stockProgram.empty())
     return true;
   try {
-    if(requireRunnableBase(identity,profile))
+    if(requireRunnableBase(identity,profile)) {
       requireNoProgramPayloads(base);
+      for(const auto& entry : fs::recursive_directory_iterator(base/"definitions"))
+        if(BaseStore::isFullSymbolFile(entry.path().lexically_relative(base)))
+          throw std::runtime_error("native base contains a full symbol table: "+entry.path().string());
+      }
     if(profile.validateProgramMetadata==nullptr)
-      throw std::runtime_error("native base profile requires a program metadata validator");
+      throw std::runtime_error("native base profile requires a runtime bindings validator");
     profile.validateProgramMetadata(base,profile.stockProgram);
     return true;
     }
@@ -505,8 +524,16 @@ bool BaseStore::isNativeProjection(const fs::path& base) {
   doc.Parse(identity.json.data(),identity.json.size());
   if(!doc.HasMember("native_script_base"))
     return false;
-  projectionSource(identity,doc["native_script_base"],1,"native-script-base-v1");
+  nativeProjectionSource(identity,doc["native_script_base"]);
   return true;
+  }
+
+bool BaseStore::isFullSymbolFile(const fs::path& relative) {
+  const auto part=relative.begin();
+  if(part==relative.end() || *part!="definitions")
+    return false;
+  const auto name=relative.filename().generic_string();
+  return name=="symbols.json" || name.starts_with("program-symbols.");
   }
 
 BaseImport::Identity BaseStore::nativeProjectionIdentity(const fs::path& combined) {
@@ -518,13 +545,15 @@ BaseImport::Identity BaseStore::nativeProjectionIdentity(const BaseImport::Ident
   if(!fingerprintName(sourceManifest))
     throw std::runtime_error("invalid combined base manifest checksum");
   BaseImport::Identity result;
-  result.fingerprint=projectionFingerprint("native-script-base-v1",source.fingerprint,sourceManifest);
+  result.fingerprint=projectionFingerprint(nativeProjectionSalt(),source.fingerprint,sourceManifest);
 
   rapidjson::Document doc;
   doc.Parse(source.json.data(),source.json.size());
   auto& alloc=doc.GetAllocator();
   rapidjson::Value binding(rapidjson::kObjectType);
-  binding.AddMember("version",1,alloc);
+  binding.AddMember("version",nativeProjectionVersion,alloc);
+  const auto recipe=RuntimeBindingRootsSha256;
+  binding.AddMember("runtime_recipe",rapidjson::Value(recipe.data(),rapidjson::SizeType(recipe.size()),alloc),alloc);
   binding.AddMember("source_fingerprint",rapidjson::Value(source.fingerprint.c_str(),alloc),alloc);
   binding.AddMember("source_manifest_sha256",rapidjson::Value(sourceManifest.data(),rapidjson::SizeType(sourceManifest.size()),alloc),alloc);
   doc.AddMember("native_script_base",binding,alloc);
@@ -613,10 +642,21 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   BaseImport::Identity identity;
   fs::path pointed;
   const auto* expectedSnapshot=installed ? &snapshot : nullptr;
-  bool reused=current && current->part(pointerPart,pointed,identity,expectedSnapshot);
-  if(!reused && current && !profile.stockProgram.empty() && (!profile.projectedOnly || projected))
-    reused=current->part("base",pointed,identity,expectedSnapshot);
-  if(reused) requireRunnableBase(identity,{profile.stockProgram});
+  const auto readPointer=[&](const char* part) {
+    if(!current || !current->part(part,pointed,identity,expectedSnapshot))
+      return false;
+    try {
+      requireRunnableBase(identity,{profile.stockProgram});
+      return true;
+      }
+    catch(const std::exception& error) {
+      log(std::string("base: rejected current pointer: ")+error.what());
+      return false;
+      }
+    };
+  bool reused=readPointer(pointerPart);
+  if(!reused && !profile.stockProgram.empty() && (!profile.projectedOnly || projected))
+    reused=readPointer("base");
   const auto identify=[&] {
     log("base: identifying installation");
     return BaseImport::identify(gothic,mounted);

@@ -3,6 +3,7 @@
 #include "basestore.h"
 #include "game/definitions/baseprogram.h"
 #include "game/definitions/gameplaydefinitions.h"
+#include "game/definitions/runtimebindings.h"
 #include "game/definitions/basescripts.h"
 #include "gothic.h"
 #include "loadprobe.h"
@@ -23,8 +24,7 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
   const auto& sha256=selected.source.recordSha256;
   if(sha256!=GameplayDefinitions::stockProgram)
     throw BaseStore::Error("native game requires the prepared catalog for the verified stock program");
-  const auto file=ProgramData::symbolMetadataPath(base,sha256);
-  auto script=daedalus::DaedalusScript::from_program(ProgramData::readSymbolMetadata(file,sha256));
+  auto script=daedalus::DaedalusScript::from_program(RuntimeBindings::read(base,sha256));
   items=ItemDefinitionRuntime::load(base,script,sha256);
   routines=RoutineDefinitionRuntime::load(base,script,sha256);
   npcs=NpcDefinitionRuntime::load(base,script,sha256);

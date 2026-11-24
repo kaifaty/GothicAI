@@ -42,7 +42,10 @@ struct Profile {
   bool             projectedOnly=false;
   void           (*validateProgramMetadata)(const std::filesystem::path&, std::string_view)=nullptr;
   };
+inline constexpr int nativeProjectionVersion=2;
 bool isNativeProjection(const std::filesystem::path& base);
+// Legacy definition artifacts are kept only in offline bases.
+bool isFullSymbolFile(const std::filesystem::path& relative);
 // Derive the production projection identity from an already verified combined base.
 BaseImport::Identity nativeProjectionIdentity(const std::filesystem::path& combined);
 BaseImport::Identity nativeProjectionIdentity(const BaseImport::Identity& combined, std::string_view manifestSha256);

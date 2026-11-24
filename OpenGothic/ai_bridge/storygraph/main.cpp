@@ -34,6 +34,7 @@
 #include "outputunits.h"
 #include "program.h"
 #include "programdata.h"
+#include "game/definitions/runtimebindings.h"
 #include "vocab.h"
 
 #include "daedalus/vm.h"
@@ -260,7 +261,7 @@ static int run(int argc, char** argv) {
   const bool nativeOu = ouMessages && explicitBase && *explicitBase && !BaseStore::metadataAuditEnabled() &&
                         BaseStore::isNativeProjection(explicitBase);
   const BaseStore::Profile nativeProfile{.stockProgram=StockStoryPrograms::stockProgram, .projectedOnly=true,
-                                         .validateProgramMetadata=ProgramData::validateSymbolProjection};
+                                         .validateProgramMetadata=RuntimeBindings::validate};
   auto base = nativeOu ? BaseStore::resolve(gothic,mounted,progress,{},nativeProfile)
                        : BaseStore::ensure(gothic,mounted,progress);
   if(importOutput!=nullptr)
