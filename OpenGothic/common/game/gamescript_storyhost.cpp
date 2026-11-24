@@ -143,6 +143,23 @@ using StoryRecordFields = RecordFields<NpcRecord,ItemRecord,daedalus::IInfo,Focu
 
 }
 
+void GameScript::applyNpcConstructorField(NpcRecord& npc, const NpcDefinitionRuntime::Field& field) {
+  using Kind = NpcDefinitions::Value::Kind;
+  const auto& input = field.value;
+  NativeValue value;
+  switch(input.kind) {
+    case Kind::Int:
+    case Kind::Symbol: value = NativeValue::integer(input.integer); break;
+    case Kind::Float:  value = NativeValue::real(input.real); break;
+    case Kind::String: value = NativeValue::str(input.text); break;
+    case Kind::Null:   value = NativeValue::integer(0); break;
+    case Kind::Self:   throw std::runtime_error("Invalid NPC constructor instance field: "+field.name);
+    }
+  std::string error;
+  if(!writeRecordField(npc,NativeSlot{NativeSlot::Member,field.name,field.index},value,error))
+    throw std::runtime_error("NPC constructor: "+error);
+  }
+
 class GameScript::StockPrograms::Host final : public NativeExecutionHost {
   public:
     explicit Host(StockPrograms& owner, bool effects) : owner(owner), effects(effects) {}

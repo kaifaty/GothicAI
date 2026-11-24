@@ -98,7 +98,7 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinit
              field->index>=binding->count())
             throw std::runtime_error("invalid NPC field "+field->binding+"["+std::to_string(field->index)+"]");
           checkValue(field->value,binding->type());
-          steps.emplace_back(Field{binding->index(),field->index,resolveValue(field->value,script)});
+          steps.emplace_back(Field{binding->index(),binding->name(),field->index,resolveValue(field->value,script)});
           }
         else if(const auto* write=std::get_if<NpcDefinitions::GlobalIntWrite>(&step)) {
           const auto* binding=script.find_symbol_by_name(write->binding);
@@ -182,7 +182,8 @@ void NpcDefinitionRuntime::observeCalls(daedalus::DaedalusVm& vm, const Definiti
 
 bool NpcDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::INpc>& npc,
                                       daedalus::DaedalusSymbol* symbol, const Definitions& definitions,
-                                      daedalus::DaedalusSymbol* definitionSymbol, const ApplyCall& applyCall) {
+                                      daedalus::DaedalusSymbol* definitionSymbol, const ApplyCall& applyCall,
+                                      ApplyField applyField) {
   LoadProbe::Npcs::Initialization probe;
   const auto* source=definitionSymbol ? definitionSymbol : symbol;
   const auto found=source ? definitions.npcs.find(source->index()) : definitions.npcs.end();
@@ -195,6 +196,10 @@ bool NpcDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::share
   Context context(vm,npc);
   for(const auto& step:found->second) {
     if(const auto* field=std::get_if<Field>(&step)) {
+      if(applyField) {
+        applyField(*npc,*field);
+        continue;
+        }
       auto* binding=vm.find_symbol_by_index(field->binding);
       const auto& value=field->value;
       if(value.kind==Kind::String) binding->set_string(value.text,field->index,npc.get());

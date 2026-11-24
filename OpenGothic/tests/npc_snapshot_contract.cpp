@@ -494,11 +494,22 @@ void npcDefinitions(const fs::path& dir) {
 
     auto* captured=vm.find_symbol_by_name("NPC_NO_ID");
     auto& calls=definitions.npcs.at(captured->index());
+    const auto fieldStep=std::ranges::find_if(calls,[](const auto& step) {
+      const auto* field=std::get_if<NpcDefinitionRuntime::Field>(&step);
+      return field!=nullptr && field->name=="C_NPC.ATTRIBUTE" && field->index==0 && field->value.integer==10;
+      });
+    check(fieldStep!=calls.end(),"prepared constructor retains the authored attribute field name and value");
+    auto before=std::get<NpcDefinitionRuntime::Field>(*fieldStep);
+    before.binding=uint32_t(-1); // Only the native member name is usable on this route.
+    auto after=before;
+    after.value.integer=53;
     std::erase_if(calls,[&](const auto& step) {
       const auto* call=std::get_if<NpcDefinitionRuntime::Call>(&step);
       return call==nullptr || call->function!=vm.find_symbol_by_name("TA_MIN")->index();
       });
     check(calls.size()==1,"constructor fixture contains one TA_MIN");
+    calls.insert(calls.begin(),std::move(before));
+    calls.emplace_back(std::move(after));
     auto actor=std::make_shared<INpc>();
     vm.global_self()->set_instance(npc);
     vm.unsafe_set_gi(npc);
@@ -514,6 +525,7 @@ void npcDefinitions(const fs::path& dir) {
     const auto apply=[&](const auto& function,const auto& call,const auto& observe) {
       check(function.name()=="TA_MIN" && call.args.size()==7 && vm.global_self()->get_instance()==actor &&
             vm.unsafe_get_gi()==actor,"typed replay receives the recorded call within the constructor context");
+      check(actor->attribute[0]==10,"the first native assignment precedes the recorded engine call");
       check(vm.pop_int()==73106,"typed replay starts with the caller's stack untouched");
       vm.push_int(73106);
       observe();
@@ -521,9 +533,16 @@ void npcDefinitions(const fs::path& dir) {
       ++dispatched;
       return true;
       };
-    check(NpcDefinitionRuntime::initialize(vm,actor,captured,definitions,nullptr,apply),
+    const auto applyField=[](NpcRecord& record, const NpcDefinitionRuntime::Field& field) {
+      check(field.name=="C_NPC.ATTRIBUTE" && field.index==0 && field.value.kind==NpcDefinitions::Value::Kind::Int,
+            "native constructor callback receives the authored typed assignment");
+      if(field.value.integer==53)
+        check(record.attribute[0]==41,"the final assignment sees the engine call's mutation");
+      record.attribute[0]=field.value.integer;
+      };
+    check(NpcDefinitionRuntime::initialize(vm,actor,captured,definitions,nullptr,apply,applyField),
           "typed engine call completes captured constructor without a registered external");
-    check(dispatched==1 && observed==1 && actor->attribute[0]==41 && vm.pop_int()==73106 &&
+    check(dispatched==1 && observed==1 && actor->attribute[0]==53 && vm.pop_int()==73106 &&
           vm.unsafe_get_gi()==npc && vm.global_self()->get_instance()==npc,
           "constructor replay preserves the existing stack, probe order and caller context");
     vm.observe_externals({});

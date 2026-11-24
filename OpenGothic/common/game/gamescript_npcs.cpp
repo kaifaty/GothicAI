@@ -132,7 +132,8 @@ void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& 
     };
 
   const NpcDefinitionRuntime::Definitions empty;
-  NpcDefinitionRuntime::initialize(vm,npc,symbol,useRecords ? npcDefinitions : empty,like,applyCall);
+  const auto applyField = vm.has_legacy_dispatcher() ? nullptr : &GameScript::applyNpcConstructorField;
+  NpcDefinitionRuntime::initialize(vm,npc,symbol,useRecords ? npcDefinitions : empty,like,applyCall,applyField);
   }
 
 void GameScript::refreshNpcAtInsert(Npc& npc) {

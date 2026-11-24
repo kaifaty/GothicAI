@@ -463,6 +463,7 @@ class GameScript final : public GameRules {
     int32_t countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
+    static void applyNpcConstructorField(NpcRecord& npc, const NpcDefinitionRuntime::Field& field);
     bool invokeNpcHelper(const std::shared_ptr<daedalus::INpc>& npc,uint32_t function,
                          std::span<const NpcHelperDefinitions::Value> args);
     bool startHotkeyPotion(Npc& pl, bool mana);

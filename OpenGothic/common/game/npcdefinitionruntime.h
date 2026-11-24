@@ -11,6 +11,7 @@
 namespace NpcDefinitionRuntime {
 struct Field {
   uint32_t binding = 0;
+  std::string name;
   uint16_t index = 0;
   NpcDefinitions::Value value;
   };
@@ -45,7 +46,9 @@ void observeCalls(daedalus::DaedalusVm& vm, const Definitions& definitions,
 // The observer, when present, receives the original VM arguments before the engine operation.
 using ApplyCall = std::function<bool(const daedalus::DaedalusSymbol&, const Call&,
                                          const std::function<void()>& observe)>;
+using ApplyField = void (*)(NpcRecord&, const Field&);
 bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::INpc>& npc,
                 daedalus::DaedalusSymbol* symbol, const Definitions& definitions,
-                daedalus::DaedalusSymbol* definitionSymbol = nullptr, const ApplyCall& applyCall = {});
+                daedalus::DaedalusSymbol* definitionSymbol = nullptr, const ApplyCall& applyCall = {},
+                ApplyField applyField = nullptr);
 }
