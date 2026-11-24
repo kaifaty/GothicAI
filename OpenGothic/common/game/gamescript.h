@@ -949,7 +949,7 @@ class GameScript final : public GameRules {
     OwnSymbols                                                  own{runtimeState};
     daedalus::DaedalusVm                                          vm;
     std::unique_ptr<StockPrograms>                                stockPrograms;
-    std::map<std::string,storygraph::NativeExternal,std::less<>>    nativeExternals;
+    storygraph::NativeExternals                                  nativeExternals;
     std::unique_ptr<BennetOre>                                    bennetOre;
     daedalus::DaedalusSymbol*                                     levelUpSound = nullptr;
     std::function<void(bool)>                                    bennetLookupScope;

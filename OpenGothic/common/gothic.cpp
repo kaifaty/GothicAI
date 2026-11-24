@@ -756,7 +756,7 @@ std::u16string Gothic::nestedPath(const std::initializer_list<const char16_t*> &
   return CommandLine::inst().nestedPath(name,type);
   }
 
-void Gothic::setupVmCommonApi(daedalus::DaedalusVm& vm) {
+void Gothic::setupVmCommonApi(daedalus::DaedalusVm& vm,storygraph::NativeExternals* natives) {
   vm.register_default_external([](std::string_view name) { notImplementedRoutine(std::string {name}); });
 
   if(auto sym = vm.find_symbol_by_name("C_SVM"))
@@ -764,40 +764,44 @@ void Gothic::setupVmCommonApi(daedalus::DaedalusVm& vm) {
   if(auto sym = vm.find_symbol_by_name("C_FIGHTAI"))
     vm.register_as_opaque(sym);
 
-  vm.register_external("concatstrings", [](std::string_view a, std::string_view b) { return Gothic::concatstrings(a, b);});
-  vm.register_external("inttostring",   [](int i)   { return Gothic::inttostring(i);   });
-  vm.register_external("floattostring", [](float f) { return Gothic::floattostring(f); });
-  vm.register_external("inttofloat",    [](int i)   { return Gothic::inttofloat(i);    });
-  vm.register_external("floattoint",    [](float f) { return Gothic::floattoint(f);    });
+  const auto bind=[&](std::string_view name,auto callback,bool observe=true) {
+    storygraph::registerNativeExternal(vm,natives,name,std::function{callback},observe);
+    };
+  // The four existing direct operations keep their observer-free path.
+  bind("concatstrings", [](std::string_view a, std::string_view b) { return Gothic::concatstrings(a, b);},false);
+  bind("inttostring",   [](int i)   { return Gothic::inttostring(i);   },false);
+  bind("floattostring", [](float f) { return Gothic::floattostring(f); });
+  bind("inttofloat",    [](int i)   { return Gothic::inttofloat(i);    });
+  bind("floattoint",    [](float f) { return Gothic::floattoint(f);    });
 
-  vm.register_external("hlp_strcmp",    [](std::string_view a, std::string_view b) { return Gothic::hlp_strcmp(a, b); });
-  vm.register_external("hlp_random",    [this](int max) { return hlp_random(max); });
+  bind("hlp_strcmp",    [](std::string_view a, std::string_view b) { return Gothic::hlp_strcmp(a, b); });
+  bind("hlp_random",    [this](int max) { return hlp_random(max); });
 
-  vm.register_external("introducechapter", [this](std::string_view title, std::string_view subtitle, std::string_view img, std::string_view sound, int time){ introducechapter(title, subtitle, img, sound, time); });
-  vm.register_external("playvideo",        [this](std::string_view name){ return playvideo(name); });
-  vm.register_external("playvideoex",      [this](std::string_view name, bool a, bool b){ return playvideoex(name, a, b); });
-  vm.register_external("printscreen",      [this](std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printscreen(msg, posx, posy, font, timesec); });
-  vm.register_external("printdialog",      [this](int dialognr, std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printdialog(dialognr, msg, posx, posy, font, timesec); });
-  vm.register_external("print",            [this](std::string_view msg){ print(msg); });
+  bind("introducechapter", [this](std::string_view title, std::string_view subtitle, std::string_view img, std::string_view sound, int time){ introducechapter(title, subtitle, img, sound, time); });
+  bind("playvideo",        [this](std::string_view name){ return playvideo(name); });
+  bind("playvideoex",      [this](std::string_view name, bool a, bool b){ return playvideoex(name, a, b); });
+  bind("printscreen",      [this](std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printscreen(msg, posx, posy, font, timesec); },false);
+  bind("printdialog",      [this](int dialognr, std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printdialog(dialognr, msg, posx, posy, font, timesec); });
+  bind("print",            [this](std::string_view msg){ print(msg); },false);
 
-  vm.register_external("doc_create",          [this](){ return doc_create(); });
-  vm.register_external("doc_createmap",       [this](){ return doc_createmap(); });
-  vm.register_external("doc_setpage",         [this](int handle, int page, std::string_view img, int scale){ doc_setpage(handle, page, img, scale); });
-  vm.register_external("doc_setpages",        [this](int handle, int count){ doc_setpages(handle, count); });
-  vm.register_external("doc_printline",       [this](int handle, int page, std::string_view text){ doc_printline(handle, page, text); });
-  vm.register_external("doc_printlines",      [this](int handle, int page, std::string_view text){ doc_printlines(handle, page, text); });
-  vm.register_external("doc_setmargins",      [this](int handle, int page, int left, int top, int right, int bottom, int mul){ doc_setmargins(handle, page, left, top, right, bottom, mul); });
-  vm.register_external("doc_setfont",         [this](int handle, int page, std::string_view font){ doc_setfont(handle, page, font); });
-  vm.register_external("doc_setlevel",        [this](int handle, std::string_view level){ doc_setlevel(handle, level); });
-  vm.register_external("doc_setlevelcoords",  [this](int handle, int left, int top, int right, int bottom){ doc_setlevelcoords(handle, left, top, right, bottom); });
-  vm.register_external("doc_show",            [this](int handle){ doc_show(handle); });
+  bind("doc_create",          [this](){ return doc_create(); });
+  bind("doc_createmap",       [this](){ return doc_createmap(); });
+  bind("doc_setpage",         [this](int handle, int page, std::string_view img, int scale){ doc_setpage(handle, page, img, scale); });
+  bind("doc_setpages",        [this](int handle, int count){ doc_setpages(handle, count); });
+  bind("doc_printline",       [this](int handle, int page, std::string_view text){ doc_printline(handle, page, text); });
+  bind("doc_printlines",      [this](int handle, int page, std::string_view text){ doc_printlines(handle, page, text); });
+  bind("doc_setmargins",      [this](int handle, int page, int left, int top, int right, int bottom, int mul){ doc_setmargins(handle, page, left, top, right, bottom, mul); });
+  bind("doc_setfont",         [this](int handle, int page, std::string_view font){ doc_setfont(handle, page, font); });
+  bind("doc_setlevel",        [this](int handle, std::string_view level){ doc_setlevel(handle, level); });
+  bind("doc_setlevelcoords",  [this](int handle, int left, int top, int right, int bottom){ doc_setlevelcoords(handle, left, top, right, bottom); });
+  bind("doc_show",            [this](int handle){ doc_show(handle); });
 
-  vm.register_external("exitgame",            [this](){ exitgame(); });
+  bind("exitgame",            [this](){ exitgame(); });
 
-  vm.register_external("printdebug",          [this](std::string_view msg){ printdebug(msg); });
-  vm.register_external("printdebugch",        [this](int ch, std::string_view msg){ printdebugch(ch, msg); });
-  vm.register_external("printdebuginst",      [this](std::string_view msg){ printdebuginst(msg); });
-  vm.register_external("printdebuginstch",    [this](int ch, std::string_view msg){ printdebuginstch(ch, msg); });
+  bind("printdebug",          [this](std::string_view msg){ printdebug(msg); });
+  bind("printdebugch",        [this](int ch, std::string_view msg){ printdebugch(ch, msg); });
+  bind("printdebuginst",      [this](std::string_view msg){ printdebuginst(msg); });
+  bind("printdebuginstch",    [this](int ch, std::string_view msg){ printdebuginstch(ch, msg); });
   }
 
 void Gothic::notImplementedRoutine(std::string_view fn) {

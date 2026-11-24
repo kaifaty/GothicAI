@@ -1181,6 +1181,43 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
   const auto* queued=bandit->aiQueueFront();
   require(waited.ok && queued && queued->act==AI_Wait && queued->i0==250,
           "native wait must keep the original floating-point seconds and enqueue 250 ms");
+
+  vm.register_external("INTTOFLOAT",std::function<float(int32_t)>{[](int32_t) -> float {
+    throw std::runtime_error("The VM float conversion must not run for a native story call");
+    }});
+  vm.register_external("DOC_PRINTLINE",std::function<void(int32_t,int32_t,std::string_view)>{
+    [](int32_t,int32_t,std::string_view) { throw std::runtime_error("The VM document callback must not run"); }});
+  std::vector<std::string> commonCalls;
+  vm.observe_externals([&](const auto& symbol) { commonCalls.push_back(symbol.name()); });
+  const auto number=script.callStoryFunction("INTTOFLOAT",bandit,hero,{-31});
+  require(number.ok && number.returned.type==storygraph::NativeValue::Float && number.returned.f==-31.f,
+          "native numeric conversion must return a float");
+  const auto text=script.callStoryFunction("CONCATSTRINGS",bandit,hero,{std::string("native "),std::string("document")});
+  require(text.ok && text.returned.s=="native document","native strings must keep their original bytes");
+
+  constexpr uint32_t randomSeed=73106,randomBound=100019;
+  script.setSeed(randomSeed);
+  std::mt19937 expectedRandom(randomSeed);
+  const auto draw=script.callStoryFunction("HLP_RANDOM",bandit,hero,{int32_t(randomBound)});
+  require(draw.ok && draw.returned.i==int32_t(expectedRandom()%randomBound),
+          "the session random callback must override the shared Gothic callback");
+
+  struct DocumentCapture {
+    std::string text;
+    void record(const DocumentMenu::Show& document) { text=document.pages.at(0).text; }
+    } documentCapture;
+  gothic.onShowDocument.bind(&documentCapture,&DocumentCapture::record);
+  const auto document=script.callStoryFunction("DOC_CREATE",bandit,hero,{});
+  require(document.ok && document.returned.i>=0,"native document creation must return a handle");
+  const auto handle=document.returned.i;
+  const auto pages=script.callStoryFunction("DOC_SETPAGES",bandit,hero,{handle,1});
+  const auto line=script.callStoryFunction("DOC_PRINTLINE",bandit,hero,{handle,0,text.returned.s});
+  const auto show=script.callStoryFunction("DOC_SHOW",bandit,hero,{handle});
+  gothic.onShowDocument.ubind(&documentCapture,&DocumentCapture::record);
+  vm.observe_externals({});
+  require(pages.ok && line.ok && show.ok && documentCapture.text=="native document\n" &&
+          commonCalls==std::vector<std::string>{"INTTOFLOAT","HLP_RANDOM","DOC_CREATE","DOC_SETPAGES","DOC_PRINTLINE","DOC_SHOW"},
+          "native documents must preserve contents and the existing external observer order");
   gothic.clearGame().reset();
 #endif
   }

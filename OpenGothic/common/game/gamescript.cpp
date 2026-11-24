@@ -8,7 +8,6 @@
 #include <cctype>
 #include <optional>
 #include <sstream>
-#include <tuple>
 #include <type_traits>
 
 #include "game/definitions/basescripts.h"
@@ -109,7 +108,7 @@ GameScript::GameScript(GameSession &owner)
 
   vmLang = Settings::getI("GAME", "language");
   Gothic::inst().setupCommonScriptClasses(vm);
-  Gothic::inst().setupVmCommonApi(vm);
+  Gothic::inst().setupVmCommonApi(vm,&nativeExternals);
   aiDefaultPipe.reset(new GlobalOutput(*this));
   loadNativeAiStates();
   initCommon();
@@ -142,49 +141,6 @@ GameScript::~GameScript() {
   Settings::inst().onSettingsChanged.ubind(this,&GameScript::initSettings);
   }
 
-namespace {
-
-using storygraph::BoundNativeCall;
-using storygraph::NativeCall;
-using storygraph::NativeValue;
-
-template<class T>
-constexpr NativeValue::Type externalType() {
-  if constexpr(std::is_integral_v<T>) {
-    return NativeValue::Int;
-    } else if constexpr(std::is_same_v<T,float>) {
-    return NativeValue::Float;
-    } else if constexpr(std::is_same_v<T,std::string_view> || std::is_same_v<T,std::string>) {
-    return NativeValue::Str;
-    } else {
-    static_assert(daedalus::DaedalusInstancePointer<T>);
-    return NativeValue::Inst;
-    }
-  }
-
-template<class T>
-T externalArgument(const NativeValue& value, const BoundNativeCall::ResolveActor& resolve) {
-  if constexpr(std::is_integral_v<T>) {
-    return static_cast<T>(value.i);
-    } else if constexpr(std::is_same_v<T,float>) {
-    return value.f;
-    } else if constexpr(std::is_same_v<T,std::string_view>) {
-    return value.s;
-    } else {
-    using Instance = typename T::element_type;
-    auto instance = resolve(value.inst);
-    if(value.inst!=0 && instance==nullptr)
-      throw std::runtime_error("Unbound instance argument");
-    if constexpr(!std::is_same_v<Instance,daedalus::DaedalusInstance>) {
-      if(instance!=nullptr && (instance->instance_type()==nullptr || *instance->instance_type()!=typeid(Instance)))
-        throw std::runtime_error("Instance argument has the wrong type");
-      }
-    return std::static_pointer_cast<Instance>(std::move(instance));
-    }
-  }
-
-}
-
 template<class R, class... P>
 void GameScript::bindExternal(const std::string& name, R(GameScript::*function)(P...)) {
   const size_t floorId = floorDefer.registerExternal(name,StartupFloor::classify(name));
@@ -193,34 +149,7 @@ void GameScript::bindExternal(const std::string& name, R(GameScript::*function)(
       floorBarrier(floorId,values...);
     return (this->*function)(values...);
     };
-  vm.register_external(name,callback);
-  const auto* symbol = vm.find_symbol_by_name(name);
-  // Function locals require the VM's call frame.
-  if(symbol==nullptr || symbol->has_local_variables_enabled())
-    return;
-
-  storygraph::NativeExternal external;
-  external.signature.parameters = {externalType<P>()...};
-  if constexpr(!std::is_void_v<R>)
-    external.signature.result = externalType<R>();
-  external.call = [callback](std::span<const NativeValue> args, const BoundNativeCall::ResolveActor& resolve,
-                             const BoundNativeCall::BindActor& bind) -> NativeCall {
-    const auto parameters = [&]<size_t... I>(std::index_sequence<I...>) {
-      return std::tuple<P...>{externalArgument<P>(args[I],resolve)...};
-      }(std::index_sequence_for<P...>{});
-    if constexpr(std::is_void_v<R>) {
-      std::apply(callback,parameters);
-      return {};
-      } else if constexpr(daedalus::DaedalusInstancePointer<R>) {
-      return {NativeValue::instance(bind(std::apply(callback,parameters))),{}};
-      } else if constexpr(std::is_same_v<R,std::string>) {
-      return {NativeValue::str(std::apply(callback,parameters)),{}};
-      } else {
-      static_assert(std::is_integral_v<R>);
-      return {NativeValue::integer(int32_t(std::apply(callback,parameters))),{}};
-      }
-    };
-  nativeExternals.insert_or_assign(symbol->name(),std::move(external));
+  storygraph::registerNativeExternal(vm,&nativeExternals,name,callback);
   }
 
 void GameScript::initCommon() {

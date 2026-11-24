@@ -2,7 +2,6 @@
 
 #include <Tempest/Log>
 
-#include "gothic.h"
 #include "storygraph/vocab.h"
 #include "world/objects/npc.h"
 
@@ -308,16 +307,6 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
         return std::nullopt;
         }
       const auto& key = slot->name();
-      if(key=="INTTOSTRING")
-        return NativeCall{NativeValue::str(std::to_string(args[0].i)),{}};
-      if(key=="CONCATSTRINGS")
-        return NativeCall{NativeValue::str(args[0].s+args[1].s),{}};
-      if(key=="PRINTSCREEN")
-        return NativeCall{NativeValue::integer(Gothic::inst().printscreen(args[0].s,args[1].i,args[2].i,args[3].s,args[4].i)),{}};
-      if(key=="PRINT") {
-        Gothic::inst().onPrint(args[0].s);
-        return NativeCall{};
-        }
       // Journal writes have a direct engine API shared with other native game systems.
       if(effects && key.starts_with("LOG_") && args.size()==2 && args[0].type==NativeValue::Str) {
         if(key=="LOG_CREATETOPIC" && args[1].type==NativeValue::Int) {
@@ -342,7 +331,8 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
           ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
           } restore{owner.vm,owner.vm.unsafe_get_gi()};
         try {
-          BoundNativeCall::observeExternal(owner.vm,*slot,args,resolve);
+          if(direct->second.observe)
+            BoundNativeCall::observeExternal(owner.vm,*slot,args,resolve);
           return direct->second.call(args,resolve,bindValue);
           }
         catch(const std::exception& ex) {
