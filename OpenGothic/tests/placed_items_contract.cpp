@@ -3676,18 +3676,6 @@ void arrowEffects(Gothic& gothic) {
               worldPins,bodyPins);
   }
 
-// [GAME] itemEffects read the working way (Settings::getI, ItemView::enabled) when neither Gothic.ini has it: 1, as Gothic
-void itemEffectsDefault() {
-  require(!Settings::exists(),"the default of itemEffects needs Settings of its own");
-  const auto dir=std::filesystem::temp_directory_path()/("item-effects-ini-"+std::to_string(getpid()));
-  Settings settings;
-  settings.load((dir/"SystemPack.ini").u16string(),(dir/"Gothic.ini").u16string());
-  const auto* env=std::getenv("OPENGOTHIC_ITEM_EFFECTS");
-  require(!Settings::has("GAME","itemEffects") && Settings::getI("GAME","itemEffects")==1 &&
-          (ItemView::enabled() || (env!=nullptr && std::string_view(env)=="0")),
-          "[GAME] itemEffects must be 1 by default, as in Gothic");
-  }
-
 void compareLegacyPlacedStartup(Gothic& gothic) {
   pointActivitiesInBothModes(gothic);
   dragonIslandPlacement(gothic);
