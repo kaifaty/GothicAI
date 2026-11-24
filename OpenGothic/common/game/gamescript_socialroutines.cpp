@@ -174,7 +174,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
         const auto chapter = storyChapter;
         if(chapter<=2) {
           static constexpr std::array starts = {1,3,5,7,11,13};
-          const auto choice = draw(5,"B_ANNOUNCE_HEROLD.RANDY");
+          const auto choice = size_t(draw(5,"B_ANNOUNCE_HEROLD.RANDY"));
           for(auto n=starts[choice]; n<starts[choice+1]; ++n)
             output(n);
           }
@@ -427,8 +427,8 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
         }
       if(ranger && position==0 && seconds>5) {
         static constexpr std::array gestures = {"T_LGUARD_SCRATCH","T_LGUARD_STRETCH","T_LGUARD_CHANGELEG"};
-        const auto choice = draw(7,"ZS_STAND_RANGERMEETING_LOOP.RANDOM");
-        if(size_t(choice)<gestures.size())
+        const auto choice = size_t(draw(7,"ZS_STAND_RANGERMEETING_LOOP.RANDOM"));
+        if(choice<gestures.size())
           ai_playani(self,gestures[choice]);
         npc.setStateTime(0);
         }

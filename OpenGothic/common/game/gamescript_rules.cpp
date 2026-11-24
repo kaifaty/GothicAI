@@ -173,7 +173,7 @@ bool GameScript::isPlayerFakeBandit(const std::shared_ptr<daedalus::INpc>& self,
   findSymbol("C_PLAYERISFAKEBANDIT.SLF")->set_instance(self);
   constexpr size_t ignoresArmor = 73; // AIV_IGNORESARMOR in the verified program
   constexpr size_t ignoresFakeGuild = 70; // AIV_IGNORESFAKEGUILD
-  const auto guild = self ? self->guild : GIL_NONE;
+  const auto guild = self ? uint32_t(self->guild) : GIL_NONE;
   if(self && (self->aivar[ignoresArmor]==1 || self->aivar[ignoresFakeGuild]==1 || guild==GIL_PIR))
     return false;
 
@@ -2508,7 +2508,7 @@ bool GameScript::wantsToAttackRoomIntruder(const std::shared_ptr<daedalus::INpc>
   findSymbol("C_WANTTOATTACKROOMINTRUDER.SLF")->set_instance(self);
   const auto owner = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
   const auto crime = playerCrime(owner);
-  const auto guild = owner ? owner->guild : GIL_NONE;
+  const auto guild = owner ? uint32_t(owner->guild) : GIL_NONE;
   return crime!=findSymbol("CRIME_NONE")->get_int() || guild==GIL_DJG || guild==GIL_SLD || guild==GIL_PAL || guild==GIL_MIL;
   }
 
@@ -2567,7 +2567,7 @@ constexpr struct {
   };
 
 std::array<bool,std::size(crimeJurisdictions)> crimeJurisdictionMembership(const daedalus::INpc* witness) {
-  const auto guild = witness ? witness->guild : GIL_NONE;
+  const auto guild = witness ? uint32_t(witness->guild) : GIL_NONE;
   const auto type = witness ? witness->type : NpcType::G2_AMBIENT;
   const bool city = guild==GIL_PAL || guild==GIL_MIL || guild==GIL_VLK;
   const bool oldCamp = city && (type==NpcType::G2_OC_AMBIENT || type==NpcType::G2_OC_MAIN);
@@ -2684,7 +2684,7 @@ bool GameScript::belongsToCity(const std::shared_ptr<daedalus::INpc>& npc) {
 bool GameScript::isToughGuy(const std::shared_ptr<daedalus::INpc>& self) {
   findSymbol("C_NPCISTOUGHGUY.SLF")->set_instance(self);
   constexpr size_t tough = 57;
-  const auto guild = self ? self->guild : GIL_NONE;
+  const auto guild = self ? uint32_t(self->guild) : GIL_NONE;
   return (self && self->aivar[tough]==1) || guild==GIL_PIR || guild==GIL_BDT || guild==GIL_DJG || guild==GIL_SLD;
   }
 
