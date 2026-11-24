@@ -1,13 +1,11 @@
 #pragma once
 
-#include "daedalus/vm.h"
-#include "daedalus/classes.h"
-#include "records/definitions.h"
 #include "particlecontent.h"
 
 #include <unordered_map>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 #include "graphics/visualfx.h"
 
@@ -41,9 +39,9 @@ class ParticlesDefinitions final {
     const ParticleFx* get(const ParticleFx* base, const VisualFx::Key* key);
 
   private:
-    std::recursive_mutex                sync;
-    std::unique_ptr<daedalus::DaedalusVm> vm;
-    ParticleContent::Result            content;
+    std::recursive_mutex                    sync;
+    std::optional<ParticleContent::Catalog> catalog;
+    ParticleContent::Result                 content;
 
     std::unordered_map<std::string,          std::unique_ptr<ParticleFx>> pfx;
     std::unordered_map<const VisualFx::Key*, std::unique_ptr<ParticleFx>> pfxKey;

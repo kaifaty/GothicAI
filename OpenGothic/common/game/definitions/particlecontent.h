@@ -1,6 +1,6 @@
 #pragma once
 
-#include "records/definitions.h"
+#include "effectdefinitiondata.h"
 #include "game/gamehost.h"
 
 #include "daedalus/vm.h"
@@ -8,7 +8,10 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
+
+namespace ProgramData { struct Index; }
 
 namespace ParticleContent {
 
@@ -99,6 +102,24 @@ struct Result {
   std::vector<std::string> errors;
   };
 
+class Catalog final {
+  public:
+    explicit Catalog(EffectDefinitionData::Particles records);
+    explicit Catalog(std::unique_ptr<daedalus::DaedalusVm> program);
+    explicit Catalog(daedalus::DaedalusVm& program);
+
+    bool contains(std::string_view name) const;
+    bool hasField(std::string_view name) const;
+    std::shared_ptr<Def::ParticleEffect> materialize(std::string_view name) const;
+    daedalus::DaedalusVm* legacyProgram() const { return program; }
+
+  private:
+    std::unique_ptr<daedalus::DaedalusVm> ownedProgram;
+    daedalus::DaedalusVm* program = nullptr;
+    std::map<std::string,Def::ParticleEffect,std::less<>> records;
+  };
+
+std::optional<Catalog> openStockCatalog(const ProgramData::Index& index);
 GameHost::ParticleNameCheck nameChecker();
 std::string canonicalName(std::string_view name);
 bool hasBase(const daedalus::DaedalusScript& script, std::string_view name);
@@ -107,6 +128,7 @@ std::unique_ptr<daedalus::DaedalusVm> openProgram(const std::filesystem::path& b
 
 // Sorted files commit individually. Overrides apply to the copied definition's fields;
 // ParticleFx builds derived settings through its ordinary constructor.
+Result load(const Catalog& catalog, const std::filesystem::path& contentRoot);
 Result load(daedalus::DaedalusVm& vm, const std::filesystem::path& contentRoot);
 Result check(const std::filesystem::path& baseRoot, const std::filesystem::path& contentRoot);
 

@@ -9,10 +9,14 @@
 #include "gamemusic.h"
 #include "game/gamesession.h"
 #include "game/serialize.h"
+#include "game/definitions/effectdefinitiondata.h"
 #include "game/definitions/particlecontent.h"
+#include "game/definitions/particlesdefinitions.h"
 #include "graphics/pfx/particlefx.h"
 #include "graphics/pfx/pfxmotion.h"
 #include "graphics/lightsource.h"
+#include "graphics/visualfx.h"
+#include "programdata.h"
 #include "world/world.h"
 #include "world/movablevobs.h"
 #include "world/objects/vobbundle.h"
@@ -589,7 +593,32 @@ void particleSettings(const ParticleFx& actual, const ParticleFx& expected) {
           actual.effectPrefferedTime()==expected.effectPrefferedTime(),"derived lifetime and emission limits");
   }
 
+void preparedParticleToolChecks(const fs::path& contentRoot, const ProgramData::Index& index,
+                                const ProgramData::Source& stock) {
+  const Fixture native;
+  const auto source=EffectDefinitionData::particleSection(index.dir.parent_path(),stock.recordSha256);
+  const auto target=EffectDefinitionData::particleSection(native.base,stock.recordSha256);
+  fs::create_directories(native.base/"programs");
+  fs::copy_file(index.dir/"programs.json",native.base/"programs/programs.json");
+  fs::create_directories(target.parent_path());
+  fs::copy_file(source,target);
+  require(!fs::exists(native.base/"programs"/index.path(stock).filename()),"offline base has a particle catalog without packed bytecode");
+
+  const auto file=native.content/"emitters.json";
+  textFile(file,"{\"format\":1,\"add\":["+emitter("base-flame","fire_medium.PfX")+","+
+           emitter("own-flame","own_test_smoke.pfx")+"]}");
+  require(subprocess({GOTHIC_CONTENT_CONVERT,"check-particles",native.base.string(),contentRoot.string()})==0,
+          "converter CLI checks own particle definitions against a catalog without packed bytecode");
+  require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-layer",native.world.string(),file.string(),contentRoot.string()})==0,
+          "converter CLI checks a layer's base and own particle names without packed bytecode");
+  require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-tree",native.base.string(),file.string(),contentRoot.string()})==0,
+          "converter CLI checks a tree's base and own particle names without packed bytecode");
+  }
+
 void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
+  const auto index=ProgramData::readIndex(baseRoot/"programs");
+  const auto* selected=ProgramData::particleFxProgram(index);
+  const bool stock=selected!=nullptr && selected->recordSha256==EffectDefinitionData::stockParticleProgram;
   const auto directory=f.content/"particles.d";
   textFile(directory/"10-smoke.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_COPY","base":"fire_smoke.pfx","set":{}},
@@ -610,11 +639,13 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"name":"OWN_TEST_PUFF","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":8,"rows":8,"frames":64,"fps":10,"once":true}},
     {"name":"FIRE_SPARKS","base":"OWN_TEST_SPARKS","replaces":true,"set":{"ppsValue":7.0},"with":["OWN_TEST_PUFF","OWN_TEST_TAIL"]},
     {"name":"OWN_TEST_DROP","base":"FIRE_SMOKE","set":{"useEmittersFOR":0},"land":"own_test_puff.pfx"}]})");
+  if(stock)
+    textFile(directory/"70-pee.json",R"({"format":1,"effects":[{"name":"PEE","base":"PEE","replaces":true,"set":{"flyGravity_S":"0 -1 0"}}]})");
   auto vm=ParticleContent::openProgram(baseRoot);
   const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
   require(original!=nullptr,"base FIRE_SMOKE definition");
   const auto loaded=ParticleContent::load(*vm,f.content);
-  require(loaded.errors.empty() && loaded.effects.size()==14,"own definitions load in filename and declaration order");
+  require(loaded.errors.empty() && loaded.effects.size()==(stock ? 15u : 14u),"own definitions load in filename and declaration order");
   const auto& sparks=loaded.motions.at("OWN_TEST_SPARKS_CHILD");
   require(sparks.curlStrength==1.5f && sparks.curlFrequency==4.f && sparks.curlSpeed==0.3f && sparks.drag==3.f &&
           sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f &&
@@ -657,6 +688,8 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   particleFields(*vm,*loaded.effects.at("OWN_TEST_NEXT"),expected);
   require(subprocess({GOTHIC_CONTENT_CONVERT,"check-particles",baseRoot.string(),f.content.string()})==0,
           "converter CLI accepts own definitions and chains");
+  if(stock)
+    preparedParticleToolChecks(f.content,index,*selected);
 
   const std::vector<std::pair<std::string,std::string>> invalid={
     {"unknown-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"unknownField":1}})"},
@@ -795,6 +828,43 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   require(custom->hazeShift==0 && custom->visMaterial.alpha!=Material::Ghost,"effects without a haze keep their material");
   require(!custom->motion.active() && custom->stretchMs==0 && custom->minPixels==0 && custom->hdrTo==0 &&
           custom->hdrEdge==1.f && !original->motion.active(),"base effects and effects without own motion keep the native path");
+  if(definitions.effects.count("PEE")!=0) {
+    const auto raw=ParticleContent::base(*vm,"PEE");
+    require(raw!=nullptr,"stock PEE is available as a raw definition");
+    const ParticleFx baseline(*raw,"expected raw PEE");
+    const auto* replaced=gothic.loadParticleFx("PEE");
+    const auto* aimed=gothic.loadParticleFx("PFX_GAI_PEE");
+    require(replaced && replaced->flyGravity==Tempest::Vec3(0,-1,0),"the PEE overlay reaches ordinary PEE lookups");
+    require(aimed && aimed->flyGravity==baseline.flyGravity && aimed->flyGravity!=replaced->flyGravity &&
+            aimed->ppsValue==PeeStream::pps && aimed->velAvg==PeeStream::vel,
+            "the aimed stream derives its gravity from raw PEE and retains the native aim and emission overrides");
+    }
+  }
+
+void runtimeVisualKeys(Gothic& gothic, const fs::path& baseRoot) {
+  const auto index=ProgramData::readIndex(baseRoot/"programs");
+  const auto* selected=ProgramData::visualFxProgram(index);
+  if(selected==nullptr || selected->recordSha256!=EffectDefinitionData::stockVisualProgram)
+    return;
+
+  const auto* firebolt=gothic.loadVisualFx("spellfx_firebolt");
+  require(firebolt && firebolt->key(SpellFxKey::Open) && firebolt->key(SpellFxKey::Init) &&
+          firebolt->key(SpellFxKey::Collide) && !firebolt->key(SpellFxKey::Invest),
+          "Firebolt resolves its fixed phases case-insensitively");
+  const auto* cast=firebolt->key(SpellFxKey::Cast);
+  const auto* castParticle=gothic.loadParticleFx("mfx_firebolt_cast");
+  require(cast && castParticle && cast->visName==castParticle && firebolt->emFXCollStat && firebolt->emFXCollDyn,
+          "Firebolt resolves the cast particle and linked collision effects");
+
+  const auto* fireball=gothic.loadVisualFx("SPELLFX_CHARGEFIREBALL");
+  require(fireball!=nullptr,"Charge Fireball is available");
+  for(int32_t level=1; level<=4; ++level)
+    require(fireball->key(SpellFxKey::Invest,level)!=nullptr,"Charge Fireball resolves invest level "+std::to_string(level));
+  require(fireball->key(SpellFxKey::Invest,5)==nullptr,"Charge Fireball stops at the first missing invest level");
+
+  const auto* transform=gothic.loadVisualFx("SPELLFX_TRANSFORM");
+  require(transform && transform->key(SpellFxKey::Invest,0)==nullptr && transform->key(SpellFxKey::Invest,1)!=nullptr,
+          "Transform ignores the stock _KEY_INVEST_0 record and uses numbered keys from one");
   }
 
 
@@ -1235,7 +1305,10 @@ struct WorldDataContract {
       if(phase==0) flameLayer(fixture,Resources::baseDir());
       gothic.isNpcInDialogFn=[](const Npc*) { return false; };
       gothic.setupGlobalScripts();
-      if(phase==0) runtimeParticles(gothic,fixture,Resources::baseDir());
+      if(phase==0) {
+        runtimeParticles(gothic,fixture,Resources::baseDir());
+        runtimeVisualKeys(gothic,Resources::baseDir());
+        }
       if(phase==2)
         require(gothic.loadParticleFx("OWN_TEST_SMOKE")!=nullptr,"disabling vob layers retains custom particle definitions");
       if(phase==3)
