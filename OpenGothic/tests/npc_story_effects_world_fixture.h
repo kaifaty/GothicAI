@@ -1123,6 +1123,27 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
   auto* heroOre=hero->addItem(*ore,1);
   auto* npcOre=bandit->addItem(*ore,1);
   require(heroOre && npcOre && heroOre!=npcOre,"each owner must have its own stack of the same item");
+  {
+    std::string snapshot;
+    NpcController controller([&](std::string&& message) { snapshot=std::move(message); });
+    struct Guard {
+      Guard() { ++BennetLookupAudit::depth; }
+      ~Guard() { --BennetLookupAudit::depth; }
+      } guard;
+    std::string error;
+    require(!controller.attach(world,"itmi_nugget",error) && error=="npc not found in current world: ITMI_NUGGET",
+            "the bridge must reject item identities as NPCs without looking up an untyped symbol");
+    require(controller.requestSnapshot(world,"bdt_1013_bandit_l"),
+            "the bridge must find the live NPC from its case-insensitive identity");
+    rapidjson::Document message;
+    require(!message.Parse(snapshot.c_str()).HasParseError() && message.HasMember("npc"),
+            "the bridge must emit an NPC snapshot");
+    const auto& actor=message["npc"];
+    require(std::string_view(actor["id"].GetString())==banditNames.front() &&
+            std::ranges::any_of(actor["inventory"].GetArray(),[](const auto& item) {
+              return std::string_view(item["item"].GetString())=="ITMI_NUGGET" && item["count"].GetInt()==1;
+              }),"the snapshot must emit the typed NPC identity and the NPC's own ore stack");
+    }
   auto& vm=script.getVm();
   using NpcRef=std::shared_ptr<daedalus::INpc>;
   vm.register_external("NPC_GETINVITEM",std::function<int32_t(NpcRef,int32_t)>{[](NpcRef,int32_t) -> int32_t {
