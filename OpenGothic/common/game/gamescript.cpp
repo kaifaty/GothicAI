@@ -230,7 +230,7 @@ void GameScript::bindNativeExternal(const std::string& name, R(GameScript::*func
   }
 
 void GameScript::initCommon() {
-  bindExternal("hlp_random",                     &GameScript::hlp_random);
+  bindNativeExternal("hlp_random",                     &GameScript::hlp_random);
   bindNativeExternal("hlp_isvalidnpc",                 &GameScript::hlp_isvalidnpc);
   bindNativeExternal("hlp_isvaliditem",                &GameScript::hlp_isvaliditem);
   bindNativeExternal("hlp_isitem",                     &GameScript::hlp_isitem);

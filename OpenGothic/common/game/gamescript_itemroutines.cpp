@@ -403,9 +403,12 @@ void GameScript::loadNativeTradeInventory() {
   const auto* ambient=findSymbol("B_CREATEAMBIENTINV");
   if(npcDefinitions.helpers.helpers.contains(ambient->index())) {
     vm.override_function("B_CREATEAMBIENTINV",std::function<void(NpcRef)>{[this,ambient](const NpcRef& actor) {
-      vm.push_instance(actor);
-      if(!actor || !NpcHelperRuntime::invoke(vm,actor,ambient,npcDefinitions.helpers))
+      using Value=NpcHelperDefinitions::Value;
+      const std::array arguments={Value{.kind=Value::Kind::Self}};
+      if(!actor || !invokeNpcHelper(actor,ambient->index(),arguments)) {
+        vm.push_instance(actor);
         vm.unsafe_call(ambient);
+        }
       }},[enabled] { return enabled() && NpcHelperRuntime::enabled(); });
     }
 
@@ -725,8 +728,10 @@ bool GameScript::applyFightSkillItemEffect(Npc& npc, uint32_t callback) {
   const auto& effect = it->second;
   if(effect.playerOnly && !npc.isPlayer())
     return true;
-  return NpcHelperRuntime::addFightSkill(vm,std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),
-                                       effect.talent,effect.delta,npcDefinitions.helpers);
+  using Value=NpcHelperDefinitions::Value;
+  const std::array arguments={Value{.kind=Value::Kind::Self},Value{.integer=effect.talent},Value{.integer=effect.delta}};
+  return invokeNpcHelper(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),
+                         uint32_t(findSymbolIndex("B_ADDFIGHTSKILL")),arguments);
   }
 
 bool GameScript::applyEquipmentStatEffect(Npc& npc, uint32_t callback) {

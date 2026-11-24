@@ -5,6 +5,7 @@
 #include "daedalus/vm.h"
 
 #include <filesystem>
+#include <functional>
 #include <unordered_map>
 
 namespace NpcHelperRuntime {
@@ -18,6 +19,11 @@ Definitions load(const std::filesystem::path& base,const daedalus::DaedalusScrip
 // Arguments have already been pushed by NPC record playback. A fallback leaves them untouched.
 bool invoke(daedalus::DaedalusVm& vm,const std::shared_ptr<daedalus::INpc>& npc,
             const daedalus::DaedalusSymbol* function,const Definitions& definitions);
-bool addFightSkill(daedalus::DaedalusVm& vm,const std::shared_ptr<daedalus::INpc>& npc,
-                   int32_t talent,int32_t percent,const Definitions& definitions);
+// The prepared path consumes record values directly. The optional observer
+// receives the same argument frames as the oracle path without executing it.
+using InvokeExternal=std::function<int32_t(const daedalus::DaedalusSymbol&, std::span<const NpcHelperDefinitions::Value>,
+                                           const std::function<void()>& observe)>;
+bool invokePrepared(daedalus::DaedalusVm& vm,const std::shared_ptr<daedalus::INpc>& npc,
+                    uint32_t function,const Definitions& definitions,std::span<const NpcHelperDefinitions::Value> args,
+                    const InvokeExternal& invokeExternal={});
 }

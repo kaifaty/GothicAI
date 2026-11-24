@@ -9,22 +9,94 @@
 #include "resources.h"
 #include "world/objects/npc.h"
 
+bool GameScript::invokeNpcHelper(const std::shared_ptr<daedalus::INpc>& npc,uint32_t function,
+                                 std::span<const NpcHelperDefinitions::Value> args) {
+  if(vm.has_legacy_dispatcher())
+    return NpcHelperRuntime::invokePrepared(vm,npc,function,npcDefinitions.helpers,args);
+  return NpcHelperRuntime::invokePrepared(vm,npc,function,npcDefinitions.helpers,args,
+    [this,&npc](const daedalus::DaedalusSymbol& operation,std::span<const NpcHelperDefinitions::Value> arguments,
+                const std::function<void()>& observe) {
+      using Kind=NpcHelperDefinitions::Value::Kind;
+      using storygraph::NativeValue;
+      constexpr storygraph::NativeInstance self=1;
+      const auto external=nativeExternals.find(operation.name());
+      std::array<NativeValue,8> values;
+      if(external==nativeExternals.end() || arguments.size()>values.size() ||
+         external->second.signature.parameters.size()!=arguments.size())
+        throw std::runtime_error("NPC helper definitions: unavailable native operation "+operation.name());
+      for(size_t index=0; index<arguments.size(); ++index) {
+        const auto& argument=arguments[index];
+        switch(argument.kind) {
+          case Kind::Int:    values[index]=NativeValue::integer(argument.integer); break;
+          case Kind::Float:  values[index]=NativeValue::real(argument.real); break;
+          case Kind::String: values[index]=NativeValue::str(argument.text); break;
+          case Kind::Self:   values[index]=NativeValue::instance(self); break;
+          case Kind::Null:
+            if(external->second.signature.parameters[index]==NativeValue::Inst)
+              values[index]=NativeValue::instance(0);
+            break;
+          case Kind::Symbol: {
+            const auto* symbol=vm.find_symbol_by_name(argument.text);
+            if(symbol==nullptr)
+              throw std::runtime_error("NPC helper definitions: unknown operation argument "+argument.text);
+            values[index]=NativeValue::integer(int32_t(symbol->index()));
+            break;
+            }
+          }
+        if(values[index].type!=external->second.signature.parameters[index])
+          throw std::runtime_error("NPC helper definitions: wrong native argument for "+operation.name());
+        }
+      if(observe)
+        observe();
+      const auto resolve=[&npc](storygraph::NativeInstance id) -> storygraph::BoundNativeCall::Instance {
+        return id==self ? npc : nullptr;
+        };
+      return external->second.call(std::span(values).first(arguments.size()),resolve,{}).value.i;
+      });
+  }
+
 void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc,
                                          daedalus::DaedalusSymbol* symbol, bool useRecords) {
   if(npc->user_ptr)
     static_cast<Npc*>(npc->user_ptr)->npcInstanceSymbol=symbol->index();
   // A director NPC keeps its own symbol while using its template's definition.
   auto* like=own.likeOf(vm,symbol->index());
-  const auto applyExternal = [this,&npc](const daedalus::DaedalusSymbol& function,
+  const auto applyCall = [this,&npc](const daedalus::DaedalusSymbol& function,
                                          const NpcDefinitionRuntime::Call& call,
                                          const std::function<void()>& observe) {
     using Type = daedalus::DaedalusDataType;
     using Kind = NpcDefinitions::Value::Kind;
     using storygraph::NativeValue;
+    if(vm.has_legacy_dispatcher())
+      return false;
+    if(call.deferred) {
+      if(!NpcHelperRuntime::enabled() || !npcDefinitions.helpers.helpers.contains(function.index()))
+        return false;
+      std::array<NpcHelperDefinitions::Value,6> arguments;
+      if(call.args.size()>arguments.size())
+        throw std::runtime_error("NPC helper definitions: too many recorded helper arguments");
+      for(size_t index=0; index<call.args.size(); ++index) {
+        const auto& argument=call.args[index];
+        auto& value=arguments[index];
+        value=argument.value;
+        switch(argument.type) {
+          case Type::STRING: value.text=vm.find_symbol_by_index(argument.literal)->get_string(argument.literalIndex); break;
+          case Type::INT:
+          case Type::FUNCTION: value.kind=Kind::Int; break;
+          case Type::FLOAT: break;
+          case Type::INSTANCE:
+            if(value.kind!=Kind::Self)
+              throw std::runtime_error("NPC helper definitions: helper targets another NPC");
+            break;
+          default: throw std::runtime_error("NPC helper definitions: unsupported prepared argument");
+          }
+        }
+      return invokeNpcHelper(npc,function.index(),std::span(arguments).first(call.args.size()));
+      }
     const auto external = nativeExternals.find(function.name());
     // The stock constructor corpus calls externals on SELF, with up to eight arguments.
     std::array<NativeValue,8> values;
-    if(vm.has_legacy_dispatcher() || external==nativeExternals.end() ||
+    if(external==nativeExternals.end() ||
        call.args.empty() || call.args.front().value.kind!=Kind::Self || call.args.size()>values.size())
       return false;
     const auto& native = external->second;
@@ -60,7 +132,7 @@ void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& 
     };
 
   const NpcDefinitionRuntime::Definitions empty;
-  NpcDefinitionRuntime::initialize(vm,npc,symbol,useRecords ? npcDefinitions : empty,like,applyExternal);
+  NpcDefinitionRuntime::initialize(vm,npc,symbol,useRecords ? npcDefinitions : empty,like,applyCall);
   }
 
 void GameScript::refreshNpcAtInsert(Npc& npc) {

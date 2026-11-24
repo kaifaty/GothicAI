@@ -94,18 +94,16 @@ void GameScript::setupDirectorNpcEquipment(Npc& npc, const DirectorNpcLook* look
       npc.unequipItem(instance);
       npc.delItem(instance,1);
       }
-    struct RestoreContext {
-      daedalus::DaedalusVm& vm;
-      std::shared_ptr<daedalus::DaedalusInstance> previous;
-      ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
-      } context{vm,vm.unsafe_get_gi()};
-    vm.push_instance(actor);
-    vm.push_int(look->gender);
-    vm.push_string(look->head);
-    vm.push_int(look->face);
-    vm.push_int(look->skin);
-    vm.push_int(look->armor);
-    NpcHelperRuntime::invoke(vm,actor,directorVisual,npcDefinitions.helpers);
+    using Value=NpcHelperDefinitions::Value;
+    const std::array arguments={
+      Value{.kind=Value::Kind::Self},
+      Value{.integer=look->gender},
+      Value{.kind=Value::Kind::String,.text=look->head},
+      Value{.integer=look->face},
+      Value{.integer=look->skin},
+      Value{.integer=look->armor},
+      };
+    invokeNpcHelper(actor,directorVisual->index(),arguments);
     }
   for(const auto& [item,count] : items)
     createinvitems(actor,int32_t(item),count);

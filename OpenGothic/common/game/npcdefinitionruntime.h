@@ -43,9 +43,9 @@ Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScri
 void observeCalls(daedalus::DaedalusVm& vm, const Definitions& definitions,
                   const std::filesystem::path& base, std::string_view sha256);
 // The observer, when present, receives the original VM arguments before the engine operation.
-using ApplyExternal = std::function<bool(const daedalus::DaedalusSymbol&, const Call&,
+using ApplyCall = std::function<bool(const daedalus::DaedalusSymbol&, const Call&,
                                          const std::function<void()>& observe)>;
 bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::INpc>& npc,
                 daedalus::DaedalusSymbol* symbol, const Definitions& definitions,
-                daedalus::DaedalusSymbol* definitionSymbol = nullptr, const ApplyExternal& applyExternal = {});
+                daedalus::DaedalusSymbol* definitionSymbol = nullptr, const ApplyCall& applyCall = {});
 }
