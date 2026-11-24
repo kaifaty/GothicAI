@@ -34,6 +34,8 @@
 #include "world/npcactivityprobe.h"
 #include "asset/worldtypes.h"
 
+namespace storygraph { struct Program; }
+
 class GameSession;
 class GameStoryExternals;
 class World;
@@ -125,7 +127,9 @@ class GameScript final : public GameRules {
     inline auto& getVm() { return vm; }
     bool         usesVerifiedNpcProgram() const { return nativeRoutineProgram; }
     // The caller binds script context. A rejected root can use the compatibility VM.
-    bool         invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed = nullptr);
+    bool         invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed = nullptr,
+                                    bool preparedOnly = false);
+    const storygraph::Program* preparedStockProgram(const daedalus::DaedalusSymbol& fn);
     // symbols of ours: the AI director's story variables and npc's
     inline auto& ownSymbols() { return own; }
     std::optional<uint32_t> addDirectorNpcSymbol(std::string_view name, std::string_view like, std::string& why);
@@ -894,10 +898,10 @@ class GameScript final : public GameRules {
     struct PointGestureRolls {
       int32_t guard = 0, crossedArms = 0, waypoint = 0, portal = 0, earthquake = 0;
       } pointGestureRolls;
+    OwnSymbols                                                  own;
     daedalus::DaedalusVm                                          vm;
     std::unique_ptr<StockPrograms>                                stockPrograms;
     StartupFloor                                                floorDefer{*this};
-    OwnSymbols                                                  own{vm};
     int32_t                                                     vmLang = -1;
     std::mt19937                                                randGen;
     std::unordered_map<const Npc*,std::mt19937>                 isolatedRandom;

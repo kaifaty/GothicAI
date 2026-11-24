@@ -29,6 +29,7 @@ struct Helper final {
 class Predicates final {
   public:
     Predicates(const daedalus::DaedalusScript& script, const Lifter& lifter);
+    explicit Predicates(std::map<std::string,Helper> prepared);
 
     // a condition function as one boolean expression
     const ExprP&  condition(uint32_t fnSymbol);
@@ -40,8 +41,8 @@ class Predicates final {
     const std::map<std::string,Helper>& helpers() const { return lifted; }
 
   private:
-    const daedalus::DaedalusScript&        script;
-    const Lifter&                        lifter;
+    const daedalus::DaedalusScript*      script = nullptr;
+    const Lifter*                         lifter = nullptr;
     std::unordered_map<uint32_t,ExprP>   conditions;
     std::map<std::string,Helper>         lifted;
   };

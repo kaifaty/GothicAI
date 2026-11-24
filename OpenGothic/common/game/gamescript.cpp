@@ -95,7 +95,9 @@ GameScript::GameScript(GameSession &owner)
     symbolCatalog = ScriptSymbolCatalog::load(baseProgramIndex().dir.parent_path(),GameplayDefinitions::stockProgram);
 
   vmLang = Settings::getI("GAME", "language");
+#if !defined(OPENGOTHIC_NATIVE_GAME)
   vm.register_exception_handler(daedalus::lenient_vm_exception_handler);
+#endif
   Gothic::inst().setupCommonScriptClasses(vm);
   Gothic::inst().setupVmCommonApi(vm);
   aiDefaultPipe.reset(new GlobalOutput(*this));
@@ -497,7 +499,7 @@ void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& np
   // (self in an instance's body is the instance's symbol): while it runs that instance is ours, as a script's
   // instance is its own while its code runs. Else the body, clothes and things would go to the script's npc
   std::optional<ScopeVar<daedalus::INpc>> mine;
-  if(auto* like = own.likeOf(sym->index()))
+  if(auto* like = own.likeOf(vm,sym->index()))
     mine.emplace(*like,npc);
 
   initializeNpcDefinition(npc,sym,useRecords);
@@ -562,7 +564,7 @@ void GameScript::loadVar(Serialize &fin) {
       if(symbol==nullptr && row.name.starts_with(OwnSymbols::Prefix)) {
         // Older saves listed director variables only in this entry.
         std::string why;
-        symbol = own.addInt(row.name,why);
+        symbol = own.addInt(vm,row.name,why);
         }
       loadValues(*values,&daedalus::DaedalusSymbol::set_int);
       }
@@ -1268,6 +1270,9 @@ int GameScript::invokeCond(Npc& npc, std::string_view func) {
     return 1;
     }
   ScopeVar self(*vm.global_self(), npc.handlePtr());
+  int32_t result = 0;
+  if(fn->rtype()==daedalus::DaedalusDataType::INT && invokeStockProgram(*fn,result,nullptr,true))
+    return result;
   return vm.call_function<int>(fn);
   }
 

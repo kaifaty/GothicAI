@@ -9,8 +9,10 @@
 #include <Tempest/Log>
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -281,12 +283,26 @@ namespace daedalus {
 	}
 
 	DaedalusInstruction DaedalusScript::instruction_at(std::uint32_t address) const {
+		if (metadata_audit_active()) abort_metadata_access(address, nullptr);
 		// Out-of-range seeks leave the cursor unchanged, as in ZenKit's memory reader.
 		if (address <= _m_text->bytes.size()) _m_text->position = address;
 		auto code = std::span<std::byte const>(_m_text->bytes).subspan(_m_text->position);
 		auto instruction = DaedalusInstruction::decode(code);
 		_m_text->position += std::min(code.size(), std::size_t(instruction.size));
 		return instruction;
+	}
+
+	void DaedalusScript::abort_metadata_access(std::uint32_t address, const char* symbol) const {
+		if (symbol != nullptr) {
+			std::fprintf(stderr, "native-script-audit: bytecode execution attempted program=%s symbol=%s pc=%" PRIu32 " (metadata only)\n",
+			             _m_metadata_audit_program.c_str(), symbol, address);
+		} else {
+			std::fprintf(stderr, "native-script-audit: bytecode read attempted program=%s pc=%" PRIu32 " (metadata only)\n",
+			             _m_metadata_audit_program.c_str(), address);
+		}
+		std::fflush(stderr);
+		// A compatibility handler may ignore a script error. The diagnostic must stop at the first access.
+		std::_Exit(EXIT_FAILURE);
 	}
 
 	DaedalusSymbol const* DaedalusScript::find_symbol_by_index(std::uint32_t index) const {

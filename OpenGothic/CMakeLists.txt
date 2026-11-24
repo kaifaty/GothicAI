@@ -7,6 +7,7 @@ set(BUILD_SHARED_LIBS OFF)
 
 option(OPENGOTHIC_ENABLE_FRAME_PROFILE "Compile opt-in frame profiling diagnostics" OFF)
 option(OPENGOTHIC_ENABLE_APP_CADENCE "Compile the normal-game death cadence benchmark" OFF)
+option(OPENGOTHIC_LEGACY_DAEDALUS "Link the legacy Daedalus interpreter into the game and headless runner" ON)
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)
@@ -75,7 +76,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/vm_bytecode daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -227,7 +228,12 @@ if(NOT MSVC)
   target_compile_options(gothic-cluster-lod-test PRIVATE -Wall -Wconversion -Werror -ffp-contract=off)
 endif()
 add_subdirectory(common/daedalus)
-target_link_libraries(${PROJECT_NAME} gothic-daedalus)
+if(OPENGOTHIC_LEGACY_DAEDALUS)
+  target_link_libraries(${PROJECT_NAME} gothic-daedalus)
+else()
+  target_compile_definitions(${PROJECT_NAME} PRIVATE OPENGOTHIC_NATIVE_GAME=1)
+  target_link_libraries(${PROJECT_NAME} gothic-script-state)
+endif()
 target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/convert/CMakeLists.txt")
   add_subdirectory(../scripts/convert content-convert)

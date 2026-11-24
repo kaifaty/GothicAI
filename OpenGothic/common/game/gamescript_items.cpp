@@ -1,5 +1,6 @@
 #include "gamescript.h"
 
+#include "basestore.h"
 #include "game/definitions/baseprogram.h"
 #include "game/definitions/gameplaydefinitions.h"
 #include "game/definitions/basescripts.h"
@@ -19,13 +20,30 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
                                          ActivityDefinitionRuntime::Definitions& activities, QuietSoundReaction& quietSound,
                                          bool& nativeRoutineProgram) {
   const auto lang=Settings::getI("GAME", "language");
+  const auto& index=baseProgramIndex();
+  const auto base=index.dir.parent_path();
+#if defined(OPENGOTHIC_NATIVE_GAME)
+  constexpr bool metadata=true;
+#else
+  const bool metadata=BaseStore::metadataAuditEnabled();
+#endif
   std::string sha256;
-  auto script=loadBaseProgram(gothic.defaultGameDatFile(),lang,&sha256);
-  items=ItemDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
-  routines=RoutineDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
-  npcs=NpcDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
-  placements=PlacementDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
-  activities=ActivityDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script,sha256);
+  auto script=[&] {
+    if(!metadata)
+      return loadBaseProgram(gothic.defaultGameDatFile(),lang,&sha256);
+    const auto selected=selectBaseProgram(index,gothic.defaultGameDatFile(),lang);
+    if(selected.source.recordSha256!=GameplayDefinitions::stockProgram)
+      throw BaseStore::Error("native game requires the verified stock GOTHIC.DAT program");
+    const auto file=ProgramData::symbolMetadataPath(base,selected.source.recordSha256);
+    auto symbols=ProgramData::readSymbolMetadata(file,selected.source.recordSha256);
+    sha256=selected.source.recordSha256;
+    return daedalus::DaedalusScript::from_program(std::move(symbols));
+    }();
+  items=ItemDefinitionRuntime::load(base,script,sha256);
+  routines=RoutineDefinitionRuntime::load(base,script,sha256);
+  npcs=NpcDefinitionRuntime::load(base,script,sha256);
+  placements=PlacementDefinitionRuntime::load(base,script,sha256);
+  activities=ActivityDefinitionRuntime::load(base,script,sha256);
   // Native behavior is verified against this particular stock Night of the Raven program.
   nativeRoutineProgram=sha256==GameplayDefinitions::stockProgram;
   if(nativeRoutineProgram) {
@@ -41,10 +59,15 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
     quietSound={ScriptFn(callback->index()),height->get_int(0),indoorHeight->get_int(0)};
     }
   const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
-  daedalus::DaedalusVm vm(std::move(script),flags);
+#if defined(OPENGOTHIC_NATIVE_GAME)
+  auto vm=daedalus::DaedalusVm::without_legacy_dispatcher(std::move(script),flags);
+#else
+  auto vm=metadata ? daedalus::DaedalusVm::without_legacy_dispatcher(std::move(script),flags)
+                   : daedalus::DaedalusVm(std::move(script),flags);
+#endif
   Gothic::enableScriptAudit(vm,gothic.defaultGameDatFile());
-  NpcDefinitionRuntime::observeCalls(vm,npcs,baseProgramIndex().dir.parent_path(),sha256);
-  PlacementDefinitionRuntime::observeCalls(vm,baseProgramIndex().dir.parent_path(),sha256);
+  NpcDefinitionRuntime::observeCalls(vm,npcs,base,sha256);
+  PlacementDefinitionRuntime::observeCalls(vm,base,sha256);
   return vm;
   }
 

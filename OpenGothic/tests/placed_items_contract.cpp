@@ -858,7 +858,7 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
   std::string error;
   const auto* entry=script.ownSymbols().find("DIR_NPC_RECORD_CONTRACT");
   const auto* own=entry ? vm.find_symbol_by_index(entry->index) :
-                         script.ownSymbols().addNpc("DIR_NPC_RECORD_CONTRACT",templateName,error);
+                         script.ownSymbols().addNpc(vm,"DIR_NPC_RECORD_CONTRACT",templateName,error);
   NpcDefinitionContract::checkDirectorNpc(script,own,error);
   names.push_back(own->name());
   std::set<uint32_t> routineAddresses;

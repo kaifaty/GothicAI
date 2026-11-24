@@ -82,8 +82,8 @@ void StoryRuntime::ensureVars() {
     if(own.find(name)!=nullptr)
       continue;  // a save brought it back with its value
     std::string why;
-    if(auto* s = own.addInt(name,why))
-      s->set_int(value); else
+    if(own.addInt(*v,name,why))
+      own.setInt(name,value); else
       Log::e("[story] vars: ",why);
     }
   }

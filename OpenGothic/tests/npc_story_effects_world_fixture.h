@@ -1,5 +1,7 @@
 // Live NPC dialogue and StoryGraph save/load cases for placed_items_contract.cpp.
 
+#include "storyeffects.h"
+
 void assessTalkEntry(World& world,Npc& npc,Npc& player) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -311,6 +313,22 @@ auto storyBeforeSave(World& world) {
   auto* dialog=vm.find_symbol_by_name("DIA_ADDON_LARES_PATCH_INFO");
   auto* transfer=vm.find_symbol_by_name("B_GIVEINVITEMS");
   require(giver && player && dialog && transfer && item!=size_t(-1),"the transfer fixture needs Lares and the ornament dialog");
+
+  static constexpr std::string_view directorName = "DIR_RUNTIME_SAVE_CONTRACT";
+  static constexpr int32_t directorValue = -41;
+  std::string directorError;
+  auto* director = script.ownSymbols().addInt(vm,directorName,directorError);
+  require(director!=nullptr,directorError.c_str());
+  const auto directorId = director->index();
+  StoryEffect setDirector;
+  setDirector.kind = "set";
+  setDirector.var = "dir_runtime_save_contract";
+  setDirector.count = 42;
+  setDirector.run(script,*giver,*player,"contract");
+  require(director->get_int()==42,"a StoryGraph effect updates the legacy director symbol");
+  director->set_int(directorValue);
+  require(script.globalIntSymbol(setDirector.var)==directorValue,"a legacy write updates the director's owned value");
+
   auto& events=NpcDefinitionContract::activityEventsOn(script);
   const bool savedEvents=events;
   const auto savedQueue=NpcDefinitionContract::queue(*giver);
@@ -413,10 +431,14 @@ auto storyBeforeSave(World& world) {
   vm.global_item()->set_instance(savedItem);
   NpcDefinitionContract::queue(*giver)=savedQueue;
   events=savedEvents;
-  return [requireJournal,item,itemText](World& restored) {
+  return [requireJournal,item,itemText,directorId](World& restored) {
     auto& script=restored.script();
     auto& vm=script.getVm();
     requireJournal(script.questLog());
+    const auto* director = vm.find_symbol_by_name(directorName);
+    require(director!=nullptr && director->index()==directorId && director->get_int()==directorValue &&
+            script.globalIntSymbol(directorName)==directorValue,
+            "an ordinary save restores the director variable and its original symbol ID");
     const auto* lares=activityNpc(restored,"VLK_449_LARES");
     const auto* hero=restored.player();
     const auto& variables=NpcDefinitionContract::transferVariables(script);

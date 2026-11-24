@@ -36,7 +36,7 @@ set(platform_allowed_dependencies
   gothic-base-runtime gothic-video-runtime)
 get_target_property(platform_dependencies OpenGothic LINK_LIBRARIES)
 # The VM and the game's authored story runtime belong to OpenGothic only.
-list(REMOVE_ITEM platform_dependencies gothic-daedalus StoryGraph)
+list(REMOVE_ITEM platform_dependencies gothic-daedalus gothic-script-state StoryGraph)
 foreach(dependency IN LISTS platform_dependencies)
   if(NOT dependency IN_LIST platform_allowed_dependencies)
     message(FATAL_ERROR "engine-platform: OpenGothic dependency '${dependency}' is not an allowed platform link input. "

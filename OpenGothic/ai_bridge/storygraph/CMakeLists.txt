@@ -57,7 +57,7 @@ add_library(StoryGraph STATIC
   graphjson.cpp graphjson.h
   model.cpp model.h
   program.cpp)
-target_link_libraries(StoryGraph PUBLIC StoryGraphLift gothic-daedalus)
+target_link_libraries(StoryGraph PUBLIC StoryGraphLift gothic-script-state)
 target_link_libraries(StoryGraph PRIVATE gothic-base-runtime)
 
 if(NOT MSVC)
@@ -71,7 +71,7 @@ option(STORYGRAPH_TOOL "build the storygraph command line tool" ${PROJECT_IS_TOP
 add_executable(storygraph main.cpp scan.cpp check.cpp check.h fuzz.cpp saveworld.cpp saveworld.h
                             effects.cpp effects.h execcheck.cpp execcheck.h snapshot.h
                             ../../common/basestore.cpp)
-target_link_libraries(storygraph PRIVATE StoryGraph gothic-base-import gothic-video-import)
+target_link_libraries(storygraph PRIVATE StoryGraph gothic-base-import gothic-video-import gothic-daedalus)
 if(NOT STORYGRAPH_TOOL)
   set_target_properties(storygraph PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()

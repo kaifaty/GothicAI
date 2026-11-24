@@ -211,7 +211,7 @@ def check_native_game(build: Path, target: str, nm: str, fmt: str) -> dict:
     sources = source_map(build)
     daedalus_archives = sorted(path for path in archives if archive_name(path) == "gothic-daedalus")
     vm_objects = sorted(obj for obj, _ in objects
-                        if sources.get(obj, "").endswith("/common/daedalus/vm.cpp"))
+                        if sources.get(obj, "").endswith("/common/daedalus/vm_bytecode.cpp"))
     dispatch_symbols = sorted(name for name in symbols.defined.keys() | symbols.undefined
                               if DAEDALUS_DISPATCH.fullmatch(name))
     return {

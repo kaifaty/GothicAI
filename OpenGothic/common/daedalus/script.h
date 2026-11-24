@@ -970,6 +970,10 @@ namespace daedalus {
 		void register_as_opaque(DaedalusSymbol* sym);
 
 	protected:
+		void arm_metadata_audit(std::string_view program) { _m_metadata_audit_program = program; }
+		[[nodiscard]] bool metadata_audit_active() const noexcept { return !_m_metadata_audit_program.empty(); }
+		[[noreturn]] void abort_metadata_access(std::uint32_t address, const char* symbol) const;
+
 		template <typename _member, int N>
 		DaedalusSymbol* _check_member(std::string_view name, std::type_info const* type) {
 			auto* sym = find_symbol_by_name(name);
@@ -1021,6 +1025,7 @@ namespace daedalus {
 		std::unordered_map<std::uint32_t, uint32_t> _m_symbols_by_address;
 
 		mutable std::unique_ptr<Bytecode> _m_text;
+		std::string _m_metadata_audit_program;
 		std::uint8_t _m_version {0};
 	};
 } // namespace daedalus

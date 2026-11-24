@@ -10,7 +10,11 @@
 using namespace storygraph;
 
 Predicates::Predicates(const daedalus::DaedalusScript& script, const Lifter& lifter)
-  :script(script), lifter(lifter) {
+  :script(&script), lifter(&lifter) {
+  }
+
+Predicates::Predicates(std::map<std::string,Helper> prepared)
+  :lifted(std::move(prepared)) {
   }
 
 const ExprP& Predicates::condition(uint32_t fnSymbol) {
@@ -18,7 +22,7 @@ const ExprP& Predicates::condition(uint32_t fnSymbol) {
   if(it!=conditions.end())
     return it->second;
   auto& c = conditions[fnSymbol];
-  c = Lifter::condition(lifter.lift(fnSymbol));
+  c = lifter!=nullptr ? Lifter::condition(lifter->lift(fnSymbol)) : ex::unknown("condition unavailable");
   whyNotLifted(c);  // lifts the helpers it calls
   return c;
   }
@@ -29,7 +33,12 @@ const Helper& Predicates::helper(const std::string& fn) {
     return it->second;
   Helper h;
   h.name = fn;
-  auto* sym = script.find_symbol_by_name(fn);
+  if(script==nullptr) {
+    h.body = ex::unknown("no prepared helper " + fn);
+    h.notLifted = "not in the prepared story graph";
+    return lifted[fn] = std::move(h);
+    }
+  auto* sym = script->find_symbol_by_name(fn);
   if(sym==nullptr) {
     h.body      = ex::unknown("no function " + fn);
     h.notLifted = "no such function";
@@ -38,7 +47,7 @@ const Helper& Predicates::helper(const std::string& fn) {
   h.params = sym->count();
   // a placeholder while the body is lifted, so recursion ends
   lifted[fn]  = Helper{fn, h.params, ex::unknown("recursive"), "recursive"};
-  h.body      = Lifter::value(lifter.lift(sym->index()));
+  h.body      = Lifter::value(lifter->lift(sym->index()));
   h.notLifted = whyNotLifted(h.body);
   return lifted[fn] = h;
   }

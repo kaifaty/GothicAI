@@ -214,7 +214,7 @@ GameSession::GameSession(Serialize &fin) {
   vm->initDialogs();
   // before the world: its npc's of ours find their symbols by index
   if(fin.setEntry(OwnSymbols::SaveEntry))
-    vm->ownSymbols().load(fin);
+    vm->ownSymbols().load(vm->getVm(),fin);
 
   if(true) {
     setWorld(std::unique_ptr<World>(new World(*this,*vm,wname,false,[&](int v){

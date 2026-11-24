@@ -34,6 +34,8 @@ std::optional<GameScript::SymbolKind> GameScript::symbolKind(std::string_view na
   }
 
 std::optional<int32_t> GameScript::globalIntSymbol(std::string_view name) const {
+  if(const auto value = own.intValue(name))
+    return value;
   const auto* symbol = vm.find_symbol_by_name(name);
   if(symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::INT && !symbol->is_member())
     return symbol->get_int(0);
@@ -61,7 +63,7 @@ std::optional<uint32_t> GameScript::findItemInstance(std::string_view name) cons
   }
 
 std::optional<uint32_t> GameScript::addDirectorNpcSymbol(std::string_view name, std::string_view like, std::string& why) {
-  if(auto* symbol = own.addNpc(name,like,why))
+  if(auto* symbol = own.addNpc(vm,name,like,why))
     return symbol->index();
   return std::nullopt;
   }
@@ -79,6 +81,8 @@ bool GameScript::isPartyMember(const Npc& npc) {
   }
 
 bool GameScript::setGlobalIntSymbol(std::string_view name, int32_t value) {
+  if(own.setInt(name,value))
+    return true;
   auto* symbol = vm.find_symbol_by_name(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT || symbol->is_member() || symbol->is_const())
     return false;

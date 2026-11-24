@@ -95,6 +95,15 @@ const StockStoryPrograms::Catalog* GameScript::StockPrograms::preparedCatalog() 
   return prepared ? &*prepared : nullptr;
   }
 
+const storygraph::Program* GameScript::StockPrograms::findPrepared(const daedalus::DaedalusSymbol& fn) {
+  if(vm.find_symbol_by_index(fn.index())!=&fn)
+    return nullptr;
+  const auto* catalog = preparedCatalog();
+  if(catalog==nullptr || !catalog->programs.contains(fn.index()))
+    return nullptr;
+  return &entry(fn.index()).program;
+  }
+
 const GameScript::StockPrograms::Entry& GameScript::StockPrograms::entry(uint32_t id) {
   if(const auto it = programs.find(id); it!=programs.end())
     return it->second;
@@ -123,17 +132,28 @@ const GameScript::StockPrograms::Entry& GameScript::StockPrograms::entry(uint32_
       }
     }
 
-  if(!code)
-    code = std::make_unique<storygraph::Bytecode>(vm);
-  entry.program = storygraph::liftProgram(vm,*code,id);
-  if(entry.program.error.empty())
-    entry.calls = code->summarize(id).calls;
+  if(vm.has_legacy_dispatcher()) {
+    if(!code)
+      code = std::make_unique<storygraph::Bytecode>(vm);
+    entry.program = storygraph::liftProgram(vm,*code,id);
+    if(entry.program.error.empty())
+      entry.calls = code->summarize(id).calls;
+    }
+  else {
+    entry.program.error = "function is missing from the prepared stock catalog";
+    }
   return programs.emplace(id,std::move(entry)).first->second;
   }
 
-bool GameScript::StockPrograms::isSupported(const daedalus::DaedalusSymbol& fn, std::unordered_set<uint32_t>& checked) {
+bool GameScript::StockPrograms::isSupported(const daedalus::DaedalusSymbol& fn, std::unordered_set<uint32_t>& checked,
+                                            bool preparedOnly) {
   if(!checked.insert(fn.index()).second)
     return true;
+  if(preparedOnly) {
+    const auto* catalog = preparedCatalog();
+    if(catalog==nullptr || !catalog->programs.contains(fn.index()))
+      return false;
+    }
   const auto& program = entry(fn.index());
   if(!program.program.error.empty())
     return false;
@@ -143,13 +163,13 @@ bool GameScript::StockPrograms::isSupported(const daedalus::DaedalusSymbol& fn, 
       return false;
     if(vm.has_active_override(*child))
       continue;
-    if(child->has_local_variables_enabled() || !isSupported(*child,checked))
+    if(child->has_local_variables_enabled() || !isSupported(*child,checked,preparedOnly))
       return false;
     }
   return true;
   }
 
-bool GameScript::StockPrograms::run(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed) {
+bool GameScript::StockPrograms::run(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly) {
   if(fn.type()!=daedalus::DaedalusDataType::FUNCTION || fn.is_external() || fn.has_local_variables_enabled() ||
      !vm.find_parameters_for_function(&fn).empty())
     return false;
@@ -158,7 +178,7 @@ bool GameScript::StockPrograms::run(const daedalus::DaedalusSymbol& fn, int32_t&
   // Preflight every nested function before the first effect. The interpreter also
   // rejects an unresolved call if an active override changes during execution.
   std::unordered_set<uint32_t> checked;
-  if(!isSupported(fn,checked))
+  if(!isSupported(fn,checked,preparedOnly))
     return false;
   auto run = interpreter.run(entry(fn.index()).program);
   if(failed!=nullptr)
@@ -169,15 +189,23 @@ bool GameScript::StockPrograms::run(const daedalus::DaedalusSymbol& fn, int32_t&
   return true;
   }
 
-bool GameScript::invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed) {
+bool GameScript::invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly) {
   if(!nativeRoutineProgram)
     return false;
   const auto* enabled = std::getenv("GOTHIC_AI_STORYEXEC");
-  if(enabled!=nullptr && std::string_view(enabled)=="0")
+  if(vm.has_legacy_dispatcher() && enabled!=nullptr && std::string_view(enabled)=="0")
     return false;
   if(stockPrograms==nullptr)
     stockPrograms = std::make_unique<StockPrograms>(*this);
-  return stockPrograms->run(fn,result,failed);
+  return stockPrograms->run(fn,result,failed,preparedOnly);
+  }
+
+const storygraph::Program* GameScript::preparedStockProgram(const daedalus::DaedalusSymbol& fn) {
+  if(!nativeRoutineProgram)
+    return nullptr;
+  if(!stockPrograms)
+    stockPrograms = std::make_unique<StockPrograms>(*this);
+  return stockPrograms->findPrepared(fn);
   }
 
 int32_t GameScript::dialogFunction(daedalus::DaedalusSymbol* fn, bool returns) {

@@ -154,9 +154,10 @@ def test_real_objects(tmp_path):
 def test_native_game_check_on_linked_targets(tmp_path):
     source = tmp_path / "source"
     build = tmp_path / "build"
-    vm_source = source / "common/daedalus/vm.cpp"
+    vm_source = source / "common/daedalus/vm_bytecode.cpp"
     vm_source.parent.mkdir(parents=True)
     vm_source.write_text("int unrelated() { return 0; }\n")
+    vm_source.with_name("vm.cpp").write_text("int scriptState() { return 0; }\n")
     (source / "main.cpp").write_text("int main() { return 0; }\n")
     (source / "dispatch.cpp").write_text(
         "namespace daedalus { struct DaedalusVm { void exec(); }; void DaedalusVm::exec() {} }\n"
@@ -165,11 +166,11 @@ def test_native_game_check_on_linked_targets(tmp_path):
         "cmake_minimum_required(VERSION 3.15)\n"
         "project(LinkCensusTest LANGUAGES CXX)\n"
         "set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)\n"
-        "add_library(gothic-daedalus STATIC common/daedalus/vm.cpp)\n"
+        "add_library(gothic-daedalus STATIC common/daedalus/vm_bytecode.cpp)\n"
         "add_executable(Gothic2Notr main.cpp)\n"
         "target_link_libraries(Gothic2Notr PRIVATE gothic-daedalus)\n"
-        "add_executable(gothic-body-runner main.cpp)\n"
-        "add_executable(direct-vm main.cpp common/daedalus/vm.cpp)\n"
+        "add_executable(gothic-body-runner main.cpp common/daedalus/vm.cpp)\n"
+        "add_executable(direct-vm main.cpp common/daedalus/vm_bytecode.cpp)\n"
         "add_executable(embedded-dispatch dispatch.cpp)\n")
     subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja"], capture_output=True, check=True)
     subprocess.run(["cmake", "--build", str(build)], capture_output=True, check=True)
@@ -187,7 +188,7 @@ def test_native_game_check_on_linked_targets(tmp_path):
     assert archive["daedalus_archives"] == ["libgothic-daedalus.a"]
     assert not archive["opcode_dispatch_symbols"]
     status, direct = run("direct-vm")
-    assert status == 1 and direct["vm_objects"] == ["CMakeFiles/direct-vm.dir/common/daedalus/vm.cpp.o"]
+    assert status == 1 and direct["vm_objects"] == ["CMakeFiles/direct-vm.dir/common/daedalus/vm_bytecode.cpp.o"]
     assert not direct["daedalus_archives"] and not direct["opcode_dispatch_symbols"]
     status, embedded = run("embedded-dispatch")
     assert status == 1 and embedded["opcode_dispatch_symbols"] == ["_ZN8daedalus10DaedalusVm4execEv"]

@@ -54,7 +54,9 @@
 //   content-convert formats
 //       Print the compiled base and video importer format hashes as JSON.
 //   content-convert no-programs-fixture <ready stock base> <new dir>
-//       Copy a ready base for metadata tests, omitting all executable program records.
+//       Copy a ready base for metadata tests, extracting stock game symbols and omitting executable programs.
+//   content-convert native-base <ready stock base> <new dir>
+//       Publish the native script profile using the stock base's verified prepared metadata.
 //   content-convert stress-base <ready base> <out dir> --subdivide 0..3 | verify-stress-base <base> <copy>
 //       A copy of a ready base with every world triangle split in four N times (stressbase.h).
 //   content-convert cook-world|verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
@@ -86,7 +88,13 @@
 #include "worldchunksruntime.h"
 #include "worlddata.h"
 #include "world/voblayer.h"
+#include "game/definitions/cameradefinitiondata.h"
+#include "game/definitions/effectdefinitiondata.h"
+#include "game/definitions/fightdefinitiondata.h"
+#include "game/definitions/menudefinitions.h"
+#include "game/definitions/musicdefinitiondata.h"
 #include "game/definitions/particlecontent.h"
+#include "game/definitions/sfxdefinitiondata.h"
 #include "game/definitions/stockstoryprograms.h"
 #include "gothicglb.h"
 #include "stressbase.h"
@@ -155,20 +163,24 @@ rapidjson::Document fixtureJson(const fs::path& file) {
   return doc;
   }
 
-void prepareNoProgramsFixture(const fs::path& source, const fs::path& output) {
+enum class ProgramProjection { TestFixture, Native };
+
+void prepareProgramProjection(const fs::path& source, const fs::path& output, ProgramProjection profile) {
+  const bool native=profile==ProgramProjection::Native;
   const auto base=fs::canonical(source);
   const auto out=fs::weakly_canonical(output);
   const auto relative=out.lexically_relative(base);
-  require(relative.empty() || *relative.begin()=="..","fixture output must be outside the source base");
-  require(!fs::exists(out),"fixture output already exists: "+out.string());
+  require(relative.empty() || *relative.begin()=="..","projection output must be outside the source base");
+  require(!fs::exists(out),"projection output already exists: "+out.string());
 
   auto identity=BaseImport::readIdentity(base);
   std::string rejection;
   if(!BaseImport::matches(base,identity,false,&rejection))
-    throw std::runtime_error("fixture source base failed verification: "+rejection);
+    throw std::runtime_error("projection source base failed verification: "+rejection);
   rapidjson::Document metadata;
   metadata.Parse(identity.json.c_str());
-  require(!metadata.HasMember("no_programs_fixture"),"fixture source must contain the program records");
+  require(!metadata.HasMember("no_programs_fixture") && !metadata.HasMember("native_script_base"),
+          "projection source must contain the program records");
   const auto index=ProgramData::readIndex(base/"programs");
   const auto* game=index.server();
   require(game && game->origin=="host" && game->recordSha256==StockStoryPrograms::stockProgram,
@@ -187,20 +199,71 @@ void prepareNoProgramsFixture(const fs::path& source, const fs::path& output) {
     }
   require(kept.contains("programs/programs.json") && kept.contains("storygraph/story.json"),
           "fixture source must bind the program index and the prepared story graph");
+
+  const auto bound=[&](const fs::path& path) {
+    const auto name=path.lexically_relative(base).generic_string();
+    require(kept.contains(name),"fixture source does not bind required definitions: "+name);
+    };
+  const auto verify=[&](const ProgramData::Source* source, std::string_view stock, const char* name,
+                       auto section, auto read) {
+    require(source && source->recordSha256==stock,"fixture source requires stock "+std::string(name));
+    bound(section(base,stock));
+    (void)read(base,stock);
+    };
+  const auto* fight=ProgramData::fightProgram(index);
+  require(fight && !fight->recordSha256.empty(),"fixture source has no Fight.dat selection");
+  bound(FightDefinitions::section(base,fight->recordSha256));
+  require(!FightDefinitions::read(base,fight->recordSha256).empty(),"fixture source has no fight tactics");
+  verify(ProgramData::cameraProgram(index),CameraDefinitionData::stockProgram,"Camera.dat",
+         CameraDefinitionData::section,CameraDefinitionData::read);
+  verify(ProgramData::sfxProgram(index),SfxDefinitionData::stockProgram,"Sfx.dat",
+         SfxDefinitionData::section,SfxDefinitionData::read);
+  verify(ProgramData::musicProgram(index),MusicDefinitionData::stockProgram,"Music.dat",
+         MusicDefinitionData::section,MusicDefinitionData::read);
+  verify(ProgramData::particleFxProgram(index),EffectDefinitionData::stockParticleProgram,"ParticleFx.dat",
+         EffectDefinitionData::particleSection,EffectDefinitionData::readParticles);
+  verify(ProgramData::visualFxProgram(index),EffectDefinitionData::stockVisualProgram,"VisualFx.dat",
+         EffectDefinitionData::visualSection,EffectDefinitionData::readVisuals);
+  bool menuSelected=false;
+  for(const auto& choice:index.selections) {
+    if(choice.request!="MENU.DAT" || !choice.source)
+      continue;
+    require(index.sources[*choice.source].recordSha256==MenuDefinitions::stockProgram,
+            "fixture source has a non-stock MENU.DAT selection");
+    menuSelected=true;
+    }
+  require(menuSelected,"fixture source has no MENU.DAT selection");
+  bound(MenuDefinitions::section(base,MenuDefinitions::stockProgram));
+  require(MenuDefinitions::read(base,MenuDefinitions::stockProgram).menus.contains("MENU_MAIN"),
+          "fixture source has no MENU_MAIN definition");
+
   for(const auto& [name, sha]:index.programs) {
     const auto path="programs/"+name;
     require(programs.contains(path+".json") && programs.contains(path+".bin"),
             "fixture source does not bind both program record files: "+path);
     }
 
+  auto program=NpcSnapshot::load(base);
+  require(program.sha256==game->recordSha256,"projection requires the stock runtime program selection");
+  program.data.bytecode.clear();
+  const auto sourceSymbols=ProgramData::symbolMetadataPath(base,program.sha256);
+  const auto sourcePayload=ProgramData::symbolMetadataPayloadPath(sourceSymbols);
+  const auto hasSymbols=kept.contains(sourceSymbols.lexically_relative(base).generic_string());
+  if(native || hasSymbols || kept.contains(sourcePayload.lexically_relative(base).generic_string())) {
+    bound(sourceSymbols);
+    bound(sourcePayload);
+    }
+
   const auto sourceManifest=BaseImport::sha256File(base/"base-files.json");
   auto& allocator=metadata.GetAllocator();
   rapidjson::Value binding(rapidjson::kObjectType);
-  binding.AddMember("version",1,allocator);
+  binding.AddMember("version",native ? 1 : 2,allocator);
   binding.AddMember("source_fingerprint",rapidjson::Value(identity.fingerprint.c_str(),allocator),allocator);
   binding.AddMember("source_manifest_sha256",rapidjson::Value(sourceManifest.c_str(),allocator),allocator);
-  metadata.AddMember("no_programs_fixture",binding,allocator);
-  identity.fingerprint=BaseImport::sha256("no-programs-fixture-v1\n"+identity.fingerprint+"\n"+sourceManifest);
+  const auto* profileName=native ? "native_script_base" : "no_programs_fixture";
+  metadata.AddMember(rapidjson::StringRef(profileName),binding,allocator);
+  const auto* domain=native ? "native-script-base-v1\n" : "no-programs-fixture-v2\n";
+  identity.fingerprint=BaseImport::sha256(domain+identity.fingerprint+"\n"+sourceManifest);
   metadata["fingerprint"].SetString(identity.fingerprint.c_str(),allocator);
   rapidjson::StringBuffer json;
   rapidjson::Writer<rapidjson::StringBuffer> writer(json);
@@ -216,6 +279,15 @@ void prepareNoProgramsFixture(const fs::path& source, const fs::path& output) {
       fs::create_directories(target.parent_path());
       fs::copy_file(from,target);
       }
+    const auto symbols=ProgramData::symbolMetadataPath(out,program.sha256);
+    if(!hasSymbols) {
+      fs::create_directories(symbols.parent_path());
+      const auto payload=ProgramData::writeSymbolMetadata(symbols,program.sha256,program.data);
+      for(const auto& file:{symbols,payload})
+        kept.emplace(file.lexically_relative(out).generic_string(),BaseImport::sha256File(file));
+      }
+    const auto difference=ProgramData::compare(program.data,ProgramData::readSymbolMetadata(symbols,program.sha256));
+    require(difference.empty(),"fixture program symbol metadata round trip: "+difference);
     BaseImport::writeBaseMetadata(out,identity);
     const auto outputManifest=fixtureJson(out/"base-files.json");
     require(outputManifest["files"].Size()==kept.size(),"fixture manifest file count differs");
@@ -228,8 +300,8 @@ void prepareNoProgramsFixture(const fs::path& source, const fs::path& output) {
     fs::remove_all(out,error);
     throw;
     }
-  std::cout << "No-programs fixture: " << out.string() << " (" << identity.fingerprint
-            << ", " << programs.size() << " program files omitted). The current game cannot use this fixture.\n";
+  std::cout << (native ? "Native script base: " : "No-programs fixture: ") << out.string()
+            << " (" << identity.fingerprint << ", " << programs.size() << " program files omitted).\n";
   }
 
 asset::Material material(const std::string& name, const std::string& texture, asset::MaterialGroup group) {
@@ -454,6 +526,19 @@ int selfTest() {
   rejected = false;
   try { ProgramData::readProgram(file); } catch(const std::exception&) { rejected = true; }
   require(rejected,"truncated program binary must be rejected");
+  fs::remove(bin);
+
+  const auto metadata=programs/"program-symbols.json";
+  const auto payload=ProgramData::writeSymbolMetadata(metadata,sha,program);
+  program.bytecode.clear();
+  diff=ProgramData::compare(program,ProgramData::readSymbolMetadata(metadata,sha));
+  require(diff.empty(),"program symbol metadata without bytecode: "+diff);
+  auto corrupt=gothicglb::readFile(payload);
+  corrupt[0]^=1;
+  gothicglb::writeFile(payload,corrupt.data(),corrupt.size());
+  rejected=false;
+  try { (void)ProgramData::readSymbolMetadata(metadata,sha); } catch(const std::exception&) { rejected=true; }
+  require(rejected,"same-size corrupt program symbol payload must be rejected");
   }
 
   // A dialog line library: archive order, duplicate names, a nested block shared by two roots, a null
@@ -1003,8 +1088,9 @@ int main(int argc, char** argv) {
       BaseImport::build(args[1],args[2]);
       return 0;
       }
-    if(args.size()==3 && args[0]=="no-programs-fixture") {
-      prepareNoProgramsFixture(args[1],args[2]);
+    if(args.size()==3 && (args[0]=="no-programs-fixture" || args[0]=="native-base")) {
+      prepareProgramProjection(args[1],args[2],args[0]=="native-base" ? ProgramProjection::Native
+                                                                    : ProgramProjection::TestFixture);
       return 0;
       }
     if(args.size()==3 && (args[0]=="zen" || args[0]=="verify-zen"))
@@ -1105,6 +1191,7 @@ int main(int argc, char** argv) {
                  "       content-convert sources|verify-sources <gothic dir> <dir>\n"
                  "       content-convert base <gothic dir> <dir>\n"
                  "       content-convert no-programs-fixture <ready stock base> <new dir>\n"
+                 "       content-convert native-base <ready stock base> <new dir>\n"
                  "       content-convert formats\n" << StressBase::usage << WorldCook::usage <<
                  "       " << clusterLodCensusUsage <<
                  "       content-convert --self-test\n";

@@ -94,6 +94,7 @@ class Supervisor:
         self.session = session or SessionFile()
         self.echo = echo  # (process name, line): output as it comes, besides the log
         self.running: dict[str, _Running] = {}
+        self._prepared_base: str | None = None
         self._stop = asyncio.Event()
         self._status: dict[str, dict[str, Any] | None] = {}
 
@@ -152,6 +153,8 @@ class Supervisor:
     async def _prepare(self) -> int:
         assert self.preparation is not None
         r = await self._spawn(self.preparation)
+        assert r.process.stdout is not None
+        output = asyncio.create_task(r.process.stdout.read())
         ended = asyncio.create_task(_exit_code(r.process))
         stopping = asyncio.create_task(self._stop.wait())
         try:
@@ -163,12 +166,17 @@ class Supervisor:
             if code:
                 self.on_event(Event("prepare", "failed", f"exited with code {code}\n{_indent(list(r.tail))}"))
             else:
+                result = os.fsdecode(await output).rstrip("\r\n")
+                path = Path(result)
+                if path.is_absolute() and (path / "base.json").is_file():
+                    self._prepared_base = result
                 self.on_event(Event("prepare", "ready", f"in {time.monotonic() - r.started:.1f}s"))
             return code
         finally:
             ended.cancel()
             stopping.cancel()
-            await asyncio.gather(ended, stopping, return_exceptions=True)
+            output.cancel()
+            await asyncio.gather(ended, stopping, output, return_exceptions=True)
 
     async def _start_services(self) -> bool:
         """False as soon as one service fails to come up (its last output in the event), or on stop()."""
@@ -228,13 +236,16 @@ class Supervisor:
         log.flush()
         self.on_event(Event(proc.name, "starting"))
         proc.cwd.mkdir(parents=True, exist_ok=True)
+        env = child_env(proc.env)
+        if self._prepared_base is not None:
+            env["OPENGOTHIC_BASE"] = self._prepared_base
         process, job = await _start(
             proc.argv,
             cwd=proc.cwd,
-            env=child_env(proc.env),
+            env=env,
             stdin=asyncio.subprocess.DEVNULL,
             # the converter's diagnostics are on stderr; _start puts every process in its own group or job
-            stdout=asyncio.subprocess.DEVNULL if proc.name == "prepare" else asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE if proc.name == "prepare" else asyncio.subprocess.STDOUT,
             limit=1 << 22,
         )

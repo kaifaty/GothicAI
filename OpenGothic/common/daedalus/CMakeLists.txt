@@ -11,5 +11,8 @@ else()
   target_link_libraries(gothic-script-data PRIVATE gothic-native-io)
 endif()
 
-add_library(gothic-daedalus STATIC vm.cpp)
-target_link_libraries(gothic-daedalus PUBLIC gothic-script-data)
+add_library(gothic-script-state STATIC vm.cpp)
+target_link_libraries(gothic-script-state PUBLIC gothic-script-data)
+
+add_library(gothic-daedalus STATIC vm_bytecode.cpp)
+target_link_libraries(gothic-daedalus PUBLIC gothic-script-state)

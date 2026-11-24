@@ -1,4 +1,5 @@
 #include "basestore.h"
+#include "programdata.h"
 #include "videodata.h"
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -236,17 +237,127 @@ std::runtime_error missingBase(const fs::path& gothic, const std::string& reason
     "; start through the launcher or run content-convert resolve <game directory>"+(reason.empty() ? "" : ": "+reason));
   }
 
-void requireRunnableBase(const BaseImport::Identity& identity) {
+std::string_view projectionSource(const BaseImport::Identity& identity, const rapidjson::Value& binding,
+                                  int version, std::string_view salt) {
+  if(!binding.IsObject() || !binding.HasMember("version") || binding["version"]!=version)
+    throw std::runtime_error("invalid projected base identity version");
+  const auto sha = [&](const char* key) -> std::string_view {
+    const auto field = binding.FindMember(key);
+    if(field==binding.MemberEnd() || !field->value.IsString())
+      return {};
+    return {field->value.GetString(),field->value.GetStringLength()};
+    };
+  const auto fingerprint = sha("source_fingerprint");
+  const auto manifest = sha("source_manifest_sha256");
+  if(!fingerprintName(fingerprint) || !fingerprintName(manifest) ||
+     identity.fingerprint!=BaseImport::sha256(std::string(salt)+"\n"+std::string(fingerprint)+"\n"+std::string(manifest)))
+    throw std::runtime_error("invalid projected base fingerprint");
+  return fingerprint;
+  }
+
+bool requireRunnableBase(const BaseImport::Identity& identity, BaseStore::Profile profile) {
   rapidjson::Document doc;
   doc.Parse(identity.json.c_str());
   if(doc.IsObject() && doc.HasMember("no_programs_fixture"))
     throw std::runtime_error("this no-programs fixture is for metadata tests; the current game requires program records");
+  if(!doc.IsObject() || !doc.HasMember("native_script_base"))
+    return false;
+  if(profile.stockProgram.empty())
+    throw std::runtime_error("this base has no executable programs; use the native game or prepare a compatibility base");
+  projectionSource(identity,doc["native_script_base"],1,"native-script-base-v1");
+  return true;
   }
 
-BaseImport::Identity readRunnableBase(const fs::path& dir) {
+BaseImport::Identity readRunnableBase(const fs::path& dir, BaseStore::Profile profile) {
   auto identity=BaseImport::readIdentity(dir);
-  requireRunnableBase(identity);
+  requireRunnableBase(identity,profile);
   return identity;
+  }
+
+rapidjson::Document sourceIdentity(const BaseImport::Identity& identity) {
+  rapidjson::Document doc;
+  doc.Parse(identity.json.data(),identity.json.size());
+  if(doc.IsObject() && doc.HasMember("native_script_base")) {
+    const auto fingerprint = projectionSource(identity,doc["native_script_base"],1,"native-script-base-v1");
+    doc["fingerprint"].SetString(fingerprint.data(),rapidjson::SizeType(fingerprint.size()),doc.GetAllocator());
+    doc.RemoveMember("native_script_base");
+    }
+  return doc;
+  }
+
+rapidjson::Document readBaseJson(const fs::path& file) {
+  std::ifstream input(file,std::ios::binary);
+  const std::string bytes{std::istreambuf_iterator<char>(input),{}};
+  rapidjson::Document json;
+  json.Parse(bytes.data(),bytes.size());
+  if(!json.IsObject() || json.HasParseError())
+    throw std::runtime_error("invalid base JSON: "+file.string());
+  return json;
+  }
+
+void requireNativeProjection(const fs::path& base, std::string_view expectedProgram) {
+  const auto index = ProgramData::readIndex(base/"programs");
+  const auto* game = index.server();
+  if(game==nullptr || (!expectedProgram.empty() && game->recordSha256!=expectedProgram))
+    throw std::runtime_error("native game requires the stock GOTHIC.DAT identity in the base program index");
+
+  const auto metadata = ProgramData::symbolMetadataPath(base,game->recordSha256);
+  const auto payload = ProgramData::symbolMetadataPayloadPath(metadata);
+  const auto manifest = readBaseJson(base/"base-files.json");
+  const auto& files = manifest["files"];
+  const auto find = [&](const fs::path& file) {
+    const auto path = file.lexically_relative(base).generic_string();
+    return std::find_if(files.Begin(),files.End(),[&](const auto& entry) { return entry["path"]==path.c_str(); });
+    };
+  const auto listedPayload = find(payload);
+  if(find(index.dir/"programs.json")==files.End() || find(metadata)==files.End() || listedPayload==files.End())
+    throw std::runtime_error("base manifest has no stock symbol projection; refresh with content-convert resolve <game directory>");
+  const auto projection = readBaseJson(metadata);
+  if(!projection.HasMember("buffer_sha256") || projection["buffer_sha256"]!=(*listedPayload)["sha256"])
+    throw std::runtime_error("base manifest and stock symbol payload checksums differ: "+payload.string());
+  (void)ProgramData::readSymbolMetadata(metadata,game->recordSha256);
+  }
+
+void requireNoProgramPayloads(const fs::path& base) {
+  for(const auto& entry : fs::directory_iterator(base/"programs"))
+    if(entry.path().filename()!="programs.json" || !entry.is_regular_file() || entry.is_symlink())
+      throw std::runtime_error("projected base contains a program payload: "+entry.path().string());
+  }
+
+bool matchesBase(const fs::path& base, const BaseImport::Identity& identity, BaseStore::Profile profile, std::string& reason) {
+  if(!BaseImport::matches(base,identity,false,&reason))
+    return false;
+  if(profile.stockProgram.empty())
+    return true;
+  try {
+    if(requireRunnableBase(identity,profile))
+      requireNoProgramPayloads(base);
+    requireNativeProjection(base,profile.stockProgram);
+    return true;
+    }
+  catch(const std::exception& error) {
+    reason=error.what();
+    return false;
+    }
+  }
+
+BaseStore::Selection metadataAuditBase(const char* explicitBase, const BaseImport::Progress& log, BaseStore::Profile profile) {
+  if(explicitBase==nullptr || *explicitBase=='\0')
+    throw std::runtime_error("metadata audit requires an explicit no-programs fixture in OPENGOTHIC_BASE");
+  const auto base = fs::canonical(explicitBase);
+  const auto identity = BaseImport::readIdentity(base);
+  rapidjson::Document doc;
+  doc.Parse(identity.json.data(),identity.json.size());
+  if(!doc.IsObject() || !doc.HasMember("no_programs_fixture") || doc.HasMember("native_script_base"))
+    throw std::runtime_error("metadata audit requires a no-programs fixture: "+base.string());
+  projectionSource(identity,doc["no_programs_fixture"],2,"no-programs-fixture-v2");
+  std::string reason;
+  if(!BaseImport::matches(base,identity,false,&reason))
+    throw std::runtime_error("no-programs fixture failed verification: "+reason);
+  requireNativeProjection(base,profile.stockProgram);
+  requireNoProgramPayloads(base);
+  log("base: metadata audit fixture "+base.string());
+  return {base,{},{}};
   }
 
 VideoData::Identity readVideoIdentity(const fs::path& directory) {
@@ -405,6 +516,11 @@ void prune(const fs::path& cache, const fs::path& current, const std::atomic_boo
 
 void BaseStore::setPublication(bool enabled) { publicationEnabled=enabled; }
 
+bool BaseStore::metadataAuditEnabled() noexcept {
+  const auto* mode = std::getenv("OPENGOTHIC_NATIVE_SCRIPT_AUDIT");
+  return mode!=nullptr && std::string_view(mode)=="metadata";
+  }
+
 fs::path BaseStore::cacheRoot() {
   fs::path cache;
 #ifdef _WIN32
@@ -419,13 +535,17 @@ fs::path BaseStore::cacheRoot() {
   return fs::weakly_canonical(fs::absolute(cache));
   }
 
-BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport::Files& mounted, const BaseImport::Progress& log, const Import& import) {
+BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport::Files& mounted, const BaseImport::Progress& log,
+                                       const Import& import, Profile profile) {
+  const auto* explicitBase=std::getenv("OPENGOTHIC_BASE");
+  if(metadataAuditEnabled())
+    return metadataAuditBase(explicitBase,log,profile);
   const auto start=std::chrono::steady_clock::now();
   const auto cache=cacheRoot();
   fs::create_directories(cache);
-  const auto* explicitBase=std::getenv("OPENGOTHIC_BASE");
+  const auto* pointerPart=profile.stockProgram.empty() ? "base" : "native_base";
   const auto explicitIdentity=explicitBase && *explicitBase
-                             ? std::optional(readRunnableBase(explicitBase)) : std::nullopt;
+                             ? std::optional(readRunnableBase(explicitBase,profile)) : std::nullopt;
   std::unique_ptr<Lock> cacheLock;
   if(!explicitBase || !*explicitBase) {
     cacheLock=std::make_unique<Lock>(cache/".lock");
@@ -441,15 +561,15 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     for(const auto& source:{destination,stored}) {
       if(source.empty() || !fs::exists(source)) continue;
       try {
-        const auto identity=readRunnableBase(source);
+        const auto identity=readRunnableBase(source,profile);
         if(identity.fingerprint!=fingerprint) throw std::runtime_error("base fingerprint differs");
-        if(!BaseImport::matches(source,identity,false,&rejection)) throw std::runtime_error(rejection);
+        if(!matchesBase(source,identity,profile,rejection)) throw std::runtime_error(rejection);
         if(source!=destination) {
           Lock replacement(cache/(identity.fingerprint+".use"),Lock::TryExclusive);
           if(!replacement.acquired()) throw std::runtime_error("cannot replace a base cache part in use");
           copy(source,destination,identity);
           }
-        Current(cache,gothic).save("base",destination,identity,"");
+        Current(cache,gothic).save(pointerPart,destination,identity,"");
         Selection selected{destination,std::make_shared<Lock>(cache/(identity.fingerprint+".use"),Lock::Shared),{}};
         try { prune(cache,destination); }
         catch(const std::exception& error) { log(std::string("base cache cleanup: ")+error.what()); }
@@ -468,33 +588,46 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   const auto snapshot=installed ? BaseImport::snapshot(gothic,mounted) : std::string();
   BaseImport::Identity identity;
   fs::path pointed;
-  bool reused=current && current->part("base",pointed,identity,installed ? &snapshot : nullptr);
-  if(reused) requireRunnableBase(identity);
+  const auto* expectedSnapshot=installed ? &snapshot : nullptr;
+  bool reused=current && current->part(pointerPart,pointed,identity,expectedSnapshot);
+  if(!reused && current && !profile.stockProgram.empty())
+    reused=current->part("base",pointed,identity,expectedSnapshot);
+  if(reused) requireRunnableBase(identity,profile);
   const auto identify=[&] {
     log("base: identifying installation");
     return BaseImport::identify(gothic,mounted);
     };
   if(explicitBase && *explicitBase) {
-    if(installed && reused) {
-      rapidjson::Document previous, selected;
-      previous.Parse(identity.json.c_str());
-      selected.Parse(explicitIdentity->json.c_str());
-      reused=!previous.HasParseError() && previous.IsObject() && previous.HasMember("format_sha256") &&
-             previous["format_sha256"]==selected["format_sha256"];
+    if(!installed) {
+      identity=*explicitIdentity;
       }
-    if(!installed) identity=*explicitIdentity;
-    else if(!reused) identity=identify();
+    else if(!profile.stockProgram.empty()) {
+      const auto installedSource=sourceIdentity(reused ? identity : identify());
+      if(sourceIdentity(*explicitIdentity)!=installedSource)
+        throw std::runtime_error(std::string("OPENGOTHIC_BASE was prepared from a different installation: ")+explicitBase);
+      identity=*explicitIdentity;
+      }
+    else {
+      if(reused) {
+        rapidjson::Document previous, selected;
+        previous.Parse(identity.json.c_str());
+        selected.Parse(explicitIdentity->json.c_str());
+        reused=!previous.HasParseError() && previous.IsObject() && previous.HasMember("format_sha256") &&
+               previous["format_sha256"]==selected["format_sha256"];
+        }
+      if(!reused) identity=identify();
+      }
     Selection selected{explicitBase,{},{}};
     if(fs::weakly_canonical(fs::path(explicitBase).parent_path())==cache)
       selected.lease=std::make_shared<Lock>(cache/(identity.fingerprint+".use"),Lock::Shared);
     std::string reason;
-    if(!BaseImport::matches(explicitBase,identity,false,&reason))
+    if(!matchesBase(explicitBase,identity,profile,reason))
       throw std::runtime_error(std::string("OPENGOTHIC_BASE does not match this installation or importer: ")+explicitBase+": "+reason);
-    if(current) current->save("base",explicitBase,identity,snapshot);
+    if(current) current->save(pointerPart,explicitBase,identity,snapshot);
     return selected;
     }
   std::string rejection;
-  if(reused && !BaseImport::matches(pointed,identity,false,&rejection)) reused=false;
+  if(reused && !matchesBase(pointed,identity,profile,rejection)) reused=false;
   if(!installed && !reused) throw missingBase(gothic,rejection);
   if(!reused && !import) {
     const auto ready=[](const fs::path& root) {
@@ -512,7 +645,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   auto store=storeRoot();
   const auto finish=[&](const char* source, bool upload=true) {
     Selection selected{destination,{},{}};
-    current->save("base",destination,identity,snapshot);
+    current->save(pointerPart,destination,identity,snapshot);
     if(destination.parent_path()==cache) {
       selected.lease=std::make_shared<Lock>(cache/(identity.fingerprint+".use"),Lock::Shared);
       try { prune(cache,destination); }
@@ -523,7 +656,8 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     log(std::string("base: ")+source+" "+destination.string()+" ("+std::to_string(ms)+" ms)");
     if(upload && publicationEnabled && !store.empty()) {
       // The worker owns a lease too: pruning cannot remove its source while copying.
-      std::packaged_task<void()> publication([store,destination,identity,lease=selected.lease] {
+      std::packaged_task<void()> publication([store,destination,identity,lease=selected.lease,
+                                            stockProgram=std::string(profile.stockProgram)] {
         const auto started=std::chrono::steady_clock::now();
         try {
           const auto root=store/"base";
@@ -531,7 +665,8 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
           Lock lock(root/(identity.fingerprint+".lock"));
           removeInterrupted(root,identity.fingerprint);
           const auto stored=root/identity.fingerprint;
-          if(BaseImport::matches(stored,identity)) return;
+          std::string reason;
+          if(matchesBase(stored,identity,{stockProgram},reason)) return;
           copy(destination,stored,identity);
           const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
           // The worker may outlive Resources and Tempest's logging callback.
@@ -548,7 +683,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     return selected;
     };
   if(reused) return finish(destination.parent_path()==cache ? "cache" : "pointer");
-  if(BaseImport::matches(destination,identity,false,&rejection)) return finish("cache");
+  if(matchesBase(destination,identity,profile,rejection)) return finish("cache");
   if(fs::exists(destination)) log("base: rejected cache directory: "+rejection);
 
   std::unique_ptr<Lock> storeLock;
@@ -567,7 +702,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
       }
     // Also allow copying from a read-only store when opening its lock failed.
     try {
-      if(BaseImport::matches(stored,identity,false,&rejection)) {
+      if((profile.stockProgram.empty() || fs::exists(stored)) && matchesBase(stored,identity,profile,rejection)) {
         copy(stored,destination,identity);
         return finish("store",false);
         }
@@ -587,6 +722,8 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   Temporary temporary(destination);
   log("base: importing installation");
   import(temporary.path);
+  if(!profile.stockProgram.empty() && !matchesBase(temporary.path,identity,profile,rejection))
+    throw std::runtime_error("imported base is not ready for the native game: "+rejection);
   storeLock.reset();
   publish(temporary.path,destination,identity);
   return finish("import");
@@ -596,6 +733,8 @@ BaseStore::Selection BaseStore::resolveVideos(const fs::path& gothic, const fs::
                                              const BaseImport::Progress& log,
                                              std::shared_ptr<std::atomic_bool> cancelled, const Import& import,
                                              const IdentifyVideos& identify) {
+  if(metadataAuditEnabled())
+    throw std::runtime_error("video selection disabled for the metadata audit");
   const auto start=std::chrono::steady_clock::now();
   const auto* fingerprint=std::getenv("OPENGOTHIC_VIDEOS_FINGERPRINT");
   if(fingerprint && !*fingerprint)

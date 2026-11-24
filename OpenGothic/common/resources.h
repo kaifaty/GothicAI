@@ -110,7 +110,7 @@ class Resources final {
     static bool                      isHeadless() { return inst!=nullptr && inst->dev==nullptr; }
     static uint64_t                  generation() { return instGeneration.load(); }
     static const char*               renderer();
-    static void                      loadBase();
+    static void                      loadBase(BaseStore::Profile profile={});
     // The fingerprint of the selected game base (the one OPENGOTHIC_BASE_FINGERPRINT selects), empty before loadBase.
     static std::string               selectedBaseFingerprint();
 

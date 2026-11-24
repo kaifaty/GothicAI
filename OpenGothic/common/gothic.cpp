@@ -16,9 +16,11 @@
 #endif
 
 #include "daedalus/classes.h"
+#include "basestore.h"
 
 #include "game/definitions/definitiontypes.h"
 #include "game/definitions/baseprogram.h"
+#include "game/definitions/gameplaydefinitions.h"
 #include "game/bodyenginepolicy.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
@@ -65,7 +67,11 @@ Gothic::Gothic() {
 
   settings.load(nestedPath({u"system",u"Gothic.ini"},Dir::FT_File),u"Gothic.ini");
 
+#if defined(OPENGOTHIC_NATIVE_GAME)
+  Resources::loadBase({GameplayDefinitions::stockProgram});
+#else
   Resources::loadBase();
+#endif
 
   std::u16string_view mod = CommandLine::inst().modPath();
   if(!mod.empty()){
@@ -632,24 +638,39 @@ std::string_view Gothic::menuMain() const {
   }
 
 std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
+#if defined(OPENGOTHIC_NATIVE_GAME)
+  (void)lang;
+  throw BaseStore::Error("native game requires a prepared catalog for "+std::string(datFile));
+#else
   return createPhoenixVm(loadScript(datFile,lang),datFile);
+#endif
   }
 
 std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(daedalus::DaedalusScript sc, std::string_view datFile) {
+#if defined(OPENGOTHIC_NATIVE_GAME)
+  (void)sc;
+  throw BaseStore::Error("native game requires a prepared catalog for "+std::string(datFile));
+#else
   setupCommonScriptClasses(sc);
 
   auto vm = std::make_unique<daedalus::DaedalusVm>(std::move(sc), daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   enableScriptAudit(*vm,datFile);
   setupVmCommonApi(*vm);
   return vm;
+#endif
   }
 
 void Gothic::enableScriptAudit(daedalus::DaedalusVm& vm, std::string_view datFile) {
+#if defined(OPENGOTHIC_NATIVE_GAME)
+  constexpr bool metadata = true;
+#else
   const auto* enabled = std::getenv("OPENGOTHIC_NATIVE_SCRIPT_AUDIT");
-  if(enabled==nullptr || std::string_view(enabled)!="1")
+  const bool metadata = BaseStore::metadataAuditEnabled();
+  if(!metadata && (enabled==nullptr || std::string_view(enabled)!="1"))
     return;
-  vm.require_native_execution(datFile);
-  Log::i("native-script-audit: armed program=",datFile);
+#endif
+  vm.require_native_execution(datFile,metadata);
+  Log::i("native-script-audit: armed program=",datFile,metadata ? " (metadata only)" : "");
   }
 
 daedalus::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {

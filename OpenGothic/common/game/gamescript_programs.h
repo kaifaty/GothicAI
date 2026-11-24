@@ -24,7 +24,8 @@ class GameScript::StockPrograms final {
   public:
     explicit StockPrograms(GameScript& script);
 
-    bool run(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed);
+    bool run(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly);
+    const storygraph::Program* findPrepared(const daedalus::DaedalusSymbol& fn);
 
   private:
     friend struct NpcDefinitionContract;
@@ -37,7 +38,7 @@ class GameScript::StockPrograms final {
     bool runPrepared(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed);
     const StockStoryPrograms::Catalog* preparedCatalog();
     const Entry& entry(uint32_t id);
-    bool isSupported(const daedalus::DaedalusSymbol& fn, std::unordered_set<uint32_t>& checked);
+    bool isSupported(const daedalus::DaedalusSymbol& fn, std::unordered_set<uint32_t>& checked, bool preparedOnly);
 
     GameScript&                          script;
     std::optional<StockStoryPrograms::Catalog> prepared;

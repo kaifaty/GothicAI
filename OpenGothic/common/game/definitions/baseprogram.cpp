@@ -59,6 +59,13 @@ daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language,
 
 daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language,
                                        std::string_view branch, std::u16string_view hostPath, std::string* recordSha256) {
+#if defined(OPENGOTHIC_NATIVE_GAME)
+  (void)language;
+  (void)branch;
+  (void)hostPath;
+  (void)recordSha256;
+  throw BaseStore::Error("native game requires a prepared catalog for "+std::string(request));
+#else
   try {
     const auto& index = baseProgramIndex();
     const ProgramData::Source* source = nullptr;
@@ -92,4 +99,5 @@ daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language,
     if(Resources::contentCensus()) Resources::contentCensus()->missing(request,error.what());
     throw BaseStore::Error("program "+std::string(request)+": "+error.what());
     }
+#endif
   }

@@ -86,7 +86,7 @@ std::filesystem::path Resources::worldContentDir(const std::filesystem::path& ro
   return root/"worlds"/name;
   }
 
-void Resources::loadBase() {
+void Resources::loadBase(BaseStore::Profile profile) {
   if(!inst->automaticBase.path.empty()) return;
   try {
     const auto gothic=std::filesystem::path(CommandLine::inst().rootPath());
@@ -99,7 +99,7 @@ void Resources::loadBase() {
     inst->automaticBase=BaseStore::resolve(gothic,archives,
                                          [](std::string_view message) {
       Log::i(message);
-      });
+      },{},profile);
     inst->indexBaseContent();
     BaseImport::Files identityLoose;
     const auto identity=BaseImport::readIdentity(inst->automaticBase.path);

@@ -3,11 +3,14 @@
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
 #include "definitionjson.h"
+#include "itemdefinitions.h"
 #include "npcsnapshot.h"
+#include "programdata.h"
 #include "game/definitions/stockstoryprograms.h"
 #include "game/definitions/symbolcatalog.h"
 #include "storygraph/bytecode.h"
 #include "storygraph/exprjson.h"
+#include "worlddata.h"
 
 #include <algorithm>
 #include <optional>
@@ -197,16 +200,50 @@ std::optional<Entry> captureEntry(Catalog& catalog, const DaedalusScript& script
   return entry;
   }
 
-void captureDialogPrograms(Catalog& catalog, DaedalusVm& vm, const storygraph::Bytecode& code) {
-  // Find the same roots as the storygraph tool. Constructors bind only the
-  // source metadata here; the converter provides no engine or world.
+void capturePrograms(Catalog& catalog, DaedalusVm& vm, const storygraph::Bytecode& code,
+                     const std::filesystem::path& base) {
   std::vector<uint32_t> pending;
+  const auto addRoot = [&](std::string_view name) {
+    if(!name.empty())
+      if(const auto* symbol = vm.find_symbol_by_name(name))
+        pending.push_back(symbol->index());
+    };
+  // Find the same dialog roots as the storygraph tool.
   vm.enumerate_instances_by_class_name("C_INFO",[&](auto& symbol) {
     const auto info = vm.init_instance<IInfo>(&symbol);
     for(auto fn : {info->condition,info->information})
       if(fn>0)
         pending.push_back(uint32_t(fn));
     });
+
+  // Item playback uses the first on_state slot of each prepared constructor.
+  const auto items = ItemDefinitions::read(base,stockProgram);
+  for(const auto& [name,item] : items.items)
+    addRoot(item.symbols.at("on_state").front());
+
+  // World triggers and MOBSI callbacks are named by the imported VOB data.
+  const auto visit = [&](const auto& visit, const asset::VirtualObject& vob) -> void {
+    if(const auto* trigger = dynamic_cast<const asset::VTriggerScript*>(&vob))
+      addRoot(trigger->function);
+    if(const auto* mob = dynamic_cast<const asset::VInteractiveObject*>(&vob)) {
+      addRoot(mob->condition_function);
+      if(!mob->on_state_change_function.empty())
+        for(int32_t state=0; state<=mob->state_count; ++state)
+          addRoot(mob->on_state_change_function+"_S"+std::to_string(state));
+      }
+    for(const auto& child : vob.children)
+      if(child!=nullptr)
+        visit(visit,*child);
+    };
+  for(const auto& dir : std::filesystem::directory_iterator(base/"worlds")) {
+    if(!dir.is_directory())
+      continue;
+    const auto world = WorldData::read(dir.path());
+    for(const auto& vob : world.vobs)
+      if(vob!=nullptr)
+        visit(visit,*vob);
+    }
+
   std::set<uint32_t> visited;
   for(size_t i=0; i<pending.size(); ++i) {
     const auto id = pending[i];
@@ -230,6 +267,10 @@ void BaseImport::convertStockStoryPrograms(const std::filesystem::path& base) {
   auto source = NpcSnapshot::load(base);
   if(source.sha256!=stockProgram)
     return;
+  const auto metadata = ProgramData::symbolMetadataPath(base,source.sha256);
+  std::filesystem::create_directories(metadata.parent_path());
+  ProgramData::writeSymbolMetadata(metadata,source.sha256,source.data);
+
   auto script = DaedalusScript::from_program(std::move(source.data));
   std::vector<ScriptSymbolCatalog::Entry> symbols;
   symbols.reserve(script.symbols().size());
@@ -243,7 +284,7 @@ void BaseImport::convertStockStoryPrograms(const std::filesystem::path& base) {
   const storygraph::Bytecode code(vm);
   Catalog catalog;
   captureTransferConstants(catalog,vm);
-  captureDialogPrograms(catalog,vm,code);
+  capturePrograms(catalog,vm,code,base);
   const auto* laresSymbol = vm.find_symbol_by_name("DIA_ADDON_LARES_PATCH_INFO");
   require(laresSymbol!=nullptr && catalog.programs.contains(laresSymbol->index()),"story programs: Lares's function was not captured");
   const auto& lares = catalog.programs.at(laresSymbol->index());
@@ -252,7 +293,7 @@ void BaseImport::convertStockStoryPrograms(const std::filesystem::path& base) {
           "story programs: Lares's function or dependencies changed");
   writeCatalog(base,catalog);
 
-  const auto actual = read(base);
+  const auto actual = StockStoryPrograms::read(base);
   require(actual.programs.size()==catalog.programs.size() && actual.symbols==catalog.symbols &&
           actual.strings==catalog.strings && actual.integers==catalog.integers,
           "story programs: catalog differs after reading");
