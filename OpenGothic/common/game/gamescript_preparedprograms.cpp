@@ -6,7 +6,6 @@
 #include <stdexcept>
 
 #include "gamescript_inventorytransfer.h"
-#include "game/definitions/scriptvars.h"
 #include "game/serialize.h"
 #include "storygraph/nativeexec.h"
 #include "world/objects/item.h"
@@ -200,13 +199,10 @@ class OrnamentDialogHost final : public storygraph::NativeExecutionHost {
       auto* taker = actors[size_t(args[1].inst)];
       const auto item = args[2].i;
       const auto amount = args[3].i;
-      const auto npcRef = [&](Npc* npc) {
-        return ScriptVars::Reference{ScriptVars::ReferenceKind::Npc,world.npcId(npc)};
-        };
       variables.amount = amount;
       variables.item = item;
-      writes.push_back({"B_GIVEINVITEMS.TAKER",npcRef(taker)});
-      writes.push_back({"B_GIVEINVITEMS.GIVER",npcRef(giver)});
+      writes.emplace_back("B_GIVEINVITEMS.TAKER",world.npcId(taker));
+      writes.emplace_back("B_GIVEINVITEMS.GIVER",world.npcId(giver));
 
       transfer = InventoryTransfer::run(giver,taker,uint32_t(item),amount,previousItemName,inventoryNoticeText(catalog));
       if(transfer->itemName)
@@ -216,7 +212,7 @@ class OrnamentDialogHost final : public storygraph::NativeExecutionHost {
       return NativeValue::integer(transfer->value);
       }
 
-    std::vector<ScriptVars::Row> writes;
+    std::vector<std::pair<std::string_view,uint32_t>> writes;
     std::optional<InventoryTransfer::Result> transfer;
 
   private:
@@ -377,10 +373,9 @@ bool GameScript::StockPrograms::runPrepared(const daedalus::DaedalusSymbol& fn, 
   const auto run = storygraph::NativeInterpreter(host).run(entry->second.program);
 
   // The compatibility session still supplies typed instance aliases to legacy callers.
-  for(const auto& [name,value] : host.writes) {
+  for(const auto& [name,id] : host.writes) {
     auto* symbol = binding(name).first;
-    const auto& ref = std::get<ScriptVars::Reference>(value);
-    auto* npc = script.world().npcById(ref.object);
+    auto* npc = script.world().npcById(id);
     symbol->set_instance(npc!=nullptr ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr);
     }
   if(host.transfer) {
