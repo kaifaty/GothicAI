@@ -172,8 +172,27 @@ void fingerprintSelection(const fs::path& root) {
   require(BaseStore::resolve(base,{},observe).path==base && !fs::exists(cache/"current"),
           "explicit base used as game directory must not create a pointer or current lock");
   unsetenv("OPENGOTHIC_BASE_FINGERPRINT");
+
+  const auto projected=root/"native";
+  const auto projection=BaseStore::nativeProjectionIdentity(base);
+  write(projected/"programs/programs.json","{}");
+  write(projected/"definitions/fixture/ready.json","{}");
+  writeBaseFixture(projected,projection);
+  const BaseStore::Profile profile{.stockProgram="fixture", .projectedOnly=true,
+                                 .validateProgramMetadata=[](const fs::path&,std::string_view) {}};
+  setenv("OPENGOTHIC_BASE",projected.c_str(),1);
+  require(BaseStore::resolve(game,{},observe,{},profile).path==projected,
+          "production projection must resolve without symbols");
+  const auto legacy=projected/"definitions/fixture/program-symbols.symbols";
+  write(legacy,"full symbol table");
+  reason.clear();
+  try { (void)BaseStore::resolve(game,{},observe,{},profile); }
+  catch(const std::exception& error) { reason=error.what(); }
+  require(reason.find("native base contains a full symbol table")!=std::string::npos,
+          "production selection must reject even an unlisted full symbol table: "+reason);
+  fs::remove(legacy);
   unsetenv("OPENGOTHIC_BASE");
-  std::cout << "fingerprint selection: cache/store, pointer, missing/corrupt refusal, explicit precedence; direct base has no current pointer/lock\n";
+  std::cout << "fingerprint selection: cache/store, pointer, corrupt and legacy payload refusal, explicit precedence; direct base has no current pointer/lock\n";
   }
 
 void snapshotSelection(const fs::path& root) {
