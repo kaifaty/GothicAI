@@ -93,6 +93,8 @@ std::string recordSha256(const std::filesystem::path& file);
 std::filesystem::path symbolMetadataPath(const std::filesystem::path& base, std::string_view sourceProgramSha256);
 std::filesystem::path symbolMetadataPayloadPath(std::filesystem::path file);
 asset::ProgramRecord readSymbolMetadata(const std::filesystem::path& file, std::string_view sourceProgramSha256);
+// Called after base manifest verification by the native game profile.
+void validateSymbolProjection(const std::filesystem::path& base, std::string_view expectedProgram);
 // Returns the fixed sibling that holds the encoded symbol section.
 std::filesystem::path writeSymbolMetadata(const std::filesystem::path& file, std::string_view sourceProgramSha256,
                                           const asset::ProgramRecord& program);

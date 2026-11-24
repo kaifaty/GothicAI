@@ -25,7 +25,7 @@ class GameScript::StockPrograms final {
     explicit StockPrograms(GameScript& script);
 
     bool run(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly);
-    const storygraph::Program* findPrepared(const daedalus::DaedalusSymbol& fn);
+    const storygraph::Program* findPrepared(const daedalus::DaedalusSymbol& fn, bool requireDependencies);
 
   private:
     friend struct NpcDefinitionContract;

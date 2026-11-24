@@ -3,7 +3,6 @@
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
 #include "definitionjson.h"
-#include "itemdefinitions.h"
 #include "npcsnapshot.h"
 #include "programdata.h"
 #include "game/definitions/stockstoryprograms.h"
@@ -217,9 +216,8 @@ void capturePrograms(Catalog& catalog, DaedalusVm& vm, const storygraph::Bytecod
     });
 
   // Item playback uses the first on_state slot of each prepared constructor.
-  const auto items = ItemDefinitions::read(base,stockProgram);
-  for(const auto& [name,item] : items.items)
-    addRoot(item.symbols.at("on_state").front());
+  for(const auto& name : BaseImport::itemUseFunctions(base/"definitions"/stockProgram/"items.json"))
+    addRoot(name);
 
   // World triggers and MOBSI callbacks are named by the imported VOB data.
   const auto visit = [&](const auto& visit, const asset::VirtualObject& vob) -> void {

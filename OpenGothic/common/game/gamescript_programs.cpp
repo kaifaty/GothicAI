@@ -95,12 +95,17 @@ const StockStoryPrograms::Catalog* GameScript::StockPrograms::preparedCatalog() 
   return prepared ? &*prepared : nullptr;
   }
 
-const storygraph::Program* GameScript::StockPrograms::findPrepared(const daedalus::DaedalusSymbol& fn) {
+const storygraph::Program* GameScript::StockPrograms::findPrepared(const daedalus::DaedalusSymbol& fn, bool requireDependencies) {
   if(vm.find_symbol_by_index(fn.index())!=&fn)
     return nullptr;
   const auto* catalog = preparedCatalog();
   if(catalog==nullptr || !catalog->programs.contains(fn.index()))
     return nullptr;
+  if(requireDependencies) {
+    std::unordered_set<uint32_t> checked;
+    if(!isSupported(fn,checked,true))
+      return nullptr;
+    }
   return &entry(fn.index()).program;
   }
 
@@ -200,12 +205,12 @@ bool GameScript::invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t&
   return stockPrograms->run(fn,result,failed,preparedOnly);
   }
 
-const storygraph::Program* GameScript::preparedStockProgram(const daedalus::DaedalusSymbol& fn) {
+const storygraph::Program* GameScript::preparedStockProgram(const daedalus::DaedalusSymbol& fn, bool requireDependencies) {
   if(!nativeRoutineProgram)
     return nullptr;
   if(!stockPrograms)
     stockPrograms = std::make_unique<StockPrograms>(*this);
-  return stockPrograms->findPrepared(fn);
+  return stockPrograms->findPrepared(fn,requireDependencies);
   }
 
 int32_t GameScript::dialogFunction(daedalus::DaedalusSymbol* fn, bool returns) {

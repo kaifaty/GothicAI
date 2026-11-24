@@ -129,7 +129,7 @@ class GameScript final : public GameRules {
     // The caller binds script context. A rejected root can use the compatibility VM.
     bool         invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed = nullptr,
                                     bool preparedOnly = false);
-    const storygraph::Program* preparedStockProgram(const daedalus::DaedalusSymbol& fn);
+    const storygraph::Program* preparedStockProgram(const daedalus::DaedalusSymbol& fn, bool requireDependencies = false);
     // symbols of ours: the AI director's story variables and npc's
     inline auto& ownSymbols() { return own; }
     std::optional<uint32_t> addDirectorNpcSymbol(std::string_view name, std::string_view like, std::string& why);

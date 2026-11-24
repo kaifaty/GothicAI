@@ -2,6 +2,8 @@
 
 #include "baseidentity.h"
 
+#include <set>
+
 namespace zenkit { class Vfs; enum class LogLevel : std::uint8_t; }
 
 namespace BaseImport {
@@ -25,6 +27,7 @@ int convertFonts(const std::filesystem::path& gothic, const std::filesystem::pat
 int convertPrograms(const std::filesystem::path& gothic, const std::filesystem::path& out, bool verifyOnly);
 // D2: definitions/<program SHA>/items.json, verified against fresh constructor executions.
 int convertItemDefinitions(const std::filesystem::path& base);
+std::set<std::string> itemUseFunctions(const std::filesystem::path& items);
 void convertMenuDefinitions(const std::filesystem::path& base);
 void convertFightDefinitions(const std::filesystem::path& base);
 void convertCameraDefinitions(const std::filesystem::path& base);

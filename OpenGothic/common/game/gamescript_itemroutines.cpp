@@ -661,6 +661,8 @@ void GameScript::loadNativeDeathTrophies() {
         for(const auto& trophy : choices) {
           bool chanceMatches = true;
           if(trophy.chance) {
+            if(randomizer==nullptr)
+              throw std::runtime_error("Invalid unconditional death trophy chance");
             const auto roll = randomizer->get_int();
             chanceMatches = trophy.chance->exact ? roll==trophy.chance->threshold : roll<=trophy.chance->threshold;
             }
@@ -1633,10 +1635,12 @@ bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
 
   const auto& name = symbol.name();
   int32_t result = 0;
+  const bool preparedOnly = !vm.has_legacy_dispatcher();
+  const auto runProgram = [&] { return invokeStockProgram(symbol,result,nullptr,preparedOnly); };
   if(name=="B_SCGETTREASURE_S1") {
     // Digging is conditional on the HERO global and changes nothing for other actors.
     return hlp_getinstanceid(vm.global_self()->get_instance())!=hlp_getinstanceid(vm.global_hero()->get_instance()) ||
-           invokeStockProgram(symbol,result);
+           runProgram();
     }
 
   // Ordinary NPCs bind the hero without opening documents or production menus.
@@ -1655,11 +1659,11 @@ bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
     };
   const auto book=std::ranges::find(mayaBooks,name,&MayaBook::callback);
   if(book==std::end(mayaBooks) && std::ranges::find(callbacks,name)==std::end(callbacks))
-    return runMobEvent(vm,name);
+    return runMobEvent(vm,name) || (preparedOnly && runProgram());
   const auto self = hlp_getinstanceid(vm.global_self()->get_instance());
   const auto hero = hlp_getnpc(int32_t(findSymbolIndex("PC_HERO")));
   if(self==hlp_getinstanceid(hero))
-    return invokeStockProgram(symbol,result);
+    return runProgram();
   if(book!=std::end(mayaBooks)) {
     readMayaBookForNpc(vm,*book,hero);
     return true;
@@ -1667,7 +1671,7 @@ bool GameScript::invokeNativeMobState(const daedalus::DaedalusSymbol& symbol) {
   if(name=="SLEEPABIT_S1") {
     const auto rock = hlp_getnpc(int32_t(findSymbolIndex("PC_ROCKEFELLER")));
     if(self==hlp_getinstanceid(rock))
-      return false;
+      return preparedOnly && runProgram();
     findSymbol("SLEEPABIT_S1.HER")->set_instance(hero);
     findSymbol("SLEEPABIT_S1.ROCK")->set_instance(rock);
     } else {

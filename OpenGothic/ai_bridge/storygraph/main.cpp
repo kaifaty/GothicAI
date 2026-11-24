@@ -26,6 +26,7 @@
 #include "basestoreimport.h"
 #include "check.h"
 #include "execcheck.h"
+#include "game/definitions/stockstoryprograms.h"
 #include "gothicglb.h"
 #include "graphjson.h"
 #include "lifter.h"
@@ -44,6 +45,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -251,9 +253,16 @@ static int run(int argc, char** argv) {
   BaseImport::Files mounted;
   for(const auto& archive:BaseImport::runtimeArchives(gothic))
     if(!archive.mod) mounted.emplace_back(archive.name,archive.size);
-  auto base = BaseStore::ensure(gothic,mounted,[](std::string_view message) {
+  const auto progress = [](std::string_view message) {
     std::fprintf(stderr,"%.*s\n",int(message.size()),message.data());
-    });
+    };
+  const auto* explicitBase = std::getenv("OPENGOTHIC_BASE");
+  const bool nativeOu = ouMessages && explicitBase && *explicitBase && !BaseStore::metadataAuditEnabled() &&
+                        BaseStore::isNativeProjection(explicitBase);
+  const BaseStore::Profile nativeProfile{.stockProgram=StockStoryPrograms::stockProgram, .projectedOnly=true,
+                                         .validateProgramMetadata=ProgramData::validateSymbolProjection};
+  auto base = nativeOu ? BaseStore::resolve(gothic,mounted,progress,{},nativeProfile)
+                       : BaseStore::ensure(gothic,mounted,progress);
   if(importOutput!=nullptr)
     std::cout.rdbuf(importOutput);
   zenkit::Logger::set(zenkit::LogLevel::INFO,{});

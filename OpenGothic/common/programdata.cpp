@@ -504,6 +504,33 @@ fs::path writeSymbolMetadata(const fs::path& file, std::string_view sourceProgra
   return payload;
   }
 
+void validateSymbolProjection(const fs::path& base, std::string_view expectedProgram) {
+  const auto index = readIndex(base/"programs");
+  const auto* game = index.server();
+  require(game!=nullptr && game->recordSha256==expectedProgram,
+          "native game requires the stock GOTHIC.DAT identity in the base program index");
+
+  const auto metadata = symbolMetadataPath(base,expectedProgram);
+  const auto payload = symbolMetadataPayloadPath(metadata);
+  const auto manifest = parseJson(gothicglb::readFile(base/"base-files.json"));
+  require(manifest.HasMember("files") && manifest["files"].IsArray(),"invalid base file manifest");
+  const auto& files = manifest["files"];
+  const auto find = [&](const fs::path& file) {
+    const auto path = file.lexically_relative(base).generic_string();
+    return std::find_if(files.Begin(),files.End(),[&](const auto& entry) {
+      return entry.IsObject() && entry.HasMember("path") && entry["path"]==path.c_str();
+      });
+    };
+  const auto listedPayload = find(payload);
+  require(find(index.dir/"programs.json")!=files.End() && find(metadata)!=files.End() && listedPayload!=files.End(),
+          "base manifest has no stock symbol projection; refresh with content-convert resolve <game directory>");
+  const auto projection = parseJson(gothicglb::readFile(metadata));
+  require(projection.HasMember("buffer_sha256") && listedPayload->HasMember("sha256") &&
+          projection["buffer_sha256"]==(*listedPayload)["sha256"],
+          "base manifest and stock symbol payload checksums differ: "+payload.string());
+  (void)readSymbolMetadata(metadata,expectedProgram);
+  }
+
 std::string recordSha256(const fs::path& file) {
   const auto json = gothicglb::readFile(file);
   const auto bin  = gothicglb::readFile(binaryPath(file));

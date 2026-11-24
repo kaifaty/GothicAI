@@ -155,23 +155,30 @@ void require(bool ok, const std::string& what) {
   if(!ok) throw std::runtime_error(what);
   }
 
-rapidjson::Document fixtureJson(const fs::path& file) {
+rapidjson::Document fixtureJson(const fs::path& file, std::string* sha=nullptr) {
   const auto bytes=gothicglb::readFile(file);
+  const std::string_view raw(reinterpret_cast<const char*>(bytes.data()),bytes.size());
   rapidjson::Document doc;
-  doc.Parse(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+  doc.Parse(raw.data(),raw.size());
   require(!doc.HasParseError() && doc.IsObject(),"invalid JSON: "+file.string());
+  if(sha!=nullptr)
+    *sha=BaseImport::sha256(raw);
   return doc;
   }
 
 enum class ProgramProjection { TestFixture, Native };
 
-void prepareProgramProjection(const fs::path& source, const fs::path& output, ProgramProjection profile) {
+void prepareProgramProjection(const fs::path& source, const fs::path& output, ProgramProjection profile,
+                              bool temporary=false) {
   const bool native=profile==ProgramProjection::Native;
   const auto base=fs::canonical(source);
   const auto out=fs::weakly_canonical(output);
   const auto relative=out.lexically_relative(base);
   require(relative.empty() || *relative.begin()=="..","projection output must be outside the source base");
-  require(!fs::exists(out),"projection output already exists: "+out.string());
+  if(temporary)
+    require(fs::is_directory(out) && fs::is_empty(out),"projection needs an empty temporary output: "+out.string());
+  else
+    require(!fs::exists(out),"projection output already exists: "+out.string());
 
   auto identity=BaseImport::readIdentity(base);
   std::string rejection;
@@ -184,9 +191,10 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
   const auto index=ProgramData::readIndex(base/"programs");
   const auto* game=index.server();
   require(game && game->origin=="host" && game->recordSha256==StockStoryPrograms::stockProgram,
-          "fixture requires the stock game program identity");
+          "projection requires the stock game program identity");
 
-  const auto manifest=fixtureJson(base/"base-files.json");
+  std::string sourceManifest;
+  const auto manifest=fixtureJson(base/"base-files.json",&sourceManifest);
   std::map<std::string,std::string> kept;
   std::set<std::string> programs;
   for(const auto& record:manifest["files"].GetArray()) {
@@ -198,22 +206,22 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     kept.emplace(path,record["sha256"].GetString());
     }
   require(kept.contains("programs/programs.json") && kept.contains("storygraph/story.json"),
-          "fixture source must bind the program index and the prepared story graph");
+          "projection source must bind the program index and the prepared story graph");
 
   const auto bound=[&](const fs::path& path) {
     const auto name=path.lexically_relative(base).generic_string();
-    require(kept.contains(name),"fixture source does not bind required definitions: "+name);
+    require(kept.contains(name),"projection source does not bind required definitions: "+name);
     };
   const auto verify=[&](const ProgramData::Source* source, std::string_view stock, const char* name,
                        auto section, auto read) {
-    require(source && source->recordSha256==stock,"fixture source requires stock "+std::string(name));
+    require(source && source->recordSha256==stock,"projection source requires stock "+std::string(name));
     bound(section(base,stock));
     (void)read(base,stock);
     };
   const auto* fight=ProgramData::fightProgram(index);
-  require(fight && !fight->recordSha256.empty(),"fixture source has no Fight.dat selection");
+  require(fight && !fight->recordSha256.empty(),"projection source has no Fight.dat selection");
   bound(FightDefinitions::section(base,fight->recordSha256));
-  require(!FightDefinitions::read(base,fight->recordSha256).empty(),"fixture source has no fight tactics");
+  require(!FightDefinitions::read(base,fight->recordSha256).empty(),"projection source has no fight tactics");
   verify(ProgramData::cameraProgram(index),CameraDefinitionData::stockProgram,"Camera.dat",
          CameraDefinitionData::section,CameraDefinitionData::read);
   verify(ProgramData::sfxProgram(index),SfxDefinitionData::stockProgram,"Sfx.dat",
@@ -229,18 +237,18 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     if(choice.request!="MENU.DAT" || !choice.source)
       continue;
     require(index.sources[*choice.source].recordSha256==MenuDefinitions::stockProgram,
-            "fixture source has a non-stock MENU.DAT selection");
+            "projection source has a non-stock MENU.DAT selection");
     menuSelected=true;
     }
-  require(menuSelected,"fixture source has no MENU.DAT selection");
+  require(menuSelected,"projection source has no MENU.DAT selection");
   bound(MenuDefinitions::section(base,MenuDefinitions::stockProgram));
   require(MenuDefinitions::read(base,MenuDefinitions::stockProgram).menus.contains("MENU_MAIN"),
-          "fixture source has no MENU_MAIN definition");
+          "projection source has no MENU_MAIN definition");
 
   for(const auto& [name, sha]:index.programs) {
     const auto path="programs/"+name;
     require(programs.contains(path+".json") && programs.contains(path+".bin"),
-            "fixture source does not bind both program record files: "+path);
+            "projection source does not bind both program record files: "+path);
     }
 
   auto program=NpcSnapshot::load(base);
@@ -254,27 +262,30 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     bound(sourcePayload);
     }
 
-  const auto sourceManifest=BaseImport::sha256File(base/"base-files.json");
-  auto& allocator=metadata.GetAllocator();
-  rapidjson::Value binding(rapidjson::kObjectType);
-  binding.AddMember("version",native ? 1 : 2,allocator);
-  binding.AddMember("source_fingerprint",rapidjson::Value(identity.fingerprint.c_str(),allocator),allocator);
-  binding.AddMember("source_manifest_sha256",rapidjson::Value(sourceManifest.c_str(),allocator),allocator);
-  const auto* profileName=native ? "native_script_base" : "no_programs_fixture";
-  metadata.AddMember(rapidjson::StringRef(profileName),binding,allocator);
-  const auto* domain=native ? "native-script-base-v1\n" : "no-programs-fixture-v2\n";
-  identity.fingerprint=BaseImport::sha256(domain+identity.fingerprint+"\n"+sourceManifest);
-  metadata["fingerprint"].SetString(identity.fingerprint.c_str(),allocator);
-  rapidjson::StringBuffer json;
-  rapidjson::Writer<rapidjson::StringBuffer> writer(json);
-  metadata.Accept(writer);
-  identity.json.assign(json.GetString(),json.GetSize());
+  if(native) {
+    identity=BaseStore::nativeProjectionIdentity(identity,sourceManifest);
+    }
+  else {
+    auto& allocator=metadata.GetAllocator();
+    rapidjson::Value binding(rapidjson::kObjectType);
+    binding.AddMember("version",2,allocator);
+    binding.AddMember("source_fingerprint",rapidjson::Value(identity.fingerprint.c_str(),allocator),allocator);
+    binding.AddMember("source_manifest_sha256",rapidjson::Value(sourceManifest.c_str(),allocator),allocator);
+    metadata.AddMember("no_programs_fixture",binding,allocator);
+    identity.fingerprint=BaseImport::sha256("no-programs-fixture-v2\n"+identity.fingerprint+"\n"+sourceManifest);
+    metadata["fingerprint"].SetString(identity.fingerprint.c_str(),allocator);
+    rapidjson::StringBuffer json;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(json);
+    metadata.Accept(writer);
+    identity.json.assign(json.GetString(),json.GetSize());
+    }
 
-  require(fs::create_directories(out),"cannot create fixture output: "+out.string());
+  if(!temporary)
+    require(fs::create_directories(out),"cannot create projection output: "+out.string());
   try {
     for(const auto& [path, sha]:kept) {
       const auto from=base/path;
-      require(from==fs::canonical(from),"fixture source contains a symbolic link: "+from.string());
+      require(from==fs::canonical(from),"projection source contains a symbolic link: "+from.string());
       const auto target=out/path;
       fs::create_directories(target.parent_path());
       fs::copy_file(from,target);
@@ -287,22 +298,51 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
         kept.emplace(file.lexically_relative(out).generic_string(),BaseImport::sha256File(file));
       }
     const auto difference=ProgramData::compare(program.data,ProgramData::readSymbolMetadata(symbols,program.sha256));
-    require(difference.empty(),"fixture program symbol metadata round trip: "+difference);
+    require(difference.empty(),"projection program symbol metadata round trip: "+difference);
     BaseImport::writeBaseMetadata(out,identity);
     const auto outputManifest=fixtureJson(out/"base-files.json");
-    require(outputManifest["files"].Size()==kept.size(),"fixture manifest file count differs");
+    require(outputManifest["files"].Size()==kept.size(),"projection manifest file count differs");
     for(const auto& record:outputManifest["files"].GetArray())
       require(kept.at(record["path"].GetString())==record["sha256"].GetString(),
-              std::string("fixture source file changed: ")+record["path"].GetString());
+              std::string("projection source file changed: ")+record["path"].GetString());
     }
   catch(...) {
-    std::error_code error;
-    fs::remove_all(out,error);
+    if(!temporary) {
+      std::error_code error;
+      fs::remove_all(out,error);
+      }
     throw;
     }
-  std::cout << (native ? "Native script base: " : "No-programs fixture: ") << out.string()
-            << " (" << identity.fingerprint << ", " << programs.size() << " program files omitted).\n";
+  if(!temporary)
+    std::cout << (native ? "Native script base: " : "No-programs fixture: ") << out.string()
+              << " (" << identity.fingerprint << ", " << programs.size() << " program files omitted).\n";
   }
+
+#ifdef GOTHIC_NATIVE_BASE_RESOLVE
+BaseStore::Selection resolveNativeBase(const fs::path& gothic, const BaseImport::Files& archives,
+                                      const BaseImport::Progress& progress, bool explicitSelection) {
+  BaseStore::Profile profile{.stockProgram=StockStoryPrograms::stockProgram,
+                             .validateProgramMetadata=ProgramData::validateSymbolProjection};
+  if(explicitSelection)
+    return BaseStore::resolve(gothic,archives,progress,{},profile);
+
+  profile.projectedOnly=true;
+  try {
+    return BaseStore::resolve(gothic,archives,progress,{},profile);
+    }
+  catch(const std::exception& error) {
+    progress(error.what());
+    }
+
+  auto combined=BaseStore::ensure(gothic,archives,progress);
+  if(combined.publication.valid())
+    combined.publication.get();
+  const auto identity=BaseStore::nativeProjectionIdentity(combined.path);
+  return BaseStore::resolve(gothic,archives,progress,[&](const auto& temporary) {
+    prepareProgramProjection(combined.path,temporary,ProgramProjection::Native,true);
+    },profile,&identity);
+  }
+#endif
 
 asset::Material material(const std::string& name, const std::string& texture, asset::MaterialGroup group) {
   asset::Material m;
@@ -1142,7 +1182,12 @@ int main(int argc, char** argv) {
         if((explicitBase && *explicitBase) || !fingerprint || !*fingerprint)
           for(const auto& archive:BaseImport::runtimeArchives(args[1]))
             if(!archive.mod) archives.emplace_back(archive.name,archive.size);
-        base=BaseStore::ensure(args[1],archives,progress);
+#ifdef GOTHIC_NATIVE_BASE_RESOLVE
+        if(args[0]=="resolve")
+          base=resolveNativeBase(args[1],archives,progress,(explicitBase && *explicitBase) || (fingerprint && *fingerprint));
+        else
+#endif
+          base=BaseStore::ensure(args[1],archives,progress);
         if(base.publication.valid()) base.publication.get();
         selected=base.path;
         }

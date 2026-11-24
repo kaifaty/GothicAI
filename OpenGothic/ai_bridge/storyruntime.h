@@ -58,7 +58,8 @@ class StoryRuntime final {
                                      bool choices = true) const;
 
     // A live query with SELF and OTHER bound by the caller.
-    std::optional<storygraph::Value> evaluate(const storygraph::ExprP& e, std::string& error);
+    std::optional<storygraph::Value> evaluate(const storygraph::ExprP& e, std::string& error,
+                                              storygraph::Externals* externals = nullptr);
     // a condition, with self and other as they are now; nullopt: it could not be computed (logged once as `what`)
     std::optional<bool> test(const storygraph::ExprP& e, std::string_view what);
     // the interpreter of the VM's programs, made again for a new VM
@@ -66,10 +67,8 @@ class StoryRuntime final {
     // a Choice or ClearChoices step ran: the dialog of the director that runs takes it (dialoggraph.h); false: none
     std::function<bool(const storygraph::Step&)> choices;
 
-    // lifting: for conditions, and for the script functions the dialogs run as programs
-    void                    ensureLifter();
-    storygraph::Bytecode&   bytecode();    // after ensureLifter
-    storygraph::Predicates& predicates();  // after ensureLifter
+    storygraph::Program originalProgram(const daedalus::DaedalusSymbol& fn);
+    storygraph::ExprP originalCondition(uint32_t fn, std::string_view dialog);
 
     // self and other bound for a program or a condition outside a dialog; as they were afterwards. nullptr: none
     class Bind final {
@@ -92,6 +91,7 @@ class StoryRuntime final {
   private:
     // the director's variables in this VM: made with their first value if missing
     void                ensureVars();
+    void                ensurePredicates();
 
     std::function<std::string(const std::string&,const std::string&)> ownLine;
 
@@ -103,6 +103,7 @@ class StoryRuntime final {
     std::unique_ptr<storygraph::Bytecode>        code;
     std::unique_ptr<storygraph::Lifter>          lifter;
     std::unique_ptr<storygraph::Predicates>      lifted;
+    std::map<std::string,storygraph::ExprP,std::less<>> preparedConditions;
 
     daedalus::DaedalusVm*                          runFor = nullptr;
     std::unique_ptr<storygraph::Externals>       engine;

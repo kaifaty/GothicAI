@@ -21,6 +21,7 @@
 #include "game/definitions/definitiontypes.h"
 #include "game/definitions/baseprogram.h"
 #include "game/definitions/gameplaydefinitions.h"
+#include "programdata.h"
 #include "game/bodyenginepolicy.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
@@ -68,7 +69,8 @@ Gothic::Gothic() {
   settings.load(nestedPath({u"system",u"Gothic.ini"},Dir::FT_File),u"Gothic.ini");
 
 #if defined(OPENGOTHIC_NATIVE_GAME)
-  Resources::loadBase({GameplayDefinitions::stockProgram});
+  Resources::loadBase({.stockProgram=GameplayDefinitions::stockProgram,
+                       .validateProgramMetadata=ProgramData::validateSymbolProjection});
 #else
   Resources::loadBase();
 #endif

@@ -1,5 +1,4 @@
 #include "basestore.h"
-#include "programdata.h"
 #include "videodata.h"
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -237,6 +236,10 @@ std::runtime_error missingBase(const fs::path& gothic, const std::string& reason
     "; start through the launcher or run content-convert resolve <game directory>"+(reason.empty() ? "" : ": "+reason));
   }
 
+std::string projectionFingerprint(std::string_view salt, std::string_view fingerprint, std::string_view manifest) {
+  return BaseImport::sha256(std::string(salt)+"\n"+std::string(fingerprint)+"\n"+std::string(manifest));
+  }
+
 std::string_view projectionSource(const BaseImport::Identity& identity, const rapidjson::Value& binding,
                                   int version, std::string_view salt) {
   if(!binding.IsObject() || !binding.HasMember("version") || binding["version"]!=version)
@@ -250,7 +253,7 @@ std::string_view projectionSource(const BaseImport::Identity& identity, const ra
   const auto fingerprint = sha("source_fingerprint");
   const auto manifest = sha("source_manifest_sha256");
   if(!fingerprintName(fingerprint) || !fingerprintName(manifest) ||
-     identity.fingerprint!=BaseImport::sha256(std::string(salt)+"\n"+std::string(fingerprint)+"\n"+std::string(manifest)))
+     identity.fingerprint!=projectionFingerprint(salt,fingerprint,manifest))
     throw std::runtime_error("invalid projected base fingerprint");
   return fingerprint;
   }
@@ -260,8 +263,11 @@ bool requireRunnableBase(const BaseImport::Identity& identity, BaseStore::Profil
   doc.Parse(identity.json.c_str());
   if(doc.IsObject() && doc.HasMember("no_programs_fixture"))
     throw std::runtime_error("this no-programs fixture is for metadata tests; the current game requires program records");
-  if(!doc.IsObject() || !doc.HasMember("native_script_base"))
+  if(!doc.IsObject() || !doc.HasMember("native_script_base")) {
+    if(profile.projectedOnly)
+      throw std::runtime_error("expected a production native base without executable programs");
     return false;
+    }
   if(profile.stockProgram.empty())
     throw std::runtime_error("this base has no executable programs; use the native game or prepare a compatibility base");
   projectionSource(identity,doc["native_script_base"],1,"native-script-base-v1");
@@ -285,40 +291,9 @@ rapidjson::Document sourceIdentity(const BaseImport::Identity& identity) {
   return doc;
   }
 
-rapidjson::Document readBaseJson(const fs::path& file) {
-  std::ifstream input(file,std::ios::binary);
-  const std::string bytes{std::istreambuf_iterator<char>(input),{}};
-  rapidjson::Document json;
-  json.Parse(bytes.data(),bytes.size());
-  if(!json.IsObject() || json.HasParseError())
-    throw std::runtime_error("invalid base JSON: "+file.string());
-  return json;
-  }
-
-void requireNativeProjection(const fs::path& base, std::string_view expectedProgram) {
-  const auto index = ProgramData::readIndex(base/"programs");
-  const auto* game = index.server();
-  if(game==nullptr || (!expectedProgram.empty() && game->recordSha256!=expectedProgram))
-    throw std::runtime_error("native game requires the stock GOTHIC.DAT identity in the base program index");
-
-  const auto metadata = ProgramData::symbolMetadataPath(base,game->recordSha256);
-  const auto payload = ProgramData::symbolMetadataPayloadPath(metadata);
-  const auto manifest = readBaseJson(base/"base-files.json");
-  const auto& files = manifest["files"];
-  const auto find = [&](const fs::path& file) {
-    const auto path = file.lexically_relative(base).generic_string();
-    return std::find_if(files.Begin(),files.End(),[&](const auto& entry) { return entry["path"]==path.c_str(); });
-    };
-  const auto listedPayload = find(payload);
-  if(find(index.dir/"programs.json")==files.End() || find(metadata)==files.End() || listedPayload==files.End())
-    throw std::runtime_error("base manifest has no stock symbol projection; refresh with content-convert resolve <game directory>");
-  const auto projection = readBaseJson(metadata);
-  if(!projection.HasMember("buffer_sha256") || projection["buffer_sha256"]!=(*listedPayload)["sha256"])
-    throw std::runtime_error("base manifest and stock symbol payload checksums differ: "+payload.string());
-  (void)ProgramData::readSymbolMetadata(metadata,game->recordSha256);
-  }
-
 void requireNoProgramPayloads(const fs::path& base) {
+  if(!fs::is_regular_file(base/"programs/programs.json"))
+    throw std::runtime_error("projected base has no program index: "+base.string());
   for(const auto& entry : fs::directory_iterator(base/"programs"))
     if(entry.path().filename()!="programs.json" || !entry.is_regular_file() || entry.is_symlink())
       throw std::runtime_error("projected base contains a program payload: "+entry.path().string());
@@ -332,7 +307,9 @@ bool matchesBase(const fs::path& base, const BaseImport::Identity& identity, Bas
   try {
     if(requireRunnableBase(identity,profile))
       requireNoProgramPayloads(base);
-    requireNativeProjection(base,profile.stockProgram);
+    if(profile.validateProgramMetadata==nullptr)
+      throw std::runtime_error("native base profile requires a program metadata validator");
+    profile.validateProgramMetadata(base,profile.stockProgram);
     return true;
     }
   catch(const std::exception& error) {
@@ -354,8 +331,9 @@ BaseStore::Selection metadataAuditBase(const char* explicitBase, const BaseImpor
   std::string reason;
   if(!BaseImport::matches(base,identity,false,&reason))
     throw std::runtime_error("no-programs fixture failed verification: "+reason);
-  requireNativeProjection(base,profile.stockProgram);
   requireNoProgramPayloads(base);
+  if(profile.validateProgramMetadata!=nullptr)
+    profile.validateProgramMetadata(base,profile.stockProgram);
   log("base: metadata audit fixture "+base.string());
   return {base,{},{}};
   }
@@ -521,6 +499,43 @@ bool BaseStore::metadataAuditEnabled() noexcept {
   return mode!=nullptr && std::string_view(mode)=="metadata";
   }
 
+bool BaseStore::isNativeProjection(const fs::path& base) {
+  const auto identity=BaseImport::readIdentity(base);
+  rapidjson::Document doc;
+  doc.Parse(identity.json.data(),identity.json.size());
+  if(!doc.HasMember("native_script_base"))
+    return false;
+  projectionSource(identity,doc["native_script_base"],1,"native-script-base-v1");
+  return true;
+  }
+
+BaseImport::Identity BaseStore::nativeProjectionIdentity(const fs::path& combined) {
+  return nativeProjectionIdentity(BaseImport::readIdentity(combined),BaseImport::sha256File(combined/"base-files.json"));
+  }
+
+BaseImport::Identity BaseStore::nativeProjectionIdentity(const BaseImport::Identity& source, std::string_view sourceManifest) {
+  requireRunnableBase(source,{});
+  if(!fingerprintName(sourceManifest))
+    throw std::runtime_error("invalid combined base manifest checksum");
+  BaseImport::Identity result;
+  result.fingerprint=projectionFingerprint("native-script-base-v1",source.fingerprint,sourceManifest);
+
+  rapidjson::Document doc;
+  doc.Parse(source.json.data(),source.json.size());
+  auto& alloc=doc.GetAllocator();
+  rapidjson::Value binding(rapidjson::kObjectType);
+  binding.AddMember("version",1,alloc);
+  binding.AddMember("source_fingerprint",rapidjson::Value(source.fingerprint.c_str(),alloc),alloc);
+  binding.AddMember("source_manifest_sha256",rapidjson::Value(sourceManifest.data(),rapidjson::SizeType(sourceManifest.size()),alloc),alloc);
+  doc.AddMember("native_script_base",binding,alloc);
+  doc["fingerprint"].SetString(result.fingerprint.c_str(),alloc);
+  rapidjson::StringBuffer json;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(json);
+  doc.Accept(writer);
+  result.json.assign(json.GetString(),json.GetSize());
+  return result;
+  }
+
 fs::path BaseStore::cacheRoot() {
   fs::path cache;
 #ifdef _WIN32
@@ -536,23 +551,27 @@ fs::path BaseStore::cacheRoot() {
   }
 
 BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport::Files& mounted, const BaseImport::Progress& log,
-                                       const Import& import, Profile profile) {
+                                       const Import& import, Profile profile, const BaseImport::Identity* projected) {
   const auto* explicitBase=std::getenv("OPENGOTHIC_BASE");
   if(metadataAuditEnabled())
     return metadataAuditBase(explicitBase,log,profile);
+  if(projected && !requireRunnableBase(*projected,profile))
+    throw std::runtime_error("native projection selection requires a production projected base identity");
   const auto start=std::chrono::steady_clock::now();
   const auto cache=cacheRoot();
   fs::create_directories(cache);
   const auto* pointerPart=profile.stockProgram.empty() ? "base" : "native_base";
   const auto explicitIdentity=explicitBase && *explicitBase
                              ? std::optional(readRunnableBase(explicitBase,profile)) : std::nullopt;
+  if(projected && explicitIdentity && explicitIdentity->fingerprint!=projected->fingerprint)
+    throw std::runtime_error("OPENGOTHIC_BASE selects a different base than the requested native projection");
   std::unique_ptr<Lock> cacheLock;
   if(!explicitBase || !*explicitBase) {
     cacheLock=std::make_unique<Lock>(cache/".lock");
     removeInterrupted(cache);
     }
   const auto* fingerprint=std::getenv("OPENGOTHIC_BASE_FINGERPRINT");
-  if((!explicitBase || !*explicitBase) && fingerprint && *fingerprint) {
+  if(!projected && (!explicitBase || !*explicitBase) && fingerprint && *fingerprint) {
     if(!fingerprintName(fingerprint)) throw std::runtime_error("invalid OPENGOTHIC_BASE_FINGERPRINT");
     const auto destination=cache/fingerprint;
     const auto store=storeRoot();
@@ -590,9 +609,9 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   fs::path pointed;
   const auto* expectedSnapshot=installed ? &snapshot : nullptr;
   bool reused=current && current->part(pointerPart,pointed,identity,expectedSnapshot);
-  if(!reused && current && !profile.stockProgram.empty())
+  if(!reused && current && !profile.stockProgram.empty() && (!profile.projectedOnly || projected))
     reused=current->part("base",pointed,identity,expectedSnapshot);
-  if(reused) requireRunnableBase(identity,profile);
+  if(reused) requireRunnableBase(identity,{profile.stockProgram});
   const auto identify=[&] {
     log("base: identifying installation");
     return BaseImport::identify(gothic,mounted);
@@ -626,9 +645,16 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     if(current) current->save(pointerPart,explicitBase,identity,snapshot);
     return selected;
     }
+  if(projected) {
+    if(installed && sourceIdentity(*projected)!=sourceIdentity(reused ? identity : identify()))
+      throw std::runtime_error("native projection source differs from the installation");
+    reused=reused && identity.fingerprint==projected->fingerprint;
+    }
   std::string rejection;
   if(reused && !matchesBase(pointed,identity,profile,rejection)) reused=false;
-  if(!installed && !reused) throw missingBase(gothic,rejection);
+  if(!projected && profile.projectedOnly && !reused)
+    throw std::runtime_error("no ready native base projection"+(rejection.empty() ? std::string{} : ": "+rejection));
+  if(!projected && !installed && !reused) throw missingBase(gothic,rejection);
   if(!reused && !import) {
     const auto ready=[](const fs::path& root) {
       std::error_code error;
@@ -640,7 +666,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     const auto store=storeRoot();
     if(!ready(cache) && (store.empty() || !ready(store/"base"))) throw missingBase(gothic,rejection);
     }
-  if(!reused) identity=identify();
+  if(!reused) identity=projected ? *projected : identify();
   const auto destination=reused ? pointed : cache/identity.fingerprint;
   auto store=storeRoot();
   const auto finish=[&](const char* source, bool upload=true) {
@@ -657,7 +683,8 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     if(upload && publicationEnabled && !store.empty()) {
       // The worker owns a lease too: pruning cannot remove its source while copying.
       std::packaged_task<void()> publication([store,destination,identity,lease=selected.lease,
-                                            stockProgram=std::string(profile.stockProgram)] {
+                                            stockProgram=std::string(profile.stockProgram),projectedOnly=profile.projectedOnly,
+                                            validateProgramMetadata=profile.validateProgramMetadata] {
         const auto started=std::chrono::steady_clock::now();
         try {
           const auto root=store/"base";
@@ -666,7 +693,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
           removeInterrupted(root,identity.fingerprint);
           const auto stored=root/identity.fingerprint;
           std::string reason;
-          if(matchesBase(stored,identity,{stockProgram},reason)) return;
+          if(matchesBase(stored,identity,{stockProgram,projectedOnly,validateProgramMetadata},reason)) return;
           copy(destination,stored,identity);
           const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
           // The worker may outlive Resources and Tempest's logging callback.
@@ -717,7 +744,9 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   // The current importer supports the installed Gothic II Data/*.vdf set. Never
   // label a base built from a different set (e.g. selected mods) with this identity.
   log("base: identifying installation");
-  if(BaseImport::identify(gothic).json!=identity.json)
+  const bool matchingInstallation = projected ? !installed || sourceIdentity(BaseImport::identify(gothic))==sourceIdentity(identity)
+                                              : BaseImport::identify(gothic).json==identity.json;
+  if(!matchingInstallation)
     throw std::runtime_error("mounted archives differ from the supported installation import");
   Temporary temporary(destination);
   log("base: importing installation");

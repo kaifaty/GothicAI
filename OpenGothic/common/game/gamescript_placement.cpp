@@ -860,7 +860,9 @@ void GameScript::invokeWorldTrigger(std::string_view fn) {
       "EVT_ORNAMENT_SWITCH_FARM_01_FUNC", "EVT_SC_ENTER_LIBRARY",
       };
     int32_t result = 0;
-    if(std::ranges::find(storyTriggers,symbol->name())!=std::end(storyTriggers) && invokeStockProgram(*symbol,result))
+    const bool preparedOnly = !vm.has_legacy_dispatcher();
+    if((preparedOnly || std::ranges::find(storyTriggers,symbol->name())!=std::end(storyTriggers)) &&
+       invokeStockProgram(*symbol,result,nullptr,preparedOnly))
       return;
     }
   vm.call_function(symbol);

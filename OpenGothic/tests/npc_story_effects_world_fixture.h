@@ -253,7 +253,7 @@ void talkPhases(Gothic& gothic) {
   talkTopicAssignments(world,npc,player);
   }
 
-auto storyJournalBeforeSave(GameScript& script) {
+auto storyJournalBeforeSave(GameScript& script, bool nativeOnly) {
   const auto journalStart=script.questLog().questCount();
   const std::string note="StoryGraph contract note";
   const std::string mission="StoryGraph contract mission";
@@ -286,13 +286,16 @@ auto storyJournalBeforeSave(GameScript& script) {
     require(result.ok,result.error.c_str());
     require(journalCalls==0,"live StoryGraph journal effects must bypass VM externals");
   }
-  stockQuestJournalEntry(script,note);
-  const auto requireJournal=[journalStart,note,mission](const QuestLog& journal) {
+  stockQuestJournalEntry(script,note,nativeOnly);
+  std::vector<std::string> entries={"first","second","stock journal helper"};
+  if(!nativeOnly)
+    entries.push_back("stock journal helper");
+  const auto requireJournal=[journalStart,note,mission,entries=std::move(entries)](const QuestLog& journal) {
     require(journal.questCount()==journalStart+2,"StoryGraph journal must ignore absent and invalid effects");
     const auto& first=journal.quest(journalStart);
     const auto& second=journal.quest(journalStart+1);
     require(first.name==note && first.section==QuestLog::Note && first.status==QuestLog::Status::Success &&
-            first.entry==std::vector<std::string>{"first","second","stock journal helper","stock journal helper"},
+            first.entry==entries,
             "StoryGraph journal must preserve note section, valid status and entry order");
     require(second.name==mission && second.section==QuestLog::Mission && second.status==QuestLog::Status::Failed &&
             second.entry.empty(),"a status before creation must create an ordered Mission");
@@ -301,10 +304,10 @@ auto storyJournalBeforeSave(GameScript& script) {
   return requireJournal;
   }
 
-auto storyBeforeSave(World& world) {
+auto storyBeforeSave(World& world, bool nativeOnly) {
   using namespace storygraph::ex;
   auto& script=world.script();
-  const auto requireJournal=storyJournalBeforeSave(script);
+  const auto requireJournal=storyJournalBeforeSave(script,nativeOnly);
   auto& vm=script.getVm();
   constexpr const char* itemName="ITMI_ORNAMENT_ADDON_VATRAS";
   const auto item=script.findSymbolIndex(itemName);
@@ -331,6 +334,9 @@ auto storyBeforeSave(World& world) {
 
   auto& events=NpcDefinitionContract::activityEventsOn(script);
   const bool savedEvents=events;
+  if(nativeOnly)
+    require(savedEvents && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off,
+            "native stock contract requires activity records and events");
   const auto savedQueue=NpcDefinitionContract::queue(*giver);
   const auto savedItem=vm.global_item()->get_instance();
   StoryRuntime story(nullptr);
@@ -357,6 +363,8 @@ auto storyBeforeSave(World& world) {
   std::vector<std::string> original;
   std::string originalItemName,originalNotice;
   for(bool native:{false,true}) {
+    if(nativeOnly && !native)
+      continue;
     if(native && (!savedEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
       continue;
     events=native;
@@ -406,12 +414,12 @@ auto storyBeforeSave(World& world) {
             to->get_instance()==std::static_pointer_cast<daedalus::INpc>(player->handlePtr()) &&
             !name->get_string().empty() && !notice->get_string().empty(),
             "Lares's dialog must write the transfer arguments, item name and notification text");
-    if(native) {
-      require(name->get_string()==originalItemName && notice->get_string()==originalNotice,
-              "the prepared dialog must preserve the localized transfer variables");
-      } else {
+    if(!native) {
       originalItemName=name->get_string();
       originalNotice=notice->get_string();
+      } else if(!nativeOnly) {
+      require(name->get_string()==originalItemName && notice->get_string()==originalNotice,
+              "the prepared dialog must preserve the localized transfer variables");
       }
     require(bytecode==(native ? 0u : 4u),"the dialog and hand-in must use the selected transfer executor");
     auto queue=NpcDefinitionContract::queue(*giver);
@@ -422,10 +430,10 @@ auto storyBeforeSave(World& world) {
               line.i2==2 && line.s1==vm.find_symbol_by_name("FONT_SCREENSMALL")->get_string(),
               "transfer notifications must keep their order, placement, duration and font");
       }
-    if(native)
-      require(activityQueue(*giver)==original,"the native notices must match the original localized text");
-    else
+    if(!native)
       original=activityQueue(*giver);
+    else if(!nativeOnly)
+      require(activityQueue(*giver)==original,"the native notices must match the original localized text");
     }
   const auto itemText=name->get_string();
   vm.global_item()->set_instance(savedItem);
@@ -452,8 +460,8 @@ auto storyBeforeSave(World& world) {
     };
   }
 
-auto storyAndPointRollsBeforeSave(World& world) {
-  const auto requireStory = storyBeforeSave(world);
+auto storyAndPointRollsBeforeSave(World& world, bool nativeOnly) {
+  const auto requireStory = storyBeforeSave(world,nativeOnly);
   static constexpr std::array names = {
     "ZS_STAND_GUARDING_LOOP.RANDOM", "ZS_STAND_ARMSCROSSED_LOOP.RANDOM", "ZS_STAND_WP_LOOP.RANDOM",
     "ZS_STAND_ARMSCROSSED_LOOP.EVENTRANDY", "B_EVENT_PORTAL_EARTHQUAKE.RANDY",

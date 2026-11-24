@@ -3688,17 +3688,7 @@ void itemEffectsDefault() {
           "[GAME] itemEffects must be 1 by default, as in Gothic");
   }
 
-void moverChildSave() {
-  itemEffectsDefault();
-  const auto* game=std::getenv("GOTHIC_DIR");
-  require(game!=nullptr && *game!='\0',"GOTHIC_DIR must point to prepared Gothic II settings");
-  const char* args[]={"gothic-placed-items-contract","-g",game};
-  CommandLine commandLine(3,args);
-  Resources resources;
-  Gothic gothic;
-  gothic.isNpcInDialogFn=[](const Npc*) { return false; };
-  gothic.setupGlobalScripts();
-  GameMusic music;
+void compareLegacyPlacedStartup(Gothic& gothic) {
   pointActivitiesInBothModes(gothic);
   dragonIslandPlacement(gothic);
   const auto placementWorldDifferences=placementFirstWorld(gothic);
@@ -3744,6 +3734,31 @@ void moverChildSave() {
   else std::puts("SKIP item query probes: OPENGOTHIC_LOADPROBE=1 is not enabled");
   benchHelpers(*gothic.player());
   talkPhases(gothic);
+  }
+
+void moverChildSave(bool nativeOnly) {
+  itemEffectsDefault();
+  const auto* game=std::getenv("GOTHIC_DIR");
+  require(game!=nullptr && *game!='\0',"GOTHIC_DIR must point to prepared Gothic II settings");
+  const char* args[]={"gothic-placed-items-contract","-g",game};
+  CommandLine commandLine(3,args);
+  Resources resources;
+  Gothic gothic;
+  gothic.isNpcInDialogFn=[](const Npc*) { return false; };
+  gothic.setupGlobalScripts();
+  GameMusic music;
+  if(nativeOnly) {
+    for(const auto& file : std::filesystem::directory_iterator(baseProgramIndex().dir))
+      require(file.path().filename()=="programs.json","native stock contract requires a base without program payloads");
+    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+    require(gothic.world()!=nullptr && gothic.player()!=nullptr,"native stock contract requires a live world and player");
+    auto& script=gothic.world()->script();
+    require(script.usesVerifiedNpcProgram() && script.getVm().size()==0 &&
+            !NpcDefinitionContract::placements(script).placements.empty(),
+            "native stock contract requires prepared stock placements and no bytecode");
+    } else {
+    compareLegacyPlacedStartup(gothic);
+    }
   const auto findChild=[](World& world) -> const WorldObjects::PlacedItem& {
     const auto& catalogue=world.placedItemCensus();
     const auto child=std::find_if(catalogue.begin(),catalogue.end(),[](const auto& row) { return row.zenId==2839; });
@@ -3772,7 +3787,7 @@ void moverChildSave() {
   savedPose.translate(25,0,0);
   child.item->setObjMatrix(savedPose);
 
-  const auto requireStory=storyAndPointRollsBeforeSave(*gothic.world());
+  const auto requireStory=storyAndPointRollsBeforeSave(*gothic.world(),nativeOnly);
   std::vector<uint8_t> bytes;
   {
     Tempest::MemWriter writer(bytes);
@@ -3806,6 +3821,10 @@ void moverChildSave() {
     require(restored.item->localTransform().data()[i]==savedPose.data()[i],
             "a moved mover-child Item must recover its exact saved pose through /placed-items");
   std::printf("Mover child 2838 -> 2839: catalogue %zu, items %u, identity and saved pose restored\n",catalogueSize,itemCount);
+  if(nativeOnly) {
+    std::puts("Native stock contract: prepared Lares exchange, story state and mover-child pose restored");
+    return;
+    }
   {
     // The record phases against the VM: the polled Loop of OPENGOTHIC_ACTIVITY_EVENTS=0, also after its load.
     const auto* configured=std::getenv("OPENGOTHIC_ACTIVITY_EVENTS");
@@ -3841,12 +3860,18 @@ int main() {
     groundBelowSupport();
     asymmetricLowestPoint();
     irregularSupport();
-    npcLiveSynthetic(npcDefinitions,npcDefinitionsDisabled,placementDefinitions,placementDefinitionsDisabled,
-                     activityDefinitionsSynthetic);
-    const auto* noGameData=std::getenv("OPENGOTHIC_CONTRACT_NO_GAME_DATA");
-    if(noGameData && std::strcmp(noGameData,"1")==0)
-      std::puts("SKIP real game corpus and mover-child save: OPENGOTHIC_CONTRACT_NO_GAME_DATA=1");
-    else moverChildSave();
+    const auto* native=std::getenv("OPENGOTHIC_CONTRACT_NATIVE_STOCK");
+    if(native && std::strcmp(native,"1")==0) {
+      moverChildSave(true);
+      } else {
+      npcLiveSynthetic(npcDefinitions,npcDefinitionsDisabled,placementDefinitions,placementDefinitionsDisabled,
+                       activityDefinitionsSynthetic);
+      const auto* noGameData=std::getenv("OPENGOTHIC_CONTRACT_NO_GAME_DATA");
+      if(noGameData && std::strcmp(noGameData,"1")==0)
+        std::puts("SKIP real game corpus and mover-child save: OPENGOTHIC_CONTRACT_NO_GAME_DATA=1");
+      else
+        moverChildSave(false);
+      }
     std::puts("Placed item census contracts passed");
     return EXIT_SUCCESS;
     }
