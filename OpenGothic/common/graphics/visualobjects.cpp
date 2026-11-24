@@ -1040,6 +1040,7 @@ void VisualObjects::preFrameUpdateLevels() {
     MeshLevels::Selection level;
     uint8_t shadowLevel = 0;
     bool shadowCoarse = false;
+    bool sunLod = false;
     bool probeChanged = false;
     uint32_t joint = 0;
     if(obj.deformCount==0 && py!=0.f && resY>0) {
@@ -1097,7 +1098,7 @@ void VisualObjects::preFrameUpdateLevels() {
           }
         }
       if(obj.bandCluster!=uint32_t(-1))
-        updateLevelBand(obj, height, height*1080.f/float(resY), shadowLevels, fullShadows, level, shadowLevel, shadowCoarse);
+        sunLod = updateLevelBand(obj, height, height*1080.f/float(resY), shadowLevels, fullShadows, level, shadowLevel, shadowCoarse);
       if((level.impostor() || joint!=0u) && obj.levelSub==0 && obj.visible && drawStatic) {
         const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));
         const Vec3 y(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
@@ -1121,7 +1122,9 @@ void VisualObjects::preFrameUpdateLevels() {
     const auto command = level.impostor() ? obj.impostorShadowCmd : obj.cmdId;
     const bool separateShadow = shadowLevel!=level.glb;
     uint32_t shadowCommand = separateShadow ? obj.cmdId : (c.shadowCommandId & 0xFFFFu);
-    if(vsmStats && (c.shadowCommandId >> 16)!=0) {
+    if(sunLod)
+      shadowCommand |= DrawClusters::ShadowSunLod;
+    if(vsmStats && (c.shadowCommandId & (DrawClusters::ShadowVisual | DrawClusters::ShadowCoarse))!=0) {
       shadowCommand |= shadowCoarse ? DrawClusters::ShadowCoarse : DrawClusters::ShadowVisual;
       if(probeChanged)
         shadowCommand |= DrawClusters::ShadowProbeChanged;

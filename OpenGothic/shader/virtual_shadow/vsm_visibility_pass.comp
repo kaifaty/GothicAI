@@ -27,7 +27,7 @@ layout(push_constant, std430) uniform UboPush {
 layout(binding = 0, std140) uniform UboScene    { SceneDesc   scene;         };
 // a cluster and the page entry its sphere touches (vsm_cull_meshlets.comp takes its meshlets): the cluster's id, the
 // entry's index and its bin above 16 bits (vsmSunBin, vsmLampBin), then the meshlets that pass, which the meshlets'
-// pass writes
+// pass writes, and the word offset of an optional whole L4 caster in instanceMem
 layout(binding = 1, std430) writeonly buffer Cnd { uvec4      candidates[];  };
 layout(binding = 2, std430) readonly buffer Mem { uint        instanceMem[]; };
 layout(binding = 3, std140) readonly buffer Bbo { Bucket      bucket[];      };
@@ -113,10 +113,10 @@ bool projectCluster(const Cluster cluster, out vec4 aabb, out float depthMax) {
   // return projectInstance(cluster, aabb, depthMax);
   }
 
-void listCandidate(uint clusterId, uint entry, uint bin) {
+void listCandidate(uint clusterId, uint entry, uint bin, uint sunCaster) {
   const uint at = atomicAdd(vsm.header.candidateCount, 1);
   if(at<push.candidateCap)
-    candidates[at] = uvec4(clusterId, entry | (bin << 16), 0, 0);
+    candidates[at] = uvec4(clusterId, entry | (bin << 16), 0, sunCaster);
   }
 
 
@@ -246,6 +246,21 @@ void runCluster(const uint clusterId, const uint mip) {
   if(!projectCluster(cluster, aabb, depthMax))
     return;
 
+  uint sunCaster = 0u;
+  const uint shadowSunLod = 1u << 19; // DrawClusters::ShadowSunLod
+  if((mip==7u || mip==8u) && (cluster.shadowCommandId & shadowSunLod)!=0u) {
+    const uint tail = (cluster.instanceId+1u)*16u; // SunCaster immediately after the 64-byte instance
+    const float cmPerTexel = uintBitsToFloat(instanceMem[tail+3u]) * clusterLodScale(pullInstance(cluster.instanceId).mat);
+    // Orthographic NDC per cm, independent of the tree's position and the page rectangle.
+    const float ndcPerCm = length(vec3(scene.viewProject[0].x, scene.viewProject[1].x, scene.viewProject[2].x));
+    const float texelsPerCm = ndcPerCm * (0.5*VSM_CLIPMAP_SIZE / float(1u << mip));
+    if(cmPerTexel * texelsPerCm <= 1.0) {
+      if(instanceMem[tail+1u]==0u)
+        return; // the other side of the band submits the same tree whole
+      sunCaster = tail;
+      }
+    }
+
   aabb = vsmPageTableBox(aabb, mip);
 
   ivec4 iaabb = ivec4(ivec2(aabb.xy), ivec2(aabb.zw)+1);
@@ -279,7 +294,7 @@ void runCluster(const uint clusterId, const uint mip) {
       continue;
 #endif
 
-    listCandidate(clusterId, i, vsmSunBin(page, sz));
+    listCandidate(clusterId, i, vsmSunBin(page, sz), sunCaster);
     }
   }
 
@@ -304,7 +319,7 @@ void runClusterOmni(const uint clusterId) {
 
     // imageAtomicAdd(dbg, ivec2(0,1), cluster.meshletCount);
     // imageAtomicAdd(dbg, ivec2(page.x%64,1+page.x/64), cluster.meshletCount);
-    listCandidate(clusterId, i, vsmLampBin(distance(lx.pos, scene.camPos)));
+    listCandidate(clusterId, i, vsmLampBin(distance(lx.pos, scene.camPos)), 0u);
     }
   }
 

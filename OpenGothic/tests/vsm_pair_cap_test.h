@@ -56,12 +56,12 @@ void vsmPairCapRecords(Tempest::Device& device) {
   // mip 2's of 0..256; a lamp hangs 5 m over them and its face 5 looks down on them
   std::vector<uint8_t> scene(sizeof(SceneGlobals::UboGlobal), 0);
   auto sunView = Tempest::Matrix4x4::mkIdentity();
-  sunView.scale(1.f/1024.f, 1.f/1024.f, 1.f);
+  sunView.scale(1.f/1024.f, 1.f/1024.f, 1.f/51200.f);
   std::memcpy(scene.data(), &sunView, sizeof(sunView));
   const auto sunEntry = [](uint32_t mip) { // packVsmPageInfo(ivec3(16,16,mip), ivec2(1))
     return (16u << 1) | (16u << 9) | (mip << 17) | (1u << 24) | (1u << 28);
     };
-  const uint32_t entries[4] = {sunEntry(0), sunEntry(1), 0x1u | (5u << 1) | (1u << 24) | (1u << 28), sunEntry(2)};
+  std::vector<uint32_t> entries = {sunEntry(0), sunEntry(1), 0x1u | (5u << 1) | (1u << 24) | (1u << 28), sunEntry(2)};
   const Light light = {{32.f, 32.f, 500.f}, 1000.f, {1.f, 1.f, 1.f}, 0.f, 0.f, 0.f, {0.f, 0.f}};
 
   // cluster 0: an object of seven meshlets at the instance's origin, the instance scaled by 2. Its cluster's sphere (400)
@@ -122,14 +122,14 @@ void vsmPairCapRecords(Tempest::Device& device) {
   // the packing alone, from slots and counts set here; or a whole frame: the visibility pass, the meshlets' pass and
   // the packing, under cap pairs, with the classes drawn the frame before
   const auto run = [&](bool packOnly, uint32_t cap, const std::array<uint32_t,9>& admitPrev, uint32_t written,
-                       const std::vector<Cmd>& counts, const std::vector<uint32_t>& slots) {
+                       const std::vector<Cmd>& counts, const std::vector<uint32_t>& slots, VisualObjects* trees = nullptr) {
     std::vector<uint8_t> pages(shaders.vsmClear.sizeofBuffer(0, 16), 0);
     Header header = {};
-    header.pageCount    = 4;
+    header.pageCount    = uint32_t(entries.size());
     header.meshletCount = written;
     std::copy(admitPrev.begin(), admitPrev.end(), header.admitPrevBits);
     std::memcpy(pages.data(), &header, sizeof(header));
-    std::memcpy(pages.data()+headerSize, entries, sizeof(entries));
+    std::memcpy(pages.data()+headerSize, entries.data(), entries.size()*sizeof(uint32_t));
     auto pageBuf    = device.ssbo(pages.data(), pages.size());
     auto cmdBuf     = device.ssbo(counts.data(), counts.size()*sizeof(Cmd));
     auto payloadSrc = device.ssbo(slots.data(), slots.size()*sizeof(uint32_t));
@@ -138,6 +138,8 @@ void vsmPairCapRecords(Tempest::Device& device) {
     {
     auto enc = command.startEncoding(device);
     if(!packOnly) {
+      if(trees!=nullptr)
+        trees->prepareGlobals(enc, 0);
       // vsm_clear.comp zeroes its page table: here the receivers' depth of every page, so no cluster is behind them
       enc.setBinding(0, clearPages);
       enc.setBinding(1, pageHiZ);
@@ -150,14 +152,14 @@ void vsmPairCapRecords(Tempest::Device& device) {
         float lodPx, lodProjection, lodHeight;
         uint32_t lodDebug;
         float lodCamera[4], lodForwardAndGuard[4];
-        } push = {2, cap, {}, 0.f, 0.f, 0.f, 0, {}, {}};
+        } push = {trees!=nullptr ? uint32_t(trees->clusters().size()) : 2u, cap, {}, 0.f, 0.f, 0.f, 0, {}, {}};
       static_assert(sizeof(Push)==64);
       enc.setBinding(0, sceneUbo);
       enc.setBinding(1, candidates);
-      enc.setBinding(2, instanceBuf);
-      enc.setBinding(3, bucketBuf);
+      enc.setBinding(2, trees!=nullptr ? trees->instanceSsbo() : instanceBuf);
+      enc.setBinding(3, trees!=nullptr ? trees->drawBuckets().ssbo() : bucketBuf);
       enc.setBinding(4, cmdBuf);
-      enc.setBinding(5, clusterBuf);
+      enc.setBinding(5, trees!=nullptr ? trees->clusters().ssbo() : clusterBuf);
       enc.setBinding(6, lightBuf);
       enc.setBinding(7, pageHiZ);
       enc.setBinding(8, pageBuf);
@@ -166,10 +168,10 @@ void vsmPairCapRecords(Tempest::Device& device) {
       enc.setBinding(11, lodRecords);
       enc.setPushData(&push, sizeof(push));
       enc.setPipeline(shaders.vsmVisibilityPass);
-      enc.dispatchThreads(2, 17);
+      enc.dispatchThreads(push.meshletCount, 17);
 
       struct CullPush { uint32_t pairCap, emit; } cull = {cap, 0};
-      enc.setBinding(7, sphereBuf);
+      enc.setBinding(7, trees!=nullptr ? trees->drawBuckets().meshletSpheres() : sphereBuf);
       enc.setBinding(9, payloadSrc);
       enc.setPipeline(shaders.vsmCullMeshlets);
       for(cull.emit=0; cull.emit<2; ++cull.emit) {
@@ -191,11 +193,13 @@ void vsmPairCapRecords(Tempest::Device& device) {
     enc.setPipeline(shaders.vsmPackDraw1);
     enc.dispatch((cap+127)/128);
     }
+    if(trees!=nullptr)
+      trees->postFrameupdate();
     device.submit(command).wait();
 
     Frame f;
     device.readBytes(pageBuf, &f.header, sizeof(f.header));
-    f.draws.resize(Draws);
+    f.draws.resize(counts.size());
     device.readBytes(cmdBuf, f.draws.data(), f.draws.size()*sizeof(Cmd));
     f.packed.resize(size_t(Slots)*4);
     device.readBytes(payloadDst, f.packed.data(), f.packed.size()*sizeof(uint32_t));
@@ -332,6 +336,158 @@ void vsmPairCapRecords(Tempest::Device& device) {
   const Frame exact = run(false, 17, prefix(Sun2), 0, zero, older);
   require(admitted(exact)==prefix(Sun2) && exact.header.meshletCount==17 && exact.header.pairSpill==0,
           ("a bin drawn the frame before goes in up to the cap and exactly at it"+demand(exact)).c_str());
+
+  // A 20 m tall tree. Its offset from the pivot keeps even m9 above
+  // the existing 32-texel cluster cull. The tree straddles two neighbouring m7 pages at x=0.
+  entries = {sunEntry(6), sunEntry(7), sunEntry(8), sunEntry(9), entries[2], sunEntry(7)-(1u << 1)};
+  Light treeLight = light;
+  treeLight.pos[2] = 40000.f;
+  treeLight.range = 60000.f;
+  lightBuf.update(&treeLight, 0, sizeof(treeLight));
+  asset::StaticMesh model;
+  model.positions = {{-50,0,6000}, {50,0,6000}};
+  model.bbox = {{-50,0,6000}, {50,2000,6000}};
+  model.sub_meshes.resize(2);
+  auto& part = model.sub_meshes[0];
+  part.wedges = {{{0,0,1},{0,0},0}, {{0,0,1},{1,0},1}};
+  for(uint16_t tip=2; tip<=PackedMesh::MaxVert; ++tip) {
+    model.positions.push_back({float(tip)-32.f,2000,6000});
+    part.wedges.push_back({{0,0,1},{0,1},tip});
+    part.triangles.push_back({{0,1,tip}});
+    }
+  model.sub_meshes[1] = part;
+  model.sub_meshes[1].triangles.resize(1); // bark, one meshlet at every level
+  PackedMesh packed(model, PackedMesh::PK_Visual);
+  for(float px : {400.f, 200.f, 100.f})
+    packed.addLevel(model, px);
+  // The fan fills the first meshlet. A separate triangle fits only the positive-x page of m7.
+  part.triangles.pop_back();
+  const auto tip = uint16_t(part.wedges.size());
+  for(auto p : {asset::Vec3{500,1000,6000}, asset::Vec3{510,1000,6000}, asset::Vec3{500,1010,6000}}) {
+    part.wedges.push_back({{0,0,1},{0,0},uint16_t(model.positions.size())});
+    model.positions.push_back(p);
+    }
+  part.triangles.push_back({{tip,uint16_t(tip+1),uint16_t(tip+2)}});
+  model.bbox.max.x = 510;
+  packed.addLevel(model, 81.63f); // forest B's authored L4
+  StaticMesh mesh(packed);
+  mesh.impostor.px = 49.f;
+  auto& mat = mesh.sub[0].material;
+  mat.tex = &Resources::fallbackTexture();
+  mat.alpha = Material::AlphaTest;
+  mat.materialMaps = true;
+  mat.foliage.on = true;
+  mat.foliage.anchor = FoliageWind::AnchorTree;
+  mat.foliage.wind = mat.foliage.flutter = 0.25f;
+  auto& wood = mesh.sub[1].material;
+  wood = mat;
+  wood.alpha = Material::Solid;
+  wood.foliage.wind = wood.foliage.flutter = 0.f;
+  Settings settings;
+  settings.load({}, {});
+  SceneGlobals mainScene;
+  mainScene.setResolution(1920, 1080);
+  using Mode = VisualObjects::BenchShadowLevels;
+  uint32_t totalDemand = 0, totalWritten = 0;
+  const auto checkTree = [&](VisualObjects& trees, VisualObjects::Item& item, float height, float scale, Mode mode,
+                             std::vector<uint32_t> regular, bool whole7, bool whole8, VisualObjects::Item* bark = nullptr) {
+    auto transform = Tempest::Matrix4x4::mkIdentity();
+    transform.scale(scale);
+    item.setObjMatrix(transform);
+    if(bark!=nullptr)
+      bark->setObjMatrix(transform);
+    auto view = Tempest::Matrix4x4::mkIdentity();
+    view.translate(0,-1000.f*scale,-(6000.f + 2000.f*540.f/height)*scale);
+    const auto identity = Tempest::Matrix4x4::mkIdentity();
+    const Tempest::Matrix4x4 shadows[] = {identity, identity};
+    mainScene.setViewProject(view, identity, 1.f, 100000.f, shadows);
+    VisualObjects::benchShadowLevels = mode;
+    trees.preFrameUpdate();
+    const std::vector<Cmd> counts(bark==nullptr ? 2 : 4, zero.front());
+    const Frame f = run(false, Slots, {}, 0, counts, older, &trees);
+    std::vector<DrawClusters::Cluster> clusters(trees.clusters().size());
+    device.readBytes(trees.clusters().ssbo(), clusters.data(), clusters.size()*sizeof(clusters.front()));
+    std::vector<uint32_t> instances(trees.instanceSsbo().byteSize()/sizeof(uint32_t));
+    device.readBytes(trees.instanceSsbo(), instances.data(), instances.size()*sizeof(uint32_t));
+    const uint32_t bins[] = {Sun0+16*6, Sun0+16*7, Sun0+16*8, Sun0+16*9, 8, Sun0+16*7};
+    std::array<uint32_t,std::extent_v<decltype(Header::pairDemand)>> expectedDemand = {};
+    for(uint32_t e=0; e<entries.size(); ++e) {
+      const bool whole = ((e==1 || e==5) && whole7) || (e==2 && whole8);
+      for(size_t draw=0; draw<counts.size(); ++draw) {
+        const bool isBark = draw>=2;
+        const auto& owner = clusters[isBark ? 2 : 0];
+        std::vector<uint32_t> expected;
+        if(draw%2==unsigned(whole)) {
+          if(whole)
+            expected = isBark ? std::vector<uint32_t>{14} : std::vector<uint32_t>{12};
+          if(whole && !isBark && e!=5)
+            expected.push_back(13);
+          if(!whole)
+            expected = isBark ? std::vector<uint32_t>{2,11} : regular;
+          }
+        expectedDemand[bins[e]] += uint32_t(expected.size());
+        std::vector<uint32_t> actual;
+        const auto& cmd = f.draws[draw];
+        for(uint32_t i=0; i<cmd.instanceCount; ++i) {
+          const auto* pair = &f.packed[size_t(cmd.writeOffset+i)*4];
+          if(pair[3]!=e)
+            continue;
+          actual.push_back(pair[1]);
+          require(pair[2]==owner.bucketId && (!whole || pair[0]==owner.instanceId),
+                  "the packed caster keeps its material bucket and the whole caster its owner");
+          if(e==0 && regular.size()==4) { // the emitted sides of the ordinary L0/L1 shadow band
+            const uint32_t mask = instances.at(size_t(pair[0])*16+14);
+            const uint32_t share = (mask >> TreeLevelBand::Bits) & TreeLevelBand::Full;
+            const uint32_t ownerMask = instances.at(size_t(owner.instanceId)*16+14);
+            require((mask & TreeLevelBand::Tag)!=0 && share>0 && share<TreeLevelBand::Full &&
+                    mask==(ownerMask | (pair[1]>=3 ? TreeLevelBand::Coarse : 0u)) &&
+                    (ownerMask & TreeLevelBand::Coarse)==0, "the two emitted levels carry complementary shadow masks");
+            }
+          }
+        std::sort(actual.begin(), actual.end());
+        require(actual==expected, ("wrong shadow meshlets at entry " + std::to_string(e) + ", draw " +
+                std::to_string(draw) + ", height " + std::to_string(height) + ", scale " + std::to_string(scale)).c_str());
+        }
+      }
+    const uint32_t demand = std::accumulate(expectedDemand.begin(), expectedDemand.end(), 0u);
+    require(std::equal(expectedDemand.begin(), expectedDemand.end(), f.header.pairDemand) &&
+            f.header.pairSpill==0 && f.header.meshletCount==demand, "the selected caster is counted and emitted in its bin");
+    totalDemand += std::accumulate(std::begin(f.header.pairDemand), std::end(f.header.pairDemand), 0u);
+    totalWritten += f.header.meshletCount;
+    };
+  {
+    VisualObjects trees(mainScene, packed.bbox());
+    auto item = trees.get(mesh, mat, 0, mesh.sub[0].iboLength, true);
+    checkTree(trees, item, 1000, 1, Mode::On, {0,1}, false, false); // no hierarchy
+  }
+  mesh.treeBough = std::make_unique<TreeBough::Asset>();
+  {
+    VisualObjects trees(mainScene, packed.bbox());
+    auto item = trees.get(mesh, mat, 0, mesh.sub[0].iboLength, true);
+    const auto& whole = trees.drawCommands()[1];
+    require(whole.pMain==nullptr && whole.maxPayload==2 && whole.pVsm!=nullptr &&
+            whole.pVsm!=trees.drawCommands()[0].pVsm &&
+            whole.pVsm==shaders.materialPipeline(mat, DrawCommands::Static, Shaders::T_Vsm, Shaders::options().doBindless),
+            "the reserved whole shadow command uses the material's unmasked alpha-tested VSM pipeline");
+    // At 600 px the regular shadow uses L3. At 800 px it blends L0 and L3.
+    checkTree(trees, item, 600, 1, Mode::On,   {9,10},     true,  true);
+    checkTree(trees, item, 800, 1, Mode::On,   {0,1,9,10}, true,  true);
+    checkTree(trees, item, 800, 2, Mode::On,   {0,1,9,10}, true,  true);
+    checkTree(trees, item, 800, 5, Mode::On,   {0,1,9,10}, false, false);
+    checkTree(trees, item, 300, 1, Mode::Full, {0,1},     false, false);
+    checkTree(trees, item, 300, 1, Mode::Off,  {3,4},     false, false);
+    // At 2.43x the still bark alone fits m7, but the crown's authored wind takes the shared tree over the cutoff.
+    auto bark = trees.get(mesh, wood, mesh.sub[1].iboOffset, mesh.sub[1].iboLength, true);
+    checkTree(trees, item, 800, 2.43f, Mode::On, {0,1,9,10}, false, true, &bark);
+  }
+  mesh.levels.pop_back();
+  {
+    VisualObjects trees(mainScene, packed.bbox());
+    auto item = trees.get(mesh, mat, 0, mesh.sub[0].iboLength, true);
+    checkTree(trees, item, 800, 1, Mode::On, {0,1,9,10}, false, false); // missing L4
+  }
+  VisualObjects::benchShadowLevels = Mode::Auto;
+  std::cout << "spruce shadow LOD: 9 selections, " << totalDemand << " pairs demanded, " << totalWritten << " written\n";
   }
 
 // The layout of the sun's entries and the selection over frames (shadow-flicker.md, «Третий круг»): the engine's own
