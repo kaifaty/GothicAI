@@ -5,6 +5,8 @@
 #include <Tempest/Log>
 #include <Tempest/Painter>
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cassert>
@@ -934,23 +936,46 @@ void VisualObjects::preFrameUpdate() {
 void VisualObjects::preFrameUpdateTrees() {
   if(objectsTree.empty())
     return;
-  const float px = scene.foliageFade();
+
+  // The quantized fade depends on the full mesh and placement, which a tree's submeshes share.
+  // The cache lives for this view update. A collision only costs a fresh evaluation.
+  struct TreeFade {
+    const StaticMesh* mesh = nullptr;
+    Vec3              at, up;
+    FoliageTree::Fade fade;
+    float             reach = 0.f;
+    uint16_t          code = 0;
+    };
+  std::array<TreeFade,64> fades;
+  const Vec3  camera = scene.camPos();
+  const float px     = scene.foliageFade();
+  const auto  wind   = FoliageWind::enabled();
+  constexpr uint32_t treeAnchor = uint32_t(FoliageWind::AnchorTree) << 24;
   for(auto id:objectsTree) {
     auto&       obj  = objects[id];
     const auto* mesh = obj.bucketId->staticMesh;
     if(mesh==nullptr || obj.deformCount>0)
       continue; // a deformed mesh sets its sphere by its points
-    const auto&    mat   = obj.bucketId->mat;
-    const uint32_t bits  = FoliageWind::pack(mat.foliage, FoliageWind::enabled());
-    const float    reach = FoliageTree::reach(mat.foliage, mesh->bbox.bbox[0], mesh->bbox.bbox[1]);
-    const Vec3     at    = Vec3(obj.pos.at(3,0), obj.pos.at(3,1), obj.pos.at(3,2));
-    const float    scale = Vec3(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2)).length();
-    const auto     fade  = FoliageTree::fadeBound(bits, reach, scale, (at-scene.camPos()).length(), px);
-    const uint16_t code  = FoliageTree::fadeCode(fade);
-    if(code==obj.treeFade)
+    const auto& mat = obj.bucketId->mat;
+    assert(FoliageTree::isTree(mat.foliage));
+    const Vec3 at(obj.pos.at(3,0), obj.pos.at(3,1), obj.pos.at(3,2));
+    const Vec3 up(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
+    const auto x = std::bit_cast<uint32_t>(at.x);
+    const auto z = std::bit_cast<uint32_t>(at.z);
+    const auto hash = (x ^ (x >> 17)) ^ std::rotl(z ^ (z >> 11), 11);
+    auto& entry = fades[hash % fades.size()];
+    if(entry.mesh!=mesh || entry.at!=at || entry.up!=up) {
+      const float reach = FoliageTree::reach(mat.foliage, mesh->bbox.bbox[0], mesh->bbox.bbox[1]);
+      const auto  fade  = FoliageTree::fadeBound(treeAnchor, reach, up.length(), (at-camera).length(), px);
+      entry = {mesh, at, up, fade, reach, FoliageTree::fadeCode(fade)};
+      }
+    if(entry.code==obj.treeFade)
       continue;
-    obj.treeFade = code;
-    clustersMem[obj.clusterId].r = mesh->drawn.rConservative + mat.waveMaxAmplitude + FoliageTree::travel(bits, reach, fade);
+    // Keep the material's own bend, flutter and radius growth for its cluster.
+    const auto bits = FoliageWind::pack(mat.foliage, wind);
+    obj.treeFade = entry.code;
+    clustersMem[obj.clusterId].r = mesh->drawn.rConservative + mat.waveMaxAmplitude +
+                                   FoliageTree::travel(bits, entry.reach, entry.fade);
     clustersMem.markClusters(obj.clusterId);
     }
   }
