@@ -8,11 +8,100 @@
 
 #include <algorithm>
 #include <bit>
+#include <map>
+#include <type_traits>
+#include <utility>
 
 using namespace storygraph;
 using daedalus::DaedalusDataType;
 using daedalus::DaedalusInstance;
 using daedalus::DaedalusSymbol;
+
+namespace {
+
+#include "storyactorfields.h"
+
+template<auto Member, class Record>
+decltype(auto) actorElement(Record& record, size_t index) {
+  auto& field = record.*Member;
+  if constexpr(std::is_array_v<std::remove_reference_t<decltype(field)>>)
+    return (field[index]);
+  else
+    return (field);
+  }
+
+template<class Record>
+struct ActorField {
+  size_t size;
+  NativeValue::Type type;
+  NativeValue (*read)(const Record&,size_t);
+  void (*write)(Record&,size_t,const NativeValue&);
+  };
+
+template<class Record, auto Member>
+ActorField<Record> actorFieldDescriptor() {
+  using Field = std::remove_reference_t<decltype(std::declval<Record&>().*Member)>;
+  using Value = std::remove_extent_t<Field>;
+  constexpr size_t size = std::is_array_v<Field> ? std::extent_v<Field> : 1;
+  constexpr bool text = std::is_same_v<Value,std::string>;
+  static_assert(text || std::is_same_v<Value,int32_t> || std::is_enum_v<Value>);
+  return {size, text ? NativeValue::Str : NativeValue::Int,
+          [](const Record& record, size_t index) {
+            const auto& value = actorElement<Member>(record,index);
+            if constexpr(text)
+              return NativeValue::str(value);
+            else if constexpr(std::is_enum_v<Value>)
+              return NativeValue::integer(std::bit_cast<int32_t>(static_cast<std::underlying_type_t<Value>>(value)));
+            else
+              return NativeValue::integer(value);
+            },
+          [](Record& record, size_t index, const NativeValue& value) {
+            auto& field = actorElement<Member>(record,index);
+            if constexpr(text)
+              field = value.s;
+            else if constexpr(std::is_enum_v<Value>)
+              field = static_cast<Value>(std::bit_cast<std::underlying_type_t<Value>>(value.i));
+            else
+              field = value.i;
+            }};
+  }
+
+template<class Record>
+const ActorField<Record>* actorField(std::string_view name) {
+  static const auto fields = [] {
+    std::map<std::string_view,ActorField<Record>,std::less<>> result;
+    actorFields(static_cast<Record*>(nullptr),[&]<auto Member>(std::string_view name) {
+      result.emplace(name,actorFieldDescriptor<Record,Member>());
+      });
+    return result;
+    }();
+  // Returned member references carry the full binding name.
+  constexpr std::string_view prefix = std::is_same_v<Record,NpcRecord> ? "C_NPC." : "C_ITEM.";
+  if(name.starts_with(prefix))
+    name.remove_prefix(prefix.size());
+  const auto found = fields.find(name);
+  return found!=fields.end() ? &found->second : nullptr;
+  }
+
+template<class Record>
+std::optional<NativeValue> readActorField(const Record& record, const NativeSlot& slot, std::string& error) {
+  if(const auto* field = actorField<Record>(slot.name); field!=nullptr && slot.index<field->size)
+    return field->read(record,slot.index);
+  error = "Invalid actor field or index: "+std::string(slot.name);
+  return std::nullopt;
+  }
+
+template<class Record>
+bool writeActorField(Record& record, const NativeSlot& slot, const NativeValue& value, std::string& error) {
+  if(const auto* field = actorField<Record>(slot.name); field!=nullptr && slot.index<field->size && value.type==field->type) {
+    field->write(record,slot.index,value);
+    return true;
+    }
+  error = "Invalid actor field, index or value: "+std::string(slot.name);
+  return false;
+  }
+
+}
 
 class GameScript::StockPrograms::Host final : public NativeExecutionHost {
   public:
@@ -52,6 +141,10 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
     bool hasMember(std::string_view name, uint16_t index) const override {
+      if(const auto* npc = actorField<NpcRecord>(name); npc!=nullptr && index<npc->size)
+        return true;
+      if(const auto* item = actorField<ItemRecord>(name); item!=nullptr && index<item->size)
+        return true;
       for(const auto& fields : owner.members)
         if(const auto field = fields.find(name); field!=fields.end() && index<field->second->count())
           return true;
@@ -79,8 +172,18 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
     std::optional<NativeValue> read(const NativeSlot& slot, std::string& error) override {
       using enum DaedalusDataType;
       const auto context = resolveInstance(slot.context);
-      if(auto* field = npcTrainingField(slot,context.get()))
-        return NativeValue::integer(*field);
+      if(slot.kind==NativeSlot::Member) {
+        if(const auto* npc = dynamic_cast<const NpcRecord*>(context.get()))
+          return readActorField(*npc,slot,error);
+        if(const auto* item = dynamic_cast<const ItemRecord*>(context.get()))
+          return readActorField(*item,slot,error);
+        if(context==nullptr) {
+          if(const auto* npc = actorField<NpcRecord>(slot.name))
+            return npc->type==NativeValue::Str ? NativeValue::str("") : NativeValue::integer(0);
+          if(const auto* item = actorField<ItemRecord>(slot.name))
+            return item->type==NativeValue::Str ? NativeValue::str("") : NativeValue::integer(0);
+          }
+        }
       auto* symbol = resolve(slot,context.get());
       if(slot.kind==NativeSlot::Member && context==nullptr)
         return symbol!=nullptr && symbol->type()==STRING ? NativeValue::str("") : NativeValue::integer(0);
@@ -111,11 +214,11 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
     bool write(const NativeSlot& slot, const NativeValue& value, std::string& error) override {
       using enum DaedalusDataType;
       const auto context = resolveInstance(slot.context);
-      if(effects && value.type==NativeValue::Int) {
-        if(auto* field = npcTrainingField(slot,context.get())) {
-          *field = value.i;
-          return true;
-          }
+      if(effects && slot.kind==NativeSlot::Member) {
+        if(auto* npc = dynamic_cast<NpcRecord*>(context.get()))
+          return writeActorField(*npc,slot,value,error);
+        if(auto* item = dynamic_cast<ItemRecord*>(context.get()))
+          return writeActorField(*item,slot,value,error);
         }
       auto* symbol = resolve(slot,context.get());
       if(!effects || symbol==nullptr || (symbol->is_const() && slot.kind!=NativeSlot::Instance)) {
@@ -258,23 +361,6 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
   private:
-    static int32_t* npcTrainingField(const NativeSlot& slot, DaedalusInstance* context) {
-      if(slot.kind!=NativeSlot::Member)
-        return nullptr;
-      auto* npc = dynamic_cast<daedalus::INpc*>(context);
-      if(npc==nullptr)
-        return nullptr;
-      if(slot.name=="LP" && slot.index==0)
-        return &npc->lp;
-      if(slot.name=="ATTRIBUTE" && slot.index<std::size(npc->attribute))
-        return &npc->attribute[slot.index];
-      if(slot.name=="HITCHANCE" && slot.index<std::size(npc->hitchance))
-        return &npc->hitchance[slot.index];
-      if(slot.name=="AIVAR" && slot.index<std::size(npc->aivar))
-        return &npc->aivar[slot.index];
-      return nullptr;
-      }
-
     NativeValue readState(const ScriptVars::Slot& state, uint16_t index) {
       return std::visit([&](const auto& field) -> NativeValue {
         using T = std::remove_cvref_t<decltype(field)>;
@@ -324,10 +410,8 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
     const Members* classMembers(const DaedalusInstance& inst) const {
-      constexpr size_t count = 5;
-      static const std::array<const std::type_info*,count> types = {
-        &typeid(daedalus::INpc), &typeid(daedalus::IItem), &typeid(daedalus::IInfo),
-        &typeid(daedalus::IFocus), &typeid(daedalus::IMenuItem)
+      static const std::array types = {
+        &typeid(daedalus::IInfo), &typeid(daedalus::IFocus), &typeid(daedalus::IMenuItem)
         };
       for(size_t i=0; i<types.size(); ++i)
         if(types[i]==inst.instance_type())

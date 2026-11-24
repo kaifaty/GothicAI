@@ -33,7 +33,7 @@ class GameScript::StockPrograms final {
     std::unordered_map<std::string_view,Binding> bindings;
     std::unordered_map<uint32_t,daedalus::DaedalusSymbol*> ids;
     std::unordered_map<std::string_view,storygraph::BoundNativeCall> calls;
-    std::array<Members,5> members;
+    std::array<Members,3> members;
   };
 
 struct GameScript::BennetOreDialog final {

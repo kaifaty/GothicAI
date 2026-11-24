@@ -49,14 +49,15 @@ GameScript::StockPrograms::StockPrograms(GameScript& script)
         calls.try_emplace(slot.name(),vm,slot);
       }
 
-    constexpr std::array classes = {"C_NPC","C_ITEM","C_INFO","C_FOCUS","C_MENU_ITEM"};
+    constexpr std::array classes = {"C_INFO","C_FOCUS","C_MENU_ITEM","C_NPC","C_ITEM"};
     for(size_t i=0; i<classes.size(); ++i) {
       const auto* cls = vm.find_symbol_by_name(classes[i]);
       if(cls==nullptr)
         continue;
       for(auto* member : vm.find_class_members(*cls)) {
         const std::string_view field = member->name();
-        members[i].emplace(field.substr(field.find('.')+1),member);
+        if(i<members.size())
+          members[i].emplace(field.substr(field.find('.')+1),member);
         bindSymbol(*member,SymbolKind::Other);
         }
       }

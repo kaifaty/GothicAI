@@ -930,6 +930,26 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
         Guard() { ++BennetLookupAudit::depth; }
         ~Guard() { --BennetLookupAudit::depth; }
         } guard;
+      const auto previousItem=vm.global_item()->get_instance();
+      const auto previousName=actor->handle().name[4];
+      auto item=std::make_shared<daedalus::IItem>(); // A native record with no VM class allocation.
+      item->text[5]="Story field test";
+      vm.global_item()->set_instance(item);
+      rapidjson::Document fields;
+      fields.Parse(R"([
+        {"do":"set","target":["field",["inst","ITEM"],"FLAGS"],"value":["int",-2147483648]},
+        {"do":"set","target":["field",["inst","SELF"],"NAME",4],"value":["field",["inst","ITEM"],"TEXT",5]},
+        {"do":"return","value":["field",["inst","SELF"],"NAME",4]}
+      ])");
+      const auto updated=script.runStoryProgram(storygraph::readProgram(fields,true),actor,hero,true);
+      require(updated.ok && updated.returned.s==item->text[5] && actor->handle().name[4]==item->text[5] &&
+              uint32_t(item->flags)==0x80000000u,"StoryGraph must read and write NPC and item fields without a VM member binding");
+      fields.Parse(R"([{"do":"return","value":["field",["inst","ITEM"],"NAME",1]}])");
+      const auto wrongIndex=script.runStoryProgram(storygraph::readProgram(fields,true),actor,hero,true);
+      require(!wrongIndex.ok && wrongIndex.started,"the NPC name array must not extend an item's scalar name");
+      actor->handle().name[4]=previousName;
+      vm.global_item()->set_instance(previousItem);
+
       std::string symbolError;
       directorNpcId=script.addDirectorNpcSymbol(directorNpc,actorName,symbolError);
       require(directorNpcId.has_value(),symbolError.c_str());
