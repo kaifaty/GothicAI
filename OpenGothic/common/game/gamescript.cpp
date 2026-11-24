@@ -147,6 +147,8 @@ template<class T>
 constexpr NativeValue::Type externalType() {
   if constexpr(std::is_integral_v<T>) {
     return NativeValue::Int;
+    } else if constexpr(std::is_same_v<T,float>) {
+    return NativeValue::Float;
     } else if constexpr(std::is_same_v<T,std::string_view>) {
     return NativeValue::Str;
     } else {
@@ -159,6 +161,8 @@ template<class T>
 T externalArgument(const NativeValue& value, const BoundNativeCall::ResolveActor& resolve) {
   if constexpr(std::is_integral_v<T>) {
     return static_cast<T>(value.i);
+    } else if constexpr(std::is_same_v<T,float>) {
+    return value.f;
     } else if constexpr(std::is_same_v<T,std::string_view>) {
     return value.s;
     } else {
@@ -255,20 +259,20 @@ void GameScript::initCommon() {
   bindExternal("wld_senduntrigger",              &GameScript::wld_senduntrigger);
   bindExternal("wld_israining",                  &GameScript::wld_israining);
 
-  bindExternal("mdl_setvisual",                  &GameScript::mdl_setvisual);
-  bindExternal("mdl_setvisualbody",              &GameScript::mdl_setvisualbody);
-  bindExternal("mdl_setmodelfatness",            &GameScript::mdl_setmodelfatness);
-  bindExternal("mdl_applyoverlaymds",            &GameScript::mdl_applyoverlaymds);
+  bindNativeExternal("mdl_setvisual",                  &GameScript::mdl_setvisual);
+  bindNativeExternal("mdl_setvisualbody",              &GameScript::mdl_setvisualbody);
+  bindNativeExternal("mdl_setmodelfatness",            &GameScript::mdl_setmodelfatness);
+  bindNativeExternal("mdl_applyoverlaymds",            &GameScript::mdl_applyoverlaymds);
   bindExternal("mdl_applyoverlaymdstimed",       &GameScript::mdl_applyoverlaymdstimed);
   bindExternal("mdl_removeoverlaymds",           &GameScript::mdl_removeoverlaymds);
-  bindExternal("mdl_setmodelscale",              &GameScript::mdl_setmodelscale);
+  bindNativeExternal("mdl_setmodelscale",              &GameScript::mdl_setmodelscale);
   bindExternal("mdl_startfaceani",               &GameScript::mdl_startfaceani);
   bindExternal("mdl_applyrandomani",             &GameScript::mdl_applyrandomani);
   bindExternal("mdl_applyrandomanifreq",         &GameScript::mdl_applyrandomanifreq);
   bindExternal("mdl_applyrandomfaceani",         &GameScript::mdl_applyrandomfaceani);
 
-  bindExternal("npc_settofightmode",             &GameScript::npc_settofightmode);
-  bindExternal("npc_settofistmode",              &GameScript::npc_settofistmode);
+  bindNativeExternal("npc_settofightmode",             &GameScript::npc_settofightmode);
+  bindNativeExternal("npc_settofistmode",              &GameScript::npc_settofistmode);
   bindExternal("npc_isinstate",                  &GameScript::npc_isinstate);
   bindNativeExternal("npc_isinroutine",                &GameScript::npc_isinroutine);
   bindExternal("npc_wasinstate",                 &GameScript::npc_wasinstate);
@@ -341,8 +345,8 @@ void GameScript::initCommon() {
   bindNativeExternal("npc_clearinventory",             &GameScript::npc_clearinventory);
   bindExternal("npc_getattitude",                &GameScript::npc_getattitude);
   bindExternal("npc_getpermattitude",            &GameScript::npc_getpermattitude);
-  bindExternal("npc_setattitude",                &GameScript::npc_setattitude);
-  bindExternal("npc_settempattitude",            &GameScript::npc_settempattitude);
+  bindNativeExternal("npc_setattitude",                &GameScript::npc_setattitude);
+  bindNativeExternal("npc_settempattitude",            &GameScript::npc_settempattitude);
   bindExternal("npc_hasbodyflag",                &GameScript::npc_hasbodyflag);
   bindExternal("npc_getlasthitspellid",          &GameScript::npc_getlasthitspellid);
   bindExternal("npc_getlasthitspellcat",         &GameScript::npc_getlasthitspellcat);

@@ -5,6 +5,7 @@
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
 
+#include <functional>
 #include <unordered_map>
 
 namespace NpcDefinitionRuntime {
@@ -41,9 +42,10 @@ Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScri
                  std::string_view sha256);
 void observeCalls(daedalus::DaedalusVm& vm, const Definitions& definitions,
                   const std::filesystem::path& base, std::string_view sha256);
-// The game and its contract share this choice of definition or VM constructor.
-// Engine calls use the VM's registered external, exactly as a script BE instruction does.
+// The observer, when present, receives the original VM arguments before the engine operation.
+using ApplyExternal = std::function<bool(const daedalus::DaedalusSymbol&, const Call&,
+                                         const std::function<void()>& observe)>;
 bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::INpc>& npc,
                 daedalus::DaedalusSymbol* symbol, const Definitions& definitions,
-                daedalus::DaedalusSymbol* definitionSymbol = nullptr);
+                daedalus::DaedalusSymbol* definitionSymbol = nullptr, const ApplyExternal& applyExternal = {});
 }

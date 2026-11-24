@@ -182,7 +182,7 @@ void NpcDefinitionRuntime::observeCalls(daedalus::DaedalusVm& vm, const Definiti
 
 bool NpcDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::INpc>& npc,
                                       daedalus::DaedalusSymbol* symbol, const Definitions& definitions,
-                                      daedalus::DaedalusSymbol* definitionSymbol) {
+                                      daedalus::DaedalusSymbol* definitionSymbol, const ApplyExternal& applyExternal) {
   LoadProbe::Npcs::Initialization probe;
   const auto* source=definitionSymbol ? definitionSymbol : symbol;
   const auto found=source ? definitions.npcs.find(source->index()) : definitions.npcs.end();
@@ -206,8 +206,19 @@ bool NpcDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::share
       }
     else {
       const auto& call=std::get<Call>(step);
-      for(const auto& argument:call.args) push(vm,argument,npc);
       const auto* function=vm.find_symbol_by_index(call.function);
+      const auto pushArguments = [&] {
+        for(const auto& argument:call.args)
+          push(vm,argument,npc);
+        };
+      if(!call.deferred && applyExternal) {
+        std::function<void()> observe;
+        if(vm.has_external_observer())
+          observe = [&] { vm.observe_bound_external(*function,pushArguments); };
+        if(applyExternal(*function,call,observe))
+          continue;
+        }
+      pushArguments();
       if(call.deferred) {
         if(!NpcHelperRuntime::invoke(vm,npc,function,definitions.helpers)) vm.unsafe_call_bl(function);
         }
