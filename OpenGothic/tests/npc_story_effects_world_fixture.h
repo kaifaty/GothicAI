@@ -1165,6 +1165,22 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
               static_cast<daedalus::IItem*>(npcOre->handlePtr().get()),nullptr} &&
           vm.pop_int()==0x12345678,
           "the external probe must see exact actors and leave the VM stack intact");
+
+  vm.register_external("NPC_GETNEARESTWP",std::function<std::string(NpcRef)>{[](NpcRef) -> std::string {
+    throw std::runtime_error("The VM waypoint callback must not run for a native story call");
+    }});
+  const auto expectedWaypoint=NpcEngineCalls::nearestWaypoint(world,*bandit);
+  const auto nearest=script.callStoryFunction("NPC_GETNEARESTWP",bandit,hero,{bandit});
+  require(!expectedWaypoint.empty() && nearest.ok && nearest.returned.type==storygraph::NativeValue::Str &&
+          nearest.returned.s==expectedWaypoint,"native waypoint lookup must return the engine's owning string");
+  vm.register_external("AI_WAIT",std::function<void(NpcRef,float)>{[](NpcRef,float) {
+    throw std::runtime_error("The VM wait callback must not run for a native story call");
+    }});
+  Contract::queue(*bandit).clear();
+  const auto waited=script.callStoryFunction("AI_WAIT",bandit,hero,{bandit,0.25f});
+  const auto* queued=bandit->aiQueueFront();
+  require(waited.ok && queued && queued->act==AI_Wait && queued->i0==250,
+          "native wait must keep the original floating-point seconds and enqueue 250 ms");
   gothic.clearGame().reset();
 #endif
   }

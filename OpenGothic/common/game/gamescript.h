@@ -482,13 +482,7 @@ class GameScript final : public GameRules {
       };
 
     template<class R, class... P>
-    std::function<R(P...)> externalCallback(const std::string& name, R(GameScript::*function)(P...));
-
-    template<class R, class... P>
     void bindExternal(const std::string& name, R(GameScript::*function)(P...));
-
-    template<class R, class... P>
-    void bindNativeExternal(const std::string& name, R(GameScript::*function)(P...));
 
     // StartupFloor: the NPC arguments of an external about to run.
     template <class ... A>
