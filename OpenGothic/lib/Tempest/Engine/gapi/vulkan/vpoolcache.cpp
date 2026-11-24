@@ -107,9 +107,13 @@ void VPoolCache::notifyDestroy(const AbstractGraphicsApi::NoCopy* res) {
   }
 
 void VPoolCache::notifyUpdate(const VDescriptorArray& arr, uint32_t element) {
-  // Cached sets hold a copy of the array, and the frame binds those copies: a slot update
-  // must reach every one of them. They are bound only where the array is bound, so the
-  // caller's guarantee that the GPU is done with the array covers them as well.
+  const Range range{element, 1};
+  notifyUpdate(arr, std::span(&range,1));
+  }
+
+void VPoolCache::notifyUpdate(const VDescriptorArray& arr, std::span<const Range> ranges) {
+  // Both forms of cached set hold copies of the array. The caller waits for
+  // GPU use of the array and its cached copies before this update.
   std::lock_guard<std::mutex> guard(sync);
 
   // The source set has already been updated, so copying to cached sets must not allocate.
@@ -121,17 +125,19 @@ void VPoolCache::notifyUpdate(const VDescriptorArray& arr, uint32_t element) {
         const auto i = std::countr_zero(mask);
         if(d.bindings.data[i]!=&arr)
           continue;
-        VkCopyDescriptorSet& cx = cpy[cnt++];
-        cx.sType           = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
-        cx.srcSet          = arr.set();
-        cx.srcArrayElement = element;
-        cx.dstSet          = d.set;
-        cx.dstBinding      = uint32_t(i);
-        cx.dstArrayElement = element;
-        cx.descriptorCount = 1;
-        if(cnt==MaxBindings) {
-          vkUpdateDescriptorSets(dev.device.impl, 0, nullptr, cnt, cpy);
-          cnt = 0;
+        for(const auto& range : ranges) {
+          VkCopyDescriptorSet& cx = cpy[cnt++];
+          cx.sType           = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
+          cx.srcSet          = arr.set();
+          cx.srcArrayElement = range.first;
+          cx.dstSet          = d.set;
+          cx.dstBinding      = uint32_t(i);
+          cx.dstArrayElement = range.first;
+          cx.descriptorCount = range.count;
+          if(cnt==MaxBindings) {
+            vkUpdateDescriptorSets(dev.device.impl, 0, nullptr, cnt, cpy);
+            cnt = 0;
+            }
           }
         }
       }

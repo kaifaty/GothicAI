@@ -213,6 +213,24 @@ DescriptorArray Device::descriptors(const Texture2d * const *tex, size_t size, c
   return d;
   }
 
+std::optional<size_t> Device::updateDescriptors(DescriptorArray& dst, const std::vector<const Texture2d*>& tex, bool initialize) {
+  if(!dst.supportsBatchUpdates())
+    return std::nullopt;
+  Detail::SmallArray<AbstractGraphicsApi::Texture*,32> arr(tex.size());
+  for(size_t i=0; i<tex.size(); ++i)
+    arr[i] = tex[i]!=nullptr ? tex[i]->impl.handler : nullptr;
+  return dst.impl.handler->update(arr.get(),tex.size(),initialize);
+  }
+
+std::optional<size_t> Device::updateDescriptors(DescriptorArray& dst, const std::vector<const StorageBuffer*>& buf, bool initialize) {
+  if(!dst.supportsBatchUpdates())
+    return std::nullopt;
+  Detail::SmallArray<AbstractGraphicsApi::Buffer*,32> arr(buf.size());
+  for(size_t i=0; i<buf.size(); ++i)
+    arr[i] = buf[i]!=nullptr ? buf[i]->impl.impl.handler : nullptr;
+  return dst.impl.handler->update(arr.get(),buf.size(),initialize);
+  }
+
 Swapchain Device::swapchain(SystemApi::Window* w) const {
   return Swapchain(api.createSwapchain(w,impl.dev));
   }

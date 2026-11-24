@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <atomic>
+#include <optional>
 #include <vector>
 #include <string_view>
 
@@ -594,6 +595,9 @@ namespace Tempest {
       struct AccelerationStructure:Shared {};
       struct DescArray:NoCopy {
         virtual void setTexture(size_t index, Texture* texture);
+        virtual bool supportsBatchUpdates() const { return false; }
+        virtual std::optional<size_t> update(Texture* const*, size_t, bool) { return std::nullopt; }
+        virtual std::optional<size_t> update(Buffer* const*, size_t, bool) { return std::nullopt; }
         };
       struct BarrierDesc {
         const Texture*   texture   = nullptr;

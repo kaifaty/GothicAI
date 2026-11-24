@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <mutex>
+#include <span>
 
 #include "vulkan_sdk.h"
 
@@ -35,6 +36,8 @@ class VPoolCache {
     void             setupLimits();
     void             notifyDestroy(const AbstractGraphicsApi::NoCopy* res);
     void             notifyUpdate(const VDescriptorArray& arr, uint32_t element);
+    struct Range { uint32_t first, count; };
+    void             notifyUpdate(const VDescriptorArray& arr, std::span<const Range> ranges);
 
     VkDescriptorPool allocPool();
     void             freePool(VkDescriptorPool p);

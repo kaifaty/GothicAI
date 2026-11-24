@@ -19,6 +19,9 @@ class VDescriptorArray : public AbstractGraphicsApi::DescArray {
 
     size_t size() const;
     void setTexture(size_t index, AbstractGraphicsApi::Texture* texture) override;
+    bool supportsBatchUpdates() const override { return true; }
+    std::optional<size_t> update(AbstractGraphicsApi::Texture* const* tex, size_t count, bool initialize) override;
+    std::optional<size_t> update(AbstractGraphicsApi::Buffer* const* buf, size_t count, bool initialize) override;
     auto   set() const -> VkDescriptorSet { return dset; }
 
     NonUniqResId     nonUniqId = NonUniqResId::I_None;
@@ -27,6 +30,9 @@ class VDescriptorArray : public AbstractGraphicsApi::DescArray {
     void alloc(VkDescriptorSetLayout lay, VDevice& dev, ShaderReflection::Class cls, size_t cnt);
     void populate(VDevice &dev, AbstractGraphicsApi::Texture **tex, size_t cnt, uint32_t mipLevel, const Sampler *smp);
     void populate(VDevice &dev, AbstractGraphicsApi::Buffer  **buf, size_t cnt);
+    template<class Resource, class Describe>
+    std::optional<size_t> updateSlots(std::vector<DSharedPtr<Resource*>>& retained, Resource* const* src,
+                                      bool initialize, VkDescriptorType type, Describe describe);
 
     VDevice&         dev;
     size_t           cnt  = 0;
@@ -35,6 +41,10 @@ class VDescriptorArray : public AbstractGraphicsApi::DescArray {
     VkSampler        sampler = VK_NULL_HANDLE;
     uint32_t         mipLevel = uint32_t(-1);
     bool             textureArray = false;
+    // Retain the payloads of arrays that are updated in place. A recycled
+    // address must never look like the previously written resource.
+    std::vector<AbstractGraphicsApi::PTexture> textures;
+    std::vector<AbstractGraphicsApi::PBuffer>  buffers;
   };
 
 class VDescriptorHeapArray : public AbstractGraphicsApi::DescArray {
