@@ -191,7 +191,7 @@ PlacementDefinitionRuntime::Definitions PlacementDefinitionRuntime::resolve(
             }
           resolved.args.push_back(std::move(argument));
           }
-        steps.push_back(std::move(resolved));
+        steps.emplace_back(std::in_place_type<Call>,std::move(resolved));
         }
       definitions.placements.emplace(symbol->index(),std::move(steps));
       }

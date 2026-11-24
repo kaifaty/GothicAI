@@ -7,7 +7,7 @@ set(BUILD_SHARED_LIBS OFF)
 
 option(OPENGOTHIC_ENABLE_FRAME_PROFILE "Compile opt-in frame profiling diagnostics" OFF)
 option(OPENGOTHIC_ENABLE_APP_CADENCE "Compile the normal-game death cadence benchmark" OFF)
-option(OPENGOTHIC_LEGACY_DAEDALUS "Link the legacy Daedalus interpreter into the game and headless runner" ON)
+option(OPENGOTHIC_LEGACY_DAEDALUS "Link the legacy Daedalus interpreter into the game and headless runner" OFF)
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)

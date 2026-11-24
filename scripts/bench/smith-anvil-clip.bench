@@ -1,6 +1,7 @@
 # Д4.1, the pair of clips «оригинал | своё»: Harad (VLK_412_HARAD) at the anvil, ZS_SMITH_ANVIL.
-# By default the occupation runs from its record in the base; OPENGOTHIC_ACTIVITY_RECORDS=0 films the same through
-# the VM. His routine: fire 10:00-10:10, anvil 10:10-10:20, fire again. World time runs 14.5x: 10 game minutes ~ 41 s,
+# The default build runs the occupation from its record in the base. For comparison through the VM, use a
+# separate legacy build with OPENGOTHIC_ACTIVITY_RECORDS=0 and select it with BENCH_HOST=local NO_BUILD=1 GAME_BIN=...
+# His routine: fire 10:00-10:10, anvil 10:10-10:20, fire again. World time runs 14.5x: 10 game minutes ~ 41 s,
 # so the minute of the clip shows him leave the fire, walk to the anvil, work and walk back at the end of the row.
 # A fixed camera over the smithy yard (fire NW_CITY_SMITH_FIRE on the left, anvil in front), the hero out of view.
 # @timeout 600

@@ -35,7 +35,7 @@
 scripts/build-engine.sh
 ```
 
-Сборки для игры на Mac, Windows и Linux используют режим без диспетчера Daedalus. Лаунчер через соседний конвертер готовит базу для проверенной «Ночи Ворона» и передаёт её игре и сервисам.
+Новая конфигурация CMake по умолчанию собирает игру без диспетчера Daedalus. На Unix тот же режим используется для `gothic-body-runner`. Чтобы переключить ранее настроенный каталог, задайте `-DOPENGOTHIC_LEGACY_DAEDALUS=OFF` при конфигурации или используйте новый каталог. Лаунчер через соседний конвертер готовит базу для проверенной «Ночи Ворона» и передаёт её игре и сервисам. Метаданные символов доступны StoryGraph и загрузке старых сохранений.
 
 Для модов с исходными DAT соберите комплект совместимости в отдельном каталоге и укажите его `Gothic2Notr` в `paths.game_bin` лаунчера. С ним используется соседний `content-convert` той же сборки.
 
@@ -43,6 +43,8 @@ scripts/build-engine.sh
 cmake -S OpenGothic -B OpenGothic/build-legacy -G Ninja -DOPENGOTHIC_LEGACY_DAEDALUS=ON
 cmake --build OpenGothic/build-legacy --target Gothic2Notr
 ```
+
+Полные `gothic-placed-items-contract` и `gothic-basecontent-contract` собирайте отдельными целями в `build-legacy`, где для сверки доступна исходная VM. В штатной сборке запускайте `gothic-placed-items-contract` с `OPENGOTHIC_CONTRACT_NATIVE_STOCK=1` и готовой базой «Ночи Ворона». Синтетический `gothic-npc-day-contract` сам линкует эталонную VM и запускается из штатной сборки без данных игры.
 
 Изменения из upstream OpenGothic при необходимости переносятся вручную: движок сильно отличается от оригинала.
 
@@ -258,6 +260,7 @@ SCENARIO=m3 ASR=voxtral scripts/e2e.sh
 - **Vulkan — Linux SDK LunarG той же версии 1.4.357.0, что Windows:** пакеты 22.04 (1.3.204) старше заголовков, которые нужны Tempest (`VK_EXT_descriptor_heap`, `VK_KHR_maintenance5`). Архив сверяется с SHA-256, закреплённым в workflow, и с опубликованным LunarG (`sdk.lunarg.com/sdk/sha/…`). Из SDK берутся только заголовки, `libvulkan.so` для линковки и `glslangValidator`; в архив игры Vulkan не кладётся.
 - **Звук:** OpenAL Soft собирается с бэкендами ALSA, PulseAudio и PipeWire, как на Ryzen (`libasound2-dev`, `libpulse-dev`, `libpipewire-0.3-dev`); библиотеки он открывает сам при запуске, поэтому в `NEEDED` их нет.
 - **Проверки job:** `bash -n` и `shellcheck` скриптов Linux, импорт сервисов, `content-convert --self-test`, отказ `content-convert resolve` на пустой папке, код 2 у `gothic-launcher setup --check` без «не собран» и «не найден uv», JSON с кодом 1 у `gothic-launcher check` пустой папки. Проверки идут с одноразовыми `HOME`, `XDG_*` и `OPENGOTHIC_BASE_CACHE` в `$RUNNER_TEMP`. Модульные тесты Python на Linux гоняет `tests.yml`.
+- **Проверка Daedalus.** Перед упаковкой Linux-job собирает в том же каталоге `gothic-body-runner` и проверяет оба бинарника через `engine_link_census.py --check-native-game`. Любой ненулевой код останавливает job. После проверки runner переносится во временный каталог раннера.
 - **Упаковка — [`scripts/linux/package.sh`](../scripts/linux/package.sh)**, аналог `scripts/windows/package.ps1`. Белый список в раскладке репозитория: `Setup-GothicAI.sh`, `Start-GothicAI.sh`, `scripts/linux/common.sh`, инструкция, `LICENSE`; исходники и lock-файлы `launcher/core`, `server`, `asr-service`, `tts-service`, `libs/chatgpt-auth` без тестов; все файлы `OpenGothic/build/opengothic/` (сейчас `Gothic2Notr` и `content-convert`), `storygraph`; `tools/uv/uv` с лицензиями; `licenses/` с `SOURCE.txt` и заметкой о рантайме GCC. Итог — `GothicAI-linux-x64-r<run>-<sha7>.tar.gz` (tar сохраняет права на запуск), манифест с SHA-256 каждого файла и для каждого ELF — архитектура, `NEEDED` и наибольшая `GLIBC_`, и `SHA256SUMS`. Скрипт отказывает, если попал запрещённый файл (список `package.ps1` плюс `.o` и `.a`), ELF не x86-64, в `NEEDED` есть библиотека вне списка системных (части glibc, `ld-linux-x86-64.so.2`, `libvulkan.so.1`, `libX11.so.6`, `libXcursor.so.1`, `libasound.so.2`), нужна `GLIBC_` новее 2.35 или есть `GLIBCXX_`/`CXXABI_`. Официальной сборке `uv` дополнительно разрешён `libgcc_s.so.1`: Rust связывает его динамически, а ставит его каждая система с glibc (glibc сама загружает его для `pthread_cancel`). Тест на синтетическом дереве с подменённым `readelf` — `scripts/tests/test_linux_package.py`.
 - **Локально тот же архив** собирают на Ubuntu 22.04 с теми же пакетами: `CC=gcc-13 CXX=g++-13 VULKAN_SDK=<SDK>/x86_64 LIBRARY_PATH=<SDK>/x86_64/lib/VulkanLoader/lib PATH=<SDK>/x86_64/bin:$PATH scripts/linux/build.sh`, затем `scripts/linux/package.sh --uv-tar … --uv-licenses … --out-dir … --name …`. Сборку на более новой системе `package.sh`, скорее всего, отклонит по версии glibc.
 
