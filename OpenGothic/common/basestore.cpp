@@ -580,13 +580,15 @@ fs::path BaseStore::cacheRoot() {
   }
 
 BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport::Files& mounted, const BaseImport::Progress& log,
-                                       const Import& import, Profile profile, const BaseImport::Identity* projected) {
+                                       const Import& import, Profile profile, const BaseImport::Identity* projected,
+                                       const fs::path& explicitSelection) {
 #ifdef _WIN32
   const auto* explicitName=_wgetenv(L"OPENGOTHIC_BASE");
 #else
   const auto* explicitName=std::getenv("OPENGOTHIC_BASE");
 #endif
-  const auto explicitBase=explicitName!=nullptr ? fs::path(explicitName) : fs::path();
+  const auto explicitBase=!explicitSelection.empty() ? explicitSelection :
+                          explicitName!=nullptr ? fs::path(explicitName) : fs::path();
   if(!profile.projectedOnly && metadataAuditEnabled())
     return metadataAuditBase(explicitBase,log,profile);
   if(projected && !requireRunnableBase(*projected,profile))

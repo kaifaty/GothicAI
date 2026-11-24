@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Packs the prebuilt Linux x64 release into one .tar.gz, with its build manifest and SHA256SUMS: the Linux
+# Packs the prebuilt Linux x64 release and offline tools into .tar.gz archives with manifests and SHA256SUMS: the Linux
 # counterpart of scripts/windows/package.ps1. Runs after scripts/linux/build.sh and reads that build's
 # outputs. The archive holds what a player runs, copied by whitelist into the repository's own layout, so
 # the launcher finds everything where it looks:
 #   Setup-GothicAI.sh, Start-GothicAI.sh, START_HERE.linux.ru.md, LICENSE, scripts/linux/common.sh
 #   launcher/core, server, asr-service, tts-service, libs/chatgpt-auth
 #                                          sources, pyproject.toml, uv.lock, .python-version (no tests)
-#   OpenGothic/build/opengothic/           Gothic2Notr, content-convert and every other file of that folder
-#   OpenGothic/ai_bridge/storygraph/build/ storygraph
+#   OpenGothic/build/opengothic/           Gothic2Notr and its runtime files
+#   OpenGothic/ai_bridge/storygraph/build/ storygraph (native OU reader)
 #   tools/uv/                              the pinned official uv and its licenses
 #   licenses/                              the licenses of everything compiled in or shipped
 # tar keeps the executable bits. Python and the locked wheels are not packed: Setup downloads them once
 # through uv.
+# The tools archive keeps the original paths of content-convert and the offline storygraph.
 #
 # The archive is refused when something private or build-only slipped in, when an ELF binary is not
 # x86-64, needs a library outside the system list below, needs glibc newer than 2.35 or needs libstdc++
@@ -81,9 +82,11 @@ sha256() {
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 stage="$OUT_DIR/$NAME"
-rm -rf "$stage"
-mkdir -p "$stage"
-work="$(mktemp -d)"
+tools_name="$NAME-tools"
+tools_stage="$OUT_DIR/$tools_name"
+rm -rf "$stage" "$tools_stage"
+mkdir -p "$stage" "$tools_stage"
+work="$(mktemp -d "$OUT_DIR/.package.XXXXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
 copy_into() {  # <source file> <relative target>
@@ -110,14 +113,15 @@ for project in "${PYTHON_PROJECTS[@]}"; do
   done < <(find "$ROOT/$project/src" -type f -print0)
 done
 
-# the game, its base and video converter, and every other file of their output folder
-for needed in "$GAME/Gothic2Notr" "$GAME/content-convert" "$STORYGRAPH/storygraph"; do
+# the game and the native dialogue reader
+for needed in "$GAME/Gothic2Notr" "$GAME/content-convert" "$STORYGRAPH/storygraph" "$STORYGRAPH/storygraph-ou"; do
   [[ -x "$ROOT/$needed" ]] || fail "not built: $ROOT/$needed (scripts/linux/build.sh)"
 done
 while IFS= read -r -d '' file; do
+  [[ "$file" == "$ROOT/$GAME/content-convert" ]] && continue
   copy_from_repo "${file#"$ROOT/"}"
 done < <(find "$ROOT/$GAME" -maxdepth 1 -type f -print0)
-copy_from_repo "$STORYGRAPH/storygraph"
+copy_into "$ROOT/$STORYGRAPH/storygraph-ou" "$STORYGRAPH/storygraph"
 
 # uv, pinned and checked by the caller
 mkdir -p "$work/uv" "$stage/tools/uv"
@@ -164,13 +168,14 @@ repository; scripts/linux/build.sh rebuilds and relinks it.
 EOF
 add_license "$work/SOURCE.txt" SOURCE.txt
 
-# refuse anything private or build-only
-bad=()
-while IFS= read -r -d '' file; do
-  relative="${file#"$stage/"}"
-  if forbidden "$relative"; then bad+=("$relative"); fi
-done < <(find "$stage" -type f -print0 | sort -z)
-((${#bad[@]} == 0)) || fail "not for the archive: ${bad[*]}"
+# the offline programs keep their paths and corresponding source notices
+(
+  stage="$tools_stage"
+  copy_from_repo "$GAME/content-convert"
+  copy_from_repo "$STORYGRAPH/storygraph"
+  copy_from_repo LICENSE
+)
+cp -Rp "$stage/licenses" "$tools_stage/licenses"
 
 # x86-64 ELF binaries that need only the system's libraries, glibc up to 2.35 and no libstdc++
 is_elf() { [[ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" == 7f454c46 ]]; }
@@ -180,70 +185,86 @@ version_needs() {  # the version names of the "Version needs" section, one per l
     /^Version (symbols|definition) section/ { needs = 0 }
     needs && match($0, /Name: [^ ]+/) { print substr($0, RSTART + 6, RLENGTH - 6) }'
 }
-binaries="$work/binaries.tsv"
-: > "$binaries"
-while IFS= read -r -d '' file; do
-  is_elf "$file" || continue
-  relative="${file#"$stage/"}"
-  machine="$("$READELF" -h --wide "$file" | sed -n 's/^ *Machine: *//p')"
-  [[ "$machine" == *X86-64* ]] || fail "not an x86-64 binary: $relative ($machine)"
-  needed="$("$READELF" -d --wide "$file" | sed -n 's/.*(NEEDED).*\[\(.*\)\].*/\1/p')"
-  allowed=("${SYSTEM_LIBRARIES[@]}")
-  if [[ "$relative" == tools/uv/uv ]]; then allowed+=("${UV_LIBRARIES[@]}"); fi
-  for library in $needed; do
-    known=0
-    for system in "${allowed[@]}"; do [[ "$library" == "$system" ]] && known=1; done
-    ((known)) || fail "$relative needs $library, which is neither linked in nor part of the player's system"
-  done
-  versions="$(version_needs "$file")"
-  glibc=''
-  for version in $versions; do
-    case "$version" in
-      GLIBCXX_* | CXXABI_*)
-        fail "$relative needs libstdc++ ($version): link it statically (-static-libstdc++)" ;;
-      GLIBC_[0-9]*)
-        number="${version#GLIBC_}"
-        newest="$(printf '%s\n%s\n' "$GLIBC_MAX" "$number" | sort -V | tail -1)"
-        [[ "$newest" == "$GLIBC_MAX" ]] || fail "$relative needs $version, newer than glibc $GLIBC_MAX"
-        if [[ -z "$glibc" ]] || [[ "$(printf '%s\n%s\n' "$glibc" "$number" | sort -V | tail -1)" == "$number" ]]; then
-          glibc="$number"
-        fi ;;
-      GLIBC_*) fail "$relative needs $version, which only glibc newer than $GLIBC_MAX or its internals have" ;;
-    esac
-  done
-  printf '%s\t%s\t%s\t%s\n' "$relative" "$machine" "$(tr '\n' ' ' <<< "$needed")" "$glibc" >> "$binaries"
-done < <(find "$stage" -type f -print0 | sort -z)
-for needed in "$GAME/Gothic2Notr" "$GAME/content-convert" "$STORYGRAPH/storygraph" tools/uv/uv; do
-  cut -f1 "$binaries" | grep -qxF "$needed" || fail "$needed is not an ELF binary in the archive"
-done
+pack_stage() {
+  local name="$1" stage="$OUT_DIR/$1" uv_version="$2"
+  shift 2
+  local bad file relative machine needed allowed library known system versions glibc version number newest
+  local binaries archive listing files manifest count
+  # refuse anything private or build-only
+  bad=()
+  while IFS= read -r -d '' file; do
+    relative="${file#"$stage/"}"
+    if forbidden "$relative"; then bad+=("$relative"); fi
+  done < <(find "$stage" -type f -print0 | sort -z)
+  ((${#bad[@]} == 0)) || fail "not for the archive: ${bad[*]}"
 
-# the archive, its manifest and their checksums
-archive="$OUT_DIR/$NAME.tar.gz"
-rm -f "$archive"
-if tar --version 2> /dev/null | grep -q 'GNU tar'; then
-  tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$archive" -C "$OUT_DIR" "$NAME"
-else  # bsdtar (a local run on a Mac): without the AppleDouble ._ files
-  COPYFILE_DISABLE=1 tar -czf "$archive" -C "$OUT_DIR" "$NAME"
-fi
-listing="$(tar -tvzf "$archive")"
-for needed in Setup-GothicAI.sh Start-GothicAI.sh tools/uv/uv "$GAME/Gothic2Notr" "$GAME/content-convert" \
-              "$STORYGRAPH/storygraph"; do
-  grep -Eq "^-rwx.* $NAME/$needed\$" <<< "$listing" || fail "the archive lacks an executable $NAME/$needed"
-done
-for needed in server/uv.lock launcher/core/uv.lock START_HERE.linux.ru.md scripts/linux/common.sh; do
-  grep -Eq " $NAME/$needed\$" <<< "$listing" || fail "the archive lacks $NAME/$needed"
-done
+  binaries="$work/binaries.tsv"
+  : > "$binaries"
+  while IFS= read -r -d '' file; do
+    is_elf "$file" || continue
+    relative="${file#"$stage/"}"
+    machine="$("$READELF" -h --wide "$file" | sed -n 's/^ *Machine: *//p')"
+    [[ "$machine" == *X86-64* ]] || fail "not an x86-64 binary: $relative ($machine)"
+    needed="$("$READELF" -d --wide "$file" | sed -n 's/.*(NEEDED).*\[\(.*\)\].*/\1/p')"
+    allowed=("${SYSTEM_LIBRARIES[@]}")
+    if [[ "$relative" == tools/uv/uv ]]; then allowed+=("${UV_LIBRARIES[@]}"); fi
+    for library in $needed; do
+      known=0
+      for system in "${allowed[@]}"; do [[ "$library" == "$system" ]] && known=1; done
+      ((known)) || fail "$relative needs $library, which is neither linked in nor part of the player's system"
+    done
+    versions="$(version_needs "$file")"
+    glibc=''
+    for version in $versions; do
+      case "$version" in
+        GLIBCXX_* | CXXABI_*)
+          fail "$relative needs libstdc++ ($version): link it statically (-static-libstdc++)" ;;
+        GLIBC_[0-9]*)
+          number="${version#GLIBC_}"
+          newest="$(printf '%s\n%s\n' "$GLIBC_MAX" "$number" | sort -V | tail -1)"
+          [[ "$newest" == "$GLIBC_MAX" ]] || fail "$relative needs $version, newer than glibc $GLIBC_MAX"
+          if [[ -z "$glibc" ]] || [[ "$(printf '%s\n%s\n' "$glibc" "$number" | sort -V | tail -1)" == "$number" ]]; then
+            glibc="$number"
+          fi ;;
+        GLIBC_*) fail "$relative needs $version, which only glibc newer than $GLIBC_MAX or its internals have" ;;
+      esac
+    done
+    printf '%s\t%s\t%s\t%s\n' "$relative" "$machine" "$(tr '\n' ' ' <<< "$needed")" "$glibc" >> "$binaries"
+  done < <(find "$stage" -type f -print0 | sort -z)
+  for needed in "$@"; do
+    cut -f1 "$binaries" | grep -qxF "$needed" || fail "$needed is not an ELF binary in the archive"
+  done
 
-files="$work/files.tsv"
-: > "$files"
-while IFS= read -r -d '' file; do
-  printf '%s\t%s\t%s\n' "${file#"$stage/"}" "$(wc -c < "$file" | tr -d ' ')" "$(sha256 "$file")" >> "$files"
-done < <(find "$stage" -type f -print0 | sort -z)
-manifest="$OUT_DIR/$NAME.manifest.json"
-printf '%s\n' "${licenses[@]}" > "$work/licenses.txt"
-NAME="$NAME" REPOSITORY="$REPOSITORY" COMMIT="$COMMIT" RUN_URL="$RUN_URL" COMPILER="$COMPILER" \
-  GLIBC_MAX="$GLIBC_MAX" VULKAN_SDK_VERSION="$VULKAN_SDK_VERSION" UV_VERSION="$UV_VERSION" \
-  python3 -I - "$manifest" "$files" "$binaries" "$work/licenses.txt" << 'EOF'
+  # the archive, its manifest and their checksums
+  archive="$work/$name.tar.gz"
+  if tar --version 2> /dev/null | grep -q 'GNU tar'; then
+    tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$archive" -C "$OUT_DIR" "$name"
+  else  # bsdtar (a local run on a Mac): without the AppleDouble ._ files
+    COPYFILE_DISABLE=1 tar -czf "$archive" -C "$OUT_DIR" "$name"
+  fi
+  listing="$(tar -tvzf "$archive")"
+  for needed in "$@"; do
+    grep -Eq "^-rwx.* $name/$needed\$" <<< "$listing" || fail "the archive lacks an executable $name/$needed"
+  done
+  if [[ "$name" == "$NAME" ]]; then
+    for needed in Setup-GothicAI.sh Start-GothicAI.sh; do
+      grep -Eq "^-rwx.* $name/$needed\$" <<< "$listing" || fail "the archive lacks an executable $name/$needed"
+    done
+    for needed in server/uv.lock launcher/core/uv.lock START_HERE.linux.ru.md scripts/linux/common.sh; do
+      grep -Eq " $name/$needed\$" <<< "$listing" || fail "the archive lacks $name/$needed"
+    done
+  fi
+
+  files="$work/files.tsv"
+  : > "$files"
+  while IFS= read -r -d '' file; do
+    printf '%s\t%s\t%s\n' "${file#"$stage/"}" "$(wc -c < "$file" | tr -d ' ')" "$(sha256 "$file")" >> "$files"
+  done < <(find "$stage" -type f -print0 | sort -z)
+  manifest="$work/$name.manifest.json"
+  printf '%s\n' "${licenses[@]}" > "$work/licenses.txt"
+  NAME="$name" REPOSITORY="$REPOSITORY" COMMIT="$COMMIT" RUN_URL="$RUN_URL" COMPILER="$COMPILER" \
+    GLIBC_MAX="$GLIBC_MAX" VULKAN_SDK_VERSION="$VULKAN_SDK_VERSION" UV_VERSION="$uv_version" \
+    python3 -I - "$manifest" "$files" "$binaries" "$work/licenses.txt" << 'EOF'
 import json, os, sys
 from datetime import datetime, timezone
 
@@ -279,13 +300,20 @@ with open(manifest, "w", encoding="utf-8") as out:
     json.dump(data, out, ensure_ascii=False, indent=2)
     out.write("\n")
 EOF
+  count="$(wc -l < "$files" | tr -d ' ')"
+  rm -rf "$stage"
+  echo "packed $count files for $name"
+}
+
+pack_stage "$NAME" "$UV_VERSION" "$GAME/Gothic2Notr" "$STORYGRAPH/storygraph" tools/uv/uv
+pack_stage "$tools_name" '' "$GAME/content-convert" "$STORYGRAPH/storygraph"
 (
-  cd "$OUT_DIR"
-  for file in "$NAME.tar.gz" "$NAME.manifest.json"; do printf '%s  %s\n' "$(sha256 "$file")" "$file"; done
-) > "$OUT_DIR/SHA256SUMS"
-count="$(wc -l < "$files" | tr -d ' ')"
-rm -rf "$stage"
-echo "packed $count files:"
-for file in "$archive" "$manifest" "$OUT_DIR/SHA256SUMS"; do
-  printf '  %s (%s bytes)\n' "$(basename "$file")" "$(wc -c < "$file" | tr -d ' ')"
-done
+  cd "$work"
+  for name in "$NAME" "$tools_name"; do
+    for file in "$name.tar.gz" "$name.manifest.json"; do
+      printf '%s  %s\n' "$(sha256 "$file")" "$file"
+    done
+  done
+) > "$work/SHA256SUMS"
+mv "$work/$NAME.tar.gz" "$work/$NAME.manifest.json" "$work/$tools_name.tar.gz" "$work/$tools_name.manifest.json" \
+   "$work/SHA256SUMS" "$OUT_DIR/"

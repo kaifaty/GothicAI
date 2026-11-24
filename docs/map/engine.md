@@ -199,7 +199,7 @@ VM-адаптер базовых программ — свободные фун�
 
 Шаг 8.4: провайдер музыки Dx8 — в Готике, `common/dmusic/dxmusicsource.*` (`loadDxMusic`, `DirectMusic` на поколение `Resources::generation()`); `Resources::readDxMusic` отдаёт байты записей базы. `Resources(Device&, Audio::Off)` не открывает звук; `Resources::loadDefaultTexture()` — `DEFAULT.TGA` из базы, без базы — шахматка в коде.
 
-Общие исходники `gothic-base-runtime` для игры, `content-convert` и отдельного `storygraph` — в `cmake/BaseRuntime.cmake`; его включают все три сборки, поэтому новый файл мира попадает во все три.
+Общие исходники `gothic-base-runtime` для игры, `content-convert` и отдельной сборки StoryGraph перечислены в `cmake/BaseRuntime.cmake`. Цель `storygraph-ou` читает готовый каталог реплик. Выпуски Linux и Windows устанавливают её по пути `storygraph`, который используют сервер и TTS. [Сборка и запуск](../development.md)
 
 ## Навигация: исследования и обучение
 

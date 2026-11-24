@@ -3,6 +3,7 @@
 The binaries are stand-ins: an ELF magic and a JSON line, which a fake readelf (READELF) prints in readelf's
 own format, so the checks run on any machine with bash and tar.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -74,7 +75,8 @@ def tree(tmp_path):
     write(root, "server/src/pkg/__pycache__/x.pyc")  # not packed
     elf(root / "OpenGothic/build/opengothic/Gothic2Notr")
     elf(root / "OpenGothic/build/opengothic/content-convert")
-    elf(root / "OpenGothic/ai_bridge/storygraph/build/storygraph")
+    elf(root / "OpenGothic/ai_bridge/storygraph/build/storygraph", offline=True)
+    elf(root / "OpenGothic/ai_bridge/storygraph/build/storygraph-ou", native_ou=True)
     uv = tmp_path / "uv"
     elf(uv / "uv-x86_64-unknown-linux-gnu/uv", needed=["libgcc_s.so.1", "libc.so.6"],
         versions={"libc.so.6": ["GLIBC_2.17"], "libgcc_s.so.1": ["GCC_4.2.0"]})
@@ -104,7 +106,10 @@ def test_packs_the_game_with_its_manifest_and_checksums(tree):
     dist = tree.parent / "dist"
     with tarfile.open(dist / "GothicAI-test.tar.gz") as archive:
         members = {m.name: m for m in archive.getmembers() if m.isfile()}
+        graph_reader = "GothicAI-test/OpenGothic/ai_bridge/storygraph/build/storygraph"
+        assert json.loads(archive.extractfile(graph_reader).read()[4:])["native_ou"] is True
     assert members["GothicAI-test/OpenGothic/build/opengothic/Gothic2Notr"].mode & 0o111
+    assert "GothicAI-test/OpenGothic/build/opengothic/content-convert" not in members
     assert members["GothicAI-test/tools/uv/uv"].mode & 0o111
     assert "GothicAI-test/licenses/ixwebsocket/LICENSE.txt" in members
     assert not [name for name in members if "/tests/" in name or name.endswith(".pyc")]
@@ -112,8 +117,21 @@ def test_packs_the_game_with_its_manifest_and_checksums(tree):
     game = next(f for f in manifest["files"] if f["path"] == "OpenGothic/build/opengothic/Gothic2Notr")
     assert game["needed"] == GOOD["needed"] and game["glibc"] == "2.34"
     assert len(manifest["files"]) == len(members)
-    sums = (dist / "SHA256SUMS").read_text().split()
-    assert sums[1::2] == ["GothicAI-test.tar.gz", "GothicAI-test.manifest.json"]
+    tools_name = "GothicAI-test-tools"
+    with tarfile.open(dist / f"{tools_name}.tar.gz") as archive:
+        tools = {m.name.removeprefix(f"{tools_name}/"): m for m in archive.getmembers() if m.isfile()}
+        converter = "OpenGothic/build/opengothic/content-convert"
+        offline = "OpenGothic/ai_bridge/storygraph/build/storygraph"
+        assert tools[converter].mode & 0o111 and tools[offline].mode & 0o111
+        assert json.loads(archive.extractfile(tools[offline]).read()[4:])["offline"] is True
+        assert "licenses/SOURCE.txt" in tools
+        assert {path for path in tools if not path.startswith("licenses/")} == {converter, offline, "LICENSE"}
+    tools_manifest = json.loads((dist / f"{tools_name}.manifest.json").read_text())
+    assert {entry["path"] for entry in tools_manifest["files"]} == set(tools)
+    sums = dict(line.split()[::-1] for line in (dist / "SHA256SUMS").read_text().splitlines())
+    assert set(sums) == {"GothicAI-test.tar.gz", "GothicAI-test.manifest.json",
+                         f"{tools_name}.tar.gz", f"{tools_name}.manifest.json"}
+    assert all(hashlib.sha256((dist / name).read_bytes()).hexdigest() == digest for name, digest in sums.items())
 
 
 @pytest.mark.parametrize("spoil, refusal", [
@@ -121,7 +139,7 @@ def test_packs_the_game_with_its_manifest_and_checksums(tree):
      "not for the archive: OpenGothic/build/opengothic/Gothic2Notr.log"),
     (lambda root: elf(root / "OpenGothic/build/opengothic/content-convert", needed=["libfoo.so.1", "libc.so.6"]),
      "content-convert needs libfoo.so.1"),
-    (lambda root: elf(root / "OpenGothic/ai_bridge/storygraph/build/storygraph",
+    (lambda root: elf(root / "OpenGothic/ai_bridge/storygraph/build/storygraph-ou",
                       versions={"libc.so.6": ["GLIBC_2.2.5", "GLIBC_2.36"]}),
      "storygraph needs GLIBC_2.36, newer than glibc 2.35"),
     (lambda root: elf(root / "OpenGothic/build/opengothic/Gothic2Notr",
@@ -135,7 +153,9 @@ def test_refuses(tree, spoil, refusal):
     result = package(tree)
     assert result.returncode != 0
     assert refusal in result.stderr
-    assert not (tree.parent / "dist" / "GothicAI-test.tar.gz").exists()
+    dist = tree.parent / "dist"
+    assert not list(dist.glob("GothicAI-test*.tar.gz"))
+    assert not (dist / "SHA256SUMS").exists()
 
 
 def test_setup_finds_a_library_in_a_long_ldconfig_cache(tmp_path):

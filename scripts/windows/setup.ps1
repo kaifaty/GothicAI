@@ -75,14 +75,13 @@ if (-not $uv) {
     }
 }
 
-# the game, its base and video converter, and the story graph converter, built here from this fork with
-# its AI bridge
+# the game, its dialogue reader, and the offline converter in a source build
 $game = Join-Path $Root 'OpenGothic\build\opengothic\Gothic2Notr.exe'
 $converter = Join-Path $Root 'OpenGothic\build\opengothic\content-convert.exe'
 $storygraph = Join-Path $Root 'OpenGothic\ai_bridge\storygraph\build\storygraph.exe'
-$built = (Test-Path -LiteralPath $game) -and (Test-Path -LiteralPath $converter) -and
-    (Test-Path -LiteralPath $storygraph)
 $sources = Test-Path -LiteralPath (Join-Path $Root 'OpenGothic\CMakeLists.txt')
+$built = (Test-Path -LiteralPath $game) -and (Test-Path -LiteralPath $storygraph) -and
+    (-not $sources -or (Test-Path -LiteralPath $converter))
 if (-not $built -and -not $sources) {
     Say 'package_incomplete'  # the release archive is prebuilt: without its game there is nothing to build
     exit 2

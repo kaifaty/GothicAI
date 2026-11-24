@@ -326,9 +326,17 @@ def test_find_layout_lists_everything_missing(config, tmp_path, monkeypatch):
     assert layout.play_content is None and content_env(layout) == {}
     monkeypatch.setattr(commands.sys, "platform", "linux")
     assert default_game_bin(repo) == binary  # Linux never chooses a stray macOS bundle
-    settings, _, _ = _ready_base(tmp_path, monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    settings, native, _ = _ready_base(tmp_path / "gothic-ai", monkeypatch, native=True)
     config.set("game.dir", str(settings))
-    assert find_layout(config).game_dir == settings
+    layout = find_layout(config)
+    assert layout.game_dir == settings
+    assert preparation(binary, settings, tmp_path) is None
+    assert game(config, layout, PORTS).env["OPENGOTHIC_BASE"] == str(native)
+    config.set("voice.enabled", "true")
+    config.set("tts.provider", "inworld")
+    for name in ("server", "tts"):
+        assert by_name(services(config, layout, PORTS, tmp_path))[name].env["OPENGOTHIC_BASE"] == str(native)
 
 
 @pytest.mark.parametrize("platform", ["linux", "darwin"])

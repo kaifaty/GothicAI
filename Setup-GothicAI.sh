@@ -63,12 +63,14 @@ if ! have_library libportaudio.so.2; then
   say "  Arch:            sudo pacman -S portaudio"
 fi
 
-# the game, its base and video converter, and the story graph converter
+# the game, its dialogue reader, and the offline converter in a source build
 built=1
-for file in OpenGothic/build/opengothic/Gothic2Notr OpenGothic/build/opengothic/content-convert \
-            OpenGothic/ai_bridge/storygraph/build/storygraph; do
+for file in OpenGothic/build/opengothic/Gothic2Notr OpenGothic/ai_bridge/storygraph/build/storygraph; do
   [[ -x "$GOTHIC_ROOT/$file" ]] || built=0
 done
+if [[ -f "$GOTHIC_ROOT/OpenGothic/CMakeLists.txt" && ! -x "$GOTHIC_ROOT/OpenGothic/build/opengothic/content-convert" ]]; then
+  built=0
+fi
 if ((!built)); then
   if [[ ! -f "$GOTHIC_ROOT/OpenGothic/CMakeLists.txt" ]]; then
     # the release archive is prebuilt: without its game there is nothing to build
