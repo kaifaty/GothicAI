@@ -85,6 +85,7 @@
 #include <exception>
 #include <functional>
 #include <future>
+#include <initializer_list>
 #include <map>
 #include <mutex>
 #include <set>
@@ -1754,14 +1755,22 @@ struct BaseContentContract {
                 names.size(),groups);
     }
 
+  static void linkBaseParts(const fs::path& base, const fs::path& fixture,
+                            std::initializer_list<std::string_view> excluded) {
+    // Preserve every part named by the source manifest outside the payload owned by the fixture.
+    for(const auto& entry : fs::directory_iterator(base)) {
+      const auto name = entry.path().filename();
+      if(std::find(excluded.begin(),excluded.end(),name.string())==excluded.end())
+        fs::create_symlink(entry.path(),fixture/name);
+      }
+    }
+
   static fs::path linkBaseForDefinitionTest(const fs::path& base, const fs::path& fixture, const fs::path& section) {
     // The manifest must validate before a fixture changes its own link to the selected section.
     const auto definitionDir = section.parent_path();
     const auto target = fixture/"definitions"/definitionDir.filename();
     fs::create_directories(target);
-    for(const auto& entry : fs::directory_iterator(base))
-      if(entry.path().filename()!="definitions")
-        fs::create_symlink(entry.path(),fixture/entry.path().filename());
+    linkBaseParts(base,fixture,{"definitions"});
     for(const auto& entry : fs::directory_iterator(base/"definitions"))
       if(entry.path().filename()!=definitionDir.filename())
         fs::create_symlink(entry.path(),fixture/"definitions"/entry.path().filename());
@@ -2821,8 +2830,7 @@ struct BaseContentContract {
   static void musicRuntime(const fs::path& base,const fs::path& temporary,const fs::path& censusPath) {
     const auto fixture=temporary/"music-runtime-base";
     fs::create_directories(fixture);
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","outputunits","audio","sources"})
-      fs::create_symlink(base/part,fixture/part);
+    linkBaseParts(base,fixture,{"music"});
     fs::copy(base/"music",fixture/"music",fs::copy_options::recursive);
     setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
     MusicData::Source selected;
@@ -3170,8 +3178,7 @@ struct BaseContentContract {
     // Start with a valid base before adding the synthetic audio integrity fixtures.
     const auto fixtureBase=temporary/"audio-runtime-base";
     fs::create_directories(fixtureBase/"audio");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","outputunits","music","sources"})
-      fs::create_symlink(base/part,fixtureBase/part);
+    linkBaseParts(base,fixtureBase,{"audio"});
     fs::copy(base/"audio",fixtureBase/"audio",fs::copy_options::recursive);
     setenv("OPENGOTHIC_BASE",fixtureBase.c_str(),1);
     Resources resources;
@@ -3669,8 +3676,7 @@ struct BaseContentContract {
       const auto incomplete=temporary/("missing-"+kind+"-index");
       fs::create_directories(incomplete/kind);
       fs::copy_file(base/"base.json",incomplete/"base.json");
-      for(const auto* part:{"base-files.json","worlds","textures","meshes","zen","models","fonts","programs","definitions","outputunits","audio","music","sources"})
-        if(part!=kind) fs::create_symlink(base/part,incomplete/part);
+      linkBaseParts(base,incomplete,{"base.json",kind});
       for(const auto& file:fs::directory_iterator(base/kind))
         if(file.path().filename()!=kind+".json") fs::create_symlink(file.path(),incomplete/kind/file.path().filename());
       setenv("OPENGOTHIC_BASE",incomplete.c_str(),1);
@@ -3687,8 +3693,7 @@ struct BaseContentContract {
     {
     const auto broken=temporary/"broken-program-record";
     fs::create_directories(broken/"programs");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","outputunits","audio","music","sources"})
-      fs::create_symlink(base/part,broken/part);
+    linkBaseParts(base,broken,{"programs"});
     for(const auto& file:fs::directory_iterator(base/"programs"))
       fs::create_symlink(file.path(),broken/"programs"/file.path().filename());
     const auto index=ProgramData::readIndex(broken/"programs");
@@ -3733,8 +3738,7 @@ struct BaseContentContract {
     {
     const auto broken=temporary/"broken-outputunits-record";
     fs::create_directories(broken/"outputunits");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","audio","music","sources"})
-      fs::create_symlink(base/part,broken/part);
+    linkBaseParts(base,broken,{"outputunits"});
     for(const auto& file:fs::directory_iterator(base/"outputunits"))
       fs::create_symlink(file.path(),broken/"outputunits"/file.path().filename());
     const auto index=OutputUnits::readIndex(broken/"outputunits");
