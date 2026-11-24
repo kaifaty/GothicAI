@@ -170,7 +170,7 @@ void GameScript::loadNativeRoutines() {
     }},enabled);
   vm.override_function("B_GIVEPLAYERXP",std::function<void(int32_t)>{
     [this](int32_t amount) { givePlayerXp(amount); }},enabled);
-  loadNativeQuestLog(enabled);
+  loadNativeQuestLog([this,enabled] { return !vm.has_legacy_dispatcher() || enabled(); });
   }
 
 bool GameScript::runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol&, int& result) {

@@ -114,14 +114,36 @@ void GameScript::setupDirectorNpcEquipment(Npc& npc, const DirectorNpcLook* look
     };
 
   if(look!=nullptr) {
-    // Remove the template's armor before the script dresses the new actor.
+    const bool native = !vm.has_legacy_dispatcher();
+    const auto* visual = native ? vm.find_symbol_by_name("B_SETNPCVISUAL") : nullptr;
+    if(native && (visual==nullptr || !NpcHelperRuntime::enabled() ||
+                  !npcDefinitions.helpers.helpers.contains(visual->index()))) {
+      Tempest::Log::e("[story] ",id,": B_SETNPCVISUAL failed: no prepared visual helper");
+      return;
+      }
+    // Remove the template's armor before dressing the new actor.
     if(auto* previous = npc.currentArmor()) {
       const auto instance = previous->clsId();
       npc.unequipItem(instance);
       npc.delItem(instance,1);
       }
-    call("B_SETNPCVISUAL",{Value::instance(actor),Value::integer(look->gender),Value::str(look->head),
-                          Value::integer(look->face),Value::integer(look->skin),Value::integer(look->armor)});
+    if(native) {
+      struct RestoreContext {
+        daedalus::DaedalusVm& vm;
+        std::shared_ptr<daedalus::DaedalusInstance> previous;
+        ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
+        } context{vm,vm.unsafe_get_gi()};
+      vm.push_instance(actor);
+      vm.push_int(look->gender);
+      vm.push_string(look->head);
+      vm.push_int(look->face);
+      vm.push_int(look->skin);
+      vm.push_int(look->armor);
+      NpcHelperRuntime::invoke(vm,actor,visual,npcDefinitions.helpers);
+      } else {
+      call("B_SETNPCVISUAL",{Value::instance(actor),Value::integer(look->gender),Value::str(look->head),
+                            Value::integer(look->face),Value::integer(look->skin),Value::integer(look->armor)});
+      }
     }
   for(const auto& [item,count] : items)
     call("CREATEINVITEMS",{Value::instance(actor),Value::integer(int32_t(item)),Value::integer(count)});

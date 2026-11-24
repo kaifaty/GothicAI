@@ -106,6 +106,11 @@ std::optional<Value> storygraph::callFunction(daedalus::DaedalusVm& vm, const da
       return std::nullopt;
       }
     }
+  const bool nativeOnly = !vm.has_legacy_dispatcher();
+  if(nativeOnly && !fn.is_external() && !vm.has_active_override(fn)) {
+    error = "script function is unavailable without bytecode: " + ident(fn.name());
+    return std::nullopt;
+    }
   for(auto& a : args)
     switch(a.type) {
       case Value::Int:   vm.push_int(a.i);         break;
@@ -118,7 +123,7 @@ std::optional<Value> storygraph::callFunction(daedalus::DaedalusVm& vm, const da
       error = "no engine function " + ident(fn.name());
       return std::nullopt;
       }
-    } else if(fn.name()=="B_GETLEARNCOSTATTRIBUTE" || fn.name()=="B_GETLEARNCOSTTALENT" || fn.name()=="B_TEACHATTRIBUTEPOINTS" ||
+    } else if(nativeOnly || fn.name()=="B_GETLEARNCOSTATTRIBUTE" || fn.name()=="B_GETLEARNCOSTTALENT" || fn.name()=="B_TEACHATTRIBUTEPOINTS" ||
               fn.name()=="B_TEACHFIGHTTALENTPERCENT" || fn.name()=="B_TEACHPLAYERTALENTRUNES" ||
               fn.name()=="B_GIVEPLAYERXP" ||
               fn.name()=="B_STARTOTHERROUTINE" || fn.name()=="B_KAPITELWECHSEL" || fn.name()=="B_GREG_COMESTODEXTER" ||

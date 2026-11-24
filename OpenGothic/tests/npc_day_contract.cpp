@@ -26,7 +26,7 @@ struct Sink final : NpcActivityProbe {
   void point(const Npc&,const WayPoint*,const WayPoint*) override {}
   void mob(const Npc&,const Interactive&,bool) override {}
   };
-daedalus::DaedalusVm makeVm() {
+daedalus::DaedalusVm makeVm(bool legacy = true) {
   asset::ProgramRecord program;
   program.version=50;
   program.bytecode.push_back(std::byte(Op::RSR));
@@ -75,6 +75,10 @@ daedalus::DaedalusVm makeVm() {
   call(Op::PUSHI,40);call(Op::PUSHV,right);call(Op::BL,rememberAddress);
   call(Op::PUSHI,2);call(Op::PUSHV,left);call(Op::BL,rememberAddress);
   op(Op::ADD);op(Op::RSR);
+  if(!legacy) {
+    program.bytecode.clear();
+    return daedalus::DaedalusVm::without_legacy_dispatcher(daedalus::DaedalusScript::from_program(std::move(program)));
+    }
   return daedalus::DaedalusVm(daedalus::DaedalusScript::from_program(std::move(program)));
   }
 std::string measure(daedalus::DaedalusVm& vm, DayScriptStats& stats, const std::vector<std::string>& sources) {
@@ -210,6 +214,23 @@ void checkNestedStoryPrograms() {
   interpreter.allowUnresolvedScriptCalls=true;
   result=interpreter.run(root);
   check(result.ok && result.returned.i==4 && externals==6,"the next dialog starts with a clean interpreter frame");
+
+  auto native=makeVm(false);
+  native.require_native_execution("synthetic",true);
+  const auto* function=native.find_symbol_by_name("REMEMBER");
+  const std::vector arguments={storygraph::Value::integer(5),storygraph::Value::str("direct")};
+  std::string error;
+  native.push_int(123);
+  check(!storygraph::callFunction(native,*function,arguments,error) &&
+        error=="script function is unavailable without bytecode: REMEMBER" && native.pop_int()==123,
+        "a native-only direct call rejects a missing override before changing the stack");
+  native.override_function("REMEMBER",[&](int32_t number,std::string_view label) {
+    check(label=="direct","native direct calls keep argument order");
+    return number+10;
+    });
+  const auto returned=storygraph::callFunction(native,*function,arguments,error);
+  check(returned && returned->type==storygraph::Value::Int && returned->i==15,
+        "a native-only direct call uses the active override outside the legacy allowlist");
   }
 
 void checkNativePhaseAccounting() {
