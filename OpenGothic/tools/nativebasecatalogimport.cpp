@@ -3,16 +3,20 @@
 #include "daedalus/script.h"
 #include "definitionjson.h"
 #include "game/definitions/cameradefinitiondata.h"
+#include "game/definitions/dialoginfodata.h"
 #include "game/definitions/effectdefinitiondata.h"
 #include "game/definitions/fightdefinitiondata.h"
 #include "game/definitions/menudefinitions.h"
 #include "game/definitions/musicdefinitiondata.h"
 #include "game/definitions/sfxdefinitiondata.h"
 #include "game/definitions/stockstoryprograms.h"
+#include "itemdefinitions.h"
+#include "npcdefinitions.h"
 #include "outputunits.h"
 #include "programdata.h"
 
 #include <algorithm>
+#include <type_traits>
 
 namespace {
 
@@ -22,6 +26,30 @@ const ProgramData::Source* programAt(const ProgramData::Index& index, std::strin
            index.sources.at(*entry.source).skipped.empty();
     });
   return row!=index.selections.end() ? &index.sources.at(*row->source) : nullptr;
+  }
+
+template<class Captured, class Uncaptured>
+void verifyArchetypes(const std::vector<NativeBaseCatalog::Identity>& identities,
+                      const Captured& captured, const Uncaptured& uncaptured, std::string_view family) {
+  using DefinitionJson::require;
+  require(identities.size()==captured.size()+uncaptured.size(),
+          "native "+std::string(family)+" identity count differs from prepared definitions");
+  for(const auto& identity : identities)
+    require(captured.contains(identity.name) || uncaptured.contains(identity.name),
+            "native "+std::string(family)+" has no prepared definition for "+identity.name);
+  }
+
+void verifyIdentities(const std::filesystem::path& base, const NativeBaseCatalog::Identities& identities) {
+  const auto npcs = NpcDefinitions::read(base,StockStoryPrograms::stockProgram);
+  verifyArchetypes(identities.npcs,npcs.npcs,npcs.uncaptured,"NPC");
+  const auto items = ItemDefinitions::read(base,StockStoryPrograms::stockProgram);
+  verifyArchetypes(identities.items,items.items,items.uncaptured,"item");
+  // The prepared dialog records already own the fields and their numeric keys.
+  const auto dialogs = DialogInfoData::load(base);
+  DefinitionJson::require(dialogs && dialogs->size()==identities.dialogs.size(),
+                          "native dialog identity count differs from prepared definitions");
+  for(const auto& identity : identities.dialogs)
+    DefinitionJson::require(dialogs->contains(identity.id),"no prepared dialog definition for "+identity.name);
   }
 
 }
@@ -50,7 +78,7 @@ NativeBaseCatalog::Selection NativeBaseCatalog::prepare(const ProgramData::Index
           "native base needs the stock menu catalog for the selected language");
   const auto* fight = ProgramData::fightProgram(programs);
   require(fight!=nullptr,"native base needs a fight catalog");
-  return {fight->recordSha256,language,{}};
+  return {fight->recordSha256,language,{}, {}, {}};
   }
 
 std::vector<NativeBaseCatalog::State> NativeBaseCatalog::prepareStates(const daedalus::DaedalusScript& program) {
@@ -75,12 +103,68 @@ std::vector<NativeBaseCatalog::State> NativeBaseCatalog::prepareStates(const dae
   return states;
   }
 
+std::vector<NativeBaseCatalog::InitialRow> NativeBaseCatalog::prepareInitialState(const daedalus::DaedalusScript& program) {
+  using Type = daedalus::DaedalusDataType;
+  const auto* npcClass=program.find_symbol_by_name("C_NPC");
+  const auto* itemClass=program.find_symbol_by_name("C_ITEM");
+  DefinitionJson::require(npcClass && itemClass,"missing stock actor or item class for initial state");
+
+  std::vector<InitialRow> rows;
+  for(const auto& symbol : program.symbols()) {
+    const auto& name=symbol.name();
+    if(symbol.is_member() || symbol.is_const() || name=="MIS_BENNET_BRINGORE" || name=="BENNET_TEACHSMITH" ||
+       name=="$PHOENIX_FAKE_STRINGS" || name=="$INSTANCE_HELP")
+      continue;
+    const auto type=symbol.type();
+    if(type==Type::INSTANCE) {
+      const auto* parent=program.find_symbol_by_index(uint32_t(symbol.parent()));
+      if(parent==npcClass || parent==itemClass)
+        rows.push_back({symbol.index(),parent==npcClass ? Alias::Npc : Alias::Item});
+      continue;
+      }
+    if(symbol.count()==0)
+      continue;
+    const auto values = [&]<class Getter>(Getter get) {
+      using T = std::decay_t<decltype(get(uint16_t{}))>;
+      std::vector<T> result;
+      result.reserve(symbol.count());
+      for(uint16_t i=0; i<symbol.count(); ++i)
+        result.push_back(get(i));
+      return result;
+      };
+    switch(type) {
+      case Type::INT:    rows.push_back({symbol.index(),values([&](uint16_t i) { return symbol.get_int(i); })}); break;
+      case Type::FLOAT:  rows.push_back({symbol.index(),values([&](uint16_t i) { return symbol.get_float(i); })}); break;
+      case Type::STRING: rows.push_back({symbol.index(),values([&](uint16_t i) { return symbol.get_string(i); })}); break;
+      default: break;
+      }
+    }
+  return rows;
+  }
+
+NativeBaseCatalog::Identities NativeBaseCatalog::prepareIdentities(daedalus::DaedalusScript& program,
+                                                                    const std::filesystem::path& base) {
+  const auto declarations = [&](std::string_view cls) {
+    std::vector<Identity> result;
+    program.enumerate_instances_by_class_name(cls,[&](const auto& symbol) {
+      DefinitionJson::require(!symbol.is_member() && !symbol.is_generated(),"invalid authored identity "+symbol.name());
+      result.push_back({symbol.index(),symbol.name()});
+      });
+    return result;
+    };
+  Identities result{declarations("C_NPC"),declarations("C_ITEM"),declarations("C_INFO")};
+  verifyIdentities(base,result);
+  return result;
+  }
+
 void NativeBaseCatalog::verify(const std::filesystem::path& base, const Selection& expected) {
   using DefinitionJson::require;
   require(!std::filesystem::exists(base/"programs"),"native catalog base contains the program directory");
   const auto selected = read(base);
-  require(selected.fight==expected.fight && selected.language==expected.language && selected.states==expected.states,
+  require(selected.fight==expected.fight && selected.language==expected.language && selected.states==expected.states &&
+          selected.initialState==expected.initialState && selected.identities==expected.identities,
           "native catalog selection differs from its source");
+  verifyIdentities(base,selected.identities);
   require(!FightDefinitions::read(base,selected.fight).empty(),"native catalog base has no fight tactics");
   require(MenuDefinitions::read(base,MenuDefinitions::stockProgram).menus.contains("MENU_MAIN"),
           "native catalog base has no main menu");
