@@ -423,7 +423,7 @@ void vsmPairCapRecords(Tempest::Device& device) {
           if(whole && !isBark && e!=5)
             expected.push_back(13);
           if(!whole)
-            expected = isBark ? std::vector<uint32_t>{2,5} : regular;
+            expected = isBark ? std::vector<uint32_t>{2,11} : regular;
           }
         expectedDemand[bins[e]] += uint32_t(expected.size());
         std::vector<uint32_t> actual;
@@ -469,21 +469,22 @@ void vsmPairCapRecords(Tempest::Device& device) {
             whole.pVsm!=trees.drawCommands()[0].pVsm &&
             whole.pVsm==shaders.materialPipeline(mat, DrawCommands::Static, Shaders::T_Vsm, Shaders::options().doBindless),
             "the reserved whole shadow command uses the material's unmasked alpha-tested VSM pipeline");
-    checkTree(trees, item, 600, 1, Mode::On,   {3,4},     true,  true);
-    checkTree(trees, item, 800, 1, Mode::On,   {0,1,3,4}, true,  true);
-    checkTree(trees, item, 800, 2, Mode::On,   {0,1,3,4}, true,  true);
-    checkTree(trees, item, 800, 5, Mode::On,   {0,1,3,4}, false, false);
+    // At 600 px the regular shadow uses L3. At 800 px it blends L0 and L3.
+    checkTree(trees, item, 600, 1, Mode::On,   {9,10},     true,  true);
+    checkTree(trees, item, 800, 1, Mode::On,   {0,1,9,10}, true,  true);
+    checkTree(trees, item, 800, 2, Mode::On,   {0,1,9,10}, true,  true);
+    checkTree(trees, item, 800, 5, Mode::On,   {0,1,9,10}, false, false);
     checkTree(trees, item, 300, 1, Mode::Full, {0,1},     false, false);
     checkTree(trees, item, 300, 1, Mode::Off,  {3,4},     false, false);
     // At 2.43x the still bark alone fits m7, but the crown's authored wind takes the shared tree over the cutoff.
     auto bark = trees.get(mesh, wood, mesh.sub[1].iboOffset, mesh.sub[1].iboLength, true);
-    checkTree(trees, item, 800, 2.43f, Mode::On, {0,1,3,4}, false, true, &bark);
+    checkTree(trees, item, 800, 2.43f, Mode::On, {0,1,9,10}, false, true, &bark);
   }
   mesh.levels.pop_back();
   {
     VisualObjects trees(mainScene, packed.bbox());
     auto item = trees.get(mesh, mat, 0, mesh.sub[0].iboLength, true);
-    checkTree(trees, item, 800, 1, Mode::On, {0,1,3,4}, false, false); // missing L4
+    checkTree(trees, item, 800, 1, Mode::On, {0,1,9,10}, false, false); // missing L4
   }
   VisualObjects::benchShadowLevels = Mode::Auto;
   std::cout << "spruce shadow LOD: 9 selections, " << totalDemand << " pairs demanded, " << totalWritten << " written\n";
