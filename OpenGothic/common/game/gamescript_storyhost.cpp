@@ -19,10 +19,10 @@ using daedalus::DaedalusSymbol;
 
 namespace {
 
-#include "storyactorfields.h"
+#include "storyrecordfields.h"
 
 template<auto Member, class Record>
-decltype(auto) actorElement(Record& record, size_t index) {
+decltype(auto) recordElement(Record& record, size_t index) {
   auto& field = record.*Member;
   if constexpr(std::is_array_v<std::remove_reference_t<decltype(field)>>)
     return (field[index]);
@@ -31,7 +31,7 @@ decltype(auto) actorElement(Record& record, size_t index) {
   }
 
 template<class Record>
-struct ActorField {
+struct RecordField {
   size_t size;
   NativeValue::Type type;
   NativeValue (*read)(const Record&,size_t);
@@ -39,26 +39,31 @@ struct ActorField {
   };
 
 template<class Record, auto Member>
-ActorField<Record> actorFieldDescriptor() {
+RecordField<Record> recordFieldDescriptor() {
   using Field = std::remove_reference_t<decltype(std::declval<Record&>().*Member)>;
   using Value = std::remove_extent_t<Field>;
   constexpr size_t size = std::is_array_v<Field> ? std::extent_v<Field> : 1;
   constexpr bool text = std::is_same_v<Value,std::string>;
-  static_assert(text || std::is_same_v<Value,int32_t> || std::is_enum_v<Value>);
-  return {size, text ? NativeValue::Str : NativeValue::Int,
+  constexpr bool real = std::is_same_v<Value,float>;
+  static_assert(text || real || std::is_same_v<Value,int32_t> || std::is_enum_v<Value>);
+  return {size, text ? NativeValue::Str : real ? NativeValue::Float : NativeValue::Int,
           [](const Record& record, size_t index) {
-            const auto& value = actorElement<Member>(record,index);
+            const auto& value = recordElement<Member>(record,index);
             if constexpr(text)
               return NativeValue::str(value);
+            else if constexpr(real)
+              return NativeValue::real(value);
             else if constexpr(std::is_enum_v<Value>)
               return NativeValue::integer(std::bit_cast<int32_t>(static_cast<std::underlying_type_t<Value>>(value)));
             else
               return NativeValue::integer(value);
             },
           [](Record& record, size_t index, const NativeValue& value) {
-            auto& field = actorElement<Member>(record,index);
+            auto& field = recordElement<Member>(record,index);
             if constexpr(text)
               field = value.s;
+            else if constexpr(real)
+              field = value.type==NativeValue::Float ? value.f : std::bit_cast<float>(value.i);
             else if constexpr(std::is_enum_v<Value>)
               field = static_cast<Value>(std::bit_cast<std::underlying_type_t<Value>>(value.i));
             else
@@ -67,16 +72,16 @@ ActorField<Record> actorFieldDescriptor() {
   }
 
 template<class Record>
-const ActorField<Record>* actorField(std::string_view name) {
+const RecordField<Record>* recordField(std::string_view name) {
   static const auto fields = [] {
-    std::map<std::string_view,ActorField<Record>,std::less<>> result;
-    actorFields(static_cast<Record*>(nullptr),[&]<auto Member>(std::string_view name) {
-      result.emplace(name,actorFieldDescriptor<Record,Member>());
+    std::map<std::string_view,RecordField<Record>,std::less<>> result;
+    recordFields(static_cast<Record*>(nullptr),[&]<auto Member>(std::string_view name) {
+      result.emplace(name,recordFieldDescriptor<Record,Member>());
       });
     return result;
     }();
   // Returned member references carry the full binding name.
-  constexpr std::string_view prefix = std::is_same_v<Record,NpcRecord> ? "C_NPC." : "C_ITEM.";
+  constexpr auto prefix = recordPrefix(static_cast<Record*>(nullptr));
   if(name.starts_with(prefix))
     name.remove_prefix(prefix.size());
   const auto found = fields.find(name);
@@ -84,22 +89,58 @@ const ActorField<Record>* actorField(std::string_view name) {
   }
 
 template<class Record>
-std::optional<NativeValue> readActorField(const Record& record, const NativeSlot& slot, std::string& error) {
-  if(const auto* field = actorField<Record>(slot.name); field!=nullptr && slot.index<field->size)
+std::optional<NativeValue> readRecordField(const Record& record, const NativeSlot& slot, std::string& error) {
+  if(const auto* field = recordField<Record>(slot.name); field!=nullptr && slot.index<field->size)
     return field->read(record,slot.index);
-  error = "Invalid actor field or index: "+std::string(slot.name);
+  error = "Invalid member field or index: "+std::string(slot.name);
   return std::nullopt;
   }
 
 template<class Record>
-bool writeActorField(Record& record, const NativeSlot& slot, const NativeValue& value, std::string& error) {
-  if(const auto* field = actorField<Record>(slot.name); field!=nullptr && slot.index<field->size && value.type==field->type) {
-    field->write(record,slot.index,value);
-    return true;
+bool writeRecordField(Record& record, const NativeSlot& slot, const NativeValue& value, std::string& error) {
+  if(const auto* field = recordField<Record>(slot.name); field!=nullptr && slot.index<field->size) {
+    if(value.type==field->type || (field->type==NativeValue::Float && value.type==NativeValue::Int)) {
+      field->write(record,slot.index,value);
+      return true;
+      }
     }
-  error = "Invalid actor field, index or value: "+std::string(slot.name);
+  error = "Invalid member field, index or value: "+std::string(slot.name);
   return false;
   }
+
+template<class... Records>
+struct RecordFields {
+  static bool contains(std::string_view name, uint16_t index) {
+    const auto valid = [index](const auto* field) { return field!=nullptr && index<field->size; };
+    return (valid(recordField<Records>(name)) || ...);
+    }
+
+  static NativeValue readNull(std::string_view name) {
+    auto type = NativeValue::Int;
+    const auto first = [&](const auto* field) {
+      if(field==nullptr)
+        return false;
+      type = field->type;
+      return true;
+      };
+    (void)(first(recordField<Records>(name)) || ...);
+    return type==NativeValue::Str ? NativeValue::str("") : NativeValue::integer(0);
+    }
+
+  template<class Visitor>
+  static bool visit(DaedalusInstance* context, Visitor visit) {
+    const auto apply = [&]<class Record>() {
+      if(auto* record = dynamic_cast<Record*>(context)) {
+        visit(*record);
+        return true;
+        }
+      return false;
+      };
+    return (apply.template operator()<Records>() || ...);
+    }
+  };
+
+using StoryRecordFields = RecordFields<NpcRecord,ItemRecord,daedalus::IInfo,FocusRecord,MenuDefinitions::MenuItem>;
 
 }
 
@@ -141,14 +182,7 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
     bool hasMember(std::string_view name, uint16_t index) const override {
-      if(const auto* npc = actorField<NpcRecord>(name); npc!=nullptr && index<npc->size)
-        return true;
-      if(const auto* item = actorField<ItemRecord>(name); item!=nullptr && index<item->size)
-        return true;
-      for(const auto& fields : owner.members)
-        if(const auto field = fields.find(name); field!=fields.end() && index<field->second->count())
-          return true;
-      return false;
+      return StoryRecordFields::contains(name,index);
       }
 
     bool acceptsCall(std::string_view name, bool external) const override {
@@ -171,23 +205,17 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
 
     std::optional<NativeValue> read(const NativeSlot& slot, std::string& error) override {
       using enum DaedalusDataType;
-      const auto context = resolveInstance(slot.context);
       if(slot.kind==NativeSlot::Member) {
-        if(const auto* npc = dynamic_cast<const NpcRecord*>(context.get()))
-          return readActorField(*npc,slot,error);
-        if(const auto* item = dynamic_cast<const ItemRecord*>(context.get()))
-          return readActorField(*item,slot,error);
-        if(context==nullptr) {
-          if(const auto* npc = actorField<NpcRecord>(slot.name))
-            return npc->type==NativeValue::Str ? NativeValue::str("") : NativeValue::integer(0);
-          if(const auto* item = actorField<ItemRecord>(slot.name))
-            return item->type==NativeValue::Str ? NativeValue::str("") : NativeValue::integer(0);
-          }
+        const auto context = resolveInstance(slot.context);
+        if(context==nullptr)
+          return StoryRecordFields::readNull(slot.name);
+        std::optional<NativeValue> result;
+        if(!StoryRecordFields::visit(context.get(),[&](const auto& record) { result=readRecordField(record,slot,error); }))
+          error = "Invalid member context: "+std::string(slot.name);
+        return result;
         }
-      auto* symbol = resolve(slot,context.get());
-      if(slot.kind==NativeSlot::Member && context==nullptr)
-        return symbol!=nullptr && symbol->type()==STRING ? NativeValue::str("") : NativeValue::integer(0);
-      if(symbol==nullptr || (slot.kind==NativeSlot::Instance && symbol->type()!=INSTANCE)) {
+      auto* symbol = resolveValue(slot.name);
+      if(symbol==nullptr || symbol->is_member() || (slot.kind==NativeSlot::Instance && symbol->type()!=INSTANCE)) {
         error = "Unknown story slot "+std::string(slot.name);
         return std::nullopt;
         }
@@ -196,9 +224,9 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
           return readState(*state,slot.index);
         switch(symbol->type()) {
           case INT:
-          case FUNCTION: return NativeValue::integer(symbol->get_int(slot.index,context.get()));
-          case FLOAT:    return NativeValue::real(symbol->get_float(slot.index,context.get()));
-          case STRING:   return NativeValue::str(symbol->get_string(slot.index,context.get()));
+          case FUNCTION: return NativeValue::integer(symbol->get_int(slot.index));
+          case FLOAT:    return NativeValue::real(symbol->get_float(slot.index));
+          case STRING:   return NativeValue::str(symbol->get_string(slot.index));
           case INSTANCE: return NativeValue::instance(bind(symbol->get_instance()));
           default:       break;
           }
@@ -213,15 +241,19 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
 
     bool write(const NativeSlot& slot, const NativeValue& value, std::string& error) override {
       using enum DaedalusDataType;
-      const auto context = resolveInstance(slot.context);
-      if(effects && slot.kind==NativeSlot::Member) {
-        if(auto* npc = dynamic_cast<NpcRecord*>(context.get()))
-          return writeActorField(*npc,slot,value,error);
-        if(auto* item = dynamic_cast<ItemRecord*>(context.get()))
-          return writeActorField(*item,slot,value,error);
+      if(!effects) {
+        error = "Cannot write story slot "+std::string(slot.name);
+        return false;
         }
-      auto* symbol = resolve(slot,context.get());
-      if(!effects || symbol==nullptr || (symbol->is_const() && slot.kind!=NativeSlot::Instance)) {
+      if(slot.kind==NativeSlot::Member) {
+        const auto context = resolveInstance(slot.context);
+        bool written = false;
+        if(!StoryRecordFields::visit(context.get(),[&](auto& record) { written=writeRecordField(record,slot,value,error); }))
+          error = "Invalid member context: "+std::string(slot.name);
+        return written;
+        }
+      auto* symbol = resolveValue(slot.name);
+      if(symbol==nullptr || symbol->is_member() || (symbol->is_const() && slot.kind!=NativeSlot::Instance)) {
         error = "Cannot write story slot "+std::string(slot.name);
         return false;
         }
@@ -233,11 +265,11 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
         }
       const auto type = symbol->type();
       if((type==INT || type==FUNCTION) && value.type==NativeValue::Int)
-        symbol->set_int(value.i,slot.index,context.get());
+        symbol->set_int(value.i,slot.index);
       else if(type==FLOAT && (value.type==NativeValue::Int || value.type==NativeValue::Float))
-        symbol->set_float(value.type==NativeValue::Float ? value.f : std::bit_cast<float>(value.i),slot.index,context.get());
+        symbol->set_float(value.type==NativeValue::Float ? value.f : std::bit_cast<float>(value.i),slot.index);
       else if(type==STRING && value.type==NativeValue::Str)
-        symbol->set_string(value.s,slot.index,context.get());
+        symbol->set_string(value.s,slot.index);
       else if(type==INSTANCE && slot.kind==NativeSlot::Instance && value.type==NativeValue::Inst)
         symbol->set_instance(resolveInstance(value.inst));
       else {
@@ -409,41 +441,20 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       return instances[size_t(index)-1];
       }
 
-    const Members* classMembers(const DaedalusInstance& inst) const {
-      static const std::array types = {
-        &typeid(daedalus::IInfo), &typeid(daedalus::IFocus), &typeid(daedalus::IMenuItem)
-        };
-      for(size_t i=0; i<types.size(); ++i)
-        if(types[i]==inst.instance_type())
-          return &owner.members[i];
-      return nullptr;
-      }
-
-    DaedalusSymbol* resolve(const NativeSlot& slot, const DaedalusInstance* context) const {
-      if(const auto bound = returned.find(slot.name); bound!=returned.end())
+    DaedalusSymbol* resolveValue(std::string_view name) const {
+      if(const auto bound = returned.find(name); bound!=returned.end())
         return bound->second;
-      if(slot.kind!=NativeSlot::Member)
-        return owner.binding(slot.name).first;
-      if(context!=nullptr) {
-        const auto* fields = classMembers(*context);
-        if(fields==nullptr)
-          return nullptr;
-        const auto field = fields->find(slot.name);
-        return field!=fields->end() ? field->second : nullptr;
-        }
-      for(const auto& fields : owner.members)
-        if(const auto field = fields.find(slot.name); field!=fields.end())
-          return field->second;
-      return nullptr;
+      return owner.binding(name).first;
       }
 
     std::optional<NativeSlot> reference(const DaedalusSymbol& symbol, uint16_t index,
                                         const std::shared_ptr<DaedalusInstance>& context) {
       // A registered engine function may return a reference instead of a value.
       // Keep its exact slot so that later operands can update it before it is read.
-      returned.emplace(symbol.name(),const_cast<DaedalusSymbol*>(&symbol));
       const auto kind = symbol.is_member() ? NativeSlot::Member :
                         symbol.type()==DaedalusDataType::INSTANCE ? NativeSlot::Instance : NativeSlot::Variable;
+      if(kind!=NativeSlot::Member)
+        returned.emplace(symbol.name(),const_cast<DaedalusSymbol*>(&symbol));
       return NativeSlot{kind,symbol.name(),index,bind(context)};
       }
 

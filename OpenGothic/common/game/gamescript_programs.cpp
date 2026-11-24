@@ -50,17 +50,10 @@ GameScript::StockPrograms::StockPrograms(GameScript& script)
       }
 
     constexpr std::array classes = {"C_INFO","C_FOCUS","C_MENU_ITEM","C_NPC","C_ITEM"};
-    for(size_t i=0; i<classes.size(); ++i) {
-      const auto* cls = vm.find_symbol_by_name(classes[i]);
-      if(cls==nullptr)
-        continue;
-      for(auto* member : vm.find_class_members(*cls)) {
-        const std::string_view field = member->name();
-        if(i<members.size())
-          members[i].emplace(field.substr(field.find('.')+1),member);
-        bindSymbol(*member,SymbolKind::Other);
-        }
-      }
+    for(const auto* name : classes)
+      if(const auto* cls = vm.find_symbol_by_name(name))
+        for(auto* member : vm.find_class_members(*cls))
+          bindSymbol(*member,SymbolKind::Other);
     for(auto* alias : {vm.global_self(), vm.global_other(), vm.global_victim(), vm.global_hero()})
       if(alias!=nullptr)
         bindSymbol(*alias,SymbolKind::Npc);

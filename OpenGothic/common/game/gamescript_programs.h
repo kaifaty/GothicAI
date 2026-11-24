@@ -14,7 +14,6 @@ class GameScript::StockPrograms final {
     friend struct NpcDefinitionContract;
 
     class Host;
-    using Members = std::map<std::string_view,daedalus::DaedalusSymbol*,std::less<>>;
     using Binding = std::pair<daedalus::DaedalusSymbol*,SymbolKind>;
 
     bool run(uint32_t id, int32_t& result, bool* failed, bool preparedOnly);
@@ -33,7 +32,6 @@ class GameScript::StockPrograms final {
     std::unordered_map<std::string_view,Binding> bindings;
     std::unordered_map<uint32_t,daedalus::DaedalusSymbol*> ids;
     std::unordered_map<std::string_view,storygraph::BoundNativeCall> calls;
-    std::array<Members,3> members;
   };
 
 struct GameScript::BennetOreDialog final {

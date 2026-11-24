@@ -948,6 +948,34 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
       const auto wrongIndex=script.runStoryProgram(storygraph::readProgram(fields,true),actor,hero,true);
       require(!wrongIndex.ok && wrongIndex.started,"the NPC name array must not extend an item's scalar name");
       actor->handle().name[4]=previousName;
+
+      const auto runFields=[&](const std::shared_ptr<daedalus::DaedalusInstance>& record, const char* program) {
+        vm.global_item()->set_instance(record);
+        fields.Parse(program);
+        return script.runStoryProgram(storygraph::readProgram(fields,true),actor,hero,true);
+        };
+      auto info=std::make_shared<daedalus::IInfo>();
+      const auto infoResult=runFields(info,R"([
+        {"do":"set","target":["field",["inst","ITEM"],"DESCRIPTION"],"value":["str","Story topic"]},
+        {"do":"return","value":["field",["inst","ITEM"],"DESCRIPTION"]}])");
+      require(infoResult.ok && infoResult.returned.s=="Story topic" && info->description=="Story topic",
+              "StoryGraph must access dialog fields on the dialog record");
+      auto focus=std::make_shared<daedalus::IFocus>();
+      const auto focusResult=runFields(focus,R"([
+        {"do":"set","target":["field",["inst","ITEM"],"NPC_RANGE1"],"value":["int",1069547520]},
+        {"do":"return","value":["field",["inst","ITEM"],"NPC_RANGE1"]}])");
+      require(focusResult.ok && focusResult.returned.type==storygraph::NativeValue::Float &&
+              focusResult.returned.f==1.5f && focus->npc_range1==1.5f,
+              "StoryGraph must preserve the float bit pattern in a focus field");
+      auto menuRecord=std::make_shared<daedalus::IMenuItem>();
+      const auto menuResult=runFields(menuRecord,R"([
+        {"do":"set","target":["field",["inst","ITEM"],"TEXT",9],"value":["str","Story menu"]},
+        {"do":"return","value":["field",["inst","ITEM"],"TEXT",9]}])");
+      require(menuResult.ok && menuResult.returned.s=="Story menu" && menuRecord->text[9]=="Story menu",
+              "StoryGraph must use the menu's own text extent when both object classes have TEXT");
+      const auto nullResult=runFields(nullptr,R"([{"do":"return","value":["field",["inst","ITEM"],"NPC_RANGE1"]}])");
+      require(nullResult.ok && nullResult.returned.type==storygraph::NativeValue::Int && nullResult.returned.i==0,
+              "a missing focus instance must still read as integer zero");
       vm.global_item()->set_instance(previousItem);
 
       std::string symbolError;
