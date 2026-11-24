@@ -24,6 +24,7 @@ class Item : public Vob {
 
     Item(World& owner, size_t     inst, Type type,
          const Tempest::Matrix4x4& initial = Tempest::Matrix4x4::mkIdentity());
+    Item(World& owner, std::shared_ptr<ItemRecord> record, uint32_t instance);
     Item(World& owner, Serialize& fin,  Type type);
     Item(Item&&);
     ~Item();

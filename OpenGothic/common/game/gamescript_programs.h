@@ -30,6 +30,7 @@ class GameScript::StockPrograms final {
     const storygraph::Program* findPrepared(const daedalus::DaedalusSymbol& fn, bool requireDependencies);
 
   private:
+    friend class GameScript;
     friend struct NpcDefinitionContract;
 
     struct Entry {
@@ -50,4 +51,16 @@ class GameScript::StockPrograms final {
     GameStoryExternals                    engine;
     storygraph::Interpreter               interpreter;
     std::unordered_map<uint32_t,Entry>    programs;
+  };
+
+struct GameScript::BennetOre final {
+  const storygraph::Program*               condition = nullptr;
+  const storygraph::Program*               answer = nullptr;
+  std::shared_ptr<const daedalus::IItem>    ore;
+  InventoryTransfer::Text                  notices;
+  std::string_view                         font;
+  daedalus::DaedalusSymbol*                oreAlias = nullptr;
+  daedalus::DaedalusSymbol*                giverAlias = nullptr;
+  daedalus::DaedalusSymbol*                takerAlias = nullptr;
+  daedalus::DaedalusSymbol*                itemAlias = nullptr;
   };

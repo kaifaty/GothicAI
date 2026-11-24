@@ -7,6 +7,7 @@
 
 class Item;
 class Npc;
+namespace daedalus { struct IItem; }
 
 namespace InventoryTransfer {
 
@@ -45,6 +46,6 @@ struct Text {
   };
 
 Result run(Npc* giver, Npc* taker, uint32_t item, int32_t amount,
-           std::string_view previousItemName, const Text& text);
+           std::string_view previousItemName, const Text& text, const daedalus::IItem* prepared = nullptr);
 
 }

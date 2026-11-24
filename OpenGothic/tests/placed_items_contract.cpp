@@ -3825,8 +3825,16 @@ void moverChildSave(bool nativeOnly) {
 
 }
 
-int main() {
+int main(int argc, const char** argv) {
   try {
+    const auto* native=std::getenv("OPENGOTHIC_CONTRACT_NATIVE_STOCK");
+    const bool nativeOnly=native && std::strcmp(native,"1")==0;
+    if(argc==4 && std::string_view(argv[1])=="--bennet-ore") {
+      bennetOreContract(argv[2],argv[3],nativeOnly);
+      std::puts("Bennet ore contract passed");
+      return EXIT_SUCCESS;
+      }
+    require(argc==1,"usage: gothic-placed-items-contract [--bennet-ore OLD_SAVE CASE_DIR]");
     census();
     rootedAndStack();
     censusCache();
@@ -3835,8 +3843,7 @@ int main() {
     groundBelowSupport();
     asymmetricLowestPoint();
     irregularSupport();
-    const auto* native=std::getenv("OPENGOTHIC_CONTRACT_NATIVE_STOCK");
-    if(native && std::strcmp(native,"1")==0) {
+    if(nativeOnly) {
       moverChildSave(true);
       } else {
       npcLiveSynthetic(npcDefinitions,npcDefinitionsDisabled,placementDefinitions,placementDefinitionsDisabled,

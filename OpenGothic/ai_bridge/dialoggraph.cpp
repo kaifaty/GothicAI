@@ -542,6 +542,8 @@ bool DialogGraph::onScript(daedalus::DaedalusSymbol& fn, int32_t& result) {
   if(!running)
     return false;
   if(auto* script = rt.script(); script!=nullptr && script->usesVerifiedNpcProgram()) {
+    if(script->ownsNativeBennetProgram(fn.index()))
+      return false;
     bool failed = false;
     if(!script->invokeStockProgram(fn,result,&failed)) {
       ++notPrograms;

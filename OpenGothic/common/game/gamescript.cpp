@@ -62,6 +62,20 @@ struct ScopeCtx final {
   NpcProcessPolicy prev = NpcProcessPolicy::AiNormal;
   };
 
+namespace {
+struct BennetLookupAudit final {
+  explicit BennetLookupAudit(const std::function<void(bool)>& scope) : scope(scope) {
+    if(scope)
+      scope(true);
+    }
+  ~BennetLookupAudit() {
+    if(scope)
+      scope(false);
+    }
+  const std::function<void(bool)>& scope;
+  };
+}
+
 
 bool GameScript::GlobalOutput::output(Npc& npc, std::string_view text) {
   return owner.aiOutput(npc,text,false);
@@ -116,6 +130,7 @@ GameScript::GameScript(GameSession &owner)
     findSymbol("B_GIVEINVITEMS.CONCATTEXT")->bind_global_string(inventoryTransferVariables.notice);
     }
   loadNativeRoutines();
+  initBennetOre();
   loadNativeRoomReaction();
   loadNativeHumanPerceptions();
   loadNativeEquipment();
@@ -826,7 +841,14 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
       const daedalus::IInfo& info = *i;
       if(info.important!=important)
         continue;
-      bool npcKnowsInfo = doesNpcKnowInfo(*player,vm.find_symbol_by_instance(info)->index());
+      const bool bennet = isBennetOreDialog(info);
+      bool npcKnowsInfo = false;
+      if(bennet) {
+        BennetLookupAudit audit(bennetLookupScope);
+        npcKnowsInfo = dlgKnownInfos.contains({static_cast<const daedalus::INpc&>(*player).symbol_index(),BennetOreInfoId});
+        } else {
+        npcKnowsInfo = doesNpcKnowInfo(*player,vm.find_symbol_by_instance(info)->index());
+        }
       if(npcKnowsInfo && !info.permanent)
         continue;
 
@@ -842,7 +864,18 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
         }
 
       bool valid=true;
-      if(info.condition) {
+      if(bennet) {
+        auto& overlay = Gothic::inst().dialogScriptFn;
+        int32_t result = 0;
+        if(overlay && overlay(*bennetConditionSymbol,result)) {
+          valid = result!=0;
+          } else {
+          BennetLookupAudit audit(bennetLookupScope);
+          auto* hero = findNpc(player.get());
+          auto* npc = findNpc(hnpc.get());
+          valid = hero!=nullptr && npc!=nullptr && bennetOffer(*hero,*npc);
+          }
+        } else if(info.condition) {
         auto* conditionSymbol = vm.find_symbol_by_index(uint32_t(info.condition));
         if (conditionSymbol != nullptr) {
           valid = dialogFunction(conditionSymbol,true) != 0;
@@ -920,6 +953,29 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
   if(&player!=&npc)
     player.stopAnim("");
   auto& pl = player.handle();
+
+  if(isBennetOreDialog(info) && dlg.scriptFn==uint32_t(info.information)) {
+    if(npc.instanceSymbol()!=size_t(info.npc) || &player==&npc)
+      return;
+    const std::pair<size_t,size_t> known = {static_cast<const daedalus::INpc&>(pl).symbol_index(),BennetOreInfoId};
+    bool newlyKnown = false;
+    {
+      BennetLookupAudit audit(bennetLookupScope);
+      newlyKnown = dlgKnownInfos.insert(known).second;
+      }
+    auto& overlay = Gothic::inst().dialogScriptFn;
+    int32_t result = 0;
+    if(!overlay || !overlay(*bennetInfoSymbol,result)) {
+      BennetLookupAudit audit(bennetLookupScope);
+      if(!bennetExecute(player,npc)) {
+        if(newlyKnown)
+          dlgKnownInfos.erase(known);
+        return;
+        }
+      }
+    Gothic::inst().onDialogChosen(dlg,player,npc);
+    return;
+    }
 
   if(info.information==int(dlg.scriptFn)) {
     setNpcInfoKnown(pl,info);
