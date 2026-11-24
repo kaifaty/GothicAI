@@ -85,6 +85,7 @@ struct NpcDefinitionContract {
     return script.isBennetOreDialog(info);
     }
   static auto& bennetAnswer(GameScript& script) { return script.bennetOre->answer; }
+  static auto& bennetTransferObserver(GameScript& script) { return script.bennetTransferObserver; }
 
   static void checkBennetLookupProbe(GameScript& script) {
     auto& writable = static_cast<daedalus::DaedalusScript&>(script.getVm());
