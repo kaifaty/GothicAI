@@ -20,6 +20,7 @@ set(BASE_SOURCES
   common/game/definitions/menudefinitions.cpp common/import/menudefinitions.cpp
   common/game/definitions/cameradefinitiondata.cpp common/import/cameradefinitions.cpp
   common/game/definitions/sfxdefinitiondata.cpp common/import/sfxdefinitions.cpp
+  common/game/definitions/musicdefinitiondata.cpp common/import/musicthemedefinitions.cpp
   common/dmusic/directmusicimport.cpp common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp)
 set(BASE_NATIVE_IO
   lib/Tempest/Engine/io/rfile.cpp lib/Tempest/Engine/io/idevice.cpp lib/Tempest/Engine/utility/dir.cpp
@@ -58,7 +59,8 @@ list(APPEND BASE_FORMAT_INPUTS common/npchelperdefinitions.h common/import/npche
   common/game/definitions/fightdefinitiondata.h common/game/definitions/fightdefinitioncapture.h common/game/fighttactic.h common/records/definitions.h
   common/import/gameplaydefinitions.cpp common/game/definitions/gameplaydefinitions.h
   common/game/definitions/menudefinitions.h common/game/definitions/menurecord.h
-  common/game/definitions/cameradefinitiondata.h common/game/definitions/sfxdefinitiondata.h)
+  common/game/definitions/cameradefinitiondata.h common/game/definitions/sfxdefinitiondata.h
+  common/game/definitions/musicdefinitiondata.h)
 list(REMOVE_DUPLICATES BASE_FORMAT_INPUTS)
 list(SORT BASE_FORMAT_INPUTS)
 set(BASE_FORMAT_SUMS "")

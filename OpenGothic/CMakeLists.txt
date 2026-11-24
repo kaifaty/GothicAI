@@ -93,7 +93,9 @@ list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/def
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/cameradefinitiondata.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/cameradefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/sfxdefinitiondata.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/sfxdefinitions.cpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/sfxdefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/musicdefinitiondata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/musicthemedefinitions.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/meshclusterlod.cpp")
 if(NOT OPENGOTHIC_ENABLE_FRAME_PROFILE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/frameprofile.cpp")
