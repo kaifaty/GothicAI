@@ -26,15 +26,17 @@ std::string symbolName(std::string_view name) {
 }
 
 VisualFxDefinitions::VisualFxDefinitions() {
-  const auto& index = baseProgramIndex();
-  const auto* source = ProgramData::visualFxProgram(index);
-  if(source==nullptr || source->recordSha256!=EffectDefinitionData::stockVisualProgram)
-    throw BaseStore::Error("visual effects require the supported prepared catalog");
+  constexpr auto program = EffectDefinitionData::stockVisualProgram;
+  if(baseNativeCatalog()==nullptr) {
+    const auto* source = ProgramData::visualFxProgram(baseProgramIndex());
+    if(source==nullptr || source->recordSha256!=program)
+      throw BaseStore::Error("visual effects require the supported prepared catalog");
+    }
 
   const auto base = Resources::baseDir();
-  const auto section = EffectDefinitionData::visualSection(base,source->recordSha256);
+  const auto section = EffectDefinitionData::visualSection(base,program);
   try {
-    auto records = EffectDefinitionData::readVisuals(base,source->recordSha256);
+    auto records = EffectDefinitionData::readVisuals(base,program);
     effects.reserve(records.effects.size());
     keys.reserve(records.keys.size());
     for(auto& effect : records.effects)

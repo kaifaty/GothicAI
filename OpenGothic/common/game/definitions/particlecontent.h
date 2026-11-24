@@ -123,6 +123,7 @@ class Catalog final {
   };
 
 std::optional<Catalog> openStockCatalog(const ProgramData::Index& index);
+std::optional<Catalog> openStockCatalog(const std::filesystem::path& base);
 GameHost::ParticleNameCheck nameChecker();
 std::string canonicalName(std::string_view name);
 

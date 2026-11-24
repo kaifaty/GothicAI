@@ -7,15 +7,17 @@
 #include "sfxdefinitiondata.h"
 
 SoundDefinitions::SoundDefinitions() {
-  const auto& index = baseProgramIndex();
-  const auto* source = ProgramData::sfxProgram(index);
-  if(source==nullptr || source->recordSha256!=SfxDefinitionData::stockProgram)
-    throw BaseStore::Error("sound effects require the supported prepared catalog");
+  constexpr auto program = SfxDefinitionData::stockProgram;
+  if(baseNativeCatalog()==nullptr) {
+    const auto* source = ProgramData::sfxProgram(baseProgramIndex());
+    if(source==nullptr || source->recordSha256!=program)
+      throw BaseStore::Error("sound effects require the supported prepared catalog");
+    }
 
   const auto base = Resources::baseDir();
-  const auto section = SfxDefinitionData::section(base,source->recordSha256);
+  const auto section = SfxDefinitionData::section(base,program);
   try {
-    auto presets = SfxDefinitionData::read(base,source->recordSha256);
+    auto presets = SfxDefinitionData::read(base,program);
     sfx.reserve(presets.size());
     for(auto& [name,effect] : presets)
       sfx.emplace(std::move(name),std::make_shared<Def::SoundEffect>(std::move(effect)));

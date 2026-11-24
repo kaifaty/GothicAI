@@ -5,8 +5,10 @@
 #include "game/gamescript_daystats.h"
 #include "game/definitions/baseprogram.h"
 #include "game/definitions/basescripts.h"
+#include "game/definitions/gameplaydefinitions.h"
 #include "gothic.h"
 #include "programdata.h"
+#include "resources.h"
 #include "settings.h"
 #include "utils/jsonescape.h"
 #include "world/mobreservations.h"
@@ -173,9 +175,11 @@ bool NpcDayMeasurement::start(World& w, const NpcDayJournal::Options& options, s
               ",\"start_world_ms\":"+std::to_string(w.time().toInt());
     if(options.scriptProbe) {
       // Use the same program selection as GameScript, regardless of the routine playback switch.
-      const auto& index=baseProgramIndex();
-      const auto selected=selectBaseProgram(index,Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"));
-      const auto routines=RoutineDefinitions::read(index.dir.parent_path(),selected.source.recordSha256);
+      auto program=GameplayDefinitions::stockProgram;
+      if(baseNativeCatalog()==nullptr)
+        program=selectBaseProgram(baseProgramIndex(),Gothic::inst().defaultGameDatFile(),
+                                  Settings::getI("GAME","language")).source.recordSha256;
+      const auto routines=RoutineDefinitions::read(Resources::baseDir(),program);
       m->stats=DayScriptStats::attach(w.script().getVm(),routines);
       }
     if(m->trace) std::fprintf(m->trace,"{\"kind\":\"header\",\"trace_version\":2,%s}\n",m->header.c_str());

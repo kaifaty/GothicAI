@@ -47,12 +47,11 @@ void MenuRoot::initSettings() {
   if(lang==menuLanguage && records.has_value())
     return;
 
-  const auto& index = baseProgramIndex();
-  const auto& sha = selectBaseProgram(index,"MENU.DAT",lang).source.recordSha256;
+  constexpr auto sha = MenuDefinitions::stockProgram;
+  if(baseNativeCatalog()==nullptr && selectBaseProgram(baseProgramIndex(),"MENU.DAT",lang).source.recordSha256!=sha)
+    throw BaseStore::Error("menus require the supported prepared catalog");
   const auto base = Resources::baseDir();
   const auto section = MenuDefinitions::section(base,sha);
-  if(sha!=MenuDefinitions::stockProgram)
-    throw BaseStore::Error("menus require the supported prepared catalog");
   try {
     records = MenuDefinitions::read(base,sha);
     if(auto* census = Resources::contentCensus())

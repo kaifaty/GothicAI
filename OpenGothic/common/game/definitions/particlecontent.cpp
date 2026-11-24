@@ -249,12 +249,15 @@ std::optional<Catalog> openStockCatalog(const ProgramData::Index& index) {
   const auto* source=ProgramData::particleFxProgram(index);
   if(source==nullptr || source->recordSha256!=EffectDefinitionData::stockParticleProgram)
     return std::nullopt;
+  return openStockCatalog(index.dir.parent_path());
+  }
 
-  const auto baseRoot=index.dir.parent_path();
-  const auto section=EffectDefinitionData::particleSection(baseRoot,source->recordSha256);
+std::optional<Catalog> openStockCatalog(const fs::path& base) {
+  constexpr auto program=EffectDefinitionData::stockParticleProgram;
+  const auto section=EffectDefinitionData::particleSection(base,program);
   try {
     if(fs::exists(section))
-      return Catalog(EffectDefinitionData::readParticles(baseRoot,source->recordSha256));
+      return Catalog(EffectDefinitionData::readParticles(base,program));
     }
   catch(const std::runtime_error& error) {
     throw BaseStore::Error(section.string()+": "+error.what());

@@ -7,15 +7,14 @@
 #include <cmath>
 
 #include "graphics/pfx/particlefx.h"
-#include "programdata.h"
 #include "resources.h"
 
 using namespace Tempest;
 
 ParticlesDefinitions::ParticlesDefinitions() {
-  const auto& index=baseProgramIndex();
-  catalog=ParticleContent::openStockCatalog(index);
   const auto base=Resources::baseDir();
+  catalog=baseNativeCatalog()!=nullptr ? ParticleContent::openStockCatalog(base)
+                                      : ParticleContent::openStockCatalog(baseProgramIndex());
   const auto section=EffectDefinitionData::particleSection(base,EffectDefinitionData::stockParticleProgram);
   if(!catalog)
     throw BaseStore::Error(section.string()+": particles require the supported prepared catalog");

@@ -14,15 +14,17 @@
 using namespace Tempest;
 
 CameraDefinitions::CameraDefinitions() {
-  const auto& index = baseProgramIndex();
-  const auto* source = ProgramData::cameraProgram(index);
-  if(source==nullptr || source->recordSha256!=CameraDefinitionData::stockProgram)
-    throw BaseStore::Error("camera presets require the supported prepared catalog");
+  constexpr auto program = CameraDefinitionData::stockProgram;
+  if(baseNativeCatalog()==nullptr) {
+    const auto* source = ProgramData::cameraProgram(baseProgramIndex());
+    if(source==nullptr || source->recordSha256!=program)
+      throw BaseStore::Error("camera presets require the supported prepared catalog");
+    }
 
   const auto base = Resources::baseDir();
-  const auto section = CameraDefinitionData::section(base,source->recordSha256);
+  const auto section = CameraDefinitionData::section(base,program);
   try {
-    cameras = CameraDefinitionData::read(base,source->recordSha256);
+    cameras = CameraDefinitionData::read(base,program);
     }
   catch(const std::runtime_error& error) {
     throw BaseStore::Error(section.string()+": "+error.what());

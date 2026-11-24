@@ -1,7 +1,6 @@
 #pragma once
 
-// The base's Daedalus programs (P12) and dialog line library (OU, P14): Gothic's data. Their indexes are read and
-// checked when Resources selects the base, through GameBaseContent; their loaders read the selected records.
+// Resources loads the game's catalog selection and dialog line library through GameBaseContent.
 
 #include <memory>
 #include <string_view>
@@ -10,9 +9,12 @@
 namespace ProgramData { struct Index; }
 namespace OutputUnits { struct Index; }
 namespace asset { struct CutsceneBlock; }
+namespace NativeBaseCatalog { struct Selection; }
 
 // Selected identifier of the prepared fight tactics on the loaded base.
 std::string_view baseFightCatalog();
+// The prepared runtime catalog on a v3 base, owned until the next base selection.
+const NativeBaseCatalog::Selection* baseNativeCatalog();
 const ProgramData::Index& baseProgramIndex();
 const OutputUnits::Index& baseOutputUnitsIndex();
 bool loadBaseOutputUnits(std::string_view request, int language,
