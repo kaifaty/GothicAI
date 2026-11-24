@@ -5,6 +5,8 @@
 #include "game/definitions/cameradefinitiondata.h"
 #include "game/definitions/cameradefinitions.h"
 #include "game/definitions/fightdefinitiondata.h"
+#include "game/definitions/sfxdefinitiondata.h"
+#include "game/definitions/sounddefinitions.h"
 #include "basemesh.h"
 #include "commandline.h"
 #include "contentcensus.h"
@@ -1702,6 +1704,22 @@ struct BaseContentContract {
                 names.size(),groups);
     }
 
+  static fs::path linkBaseForDefinitionTest(const fs::path& base, const fs::path& fixture, const fs::path& section) {
+    // The manifest must validate before a fixture changes its own link to the selected section.
+    const auto definitionDir = section.parent_path();
+    const auto target = fixture/"definitions"/definitionDir.filename();
+    fs::create_directories(target);
+    for(const auto& entry : fs::directory_iterator(base))
+      if(entry.path().filename()!="definitions")
+        fs::create_symlink(entry.path(),fixture/entry.path().filename());
+    for(const auto& entry : fs::directory_iterator(base/"definitions"))
+      if(entry.path().filename()!=definitionDir.filename())
+        fs::create_symlink(entry.path(),fixture/"definitions"/entry.path().filename());
+    for(const auto& entry : fs::directory_iterator(definitionDir))
+      fs::create_symlink(entry.path(),target/entry.path().filename());
+    return target/section.filename();
+    }
+
   using CameraOracle = std::map<std::string,std::shared_ptr<daedalus::ICamera>>;
 
   static void cameraRuntimePresets(const CameraDefinitions& cameras, const CameraOracle& original) {
@@ -1775,24 +1793,13 @@ struct BaseContentContract {
       }),"camera records must report their actual selection");
     }
 
-    // Validate a private copy of the base before removing only its camera record.
     const auto fixture = temporary/"camera-runtime-base";
-    fs::create_directories(fixture/"definitions"/sha);
-    for(const auto& entry : fs::directory_iterator(base))
-      if(entry.path().filename()!="definitions")
-        fs::create_symlink(entry.path(),fixture/entry.path().filename());
-    for(const auto& entry : fs::directory_iterator(base/"definitions"))
-      if(entry.path().filename()!=sha)
-        fs::create_symlink(entry.path(),fixture/"definitions"/entry.path().filename());
-    for(const auto& entry : fs::directory_iterator(section.parent_path()))
-      fs::create_symlink(entry.path(),fixture/"definitions"/sha/entry.path().filename());
-
+    const auto fixtureSection = linkBaseForDefinitionTest(base,fixture,section);
     setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
     {
     Resources resources;
     Resources::loadBase();
     Gothic gothic;
-    const auto fixtureSection = CameraDefinitionData::section(fixture,sha);
     require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private camera record link");
     const CameraDefinitions fallback;
     cameraRuntimePresets(fallback,original);
@@ -1835,6 +1842,103 @@ struct BaseContentContract {
     }
     setenv("OPENGOTHIC_BASE",base.c_str(),1);
     std::puts("Camera records: 33 ordered presets and 759 fields match the original; runtime lookup, fallback and corruption checked");
+    }
+
+  static void sfxRecords(const fs::path& base, const fs::path& temporary, const fs::path& censusPath) {
+    const auto index = ProgramData::readIndex(base/"programs");
+    const auto* selected = ProgramData::sfxProgram(index);
+    require(selected!=nullptr,"Sfx.dat source selection missing");
+    const auto& sha = selected->recordSha256;
+    if(sha!=SfxDefinitionData::stockProgram)
+      return;
+
+    const auto section = SfxDefinitionData::section(base,sha);
+    const auto imported = SfxDefinitionData::read(base,sha);
+    std::vector<std::shared_ptr<daedalus::ISoundEffect>> original;
+    const auto compareRuntime = [&](const SoundDefinitions& sounds) {
+      for(size_t i=0; i<imported.size(); ++i) {
+        const auto& name = imported[i].first;
+        definitionFields(*original[i],sounds[name],name+" runtime");
+        }
+      require(!sounds["LADDER_STEP"].file.empty(),"stock lookup must find LADDER_STEP");
+      definitionFields(daedalus::ISoundEffect{},sounds["ladder_step"],"sound lookup is case sensitive");
+      definitionFields(daedalus::ISoundEffect{},sounds["__SFX_CONTRACT_MISSING__"],"missing sound default");
+      };
+    {
+    Resources resources;
+    Resources::loadBase();
+    Gothic gothic;
+    auto source = definitionSourceVm(index,"Sfx.dat",gothic);
+    source->observe_externals([](const auto& symbol) {
+      throw std::runtime_error("stock Sfx.dat unexpectedly calls "+symbol.name());
+      });
+    const auto names = definitionNames(*source,"C_SFX");
+    equal(names.size(),1770u,"stock sound count");
+    equal(imported.size(),names.size(),"imported sound count");
+    original.reserve(names.size());
+    for(size_t i=0; i<names.size(); ++i) {
+      const auto& [id,name] = names[i];
+      auto [instance,error] = definitionInstance<daedalus::ISoundEffect>(*source,source->find_symbol_by_index(id));
+      require(instance!=nullptr,name+": original sound initialization failed: "+error);
+      require(imported[i].first==name,name+": imported sound order differs");
+      definitionFields(*instance,imported[i].second,name+" imported");
+      original.push_back(std::move(instance));
+      }
+
+    require(Resources::writeCensus(),"cannot write Sfx oracle census");
+    const auto before = json(censusPath);
+    const SoundDefinitions sounds;
+    compareRuntime(sounds);
+    require(Resources::writeCensus(),"cannot write Sfx records census");
+    const auto after = json(censusPath);
+    require(after["files"]==before["files"] && after["runtime_programs"]["selections"].Empty(),
+            "Sfx records must open neither original Sfx.dat nor a VM program");
+    const auto recordPath = "base/"+section.lexically_relative(base).generic_string();
+    const auto& replacements = after["replacements"];
+    require(std::any_of(replacements.Begin(),replacements.End(),[&](const auto& row) {
+      return std::string_view(row["name"].GetString())=="SFX.DAT" &&
+             std::string_view(row["replacement"].GetString())==recordPath && row["opens"].GetUint64()==1;
+      }),"Sfx records must report their actual selection");
+    }
+
+    const auto fixture = temporary/"sfx-runtime-base";
+    const auto fixtureSection = linkBaseForDefinitionTest(base,fixture,section);
+    setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
+    {
+    Resources resources;
+    Resources::loadBase();
+    Gothic gothic;
+    require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private Sfx record link");
+    const SoundDefinitions fallback;
+    compareRuntime(fallback);
+    require(Resources::writeCensus(),"cannot write Sfx fallback census");
+    const auto fallbackCensus = json(censusPath);
+    const auto& programs = fallbackCensus["runtime_programs"]["selections"];
+    equal(programs.Size(),1u,"Sfx fallback program selection count");
+    require(std::string_view(programs[0]["request"].GetString())=="Sfx.dat" &&
+            std::string_view(programs[0]["record"]["sha256"].GetString())==sha,
+            "the Sfx fallback must run the selected base program");
+    require(fallbackCensus["files"].Empty(),"the Sfx fallback must not open an original DAT");
+
+    auto corrupt = json(section);
+    require(corrupt.HasMember("presets") && corrupt["presets"].IsArray() && !corrupt["presets"].Empty() &&
+            corrupt["presets"][0].HasMember("reverb_level"),"Sfx corruption fixture is missing its reverb field");
+    corrupt["presets"][0]["reverb_level"].SetString("invalid");
+    writeJson(fixtureSection,corrupt);
+    bool rejected = false;
+    try {
+      const SoundDefinitions invalid;
+      }
+    catch(const BaseStore::Error& error) {
+      rejected = std::string_view(error.what()).find(fixtureSection.string())!=std::string_view::npos;
+      }
+    require(rejected,"corrupt selected Sfx records must be rejected");
+    require(Resources::writeCensus(),"cannot write corrupt Sfx census");
+    const auto failure = json(censusPath);
+    require(failure["runtime_programs"]["selections"]==programs,"a corrupt Sfx record must not execute VM fallback");
+    }
+    setenv("OPENGOTHIC_BASE",base.c_str(),1);
+    std::puts("Sfx records: 1770 ordered presets and 15930 fields match the original; runtime lookup, fallback and corruption checked");
     }
 
   static void definitionRecords(const fs::path& base, const fs::path& censusPath) {
@@ -3301,6 +3405,7 @@ struct BaseContentContract {
     }
     census(censusPath,meshCount,modelCount,fontCount,programCount);
     cameraRecords(base,temporary,censusPath);
+    sfxRecords(base,temporary,censusPath);
     // Keep parser regression reads separate from the runtime-open census.
     {
     Resources resources;
