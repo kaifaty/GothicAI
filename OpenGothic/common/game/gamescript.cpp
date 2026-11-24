@@ -465,7 +465,7 @@ void GameScript::initSettings() {
 void GameScript::initDialogs() {
   loadDialogOU();
 
-  storyDialogNames.clear();
+  storyDialogsById.clear();
   storyDialogs.clear();
   dialogsInfo.clear();
   const bool native = nativeRoutineProgram && activityEvents && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
@@ -1709,7 +1709,7 @@ Item* GameScript::findItemById(const std::shared_ptr<daedalus::DaedalusInstance>
   }
 
 Npc* GameScript::findNpcById(size_t id) {
-  auto* handle = vm.find_symbol_by_index(uint32_t(id));
+  auto* handle = nativeRoutineProgram ? storySlot(uint32_t(id)) : vm.find_symbol_by_index(uint32_t(id));
   if(handle==nullptr || !handle->is_instance_of<daedalus::INpc>())
     return nullptr;
 
@@ -1723,6 +1723,10 @@ Npc* GameScript::findNpcById(size_t id) {
   }
 
 daedalus::IInfo* GameScript::findInfo(size_t id) {
+  if(nativeRoutineProgram) {
+    const auto entry = storyDialogsById.find(uint32_t(id));
+    return entry!=storyDialogsById.end() ? entry->second.second : nullptr;
+    }
   auto* sym = vm.find_symbol_by_index(uint32_t(id));
   if(sym==nullptr||!sym->is_instance_of<daedalus::IInfo>())
     return nullptr;

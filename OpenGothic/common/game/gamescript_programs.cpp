@@ -207,6 +207,17 @@ std::string_view GameScript::storySymbolName(uint32_t id) {
   return {};
   }
 
+daedalus::DaedalusSymbol* GameScript::storySlot(uint32_t id) const {
+  if(!stockPrograms)
+    return nullptr;
+  const auto found = stockPrograms->ids.find(id);
+  if(found!=stockPrograms->ids.end())
+    return found->second;
+  if(const auto* entry = own.find(id))
+    return own.binding(entry->name);
+  return nullptr;
+  }
+
 std::optional<int32_t> GameScript::storySymbolIndex(std::string_view name) {
   if(const auto [slot,kind] = storyPrograms().binding(name); slot!=nullptr)
     return int32_t(slot->index());

@@ -322,6 +322,7 @@ class GameScript final : public GameRules {
     friend class GameStoryExternals;
     class StockPrograms;
     StockPrograms& storyPrograms();
+    daedalus::DaedalusSymbol* storySlot(uint32_t id) const;
     daedalus::DaedalusSymbol* storySlot(std::string_view name, SymbolKind* kind = nullptr) const;
     struct BennetOre;
     struct BennetOreDialog;
@@ -877,7 +878,7 @@ class GameScript final : public GameRules {
     void sort(std::vector<DlgChoice>& dlg);
     // a dialog's condition, information or choice: the story graph runs it if it takes it, else the VM
     int32_t dialogFunction(uint32_t function, bool returns);
-    void rememberStoryDialog(std::string_view name, const daedalus::IInfo& info);
+    void rememberStoryDialog(std::string_view name, daedalus::IInfo& info);
     const daedalus::IInfo* storyDialog(std::string_view name) const;
 
     void initBennetOre();
@@ -974,7 +975,7 @@ class GameScript final : public GameRules {
     std::set<std::pair<size_t,size_t>>                          dlgKnownInfos;
     std::vector<std::shared_ptr<daedalus::IInfo>>                 dialogsInfo;
     std::map<std::string,const daedalus::IInfo*,std::less<>>     storyDialogs;
-    std::unordered_map<uint32_t,std::string_view>                storyDialogNames;
+    std::unordered_map<uint32_t,std::pair<std::string_view,daedalus::IInfo*>> storyDialogsById;
     std::vector<std::shared_ptr<asset::CutsceneBlock>>           dialogs;
     std::unordered_map<size_t,AiState>                          aiStates;
     std::unique_ptr<AiOuputPipe>                                aiDefaultPipe;

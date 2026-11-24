@@ -919,9 +919,9 @@ bool GameScript::doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) cons
   return dlgKnownInfos.contains({actor,infoInstance});
   }
 
-void GameScript::rememberStoryDialog(std::string_view name, const daedalus::IInfo& info) {
+void GameScript::rememberStoryDialog(std::string_view name, daedalus::IInfo& info) {
   const auto [entry, inserted] = storyDialogs.emplace(name,&info);
-  if(!inserted || !storyDialogNames.emplace(info.symbol_index(),entry->first).second)
+  if(!inserted || !storyDialogsById.try_emplace(info.symbol_index(),entry->first,&info).second)
     throw std::runtime_error("duplicate story dialog: "+std::string(name));
   }
 
@@ -936,8 +936,8 @@ const daedalus::IInfo* GameScript::storyDialog(std::string_view name) const {
   }
 
 std::string_view GameScript::storyDialogName(uint32_t id) const {
-  const auto entry = storyDialogNames.find(id);
-  return entry!=storyDialogNames.end() ? entry->second : std::string_view{};
+  const auto entry = storyDialogsById.find(id);
+  return entry!=storyDialogsById.end() ? entry->second.first : std::string_view{};
   }
 
 std::optional<uint32_t> GameScript::storyDialogFunction(std::string_view name, bool condition) const {
