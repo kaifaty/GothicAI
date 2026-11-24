@@ -370,10 +370,7 @@ void Npc::loadAiState(Serialize& fin) {
   fin.read(aiState.funcIni,aiState.funcLoop,aiState.funcEnd,aiState.sTime,aiState.eTime,aiState.started,aiState.loopNextTime);
   fin.read(aiPrevState);
 
-  aiState.hint = "";
-  if(auto s = owner.rules().symbolName(aiState.funcIni.ptr); !s.empty()) {
-    aiState.hint = s.data();
-    }
+  aiState.hint = aiState.funcIni.isValid() ? owner.rules().aiState(aiState.funcIni).name() : "";
 
   aiQueue.load(fin,owner);
   aiQueueOverlay.load(fin,owner);

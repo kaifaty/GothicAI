@@ -28,6 +28,7 @@
 #include "game/ownsymbols.h"
 #include "game/gamescript_startupfloor.h"
 #include "game/gamescript_inventorytransfer.h"
+#include "game/gamescript_nativecall.h"
 #include "game/itemdefinitionruntime.h"
 #include "game/routinedefinitionruntime.h"
 #include "game/npcdefinitionruntime.h"
@@ -463,16 +464,6 @@ class GameScript final : public GameRules {
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     bool startHotkeyPotion(Npc& pl, bool mana);
 
-    template<typename T>
-    struct DetermineSignature {
-      using signature = void();
-      };
-
-    template <typename C, typename R, typename ... P>
-    struct DetermineSignature<R(C::*)(P...)> {
-      using signature = R(P...);
-      };
-
     struct GlobalOutput : AiOuputPipe {
       explicit GlobalOutput(GameScript& owner):owner(owner){}
 
@@ -487,16 +478,14 @@ class GameScript final : public GameRules {
       GameScript& owner;
       };
 
-    template <class F>
-    void bindExternal(const std::string& name, F function) {
-      const size_t floorId = floorDefer.registerExternal(name,StartupFloor::classify(name));
-      vm.register_external(name, std::function<typename DetermineSignature<F>::signature> (
-                                   [this, function, floorId](auto ... v) {
-                                     if(floorDefer.active())
-                                       floorBarrier(floorId,v...);
-                                     return (this->*function)(v...);
-                                     }));
-      }
+    template<class R, class... P>
+    std::function<R(P...)> externalCallback(const std::string& name, R(GameScript::*function)(P...));
+
+    template<class R, class... P>
+    void bindExternal(const std::string& name, R(GameScript::*function)(P...));
+
+    template<class R, class... P>
+    void bindNativeExternal(const std::string& name, R(GameScript::*function)(P...));
 
     // StartupFloor: the NPC arguments of an external about to run.
     template <class ... A>
@@ -516,6 +505,7 @@ class GameScript final : public GameRules {
     void  loadDialogOU();
     void  loadNativeAmbientInfos();
     void  loadNativeTrainingHelpers();
+    void  loadNativeAiStates();
     auto  buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol&;
     bool  readDialogInfos();
 
@@ -959,6 +949,7 @@ class GameScript final : public GameRules {
     OwnSymbols                                                  own;
     daedalus::DaedalusVm                                          vm;
     std::unique_ptr<StockPrograms>                                stockPrograms;
+    std::map<std::string,storygraph::NativeExternal,std::less<>>    nativeExternals;
     std::unique_ptr<BennetOre>                                    bennetOre;
     daedalus::DaedalusSymbol*                                     levelUpSound = nullptr;
     std::function<void(bool)>                                    bennetLookupScope;

@@ -3,6 +3,7 @@
 #include "placementdefinitions.h"
 #include "daedalus/vm.h"
 
+#include <functional>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -75,5 +76,5 @@ Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScri
 void observeCalls(daedalus::DaedalusVm& vm, const std::filesystem::path& base, std::string_view sha256);
 // The startup game entry point and the contract share the record/VM choice.
 bool execute(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol* function,
-             const Definitions& definitions);
+             const Definitions& definitions, const std::function<bool(const Call&)>& applyNative = {});
 }

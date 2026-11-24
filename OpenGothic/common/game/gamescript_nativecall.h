@@ -23,6 +23,8 @@ class BoundNativeCall final {
     BoundNativeCall(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& symbol);
     const NativeFunction& signature() const { return function; }
     bool active() const;
+    static void observeExternal(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& symbol,
+                                std::span<const NativeValue> args, const ResolveActor& resolve);
     std::optional<NativeCall> invoke(std::span<const NativeValue> args, const ResolveActor& resolve,
                                      const BindActor& bind, const MapReference& map, std::string& error) const;
 
@@ -30,6 +32,12 @@ class BoundNativeCall final {
     daedalus::DaedalusVm& vm;
     daedalus::DaedalusSymbol& symbol;
     NativeFunction function;
+  };
+
+struct NativeExternal final {
+  NativeFunction signature;
+  std::function<NativeCall(std::span<const NativeValue>, const BoundNativeCall::ResolveActor&,
+                           const BoundNativeCall::BindActor&)> call;
   };
 
 }

@@ -699,6 +699,10 @@ namespace daedalus {
 		[[nodiscard]] bool has_bound_native(DaedalusSymbol& sym) const;
 		bool call_bound_native(DaedalusSymbol& sym, std::function<void()> const& push,
 		                       std::function<void()> const& pop);
+
+		// Expose arguments to existing external probes without dispatching the external through the VM.
+		[[nodiscard]] bool has_external_observer() const { return bool(_m_external_observer); }
+		void observe_bound_external(DaedalusSymbol const& sym, std::function<void()> const& push);
 		std::shared_ptr<DaedalusInstance> unsafe_get_gi();
 		void unsafe_set_gi(std::shared_ptr<DaedalusInstance> i);
 

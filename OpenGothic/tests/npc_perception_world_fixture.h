@@ -225,12 +225,21 @@ void stockTeachAttribute(GameScript& script, Npc& npc, Npc& player) {
       vm.observe_externals([&](const auto& function) { notices+=function.name()=="PRINTSCREEN"; });
       using storygraph::Value;
       std::string error;
-      const auto trainedResult=storygraph::callFunction(vm,*helper,{Value::instance(teacher),Value::instance(student),
-          Value::integer(ATR_STRENGTH),Value::integer(points),Value::integer(40)},error);
+      std::optional<int32_t> trainedResult;
+      if(native) {
+        const auto result=script.callStoryFunction("B_TEACHATTRIBUTEPOINTS",&npc,&player,{&npc,&player,int32_t(ATR_STRENGTH),points,40});
+        require(result.ok,result.error.c_str());
+        trainedResult=result.returned.i;
+        } else {
+        const auto result=storygraph::callFunction(vm,*helper,{Value::instance(teacher),Value::instance(student),
+            Value::integer(ATR_STRENGTH),Value::integer(points),Value::integer(40)},error);
+        if(result)
+          trainedResult=result->i;
+        }
       vm.observe_instructions({});
       vm.observe_externals({});
-      require(trainedResult && trainedResult->i==int32_t(accepted) && instructions==(native ? 0u : 1u) &&
-              innerInstructions==(!native && accepted ? 2u : 0u) && notices==1,
+      require(trainedResult==int32_t(accepted) && instructions==(native ? 0u : 1u) &&
+              innerInstructions==(!native && accepted ? 2u : 0u) && notices==size_t(!native),
               "attribute lesson: preserve selected execution, teacher refusals and training notices");
       require(Contract::queue(npc).size()==savedQueue.size()+size_t(!accepted) &&
               Contract::outputOrder(script)==savedOrder+int(!accepted),
@@ -289,7 +298,6 @@ void stockTeachFight(GameScript& script, Npc& npc, Npc& player) {
   auto* raise=script.findSymbol("B_RAISEFIGHTTALENT");
   auto* counter=script.findSymbol("B_RAISEREALFIGHTTALENTPERCENT");
   auto* add=script.findSymbol("B_ADDFIGHTSKILL");
-  const bool nativeSkill=NpcHelperRuntime::enabled() && Contract::definitions(script).helpers.helpers.contains(add->index());
   static constexpr struct {
     int current,trained,pairedTrained,points,limit,lp,price;
     bool accepted,paired;
@@ -322,13 +330,22 @@ void stockTeachFight(GameScript& script, Npc& npc, Npc& player) {
       vm.observe_externals([&](const auto& fn) { notices+=fn.name()=="PRINTSCREEN"; });
       using storygraph::Value;
       std::string error;
-      const auto result=storygraph::callFunction(vm,*teacherFn,{Value::instance(teacher),Value::instance(student),
-          Value::integer(TALENT_1H),Value::integer(points),Value::integer(limit)},error);
+      std::optional<int32_t> result;
+      if(native) {
+        const auto call=script.callStoryFunction("B_TEACHFIGHTTALENTPERCENT",&npc,&player,{&npc,&player,int32_t(TALENT_1H),points,limit});
+        require(call.ok,call.error.c_str());
+        result=call.returned.i;
+        } else {
+        const auto call=storygraph::callFunction(vm,*teacherFn,{Value::instance(teacher),Value::instance(student),
+            Value::integer(TALENT_1H),Value::integer(points),Value::integer(limit)},error);
+        if(call)
+          result=call->i;
+        }
       vm.observe_instructions({});
       vm.observe_externals({});
       const size_t count=accepted ? 1+size_t(paired) : 0;
-      require(result && result->i==int(accepted) && roots==size_t(!native) && raises==(native ? 0u : count*2u) &&
-              adds==(native && nativeSkill ? 0u : count) && notices==1 && vm.unsafe_get_gi()==context,
+      require(result==int(accepted) && roots==size_t(!native) && raises==(native ? 0u : count*2u) &&
+              adds==(native ? 0u : count) && notices==size_t(!native) && vm.unsafe_get_gi()==context,
               "fight lesson: use the selected executor and issue one notice");
       require(Contract::queue(npc).size()==queue.size()+size_t(!accepted) && Contract::outputOrder(script)==order+int(!accepted),
               "fight lesson: queue the teacher's refusal in order");
@@ -406,12 +423,21 @@ void stockTeachRune(GameScript& script, Npc& npc, Npc& player) {
         });
       using storygraph::Value;
       std::string error;
-      const auto result=storygraph::callFunction(vm,*lesson,{Value::instance(teacher),Value::instance(student),
-          Value::integer(spell)},error);
+      std::optional<int32_t> result;
+      if(native) {
+        const auto call=script.callStoryFunction("B_TEACHPLAYERTALENTRUNES",&npc,&player,{&npc,&player,spell});
+        require(call.ok,call.error.c_str());
+        result=call.returned.i;
+        } else {
+        const auto call=storygraph::callFunction(vm,*lesson,{Value::instance(teacher),Value::instance(student),
+            Value::integer(spell)},error);
+        if(call)
+          result=call->i;
+        }
       vm.observe_instructions({});
       vm.observe_externals({});
-      require(result && result->i==int(allowed) && instructions==size_t(!native) && vm.unsafe_get_gi()==context &&
-              scrolls==0 && screens==1u+size_t(allowed) && student->lp==0 && flags->get_int(0)==int(allowed),
+      require(result==int(allowed) && instructions==size_t(!native) && vm.unsafe_get_gi()==context &&
+              scrolls==0 && screens==(native ? 0u : 1u+size_t(allowed)) && student->lp==0 && flags->get_int(0)==int(allowed),
               "rune lesson: preserve optional stock fallback, refusal, LP and the learned spell flag");
       require(Contract::queue(npc).size()==queue.size()+size_t(!allowed) &&
               player.talentSkill(TALENT_RUNES)==(allowed ? 1 : skill),

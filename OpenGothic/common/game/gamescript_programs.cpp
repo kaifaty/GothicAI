@@ -47,7 +47,7 @@ GameScript::StockPrograms::StockPrograms(GameScript& script)
       auto& slot = *vm.find_symbol_by_index(symbol.index());
       bindSymbol(slot, callable || state ? SymbolKind::Function :
                        symbol.is_const() ? SymbolKind::Constant : SymbolKind::Variable);
-      if(callable)
+      if(callable && !script.nativeExternals.contains(slot.name()))
         calls.try_emplace(slot.name(),vm,slot);
       }
 
@@ -98,7 +98,7 @@ void GameScript::StockPrograms::bindCatalog(const StockStoryPrograms::Catalog& c
         break;
       }
     bindSymbol(*symbol,kind);
-    if(symbol->type()==FUNCTION && (symbol->is_external() || symbol->is_const()))
+    if(symbol->type()==FUNCTION && (symbol->is_external() || symbol->is_const()) && !script.nativeExternals.contains(name))
       calls.try_emplace(name,vm,*symbol);
     }
 
@@ -151,14 +151,26 @@ std::optional<storygraph::NativeFunction> GameScript::StockPrograms::function(st
   const auto [slot,kind] = binding(name);
   if(slot==nullptr || kind!=SymbolKind::Function)
     return std::nullopt;
+  if(const auto direct = script.nativeExternals.find(slot->name()); direct!=script.nativeExternals.end())
+    return direct->second.signature;
   const auto call = calls.find(slot->name());
   if(call==calls.end())
     return std::nullopt;
   auto fn = call->second.signature();
   const auto* prepared = program(slot->index());
-  // This stock helper has complete prepared logic; its compatibility override
-  // still peeks up routines and static locals in the original table.
-  if(call->second.active() && (prepared==nullptr || slot->name()!="B_STARTOTHERROUTINE"))
+  // Run complete prepared operations directly. Some of their VM adapters still
+  // serve other engine entry points until those callers migrate.
+  static constexpr std::string_view preparedOperations[] = {
+    "B_STARTOTHERROUTINE", "B_GREG_COMESTODEXTER",
+    "B_BUILDLEARNSTRING", "B_GETLEARNCOSTATTRIBUTE", "B_GETLEARNCOSTTALENT",
+    "B_RAISEATTRIBUTE", "B_RAISEREALATTRIBUTELEARNCOUNTER", "B_RAISEFIGHTTALENT",
+    "B_RAISEREALFIGHTTALENTPERCENT", "B_ADDFIGHTSKILL", "B_LOGENTRY", "B_SAY"
+    };
+  if(prepared!=nullptr && std::ranges::find(preparedOperations,slot->name())!=std::end(preparedOperations)) {
+    fn.program = &prepared->program;
+    return fn;
+    }
+  if(call->second.active())
     return fn;
   if(prepared==nullptr)
     return std::nullopt;
