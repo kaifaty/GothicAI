@@ -3747,40 +3747,15 @@ void moverChildSave(bool nativeOnly) {
   gothic.isNpcInDialogFn=[](const Npc*) { return false; };
   gothic.setupGlobalScripts();
   GameMusic music;
-  if(nativeOnly) {
-    for(const auto& file : std::filesystem::directory_iterator(baseProgramIndex().dir))
-      require(file.path().filename()=="programs.json","native stock contract requires a base without program payloads");
-    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
-    require(gothic.world()!=nullptr && gothic.player()!=nullptr,"native stock contract requires a live world and player");
-    auto& script=gothic.world()->script();
-    require(script.usesVerifiedNpcProgram() && script.getVm().size()==0 &&
-            !NpcDefinitionContract::placements(script).placements.empty(),
-            "native stock contract requires prepared stock placements and no bytecode");
-    } else {
+  if(nativeOnly)
+    startNativePlacementWorld(gothic);
+  else
     compareLegacyPlacedStartup(gothic);
-    }
-  const auto findChild=[](World& world) -> const WorldObjects::PlacedItem& {
-    const auto& catalogue=world.placedItemCensus();
-    const auto child=std::find_if(catalogue.begin(),catalogue.end(),[](const auto& row) { return row.zenId==2839; });
-    require(child!=catalogue.end() && child->item!=nullptr,
-            "the authored catalogue must contain Item 2839 below mover 2838 on both startup and reload");
-    const auto attachments=world.vobAttachmentSnapshot(2838);
-    require(std::any_of(attachments.begin(),attachments.end(),[](const auto& row) {
-              return row.zenId==2839 && row.parentZenId==2838;
-              }),"the save fixture must contain an actual mover-child Item");
-    return *child;
-    };
-  const auto& child=findChild(*gothic.world());
+  const auto& child=placedMoverChild(*gothic.world());
   gothic.world()->script().getVm().global_item()->set_instance(
     std::static_pointer_cast<daedalus::IItem>(child.item->handlePtr()));
   const auto catalogueSize=gothic.world()->placedItemCensus().size();
-  const auto countItems=[](World& world) {
-    uint32_t count=0;
-    while(world.itmById(count)!=nullptr)
-      ++count;
-    return count;
-    };
-  const auto itemCount=countItems(*gothic.world());
+  const auto itemCount=placedWorldItemCount(*gothic.world());
   const auto instance=child.instance;
   const auto verdict=child.validation.disposition;
   auto savedPose=child.origin;
@@ -3808,11 +3783,11 @@ void moverChildSave(bool nativeOnly) {
     gothic.setGame(std::make_unique<GameSession>(in));
   }
   requireStory(*gothic.world());
-  const auto& restored=findChild(*gothic.world());
+  const auto& restored=placedMoverChild(*gothic.world());
   require(gothic.world()->script().getVm().global_item()->get_instance()==
           std::static_pointer_cast<daedalus::IItem>(restored.item->handlePtr()),
           "the saved global Item reference must resolve to the restored world Item");
-  require(gothic.world()->placedItemCensus().size()==catalogueSize && countItems(*gothic.world())==itemCount,
+  require(gothic.world()->placedItemCensus().size()==catalogueSize && placedWorldItemCount(*gothic.world())==itemCount,
           "loading a mover-child identity must preserve the catalogue and avoid duplicate Items");
   require(restored.instance==instance && restored.validation.disposition==verdict &&
           restored.item->placedItemZenId()==2839,
