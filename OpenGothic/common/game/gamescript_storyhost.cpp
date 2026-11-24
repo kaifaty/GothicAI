@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 
+#include "gothic.h"
 #include "storygraph/vocab.h"
 #include "world/objects/npc.h"
 
@@ -78,6 +79,8 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
     std::optional<NativeValue> read(const NativeSlot& slot, std::string& error) override {
       using enum DaedalusDataType;
       const auto context = resolveInstance(slot.context);
+      if(auto* field = npcTrainingField(slot,context.get()))
+        return NativeValue::integer(*field);
       auto* symbol = resolve(slot,context.get());
       if(slot.kind==NativeSlot::Member && context==nullptr)
         return symbol!=nullptr && symbol->type()==STRING ? NativeValue::str("") : NativeValue::integer(0);
@@ -106,6 +109,12 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
     bool write(const NativeSlot& slot, const NativeValue& value, std::string& error) override {
       using enum DaedalusDataType;
       const auto context = resolveInstance(slot.context);
+      if(effects && value.type==NativeValue::Int) {
+        if(auto* field = npcTrainingField(slot,context.get())) {
+          *field = value.i;
+          return true;
+          }
+        }
       auto* symbol = resolve(slot,context.get());
       if(!effects || symbol==nullptr || (symbol->is_const() && slot.kind!=NativeSlot::Instance)) {
         error = "Cannot write story slot "+std::string(slot.name);
@@ -150,12 +159,24 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
                                           std::string& error) override {
       const auto* slot = owner.binding(name).first;
       const auto fn = findFunction(name);
-      if(slot==nullptr || !fn || fn->program!=nullptr) {
+      if(slot==nullptr || !fn || fn->program!=nullptr ||
+         !std::equal(args.begin(),args.end(),fn->parameters.begin(),fn->parameters.end(),
+                     [](const NativeValue& actual, NativeValue::Type expected) { return actual.type==expected; })) {
         error = "Unknown native story operation "+std::string(name);
         return std::nullopt;
         }
-      // Journal writes have a direct engine API shared with other native game systems.
       const auto& key = slot->name();
+      if(key=="INTTOSTRING")
+        return NativeCall{NativeValue::str(std::to_string(args[0].i)),{}};
+      if(key=="CONCATSTRINGS")
+        return NativeCall{NativeValue::str(args[0].s+args[1].s),{}};
+      if(key=="PRINTSCREEN")
+        return NativeCall{NativeValue::integer(Gothic::inst().printscreen(args[0].s,args[1].i,args[2].i,args[3].s,args[4].i)),{}};
+      if(key=="PRINT") {
+        Gothic::inst().onPrint(args[0].s);
+        return NativeCall{};
+        }
+      // Journal writes have a direct engine API shared with other native game systems.
       if(effects && key.starts_with("LOG_") && args.size()==2 && args[0].type==NativeValue::Str) {
         if(key=="LOG_CREATETOPIC" && args[1].type==NativeValue::Int) {
           owner.script.log_createtopic(args[0].s,args[1].i);
@@ -168,6 +189,23 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
         if(key=="LOG_ADDENTRY" && args[1].type==NativeValue::Str) {
           owner.script.log_addentry(args[0].s,args[1].s);
           return NativeCall{};
+          }
+        }
+      if(const auto direct = owner.script.nativeExternals.find(key); direct!=owner.script.nativeExternals.end()) {
+        const auto resolve = [this](NativeInstance id) { return resolveInstance(id); };
+        const auto bindValue = [this](const auto& value) { return bind(value); };
+        struct RestoreContext {
+          daedalus::DaedalusVm& vm;
+          std::shared_ptr<DaedalusInstance> previous;
+          ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
+          } restore{owner.vm,owner.vm.unsafe_get_gi()};
+        try {
+          BoundNativeCall::observeExternal(owner.vm,*slot,args,resolve);
+          return direct->second.call(args,resolve,bindValue);
+          }
+        catch(const std::exception& ex) {
+          error = "Native function " + key + " failed: " + ex.what();
+          return std::nullopt;
           }
         }
       return owner.calls.at(slot->name()).invoke(args,
@@ -212,6 +250,23 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
   private:
+    static int32_t* npcTrainingField(const NativeSlot& slot, DaedalusInstance* context) {
+      if(slot.kind!=NativeSlot::Member)
+        return nullptr;
+      auto* npc = dynamic_cast<daedalus::INpc*>(context);
+      if(npc==nullptr)
+        return nullptr;
+      if(slot.name=="LP" && slot.index==0)
+        return &npc->lp;
+      if(slot.name=="ATTRIBUTE" && slot.index<std::size(npc->attribute))
+        return &npc->attribute[slot.index];
+      if(slot.name=="HITCHANCE" && slot.index<std::size(npc->hitchance))
+        return &npc->hitchance[slot.index];
+      if(slot.name=="AIVAR" && slot.index<std::size(npc->aivar))
+        return &npc->aivar[slot.index];
+      return nullptr;
+      }
+
     std::shared_ptr<DaedalusInstance> resolveInstance(NativeInstance index) const {
       if(index==0 || index>instances.size())
         return {};

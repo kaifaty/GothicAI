@@ -2071,7 +2071,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
 
   if(name=="ZS_ATTACK_LOOP") {
     result = LOOP_CONTINUE;
-    vm.unsafe_call_bl(findSymbol("B_GREG_COMESTODEXTER"));
+    runGregRoutineTransition(*self);
     npc_gettarget(self);
     if(npc_getdisttonpc(self,other())>aivar[fightDistanceCancel]) {
       stopPursuit();
@@ -4080,23 +4080,6 @@ auto GameScript::npcRecord(size_t id) -> std::shared_ptr<NpcRecord> {
 
 size_t GameScript::goldItemId() const {
   return itMi_Gold->index();
-  }
-
-const AiState& GameScript::aiState(ScriptFn id) {
-  auto it = aiStates.find(id.ptr);
-  if(it!=aiStates.end())
-    return it->second;
-  AiState state;
-  state.funcIni = id.ptr;
-  if(auto* symbol = findSymbol(id.ptr)) {
-    state.mname = symbol->name().c_str();
-    state.funcLoop = findSymbolIndex(symbol->name()+"_Loop");
-    state.funcEnd = findSymbolIndex(symbol->name()+"_End");
-    } else {
-    state.funcLoop = uint32_t(-1);
-    state.funcEnd = uint32_t(-1);
-    }
-  return aiStates.emplace(id.ptr,state).first->second;
   }
 
 int GameScript::whirlwindDuration() {

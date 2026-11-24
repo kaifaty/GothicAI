@@ -859,6 +859,10 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
   gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
   const auto journalBefore = gothic.world()->script().questLog().questCount();
   const auto stockId = gothic.world()->script().findSymbolIndex(stock);
+  const auto stateInit = gothic.world()->script().findFunction("ZS_SHORTZAPPED");
+  const auto stateLoop = gothic.world()->script().findFunction("ZS_SHORTZAPPED_LOOP");
+  const auto stateEnd = gothic.world()->script().findFunction("ZS_SHORTZAPPED_END");
+  require(stateInit.isValid() && stateLoop.isValid() && stateEnd.isValid(),"the state fixture must have all three phases");
   std::optional<uint32_t> directorNpcId;
   {
     auto& world=*gothic.world();
@@ -888,10 +892,13 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
             script.setGlobalIntSymbol("BDT_1013_AWAY",0) &&
             script.setGlobalIntSymbol("CAVALORN_ADDON_TEACHPLAYER",1),"Cavalorn contract needs the stock quest flags");
     hero->handle().aivar[86]=35; // REAL_TALENT_BOW, the two-point price tier.
+    hero->handle().hitchance[TALENT_BOW]=35;
+    hero->handle().lp=2;
     const auto teachFn=script.findSymbolIndex("DIA_ADDON_CAVALORN_TEACH_INFO");
     const auto bowFn=script.findSymbolIndex("DIA_ADDON_CAVALORN_TEACH_BOW_1");
     Contract::queue(*hero).clear();
     Contract::queue(*actor).clear();
+    bandits.front()->clearState(true);
 
     std::vector<std::string> chosen;
     StoryRuntime runtime(nullptr);
@@ -968,13 +975,34 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
       const auto bow=std::ranges::find(lessons,bowFn,&GameScript::DlgChoice::scriptFn);
       require(bow!=lessons.end() && bow->title.ends_with("2 LP"),
               "Cavalorn's bow lesson must display the learner's two-point price");
+      script.exec(*bow,*hero,*actor);
+      require(hero->handle().lp==0 && hero->handle().hitchance[TALENT_BOW]==36 && hero->handle().aivar[86]==36,
+              "Cavalorn must debit two LP and update current and trained bow skill");
+      const auto afterPurchase=script.callStoryFunction("B_TEACHFIGHTTALENTPERCENT",actor,hero,
+                                                       {actor,hero,int32_t(TALENT_BOW),1,90});
+      require(afterPurchase.ok && afterPurchase.returned.i==0 && hero->handle().lp==0 &&
+              hero->handle().hitchance[TALENT_BOW]==36 && hero->handle().aivar[86]==36,
+              "a repeat lesson without LP must refuse without changing the learner");
+      require(script.globalIntSymbol("B_TEACHFIGHTTALENTPERCENT.KOSTEN")==2 &&
+              script.globalIntSymbol("B_TEACHFIGHTTALENTPERCENT.REALHITCHANCE")==36,
+              "the training result must update the exact stock named values");
 
       rapidjson::Document invalid;
       invalid.Parse(R"([{"do":"set","target":["var","DIR_NATIVE_STORY_RESULT"],"value":["int",99]},
                          {"do":"call","call":["fn","MISSING_STORY_CONTRACT_HELPER"]}])");
       const auto rejected=runtime.run(storygraph::readProgram(invalid,false),actor,hero);
       require(!rejected.ok && !rejected.started,"an unresolved dependency must be rejected before executing the first effect");
+
+      require(bandits.front()->startState(stateInit,{}),"the bandit must enter a new state without a VM lookup");
+      const auto& state=Contract::aiState(*bandits.front());
+      require(state.funcIni==stateInit && state.funcLoop==stateLoop && state.funcEnd==stateEnd &&
+              std::string_view(state.hint)=="ZS_SHORTZAPPED",
+              "a first state transition must resolve the stock Init, Loop and End records");
     }
+    ActivityCalls activityCalls;
+    Contract::tickRoutine(*bandits.front());
+    require(Contract::aiState(*bandits.front()).started && activityCalls.phase(*bandits.front(),"ZS_SHORTZAPPED")==1,
+            "the game must run the state Init before its mid-state save");
     vm.remove_instruction_observer(observer);
     require(BennetLookupAudit::lookups==reads && instructions==0,"normal StoryGraph and bridge paths must avoid full table reads and bytecode");
   }
@@ -1011,6 +1039,10 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
   auto& world=*gothic.world();
   auto& script=world.script();
   const auto* cavalorn=activityNpc(world,actorName);
+  require(world.player()->handle().lp==0 && world.player()->handle().hitchance[TALENT_BOW]==36 &&
+          world.player()->handle().aivar[86]==36 && script.globalIntSymbol("B_TEACHFIGHTTALENTPERCENT.KOSTEN")==2 &&
+          script.globalIntSymbol("B_TEACHFIGHTTALENTPERCENT.REALHITCHANCE")==36,
+          "ordinary reload must restore the purchased skill, LP and saved training values");
   const auto* waypoint=cavalorn ? cavalorn->currentTaPoint() : nullptr;
   require(waypoint && waypoint->name=="NW_XARDAS_BANDITS_LEFT" &&
           std::ranges::all_of(banditNames,[&](const char* name) {
@@ -1025,6 +1057,66 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
           journal.questCount()==journalBefore+1 && journal.quest(journalBefore).name==topic &&
           journal.quest(journalBefore).entry==std::vector<std::string>{"Ambush recorded"},
           "ordinary reload must restore the stock dialogue and the authored variable and journal effects");
+  auto* bandit=activityNpc(world,banditNames.front());
+  require(bandit && bandit->isInState(stateInit),"ordinary reload must restore the active state");
+  const auto& state=Contract::aiState(*bandit);
+  require(state.started && state.funcLoop==stateLoop && state.funcEnd==stateEnd &&
+          std::string_view(state.hint)=="ZS_SHORTZAPPED","ordinary reload must keep the state phases and name");
+  ActivityCalls activityCalls;
+  script.invokeState(bandit,nullptr,nullptr,state.funcLoop);
+  bandit->clearState(false);
+  require(activityCalls.phase(*bandit,"ZS_SHORTZAPPED")==0 && activityCalls.phase(*bandit,"ZS_SHORTZAPPED_LOOP")==1 &&
+          activityCalls.phase(*bandit,"ZS_SHORTZAPPED_END")==1,
+          "a restored state must continue through Loop and End without replaying Init");
+
+  const auto ore=script.findItemInstance("ITMI_NUGGET");
+  require(ore.has_value(),"the inventory contract needs the stock ore type");
+  auto* hero=world.player();
+  auto* heroOre=hero->addItem(*ore,1);
+  auto* npcOre=bandit->addItem(*ore,1);
+  require(heroOre && npcOre && heroOre!=npcOre,"each owner must have its own stack of the same item");
+  auto& vm=script.getVm();
+  using NpcRef=std::shared_ptr<daedalus::INpc>;
+  vm.register_external("NPC_GETINVITEM",std::function<int32_t(NpcRef,int32_t)>{[](NpcRef,int32_t) -> int32_t {
+    throw std::runtime_error("The VM inventory callback must not run for a native story call");
+    }});
+  std::vector<const daedalus::DaedalusInstance*> observed;
+  vm.observe_externals([&](const auto& symbol) {
+    if(symbol.name()=="NPC_GETINVITEM") {
+      require(std::get<int32_t>(vm.stack_frame(0).value)==int32_t(*ore),"the external probe must see the item type");
+      observed.push_back(std::get<std::shared_ptr<daedalus::DaedalusInstance>>(vm.stack_frame(1).value).get());
+      }
+    });
+  vm.push_int(0x12345678);
+  const auto lookup=[&](Npc* owner) {
+    return script.callStoryFunction("NPC_GETINVITEM",bandit,hero,{owner,int32_t(*ore)});
+    };
+  const auto playerLookup=lookup(hero);
+  require(playerLookup.ok && playerLookup.returned.i==int32_t(*ore) &&
+          vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(heroOre->handlePtr()),
+          "native inventory lookup must bind the actual hero stack");
+  const auto npcLookup=lookup(bandit);
+  require(npcLookup.ok && npcLookup.returned.i==int32_t(*ore) &&
+          vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(npcOre->handlePtr()),
+          "native inventory lookup must distinguish stacks held by different actors");
+  storygraph::Program wrongType;
+  wrongType.returns=true;
+  auto& ret=wrongType.steps.emplace_back();
+  ret.kind=storygraph::Step::Return;
+  ret.value=storygraph::ex::call("NPC_GETINVITEM",{storygraph::ex::inst("ITEM"),storygraph::ex::integer(int32_t(*ore))});
+  const auto rejected=script.runStoryProgram(wrongType,bandit,hero,true);
+  require(!rejected.ok && rejected.error.find("wrong type")!=std::string::npos &&
+          vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(npcOre->handlePtr()),
+          "an item in the NPC argument must fail without changing ITEM");
+  const auto nullLookup=lookup(nullptr);
+  require(nullLookup.ok && nullLookup.returned.i==-1 && vm.global_item()->get_instance()==nullptr,
+          "native inventory lookup must keep the stock result and clear ITEM for a null NPC");
+  vm.observe_externals({});
+  require(observed==std::vector<const daedalus::DaedalusInstance*>{
+              static_cast<daedalus::INpc*>(hero->handlePtr().get()),static_cast<daedalus::INpc*>(bandit->handlePtr().get()),
+              static_cast<daedalus::IItem*>(npcOre->handlePtr().get()),nullptr} &&
+          vm.pop_int()==0x12345678,
+          "the external probe must see exact actors and leave the VM stack intact");
   gothic.clearGame().reset();
 #endif
   }

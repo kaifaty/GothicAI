@@ -16,8 +16,52 @@ void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& 
     static_cast<Npc*>(npc->user_ptr)->npcInstanceSymbol=symbol->index();
   // A director NPC keeps its own symbol while using its template's definition.
   auto* like=own.likeOf(vm,symbol->index());
+  const auto applyExternal = [this,&npc](const daedalus::DaedalusSymbol& function,
+                                         const NpcDefinitionRuntime::Call& call,
+                                         const std::function<void()>& observe) {
+    using Type = daedalus::DaedalusDataType;
+    using Kind = NpcDefinitions::Value::Kind;
+    using storygraph::NativeValue;
+    const auto external = nativeExternals.find(function.name());
+    // The stock constructor corpus calls externals on SELF, with up to eight arguments.
+    std::array<NativeValue,8> values;
+    if(vm.has_legacy_dispatcher() || external==nativeExternals.end() ||
+       call.args.empty() || call.args.front().value.kind!=Kind::Self || call.args.size()>values.size())
+      return false;
+    const auto& native = external->second;
+    if(native.signature.result || native.signature.parameters.size()!=call.args.size())
+      return false;
+    constexpr storygraph::NativeInstance self = 1;
+    for(size_t index=0; index<call.args.size(); ++index) {
+      const auto& argument = call.args[index];
+      const auto& value = argument.value;
+      switch(argument.type) {
+        case Type::FLOAT:  values[index] = NativeValue::real(value.real); break;
+        case Type::STRING: values[index] = NativeValue::str(vm.find_symbol_by_index(argument.literal)->get_string(argument.literalIndex)); break;
+        case Type::INT:
+        case Type::FUNCTION: values[index] = NativeValue::integer(value.integer); break;
+        case Type::INSTANCE:
+          if(value.kind!=Kind::Self)
+            return false;
+          values[index] = NativeValue::instance(self);
+          break;
+        default:
+          return false;
+        }
+      if(values[index].type!=native.signature.parameters[index])
+        return false;
+      }
+    if(observe)
+      observe();
+    const auto resolve = [&npc](storygraph::NativeInstance id) -> storygraph::BoundNativeCall::Instance {
+      return id==self ? npc : nullptr;
+      };
+    native.call(std::span(values).first(call.args.size()),resolve,{});
+    return true;
+    };
+
   const NpcDefinitionRuntime::Definitions empty;
-  NpcDefinitionRuntime::initialize(vm,npc,symbol,useRecords ? npcDefinitions : empty,like);
+  NpcDefinitionRuntime::initialize(vm,npc,symbol,useRecords ? npcDefinitions : empty,like,applyExternal);
   }
 
 void GameScript::refreshNpcAtInsert(Npc& npc) {

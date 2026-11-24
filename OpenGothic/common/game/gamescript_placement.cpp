@@ -1,5 +1,7 @@
 #include "gamescript.h"
 
+#include "gamescript_nativecall.h"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -890,12 +892,28 @@ void GameScript::runWorldFirstEntryTrigger(bool oldWorld) {
 
 void GameScript::runStartup(std::string_view fn) {
   const auto* function = vm.find_symbol_by_name(fn);
+  const auto applyNativeInsert = [this](const PlacementDefinitionRuntime::Call& call) {
+    if(call.deferred || vm.has_legacy_dispatcher())
+      return false;
+    const auto& target = *vm.find_symbol_by_index(call.function);
+    if(target.name()!="WLD_INSERTNPC" && target.name()!="WLD_INSERTITEM")
+      return false;
+
+    const auto& instance = call.args[0];
+    const auto& point = call.args[1];
+    const auto& waypoint = vm.find_symbol_by_index(point.literal)->get_string(point.literalIndex);
+    using storygraph::NativeValue;
+    const std::array args{NativeValue::integer(instance.value.integer),NativeValue::str(waypoint)};
+    storygraph::BoundNativeCall::observeExternal(vm,target,args,{});
+    nativeExternals.at(target.name()).call(args,{},{});
+    return true;
+    };
   if(nativeRoutineProgram && PlacementDefinitionRuntime::enabled() && function && function->name()=="STARTUP_DRAGONISLAND" &&
      !placementDefinitions.dragonIsland.empty()) {
-    PlacementDefinitionRuntime::execute(vm,function,dragonIslandPlacement(vm,placementDefinitions.dragonIsland));
+    PlacementDefinitionRuntime::execute(vm,function,dragonIslandPlacement(vm,placementDefinitions.dragonIsland),applyNativeInsert);
     return;
     }
-  PlacementDefinitionRuntime::execute(vm,function,placementDefinitions);
+  PlacementDefinitionRuntime::execute(vm,function,placementDefinitions,applyNativeInsert);
   }
 
 void GameScript::runWorldInit(std::string_view fn) {

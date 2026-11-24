@@ -207,6 +207,30 @@ namespace daedalus {
 		return true;
 	}
 
+	void DaedalusVm::observe_bound_external(DaedalusSymbol const& sym, std::function<void()> const& push) {
+		if (!_m_external_observer)
+			return;
+		auto const start = _m_stack_ptr;
+		if (start + sym.count() > stack_size)
+			throw DaedalusVmException {"Stack overflow observing bound function " + sym.name()};
+		auto const clear = [&] {
+			while (_m_stack_ptr > start) {
+				if (top_is_reference())
+					(void)pop_reference();
+				else
+					_m_stack[--_m_stack_ptr] = {};
+			}
+		};
+		try {
+			push();
+			_m_external_observer(sym);
+		} catch (...) {
+			clear();
+			throw;
+		}
+		clear();
+	}
+
 	void DaedalusVm::unsafe_jump(uint32_t address) {
 		this->jump(address);
 	}

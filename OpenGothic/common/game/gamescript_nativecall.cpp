@@ -19,6 +19,30 @@ static NativeValue::Type valueType(daedalus::DaedalusDataType type) {
     }
   }
 
+static void pushArguments(daedalus::DaedalusVm& vm, std::span<const NativeValue> args,
+                          const BoundNativeCall::ResolveActor& resolve) {
+  for(const auto& argument : args) {
+    switch(argument.type) {
+      case NativeValue::Int:   vm.push_int(argument.i); break;
+      case NativeValue::Float: vm.push_float(argument.f); break;
+      case NativeValue::Str:   vm.push_string(argument.s); break;
+      case NativeValue::Inst: {
+        auto actor = resolve(argument.inst);
+        if(argument.inst!=0 && actor==nullptr)
+          throw std::runtime_error("Unbound instance argument");
+        vm.push_instance(std::move(actor));
+        break;
+        }
+      }
+    }
+  }
+
+void BoundNativeCall::observeExternal(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& symbol,
+                                     std::span<const NativeValue> args, const ResolveActor& resolve) {
+  if(vm.has_external_observer())
+    vm.observe_bound_external(symbol, [&] { pushArguments(vm,args,resolve); });
+  }
+
 BoundNativeCall::BoundNativeCall(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& symbol)
   : vm(vm), symbol(symbol) {
   if(symbol.type()!=daedalus::DaedalusDataType::FUNCTION)
@@ -50,21 +74,8 @@ std::optional<NativeCall> BoundNativeCall::invoke(std::span<const NativeValue> a
   NativeCall result;
   try {
     const bool invoked = vm.call_bound_native(symbol, [&] {
-      for(const auto& argument : args) {
-        switch(argument.type) {
-          case NativeValue::Int:   vm.push_int(argument.i); break;
-          case NativeValue::Float: vm.push_float(argument.f); break;
-          case NativeValue::Str:   vm.push_string(argument.s); break;
-          case NativeValue::Inst: {
-            auto actor = resolve(argument.inst);
-            if(argument.inst!=0 && actor==nullptr)
-              throw std::runtime_error("Unbound instance argument");
-            vm.push_instance(std::move(actor));
-            break;
-            }
-          }
-        }
-      }, [&] {
+      pushArguments(vm,args,resolve);
+    }, [&] {
       if(!function.result)
         return;
       if(!symbol.is_external() && vm.top_is_named_reference()) {

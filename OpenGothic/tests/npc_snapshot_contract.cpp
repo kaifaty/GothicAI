@@ -486,11 +486,47 @@ void npcDefinitions(const fs::path& dir) {
     auto script=DaedalusScript::from_program(program.data);
     INpc::register_(script); IItem::register_(script);
     DaedalusVm vm(std::move(script));
-    const auto definitions=NpcDefinitionRuntime::resolve(library,vm);
+    auto definitions=NpcDefinitionRuntime::resolve(library,vm);
     auto npc=std::make_shared<INpc>();
     check(!NpcDefinitionRuntime::initialize(vm,npc,vm.find_symbol_by_name("NPC_WRITER"),definitions),
           "uncaptured NPC uses the same VM fallback as the game");
     check(vm.find_symbol_by_name("CHAPTER")->get_int()==9,"fallback preserves constructor side effects");
+
+    auto* captured=vm.find_symbol_by_name("NPC_NO_ID");
+    auto& calls=definitions.npcs.at(captured->index());
+    std::erase_if(calls,[&](const auto& step) {
+      const auto* call=std::get_if<NpcDefinitionRuntime::Call>(&step);
+      return call==nullptr || call->function!=vm.find_symbol_by_name("TA_MIN")->index();
+      });
+    check(calls.size()==1,"constructor fixture contains one TA_MIN");
+    auto actor=std::make_shared<INpc>();
+    vm.global_self()->set_instance(npc);
+    vm.unsafe_set_gi(npc);
+    vm.push_int(73106);
+    size_t observed=0,dispatched=0;
+    vm.observe_externals([&](const auto& function) {
+      const auto [literal,index,context]=vm.pop_reference();
+      check(function.name()=="TA_MIN" && literal==vm.find_symbol_by_name("POINT") &&
+            index==0 && context==actor,"constructor probe sees the original immutable waypoint reference");
+      vm.push_reference(literal);
+      ++observed;
+      });
+    const auto apply=[&](const auto& function,const auto& call,const auto& observe) {
+      check(function.name()=="TA_MIN" && call.args.size()==7 && vm.global_self()->get_instance()==actor &&
+            vm.unsafe_get_gi()==actor,"typed replay receives the recorded call within the constructor context");
+      check(vm.pop_int()==73106,"typed replay starts with the caller's stack untouched");
+      vm.push_int(73106);
+      observe();
+      actor->attribute[0]=41;
+      ++dispatched;
+      return true;
+      };
+    check(NpcDefinitionRuntime::initialize(vm,actor,captured,definitions,nullptr,apply),
+          "typed engine call completes captured constructor without a registered external");
+    check(dispatched==1 && observed==1 && actor->attribute[0]==41 && vm.pop_int()==73106 &&
+          vm.unsafe_get_gi()==npc && vm.global_self()->get_instance()==npc,
+          "constructor replay preserves the existing stack, probe order and caller context");
+    vm.observe_externals({});
     }
   auto changed=read(file);
   for(auto& record:changed["records"].GetArray()) {

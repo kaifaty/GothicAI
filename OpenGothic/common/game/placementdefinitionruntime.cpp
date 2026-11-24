@@ -234,7 +234,7 @@ void PlacementDefinitionRuntime::observeCalls(daedalus::DaedalusVm& vm, const st
   }
 
 bool PlacementDefinitionRuntime::execute(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol* function,
-                                         const Definitions& definitions) {
+                                         const Definitions& definitions, const std::function<bool(const Call&)>& applyNative) {
   const auto found=function ? definitions.placements.find(function->index()) : definitions.placements.end();
   const bool playback=enabled() && found!=definitions.placements.end();
   LoadProbe::Placement::Scope probe(!playback);
@@ -251,6 +251,8 @@ bool PlacementDefinitionRuntime::execute(daedalus::DaedalusVm& vm, const daedalu
       continue;
       }
     const auto& call=std::get<Call>(step);
+    if(applyNative && applyNative(call))
+      continue;
     for(const auto& argument:call.args) push(vm,argument);
     const auto* target=vm.find_symbol_by_index(call.function);
     if(call.deferred) {

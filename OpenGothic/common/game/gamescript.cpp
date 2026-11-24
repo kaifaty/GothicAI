@@ -8,6 +8,7 @@
 #include <cctype>
 #include <optional>
 #include <sstream>
+#include <tuple>
 #include <type_traits>
 
 #include "game/definitions/basescripts.h"
@@ -110,6 +111,7 @@ GameScript::GameScript(GameSession &owner)
   Gothic::inst().setupCommonScriptClasses(vm);
   Gothic::inst().setupVmCommonApi(vm);
   aiDefaultPipe.reset(new GlobalOutput(*this));
+  loadNativeAiStates();
   initCommon();
   loadNativeNpcDeath();
   loadNativeTradeInventory();
@@ -135,17 +137,104 @@ GameScript::~GameScript() {
   Settings::inst().onSettingsChanged.ubind(this,&GameScript::initSettings);
   }
 
+namespace {
+
+using storygraph::BoundNativeCall;
+using storygraph::NativeCall;
+using storygraph::NativeValue;
+
+template<class T>
+constexpr NativeValue::Type externalType() {
+  if constexpr(std::is_integral_v<T>) {
+    return NativeValue::Int;
+    } else if constexpr(std::is_same_v<T,float>) {
+    return NativeValue::Float;
+    } else if constexpr(std::is_same_v<T,std::string_view>) {
+    return NativeValue::Str;
+    } else {
+    static_assert(daedalus::DaedalusInstancePointer<T>);
+    return NativeValue::Inst;
+    }
+  }
+
+template<class T>
+T externalArgument(const NativeValue& value, const BoundNativeCall::ResolveActor& resolve) {
+  if constexpr(std::is_integral_v<T>) {
+    return static_cast<T>(value.i);
+    } else if constexpr(std::is_same_v<T,float>) {
+    return value.f;
+    } else if constexpr(std::is_same_v<T,std::string_view>) {
+    return value.s;
+    } else {
+    using Instance = typename T::element_type;
+    auto instance = resolve(value.inst);
+    if(value.inst!=0 && instance==nullptr)
+      throw std::runtime_error("Unbound instance argument");
+    if constexpr(!std::is_same_v<Instance,daedalus::DaedalusInstance>) {
+      if(instance!=nullptr && (instance->instance_type()==nullptr || *instance->instance_type()!=typeid(Instance)))
+        throw std::runtime_error("Instance argument has the wrong type");
+      }
+    return std::static_pointer_cast<Instance>(std::move(instance));
+    }
+  }
+
+}
+
+template<class R, class... P>
+std::function<R(P...)> GameScript::externalCallback(const std::string& name, R(GameScript::*function)(P...)) {
+  const size_t floorId = floorDefer.registerExternal(name,StartupFloor::classify(name));
+  return [this,function,floorId](P... values) {
+    if(floorDefer.active())
+      floorBarrier(floorId,values...);
+    return (this->*function)(values...);
+    };
+  }
+
+template<class R, class... P>
+void GameScript::bindExternal(const std::string& name, R(GameScript::*function)(P...)) {
+  vm.register_external(name,externalCallback(name,function));
+  }
+
+template<class R, class... P>
+void GameScript::bindNativeExternal(const std::string& name, R(GameScript::*function)(P...)) {
+  const auto callback = externalCallback(name,function);
+  vm.register_external(name,callback);
+  const auto* symbol = vm.find_symbol_by_name(name);
+  if(symbol==nullptr)
+    return; // A reference program may omit this external.
+
+  storygraph::NativeExternal external;
+  external.signature.parameters = {externalType<P>()...};
+  if constexpr(!std::is_void_v<R>)
+    external.signature.result = externalType<R>();
+  external.call = [callback](std::span<const NativeValue> args, const BoundNativeCall::ResolveActor& resolve,
+                             const BoundNativeCall::BindActor& bind) -> NativeCall {
+    const auto parameters = [&]<size_t... I>(std::index_sequence<I...>) {
+      return std::tuple<P...>{externalArgument<P>(args[I],resolve)...};
+      }(std::index_sequence_for<P...>{});
+    if constexpr(std::is_void_v<R>) {
+      std::apply(callback,parameters);
+      return {};
+      } else if constexpr(daedalus::DaedalusInstancePointer<R>) {
+      return {NativeValue::instance(bind(std::apply(callback,parameters))),{}};
+      } else {
+      return {NativeValue::integer(int32_t(std::apply(callback,parameters))),{}};
+      }
+    };
+  nativeExternals.insert_or_assign(symbol->name(),std::move(external));
+  }
+
 void GameScript::initCommon() {
   bindExternal("hlp_random",                     &GameScript::hlp_random);
-  bindExternal("hlp_isvalidnpc",                 &GameScript::hlp_isvalidnpc);
-  bindExternal("hlp_isvaliditem",                &GameScript::hlp_isvaliditem);
-  bindExternal("hlp_isitem",                     &GameScript::hlp_isitem);
-  bindExternal("hlp_getnpc",                     &GameScript::hlp_getnpc);
-  bindExternal("hlp_getinstanceid",              &GameScript::hlp_getinstanceid);
+  bindNativeExternal("hlp_isvalidnpc",                 &GameScript::hlp_isvalidnpc);
+  bindNativeExternal("hlp_isvaliditem",                &GameScript::hlp_isvaliditem);
+  bindNativeExternal("hlp_isitem",                     &GameScript::hlp_isitem);
+  bindNativeExternal("hlp_getnpc",                     &GameScript::hlp_getnpc);
+  bindNativeExternal("hlp_getinstanceid",              &GameScript::hlp_getinstanceid);
 
-  bindExternal("wld_insertnpc",                  &GameScript::wld_insertnpc);
-  bindExternal("wld_removenpc",                  &GameScript::wld_removenpc);
-  bindExternal("wld_insertitem",                 &GameScript::wld_insertitem);
+  bindNativeExternal("wld_insertnpc",                  &GameScript::wld_insertnpc);
+  bindNativeExternal("wld_removenpc",                  &GameScript::wld_removenpc);
+  bindNativeExternal("wld_insertitem",                 &GameScript::wld_insertitem);
   bindExternal("wld_settime",                    &GameScript::wld_settime);
   bindExternal("wld_getday",                     &GameScript::wld_getday);
   bindExternal("wld_playeffect",                 &GameScript::wld_playeffect);
@@ -170,39 +259,39 @@ void GameScript::initCommon() {
   bindExternal("wld_senduntrigger",              &GameScript::wld_senduntrigger);
   bindExternal("wld_israining",                  &GameScript::wld_israining);
 
-  bindExternal("mdl_setvisual",                  &GameScript::mdl_setvisual);
-  bindExternal("mdl_setvisualbody",              &GameScript::mdl_setvisualbody);
-  bindExternal("mdl_setmodelfatness",            &GameScript::mdl_setmodelfatness);
-  bindExternal("mdl_applyoverlaymds",            &GameScript::mdl_applyoverlaymds);
+  bindNativeExternal("mdl_setvisual",                  &GameScript::mdl_setvisual);
+  bindNativeExternal("mdl_setvisualbody",              &GameScript::mdl_setvisualbody);
+  bindNativeExternal("mdl_setmodelfatness",            &GameScript::mdl_setmodelfatness);
+  bindNativeExternal("mdl_applyoverlaymds",            &GameScript::mdl_applyoverlaymds);
   bindExternal("mdl_applyoverlaymdstimed",       &GameScript::mdl_applyoverlaymdstimed);
   bindExternal("mdl_removeoverlaymds",           &GameScript::mdl_removeoverlaymds);
-  bindExternal("mdl_setmodelscale",              &GameScript::mdl_setmodelscale);
+  bindNativeExternal("mdl_setmodelscale",              &GameScript::mdl_setmodelscale);
   bindExternal("mdl_startfaceani",               &GameScript::mdl_startfaceani);
   bindExternal("mdl_applyrandomani",             &GameScript::mdl_applyrandomani);
   bindExternal("mdl_applyrandomanifreq",         &GameScript::mdl_applyrandomanifreq);
   bindExternal("mdl_applyrandomfaceani",         &GameScript::mdl_applyrandomfaceani);
 
-  bindExternal("npc_settofightmode",             &GameScript::npc_settofightmode);
-  bindExternal("npc_settofistmode",              &GameScript::npc_settofistmode);
+  bindNativeExternal("npc_settofightmode",             &GameScript::npc_settofightmode);
+  bindNativeExternal("npc_settofistmode",              &GameScript::npc_settofistmode);
   bindExternal("npc_isinstate",                  &GameScript::npc_isinstate);
-  bindExternal("npc_isinroutine",                &GameScript::npc_isinroutine);
+  bindNativeExternal("npc_isinroutine",                &GameScript::npc_isinroutine);
   bindExternal("npc_wasinstate",                 &GameScript::npc_wasinstate);
   bindExternal("npc_getdisttowp",                &GameScript::npc_getdisttowp);
-  bindExternal("npc_exchangeroutine",            &GameScript::npc_exchangeroutine);
-  bindExternal("npc_isdead",                     &GameScript::npc_isdead);
+  bindNativeExternal("npc_exchangeroutine",            &GameScript::npc_exchangeroutine);
+  bindNativeExternal("npc_isdead",                     &GameScript::npc_isdead);
   bindExternal("npc_knowsinfo",                  &GameScript::npc_knowsinfo);
-  bindExternal("npc_settalentskill",             &GameScript::npc_settalentskill);
-  bindExternal("npc_gettalentskill",             &GameScript::npc_gettalentskill);
+  bindNativeExternal("npc_settalentskill",             &GameScript::npc_settalentskill);
+  bindNativeExternal("npc_gettalentskill",             &GameScript::npc_gettalentskill);
   bindExternal("npc_settalentvalue",             &GameScript::npc_settalentvalue);
   bindExternal("npc_gettalentvalue",             &GameScript::npc_gettalentvalue);
   bindExternal("npc_setrefusetalk",              &GameScript::npc_setrefusetalk);
   bindExternal("npc_refusetalk",                 &GameScript::npc_refusetalk);
-  bindExternal("npc_hasitems",                   &GameScript::npc_hasitems);
-  bindExternal("npc_hasspell",                   &GameScript::npc_hasspell);
-  bindExternal("npc_getinvitem",                 &GameScript::npc_getinvitem);
-  bindExternal("npc_getinvitembyslot",           &GameScript::npc_getinvitembyslot);
-  bindExternal("npc_removeinvitem",              &GameScript::npc_removeinvitem);
-  bindExternal("npc_removeinvitems",             &GameScript::npc_removeinvitems);
+  bindNativeExternal("npc_hasitems",                   &GameScript::npc_hasitems);
+  bindNativeExternal("npc_hasspell",                   &GameScript::npc_hasspell);
+  bindNativeExternal("npc_getinvitem",                 &GameScript::npc_getinvitem);
+  bindNativeExternal("npc_getinvitembyslot",           &GameScript::npc_getinvitembyslot);
+  bindNativeExternal("npc_removeinvitem",              &GameScript::npc_removeinvitem);
+  bindNativeExternal("npc_removeinvitems",             &GameScript::npc_removeinvitems);
   bindExternal("npc_getbodystate",               &GameScript::npc_getbodystate);
   bindExternal("npc_getlookattarget",            &GameScript::npc_getlookattarget);
   bindExternal("npc_getdisttonpc",               &GameScript::npc_getdisttonpc);
@@ -219,9 +308,9 @@ void GameScript::initCommon() {
   bindExternal("npc_changeattribute",            &GameScript::npc_changeattribute);
   bindExternal("npc_isonfp",                     &GameScript::npc_isonfp);
   bindExternal("npc_getheighttonpc",             &GameScript::npc_getheighttonpc);
-  bindExternal("npc_getequippedmeleeweapon",     &GameScript::npc_getequippedmeleeweapon);
-  bindExternal("npc_getequippedrangedweapon",    &GameScript::npc_getequippedrangedweapon);
-  bindExternal("npc_getequippedarmor",           &GameScript::npc_getequippedarmor);
+  bindNativeExternal("npc_getequippedmeleeweapon",     &GameScript::npc_getequippedmeleeweapon);
+  bindNativeExternal("npc_getequippedrangedweapon",    &GameScript::npc_getequippedrangedweapon);
+  bindNativeExternal("npc_getequippedarmor",           &GameScript::npc_getequippedarmor);
   bindExternal("npc_canseenpc",                  &GameScript::npc_canseenpc);
   bindExternal("npc_canseenpcfreelos",           &GameScript::npc_canseenpcfreelos);
   bindExternal("npc_canseeitem",                 &GameScript::npc_canseeitem);
@@ -253,11 +342,11 @@ void GameScript::initCommon() {
   bindExternal("npc_stopani",                    &GameScript::npc_stopani);
   bindExternal("npc_settrueguild",               &GameScript::npc_settrueguild);
   bindExternal("npc_gettrueguild",               &GameScript::npc_gettrueguild);
-  bindExternal("npc_clearinventory",             &GameScript::npc_clearinventory);
+  bindNativeExternal("npc_clearinventory",             &GameScript::npc_clearinventory);
   bindExternal("npc_getattitude",                &GameScript::npc_getattitude);
   bindExternal("npc_getpermattitude",            &GameScript::npc_getpermattitude);
-  bindExternal("npc_setattitude",                &GameScript::npc_setattitude);
-  bindExternal("npc_settempattitude",            &GameScript::npc_settempattitude);
+  bindNativeExternal("npc_setattitude",                &GameScript::npc_setattitude);
+  bindNativeExternal("npc_settempattitude",            &GameScript::npc_settempattitude);
   bindExternal("npc_hasbodyflag",                &GameScript::npc_hasbodyflag);
   bindExternal("npc_getlasthitspellid",          &GameScript::npc_getlasthitspellid);
   bindExternal("npc_getlasthitspellcat",         &GameScript::npc_getlasthitspellcat);
@@ -275,9 +364,9 @@ void GameScript::initCommon() {
   bindExternal("ai_output",                      &GameScript::ai_output);
   bindExternal("ai_stopprocessinfos",            &GameScript::ai_stopprocessinfos);
   bindExternal("ai_processinfos",                &GameScript::ai_processinfos);
-  bindExternal("ai_standup",                     &GameScript::ai_standup);
-  bindExternal("ai_standupquick",                &GameScript::ai_standupquick);
-  bindExternal("ai_continueroutine",             &GameScript::ai_continueroutine);
+  bindNativeExternal("ai_standup",                     &GameScript::ai_standup);
+  bindNativeExternal("ai_standupquick",                &GameScript::ai_standupquick);
+  bindNativeExternal("ai_continueroutine",             &GameScript::ai_continueroutine);
   bindExternal("ai_stoplookat",                  &GameScript::ai_stoplookat);
   bindExternal("ai_lookat",                      &GameScript::ai_lookat);
   bindExternal("ai_lookatnpc",                   &GameScript::ai_lookatnpc);
@@ -286,7 +375,7 @@ void GameScript::initCommon() {
   bindExternal("ai_turnaway",                    &GameScript::ai_turnaway);
   bindExternal("ai_turntonpc",                   &GameScript::ai_turntonpc);
   bindExternal("ai_whirlaround",                 &GameScript::ai_whirlaround);
-  bindExternal("ai_outputsvm",                   &GameScript::ai_outputsvm);
+  bindNativeExternal("ai_outputsvm",                   &GameScript::ai_outputsvm);
   bindExternal("ai_outputsvm_overlay",           &GameScript::ai_outputsvm_overlay);
   bindExternal("ai_startstate",                  &GameScript::ai_startstate);
   bindExternal("ai_playani",                     &GameScript::ai_playani);
@@ -328,15 +417,15 @@ void GameScript::initCommon() {
   bindExternal("mob_hasitems",                   &GameScript::mob_hasitems);
   bindExternal("ai_printscreen",                 &GameScript::ai_printscreen);
 
-  bindExternal("ta_min",                         &GameScript::ta_min);
+  bindNativeExternal("ta_min",                         &GameScript::ta_min);
 
   bindExternal("log_createtopic",                &GameScript::log_createtopic);
   bindExternal("log_settopicstatus",             &GameScript::log_settopicstatus);
   bindExternal("log_addentry",                   &GameScript::log_addentry);
 
-  bindExternal("equipitem",                      &GameScript::equipitem);
-  bindExternal("createinvitem",                  &GameScript::createinvitem);
-  bindExternal("createinvitems",                 &GameScript::createinvitems);
+  bindNativeExternal("equipitem",                      &GameScript::equipitem);
+  bindNativeExternal("createinvitem",                  &GameScript::createinvitem);
+  bindNativeExternal("createinvitems",                 &GameScript::createinvitems);
 
   bindExternal("perc_setrange",                  &GameScript::perc_setrange);
 
@@ -344,7 +433,7 @@ void GameScript::initCommon() {
   bindExternal("info_clearchoices",              &GameScript::info_clearchoices);
   bindExternal("infomanager_hasfinished",        &GameScript::infomanager_hasfinished);
 
-  bindExternal("snd_play",                       &GameScript::snd_play);
+  bindNativeExternal("snd_play",                       &GameScript::snd_play);
   bindExternal("snd_play3d",                     &GameScript::snd_play3d);
 
   bindExternal("game_initgerman",                &GameScript::game_initgerman);
