@@ -318,15 +318,15 @@ bool matchesBase(const fs::path& base, const BaseImport::Identity& identity, Bas
     }
   }
 
-BaseStore::Selection metadataAuditBase(const char* explicitBase, const BaseImport::Progress& log, BaseStore::Profile profile) {
-  if(explicitBase==nullptr || *explicitBase=='\0')
+BaseStore::Selection metadataAuditBase(const fs::path& explicitBase, const BaseImport::Progress& log, BaseStore::Profile profile) {
+  if(explicitBase.empty())
     throw std::runtime_error("metadata audit requires an explicit no-programs fixture in OPENGOTHIC_BASE");
   const auto base = fs::canonical(explicitBase);
   const auto identity = BaseImport::readIdentity(base);
   rapidjson::Document doc;
   doc.Parse(identity.json.data(),identity.json.size());
   if(!doc.IsObject() || !doc.HasMember("no_programs_fixture") || doc.HasMember("native_script_base"))
-    throw std::runtime_error("metadata audit requires a no-programs fixture: "+base.string());
+    throw std::runtime_error("metadata audit requires a no-programs fixture: "+pointerPath(base));
   projectionSource(identity,doc["no_programs_fixture"],2,"no-programs-fixture-v2");
   std::string reason;
   if(!BaseImport::matches(base,identity,false,&reason))
@@ -334,7 +334,7 @@ BaseStore::Selection metadataAuditBase(const char* explicitBase, const BaseImpor
   requireNoProgramPayloads(base);
   if(profile.validateProgramMetadata!=nullptr)
     profile.validateProgramMetadata(base,profile.stockProgram);
-  log("base: metadata audit fixture "+base.string());
+  log("base: metadata audit fixture "+pointerPath(base));
   return {base,{},{}};
   }
 
@@ -552,7 +552,12 @@ fs::path BaseStore::cacheRoot() {
 
 BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport::Files& mounted, const BaseImport::Progress& log,
                                        const Import& import, Profile profile, const BaseImport::Identity* projected) {
-  const auto* explicitBase=std::getenv("OPENGOTHIC_BASE");
+#ifdef _WIN32
+  const auto* explicitName=_wgetenv(L"OPENGOTHIC_BASE");
+#else
+  const auto* explicitName=std::getenv("OPENGOTHIC_BASE");
+#endif
+  const auto explicitBase=explicitName!=nullptr ? fs::path(explicitName) : fs::path();
   if(metadataAuditEnabled())
     return metadataAuditBase(explicitBase,log,profile);
   if(projected && !requireRunnableBase(*projected,profile))
@@ -561,17 +566,17 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   const auto cache=cacheRoot();
   fs::create_directories(cache);
   const auto* pointerPart=profile.stockProgram.empty() ? "base" : "native_base";
-  const auto explicitIdentity=explicitBase && *explicitBase
+  const auto explicitIdentity=!explicitBase.empty()
                              ? std::optional(readRunnableBase(explicitBase,profile)) : std::nullopt;
   if(projected && explicitIdentity && explicitIdentity->fingerprint!=projected->fingerprint)
     throw std::runtime_error("OPENGOTHIC_BASE selects a different base than the requested native projection");
   std::unique_ptr<Lock> cacheLock;
-  if(!explicitBase || !*explicitBase) {
+  if(explicitBase.empty()) {
     cacheLock=std::make_unique<Lock>(cache/".lock");
     removeInterrupted(cache);
     }
   const auto* fingerprint=std::getenv("OPENGOTHIC_BASE_FINGERPRINT");
-  if(!projected && (!explicitBase || !*explicitBase) && fingerprint && *fingerprint) {
+  if(!projected && explicitBase.empty() && fingerprint && *fingerprint) {
     if(!fingerprintName(fingerprint)) throw std::runtime_error("invalid OPENGOTHIC_BASE_FINGERPRINT");
     const auto destination=cache/fingerprint;
     const auto store=storeRoot();
@@ -600,7 +605,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     throw std::runtime_error(std::string("no ready base for OPENGOTHIC_BASE_FINGERPRINT=")+fingerprint+
                              (rejection.empty() ? "; not found in cache or store" : ": "+rejection));
     }
-  const bool directBase=explicitBase && *explicitBase && fs::weakly_canonical(explicitBase)==fs::weakly_canonical(gothic);
+  const bool directBase=!explicitBase.empty() && fs::weakly_canonical(explicitBase)==fs::weakly_canonical(gothic);
   std::unique_ptr<Current> current;
   if(!directBase) current=std::make_unique<Current>(cache,gothic);
   const bool installed=!directBase && hasInstallation(gothic);
@@ -616,14 +621,33 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     log("base: identifying installation");
     return BaseImport::identify(gothic,mounted);
     };
-  if(explicitBase && *explicitBase) {
+  const auto matchesInstalledSource=[&](const BaseImport::Identity& candidate) {
+    const auto requested=sourceIdentity(candidate);
+    if(reused && sourceIdentity(identity)==requested)
+      return true;
+
+    // The compatibility importer may have refreshed its pointer while the
+    // native pointer still names a projection from the previous format.
+    fs::path combinedPath;
+    BaseImport::Identity combined;
+    if(current && current->part("base",combinedPath,combined,expectedSnapshot) && sourceIdentity(combined)==requested)
+      return true;
+    return sourceIdentity(identify())==requested;
+    };
+  if(!explicitBase.empty()) {
+    const auto displayBase=[&] {
+#ifdef _WIN32
+      return pointerPath(explicitBase);
+#else
+      return explicitBase.string();
+#endif
+      };
     if(!installed) {
       identity=*explicitIdentity;
       }
     else if(!profile.stockProgram.empty()) {
-      const auto installedSource=sourceIdentity(reused ? identity : identify());
-      if(sourceIdentity(*explicitIdentity)!=installedSource)
-        throw std::runtime_error(std::string("OPENGOTHIC_BASE was prepared from a different installation: ")+explicitBase);
+      if(!matchesInstalledSource(*explicitIdentity))
+        throw std::runtime_error("OPENGOTHIC_BASE was prepared from a different installation: "+displayBase());
       identity=*explicitIdentity;
       }
     else {
@@ -637,16 +661,16 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
       if(!reused) identity=identify();
       }
     Selection selected{explicitBase,{},{}};
-    if(fs::weakly_canonical(fs::path(explicitBase).parent_path())==cache)
+    if(fs::weakly_canonical(explicitBase.parent_path())==cache)
       selected.lease=std::make_shared<Lock>(cache/(identity.fingerprint+".use"),Lock::Shared);
     std::string reason;
     if(!matchesBase(explicitBase,identity,profile,reason))
-      throw std::runtime_error(std::string("OPENGOTHIC_BASE does not match this installation or importer: ")+explicitBase+": "+reason);
+      throw std::runtime_error("OPENGOTHIC_BASE does not match this installation or importer: "+displayBase()+": "+reason);
     if(current) current->save(pointerPart,explicitBase,identity,snapshot);
     return selected;
     }
   if(projected) {
-    if(installed && sourceIdentity(*projected)!=sourceIdentity(reused ? identity : identify()))
+    if(installed && !matchesInstalledSource(*projected))
       throw std::runtime_error("native projection source differs from the installation");
     reused=reused && identity.fingerprint==projected->fingerprint;
     }

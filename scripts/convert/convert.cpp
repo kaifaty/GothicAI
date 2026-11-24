@@ -320,12 +320,13 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
 
 #ifdef GOTHIC_NATIVE_BASE_RESOLVE
 BaseStore::Selection resolveNativeBase(const fs::path& gothic, const BaseImport::Files& archives,
-                                      const BaseImport::Progress& progress, bool explicitSelection) {
+                                      const BaseImport::Progress& progress, bool explicitBase) {
   BaseStore::Profile profile{.stockProgram=StockStoryPrograms::stockProgram,
                              .validateProgramMetadata=ProgramData::validateSymbolProjection};
-  if(explicitSelection)
+  if(explicitBase)
     return BaseStore::resolve(gothic,archives,progress,{},profile);
 
+  // Settings-only launches can supply the fingerprint of the ready combined base.
   profile.projectedOnly=true;
   try {
     return BaseStore::resolve(gothic,archives,progress,{},profile);
@@ -1184,7 +1185,7 @@ int main(int argc, char** argv) {
             if(!archive.mod) archives.emplace_back(archive.name,archive.size);
 #ifdef GOTHIC_NATIVE_BASE_RESOLVE
         if(args[0]=="resolve")
-          base=resolveNativeBase(args[1],archives,progress,(explicitBase && *explicitBase) || (fingerprint && *fingerprint));
+          base=resolveNativeBase(args[1],archives,progress,explicitBase && *explicitBase);
         else
 #endif
           base=BaseStore::ensure(args[1],archives,progress);
@@ -1208,7 +1209,8 @@ int main(int argc, char** argv) {
           std::cerr << "video base: warning: " << error.what() << '\n';
           }
         }
-      output << selected.string() << std::endl;
+      const auto path=selected.u8string();
+      output << std::string_view(reinterpret_cast<const char*>(path.data()),path.size()) << std::endl;
       return 0;
       }
     if(args.size()==3 && (args[0]=="sources" || args[0]=="verify-sources"))
