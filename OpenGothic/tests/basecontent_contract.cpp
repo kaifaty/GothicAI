@@ -860,7 +860,7 @@ struct BaseContentContract {
       writeJson(scriptFile,badOverlay);
       logs.clear();
       {
-      Resources resources; Resources::loadBase();
+      Resources resources; Gothic gothic;
       asset::ModelScript loaded;
       require(Resources::loadModelScriptData("HUMANS.MSB",loaded),"broken overlay must keep base script");
       require(ModelData::compare(baseScript,loaded).empty(),"broken overlay must not partly mutate base script");
