@@ -5,6 +5,9 @@
 #include <utility>
 #include <vector>
 
+#include "game/definitions/basescripts.h"
+#include "game/definitions/npcworlddata.h"
+#include "programdata.h"
 #include "world/objects/npc.h"
 
 void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc,
@@ -315,45 +318,16 @@ void GameScript::loadNativeNpcGlobals() {
   if(!nativeRoutineProgram)
     return;
 
-  // Capture a typed chapter default and ordered alias table once. World entry
-  // resolves the source NPCs anew against the current world.
-  using Op=daedalus::DaedalusOpcode;
-  auto pc=findSymbol("B_INITNPCGLOBALS")->address();
-  const auto take=[&](Op expected) {
-    const auto instruction=vm.instruction_at(pc);
-    if(instruction.op!=expected)
-      throw std::runtime_error("Invalid stock NPC global binding at "+std::to_string(pc));
-    pc+=instruction.size;
-    return instruction;
-    };
-  const auto unsetChapter=take(Op::PUSHI).immediate;
-  const auto chapter=take(Op::PUSHV).symbol;
-  take(Op::EQ);
-  const auto bindStart=take(Op::BZ).address;
-  const auto defaultChapter=take(Op::PUSHI).immediate;
-  const auto destination=take(Op::PUSHV).symbol;
-  take(Op::MOVI);
-  if(pc!=bindStart || chapter!=destination || chapter!=findSymbolIndex("KAPITEL"))
-    throw std::runtime_error("Invalid stock NPC global chapter default");
+  findSymbol("KAPITEL")->bind_global_int(storyChapter);
+  auto globals = NpcWorldData::loadGlobals(baseProgramIndex().dir.parent_path());
+  if(!globals)
+    return;
 
-  const auto lookup=findSymbol("HLP_GETNPC")->index();
-  std::vector<std::pair<int32_t,uint32_t>> bindings;
-  while(vm.instruction_at(pc).op!=Op::RSR) {
-    const auto source=take(Op::PUSHI).immediate;
-    const auto external=take(Op::BE).symbol;
-    const auto target=take(Op::PUSHVI).symbol;
-    take(Op::MOVVI);
-    if(external!=lookup)
-      throw std::runtime_error("Invalid stock NPC global lookup");
-    bindings.emplace_back(source,target);
-    }
-
-  findSymbol(chapter)->bind_global_int(storyChapter);
-  vm.override_function("B_INITNPCGLOBALS",std::function<void()>{[this, unsetChapter, defaultChapter,
-                                                                lookup, bindings=std::move(bindings)] {
-    if(storyChapter==unsetChapter)
-      storyChapter=defaultChapter;
-    for(const auto& [source,target]:bindings) {
+  const auto lookup = findSymbol("HLP_GETNPC")->index();
+  vm.override_function("B_INITNPCGLOBALS",std::function<void()>{[this,lookup,record=std::move(*globals)] {
+    if(storyChapter==record.unsetChapter)
+      storyChapter=record.defaultChapter;
+    for(const auto& [source,target]:record.bindings) {
       vm.push_int(source);
       vm.unsafe_call_external(findSymbol(lookup));
       findSymbol(target)->set_instance(vm.pop_instance());
@@ -365,31 +339,11 @@ void GameScript::loadNativeMonsterAttitudes() {
   if(!nativeRoutineProgram)
     return;
 
-  using Op=daedalus::DaedalusOpcode;
-  using Type=daedalus::DaedalusDataType;
-  const auto setter = findSymbol("B_SETMONSTERATTITUDE")->address();
-  auto pc = findSymbol("B_INITMONSTERATTITUDES")->address();
-  const auto literal = [&] {
-    const auto instruction = vm.instruction_at(pc);
-    const auto* value = instruction.op==Op::PUSHV ? findSymbol(instruction.symbol) : nullptr;
-    if(value==nullptr || !value->is_const() || value->type()!=Type::INT)
-      throw std::runtime_error("Invalid stock monster attitude literal at "+std::to_string(pc));
-    pc += instruction.size;
-    return value->get_int();
-    };
-  struct AttitudeRule { int32_t from, attitude, to; };
-  std::vector<AttitudeRule> rules;
-  rules.reserve(1932);
-  while(vm.instruction_at(pc).op!=Op::RSR) {
-    const AttitudeRule rule = {literal(),literal(),literal()};
-    const auto call = vm.instruction_at(pc);
-    if(call.op!=Op::BL || call.address!=setter)
-      throw std::runtime_error("Invalid stock monster attitude call at "+std::to_string(pc));
-    pc += call.size;
-    rules.push_back(rule);
-    }
+  auto rules = NpcWorldData::loadAttitudes(baseProgramIndex().dir.parent_path());
+  if(!rules)
+    return;
 
-  vm.override_function("B_INITMONSTERATTITUDES",std::function<void()>{[this,rules=std::move(rules)] {
+  vm.override_function("B_INITMONSTERATTITUDES",std::function<void()>{[this,rules=std::move(*rules)] {
     static constexpr int32_t humanGuilds[] = {
       GIL_NONE,GIL_PAL,GIL_MIL,GIL_VLK,GIL_KDF,GIL_NOV,GIL_DJG,GIL_SLD,GIL_BAU,GIL_BDT,GIL_STRF,GIL_OUT,GIL_PIR,GIL_KDW,
       };

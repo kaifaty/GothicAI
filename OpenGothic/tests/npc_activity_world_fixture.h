@@ -414,7 +414,8 @@ void guardActivityWorld(Gothic& gothic) {
     second.setStateTime(6000);
     Contract::tickRoutine(second);
     const auto* action = second.aiQueueFront();
-    require(Contract::random(script)==expected && calls.lastScriptRoll==&second && roll->get_int()==int32_t(draw) && second.stateTime()==0 &&
+    require(Contract::random(script)==expected && calls.lastScriptRoll==&second && roll->get_int()==int32_t(draw) &&
+            (!script.usesVerifiedNpcProgram() || Contract::pointGestureRolls(script).guard==int32_t(draw)) && second.stateTime()==0 &&
             (a.gestures[draw].animation.empty() ? action==nullptr :
              action && action->act==AI_PlayAnim && action->s0==a.gestures[draw].animation),
             "the due gesture consumes one draw, queues its recorded outcome and resets state time");
@@ -424,7 +425,8 @@ void guardActivityWorld(Gothic& gothic) {
   roll->set_int(0);
   second.setStateTime(6000);
   script.invokeState(&second,nullptr,nullptr,ScriptFn(guard.phases.loop));
-  require(roll->get_int()==5,"the original Loop writes the same seeded draw");
+  require(roll->get_int()==5 && (!script.usesVerifiedNpcProgram() || Contract::pointGestureRolls(script).guard==5),
+          "the original Loop writes the same seeded draw to the shared state");
   roll->set_int(originalRoll);
   test.stop(second);
   guard.pointName=wp->name;
@@ -1162,6 +1164,11 @@ CampfireSave pointActivitiesWorld(Gothic& gothic,bool events) {
         check(gesture.get_int()==roll && event.get_int()==eventRoll && quakeVmEntries==before+size_t(quake && !events) &&
               sound.get_int()==soundRoll && Contract::random(script)==expected && npc.stateTime()==0,
               "the original earthquake draws come in order and the native reaction runs no bytecode");
+        if(script.usesVerifiedNpcProgram()) {
+          const auto& owned = Contract::pointGestureRolls(script);
+          check((folded ? owned.crossedArms : owned.waypoint)==roll && owned.portal==eventRoll &&
+                owned.earthquake==soundRoll,"both activity paths update the same owned point and earthquake rolls");
+          }
         quakes+=sound.get_int()>=0;
         const char* clips[]={"T_LGUARD_SCRATCH","T_LGUARD_STRETCH","T_LGUARD_CHANGELEG"};
         checkPointClip(npc,roll<3 ? clips[roll] : "");

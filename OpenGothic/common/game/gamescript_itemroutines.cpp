@@ -2,7 +2,11 @@
 
 #include "gamescript_inventorytransfer.h"
 
+#include "game/definitions/basescripts.h"
+#include "game/definitions/tradeinventorydata.h"
+#include "game/definitions/deathtrophydefinitions.h"
 #include "game/npcactivityhost.h"
+#include "programdata.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
@@ -392,7 +396,6 @@ void GameScript::loadNativeTradeInventory() {
   if(!nativeRoutineProgram)
     return;
 
-  using Op = daedalus::DaedalusOpcode;
   using Symbol = daedalus::DaedalusSymbol;
   using NpcRef = std::shared_ptr<daedalus::INpc>;
   const auto enabled = [this] {
@@ -406,6 +409,11 @@ void GameScript::loadNativeTradeInventory() {
         vm.unsafe_call(ambient);
       }},[enabled] { return enabled() && NpcHelperRuntime::enabled(); });
     }
+
+  auto record = TradeInventoryData::load(baseProgramIndex().dir.parent_path());
+  if(!record)
+    return;
+
   auto* lookup = findSymbol("HLP_GETNPC");
   auto* instanceId = findSymbol("HLP_GETINSTANCEID");
   auto* hasItems = findSymbol("NPC_HASITEMS");
@@ -419,168 +427,9 @@ void GameScript::loadNativeTradeInventory() {
   auto* runeHero = findSymbol("B_CLEARRUNEINV.HER");
   auto* junkActor = findSymbol("B_CLEARJUNKTRADEINV.SLF");
   auto* tradeActor = findSymbol("B_GIVETRADEINV.SLF");
-  auto* aivar = findSymbol("C_NPC.AIVAR");
-  auto* chapter = findSymbol("KAPITEL");
   const auto deadState = int32_t(findSymbolIndex("ZS_DEAD"));
   const auto unconsciousState = int32_t(findSymbolIndex("ZS_UNCONSCIOUS"));
   constexpr uint16_t stockChapter = 49; // AIV_INVCHAPTER.
-  uint32_t pc = runes->address();
-  const auto malformed = [&] { throw std::runtime_error("Invalid stock inventory rule at "+std::to_string(pc)); };
-  const auto take = [&](Op expected) {
-    const auto op = vm.instruction_at(pc);
-    if(op.op!=expected)
-      malformed();
-    pc += op.size;
-    return op;
-    };
-  const auto expectSymbol = [&](Op op,const Symbol* symbol) {
-    if(take(op).symbol!=symbol->index())
-      malformed();
-    };
-  const auto saveActor = [&](const Symbol* symbol) {
-    expectSymbol(Op::PUSHVI,symbol);
-    take(Op::MOVVI);
-    };
-  const auto expectCall = [&](const Symbol* symbol) {
-    if(take(Op::BL).address!=symbol->address())
-      malformed();
-    };
-  const auto expectChapterSlot = [&] {
-    const auto op = take(Op::PUSHVV);
-    if(op.symbol!=aivar->index() || op.index!=stockChapter)
-      malformed();
-    };
-  const auto readPair = [&](const Symbol* actor) {
-    expectSymbol(Op::PUSHVI,actor);
-    const auto remove = take(Op::PUSHI).immediate;
-    expectSymbol(Op::PUSHVI,actor);
-    const auto count = take(Op::PUSHI).immediate;
-    expectSymbol(Op::BE,hasItems);
-    expectSymbol(Op::BE,removeItems);
-    return std::pair{remove,count};
-    };
-
-  saveActor(runesActor);
-  const auto heroIndex = take(Op::PUSHI).immediate;
-  if(heroIndex!=int32_t(findSymbolIndex("PC_HERO")))
-    malformed();
-  expectSymbol(Op::BE,lookup);
-  saveActor(runeHero);
-  expectSymbol(Op::PUSHVI,runeHero);
-  expectSymbol(Op::BE,instanceId);
-  expectSymbol(Op::PUSHVI,vm.global_self());
-  expectSymbol(Op::BE,instanceId);
-  take(Op::NEQ);
-  const auto runesEnd = take(Op::BZ).address;
-  std::array<std::pair<int32_t,int32_t>,54> runePairs;
-  for(auto& pair : runePairs)
-    pair = readPair(runesActor);
-  if(pc!=runesEnd)
-    malformed();
-  take(Op::RSR);
-
-  pc = junk->address();
-  saveActor(junkActor);
-  expectSymbol(Op::PUSHVI,junkActor);
-  expectSymbol(Op::BE,validNpc);
-  const auto junkEnd = take(Op::BZ).address;
-  std::array<std::pair<int32_t,int32_t>,73> junkPairs;
-  for(auto& pair : junkPairs)
-    pair = readPair(junkActor);
-  if(pc!=junkEnd)
-    malformed();
-  take(Op::RSR);
-
-  struct Trader {
-    int32_t source;
-    Symbol* alias;
-    };
-  std::array<Trader,50> traders;
-  pc = findSymbol("B_GIVETRADEINV")->address();
-  saveActor(tradeActor);
-  for(auto& trader : traders) {
-    trader.source = take(Op::PUSHI).immediate;
-    expectSymbol(Op::BE,lookup);
-    trader.alias = findSymbol(take(Op::PUSHVI).symbol);
-    if(trader.alias==nullptr || !trader.alias->name().starts_with("B_GIVETRADEINV.TRD_"))
-      malformed();
-    take(Op::MOVVI);
-    }
-  expectSymbol(Op::PUSHVI,tradeActor);
-  expectCall(runes);
-  expectSymbol(Op::PUSHV,chapter);
-  expectSymbol(Op::GMOVI,tradeActor);
-  expectChapterSlot();
-  take(Op::LTE);
-  const auto restockEnd = take(Op::BZ).address;
-  const auto readTraderBranch = [&] {
-    auto* alias = findSymbol(take(Op::PUSHVI).symbol);
-    if(std::ranges::find(traders,alias,&Trader::alias)==traders.end())
-      malformed();
-    expectSymbol(Op::BE,instanceId);
-    expectSymbol(Op::PUSHVI,tradeActor);
-    expectSymbol(Op::BE,instanceId);
-    take(Op::EQ);
-    return std::pair{alias,take(Op::BZ).address};
-    };
-  // Lookup, restock and cleanup each have their own authored order.
-  std::array<std::pair<Symbol*,const Symbol*>,50> restocks;
-  for(auto& restock : restocks) {
-    const auto [alias,next] = readTraderBranch();
-    expectSymbol(Op::PUSHVI,tradeActor);
-    expectCall(junk);
-    expectSymbol(Op::PUSHVI,tradeActor);
-    const auto* body = vm.find_symbol_by_address(take(Op::BL).address);
-    if(body==nullptr || !body->name().starts_with("B_GIVETRADEINV_") || pc!=next)
-      malformed();
-    restock = {alias,body};
-    }
-  if(take(Op::PUSHI).immediate!=1)
-    malformed();
-  expectSymbol(Op::PUSHV,chapter);
-  take(Op::ADD);
-  expectSymbol(Op::GMOVI,tradeActor);
-  expectChapterSlot();
-  take(Op::MOVI);
-  if(pc!=restockEnd)
-    malformed();
-  for(const auto state : {unconsciousState,deadState}) {
-    expectSymbol(Op::PUSHVI,tradeActor);
-    if(take(Op::PUSHI).immediate!=state)
-      malformed();
-    expectSymbol(Op::BE,inState);
-    }
-  take(Op::ORR);
-  const auto tradeEnd = take(Op::BZ).address;
-  std::array<Symbol*,50> defeatedTraders;
-  for(auto& defeated : defeatedTraders) {
-    const auto [alias,next] = readTraderBranch();
-    expectSymbol(Op::PUSHVI,tradeActor);
-    expectCall(dead);
-    if(pc!=next)
-      malformed();
-    defeated = alias;
-    }
-  if(pc!=tradeEnd)
-    malformed();
-  take(Op::RSR);
-
-  struct StockGrant {
-    int32_t item = 0, amount = 0;
-    Symbol* recipient = nullptr;
-    Symbol* itemSymbol = nullptr;
-    };
-  struct StockBonus {
-    enum class Condition { HeroGuild, SecretSign } condition;
-    std::vector<StockGrant> grants, following;
-    };
-  struct StockBatch {
-    Symbol* granted = nullptr;
-    std::optional<int32_t> minimumChapter;
-    bool requiresOldWorld = false;
-    std::vector<StockGrant> grants;
-    std::optional<StockBonus> bonus;
-    };
   auto* create = findSymbol("CREATEINVITEMS");
   auto* yes = findSymbol("TRUE");
   auto* no = findSymbol("FALSE");
@@ -588,111 +437,16 @@ void GameScript::loadNativeTradeInventory() {
   auto* secretSign = findSymbol("KNOWS_SECRETSIGN");
   auto* militia = findSymbol("GIL_MIL");
   auto* paladin = findSymbol("GIL_PAL");
-  auto* guild = findSymbol("C_NPC.GUILD");
-  const auto pushes = [&](const Symbol* symbol) {
-    const auto next = vm.instruction_at(pc);
-    return next.op==Op::PUSHV && next.symbol==symbol->index();
-    };
-  const auto readGrants = [&](Symbol* actor, uint32_t end) {
-    std::vector<StockGrant> grants;
-    while(pc<end && vm.instruction_at(pc).op==Op::PUSHVI) {
-      StockGrant grant;
-      grant.recipient = findSymbol(take(Op::PUSHVI).symbol);
-      if(grant.recipient!=actor && grant.recipient!=vm.global_self())
-        malformed();
-      if(vm.instruction_at(pc).op==Op::PUSHV) {
-        // Samuel's stock reads the live item index.
-        grant.itemSymbol = findSymbol("RI_PROTFIRE02");
-        expectSymbol(Op::PUSHV,grant.itemSymbol);
-        } else {
-        grant.item = take(Op::PUSHI).immediate;
-        }
-      grant.amount = take(Op::PUSHI).immediate;
-      expectSymbol(Op::BE,create);
-      grants.push_back(grant);
-      }
-    return grants;
-    };
-  const auto bindStock = [&](const Symbol& body) {
-    pc = body.address();
-    auto* actor = findSymbol(body.name()+".SLF");
-    saveActor(actor);
-    std::vector<StockBatch> stock;
-    while(vm.instruction_at(pc).op!=Op::RSR) {
-      StockBatch batch;
-      uint32_t end = vm.size();
-      if(vm.instruction_at(pc).op==Op::PUSHV) {
-        expectSymbol(Op::PUSHV,no);
-        batch.granted = findSymbol(take(Op::PUSHV).symbol);
-        if(batch.granted==nullptr || batch.granted->name().find("_ITEMSGIVEN_CHAPTER_")==std::string::npos)
-          malformed();
-        take(Op::EQ);
-        if(pushes(yes)) {
-          expectSymbol(Op::PUSHV,yes);
-          expectSymbol(Op::PUSHV,oldWorldFlag);
-          take(Op::EQ);
-          batch.requiresOldWorld = true;
-          }
-        if(vm.instruction_at(pc).op==Op::PUSHI) {
-          batch.minimumChapter = take(Op::PUSHI).immediate;
-          expectSymbol(Op::PUSHV,chapter);
-          take(Op::GTE);
-          take(Op::AND);
-          }
-        if(batch.requiresOldWorld) {
-          if(!batch.minimumChapter)
-            malformed();
-          take(Op::AND);
-          }
-        end = take(Op::BZ).address;
-        }
-      batch.grants = readGrants(actor,end);
-      std::optional<StockBonus::Condition> bonus;
-      const auto bonusStart = vm.instruction_at(pc);
-      if(pushes(militia)) {
-        for(auto* allowed : {militia,paladin}) {
-          expectSymbol(Op::PUSHV,allowed);
-          expectSymbol(Op::GMOVI,vm.global_hero());
-          expectSymbol(Op::PUSHV,guild);
-          take(Op::EQ);
-          }
-        take(Op::ORR);
-        bonus = StockBonus::Condition::HeroGuild;
-        } else if(pushes(yes) && vm.instruction_at(pc+bonusStart.size).symbol==secretSign->index()) {
-        expectSymbol(Op::PUSHV,yes);
-        expectSymbol(Op::PUSHV,secretSign);
-        take(Op::EQ);
-        bonus = StockBonus::Condition::SecretSign;
-        }
-      if(bonus) {
-        const auto bonusEnd = take(Op::BZ).address;
-        if(bonusEnd>=end)
-          malformed();
-        auto grants = readGrants(actor,bonusEnd);
-        if(pc!=bonusEnd || grants.empty())
-          malformed();
-        // Gorax's third-chapter batch includes a grant after the guild check.
-        batch.bonus = StockBonus{*bonus,std::move(grants),readGrants(actor,end)};
-        }
-      if(batch.granted!=nullptr) {
-        expectSymbol(Op::PUSHV,yes);
-        expectSymbol(Op::PUSHV,batch.granted);
-        take(Op::MOVI);
-        if(pc!=end)
-          malformed();
-        } else if(batch.grants.empty() || !stock.empty() || vm.instruction_at(pc).op!=Op::RSR) {
-        malformed();
-        }
-      stock.push_back(std::move(batch));
-      }
-    take(Op::RSR);
-    vm.override_function(body.name(),std::function<void(NpcRef)>{
-      [this,actor,create,yes,no,oldWorldFlag,secretSign,militia,paladin,stock=std::move(stock)](NpcRef npc) {
-        const auto grantItems = [&](const std::vector<StockGrant>& grants) {
+
+  for(auto& stock : record->stock) {
+    auto* actor = findSymbol(stock.actor);
+    vm.override_function(findSymbol(stock.function)->name(),std::function<void(NpcRef)>{
+      [this,actor,create,yes,no,oldWorldFlag,secretSign,militia,paladin,batches=std::move(stock.batches)](NpcRef npc) {
+        const auto grantItems = [&](const std::vector<TradeInventoryData::Grant>& grants) {
           for(const auto& grant : grants) {
-            vm.push_reference(grant.recipient);
+            vm.push_reference(findSymbol(grant.recipient));
             if(grant.itemSymbol)
-              vm.push_reference(grant.itemSymbol);
+              vm.push_reference(findSymbol(*grant.itemSymbol));
             else
               vm.push_int(grant.item);
             vm.push_int(grant.amount);
@@ -706,8 +460,9 @@ void GameScript::loadNativeTradeInventory() {
           return (hero ? hero->guild : 0)==value;
           };
         actor->set_instance(std::move(npc));
-        for(const auto& batch : stock) {
-          const bool pending = batch.granted==nullptr || batch.granted->get_int()==no->get_int();
+        for(const auto& batch : batches) {
+          auto* granted = batch.granted ? findSymbol(*batch.granted) : nullptr;
+          const bool pending = granted==nullptr || granted->get_int()==no->get_int();
           const bool enteredOldWorld = !batch.requiresOldWorld || oldWorldFlag->get_int()==yes->get_int();
           const bool chapterReached = !batch.minimumChapter || storyChapter>=*batch.minimumChapter;
           if(!pending || !enteredOldWorld || !chapterReached)
@@ -715,7 +470,7 @@ void GameScript::loadNativeTradeInventory() {
           grantItems(batch.grants);
           if(batch.bonus) {
             bool eligible = false;
-            if(batch.bonus->condition==StockBonus::Condition::HeroGuild) {
+            if(batch.bonus->condition==TradeInventoryData::Bonus::Condition::HeroGuild) {
               const bool isMilitia = hasHeroGuild(militia);
               const bool isPaladin = hasHeroGuild(paladin);
               eligible = isMilitia || isPaladin;
@@ -726,13 +481,11 @@ void GameScript::loadNativeTradeInventory() {
               grantItems(batch.bonus->grants);
             grantItems(batch.bonus->following);
             }
-          if(batch.granted)
-            batch.granted->set_int(yes->get_int());
+          if(granted!=nullptr)
+            granted->set_int(yes->get_int());
           }
         }},enabled);
-    };
-  for(const auto& restock : restocks)
-    bindStock(*restock.second);
+    }
 
   const auto getNpc = [this,lookup](int32_t source,Symbol* alias) {
     vm.push_int(source);
@@ -766,7 +519,7 @@ void GameScript::loadNativeTradeInventory() {
     };
 
   vm.override_function("B_CLEARRUNEINV",std::function<void(NpcRef)>{
-    [this,runesActor,runeHero,heroIndex,runePairs,getNpc,id,removePairs](NpcRef actor) {
+    [this,runesActor,runeHero,heroIndex=record->hero,runePairs=std::move(record->runes),getNpc,id,removePairs](NpcRef actor) {
       runesActor->set_instance(std::move(actor));
       getNpc(heroIndex,runeHero);
       const auto hero = id(runeHero);
@@ -774,7 +527,7 @@ void GameScript::loadNativeTradeInventory() {
         removePairs(runesActor,runePairs);
     }},enabled);
   vm.override_function("B_CLEARJUNKTRADEINV",std::function<void(NpcRef)>{
-    [this,junkActor,junkPairs,validNpc,removePairs](NpcRef actor) {
+    [this,junkActor,junkPairs=std::move(record->junk),validNpc,removePairs](NpcRef actor) {
       junkActor->set_instance(std::move(actor));
       vm.push_reference(junkActor);
       vm.unsafe_call_external(validNpc);
@@ -794,9 +547,10 @@ void GameScript::loadNativeTradeInventory() {
         current->aivar[stockChapter] = std::bit_cast<int32_t>(uint32_t(storyChapter)-1u);
     }},enabled);
   vm.override_function("B_GIVETRADEINV",std::function<void(NpcRef)>{
-    [this,traders,restocks,defeatedTraders,tradeActor,runes,junk,dead,inState,unconsciousState,deadState,getNpc,id,call,member](NpcRef actor) {
-      const auto sameTrader = [&](Symbol* alias) {
-        const auto selected = id(alias);
+    [this,traders=std::move(record->traders),restocks=std::move(record->restocks),
+     defeatedTraders=std::move(record->defeated),tradeActor,runes,junk,dead,inState,unconsciousState,deadState,getNpc,id,call,member](NpcRef actor) {
+      const auto sameTrader = [&](uint32_t alias) {
+        const auto selected = id(findSymbol(alias));
         return selected==id(tradeActor);
         };
       const auto isInState = [&](int32_t state) {
@@ -806,8 +560,8 @@ void GameScript::loadNativeTradeInventory() {
         return vm.pop_int()!=0;
         };
       tradeActor->set_instance(std::move(actor));
-      for(const auto& trader : traders)
-        getNpc(trader.source,trader.alias);
+      for(const auto& [source,alias] : traders)
+        getNpc(source,findSymbol(alias));
       call(tradeActor,runes);
       const auto current = member(tradeActor);
       if((current ? current->aivar[stockChapter] : 0)<=storyChapter) {
@@ -815,7 +569,7 @@ void GameScript::loadNativeTradeInventory() {
           if(!sameTrader(alias))
             continue;
           call(tradeActor,junk);
-          call(tradeActor,body);
+          call(tradeActor,findSymbol(body));
           }
         if(const auto restocked = member(tradeActor))
           restocked->aivar[stockChapter] = std::bit_cast<int32_t>(uint32_t(storyChapter)+1u);
@@ -823,7 +577,7 @@ void GameScript::loadNativeTradeInventory() {
       const bool unconscious = isInState(unconsciousState);
       const bool deceased = isInState(deadState);
       if(unconscious || deceased) {
-        for(auto* alias : defeatedTraders) {
+        for(auto alias : defeatedTraders) {
           if(sameTrader(alias))
             call(tradeActor,dead);
           }
@@ -835,168 +589,46 @@ void GameScript::loadNativeDeathTrophies() {
   if(!nativeRoutineProgram)
     return;
 
-  using Op = daedalus::DaedalusOpcode;
+  using namespace DeathTrophyDefinitions;
   using Symbol = daedalus::DaedalusSymbol;
   using NpcRef = std::shared_ptr<daedalus::INpc>;
-  struct Grant { int32_t item, amount; };
-  struct Chance { int32_t threshold; bool exact; };
-  struct Trophy {
-    Symbol* match;
-    Symbol* context;
-    bool matchInstance;
-    std::optional<Chance> chance;
-    std::vector<Grant> grants;
-    };
-  using Trophies = std::vector<Trophy>;
-  struct Talent { uint8_t index; Trophies trophies; };
-  struct RandomTrophies {
-    int32_t bound;
-    Symbol* result;
-    std::vector<Trophies> choices;
-    };
 
-  auto* body = findSymbol("B_GIVEDEATHINV");
+  auto catalog = load(baseProgramIndex().dir.parent_path());
+  if(!catalog)
+    return;
+
   auto* actor = findSymbol("B_GIVEDEATHINV.SLF");
   auto* talent = findSymbol("PLAYER_TALENT_TAKEANIMALTROPHY");
-  auto* aivar = findSymbol("C_NPC.AIVAR");
   auto* yes = findSymbol("TRUE");
   auto* instanceId = findSymbol("HLP_GETINSTANCEID");
   auto* random = findSymbol("HLP_RANDOM");
   auto* create = findSymbol("CREATEINVITEMS");
-  constexpr uint16_t given = 11, species = 43; // AIV_DEATHINVGIVEN and AIV_MM_REAL_ID.
-  auto pc = body->address();
-  const auto malformed = [&] { throw std::runtime_error("Invalid stock death trophy rule at "+std::to_string(pc)); };
-  const auto next = [&] { return vm.instruction_at(pc).op; };
-  const auto take = [&](Op expected) {
-    const auto op = vm.instruction_at(pc);
-    if(op.op!=expected)
-      malformed();
-    pc += op.size;
-    return op;
-    };
-  const auto expectSymbol = [&](Op op,const Symbol* symbol) {
-    if(take(op).symbol!=symbol->index())
-      malformed();
-    };
-  const auto expectAivar = [&](uint16_t slot) {
-    const auto op = take(Op::PUSHVV);
-    if(op.symbol!=aivar->index() || op.index!=slot)
-      malformed();
-    };
-  expectSymbol(Op::PUSHVI,actor);
-  take(Op::MOVVI);
-  expectSymbol(Op::PUSHV,yes);
-  expectSymbol(Op::GMOVI,actor);
-  expectAivar(given);
-  take(Op::EQ);
-  const auto firstTalent = take(Op::BZ).address;
-  take(Op::RSR);
-  if(pc!=firstTalent)
-    malformed();
 
-  size_t grantCount = 0;
-  const auto readTrophy = [&](const Symbol* randomizer,bool allowChoice) {
-    Trophy trophy{};
-    if(next()==Op::PUSHI) {
-      if(randomizer==nullptr)
-        malformed();
-      const auto limit = take(Op::PUSHI).immediate;
-      expectSymbol(Op::PUSHV,randomizer);
-      const bool exact = next()==Op::EQ;
-      take(exact ? Op::EQ : Op::LTE);
-      trophy.chance = Chance{limit,exact};
+  const auto check = [&](const Trophies& trophies) {
+    using Type = daedalus::DaedalusDataType;
+    for(const auto& trophy : trophies) {
+      const auto* symbol = findSymbol(trophy.symbol);
+      const auto type = trophy.match==Match::Instance ? Type::INSTANCE : Type::INT;
+      if(symbol==nullptr || symbol->type()!=type)
+        throw std::runtime_error("Invalid death-trophies.json match symbol "+std::to_string(trophy.symbol));
       }
-    trophy.matchInstance = next()==Op::PUSHVI;
-    if(trophy.matchInstance) {
-      trophy.match = findSymbol(take(Op::PUSHVI).symbol);
-      trophy.context = actor;
-      expectSymbol(Op::BE,instanceId);
-      expectSymbol(Op::PUSHVI,actor);
-      expectSymbol(Op::BE,instanceId);
-      } else {
-      trophy.match = findSymbol(take(Op::PUSHV).symbol);
-      trophy.context = findSymbol(take(Op::GMOVI).symbol);
-      if(trophy.context!=actor && trophy.context!=vm.global_self())
-        malformed();
-      expectAivar(species);
-      }
-    if(trophy.match==nullptr)
-      malformed();
-    take(Op::EQ);
-    if(trophy.chance)
-      take(Op::AND);
-    const auto end = take(Op::BZ).address;
-    while(pc<end && next()==Op::PUSHVI) {
-      expectSymbol(Op::PUSHVI,actor);
-      const auto item = take(Op::PUSHI).immediate;
-      const auto amount = take(Op::PUSHI).immediate;
-      expectSymbol(Op::BE,create);
-      trophy.grants.push_back({item,amount});
-      ++grantCount;
-      }
-    const auto choiceEnd = allowChoice && pc<end ? take(Op::B).address : 0u;
-    if(pc!=end || trophy.grants.empty())
-      malformed();
-    return std::pair{std::move(trophy),choiceEnd};
     };
-
-  std::array<Talent,14> taught;
-  for(auto& learned : taught) {
-    expectSymbol(Op::PUSHV,yes);
-    const auto access = next()==Op::PUSHV ? Op::PUSHV : Op::PUSHVV;
-    const auto op = take(access);
-    if(op.symbol!=talent->index() || op.index>=talent->count())
-      malformed();
-    learned.index = op.index;
-    take(Op::EQ);
-    const auto end = take(Op::BZ).address;
-    while(pc<end)
-      learned.trophies.push_back(readTrophy(nullptr,false).first);
-    if(pc!=end || learned.trophies.empty())
-      malformed();
+  for(const auto& learned : catalog->taught) {
+    if(learned.index>=talent->count())
+      throw std::runtime_error("Invalid death-trophies.json talent index "+std::to_string(learned.index));
+    check(learned.trophies);
     }
-  // First-match choices share one exit. Talent rows grant independently.
-  const auto readChoice = [&](const Symbol* randomizer) {
-    auto [trophy,end] = readTrophy(randomizer,true);
-    if(end<=pc)
-      malformed();
-    Trophies choices;
-    choices.push_back(std::move(trophy));
-    while(pc<end) {
-      auto [choice,jump] = readTrophy(randomizer,true);
-      if((pc<end && jump!=end) || (pc==end && jump!=0))
-        malformed();
-      choices.push_back(std::move(choice));
-      }
-    if(pc!=end)
-      malformed();
-    return choices;
-    };
-  const auto unconditional = readChoice(nullptr);
-  std::array<RandomTrophies,3> randomized;
-  const std::array randomVariables{"GOBLINGREEN_RANDOMIZER","GOBLINBLACK_RANDOMIZER","ORC_RANDOMIZER"};
-  for(size_t i=0;i<randomized.size();++i) {
-    auto& roll = randomized[i];
-    roll.bound = take(Op::PUSHI).immediate;
-    expectSymbol(Op::BE,random);
-    roll.result = findSymbol(randomVariables[i]);
-    expectSymbol(Op::PUSHV,roll.result);
-    take(Op::MOVI);
-    const size_t groupCount = i==2 ? 5 : 1;
-    for(size_t j=0;j<groupCount;++j)
-      roll.choices.push_back(readChoice(roll.result));
+  check(catalog->unconditional);
+  for(const auto& roll : catalog->randomized) {
+    const auto* result = findSymbol(roll.result);
+    if(result==nullptr || result->type()!=daedalus::DaedalusDataType::INT || result->is_const() || result->count()==0)
+      throw std::runtime_error("Invalid death-trophies.json RNG local "+std::to_string(roll.result));
+    for(const auto& choices : roll.choices)
+      check(choices);
     }
-  expectSymbol(Op::PUSHV,yes);
-  expectSymbol(Op::GMOVI,actor);
-  expectAivar(given);
-  take(Op::MOVI);
-  take(Op::RSR);
-  if(grantCount!=123)
-    malformed();
 
   vm.override_function("B_GIVEDEATHINV",std::function<void(NpcRef)>{
-    [this,actor,talent,yes,instanceId,random,create,taught=std::move(taught),
-     unconditional=std::move(unconditional),randomized=std::move(randomized)](NpcRef npc) {
+    [this,actor,talent,yes,instanceId,random,create,catalog=std::move(*catalog)](NpcRef npc) {
       const auto member = [&](Symbol* symbol) {
         auto current = std::static_pointer_cast<daedalus::INpc>(symbol->get_instance());
         vm.unsafe_set_gi(current);
@@ -1008,12 +640,13 @@ void GameScript::loadNativeDeathTrophies() {
         return vm.pop_int();
         };
       const auto matches = [&](const Trophy& trophy) {
-        if(trophy.matchInstance) {
-          const auto expected = id(trophy.match);
-          return expected==id(trophy.context);
+        auto* match = findSymbol(trophy.symbol);
+        if(trophy.match==Match::Instance) {
+          const auto expected = id(match);
+          return expected==id(actor);
           }
-        const auto expected = trophy.match->get_int();
-        const auto current = member(trophy.context);
+        const auto expected = match->get_int();
+        const auto current = member(trophy.match==Match::ActorSpecies ? actor : vm.global_self());
         return (current ? current->aivar[species] : 0)==expected;
         };
       const auto grant = [&](const Trophy& trophy) {
@@ -1042,7 +675,7 @@ void GameScript::loadNativeDeathTrophies() {
       actor->set_instance(std::move(npc));
       if(const auto current = member(actor); current && current->aivar[given]==yes->get_int())
         return;
-      for(const auto& learned : taught) {
+      for(const auto& learned : catalog.taught) {
         if(talent->get_int(learned.index)!=yes->get_int())
           continue;
         for(const auto& trophy : learned.trophies) {
@@ -1050,14 +683,15 @@ void GameScript::loadNativeDeathTrophies() {
             grant(trophy);
           }
         }
-      choose(unconditional,nullptr);
+      choose(catalog.unconditional,nullptr);
       // All three draws and their globals are observable even for non-monsters.
-      for(const auto& roll : randomized) {
+      for(const auto& roll : catalog.randomized) {
         vm.push_int(roll.bound);
         vm.unsafe_call_external(random);
-        roll.result->set_int(vm.pop_int());
+        auto* result = findSymbol(roll.result);
+        result->set_int(vm.pop_int());
         for(const auto& choices : roll.choices)
-          choose(choices,roll.result);
+          choose(choices,result);
         }
       if(const auto current = member(actor))
         current->aivar[given] = yes->get_int();
@@ -1470,8 +1104,8 @@ constexpr std::array<std::string_view,4> eatingGesture={
 
 int32_t GameScript::giveInventoryItems(const std::shared_ptr<daedalus::INpc>& giver,
                                        const std::shared_ptr<daedalus::INpc>& taker, int32_t item, int32_t amount) {
-  findSymbol("B_GIVEINVITEMS.AMOUNT")->set_int(amount);
-  findSymbol("B_GIVEINVITEMS.ITEMINSTANCE")->set_int(item);
+  inventoryTransferVariables.amount = amount;
+  inventoryTransferVariables.item = item;
   findSymbol("B_GIVEINVITEMS.TAKER")->set_instance(taker);
   findSymbol("B_GIVEINVITEMS.GIVER")->set_instance(giver);
   const auto string = [this](const char* symbol) -> const std::string& { return findSymbol(symbol)->get_string(); };
@@ -1488,9 +1122,9 @@ int32_t GameScript::giveInventoryItems(const std::shared_ptr<daedalus::INpc>& gi
   if(transfer.itemChanged)
     storeItem(transfer.item);
   if(transfer.itemName)
-    findSymbol("B_GIVEINVITEMS.ITEMNAME")->set_string(*transfer.itemName);
+    inventoryTransferVariables.itemName = *transfer.itemName;
   if(transfer.notice) {
-    findSymbol("B_GIVEINVITEMS.CONCATTEXT")->set_string(transfer.notice->text);
+    inventoryTransferVariables.notice = transfer.notice->text;
     ai_printscreen(transfer.notice->text,-1,transfer.notice->y,string("FONT_SCREENSMALL"),2);
     }
   return transfer.value;

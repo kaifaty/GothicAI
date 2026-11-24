@@ -181,12 +181,12 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     error = "no npc " + std::string(JsonRead::str(msg,"npc"));
     return false;
     }
-  auto& vm = world.script().getVm();
+  auto& script = world.script();
   std::vector<StoryEffect> list;
   if(auto it = msg.FindMember("effects"); it!=msg.MemberEnd() && it->value.IsArray()) {
     for(auto& x : it->value.GetArray()) {
       StoryEffect e;
-      error = StoryEffect::read(x,&vm,e);
+      error = StoryEffect::read(x,script,e);
       if(!error.empty())
         return false;
       list.push_back(std::move(e));
@@ -197,7 +197,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     if(e.kind=="chest_take")
       takes.push_back({e.chest,e.item,e.count});
     // v39: a mission item (ITEM_MISSION) never goes from one npc to another
-    const size_t id = e.kind=="give" && e.toNpc ? world.script().findSymbolIndex(e.item) : size_t(-1);
+    const size_t id = e.kind=="give" && e.toNpc ? script.findSymbolIndex(e.item) : size_t(-1);
     if(auto* it = id==size_t(-1) ? nullptr : const_cast<Inventory&>(npc->inventory()).getItem(id); it!=nullptr && it->isMission()) {
       error = "a mission item: " + e.item;
       return false;
@@ -210,7 +210,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     auto* source = NpcChests::find(world,chest);
     if(source==nullptr)
       return std::nullopt;
-    const auto id = world.script().findSymbolIndex(item);
+    const auto id = script.findSymbolIndex(item);
     auto* stock = source->inventory().getItem(id);
     return ChestTake::Stock{int64_t(source->inventory().itemCount(id)),stock!=nullptr && stock->isMission()};
     });
@@ -283,7 +283,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       else if(e.kind=="create")
         made[e.item] += e.count;
       else if(e.kind=="teach") {
-        const int32_t cost = e.learnCost(vm,*pl,error);
+        const int32_t cost = e.learnCost(script,*pl,error);
         if(cost<0)
           return false;
         lp += cost;
@@ -291,7 +291,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       }
     for(auto& [k,count] : need) {
       Npc&         giver = k.first ? *pl : *npc;
-      const size_t id    = world.script().findSymbolIndex(k.second);
+      const size_t id    = script.findSymbolIndex(k.second);
       const auto   has   = int64_t(id==size_t(-1) ? 0 : giver.itemCount(id)) + (k.first ? 0 : made[k.second]);
       if(has<count) {
         error = "missing: " + std::string(k.first ? "hero " : "npc ") + k.second + " " + std::to_string(count) +
@@ -327,8 +327,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       outcome.dropped.clear();
       if(auto* weapon = npc->currentMeleeWeapon()) {
         const auto id = weapon->clsId();
-        if(auto* symbol = world.script().findSymbol(id))
-          outcome.dropped = symbol->name();
+        outcome.dropped = script.symbolName(id);
         Matrix4x4 at;
         at.identity();
         at.translate(npc->position());
@@ -353,7 +352,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       }
     if(e.kind=="attack" || e.kind=="refuse_talk" || e.kind=="calm")
       release(world,*npc);  // the scripts carry these out: an npc the server holds is let go first
-    e.run(vm,*npc,*pl,who);
+    e.run(script,*npc,*pl,who);
     }
   return true;
   }

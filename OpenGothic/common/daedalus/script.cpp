@@ -176,7 +176,7 @@ namespace daedalus {
 				break;
 			case DaedalusDataType::STRING:
 				record.string_values.resize(sym._m_count);
-				std::copy_n(std::get<std::unique_ptr<std::string[]>>(sym._m_value).get(),
+				std::copy_n(sym.string_data(),
 				            sym._m_count,
 				            record.string_values.begin());
 				break;
@@ -515,7 +515,7 @@ namespace daedalus {
 			return *get_member_ptr<std::string>(index, context);
 		}
 
-		return std::get<std::unique_ptr<std::string[]>>(_m_value)[index];
+		return string_data()[index];
 	}
 
 	float DaedalusSymbol::get_float(std::uint16_t index, DaedalusInstance const* context) const {
@@ -587,7 +587,7 @@ namespace daedalus {
 
 			*get_member_ptr<std::string>(index, context) = value;
 		} else {
-			std::get<std::unique_ptr<std::string[]>>(_m_value).get()[index] = value;
+			string_data()[index] = value;
 		}
 	}
 
@@ -655,6 +655,22 @@ namespace daedalus {
 		if (const auto* bound = std::get_if<std::int32_t*>(&_m_value))
 			return *bound;
 		return std::get<std::unique_ptr<std::int32_t[]>>(_m_value).get();
+	}
+
+	void DaedalusSymbol::bind_global_string(std::string& value) {
+		if (type() != DaedalusDataType::STRING || is_member() || is_const() || count() != 1 ||
+		    !std::holds_alternative<std::unique_ptr<std::string[]>>(_m_value)) {
+			throw DaedalusScriptError {"cannot bind mutable global string " + name()};
+		}
+
+		value = get_string();
+		_m_value = &value;
+	}
+
+	std::string* DaedalusSymbol::string_data() const {
+		if (const auto* bound = std::get_if<std::string*>(&_m_value))
+			return *bound;
+		return std::get<std::unique_ptr<std::string[]>>(_m_value).get();
 	}
 
 	std::shared_ptr<DaedalusInstance> const& DaedalusSymbol::get_instance() {

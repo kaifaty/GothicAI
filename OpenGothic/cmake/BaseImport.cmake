@@ -26,7 +26,10 @@ set(BASE_RUNTIME_SOURCES
   common/game/definitions/fightdefinitiondata.cpp common/game/definitions/menudefinitions.cpp
   common/game/definitions/cameradefinitiondata.cpp common/game/definitions/sfxdefinitiondata.cpp
   common/game/definitions/musicdefinitiondata.cpp
-  common/game/definitions/effectdefinitiondata.cpp common/game/definitions/dialoginfodata.cpp
+  common/game/definitions/questclosuredata.cpp
+  common/game/definitions/effectdefinitiondata.cpp common/game/definitions/dialoginfodata.cpp common/game/definitions/symbolcatalog.cpp
+  common/game/definitions/npcworlddata.cpp common/game/definitions/tradeinventorydata.cpp
+  common/game/definitions/deathtrophydefinitions.cpp
   common/gothicglb.cpp common/gltfmesh.cpp common/utils/fileutil.cpp common/musicdata.cpp common/dmusic/musicrecord.cpp common/musicnative.c
   common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp
   common/dmusic/hydra.cpp common/dmusic/soundfont.cpp)

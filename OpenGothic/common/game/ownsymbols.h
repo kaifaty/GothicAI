@@ -34,6 +34,7 @@ class OwnSymbols final {
 
     const std::vector<Entry>& entries() const { return list; }
     const Entry*              find(std::string_view name) const;
+    const Entry*              find(uint32_t index) const;
     // the script's instance an npc of ours is made like; nullptr for any other symbol
     daedalus::DaedalusSymbol*   likeOf(uint32_t index);
 

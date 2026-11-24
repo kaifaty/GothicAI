@@ -60,7 +60,7 @@ endif()
 # Definitions import executes item constructors through the shared snapshot library.
 target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
 
-target_link_libraries(content-convert PRIVATE gothic-npc-snapshot)
+target_link_libraries(content-convert PRIVATE gothic-npc-snapshot StoryGraph)
 add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
   ../../OpenGothic/common/game/itemdefinitionruntime.cpp
   ../../OpenGothic/common/game/npcdefinitionruntime.cpp

@@ -324,7 +324,7 @@ void GameScript::runPortalEarthquake(Npc& npc) {
   const auto hero = vm.global_hero()->get_instance();
   wld_playeffect("FX_EarthQuake",hero,hero,0,0,0,0);
   const auto roll = rollRandom(4,&npc,true);
-  findSymbol("B_EVENT_PORTAL_EARTHQUAKE.RANDY")->set_int(int32_t(roll));
+  pointGestureRolls.earthquake = int32_t(roll);
   static constexpr std::string_view cues[4][2] = {
     {"Ravens_Earthquake4", {}},
     {"Ravens_Earthquake4", "Ravens_Earthquake2"},

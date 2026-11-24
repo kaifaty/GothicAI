@@ -34,28 +34,35 @@ if(PROJECT_IS_TOP_LEVEL)
   endif()
 endif()
 
-set(STORYGRAPH_SOURCES
-  bytecode.cpp bytecode.h
-  eval.cpp     eval.h
-  exec.cpp     exec.h execcore.h
-  expr.cpp     expr.h
+add_library(StoryGraphRuntime STATIC
+  expr.cpp expr.h
   exprjson.cpp exprjson.h
-  lifter.cpp   lifter.h
-  model.cpp    model.h
-  nativeexec.cpp nativeexec.h
-  predicates.cpp predicates.h
-  program.cpp  program.h
-  vocab.h
+  nativeexec.cpp nativeexec.h execcore.h
+  program.h vocab.h
   ../textcodec.cpp ../textcodec.h
   ../../common/game/definitions/stockstoryprograms.cpp ../../common/game/definitions/stockstoryprograms.h)
-add_library(StoryGraph STATIC ${STORYGRAPH_SOURCES})
-target_link_libraries(StoryGraph PUBLIC gothic-daedalus)
-target_include_directories(StoryGraph PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_include_directories(StoryGraph PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
-# rapidjson 1.1 trips modern clang warnings; treat it as a system header
-target_include_directories(StoryGraph SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rapidjson/include)
+target_include_directories(StoryGraphRuntime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(StoryGraphRuntime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+target_include_directories(StoryGraphRuntime SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rapidjson/include)
+
+add_library(StoryGraphLift STATIC
+  bytecode.cpp bytecode.h
+  lifter.cpp lifter.h
+  predicates.cpp predicates.h)
+target_link_libraries(StoryGraphLift PUBLIC StoryGraphRuntime gothic-script-data)
+
+add_library(StoryGraph STATIC
+  eval.cpp eval.h
+  exec.cpp exec.h
+  graphjson.cpp graphjson.h
+  model.cpp model.h
+  program.cpp)
+target_link_libraries(StoryGraph PUBLIC StoryGraphLift gothic-daedalus)
+target_link_libraries(StoryGraph PRIVATE gothic-base-runtime)
 
 if(NOT MSVC)
+  target_compile_options(StoryGraphRuntime PRIVATE -Wall -Wconversion -Werror)
+  target_compile_options(StoryGraphLift PRIVATE -Wall -Wconversion -Werror)
   target_compile_options(StoryGraph PRIVATE -Wall -Wconversion -Werror)
 endif()
 

@@ -108,6 +108,9 @@ class Base:
             self.close()
             raise
 
+    def has_file(self, relative: str) -> bool:
+        return relative in self._files
+
     def read(self, relative: str) -> bytes:
         try:
             entry = self._files[relative]

@@ -14,6 +14,11 @@ build are system ones; they are only counted.
 
     python3 scripts/engine_link_census.py OpenGothic/build             # markdown report
     python3 scripts/engine_link_census.py OpenGothic/build --json      # the same as JSON
+    python3 scripts/engine_link_census.py OpenGothic/build --check-native-game --json
+    python3 scripts/engine_link_census.py OpenGothic/build --check-native-game --target gothic-body-runner
+
+The native game check requires the unstripped linked executable. Exit codes are 0 for a clean
+check, 1 for a Daedalus dependency or interpreter symbol, and 2 for an uninspectable build.
 
 Step 8.2 of the engine layers plan: reports/engine/2026-11-13-empty-island/README.md.
 """
@@ -46,6 +51,7 @@ MACHO_LINE = re.compile(r"^(?:[0-9a-fA-F]+)?\s*\((?P<section>[^)]*)\)(?:\s+\(ali
                         r"(?P<kind>(?:weak\s+)?(?:private\s+)?external|non-external)\s+"
                         r"(?:\(was a private external\)\s+)?(?:\[[a-z ]+\]\s+)*(?P<name>\S.*?)"
                         r"(?:\s+\((?:from|weak import)[^)]*\))?$")
+DAEDALUS_DISPATCH = re.compile(r"^_ZN8daedalus10DaedalusVm4execEv(?:[.$@].*)?$")
 
 
 @dataclass
@@ -54,15 +60,16 @@ class Symbols:
     defined: dict[str, bool] = field(default_factory=dict)  # name -> weak
 
 
-def parse_nm(text: str, fmt: str) -> Symbols:
-    """Global symbols of one `nm` (ELF) or `nm -m` (Mach-O) output; Mach-O loses its leading `_`."""
+def parse_nm(text: str, fmt: str, *, include_local_text: bool = False) -> Symbols:
+    """Global symbols and optional local text from ELF/Mach-O nm; drop the Mach-O prefix."""
     out = Symbols()
     for line in text.splitlines():
         if not line.strip() or line.endswith(":"):
             continue
         if fmt == "macho":
             m = MACHO_LINE.match(line)
-            if not m or m["kind"] == "non-external":
+            if not m or (m["kind"] == "non-external" and
+                         not (include_local_text and m["section"] == "__TEXT,__text")):
                 continue
             name = m["name"].removeprefix("_")
             if m["section"] == "undefined":
@@ -76,7 +83,7 @@ def parse_nm(text: str, fmt: str) -> Symbols:
             kind, name = m["type"], m["name"]
             if kind in ELF_UNDEFINED:
                 out.undefined.add(name)
-            elif kind in ELF_DEFINED:
+            elif kind in ELF_DEFINED or (include_local_text and kind == "t"):
                 out.defined[name] = out.defined.get(name, True) and kind in ELF_WEAK
     out.undefined -= out.defined.keys()
     return out
@@ -102,7 +109,7 @@ def query_inputs(text: str) -> tuple[str, list[str]]:
     return rule, inputs
 
 
-def link_objects(build: Path, target: str) -> list[tuple[str, str]]:
+def link_objects(build: Path, target: str, *, archives: set[str] | None = None) -> list[tuple[str, str]]:
     """(object, library) pairs linked into `target`; objects of the target itself have its library name."""
     seen: set[str] = set()
     result: list[tuple[str, str]] = []
@@ -125,6 +132,8 @@ def link_objects(build: Path, target: str) -> list[tuple[str, str]]:
                     seen.add(i)
                     result.append((i, library))
             elif i.endswith(LINKABLE):
+                if archives is not None:
+                    archives.add(i)
                 walk(i, archive_name(i))
 
     walk(target, target)
@@ -166,10 +175,52 @@ def classify(source: str | None, engine: Path, build: Path) -> tuple[str, str | 
     return rel, layer_of(rel)
 
 
-def run_nm(nm: str, fmt: str, obj: Path) -> Symbols:
+def run_nm(nm: str, fmt: str, obj: Path, *, include_local_text: bool = False) -> Symbols:
     args = [nm, "-m", str(obj)] if fmt == "macho" else [nm, str(obj)]
     out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
-    return parse_nm(out, fmt)
+    return parse_nm(out, fmt, include_local_text=include_local_text)
+
+
+def executable_target(build: Path, target: str) -> str:
+    """Resolve a CMake Ninja executable alias to the executable in the supplied build."""
+    seen: set[str] = set()
+    node = target
+    while node not in seen:
+        seen.add(node)
+        rule, inputs = query_inputs(ninja(build, "-t", "query", node))
+        if re.match(r"^(?:C|CXX)_EXECUTABLE_LINKER__", rule):
+            return node
+        if rule != "phony" or len(inputs) != 1:
+            break
+        node = inputs[0]
+    raise ValueError(f"{target} is not a CMake Ninja executable target")
+
+
+def check_native_game(build: Path, target: str, nm: str, fmt: str) -> dict:
+    node = executable_target(build, target)
+    binary = (build / node).resolve()
+    if not binary.is_relative_to(build) or not binary.is_file():
+        raise ValueError(f"{binary}: linked executable is missing from the build")
+    symbols = run_nm(nm, fmt, binary, include_local_text=True)
+    if "main" not in symbols.defined:
+        raise ValueError(f"{binary}: no main symbol; use an unstripped executable")
+    archives: set[str] = set()
+    objects = link_objects(build, node, archives=archives)
+    if not objects:
+        raise ValueError(f"{target}: no object files found in the link inputs")
+    sources = source_map(build)
+    daedalus_archives = sorted(path for path in archives if archive_name(path) == "gothic-daedalus")
+    vm_objects = sorted(obj for obj, _ in objects
+                        if sources.get(obj, "").endswith("/common/daedalus/vm.cpp"))
+    dispatch_symbols = sorted(name for name in symbols.defined.keys() | symbols.undefined
+                              if DAEDALUS_DISPATCH.fullmatch(name))
+    return {
+        "binary": str(binary),
+        "daedalus_archives": daedalus_archives,
+        "vm_objects": vm_objects,
+        "opcode_dispatch_symbols": dispatch_symbols,
+        "status": "leaked" if daedalus_archives or vm_objects or dispatch_symbols else "clean",
+    }
 
 
 def demangle(names: list[str], cxxfilt: str) -> dict[str, str]:
@@ -330,8 +381,28 @@ def main() -> int:
     ap.add_argument("--format", choices=("elf", "macho"), default="macho" if sys.platform == "darwin" else "elf")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--check-native-game", action="store_true",
+                    help="verify the unstripped executable and link inputs contain no Daedalus interpreter")
     args = ap.parse_args()
     build = args.build.resolve()
+    if args.check_native_game:
+        try:
+            result = check_native_game(build, args.target, args.nm, args.format)
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
+            if args.json:
+                print(json.dumps({"status": "error", "target": args.target, "error": detail}, indent=1))
+            else:
+                print(f"Native game link check: {detail}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(result, indent=1))
+        else:
+            print(f"Native game link check: {result['status']} ({result['binary']})")
+            for key in ("daedalus_archives", "vm_objects", "opcode_dispatch_symbols"):
+                for item in result[key]:
+                    print(f"{key}: {item}")
+        return int(result["status"] == "leaked")
     engine = args.engine.resolve() if args.engine else engine_dir(build)
     units = collect(build, args.target, engine, args.nm, args.format, args.jobs)
     if not units:

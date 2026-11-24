@@ -29,13 +29,17 @@ const OwnSymbols::Entry* OwnSymbols::find(std::string_view name) const {
   return nullptr;
   }
 
-daedalus::DaedalusSymbol* OwnSymbols::likeOf(uint32_t index) {
-  for(auto& e:list)
-    if(e.index==index)
-      return e.kind==Kind::Npc ? vm.find_symbol_by_name(e.like) : nullptr;
+const OwnSymbols::Entry* OwnSymbols::find(uint32_t index) const {
+  for(const auto& entry : list)
+    if(entry.index==index)
+      return &entry;
   return nullptr;
   }
 
+daedalus::DaedalusSymbol* OwnSymbols::likeOf(uint32_t index) {
+  const auto* entry = find(index);
+  return entry!=nullptr && entry->kind==Kind::Npc ? vm.find_symbol_by_name(entry->like) : nullptr;
+  }
 std::string OwnSymbols::whyNot(const std::string& name) const {
   if(name.size()<=Prefix.size() || name.rfind(Prefix,0)!=0)
     return name + ": a symbol of ours is named " + std::string(Prefix) + "...";

@@ -5,6 +5,11 @@ namespace {
 using namespace DefinitionJson;
 constexpr std::string_view format = "gothic-dialog-infos";
 constexpr int version = 1;
+constexpr std::string_view ambientFormat = "gothic-ambient-dialog-infos";
+
+std::filesystem::path ambientSection(const std::filesystem::path& base) {
+  return DialogInfoData::section(base).parent_path()/"ambient-dialog-infos.json";
+  }
 
 uint32_t id(const Json& value) {
   require(value.IsUint(),"dialog infos: expected a symbol ID");
@@ -84,6 +89,58 @@ void DialogInfoData::write(const std::filesystem::path& base, const Rows& rows) 
   put(document,"program_sha256",text(GameplayDefinitions::stockProgram,allocator),allocator);
   put(document,"instances",std::move(instances),allocator);
   const auto path = section(base);
+  std::filesystem::create_directories(path.parent_path());
+  DefinitionJson::write(path,document);
+  }
+
+std::optional<DialogInfoData::AmbientBindings> DialogInfoData::loadAmbient(const std::filesystem::path& base) {
+  const auto path = ambientSection(base);
+  if(!std::filesystem::exists(path))
+    return std::nullopt;
+  try {
+    const auto document = read(path);
+    object(document,{"format","version","program_sha256","bindings"});
+    require(string(document["format"])==ambientFormat && integer(document["version"])==version &&
+            string(document["program_sha256"])==GameplayDefinitions::stockProgram &&
+            document["bindings"].IsObject(),"invalid ambient dialog format");
+    AmbientBindings bindings;
+    for(const auto& entry : document["bindings"].GetObject()) {
+      const auto name = bytes(entry.name);
+      object(entry.value,{"actor","topics"});
+      require(name.starts_with("B_ASSIGNAMBIENTINFOS_") && entry.value["topics"].IsArray(),
+              "invalid ambient dialog binding");
+      AmbientBinding binding;
+      binding.actor = id(entry.value["actor"]);
+      for(const auto& topic : entry.value["topics"].GetArray())
+        binding.topics.push_back(id(topic));
+      require(bindings.emplace(name,std::move(binding)).second,"duplicate ambient dialog binding");
+      }
+    require(!bindings.empty(),"missing ambient dialog bindings");
+    return bindings;
+    }
+  catch(const std::runtime_error& error) {
+    throw std::runtime_error(path.string()+": "+error.what());
+    }
+  }
+
+void DialogInfoData::writeAmbient(const std::filesystem::path& base, const AmbientBindings& bindings) {
+  rapidjson::Document document(rapidjson::kObjectType);
+  auto& alloc = document.GetAllocator();
+  put(document,"format",text(ambientFormat,alloc),alloc);
+  put(document,"version",Json(version),alloc);
+  put(document,"program_sha256",text(GameplayDefinitions::stockProgram,alloc),alloc);
+  Json records(rapidjson::kObjectType);
+  for(const auto& [name,binding] : bindings) {
+    Json row(rapidjson::kObjectType);
+    put(row,"actor",Json(binding.actor),alloc);
+    Json topics(rapidjson::kArrayType);
+    for(auto topic : binding.topics)
+      topics.PushBack(Json(topic),alloc);
+    put(row,"topics",std::move(topics),alloc);
+    records.AddMember(text(encode(name),alloc),std::move(row),alloc);
+    }
+  put(document,"bindings",std::move(records),alloc);
+  const auto path = ambientSection(base);
   std::filesystem::create_directories(path.parent_path());
   DefinitionJson::write(path,document);
   }

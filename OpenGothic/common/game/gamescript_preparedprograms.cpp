@@ -20,8 +20,8 @@ using storygraph::NativeValue;
 class OrnamentDialogHost final : public storygraph::NativeExecutionHost {
   public:
     OrnamentDialogHost(const StockStoryPrograms::Catalog& catalog, Npc* self, Npc* other,
-                       const World& world, std::string_view previousItemName)
-      : catalog(catalog), actors{nullptr,self,other}, world(world), previousItemName(previousItemName) {}
+                       const World& world, InventoryTransfer::Variables& variables, std::string_view previousItemName)
+      : catalog(catalog), actors{nullptr,self,other}, world(world), variables(variables), previousItemName(previousItemName) {}
 
     bool hasVariable(std::string_view name, bool) const override {
       return name=="SELF" || name=="OTHER";
@@ -71,8 +71,8 @@ class OrnamentDialogHost final : public storygraph::NativeExecutionHost {
       const auto npcRef = [&](Npc* npc) {
         return ScriptVars::Reference{ScriptVars::ReferenceKind::Npc,world.npcId(npc)};
         };
-      writes.push_back({"B_GIVEINVITEMS.AMOUNT",std::vector<int32_t>{amount}});
-      writes.push_back({"B_GIVEINVITEMS.ITEMINSTANCE",std::vector<int32_t>{item}});
+      variables.amount = amount;
+      variables.item = item;
       writes.push_back({"B_GIVEINVITEMS.TAKER",npcRef(taker)});
       writes.push_back({"B_GIVEINVITEMS.GIVER",npcRef(giver)});
 
@@ -86,9 +86,9 @@ class OrnamentDialogHost final : public storygraph::NativeExecutionHost {
         };
       transfer = InventoryTransfer::run(giver,taker,uint32_t(item),amount,previousItemName,text);
       if(transfer->itemName)
-        writes.push_back({"B_GIVEINVITEMS.ITEMNAME",std::vector<std::string>{*transfer->itemName}});
+        variables.itemName = *transfer->itemName;
       if(transfer->notice)
-        writes.push_back({"B_GIVEINVITEMS.CONCATTEXT",std::vector<std::string>{transfer->notice->text}});
+        variables.notice = transfer->notice->text;
       return NativeValue::integer(transfer->value);
       }
 
@@ -99,6 +99,7 @@ class OrnamentDialogHost final : public storygraph::NativeExecutionHost {
     const StockStoryPrograms::Catalog& catalog;
     const std::array<Npc*,3> actors;
     const World& world;
+    InventoryTransfer::Variables& variables;
     std::string_view previousItemName;
   };
 
@@ -112,27 +113,25 @@ bool GameScript::StockPrograms::runPrepared(const daedalus::DaedalusSymbol& fn, 
   if(catalog==nullptr)
     return false;
   const auto entry = catalog->programs.find(fn.index());
-  if(entry==catalog->programs.end() || entry->second.name!=fn.name() || !entry->second.parameters.empty())
+  const auto transfer = catalog->symbols.find("B_GIVEINVITEMS");
+  if(entry==catalog->programs.end() || transfer==catalog->symbols.end() || entry->second.name!=fn.name() ||
+     entry->second.returnType!=0 || !entry->second.parameters.empty() || entry->second.calls.size()!=1 ||
+     entry->second.calls.front()!=transfer->second)
     throw std::runtime_error("prepared ornament dialog identity differs from game symbols");
 
   // Bridge the current session context. The prepared executor and transfer rule do not read VM state.
   const auto held = std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance());
   auto* self = script.findNpc(vm.global_self());
   OrnamentDialogHost host(*catalog,self,script.findNpc(vm.global_other()),script.world(),
-                          held ? std::string_view(held->name) : std::string_view{});
+                          script.inventoryTransferVariables,held ? std::string_view(held->name) : std::string_view{});
   const auto run = storygraph::NativeInterpreter(host).run(entry->second.program);
 
-  // Until the remaining callers migrate, publish the typed writes through the compatibility session.
+  // The compatibility session still supplies typed instance aliases to legacy callers.
   for(const auto& [name,value] : host.writes) {
     auto* symbol = vm.find_symbol_by_name(name);
-    if(const auto* ints = std::get_if<std::vector<int32_t>>(&value))
-      symbol->set_int(ints->front());
-    else if(const auto* strings = std::get_if<std::vector<std::string>>(&value))
-      symbol->set_string(strings->front());
-    else if(const auto* ref = std::get_if<ScriptVars::Reference>(&value)) {
-      auto* npc = script.world().npcById(ref->object);
-      symbol->set_instance(npc!=nullptr ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr);
-      }
+    const auto& ref = std::get<ScriptVars::Reference>(value);
+    auto* npc = script.world().npcById(ref.object);
+    symbol->set_instance(npc!=nullptr ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr);
     }
   if(host.transfer) {
     if(host.transfer->itemChanged)

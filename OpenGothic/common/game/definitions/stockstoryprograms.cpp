@@ -10,8 +10,6 @@ namespace {
 namespace fs = std::filesystem;
 using namespace DefinitionJson;
 using namespace StockStoryPrograms;
-constexpr std::string_view format = "gothic-stock-story-programs";
-constexpr int version = 1;
 
 uint32_t number(const Json& value) {
   require(value.IsUint(),"story programs: expected uint32");
@@ -27,13 +25,6 @@ std::vector<uint32_t> numbers(const Json& values) {
   return result;
   }
 
-Json putNumbers(const std::vector<uint32_t>& values, Allocator& alloc) {
-  Json result(rapidjson::kArrayType);
-  for(auto value : values)
-    result.PushBack(Json(value),alloc);
-  return result;
-  }
-
 template<class T, class Decode>
 void readTable(T& target, const Json& values, Decode&& decode) {
   require(values.IsObject(),"story programs: expected a symbol table");
@@ -42,14 +33,6 @@ void readTable(T& target, const Json& values, Decode&& decode) {
     require(!name.empty() && target.emplace(name,decode(it->value)).second,
             "story programs: invalid or duplicate symbol "+name);
     }
-  }
-
-template<class T, class Encode>
-Json writeTable(const T& values, Allocator& alloc, Encode&& encodeValue) {
-  Json result(rapidjson::kObjectType);
-  for(const auto& [name,value] : values)
-    result.AddMember(text(encode(name),alloc),encodeValue(value),alloc);
-  return result;
   }
 
 void checkType(uint32_t type, bool allowVoid) {
@@ -104,36 +87,4 @@ Catalog StockStoryPrograms::read(const fs::path& base) {
     require(result.programs.emplace(entry.id,std::move(entry)).second,"story programs: duplicate function");
     }
   return result;
-  }
-
-void StockStoryPrograms::write(const fs::path& base, const Catalog& catalog) {
-  rapidjson::Document doc(rapidjson::kObjectType);
-  auto& alloc = doc.GetAllocator();
-  put(doc,"format",text(format,alloc),alloc);
-  put(doc,"version",Json(version),alloc);
-  put(doc,"program_sha256",text(stockProgram,alloc),alloc);
-  put(doc,"symbols",writeTable(catalog.symbols,alloc,[](auto value) { return Json(value); }),alloc);
-  put(doc,"integers",writeTable(catalog.integers,alloc,[](auto value) { return Json(value); }),alloc);
-  put(doc,"strings",writeTable(catalog.strings,alloc,[&](const auto& value) { return text(encode(value),alloc); }),alloc);
-  Json programs(rapidjson::kArrayType);
-  for(const auto& [id,entry] : catalog.programs) {
-    Json row(rapidjson::kObjectType);
-    put(row,"id",Json(id),alloc);
-    put(row,"name",text(encode(entry.name),alloc),alloc);
-    put(row,"return_type",Json(entry.returnType),alloc);
-    put(row,"parameters",putNumbers(entry.parameters,alloc),alloc);
-    put(row,"calls",putNumbers(entry.calls,alloc),alloc);
-    rapidjson::Document steps;
-    const auto serialized = storygraph::toJson(entry.program);
-    steps.Parse<rapidjson::kParseFullPrecisionFlag | rapidjson::kParseValidateEncodingFlag>(serialized.data(),serialized.size());
-    require(!steps.HasParseError() && steps.IsArray(),"story programs: cannot serialize "+entry.name);
-    Json copy;
-    copy.CopyFrom(steps,alloc);
-    put(row,"steps",std::move(copy),alloc);
-    programs.PushBack(std::move(row),alloc);
-    }
-  put(doc,"programs",std::move(programs),alloc);
-  const auto path = section(base);
-  fs::create_directories(path.parent_path());
-  DefinitionJson::write(path,doc);
   }

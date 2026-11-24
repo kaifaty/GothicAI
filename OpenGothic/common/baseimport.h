@@ -33,7 +33,12 @@ void convertMusicThemes(const std::filesystem::path& base);
 void convertEffectDefinitions(const std::filesystem::path& base);
 void convertGameplayDefinitions(const std::filesystem::path& base);
 void convertDialogInfos(const std::filesystem::path& base);
+void convertQuestClosures(const std::filesystem::path& base);
+void convertNpcWorldData(const std::filesystem::path& base);
+void convertTradeInventory(const std::filesystem::path& base);
 void convertStockStoryPrograms(const std::filesystem::path& base);
+void convertDeathTrophies(const std::filesystem::path& base);
+void convertStoryGraph(const std::filesystem::path& base);
 // D3a: definitions/<program SHA>/routines.json, verified against fresh function executions.
 int convertRoutineDefinitions(const std::filesystem::path& base);
 // D3b: definitions/<program SHA>/npcs.json, verified against fresh constructor executions.

@@ -1,4 +1,7 @@
 #include "spelldefinitions.h"
+
+#include "daedalus/classes.h"
+#include "daedalus/vm.h"
 #include "gameplaydefinitions.h"
 #include "utils/string_frm.h"
 
@@ -7,26 +10,25 @@
 
 using namespace Tempest;
 
-SpellDefinitions::SpellDefinitions(daedalus::DaedalusVm& vm, const GameplayDefinitions* records) : vm(vm) {
-  vm.enumerate_instances_by_class_name("C_Spell", [this, &vm, records](daedalus::DaedalusSymbol& sym) {
-    spl.push_back(records ? records->init<daedalus::ISpell>(vm,&sym) : vm.init_instance<daedalus::ISpell>(&sym));
+SpellDefinitions::SpellDefinitions(daedalus::DaedalusVm& vm) {
+  vm.enumerate_instances_by_class_name("C_Spell",[&](daedalus::DaedalusSymbol& sym) {
+    spl.emplace(sym.name(),vm.init_instance<daedalus::ISpell>(&sym));
     });
   }
 
-SpellDefinitions::~SpellDefinitions() {
+SpellDefinitions::SpellDefinitions(const GameplayDefinitions& records) {
+  for(auto& [name,spell] : records.spells())
+    spl.emplace(std::move(name),std::make_shared<SpellRecord>(spell));
   }
 
-const daedalus::ISpell& SpellDefinitions::find(std::string_view instanceName) const {
-  string_frm format("SPELL_",instanceName);
-  for(auto& i:format)
-    i = char(std::toupper(i));
+const SpellRecord& SpellDefinitions::find(std::string_view instanceName) const {
+  string_frm name("SPELL_",instanceName);
+  for(auto& ch : name)
+    ch = char(std::toupper(static_cast<unsigned char>(ch)));
 
-  for(auto& i:spl) { // TODO: optimize
-    auto sym = vm.find_symbol_by_instance(i);
-    if(sym->name()==format)
-      return *i;
-    }
+  if(const auto spell = spl.find(std::string_view(name)); spell!=spl.end())
+    return *spell->second;
   Log::d("invalid spell [",instanceName.data(),"]");
-  static daedalus::ISpell szero={};
+  static constexpr SpellRecord szero = {};
   return szero;
   }

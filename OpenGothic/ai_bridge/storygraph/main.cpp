@@ -27,6 +27,7 @@
 #include "check.h"
 #include "execcheck.h"
 #include "gothicglb.h"
+#include "graphjson.h"
 #include "lifter.h"
 #include "model.h"
 #include "outputunits.h"
@@ -39,8 +40,6 @@
 #include "daedalus/classes.h"
 
 #include <rapidjson/document.h>
-#include <rapidjson/stringbuffer.h>
-#include <rapidjson/writer.h>
 
 #include <algorithm>
 #include <cctype>
@@ -78,32 +77,11 @@ static fs::path installationRoot(const fs::path& input, bool directory) {
   throw std::runtime_error("input must be a game directory or a DAT source path under its _work directory");
   }
 
-static std::string sourceMetadata(const std::string& programSha, const ProgramData::Source& source,
-                                  const std::string& ouNativeSha, const std::string& ouSourceSha,
-                                  const char* executable) {
-  rapidjson::StringBuffer buffer;
-  rapidjson::Writer<rapidjson::StringBuffer> json(buffer);
-  json.StartObject();
-  json.Key("program_native_sha256"); json.String(programSha.c_str());
-  json.Key("program_source_sha256"); json.String(source.sha256.c_str());
-  json.Key("ou_native_sha256");
-  if(ouNativeSha.empty())
-    json.Null();
-  else
-    json.String(ouNativeSha.c_str());
-  json.Key("ou_source_sha256");
-  if(ouSourceSha.empty())
-    json.Null();
-  else
-    json.String(ouSourceSha.c_str());
-  json.Key("converter_sha256");
+static std::string executableSha(const char* executable) {
   std::error_code error;
   if(fs::is_regular_file(fs::path(executable),error))
-    json.String(BaseImport::sha256File(fs::path(executable)).c_str());
-  else
-    json.Null();
-  json.EndObject();
-  return std::string(buffer.GetString(),buffer.GetSize());
+    return BaseImport::sha256File(fs::path(executable));
+  return {};
   }
 
 static WorldData::ZenFile loadLibrary(const OutputUnits::Index& index, const OutputUnits::Source& source,
@@ -112,14 +90,6 @@ static WorldData::ZenFile loadLibrary(const OutputUnits::Index& index, const Out
   if(actualSha!=source.recordSha256)
     throw std::runtime_error("selected OU record identity differs from its index");
   return library;
-  }
-
-static LineTexts loadLines(const WorldData::ZenFile& library) {
-  LineTexts lines;
-  for(const auto& b:OutputUnits::sortedBlocks(library))
-    if(auto msg = OutputUnits::message(*b))
-      lines[upper(b->name)] = msg->text;
-  return lines;
   }
 
 static int printOuMessages(const OutputUnits::Index& index) {
@@ -387,8 +357,8 @@ static int run(int argc, char** argv) {
     return 0;
     }
   if(json!=nullptr) {
-    auto text = toJson(m, pretty);
-    text.insert(1,"\"sources\":"+sourceMetadata(programSha,*source,ouNativeSha,ouSourceSha,argv[0])+",");
+    const auto converterSha = executableSha(argv[0]);
+    const auto text = toJson(m,{programSha,source->sha256,ouNativeSha,ouSourceSha,converterSha},pretty);
     FILE* f = std::fopen(json, "wb");
     if(f==nullptr) {
       std::fprintf(stderr, "can't write %s\n", json);

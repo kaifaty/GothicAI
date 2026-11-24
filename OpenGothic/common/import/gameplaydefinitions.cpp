@@ -3,6 +3,7 @@
 #include "npcsnapshot.h"
 
 #include "daedalus/classes.h"
+#include "daedalus/vm.h"
 
 namespace {
 using namespace DefinitionJson;
@@ -16,8 +17,12 @@ void capture(DaedalusVm& vm, Json& rows, DaedalusSymbol& symbol, Allocator& allo
     else
       return vm.init_instance<T>(&symbol);
     }();
+  const auto* cls = vm.find_symbol_by_index(symbol.parent());
+  while(cls!=nullptr && cls->type()!=DaedalusDataType::CLASS)
+    cls = vm.find_symbol_by_index(cls->parent());
+  require(cls!=nullptr,"gameplay definitions: missing class for "+symbol.name());
   Json row(rapidjson::kObjectType);
-  for(auto* member : vm.find_class_members(GameplayDefinitions::instanceClass(vm,symbol))) {
+  for(auto* member : vm.find_class_members(*cls)) {
     Json values(rapidjson::kArrayType);
     for(uint16_t index=0; index<member->count(); ++index) {
       Json value;

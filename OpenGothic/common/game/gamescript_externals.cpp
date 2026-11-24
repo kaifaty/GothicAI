@@ -444,6 +444,10 @@ void GameScript::ai_stopprocessinfos(std::shared_ptr<daedalus::INpc> selfRef) {
     }
   }
 
+void GameScript::endDirectorDialog(Npc& npc) {
+  ai_stopprocessinfos(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+  }
+
 void GameScript::ai_standup(std::shared_ptr<daedalus::INpc> selfRef) {
   auto self = findNpc(selfRef);
   if(self!=nullptr)

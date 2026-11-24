@@ -12,6 +12,9 @@
 
 namespace StockStoryPrograms {
 
+inline constexpr std::string_view format = "gothic-stock-story-programs";
+inline constexpr int version = 1;
+
 inline constexpr std::string_view stockProgram = "a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c";
 
 struct Entry {
@@ -32,6 +35,5 @@ struct Catalog {
 
 std::filesystem::path section(const std::filesystem::path& base);
 Catalog read(const std::filesystem::path& base);
-void write(const std::filesystem::path& base, const Catalog& catalog);
 
 }

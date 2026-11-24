@@ -5,6 +5,7 @@
 #include "definitionjson.h"
 #include "npcsnapshot.h"
 #include "game/definitions/stockstoryprograms.h"
+#include "game/definitions/symbolcatalog.h"
 #include "storygraph/bytecode.h"
 #include "storygraph/exprjson.h"
 
@@ -13,9 +14,78 @@
 #include <set>
 
 namespace {
-using DefinitionJson::require;
+using namespace DefinitionJson;
 using namespace daedalus;
 using namespace StockStoryPrograms;
+
+ScriptSymbolCatalog::Kind symbolKind(const DaedalusScript& script, const DaedalusSymbol& symbol) {
+  using Kind = ScriptSymbolCatalog::Kind;
+  using Type = DaedalusDataType;
+  if(symbol.is_member())
+    return Kind::Other;
+  if(symbol.type()==Type::INT)
+    return symbol.is_const() ? Kind::Constant : Kind::Variable;
+  if(symbol.type()==Type::FUNCTION)
+    return Kind::Function;
+  if(symbol.type()==Type::INSTANCE) {
+    const auto* parent = &symbol;
+    for(int i = 0; i<8 && parent!=nullptr && parent->type()!=Type::CLASS; ++i)
+      parent = script.find_symbol_by_index(parent->parent());
+    if(parent!=nullptr && parent->type()==Type::CLASS) {
+      if(parent->name()=="C_NPC")  return Kind::Npc;
+      if(parent->name()=="C_ITEM") return Kind::Item;
+      if(parent->name()=="C_INFO") return Kind::Info;
+      }
+    }
+  return Kind::Other;
+  }
+
+Json putNumbers(const std::vector<uint32_t>& values, Allocator& alloc) {
+  Json result(rapidjson::kArrayType);
+  for(auto value : values)
+    result.PushBack(Json(value),alloc);
+  return result;
+  }
+
+template<class T, class Encode>
+Json writeTable(const T& values, Allocator& alloc, Encode&& encodeValue) {
+  Json result(rapidjson::kObjectType);
+  for(const auto& [name,value] : values)
+    result.AddMember(text(encode(name),alloc),encodeValue(value),alloc);
+  return result;
+  }
+
+void writeCatalog(const std::filesystem::path& base, const Catalog& catalog) {
+  rapidjson::Document doc(rapidjson::kObjectType);
+  auto& alloc = doc.GetAllocator();
+  put(doc,"format",text(format,alloc),alloc);
+  put(doc,"version",Json(version),alloc);
+  put(doc,"program_sha256",text(stockProgram,alloc),alloc);
+  put(doc,"symbols",writeTable(catalog.symbols,alloc,[](auto value) { return Json(value); }),alloc);
+  put(doc,"integers",writeTable(catalog.integers,alloc,[](auto value) { return Json(value); }),alloc);
+  put(doc,"strings",writeTable(catalog.strings,alloc,[&](const auto& value) { return text(encode(value),alloc); }),alloc);
+  Json programs(rapidjson::kArrayType);
+  for(const auto& [id,entry] : catalog.programs) {
+    Json row(rapidjson::kObjectType);
+    put(row,"id",Json(id),alloc);
+    put(row,"name",text(encode(entry.name),alloc),alloc);
+    put(row,"return_type",Json(entry.returnType),alloc);
+    put(row,"parameters",putNumbers(entry.parameters,alloc),alloc);
+    put(row,"calls",putNumbers(entry.calls,alloc),alloc);
+    rapidjson::Document steps;
+    const auto serialized = storygraph::toJson(entry.program);
+    steps.Parse<rapidjson::kParseFullPrecisionFlag | rapidjson::kParseValidateEncodingFlag>(serialized.data(),serialized.size());
+    require(!steps.HasParseError() && steps.IsArray(),"story programs: cannot serialize "+entry.name);
+    Json copy;
+    copy.CopyFrom(steps,alloc);
+    put(row,"steps",std::move(copy),alloc);
+    programs.PushBack(std::move(row),alloc);
+    }
+  put(doc,"programs",std::move(programs),alloc);
+  const auto path = section(base);
+  std::filesystem::create_directories(path.parent_path());
+  DefinitionJson::write(path,doc);
+  }
 
 const DaedalusSymbol& addSymbol(Catalog& catalog, const DaedalusScript& script, std::string_view name) {
   const auto* symbol = script.find_symbol_by_name(name);
@@ -161,6 +231,12 @@ void BaseImport::convertStockStoryPrograms(const std::filesystem::path& base) {
   if(source.sha256!=stockProgram)
     return;
   auto script = DaedalusScript::from_program(std::move(source.data));
+  std::vector<ScriptSymbolCatalog::Entry> symbols;
+  symbols.reserve(script.symbols().size());
+  for(const auto& symbol : script.symbols())
+    symbols.push_back({symbol.name(),symbolKind(script,symbol)});
+  ScriptSymbolCatalog::write(base,source.sha256,symbols);
+
   register_all_script_classes(script);
   DaedalusVm vm(std::move(script),DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   vm.register_default_external([](const DaedalusSymbol&) {});
@@ -174,7 +250,7 @@ void BaseImport::convertStockStoryPrograms(const std::filesystem::path& base) {
   require(lares.parameters.empty() && lares.returnType==uint32_t(DaedalusDataType::VOID) &&
           lares.calls==std::vector<uint32_t>{catalog.symbols.at("B_GIVEINVITEMS")},
           "story programs: Lares's function or dependencies changed");
-  write(base,catalog);
+  writeCatalog(base,catalog);
 
   const auto actual = read(base);
   require(actual.programs.size()==catalog.programs.size() && actual.symbols==catalog.symbols &&

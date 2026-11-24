@@ -81,23 +81,72 @@ PlacementDefinitions::Step step(const Json& json) {
   return call;
   }
 
+std::vector<PlacementDefinitions::LiteralInsert> inserts(const Json& rows,size_t size) {
+  require(rows.IsArray() && rows.Size()==size,"unexpected placement count");
+  std::vector<PlacementDefinitions::LiteralInsert> result;
+  result.reserve(rows.Size());
+  for(const auto& row:rows.GetArray()) {
+    require(row.IsArray() && row.Size()==3 && row[0].IsUint() && row[1].IsUint() && row[2].IsUint(),
+            "expected instance, point and external symbol indices");
+    result.push_back({row[0].GetUint(),row[1].GetUint(),row[2].GetUint()});
+    }
+  return result;
+  }
+
 template<size_t N>
 std::array<std::vector<PlacementDefinitions::LiteralInsert>,N> insertGroups(const Json& source,
                                                                            const std::array<size_t,N>& sizes) {
   require(source.IsArray() && source.Size()==N,"unexpected chapter placement group count");
   std::array<std::vector<PlacementDefinitions::LiteralInsert>,N> groups;
-  for(rapidjson::SizeType i=0;i<source.Size();++i) {
-    const auto& group=source[i];
-    require(group.IsArray() && group.Size()==sizes[i],"unexpected chapter placement count");
-    groups[i].reserve(group.Size());
-    for(const auto& row:group.GetArray()) {
-      require(row.IsArray() && row.Size()==3 && row[0].IsUint() && row[1].IsUint() && row[2].IsUint(),
-              "expected instance, point and external symbol indices");
-      groups[i].push_back({row[0].GetUint(),row[1].GetUint(),row[2].GetUint()});
-      }
-    }
+  for(rapidjson::SizeType i=0;i<source.Size();++i)
+    groups[i]=inserts(source[i],sizes[i]);
   return groups;
 }
+
+uint32_t symbolId(const Json& value) {
+  require(value.IsUint(),"expected a symbol index");
+  return value.GetUint();
+  }
+
+std::vector<uint32_t> actorIds(const Json& actors,size_t count) {
+  require(actors.IsArray() && actors.Size()==count,"unexpected first-entry actor count");
+  std::vector<uint32_t> result;
+  result.reserve(count);
+  for(const auto& actor:actors.GetArray())
+    result.push_back(symbolId(actor));
+  return result;
+  }
+
+PlacementDefinitions::RoomAssignment roomAssignment(const Json& row) {
+  require(row.IsArray() && row.Size()==2,"expected a room and its guild");
+  return {symbolId(row[0]),row[1].IsNull() ? std::nullopt : std::optional(symbolId(row[1]))};
+  }
+
+PlacementDefinitions::RoomInitializer roomInitializer(const Json& row,const PlacementDefinitions::RoomInitializerShape& shape) {
+  using namespace PlacementDefinitions;
+  DefinitionJson::object(row,{"mobs","rooms"});
+  const auto& mobs=at(row,"mobs");
+  const auto& rooms=at(row,"rooms");
+  require(mobs.IsArray() && mobs.Size()==shape.mobs && rooms.IsArray() && rooms.Size()==shape.rooms,
+          "unexpected sizes for room initializer "+std::string(shape.name));
+  RoomInitializer result;
+  for(const auto& mob:mobs.GetArray()) {
+    require(mob.IsArray() && mob.Size()==4,"invalid room mob routine");
+    result.mobs.push_back({DefinitionJson::integer(mob[0]),DefinitionJson::integer(mob[1]),symbolId(mob[2]),DefinitionJson::integer(mob[3])});
+    }
+  size_t choices=0;
+  for(const auto& room:rooms.GetArray()) {
+    require(room.IsArray(),"expected a room assignment or choice");
+    if(room.Size()==4) {
+      result.rooms.emplace_back(RoomChoice{symbolId(room[0]),symbolId(room[1]),roomAssignment(room[2]),roomAssignment(room[3])});
+      ++choices;
+      }
+    else
+      result.rooms.emplace_back(roomAssignment(room));
+    }
+  require(choices==shape.choices,"unexpected choice count in room initializer "+std::string(shape.name));
+  return result;
+  }
 }
 
 PlacementDefinitions::Library PlacementDefinitions::read(const std::filesystem::path& base,
@@ -112,20 +161,59 @@ PlacementDefinitions::Library PlacementDefinitions::read(const std::filesystem::
     require(!doc.HasParseError(),"invalid JSON");
     require(string(at(doc,"format"))=="gothic-placement-definitions","unsupported format");
     const auto version=DefinitionJson::integer(at(doc,"version"));
-    require(version==1 || version==2,"unsupported version");
+    require(version>=1 && version<=6,"unsupported version");
     require(!string(at(doc,"program_name")).empty(),"empty program name");
     require(string(at(doc,"program_sha256"))==programSha256,"program SHA differs");
     require(string(at(doc,"string_encoding"))=="unicode-byte-mapping","unsupported string encoding");
     const auto& records=at(doc,"records");
     require(records.IsArray(),"records must be an array");
-    require(doc.MemberCount()==(version==1 ? 6u : 7u),"unexpected envelope field");
+    constexpr std::array fields{6u,7u,9u,11u,13u,14u};
+    require(doc.MemberCount()==fields[size_t(version-1)],"unexpected envelope field");
     Library result;
-    if(version==2) {
+    if(version>=2) {
       const auto& chapters=at(doc,"khorinis_late_chapters");
       DefinitionJson::object(chapters,{"chapter_4","chapter_5"});
       result.khorinisLateChapters=KhorinisLateChapters{
         insertGroups(at(chapters,"chapter_4"),KhorinisLateChapters::chapter4Sizes),
         insertGroups(at(chapters,"chapter_5"),KhorinisLateChapters::chapter5Sizes)};
+      }
+    if(version>=3) {
+      result.addonChapter4=inserts(at(doc,"addon_chapter_4"),Library::addonChapter4Count);
+      const auto& functions=at(doc,"startup_functions");
+      require(functions.IsArray() && !functions.Empty(),"expected startup function indices");
+      auto& ids=result.startupFunctions.emplace();
+      ids.reserve(functions.Size());
+      for(const auto& function:functions.GetArray()) {
+        require(function.IsUint() && (ids.empty() || ids.back()<function.GetUint()),"expected sorted unique startup function indices");
+        ids.push_back(function.GetUint());
+        }
+      }
+    if(version>=4) {
+      const auto& chapters=at(doc,"old_world_chapters");
+      DefinitionJson::object(chapters,{"chapter_3","chapter_4"});
+      result.oldWorldChapters=OldWorldChapters{
+        insertGroups(at(chapters,"chapter_3"),OldWorldChapters::chapter3Sizes),
+        insertGroups(at(chapters,"chapter_4"),OldWorldChapters::chapter4Sizes)};
+      const auto& island=at(doc,"dragon_island");
+      require(island.IsArray() && !island.Empty(),"expected Dragon Island placements");
+      result.dragonIsland=inserts(island,island.Size());
+      }
+    if(version>=5) {
+      const auto& rooms=at(doc,"room_initializers");
+      require(rooms.IsObject() && rooms.MemberCount()==std::size(roomInitializerShapes),"unexpected room initializer count");
+      for(const auto& shape:roomInitializerShapes)
+        result.roomInitializers.emplace(shape.name,roomInitializer(at(rooms,shape.name),shape));
+      const auto& first=at(doc,"first_entries");
+      DefinitionJson::object(first,{"old_world","addon_world"});
+      result.firstEntries=FirstEntries{actorIds(at(first,"old_world"),FirstEntries::oldWorldCount),
+                                       actorIds(at(first,"addon_world"),FirstEntries::addonWorldCount)};
+      }
+    if(version>=6) {
+      const auto& chapters=at(doc,"khorinis_early_chapters");
+      DefinitionJson::object(chapters,{"chapter_2","chapter_3"});
+      result.khorinisEarlyChapters=KhorinisEarlyChapters{
+        inserts(at(chapters,"chapter_2"),KhorinisEarlyChapters::chapter2Count),
+        insertGroups(at(chapters,"chapter_3"),KhorinisEarlyChapters::chapter3Sizes)};
       }
     for(const auto& record:records.GetArray()) {
       const auto name=string(at(record,"symbol"));

@@ -19,4 +19,19 @@
 		int32_t target_collect_range;
 		int32_t target_collect_azi;
 		int32_t target_collect_elev;
+
+		static void fields(auto&& member) {
+			member("C_SPELL.TIME_PER_MANA", &SpellRecord::time_per_mana);
+			member("C_SPELL.DAMAGE_PER_LEVEL", &SpellRecord::damage_per_level);
+			member("C_SPELL.DAMAGETYPE", &SpellRecord::damage_type);
+			member("C_SPELL.SPELLTYPE", &SpellRecord::spell_type);
+			member("C_SPELL.CANTURNDURINGINVEST", &SpellRecord::can_turn_during_invest);
+			member("C_SPELL.CANCHANGETARGETDURINGINVEST", &SpellRecord::can_change_target_during_invest);
+			member("C_SPELL.ISMULTIEFFECT", &SpellRecord::is_multi_effect);
+			member("C_SPELL.TARGETCOLLECTALGO", &SpellRecord::target_collect_algo);
+			member("C_SPELL.TARGETCOLLECTTYPE", &SpellRecord::target_collect_type);
+			member("C_SPELL.TARGETCOLLECTRANGE", &SpellRecord::target_collect_range);
+			member("C_SPELL.TARGETCOLLECTAZI", &SpellRecord::target_collect_azi);
+			member("C_SPELL.TARGETCOLLECTELEV", &SpellRecord::target_collect_elev);
+		}
 	};

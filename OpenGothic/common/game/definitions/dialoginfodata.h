@@ -23,6 +23,16 @@ struct Write {
 
 using Rows = std::map<uint32_t,std::vector<Write>>;
 
+struct AmbientBinding {
+  uint32_t actor = 0;
+  std::vector<uint32_t> topics;
+  bool operator==(const AmbientBinding&) const = default;
+  };
+
+using AmbientBindings = std::map<std::string,AmbientBinding,std::less<>>;
+std::optional<AmbientBindings> loadAmbient(const std::filesystem::path& base);
+void writeAmbient(const std::filesystem::path& base, const AmbientBindings& bindings);
+
 std::filesystem::path section(const std::filesystem::path& base);
 std::optional<Rows> load(const std::filesystem::path& base);
 void write(const std::filesystem::path& base, const Rows& rows);

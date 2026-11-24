@@ -9,6 +9,7 @@
 #include <Tempest/Log>
 
 #include "game/definitions/basescripts.h"
+#include "basestore.h"
 #include "game/definitions/dialoginfodata.h"
 #include "game/serialize.h"
 #include "programdata.h"
@@ -594,7 +595,6 @@ void GameScript::loadNativeAmbientInfos() {
   if(!nativeRoutineProgram)
     return;
 
-  using Op = daedalus::DaedalusOpcode;
   using Type = daedalus::DaedalusDataType;
   using Symbol = daedalus::DaedalusSymbol;
   using Actor = std::shared_ptr<daedalus::INpc>;
@@ -652,6 +652,9 @@ void GameScript::loadNativeAmbientInfos() {
     Symbol* savedActor = nullptr;
     std::vector<Symbol*> topics;
     };
+  const auto ambientData = DialogInfoData::loadAmbient(baseProgramIndex().dir.parent_path());
+  if(!ambientData)
+    return;
   std::array<Binding,std::size(selectors)> bindings;
   auto* infoClass = findSymbol("C_INFO");
   auto* npcMember = findSymbol("C_INFO.NPC");
@@ -660,38 +663,18 @@ void GameScript::loadNativeAmbientInfos() {
     if(selectors[i].suffix.empty())
       continue;
     const auto name = std::string("B_ASSIGNAMBIENTINFOS_").append(selectors[i].suffix);
-    auto* helper = findSymbol(name);
+    const auto found = ambientData->find(name);
+    if(found==ambientData->end())
+      throw BaseStore::Error("missing stock ambient dialog binding: "+name);
     auto& binding = bindings[i];
-    binding.savedActor = findSymbol(name+".SLF");
-    if(helper==nullptr || binding.savedActor==nullptr)
-      return;
-
-    // Accept only the saved parameter followed by ordered C_INFO.NPC assignments.
-    uint32_t pc = helper->address();
-    const auto take = [&](Op expected) -> std::optional<daedalus::DaedalusInstruction> {
-      if(pc>=vm.size())
-        return {};
-      const auto instr = vm.instruction_at(pc);
-      if(instr.op!=expected)
-        return {};
-      pc += instr.size;
-      return instr;
-      };
-    const auto symbol = [&](Op op,const Symbol* expected) {
-      const auto instr = take(op);
-      return instr && instr->symbol==expected->index();
-      };
-    if(!symbol(Op::PUSHVI,binding.savedActor) || !take(Op::MOVVI))
-      return;
-    while(!take(Op::RSR)) {
-      if(!symbol(Op::PUSHVI,binding.savedActor) || !symbol(Op::BE,instanceId))
-        return;
-      const auto target = take(Op::GMOVI);
-      auto* info = target ? vm.find_symbol_by_index(target->symbol) : nullptr;
-      if(info==nullptr || info->type()!=Type::INSTANCE || info->parent()!=infoClass->index() ||
-         !symbol(Op::PUSHV,npcMember) || !take(Op::MOVI))
-        return;
-      binding.topics.push_back(info);
+    binding.savedActor = findSymbol(found->second.actor);
+    if(binding.savedActor==nullptr || binding.savedActor->name()!=name+".SLF" || binding.savedActor->type()!=Type::INSTANCE)
+      throw BaseStore::Error("invalid stock ambient dialog actor: "+name);
+    for(auto id : found->second.topics) {
+      auto* topic = findSymbol(id);
+      if(topic==nullptr || topic->type()!=Type::INSTANCE || topic->parent()!=infoClass->index())
+        throw BaseStore::Error("invalid stock ambient dialog topic: "+name);
+      binding.topics.push_back(topic);
       }
     }
 
@@ -918,6 +901,17 @@ bool GameScript::readDialogInfos() {
 void GameScript::setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info) {
   auto id = std::make_pair(vm.find_symbol_by_instance(static_cast<const daedalus::INpc&>(npc))->index(),vm.find_symbol_by_instance(info)->index());
   dlgKnownInfos.insert(id);
+  }
+
+bool GameScript::markNpcInfoKnown(const Npc& npc, std::string_view name) {
+  auto* symbol = vm.find_symbol_by_name(name);
+  if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)
+    return false;
+  const auto info = std::dynamic_pointer_cast<daedalus::IInfo>(symbol->get_instance());
+  if(!info)
+    return false;
+  setNpcInfoKnown(*npc.handlePtr(),*info);
+  return true;
   }
 
 bool GameScript::doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const {

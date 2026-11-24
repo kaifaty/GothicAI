@@ -419,7 +419,9 @@ auto storyBeforeSave(World& world) {
     requireJournal(script.questLog());
     const auto* lares=activityNpc(restored,"VLK_449_LARES");
     const auto* hero=restored.player();
+    const auto& variables=NpcDefinitionContract::transferVariables(script);
     require(lares && hero && lares->itemCount(item)==0 && hero->itemCount(item)==1 &&
+            variables.amount==1 && variables.item==int32_t(item) && variables.itemName==itemText &&
             vm.find_symbol_by_name("B_GIVEINVITEMS.ITEMNAME")->get_string()==itemText &&
             vm.find_symbol_by_name("B_GIVEINVITEMS.AMOUNT")->get_int()==1 &&
             vm.find_symbol_by_name("B_GIVEINVITEMS.TAKER")->get_instance().get()==

@@ -85,6 +85,47 @@ std::vector<DialogInfoData::Write> capture(const daedalus::DaedalusScript& scrip
     }
   return fields;
   }
+
+DialogInfoData::AmbientBindings captureAmbient(const daedalus::DaedalusScript& script) {
+  const auto* infoClass = script.find_symbol_by_name("C_INFO");
+  const auto member = script.find_symbol_by_name("C_INFO.NPC")->index();
+  const auto instance = script.find_symbol_by_name("HLP_GETINSTANCEID")->index();
+  DialogInfoData::AmbientBindings bindings;
+  for(const auto& function : script.symbols()) {
+    if(function.type()!=Type::FUNCTION || function.is_member() ||
+       !function.name().starts_with("B_ASSIGNAMBIENTINFOS_"))
+      continue;
+    const auto* actor = script.find_symbol_by_name(function.name()+".SLF");
+    const auto valid = [&](bool ok) {
+      require(ok,"invalid ambient dialog binding in "+function.name());
+      };
+    valid(actor!=nullptr && actor->type()==Type::INSTANCE && !actor->is_member());
+    auto pc = function.address();
+    const auto take = [&](Op op) {
+      valid(pc<script.size());
+      const auto instruction = script.instruction_at(pc);
+      valid(instruction.op==op);
+      pc += instruction.size;
+      return instruction;
+      };
+    auto& binding = bindings[function.name()];
+    binding.actor = actor->index();
+    valid(take(Op::PUSHVI).symbol==binding.actor);
+    take(Op::MOVVI);
+    while(script.instruction_at(pc).op!=Op::RSR) {
+      valid(take(Op::PUSHVI).symbol==binding.actor && take(Op::BE).symbol==instance);
+      const auto id = take(Op::GMOVI).symbol;
+      const auto* topic = script.find_symbol_by_index(id);
+      valid(topic!=nullptr && topic->type()==Type::INSTANCE && topic->parent()==infoClass->index() &&
+            take(Op::PUSHV).symbol==member);
+      take(Op::MOVI);
+      binding.topics.push_back(id);
+      }
+    take(Op::RSR);
+    }
+  require(!bindings.empty(),"dialog infos: missing ambient topic bindings");
+  return bindings;
+  }
 }
 
 void BaseImport::convertDialogInfos(const std::filesystem::path& base) {
@@ -99,4 +140,7 @@ void BaseImport::convertDialogInfos(const std::filesystem::path& base) {
     });
   require(rows.size()==4139,"dialog infos: incomplete stock catalogue");
   DialogInfoData::write(base,rows);
+  const auto ambient = captureAmbient(script);
+  DialogInfoData::writeAmbient(base,ambient);
+  require(DialogInfoData::loadAmbient(base)==ambient,"dialog infos: ambient bindings differ after reading");
   }

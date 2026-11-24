@@ -561,6 +561,7 @@ namespace daedalus {
 
 		/// Preserve this mutable scalar in storage that outlives the symbol.
 		void bind_global_int(std::int32_t& value);
+		void bind_global_string(std::string& value);
 
 		/// \brief Validates that the symbol is an instance and sets it's value
 		/// \param inst The instance value to set
@@ -728,13 +729,15 @@ namespace daedalus {
 	private:
 		friend class DaedalusScript;
 		std::int32_t* int_data() const;
+		std::string* string_data() const;
 
 		std::string _m_name;
 		std::variant<std::unique_ptr<std::int32_t[]>,
 		             std::unique_ptr<float[]>,
 		             std::unique_ptr<std::string[]>,
 		             std::shared_ptr<DaedalusInstance>,
-		             std::int32_t*>
+		             std::int32_t*,
+		             std::string*>
 		    _m_value;
 
 		std::int32_t _m_address {-1};

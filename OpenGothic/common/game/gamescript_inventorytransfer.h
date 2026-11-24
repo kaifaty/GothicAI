@@ -10,6 +10,13 @@ class Npc;
 
 namespace InventoryTransfer {
 
+struct Variables {
+  int32_t amount = 0;
+  int32_t item = 0;
+  std::string itemName;
+  std::string notice;
+  };
+
 struct Notice {
   std::string text;
   int32_t y = 0;

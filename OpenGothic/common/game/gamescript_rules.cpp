@@ -1,9 +1,13 @@
 #include "gamescript.h"
 
+#include "basestore.h"
+#include "game/definitions/basescripts.h"
+#include "programdata.h"
+#include "game/definitions/questclosuredata.h"
+
 #include "damagecalculator.h"
 #include "definitions/fightaidefinitions.h"
 #include "npcactivityhost.h"
-#include "eval.h"
 #include "gothic.h"
 
 #include "world/bodytraces.h"
@@ -43,6 +47,12 @@ enum class AttackAnnouncementReason : int32_t {
 }
 
 std::string_view GameScript::symbolName(size_t id) {
+  if(symbolCatalog)
+    if(const auto* entry = symbolCatalog->at(id))
+      return entry->name;
+  if(id<=UINT32_MAX)
+    if(const auto* entry = own.find(uint32_t(id)))
+      return entry->name;
   if(auto* symbol = findSymbol(id))
     return symbol->name();
   return "";
@@ -3589,97 +3599,41 @@ void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
     return std::bit_cast<int32_t>(uint32_t(wld_getday())+uint32_t(nextDay));
     }},enabled);
 
-  using Op=daedalus::DaedalusOpcode;
-  using Type=daedalus::DaedalusDataType;
-  using Number=std::variant<int32_t,uint32_t>; // literal or live integer symbol
-  struct Row {
-    uint32_t topic;
-    std::array<Number,3> values;
-    };
-  struct GuildRule {
-    size_t before;
-    uint32_t topic, status;
-    std::array<uint32_t,3> excluded;
-    };
-  static constexpr std::array groups{
-    std::pair{"B_CLOSETOPICS_MATTES",101u},
-    std::pair{"B_CLOSETOPICS_HOSHI",18u},
-    std::pair{"B_CLOSETOPICS_YOLY",87u}
-    };
-  const auto* closeFunction=findSymbol("B_CLOSETOPIC");
-  const auto close=closeFunction->index();
-  const auto setStatus=findSymbol("LOG_SETTOPICSTATUS")->index();
-  auto pc=findSymbol("B_CHECKLOG")->address();
-  const auto invalid=[&] {
-    return std::runtime_error("Invalid stock quest log record at "+std::to_string(pc));
-    };
-  const auto take=[&](Op expected) {
-    const auto instruction=vm.instruction_at(pc);
-    if(instruction.op!=expected)
-      throw invalid();
-    pc+=instruction.size;
-    return instruction;
-    };
-  const auto reference=[&](Type type) {
-    const auto id=take(Op::PUSHV).symbol;
-    const auto* symbol=findSymbol(id);
-    if(symbol==nullptr || symbol->type()!=type || symbol->is_member())
-      throw invalid();
-    return id;
-    };
-  const auto number=[&]() -> Number {
-    if(vm.instruction_at(pc).op==Op::PUSHI)
-      return take(Op::PUSHI).immediate;
-    return reference(Type::INT);
-    };
-
-  for(const auto& [name,count]:groups)
-    if(take(Op::BL).address!=findSymbol(name)->address())
-      throw invalid();
-  take(Op::RSR);
-
   vm.override_function("B_CLOSETOPIC",std::function<void(std::string_view,int32_t,int32_t,int32_t)>{
     [this](std::string_view topic,int32_t mission,int32_t common,int32_t chapter) {
       closeQuestTopic(topic,mission,common,chapter);
       }},enabled);
-  for(const auto& [name,count]:groups) {
-    pc=findSymbol(name)->address();
-    std::vector<Row> rows;
-    rows.reserve(count);
-    std::optional<GuildRule> guildRule;
-    while(vm.instruction_at(pc).op!=Op::RSR) {
-      const auto* first=findSymbol(vm.instruction_at(pc).symbol);
-      if(first!=nullptr && first->type()==Type::STRING) {
-        Row row{reference(Type::STRING),{number(),number(),number()}};
-        if(take(Op::BL).address!=closeFunction->address())
-          throw invalid();
-        rows.push_back(row);
-        continue;
-        }
-      // The only branch in the three groups is Yoly's guild exception.
-      if(std::string_view(name)!="B_CLOSETOPICS_YOLY" || guildRule)
-        throw invalid();
-      GuildRule rule{rows.size(),0,0,{}};
-      for(auto& guild:rule.excluded) {
-        guild=reference(Type::INT);
-        if(take(Op::GMOVI).symbol!=vm.global_hero()->index() ||
-           take(Op::PUSHV).symbol!=findSymbol("C_NPC.GUILD")->index())
-          throw invalid();
-        take(Op::NEQ);
-        }
-      take(Op::AND);
-      take(Op::AND);
-      const auto skip=take(Op::BZ).address;
-      rule.topic=reference(Type::STRING);
-      rule.status=reference(Type::INT);
-      if(take(Op::BE).symbol!=setStatus || pc!=skip)
-        throw invalid();
-      guildRule=rule;
-      }
-    const bool hasGuildRule=std::string_view(name)=="B_CLOSETOPICS_YOLY";
-    if(rows.size()!=count || guildRule.has_value()!=hasGuildRule || (guildRule && guildRule->before>=rows.size()))
-      throw invalid();
 
+  const auto base = baseProgramIndex().dir.parent_path();
+  if(!std::filesystem::exists(QuestClosureData::section(base)))
+    return;
+  auto groups = QuestClosureData::read(base);
+  using Type = daedalus::DaedalusDataType;
+  const auto checkSymbol = [&](uint32_t id, Type type) {
+    const auto* symbol = findSymbol(id);
+    if(symbol==nullptr || symbol->type()!=type || symbol->is_member())
+      throw BaseStore::Error(QuestClosureData::section(base).string()+": invalid quest symbol "+std::to_string(id));
+    };
+  for(const auto& group : groups) {
+    for(const auto& row : group.rows) {
+      checkSymbol(row.topic,Type::STRING);
+      for(const auto& value : row.values)
+        if(const auto* symbol = std::get_if<uint32_t>(&value))
+          checkSymbol(*symbol,Type::INT);
+      }
+    if(const auto& rule = group.guildRule) {
+      checkSymbol(rule->topic,Type::STRING);
+      checkSymbol(rule->status,Type::INT);
+      for(auto guild : rule->excluded)
+        checkSymbol(guild,Type::INT);
+      }
+    }
+
+  const auto close = findSymbol("B_CLOSETOPIC")->index();
+  const auto setStatus = findSymbol("LOG_SETTOPICSTATUS")->index();
+  for(size_t i=0;i<groups.size();++i) {
+    const auto name = QuestClosureData::names[i];
+    auto& [rows,guildRule] = groups[i];
     vm.override_function(name,std::function<void()>{[this, rows=std::move(rows), guildRule, close, setStatus] {
       for(size_t i=0;i<rows.size();++i) {
         if(guildRule && i==guildRule->before) {
@@ -3706,7 +3660,7 @@ void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
       }},enabled);
     }
   vm.override_function("B_CHECKLOG",std::function<void()>{[this] {
-    for(const auto& [name,count]:groups)
+    for(const auto name : QuestClosureData::names)
       vm.unsafe_call_bl(findSymbol(name));
     }},enabled);
   }
@@ -4282,66 +4236,6 @@ std::string_view GameScript::stringSymbol(std::string_view name) {
   if(auto* symbol = findSymbol(name))
     return symbol->get_string();
   return "";
-  }
-
-std::optional<GameScript::SymbolKind> GameScript::symbolKind(std::string_view name) const {
-  using Type = daedalus::DaedalusDataType;
-  auto* symbol = vm.find_symbol_by_name(name);
-  if(symbol==nullptr)
-    return std::nullopt;
-  if(symbol->is_member())
-    return SymbolKind::Other;
-  switch(symbol->type()) {
-    case Type::INSTANCE:
-      for(int i=0; i<8 && symbol!=nullptr && symbol->type()!=Type::CLASS; ++i)
-        symbol = vm.find_symbol_by_index(symbol->parent());
-      if(symbol!=nullptr && symbol->type()==Type::CLASS) {
-        if(symbol->name()=="C_NPC")  return SymbolKind::Npc;
-        if(symbol->name()=="C_ITEM") return SymbolKind::Item;
-        if(symbol->name()=="C_INFO") return SymbolKind::Info;
-        }
-      break;
-    case Type::INT:      return symbol->is_const() ? SymbolKind::Constant : SymbolKind::Variable;
-    case Type::FUNCTION: return SymbolKind::Function;
-    default: break;
-    }
-  return SymbolKind::Other;
-  }
-
-std::optional<int32_t> GameScript::globalIntSymbol(std::string_view name) const {
-  const auto* symbol = vm.find_symbol_by_name(name);
-  if(symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::INT && !symbol->is_member())
-    return symbol->get_int(0);
-  return std::nullopt;
-  }
-
-std::string_view GameScript::stringSymbol(std::string_view name, std::string_view fallback) const {
-  const auto* symbol = vm.find_symbol_by_name(name);
-  if(symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::STRING)
-    return symbol->get_string();
-  return fallback;
-  }
-
-bool GameScript::isPartyMember(const Npc& npc) {
-  const auto index = intSymbol("AIV_PARTYMEMBER",-1);
-  return index>=0 && size_t(index)<NpcRecord::aivar_count && npc.handlePtr()->aivar[size_t(index)]!=0;
-  }
-
-std::optional<bool> GameScript::queryNpcKnowsInfo(const Npc& npc, std::string_view name) {
-  const auto* info = vm.find_symbol_by_name(name);
-  const auto* knows = vm.find_symbol_by_name("NPC_KNOWSINFO");
-  if(info==nullptr || knows==nullptr)
-    return std::nullopt;
-  if(nativeRoutineProgram)
-    return doesNpcKnowInfo(*npc.handlePtr(),info->index());
-
-  std::string error;
-  const auto result = storygraph::callFunction(vm,*knows,
-                       {storygraph::Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),
-                        storygraph::Value::integer(int32_t(info->index()))},error);
-  if(result && result->type==storygraph::Value::Int)
-    return result->i!=0;
-  return std::nullopt;
   }
 
 bool GameScript::isNpcInstance(size_t id) {

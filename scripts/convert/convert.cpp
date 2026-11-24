@@ -53,6 +53,8 @@
 //       Progress goes to stderr and the selected base path goes to stdout.
 //   content-convert formats
 //       Print the compiled base and video importer format hashes as JSON.
+//   content-convert no-programs-fixture <ready stock base> <new dir>
+//       Copy a ready base for metadata tests, omitting all executable program records.
 //   content-convert stress-base <ready base> <out dir> --subdivide 0..3 | verify-stress-base <base> <copy>
 //       A copy of a ready base with every world triangle split in four N times (stressbase.h).
 //   content-convert cook-world|verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
@@ -85,6 +87,7 @@
 #include "worlddata.h"
 #include "world/voblayer.h"
 #include "game/definitions/particlecontent.h"
+#include "game/definitions/stockstoryprograms.h"
 #include "gothicglb.h"
 #include "stressbase.h"
 #include "npcsnapshot.h"
@@ -100,6 +103,10 @@
 #include <zenkit/Texture.hh>
 #include <zenkit/World.hh>
 #include <zenkit/addon/texcvt.hh>
+
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 
 // miniz otherwise #defines crc32 and other zlib names.
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
@@ -118,6 +125,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -137,6 +145,91 @@ constexpr char clusterLodCensusUsage[] =
   "       content-convert stress-base <content dir> <out dir> --meshes 0..3\n";
 void require(bool ok, const std::string& what) {
   if(!ok) throw std::runtime_error(what);
+  }
+
+rapidjson::Document fixtureJson(const fs::path& file) {
+  const auto bytes=gothicglb::readFile(file);
+  rapidjson::Document doc;
+  doc.Parse(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+  require(!doc.HasParseError() && doc.IsObject(),"invalid JSON: "+file.string());
+  return doc;
+  }
+
+void prepareNoProgramsFixture(const fs::path& source, const fs::path& output) {
+  const auto base=fs::canonical(source);
+  const auto out=fs::weakly_canonical(output);
+  const auto relative=out.lexically_relative(base);
+  require(relative.empty() || *relative.begin()=="..","fixture output must be outside the source base");
+  require(!fs::exists(out),"fixture output already exists: "+out.string());
+
+  auto identity=BaseImport::readIdentity(base);
+  std::string rejection;
+  if(!BaseImport::matches(base,identity,false,&rejection))
+    throw std::runtime_error("fixture source base failed verification: "+rejection);
+  rapidjson::Document metadata;
+  metadata.Parse(identity.json.c_str());
+  require(!metadata.HasMember("no_programs_fixture"),"fixture source must contain the program records");
+  const auto index=ProgramData::readIndex(base/"programs");
+  const auto* game=index.server();
+  require(game && game->origin=="host" && game->recordSha256==StockStoryPrograms::stockProgram,
+          "fixture requires the stock game program identity");
+
+  const auto manifest=fixtureJson(base/"base-files.json");
+  std::map<std::string,std::string> kept;
+  std::set<std::string> programs;
+  for(const auto& record:manifest["files"].GetArray()) {
+    const std::string path=record["path"].GetString();
+    if(path.starts_with("programs/") && path!="programs/programs.json") {
+      programs.insert(path);
+      continue;
+      }
+    kept.emplace(path,record["sha256"].GetString());
+    }
+  require(kept.contains("programs/programs.json") && kept.contains("storygraph/story.json"),
+          "fixture source must bind the program index and the prepared story graph");
+  for(const auto& [name, sha]:index.programs) {
+    const auto path="programs/"+name;
+    require(programs.contains(path+".json") && programs.contains(path+".bin"),
+            "fixture source does not bind both program record files: "+path);
+    }
+
+  const auto sourceManifest=BaseImport::sha256File(base/"base-files.json");
+  auto& allocator=metadata.GetAllocator();
+  rapidjson::Value binding(rapidjson::kObjectType);
+  binding.AddMember("version",1,allocator);
+  binding.AddMember("source_fingerprint",rapidjson::Value(identity.fingerprint.c_str(),allocator),allocator);
+  binding.AddMember("source_manifest_sha256",rapidjson::Value(sourceManifest.c_str(),allocator),allocator);
+  metadata.AddMember("no_programs_fixture",binding,allocator);
+  identity.fingerprint=BaseImport::sha256("no-programs-fixture-v1\n"+identity.fingerprint+"\n"+sourceManifest);
+  metadata["fingerprint"].SetString(identity.fingerprint.c_str(),allocator);
+  rapidjson::StringBuffer json;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(json);
+  metadata.Accept(writer);
+  identity.json.assign(json.GetString(),json.GetSize());
+
+  require(fs::create_directories(out),"cannot create fixture output: "+out.string());
+  try {
+    for(const auto& [path, sha]:kept) {
+      const auto from=base/path;
+      require(from==fs::canonical(from),"fixture source contains a symbolic link: "+from.string());
+      const auto target=out/path;
+      fs::create_directories(target.parent_path());
+      fs::copy_file(from,target);
+      }
+    BaseImport::writeBaseMetadata(out,identity);
+    const auto outputManifest=fixtureJson(out/"base-files.json");
+    require(outputManifest["files"].Size()==kept.size(),"fixture manifest file count differs");
+    for(const auto& record:outputManifest["files"].GetArray())
+      require(kept.at(record["path"].GetString())==record["sha256"].GetString(),
+              std::string("fixture source file changed: ")+record["path"].GetString());
+    }
+  catch(...) {
+    std::error_code error;
+    fs::remove_all(out,error);
+    throw;
+    }
+  std::cout << "No-programs fixture: " << out.string() << " (" << identity.fingerprint
+            << ", " << programs.size() << " program files omitted). The current game cannot use this fixture.\n";
   }
 
 asset::Material material(const std::string& name, const std::string& texture, asset::MaterialGroup group) {
@@ -910,6 +1003,10 @@ int main(int argc, char** argv) {
       BaseImport::build(args[1],args[2]);
       return 0;
       }
+    if(args.size()==3 && args[0]=="no-programs-fixture") {
+      prepareNoProgramsFixture(args[1],args[2]);
+      return 0;
+      }
     if(args.size()==3 && (args[0]=="zen" || args[0]=="verify-zen"))
       return BaseImport::convertZen(args[1],args[2],args[0]=="verify-zen");
     if(args.size()==3 && (args[0]=="meshes" || args[0]=="verify-meshes"))
@@ -1007,6 +1104,7 @@ int main(int argc, char** argv) {
                  "       content-convert resolve-base|resolve-videos|resolve <gothic dir>\n"
                  "       content-convert sources|verify-sources <gothic dir> <dir>\n"
                  "       content-convert base <gothic dir> <dir>\n"
+                 "       content-convert no-programs-fixture <ready stock base> <new dir>\n"
                  "       content-convert formats\n" << StressBase::usage << WorldCook::usage <<
                  "       " << clusterLodCensusUsage <<
                  "       content-convert --self-test\n";

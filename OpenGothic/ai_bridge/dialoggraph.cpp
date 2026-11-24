@@ -462,21 +462,21 @@ void DialogGraph::onExec(const GameScript::DlgChoice& dlg, Npc& player, Npc& npc
   offering.erase(n.id);  // what it offers comes from this run
 
   // lines are queued like AI_Output in an info function; effects happen right away, like there
-  auto* v = vm();
+  auto* sc = rt.script();
   for(auto& l : n.lines) {
     Npc& speaker  = l.hero ? player : npc;
     Npc& listener = l.hero ? npc : player;
     auto id = l.id;
     if(id.empty()) {
-      auto* s = v ? v->find_symbol_by_index(speaker.instanceSymbol()) : nullptr;
-      id = addLine(s ? s->name() : std::string(),l.text);
+      const auto name = sc ? std::string(sc->symbolName(speaker.instanceSymbol())) : std::string{};
+      id = addLine(name,l.text);
       }
     speaker.aiPush(AiQueue::aiOutput(listener,id,0));
     }
-  if(v==nullptr)
+  if(sc==nullptr)
     return;
   for(auto& e : n.effects)
-    e.run(*v,npc,player,n.id);
+    e.run(*sc,npc,player,n.id);
   if(!n.program.steps.empty())
     runOwn(n.id,n.program.steps);
   }

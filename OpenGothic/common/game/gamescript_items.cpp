@@ -7,6 +7,11 @@
 #include "loadprobe.h"
 #include "programdata.h"
 #include "settings.h"
+#include "storygraph/eval.h"
+#include "world/objects/item.h"
+#include "world/objects/npc.h"
+
+#include <cstdlib>
 
 daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                          RoutineDefinitionRuntime::Definitions& routines,
@@ -64,6 +69,81 @@ std::optional<std::string> GameScript::itemNameForQuery(size_t instance) {
     }
   symbol->set_instance(previous);
   return result;
+  }
+
+void GameScript::setupDirectorNpcEquipment(Npc& npc, const DirectorNpcLook* look,
+                                          std::span<const std::pair<uint32_t,int32_t>> items) {
+  using storygraph::Value;
+  struct RestoreSelf {
+    daedalus::DaedalusSymbol& self;
+    std::shared_ptr<daedalus::DaedalusInstance> previous;
+    ~RestoreSelf() { self.set_instance(previous); }
+    } restore{*vm.global_self(),vm.global_self()->get_instance()};
+
+  const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  restore.self.set_instance(actor);
+  const std::string id(symbolName(npc.instanceSymbol()));
+  const auto call = [&](const char* function, std::vector<Value> args) {
+    std::string error;
+    const auto* symbol = vm.find_symbol_by_name(function);
+    if(symbol==nullptr || !storygraph::callFunction(vm,*symbol,args,error))
+      Tempest::Log::e("[story] ",id,": ",function," failed: ",symbol==nullptr ? "no such function" : error);
+    };
+
+  if(look!=nullptr) {
+    // Remove the template's armor before the script dresses the new actor.
+    if(auto* previous = npc.currentArmor()) {
+      const auto instance = previous->clsId();
+      npc.unequipItem(instance);
+      npc.delItem(instance,1);
+      }
+    call("B_SETNPCVISUAL",{Value::instance(actor),Value::integer(look->gender),Value::str(look->head),
+                          Value::integer(look->face),Value::integer(look->skin),Value::integer(look->armor)});
+    }
+  for(const auto& [item,count] : items)
+    call("CREATEINVITEMS",{Value::instance(actor),Value::integer(int32_t(item)),Value::integer(count)});
+  }
+
+bool GameScript::isStockDirectorActor(const Npc& npc) const {
+  const auto* symbol = vm.find_symbol_by_index(npc.instanceSymbol());
+  return symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::INSTANCE && !symbol->is_generated();
+  }
+
+Npc* GameScript::boundStockDirectorNpc(std::string_view name) {
+  auto* symbol = vm.find_symbol_by_name(name);
+  if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INSTANCE || symbol->is_generated())
+    return nullptr;
+  auto record = std::dynamic_pointer_cast<daedalus::INpc>(symbol->get_instance());
+  return findNpc(static_cast<NpcRecord*>(record.get()));
+  }
+
+bool GameScript::tryDirectorGiveItems(Npc& giver, Npc& taker, std::string_view item, int32_t count) {
+  if(!nativeRoutineProgram || count<=0 || !isStockDirectorActor(giver) || !isStockDirectorActor(taker))
+    return false;
+  const auto* enabled = std::getenv("GOTHIC_AI_STORYEXEC");
+  if(enabled!=nullptr && std::string_view(enabled)=="0")
+    return false;
+  const auto* function = vm.find_symbol_by_name("B_GIVEINVITEMS");
+  if(function==nullptr || !vm.has_active_override(*function))
+    return false;
+  const auto id = findItemInstance(item);
+  if(!id || !itemDefinitions.items.contains(*id))
+    return false;
+
+  giveInventoryItems(std::static_pointer_cast<daedalus::INpc>(giver.handlePtr()),
+                    std::static_pointer_cast<daedalus::INpc>(taker.handlePtr()),int32_t(*id),count);
+  return true;
+  }
+
+bool GameScript::tryDirectorCreateItems(Npc& npc, std::string_view item, int32_t count) {
+  if(!nativeRoutineProgram || count<=0 || !isStockDirectorActor(npc))
+    return false;
+  const auto id = findItemInstance(item);
+  if(!id || !itemDefinitions.items.contains(*id))
+    return false;
+
+  createinvitems(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int32_t(*id),count);
+  return true;
   }
 
 void GameScript::initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance) {

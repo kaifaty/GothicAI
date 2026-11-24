@@ -91,6 +91,8 @@ GameScript::GameScript(GameSession &owner)
   if (vm.global_self() == nullptr || vm.global_other() == nullptr || vm.global_item() == nullptr ||
       vm.global_victim() == nullptr || vm.global_hero() == nullptr)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
+  if(nativeRoutineProgram)
+    symbolCatalog = ScriptSymbolCatalog::load(baseProgramIndex().dir.parent_path(),GameplayDefinitions::stockProgram);
 
   vmLang = Settings::getI("GAME", "language");
   vm.register_exception_handler(daedalus::lenient_vm_exception_handler);
@@ -105,6 +107,12 @@ GameScript::GameScript(GameSession &owner)
   loadNativeMonsterAttitudes();
   loadNativeWorldEntry();
   loadNativeRoutineExchange();
+  if(nativeRoutineProgram) {
+    findSymbol("B_GIVEINVITEMS.AMOUNT")->bind_global_int(inventoryTransferVariables.amount);
+    findSymbol("B_GIVEINVITEMS.ITEMINSTANCE")->bind_global_int(inventoryTransferVariables.item);
+    findSymbol("B_GIVEINVITEMS.ITEMNAME")->bind_global_string(inventoryTransferVariables.itemName);
+    findSymbol("B_GIVEINVITEMS.CONCATTEXT")->bind_global_string(inventoryTransferVariables.notice);
+    }
   loadNativeRoutines();
   loadNativeRoomReaction();
   loadNativeHumanPerceptions();
@@ -341,11 +349,11 @@ void GameScript::initCommon() {
 
   const auto gameplay = nativeRoutineProgram && NpcDefinitionRuntime::enabled() ?
                         GameplayDefinitions::load(baseProgramIndex().dir.parent_path()) : nullptr;
-  spells               = std::make_unique<SpellDefinitions>(vm,gameplay.get());
-  svm                  = std::make_unique<SvmDefinitions>(vm,gameplay);
+  spells = gameplay ? std::make_unique<SpellDefinitions>(*gameplay) : std::make_unique<SpellDefinitions>(vm);
+  svm    = gameplay ? std::make_unique<SvmDefinitions>(gameplay)    : std::make_unique<SvmDefinitions>(vm);
 
-  const auto focus = [&](std::string_view name) {
-    return gameplay ? *gameplay->init<daedalus::IFocus>(vm,vm.find_symbol_by_name(name)) : findFocus(name);
+  const auto focus = [&](std::string_view name) -> FocusRecord {
+    return gameplay ? gameplay->focus(name) : findFocus(name);
     };
   cFocusNorm           = focus("FOCUS_NORMAL");
   cFocusMelee          = focus("FOCUS_MELEE");
@@ -394,9 +402,11 @@ void GameScript::initCommon() {
   gilAttitudes.resize(gilCount*gilCount,ATT_HOSTILE);
   wld_exchangeguildattitudes("GIL_ATTITUDES");
 
-  auto id = vm.find_symbol_by_name("Gil_Values");
-  if(id!=nullptr){
-    cGuildVal = gameplay ? gameplay->init<daedalus::IGuildValues>(vm,id) : vm.init_instance<daedalus::IGuildValues>(id);
+  if(gameplay)
+    cGuildVal = std::make_shared<GuildRecord>(gameplay->guild());
+  else if(auto* id = vm.find_symbol_by_name("Gil_Values"))
+    cGuildVal = vm.init_instance<daedalus::IGuildValues>(id);
+  if(cGuildVal){
     for(size_t i=0;i<Guild::GIL_PUBLIC;++i){
       cGuildVal->water_depth_knee   [i]=cGuildVal->water_depth_knee   [Guild::GIL_HUMAN];
       cGuildVal->water_depth_chest  [i]=cGuildVal->water_depth_chest  [Guild::GIL_HUMAN];
@@ -754,6 +764,11 @@ daedalus::DaedalusSymbol* GameScript::findSymbol(const size_t s) {
   }
 
 size_t GameScript::findSymbolIndex(std::string_view name) {
+  if(symbolCatalog)
+    if(const auto id = symbolCatalog->find(name))
+      return *id;
+  if(const auto* entry = own.find(name))
+    return entry->index;
   auto sym = vm.find_symbol_by_name(name);
   return sym == nullptr ? size_t(-1) : sym->index();
   }

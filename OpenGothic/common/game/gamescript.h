@@ -8,12 +8,14 @@
 #include <optional>
 #include <set>
 #include <random>
+#include <span>
 #include <unordered_map>
 
 #include <Tempest/Matrix4x4>
 #include <Tempest/Painter>
 
 #include "game/definitions/svmdefinitions.h"
+#include "game/definitions/symbolcatalog.h"
 #include "game/definitions/spelldefinitions.h"
 #include "game/aiouputpipe.h"
 #include "game/constants.h"
@@ -23,6 +25,7 @@
 #include "game/questlog.h"
 #include "game/ownsymbols.h"
 #include "game/gamescript_startupfloor.h"
+#include "game/gamescript_inventorytransfer.h"
 #include "game/itemdefinitionruntime.h"
 #include "game/routinedefinitionruntime.h"
 #include "game/npcdefinitionruntime.h"
@@ -50,7 +53,7 @@ class GameScript final : public GameRules {
     using PerDist = ::PerDist;
     using PhysicalSpell = ::PhysicalSpell;
 
-    enum class SymbolKind { Other, Npc, Item, Info, Constant, Variable, Function };
+    using SymbolKind = ScriptSymbolCatalog::Kind;
 
     std::optional<SymbolKind> symbolKind(std::string_view name) const;
     std::optional<int32_t>    globalIntSymbol(std::string_view name) const;
@@ -58,6 +61,12 @@ class GameScript final : public GameRules {
     bool                      isPartyMember(const Npc& npc);
     std::optional<bool>       queryNpcKnowsInfo(const Npc& npc, std::string_view name);
     std::optional<std::string> itemNameForQuery(size_t instance);
+    std::optional<int32_t>     intConstant(std::string_view name) const;
+    std::optional<uint32_t>    findItemInstance(std::string_view name) const;
+    bool                      setGlobalIntSymbol(std::string_view name, int32_t value);
+    void                      setPartyMember(Npc& npc, bool active);
+    bool                      markNpcInfoKnown(const Npc& npc, std::string_view name);
+    void                      endDirectorDialog(Npc& npc);
 
     std::string_view symbolName(size_t id) override;
     ScriptFn         findFunction(std::string_view name) override;
@@ -119,6 +128,19 @@ class GameScript final : public GameRules {
     bool         invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed = nullptr);
     // symbols of ours: the AI director's story variables and npc's
     inline auto& ownSymbols() { return own; }
+    std::optional<uint32_t> addDirectorNpcSymbol(std::string_view name, std::string_view like, std::string& why);
+
+    struct DirectorNpcLook {
+      std::string head;
+      int32_t     gender = 0, face = 0, skin = 0, armor = -1;
+      };
+    void setupDirectorNpcEquipment(Npc& npc, const DirectorNpcLook* look,
+                                   std::span<const std::pair<uint32_t,int32_t>> items);
+    // The caller binds SELF and OTHER. A false result leaves the effect to the compatibility path.
+    bool tryDirectorGiveItems(Npc& giver, Npc& taker, std::string_view item, int32_t count);
+    bool tryDirectorCreateItems(Npc& npc, std::string_view item, int32_t count);
+    Npc* boundStockDirectorNpc(std::string_view name);
+
     auto         questLog() const -> const QuestLog&;
 
     const World& world() const;
@@ -468,6 +490,7 @@ class GameScript final : public GameRules {
     auto  findInfo    (size_t id) -> daedalus::IInfo*;
     auto  findFocus(std::string_view name) -> daedalus::IFocus;
 
+    bool isStockDirectorActor(const Npc& npc) const;
     void storeItem(Item* it);
     bool invokeNativeMobState(const daedalus::DaedalusSymbol& symbol);
     void runStockPickLock(int32_t success, int32_t brokenOrOpen);
@@ -832,6 +855,7 @@ class GameScript final : public GameRules {
     bool                                                        activityEvents = ActivityDefinitionRuntime::events();
     QuietSoundReaction                                          quietSound;
     bool                                                        nativeRoutineProgram = false;
+    std::unique_ptr<ScriptSymbolCatalog::Catalog>                symbolCatalog;
     ScriptFn                                                    drawWeaponCallback;
     ScriptFn                                                    threatCallback;
     ScriptFn                                                    warnCallback;
@@ -866,6 +890,10 @@ class GameScript final : public GameRules {
       int32_t stoneGuardianTrigger=0, tookRhademesTrap=0, talkedToRhademesAfter=0, removedRhademes=0;
       int32_t attackWarn=0;
       } ghostProgress;
+    InventoryTransfer::Variables                                inventoryTransferVariables;
+    struct PointGestureRolls {
+      int32_t guard = 0, crossedArms = 0, waypoint = 0, portal = 0, earthquake = 0;
+      } pointGestureRolls;
     daedalus::DaedalusVm                                          vm;
     std::unique_ptr<StockPrograms>                                stockPrograms;
     StartupFloor                                                floorDefer{*this};
@@ -910,8 +938,8 @@ class GameScript final : public GameRules {
     size_t                                                      ZS_Attack=0;
     size_t                                                      ZS_MM_Attack=0;
 
-    daedalus::IFocus                                              cFocusNorm,cFocusMelee,cFocusRange,cFocusMage;
-    std::shared_ptr<daedalus::IGuildValues>                       cGuildVal;
+    FocusRecord                                                 cFocusNorm,cFocusMelee,cFocusRange,cFocusMage;
+    std::shared_ptr<GuildRecord>                                 cGuildVal;
 
   friend struct ScopeCtx;
   friend class BodyController;

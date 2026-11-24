@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -235,6 +236,19 @@ std::runtime_error missingBase(const fs::path& gothic, const std::string& reason
     "; start through the launcher or run content-convert resolve <game directory>"+(reason.empty() ? "" : ": "+reason));
   }
 
+void requireRunnableBase(const BaseImport::Identity& identity) {
+  rapidjson::Document doc;
+  doc.Parse(identity.json.c_str());
+  if(doc.IsObject() && doc.HasMember("no_programs_fixture"))
+    throw std::runtime_error("this no-programs fixture is for metadata tests; the current game requires program records");
+  }
+
+BaseImport::Identity readRunnableBase(const fs::path& dir) {
+  auto identity=BaseImport::readIdentity(dir);
+  requireRunnableBase(identity);
+  return identity;
+  }
+
 VideoData::Identity readVideoIdentity(const fs::path& directory) {
   std::ifstream input(directory/"videos.json",std::ios::binary);
   const std::string bytes{std::istreambuf_iterator<char>(input),{}};
@@ -410,6 +424,8 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   const auto cache=cacheRoot();
   fs::create_directories(cache);
   const auto* explicitBase=std::getenv("OPENGOTHIC_BASE");
+  const auto explicitIdentity=explicitBase && *explicitBase
+                             ? std::optional(readRunnableBase(explicitBase)) : std::nullopt;
   std::unique_ptr<Lock> cacheLock;
   if(!explicitBase || !*explicitBase) {
     cacheLock=std::make_unique<Lock>(cache/".lock");
@@ -425,7 +441,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     for(const auto& source:{destination,stored}) {
       if(source.empty() || !fs::exists(source)) continue;
       try {
-        const auto identity=BaseImport::readIdentity(source);
+        const auto identity=readRunnableBase(source);
         if(identity.fingerprint!=fingerprint) throw std::runtime_error("base fingerprint differs");
         if(!BaseImport::matches(source,identity,false,&rejection)) throw std::runtime_error(rejection);
         if(source!=destination) {
@@ -453,6 +469,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   BaseImport::Identity identity;
   fs::path pointed;
   bool reused=current && current->part("base",pointed,identity,installed ? &snapshot : nullptr);
+  if(reused) requireRunnableBase(identity);
   const auto identify=[&] {
     log("base: identifying installation");
     return BaseImport::identify(gothic,mounted);
@@ -461,11 +478,11 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     if(installed && reused) {
       rapidjson::Document previous, selected;
       previous.Parse(identity.json.c_str());
-      selected.Parse(BaseImport::readIdentity(explicitBase).json.c_str());
+      selected.Parse(explicitIdentity->json.c_str());
       reused=!previous.HasParseError() && previous.IsObject() && previous.HasMember("format_sha256") &&
              previous["format_sha256"]==selected["format_sha256"];
       }
-    if(!installed) identity=BaseImport::readIdentity(explicitBase);
+    if(!installed) identity=*explicitIdentity;
     else if(!reused) identity=identify();
     Selection selected{explicitBase,{},{}};
     if(fs::weakly_canonical(fs::path(explicitBase).parent_path())==cache)
