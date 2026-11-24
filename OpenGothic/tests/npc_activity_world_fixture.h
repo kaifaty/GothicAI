@@ -1427,8 +1427,8 @@ void quietSoundAtPost(Gothic& gothic) {
   constexpr auto* actor="VLK_412_HARAD";
   constexpr auto* point="FP_STAND_CITY_20";
   constexpr uint32_t seed=73106;
-  std::string program;
-  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  const auto& program=selectBaseProgram(baseProgramIndex(),gothic.defaultGameDatFile(),
+      Settings::getI("GAME","language")).source.recordSha256;
   if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
     std::puts("SKIP quiet sound: the fixtures are for the verified NotR program");
     return;
@@ -2038,8 +2038,8 @@ void sleepRoutineWorld(Gothic& gothic,bool events,bool deep) {
 // The switch and the accepted list through the loader the game calls.
 void activitySwitch(GameScript& script,const std::vector<std::string>& accepted,const char* other,size_t pointPhases) {
   const auto base=baseProgramIndex().dir.parent_path();
-  std::string sha;
-  loadBaseProgram(Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"),&sha);
+  const auto& sha=selectBaseProgram(baseProgramIndex(),Gothic::inst().defaultGameDatFile(),
+      Settings::getI("GAME","language")).source.recordSha256;
   const auto* configured=std::getenv("OPENGOTHIC_ACTIVITY_RECORDS");
   const std::optional<std::string> previous=configured ? std::optional<std::string>(configured) : std::nullopt;
   struct Restore {

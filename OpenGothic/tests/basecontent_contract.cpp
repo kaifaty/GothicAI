@@ -85,6 +85,7 @@
 #include <exception>
 #include <functional>
 #include <future>
+#include <initializer_list>
 #include <map>
 #include <mutex>
 #include <set>
@@ -695,7 +696,6 @@ struct BaseContentContract {
     Animation::AnimData baseSequence;
     {
     Resources resources;
-    Resources::loadBase();
     Gothic gothic;
     require(Resources::loadAnimationData("HUMANS-T_JUMPB.MAN",baseline),"base jump record must load");
     require(Resources::loadModelScriptData("HUMANS.MSB",baseScript),"base human script must load");
@@ -786,7 +786,6 @@ struct BaseContentContract {
     try {
       {
       Resources resources;
-      Resources::loadBase();
       Gothic gothic;
       asset::ModelScript merged;
       require(Resources::loadModelScriptData("HUMANS.MSB",merged),"content human script must load");
@@ -838,7 +837,7 @@ struct BaseContentContract {
       writeOverlay(scriptFile);
       logs.clear();
       {
-      Resources resources; Resources::loadBase(); Gothic gothic;
+      Resources resources; Gothic gothic;
       asset::ModelScript loaded;
       require(Resources::loadModelScriptData("HUMANS.MSB",loaded),"cross-kind collision must keep base script");
       require(ModelData::compare(baseScript,loaded).empty(),"cross-kind collision must reject the whole overlay before merging");
@@ -861,7 +860,7 @@ struct BaseContentContract {
       writeJson(scriptFile,badOverlay);
       logs.clear();
       {
-      Resources resources; Resources::loadBase();
+      Resources resources; Gothic gothic;
       asset::ModelScript loaded;
       require(Resources::loadModelScriptData("HUMANS.MSB",loaded),"broken overlay must keep base script");
       require(ModelData::compare(baseScript,loaded).empty(),"broken overlay must not partly mutate base script");
@@ -871,7 +870,7 @@ struct BaseContentContract {
       gothicglb::writeFile(indexFile,invalid.data(),invalid.size());
       logs.clear();
       {
-      Resources resources; Resources::loadBase(); Gothic gothic;
+      Resources resources; Gothic gothic;
       const auto* animation=Resources::loadAnimation("HUMANS.MSB");
       require(animation && !animation->sequence("T_TESTDASHB"),"broken content index must leave the base usable");
       equal(animation->sequence("T_JUMPB")->data->numFrames,14u,"broken index base jump frames");
@@ -883,7 +882,7 @@ struct BaseContentContract {
 
     setenv("OPENGOTHIC_CONTENT","",1);
     {
-    Resources resources; Resources::loadBase(); Gothic gothic;
+    Resources resources; Gothic gothic;
     asset::ModelAnimation loaded;
     require(Resources::loadAnimationData("HUMANS-T_JUMPB.MAN",loaded),"base jump must load after disabling content");
     require(ModelData::compare(baseline,loaded).empty(),"no-content jump record must be bit-identical to base");
@@ -1194,7 +1193,7 @@ struct BaseContentContract {
       }
     }
 
-  static size_t programs(const fs::path& base, const fs::path& censusPath) {
+  static void programs(const fs::path& base, const fs::path& censusPath) {
     const auto index=ProgramData::readIndex(base/"programs");
     const auto gothic=fs::path(CommandLine::inst().rootPath());
     require(!index.programs.empty(),"program corpus must contain native records");
@@ -1326,18 +1325,17 @@ struct BaseContentContract {
       const auto& source=index.sources.at(*row.source);
       const auto identity=selectBaseProgram(index,row.request,row.language);
       require(&identity.source==&source && identity.branch==row.step,row.request+": program identity differs from imported selection");
-      const auto host=row.step.starts_with("host_") ? (gothic/source.path).u16string() : std::u16string{};
-      const auto script=loadBaseProgram(row.request,row.language,row.step,host);
-      equal(script.symbols().size(),ProgramData::readProgram(index.path(source)).symbols.size(),row.request+" selected symbol count");
+      std::string digest;
+      (void)ProgramData::readProgram(index.path(source),&digest);
+      require(digest==source.recordSha256,row.request+": selected program record identity differs");
       ++selected;
       }
-    equal(selected,8u,"all eight default scripts must select native records");
-    require(Resources::writeCensus(),"cannot write native program census");
+    equal(selected,8u,"all eight default scripts must select offline records");
+    require(Resources::writeCensus(),"cannot write offline program census");
     const auto after=json(censusPath);
-    require(before["files"]==after["files"],"native program loading must add zero original source opens");
-    equal(after["runtime_programs"]["selections"].Size(),selected,"actual native program census selections");
-    std::printf("Programs: %zu sources, %zu symbols and %zu bytecode bytes match independent DAT reads; all eight native selections add zero DAT opens\n",parsed,symbols,code);
-    return selected;
+    require(before["files"]==after["files"],"offline record checks must add zero original source opens");
+    require(after["runtime_programs"]["selections"].Empty(),"imported program records must stay outside runtime");
+    std::printf("Offline programs: %zu sources, %zu symbols and %zu bytecode bytes match independent DAT reads; all eight default records confirmed\n",parsed,symbols,code);
     }
 
   static void programIdentityPrecedence() {
@@ -1601,7 +1599,7 @@ struct BaseContentContract {
     }
 
   static std::unique_ptr<daedalus::DaedalusVm> definitionSourceVm(const ProgramData::Index& index,
-                                                              std::string_view request, Gothic& gothic) {
+                                                             std::string_view request) {
     const auto row=std::find_if(index.selections.begin(),index.selections.end(),[&](const auto& selection) {
       return selection.request==request && selection.language==-1;
       });
@@ -1634,9 +1632,7 @@ struct BaseContentContract {
     auto script=daedalus::DaedalusScript::from_program(asset::fromZenKit(original.export_program()));
     // Replay the original registrations, including opaque Fight, before constructing the oracle VM.
     definitionSourceClasses(script);
-    auto vm=std::make_unique<daedalus::DaedalusVm>(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
-    gothic.setupVmCommonApi(*vm);
-    return vm;
+    return std::make_unique<daedalus::DaedalusVm>(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
     }
 
   static std::vector<std::pair<uint32_t,std::string>> definitionNames(daedalus::DaedalusVm& vm, std::string_view className) {
@@ -1759,20 +1755,44 @@ struct BaseContentContract {
                 names.size(),groups);
     }
 
+  static void linkBaseParts(const fs::path& base, const fs::path& fixture,
+                            std::initializer_list<std::string_view> excluded) {
+    // Preserve every part named by the source manifest outside the payload owned by the fixture.
+    for(const auto& entry : fs::directory_iterator(base)) {
+      const auto name = entry.path().filename();
+      if(std::find(excluded.begin(),excluded.end(),name.string())==excluded.end())
+        fs::create_symlink(entry.path(),fixture/name);
+      }
+    }
+
   static fs::path linkBaseForDefinitionTest(const fs::path& base, const fs::path& fixture, const fs::path& section) {
     // The manifest must validate before a fixture changes its own link to the selected section.
     const auto definitionDir = section.parent_path();
     const auto target = fixture/"definitions"/definitionDir.filename();
     fs::create_directories(target);
-    for(const auto& entry : fs::directory_iterator(base))
-      if(entry.path().filename()!="definitions")
-        fs::create_symlink(entry.path(),fixture/entry.path().filename());
+    linkBaseParts(base,fixture,{"definitions"});
     for(const auto& entry : fs::directory_iterator(base/"definitions"))
       if(entry.path().filename()!=definitionDir.filename())
         fs::create_symlink(entry.path(),fixture/"definitions"/entry.path().filename());
     for(const auto& entry : fs::directory_iterator(definitionDir))
       fs::create_symlink(entry.path(),target/entry.path().filename());
     return target/section.filename();
+    }
+
+  template<class Definitions>
+  static void requireUnavailableCatalog(const fs::path& section, const fs::path& censusPath) {
+    bool rejected = false;
+    try {
+      const Definitions unavailable;
+      }
+    catch(const BaseStore::Error& error) {
+      rejected = std::string_view(error.what()).find(section.string())!=std::string_view::npos;
+      }
+    require(rejected,"an unavailable prepared catalog must report its path");
+    require(Resources::writeCensus(),"cannot write unavailable catalog census");
+    const auto census = json(censusPath);
+    require(census["files"].Empty() && census["runtime_programs"]["selections"].Empty(),
+            "an unavailable prepared catalog must not open DAT or execute its program");
     }
 
   using CameraOracle = std::map<std::string,std::shared_ptr<daedalus::ICamera>>;
@@ -1815,10 +1835,9 @@ struct BaseContentContract {
     {
     Resources resources;
     Resources::loadBase();
-    Gothic gothic;
-    auto source = definitionSourceVm(index,"Camera.dat",gothic);
-    source->register_external("hlp_random",[](int) -> int {
-      throw std::runtime_error("stock Camera.dat unexpectedly calls HLP_RANDOM");
+    auto source = definitionSourceVm(index,"Camera.dat");
+    source->observe_externals([](const auto& symbol) {
+      throw std::runtime_error("stock Camera.dat unexpectedly calls "+symbol.name());
       });
     const auto names = definitionNames(*source,"CCAMSYS");
     equal(names.size(),33u,"stock camera count");
@@ -1854,18 +1873,8 @@ struct BaseContentContract {
     {
     Resources resources;
     Resources::loadBase();
-    Gothic gothic;
     require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private camera record link");
-    const CameraDefinitions fallback;
-    cameraRuntimePresets(fallback,original);
-    require(Resources::writeCensus(),"cannot write camera fallback census");
-    const auto fallbackCensus = json(censusPath);
-    const auto& programs = fallbackCensus["runtime_programs"]["selections"];
-    equal(programs.Size(),1u,"camera fallback program selection count");
-    require(std::string_view(programs[0]["request"].GetString())=="Camera.dat" &&
-            std::string_view(programs[0]["record"]["sha256"].GetString())==sha,
-            "the camera fallback must run the selected base program");
-    require(fallbackCensus["files"].Empty(),"the camera fallback must not open an original DAT");
+    requireUnavailableCatalog<CameraDefinitions>(fixtureSection,censusPath);
 
     auto renamed = imported;
     const auto mobDefault = std::find_if(renamed.begin(),renamed.end(),[](const auto& row) { return row.first=="CAMMODMOBDEFAULT"; });
@@ -1883,20 +1892,10 @@ struct BaseContentContract {
             corrupt["presets"][0].HasMember("best_range"),"camera corruption fixture is missing its range field");
     corrupt["presets"][0]["best_range"].SetString("invalid");
     writeJson(fixtureSection,corrupt);
-    bool rejected = false;
-    try {
-      const CameraDefinitions invalid;
-      }
-    catch(const std::runtime_error&) {
-      rejected = true;
-      }
-    require(rejected,"corrupt selected camera records must be rejected");
-    require(Resources::writeCensus(),"cannot write corrupt camera census");
-    const auto failure = json(censusPath);
-    require(failure["runtime_programs"]["selections"]==programs,"a corrupt camera record must not execute VM fallback");
+    requireUnavailableCatalog<CameraDefinitions>(fixtureSection,censusPath);
     }
     setenv("OPENGOTHIC_BASE",base.c_str(),1);
-    std::puts("Camera records: 33 ordered presets and 759 fields match the original; runtime lookup, fallback and corruption checked");
+    std::puts("Camera records: 33 ordered presets and 759 fields match the original; unavailable catalogs rejected");
     }
 
   static void sfxRecords(const fs::path& base, const fs::path& temporary, const fs::path& censusPath) {
@@ -1922,8 +1921,7 @@ struct BaseContentContract {
     {
     Resources resources;
     Resources::loadBase();
-    Gothic gothic;
-    auto source = definitionSourceVm(index,"Sfx.dat",gothic);
+    auto source = definitionSourceVm(index,"Sfx.dat");
     source->observe_externals([](const auto& symbol) {
       throw std::runtime_error("stock Sfx.dat unexpectedly calls "+symbol.name());
       });
@@ -1962,38 +1960,18 @@ struct BaseContentContract {
     {
     Resources resources;
     Resources::loadBase();
-    Gothic gothic;
     require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private Sfx record link");
-    const SoundDefinitions fallback;
-    compareRuntime(fallback);
-    require(Resources::writeCensus(),"cannot write Sfx fallback census");
-    const auto fallbackCensus = json(censusPath);
-    const auto& programs = fallbackCensus["runtime_programs"]["selections"];
-    equal(programs.Size(),1u,"Sfx fallback program selection count");
-    require(std::string_view(programs[0]["request"].GetString())=="Sfx.dat" &&
-            std::string_view(programs[0]["record"]["sha256"].GetString())==sha,
-            "the Sfx fallback must run the selected base program");
-    require(fallbackCensus["files"].Empty(),"the Sfx fallback must not open an original DAT");
+    requireUnavailableCatalog<SoundDefinitions>(fixtureSection,censusPath);
 
     auto corrupt = json(section);
     require(corrupt.HasMember("presets") && corrupt["presets"].IsArray() && !corrupt["presets"].Empty() &&
             corrupt["presets"][0].HasMember("reverb_level"),"Sfx corruption fixture is missing its reverb field");
     corrupt["presets"][0]["reverb_level"].SetString("invalid");
     writeJson(fixtureSection,corrupt);
-    bool rejected = false;
-    try {
-      const SoundDefinitions invalid;
-      }
-    catch(const BaseStore::Error& error) {
-      rejected = std::string_view(error.what()).find(fixtureSection.string())!=std::string_view::npos;
-      }
-    require(rejected,"corrupt selected Sfx records must be rejected");
-    require(Resources::writeCensus(),"cannot write corrupt Sfx census");
-    const auto failure = json(censusPath);
-    require(failure["runtime_programs"]["selections"]==programs,"a corrupt Sfx record must not execute VM fallback");
+    requireUnavailableCatalog<SoundDefinitions>(fixtureSection,censusPath);
     }
     setenv("OPENGOTHIC_BASE",base.c_str(),1);
-    std::puts("Sfx records: 1770 ordered presets and 15930 fields match the original; runtime lookup, fallback and corruption checked");
+    std::puts("Sfx records: 1770 ordered presets and 15930 fields match the original; unavailable catalogs rejected");
     }
 
   static void musicRecords(const fs::path& base, const fs::path& temporary, const fs::path& censusPath) {
@@ -2037,8 +2015,7 @@ struct BaseContentContract {
     {
     Resources resources;
     Resources::loadBase();
-    Gothic gothic;
-    auto source = definitionSourceVm(index,"Music.dat",gothic);
+    auto source = definitionSourceVm(index,"Music.dat");
     source->observe_externals([](const auto& symbol) {
       throw std::runtime_error("stock Music.dat unexpectedly calls "+symbol.name());
       });
@@ -2079,38 +2056,18 @@ struct BaseContentContract {
     {
     Resources resources;
     Resources::loadBase();
-    Gothic gothic;
     require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private music theme record link");
-    const MusicDefinitions fallback;
-    compareRuntime(fallback);
-    require(Resources::writeCensus(),"cannot write music theme fallback census");
-    const auto fallbackCensus = json(censusPath);
-    const auto& programs = fallbackCensus["runtime_programs"]["selections"];
-    equal(programs.Size(),1u,"music theme fallback program selection count");
-    require(std::string_view(programs[0]["request"].GetString())=="Music.dat" &&
-            std::string_view(programs[0]["record"]["sha256"].GetString())==sha,
-            "the music theme fallback must run the selected base program");
-    require(fallbackCensus["files"].Empty(),"the music theme fallback must not open an original DAT");
+    requireUnavailableCatalog<MusicDefinitions>(fixtureSection,censusPath);
 
     auto corrupt = json(section);
     require(corrupt.HasMember("themes") && corrupt["themes"].IsArray() && !corrupt["themes"].Empty() &&
             corrupt["themes"][0].HasMember("vol"),"music theme corruption fixture is missing its volume field");
     corrupt["themes"][0]["vol"].SetString("invalid");
     writeJson(fixtureSection,corrupt);
-    bool rejected = false;
-    try {
-      const MusicDefinitions invalid;
-      }
-    catch(const BaseStore::Error& error) {
-      rejected = std::string_view(error.what()).find(fixtureSection.string())!=std::string_view::npos;
-      }
-    require(rejected,"corrupt selected music theme records must report their path");
-    require(Resources::writeCensus(),"cannot write corrupt music theme census");
-    const auto failure = json(censusPath);
-    require(failure["runtime_programs"]["selections"]==programs,"a corrupt music theme record must not execute VM fallback");
+    requireUnavailableCatalog<MusicDefinitions>(fixtureSection,censusPath);
     }
     setenv("OPENGOTHIC_BASE",base.c_str(),1);
-    std::puts("Music records: 74 ordered themes and 518 fields match the original; runtime lookup, fallback and corruption checked");
+    std::puts("Music records: 74 ordered themes and 518 fields match the original; unavailable catalogs rejected");
     }
 
   template<class Source, class T>
@@ -2157,13 +2114,12 @@ struct BaseContentContract {
     {
     Resources resources;
     Resources::loadBase();
-    Gothic gothic;
     const auto noExternal = [](const auto& symbol) {
       throw std::runtime_error("stock effect initializer unexpectedly calls "+symbol.name());
       };
-    auto rawParticles = definitionSourceVm(index,particle.request,gothic);
+    auto rawParticles = definitionSourceVm(index,particle.request);
     rawParticles->observe_externals(noExternal);
-    auto rawVisuals = definitionSourceVm(index,visual.request,gothic);
+    auto rawVisuals = definitionSourceVm(index,visual.request);
     rawVisuals->observe_externals(noExternal);
     const auto particles = EffectDefinitionData::readParticles(base,particle.sha);
     const auto visuals = EffectDefinitionData::readVisuals(base,visual.sha);
@@ -2192,42 +2148,30 @@ struct BaseContentContract {
       {
       Resources resources;
       Resources::loadBase();
-      Gothic gothic;
       require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private effect record link");
-      const ParticlesDefinitions particleDefinitions;
-      const VisualFxDefinitions visualDefinitions;
-      require(Resources::writeCensus(),"cannot write effect fallback census");
-      const auto fallback = json(censusPath);
-      const auto& programs = fallback["runtime_programs"]["selections"];
-      equal(programs.Size(),1u,"effect fallback program selection count");
-      require(std::string_view(programs[0]["request"].GetString())==missing.request &&
-              std::string_view(programs[0]["record"]["sha256"].GetString())==missing.sha,
-              "only the missing effect catalog must run the selected base program");
-      require(fallback["files"].Empty() && recordSelected(fallback,present),
-              "the other effect catalog must still read its records without original DAT opens");
+      const auto rejectUnavailable = [&] {
+        if(missingParticle)
+          requireUnavailableCatalog<ParticlesDefinitions>(fixtureSection,censusPath);
+        else
+          requireUnavailableCatalog<VisualFxDefinitions>(fixtureSection,censusPath);
+        };
+      rejectUnavailable();
+      if(missingParticle) {
+        const VisualFxDefinitions available;
+        } else {
+        const ParticlesDefinitions available;
+        }
+      require(Resources::writeCensus(),"cannot write remaining effect catalog census");
+      require(recordSelected(json(censusPath),present),"the other effect catalog must still load its records");
 
       auto corrupt = json(missing.section);
       corrupt["version"].SetInt(0);
       writeJson(fixtureSection,corrupt);
-      bool rejected = false;
-      try {
-        if(missingParticle) {
-          const ParticlesDefinitions invalid;
-          } else {
-          const VisualFxDefinitions invalid;
-          }
-        }
-      catch(const BaseStore::Error& error) {
-        rejected = std::string_view(error.what()).find(fixtureSection.string())!=std::string_view::npos;
-        }
-      require(rejected,"corrupt selected effect records must report their path");
-      require(Resources::writeCensus(),"cannot write corrupt effect census");
-      const auto failure = json(censusPath);
-      require(failure["runtime_programs"]["selections"]==programs,"a corrupt effect record must not execute VM fallback");
+      rejectUnavailable();
       }
       }
     setenv("OPENGOTHIC_BASE",base.c_str(),1);
-    std::puts("Effect records: 528 particles, 277 effects and 248 emit keys match the original across 51882 scalar fields; mixed fallback and corruption checked");
+    std::puts("Effect records: 528 particles, 277 effects and 248 emit keys match the original across 51882 scalar fields; unavailable catalogs rejected");
     }
 
   static void definitionRecords(const fs::path& base, const fs::path& censusPath) {
@@ -2273,14 +2217,16 @@ struct BaseContentContract {
     definitionFields(daedalus::IEffectBase{},Def::EffectBase{},"EffectBase value initialization");
     definitionFields(daedalus::IParticleEffectEmitKey{},Def::ParticleEffectEmitKey{},"ParticleEffectEmitKey value initialization");
     const auto index=ProgramData::readIndex(base/"programs");
-    Gothic gothic;
     for(const std::string request:{"Fight.dat","Camera.dat","Sfx.dat","ParticleFx.dat","VisualFx.dat","Music.dat"}) {
-      auto source=definitionSourceVm(index,request,gothic);
+      auto source=definitionSourceVm(index,request);
       require(Resources::writeCensus(),"cannot write definition source census");
       const auto before=json(censusPath);
-      auto native=gothic.createPhoenixVm(request);
-      require(Resources::writeCensus(),"cannot write native definition census");
-      require(before["files"]==json(censusPath)["files"],request+": own definition VM added an original DAT open");
+      const auto selected=selectBaseProgram(index,request,-1);
+      auto script=daedalus::DaedalusScript::from_program(ProgramData::readProgram(index.path(selected.source)));
+      Gothic::setupCommonScriptClasses(script);
+      auto native=std::make_unique<daedalus::DaedalusVm>(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+      require(Resources::writeCensus(),"cannot write offline definition census");
+      require(before["files"]==json(censusPath)["files"],request+": offline definition record added an original DAT open");
       const auto rejectRandom=[](int)->int {
         throw std::runtime_error("definition oracle encountered HLP_RANDOM; initializer parity requires investigation");
         };
@@ -2884,8 +2830,7 @@ struct BaseContentContract {
   static void musicRuntime(const fs::path& base,const fs::path& temporary,const fs::path& censusPath) {
     const auto fixture=temporary/"music-runtime-base";
     fs::create_directories(fixture);
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","outputunits","audio","sources"})
-      fs::create_symlink(base/part,fixture/part);
+    linkBaseParts(base,fixture,{"music"});
     fs::copy(base/"music",fixture/"music",fs::copy_options::recursive);
     setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
     MusicData::Source selected;
@@ -3233,12 +3178,10 @@ struct BaseContentContract {
     // Start with a valid base before adding the synthetic audio integrity fixtures.
     const auto fixtureBase=temporary/"audio-runtime-base";
     fs::create_directories(fixtureBase/"audio");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","outputunits","music","sources"})
-      fs::create_symlink(base/part,fixtureBase/part);
+    linkBaseParts(base,fixtureBase,{"audio"});
     fs::copy(base/"audio",fixtureBase/"audio",fs::copy_options::recursive);
     setenv("OPENGOTHIC_BASE",fixtureBase.c_str(),1);
     Resources resources;
-    Resources::loadBase();
     Gothic gothic;
     require(Resources::isHeadless(),"audio integration must remain CPU-only");
     const auto pcm=[](uint16_t channels,const std::vector<int16_t>& samples) {
@@ -3349,21 +3292,16 @@ struct BaseContentContract {
     std::puts("Audio runtime: lazy payload checks, external priority, exact PCM and zero-data outcomes, integrity failures, verified identities and zero original opens checked");
     }
 
-  static void census(const fs::path& file, size_t meshes, size_t models, size_t fonts, size_t programs) {
+  static void census(const fs::path& file, size_t meshes, size_t models, size_t fonts) {
     const auto data=json(file);
-    equal(data["replacements"].Size(),meshes+models+programs,"census base mesh/model/program count");
-    size_t selectedMeshes=0,selectedModels=0,selectedPrograms=0,sourceModels=0,sourceFonts=0;
+    equal(data["replacements"].Size(),meshes+models,"census base mesh/model count");
+    size_t selectedMeshes=0,selectedModels=0,sourceModels=0,sourceFonts=0;
     for(const auto& row:data["replacements"].GetArray()) {
       const std::string_view kind=row["kind"].GetString(),path=row["replacement"].GetString();
       if(kind=="basemodel") {
         ++selectedModels;
         require(path.starts_with("base/models/"),"base model census path");
         equal(row["opens"].GetUint64(),1u,"base model selected once");
-        }
-      else if(kind=="baseprogram") {
-        ++selectedPrograms;
-        require(path.starts_with("base/programs/"),"base program census path");
-        equal(row["opens"].GetUint64(),1u,"base program selected once");
         }
       else {
         ++selectedMeshes;
@@ -3373,7 +3311,6 @@ struct BaseContentContract {
       }
     equal(selectedMeshes,meshes,"census selected mesh count");
     equal(selectedModels,models,"census selected model count");
-    equal(selectedPrograms,programs,"census selected program count");
     for(const auto& row:data["files"].GetArray()) {
       const std::string_view kind=row["kind"].GetString();
       if(kind=="font") {
@@ -3630,7 +3567,7 @@ struct BaseContentContract {
     std::printf("Archive order: %zu entries equal to independent legacy scan, including mods\n",expected.size());
     }
 
-  static void run(const fs::path& base, const fs::path& temporary) {
+  static void run(const fs::path& base, const fs::path& runtime, const fs::path& temporary) {
     archiveOrder();
     censusSource(temporary/"source-census.json");
     setenv("OPENGOTHIC_CONTENT","",1);
@@ -3638,7 +3575,7 @@ struct BaseContentContract {
     const auto censusPath=temporary/"census.json";
     setenv("OPENGOTHIC_CENSUS",censusPath.c_str(),1);
     std::string meshKey;
-    size_t textureCount=0,meshCount=0,modelCount=0,fontCount=0,programCount=0,dds=0,png=0,tga=0,vertices=0,indices=0,meshlets=0;
+    size_t textureCount=0,meshCount=0,modelCount=0,fontCount=0,dds=0,png=0,tga=0,vertices=0,indices=0,meshlets=0;
     {
     Resources resources;
     require(!resources.baseTextures.enabled && !resources.baseMeshes.enabled && !resources.baseModels.enabled && !resources.baseFonts.enabled,
@@ -3651,7 +3588,7 @@ struct BaseContentContract {
     modelCount=models(base);
     fontCount=fonts(base,resources);
     programIdentityPrecedence();
-    programCount=programs(base,censusPath);
+    programs(base,censusPath);
     modelFixtures(temporary);
     for(const auto& [key,file]:resources.baseTextures.files) {
       auto* entry=sourceVfs().find(key+"-C.TEX");
@@ -3693,7 +3630,7 @@ struct BaseContentContract {
       }
     meshKey=resources.baseMeshes.files.begin()->first;
     }
-    census(censusPath,meshCount,modelCount,fontCount,programCount);
+    census(censusPath,meshCount,modelCount,fontCount);
     cameraRecords(base,temporary,censusPath);
     sfxRecords(base,temporary,censusPath);
     musicRecords(base,temporary,censusPath);
@@ -3711,7 +3648,7 @@ struct BaseContentContract {
     musicIntegrity(base,temporary);
     musicRuntime(base,temporary,censusPath);
     audioCorpus(base);
-    audioRuntime(base,temporary,censusPath);
+    audioRuntime(runtime,temporary,censusPath);
     std::printf("Meshes: %zu equal; %zu vertices, %zu indices, %zu meshlets; physics packing equal\n",
                 meshCount,vertices,indices,meshlets);
 
@@ -3739,8 +3676,7 @@ struct BaseContentContract {
       const auto incomplete=temporary/("missing-"+kind+"-index");
       fs::create_directories(incomplete/kind);
       fs::copy_file(base/"base.json",incomplete/"base.json");
-      for(const auto* part:{"base-files.json","worlds","textures","meshes","zen","models","fonts","programs","definitions","outputunits","audio","music","sources"})
-        if(part!=kind) fs::create_symlink(base/part,incomplete/part);
+      linkBaseParts(base,incomplete,{"base.json",kind});
       for(const auto& file:fs::directory_iterator(base/kind))
         if(file.path().filename()!=kind+".json") fs::create_symlink(file.path(),incomplete/kind/file.path().filename());
       setenv("OPENGOTHIC_BASE",incomplete.c_str(),1);
@@ -3757,8 +3693,7 @@ struct BaseContentContract {
     {
     const auto broken=temporary/"broken-program-record";
     fs::create_directories(broken/"programs");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","outputunits","audio","music","sources"})
-      fs::create_symlink(base/part,broken/part);
+    linkBaseParts(base,broken,{"programs"});
     for(const auto& file:fs::directory_iterator(base/"programs"))
       fs::create_symlink(file.path(),broken/"programs"/file.path().filename());
     const auto index=ProgramData::readIndex(broken/"programs");
@@ -3774,17 +3709,15 @@ struct BaseContentContract {
     Resources resources;
     Resources::loadBase();
     fs::remove(bin);
-    const auto host=selected->step.starts_with("host_") ?
-      (fs::path(CommandLine::inst().rootPath())/source.path).u16string() : std::u16string{};
     const auto fails=[&](const std::string& description, const std::string& reason=std::string{}) {
       bool failed=false;
-      try { (void)loadBaseProgram(selected->request,selected->language,selected->step,host); }
-      catch(const BaseStore::Error& error) {
-        const std::string message=error.what();
-        failed=message.find("program "+selected->request+":")!=std::string::npos &&
-               (reason.empty() || message.find(reason)!=std::string::npos);
+      try {
+        std::string digest;
+        (void)ProgramData::readProgram(file,&digest);
+        require(digest==source.recordSha256,"program record identity differs from base index");
         }
-      require(failed,description+": selected native failure must be fatal");
+      catch(const std::exception& error) { failed=reason.empty() || std::string_view(error.what()).find(reason)!=std::string_view::npos; }
+      require(failed,description+": offline program reader must reject the invalid record");
       };
     fails("missing BIN");
     fs::create_symlink(base/"programs"/bin.filename(),bin);
@@ -3799,14 +3732,13 @@ struct BaseContentContract {
     }
     const auto failed=json(censusPath);
     require(failed["files"].Empty() && failed["replacements"].Empty() &&
-            failed["runtime_programs"]["selections"].Empty() && failed["base_misses"].Size()==3,
-            "failed native records must record misses without original opens or successful selections");
+            failed["runtime_programs"]["selections"].Empty(),
+            "offline program integrity checks must not load a game program");
     }
     {
     const auto broken=temporary/"broken-outputunits-record";
     fs::create_directories(broken/"outputunits");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","definitions","programs","audio","music","sources"})
-      fs::create_symlink(base/part,broken/part);
+    linkBaseParts(base,broken,{"outputunits"});
     for(const auto& file:fs::directory_iterator(base/"outputunits"))
       fs::create_symlink(file.path(),broken/"outputunits"/file.path().filename());
     const auto index=OutputUnits::readIndex(broken/"outputunits");
@@ -3883,7 +3815,7 @@ struct BaseContentContract {
     equal(selected["replacements"].Size(),1u,"own replacement count");
     require(std::string(selected["replacements"][0]["kind"].GetString())=="mesh","own replacement census kind");
     std::puts("Selection: invalid base rejected; missing resources recorded; own content wins; census kinds stay separate");
-    contentAnimations(base,temporary);
+    contentAnimations(runtime,temporary);
     }
   };
 
@@ -3895,8 +3827,15 @@ int main() {
     const auto* gothic=std::getenv("GOTHIC_DIR");
     const auto* dir=std::getenv("OPENGOTHIC_BASE");
     BaseContentContract::require(gothic && *gothic,"GOTHIC_DIR must point to a Gothic II installation");
-    BaseContentContract::require(dir && *dir,"OPENGOTHIC_BASE must point to a content-convert base with textures and meshes");
+    BaseContentContract::require(dir && *dir,"OPENGOTHIC_BASE must point to a full source base for the offline oracle");
     const auto base=fs::absolute(dir);
+    const auto fingerprint=BaseStore::nativeProjectionIdentity(base).fingerprint;
+    const auto* runtimeDir=std::getenv("OPENGOTHIC_CONTRACT_NATIVE_BASE");
+    const auto runtime=runtimeDir && *runtimeDir ? fs::absolute(runtimeDir) : BaseStore::cacheRoot()/fingerprint;
+    BaseContentContract::require(fs::is_regular_file(runtime/"base.json"),
+        "Prepare the matching stock runtime base with content-convert resolve and set OPENGOTHIC_CONTRACT_NATIVE_BASE");
+    BaseContentContract::require(BaseStore::isNativeProjection(runtime) && BaseImport::readIdentity(runtime).fingerprint==fingerprint,
+        "The runtime base must be the prepared projection of the offline oracle base");
     fs::create_directories(temporary);
     // Fixtures point OPENGOTHIC_BASE at bases inside `temporary`, and an explicit base is saved as the
     // installation's current base in the cache. Keep that pointer in the contract's own cache: in the shared
@@ -3904,7 +3843,7 @@ int main() {
     setenv("OPENGOTHIC_BASE_CACHE",(temporary/"base-cache").c_str(),1);
     const char* args[]={"gothic-basecontent-contract","-g",gothic};
     CommandLine commandLine(3,args);
-    BaseContentContract::run(base,temporary);
+    BaseContentContract::run(base,runtime,temporary);
     std::puts("base content contract: passed");
     }
   catch(const std::exception& error) {

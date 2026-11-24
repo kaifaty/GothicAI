@@ -27,6 +27,7 @@
 #include "world/triggers/abstracttrigger.h"
 #include "world/objects/npc.h"
 #include "game/serialize.h"
+#include "game/savegameheader.h"
 #include "game/simulationstep.h"
 #include "game/globaleffects.h"
 #include "utils/gthfont.h"
@@ -1340,10 +1341,24 @@ void MainWindow::startGame(std::string_view slot) {
   }
 
 void MainWindow::loadGame(std::string_view slot) {
-  if(Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
-    setGameImpl(nullptr);
+  if(Gothic::inst().checkLoading()!=Gothic::LoadState::Idle)
+    return;
+
+  try {
+    Tempest::RFile file(slot);
+    Serialize      archive(file);
+    SaveGameHeader header;
+    archive.setEntry("header");
+    archive.read(header);
+    header.requireCompatible();
+    }
+  catch(const std::exception& e) {
+    Log::e("loading error: ",e.what());
+    Gothic::inst().onPrint(e.what());
+    return;
     }
 
+  setGameImpl(nullptr);
   Gothic::inst().setBenchmarkMode(Benchmark::None);
   Gothic::inst().startLoad("LOADING.TGA",[slot=std::string(slot)](std::unique_ptr<GameSession>&& game){
     game = nullptr; // clear world-memory now

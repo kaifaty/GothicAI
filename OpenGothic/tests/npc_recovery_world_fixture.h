@@ -273,8 +273,8 @@ void stockDeathTrophies(ActivityEventsWorld& test, bool native) {
 void npcDeathLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
-  std::string program;
-  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  const auto& program=selectBaseProgram(baseProgramIndex(),gothic.defaultGameDatFile(),
+      Settings::getI("GAME","language")).source.recordSha256;
   if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
     std::puts("SKIP death: the fixture is for the verified NotR program");
     return;
@@ -395,19 +395,19 @@ void npcDeathLifecycle(Gothic& gothic) {
     Tempest::MemWriter writer(legacy);
     {
       Serialize out(writer);
-      out.setEntry("game/daedalus");
+      out.setEntry(ScriptVars::StateEntry);
       out.write(uint32_t(2));
       out.write(uint32_t(daedalus::DaedalusDataType::INT),canyon->name(),uint32_t(1),int32_t(7));
       out.write(uint32_t(daedalus::DaedalusDataType::INT),swamp->name(),uint32_t(1),int32_t(2));
     }
     Tempest::MemReader reader(legacy);
     Serialize in(reader);
-    require(in.setEntry("game/daedalus"),"death progress: legacy save entry is present");
+    require(in.setEntry(ScriptVars::StateEntry),"death progress: save state is present");
     script.loadVar(in);
     const auto& progress=Contract::deathProgress(script);
     require(progress.canyonRazors==7 && progress.dragonDeaths[0]==2 &&
             canyon->get_int()==progress.canyonRazors && swamp->get_int()==progress.dragonDeaths[0],
-            "death progress: legacy save values are visible in engine storage and script aliases");
+            "death progress: saved values are visible in engine storage and script aliases");
     canyon->set_int(oldCanyon);
     swamp->set_int(oldSwamp);
   }
@@ -1076,8 +1076,8 @@ std::vector<std::string> heroItemPrograms(Gothic& gothic,World& world,Npc& hero,
 void npcUnconsciousLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
-  std::string program;
-  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  const auto& program=selectBaseProgram(baseProgramIndex(),gothic.defaultGameDatFile(),
+      Settings::getI("GAME","language")).source.recordSha256;
   if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
     std::puts("SKIP unconscious: the fixture is for the verified NotR program");
     return;

@@ -17,6 +17,8 @@ import socket
 import subprocess
 import sys
 import time
+import zipfile
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -73,6 +75,8 @@ UV_CANDIDATES_WINDOWS = (
 MANAGED_ENV = ("OPENAI_API_KEY", "INWORLD_API_KEY", "OPENGOTHIC_BODY_NET")
 FOREIGN_ENV = ("VIRTUAL_ENV",)  # the launcher's own venv: `uv run` of a service would warn and ignore it
 SAVE_RE = re.compile(r"save_slot_(\d+)\.sav")
+SAVE_TAG = b"OpenGothic/Save\0"
+SAVE_VERSION = 56  # SaveArchive::Current
 
 
 class LaunchError(Exception):
@@ -418,12 +422,23 @@ def preparation(
 
 
 def latest_save(game_home: Path) -> str | None:
-    """Slot of the newest save the game wrote (quick save is slot 0)."""
-    saves = [p for p in game_home.glob("save_slot_*.sav") if SAVE_RE.fullmatch(p.name)]
-    if not saves:
-        return None
-    newest = max(saves, key=lambda p: p.stat().st_mtime)
-    return SAVE_RE.fullmatch(newest.name).group(1)  # type: ignore[union-attr]
+    """Slot of the newest save supported by this build (quick save is slot 0)."""
+    latest: tuple[float, str] | None = None
+    prefix = SAVE_TAG + SAVE_VERSION.to_bytes(2, "little")
+    for path in game_home.glob("save_slot_*.sav"):
+        slot = SAVE_RE.fullmatch(path.name)
+        if slot is None:
+            continue
+        try:
+            modified = path.stat().st_mtime
+            if latest is not None and modified <= latest[0]:
+                continue
+            with zipfile.ZipFile(path) as archive, archive.open("header") as header:
+                if header.read(len(prefix)) == prefix:
+                    latest = modified, slot.group(1)
+        except (OSError, KeyError, RuntimeError, zipfile.BadZipFile, zlib.error):
+            continue
+    return latest[1] if latest else None
 
 
 def child_env(extra: dict[str, str]) -> dict[str, str]:

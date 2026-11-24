@@ -1697,8 +1697,8 @@ void activityEventsSynthetic(World& world,Npc& npc,const ActivityPhases& anvil,c
     const auto* records=std::getenv("OPENGOTHIC_ACTIVITY_RECORDS");
     const std::optional<std::string> kept=records ? std::optional<std::string>(records) : std::nullopt;
     setenv("OPENGOTHIC_ACTIVITY_RECORDS","all",1);
-    std::string sha;
-    loadBaseProgram(Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"),&sha);
+    const auto& sha=selectBaseProgram(baseProgramIndex(),Gothic::inst().defaultGameDatFile(),
+        Settings::getI("GAME","language")).source.recordSha256;
     auto all=ActivityDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script.getVm(),sha);
     if(kept) setenv("OPENGOTHIC_ACTIVITY_RECORDS",kept->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_RECORDS");
     auto& live=NpcDefinitionContract::activities(script);
@@ -3819,12 +3819,12 @@ int main(int argc, const char** argv) {
   try {
     const auto* native=std::getenv("OPENGOTHIC_CONTRACT_NATIVE_STOCK");
     const bool nativeOnly=native && std::strcmp(native,"1")==0;
-    if(argc==4 && std::string_view(argv[1])=="--bennet-ore") {
-      bennetOreContract(argv[2],argv[3],nativeOnly);
+    if(argc==3 && std::string_view(argv[1])=="--bennet-ore") {
+      bennetOreContract(argv[2]);
       std::puts("Bennet ore contract passed");
       return EXIT_SUCCESS;
       }
-    require(argc==1,"usage: gothic-placed-items-contract [--bennet-ore OLD_SAVE CASE_DIR]");
+    require(argc==1,"usage: gothic-placed-items-contract [--bennet-ore CASE_DIR]");
     census();
     rootedAndStack();
     censusCache();

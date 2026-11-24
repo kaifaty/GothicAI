@@ -1,24 +1,23 @@
 #include "fightaidefinitions.h"
 
 #include "basescripts.h"
-#include "fightdefinitioncapture.h"
-#include "gothic.h"
+#include "basestore.h"
+#include "fightdefinitiondata.h"
 #include "programdata.h"
-
-#include <stdexcept>
 
 FightAi::FightAi() {
   const auto& index = baseProgramIndex();
   const auto* source = ProgramData::fightProgram(index);
   if(source==nullptr)
-    throw std::runtime_error("fight definitions: no source in program base index");
+    throw BaseStore::Error("fight tactics require a prepared catalog");
+
   const auto base = index.dir.parent_path();
-  if(std::filesystem::exists(FightDefinitions::section(base,source->recordSha256))) {
+  const auto section = FightDefinitions::section(base,source->recordSha256);
+  try {
     fAi = FightDefinitions::read(base,source->recordSha256);
-    } else {
-    // Extra script programs can call engine externals while building their tactics.
-    auto vm = Gothic::inst().createPhoenixVm("Fight.dat");
-    fAi = FightDefinitions::capture(*vm);
+    }
+  catch(const std::runtime_error& error) {
+    throw BaseStore::Error(section.string()+": "+error.what());
     }
   }
 

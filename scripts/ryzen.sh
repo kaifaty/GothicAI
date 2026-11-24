@@ -479,7 +479,6 @@ build_engine() {
     cmake -S "$ROOT/OpenGothic" -B "$state/build" -G Ninja \
       -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       "${RYZEN_CMAKE_FLAGS[@]}" \
-      -DOPENGOTHIC_LEGACY_DAEDALUS=OFF \
       -DOPENGOTHIC_ENABLE_APP_CADENCE=ON -DOPENGOTHIC_ENABLE_FRAME_PROFILE="$frame_profile" \
       -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
       >"$state/build/configure.log" 2>&1 || { local rc=$?; cat "$state/build/configure.log"; return "$rc"; }
@@ -821,7 +820,7 @@ import re
 import sys
 
 sys.path.insert(0, sys.argv[7])
-from ryzen_game import _installation_identity
+from ryzen_game import _installation_identity, _ready_script_base
 
 game = Path(sys.argv[1]).expanduser().resolve()
 cache = Path.home() / '.cache/gothic-ai/base'
@@ -841,7 +840,8 @@ def import_required(message):
                      'to import the base into ~/.cache/gothic-ai/base, then retry')
 
 def select(kind, expected):
-    part = current.get(kind)
+    native = kind == 'base' and action != 'pytest'
+    part = (current.get('native_base') if native else None) or current.get(kind)
     if kind == 'videos' and part is None:
         print('\n')
         return
@@ -852,7 +852,10 @@ def select(kind, expected):
     fingerprint, path = part['fingerprint'], Path(part['path'])
     pointed = identity(kind, path)
     actual = pointed['format_sha256']
-    if actual != expected:
+    def ready(directory):
+        return not native or _ready_script_base(directory, native=True)
+
+    if actual != expected or not ready(path):
         sources = _installation_identity(pointed, kind)
         root = cache if kind == 'base' else cache / 'videos'
         for candidate in sorted(root.glob('*/base.json' if kind == 'base' else '*/videos.json')):
@@ -860,20 +863,24 @@ def select(kind, expected):
                 continue
             try:
                 cached = identity(kind, candidate.parent)
-                if cached['format_sha256'] != expected or _installation_identity(cached, kind) != sources:
+                if (cached['format_sha256'] != expected or _installation_identity(cached, kind) != sources
+                        or not ready(candidate.parent)):
                     continue
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 continue
             fingerprint, path = candidate.parent.name, candidate.parent
             if action == 'setup':
-                print(f'Ryzen: Mac pointer has importer format {actual}, using Mac cache part '
-                      f'{fingerprint} of format {expected}', file=sys.stderr)
+                if actual != expected:
+                    print(f'Ryzen: Mac pointer has importer format {actual}, using Mac cache part '
+                          f'{fingerprint} of format {expected}', file=sys.stderr)
+                else:
+                    print(f'Ryzen: using prepared native base {fingerprint}', file=sys.stderr)
             break
         else:
             import_required(
                 f'needs_decision: Mac {kind} part {fingerprint} has importer format {actual}, '
                 f'this checkout builds {expected}; build the engine from this checkout and run the game '
-                'or storygraph once on Mac to import into ~/.cache/gothic-ai/base, then retry setup')
+                'once on Mac through the launcher to prepare the base in ~/.cache/gothic-ai/base, then retry setup')
     print(fingerprint)
     print(path)
 
@@ -920,7 +927,7 @@ export -f verify_base_part
   printf "__name__ = 'ryzen_game'\n"
   printf '%s\n' "$3"
   cat <<'PY_HOST'
-kind, expected = sys.argv[1:]
+kind, expected, profile = sys.argv[1:]
 fingerprint = ''
 try:
     parts = json.loads((Path.home() / 'gothic-ai/game-base.json').read_text())
@@ -934,6 +941,8 @@ try:
         roots.append(store)
 
     def ready(directory):
+        if kind == 'base' and profile != 'pytest' and not _ready_script_base(directory, native=True):
+            return False
         return subprocess.run(
             ['bash', '-c', 'verify_base_part "$@"', '--', kind, str(directory), directory.name, 'quick'],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -951,9 +960,9 @@ except (OSError, ValueError, KeyError, TypeError):
 print(fingerprint)
 sys.exit(3)
 PY_HOST
-} | python3 - "$1" "$2"
+} | python3 - "$1" "$2" "$4"
 REMOTE
-  } | remote bash -s -- "$1" "$2" "$(cat "$ROOT/scripts/ryzen_game.py")"
+  } | remote bash -s -- "$1" "$2" "$(cat "$ROOT/scripts/ryzen_game.py")" "$ACTION"
 }
 
 resolve_host_base_parts() {

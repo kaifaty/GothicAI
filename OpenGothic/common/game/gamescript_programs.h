@@ -53,12 +53,23 @@ class GameScript::StockPrograms final {
     std::unordered_map<uint32_t,Entry>    programs;
   };
 
-struct GameScript::BennetOre final {
+struct GameScript::BennetOreDialog final {
+  uint32_t                                 infoId = 0;
   const storygraph::Program*               condition = nullptr;
   const storygraph::Program*               answer = nullptr;
+  daedalus::DaedalusSymbol*                 conditionSymbol = nullptr;
+  daedalus::DaedalusSymbol*                 answerSymbol = nullptr;
+  };
+
+struct GameScript::BennetOre final {
+  std::array<BennetOreDialog,3>             dialogs;
   std::shared_ptr<const daedalus::IItem>    ore;
   InventoryTransfer::Text                  notices;
   std::string_view                         font;
+  uint32_t                                 missionId = 0;
+  uint32_t                                 teachingId = 0;
+  const daedalus::DaedalusSymbol*           smithTalent = nullptr;
+  const daedalus::DaedalusSymbol*           rescueMission = nullptr;
   daedalus::DaedalusSymbol*                oreAlias = nullptr;
   daedalus::DaedalusSymbol*                giverAlias = nullptr;
   daedalus::DaedalusSymbol*                takerAlias = nullptr;

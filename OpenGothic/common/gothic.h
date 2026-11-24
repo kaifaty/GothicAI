@@ -234,11 +234,8 @@ class Gothic final : public GameServices, public GameHost {
     uint32_t                              messageTime   (std::string_view id) const;
 
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
-    std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
-    std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(daedalus::DaedalusScript sc, std::string_view datFile);
     static void                            enableScriptAudit(daedalus::DaedalusVm& vm, std::string_view datFile);
-    daedalus::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
-    void                                  setupCommonScriptClasses(daedalus::DaedalusScript &sc);
+    static void                            setupCommonScriptClasses(daedalus::DaedalusScript &sc);
     void                                  setupVmCommonApi(daedalus::DaedalusVm &vm);
 
     static const FightAi&                 fai();
@@ -287,7 +284,7 @@ class Gothic final : public GameServices, public GameHost {
     bool                                    meleeBladeLabels = true;
     Benchmark                               isBenchmark    = Benchmark::None;
 
-    std::string                             wrldDef, plDef, gameDatDef, ouDef;
+    std::string                             wrldDef, plDef, ouDef;
 
     std::unique_ptr<IniFile>                modFile;
     std::unique_ptr<IniFile>                systemPackIniFile;

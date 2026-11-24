@@ -6,7 +6,9 @@
 
 #include "baseidentity.h"
 #include "baseimport.h"
+#include "asset/fromzenkit.h"
 #include "commandline.h"
+#include "game/definitions/baseprogram.h"
 #include "game/definitions/basescripts.h"
 #include "game/definitions/gameplaydefinitions.h"
 #include "game/definitions/spelldefinitions.h"
@@ -27,6 +29,8 @@
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
+#include <zenkit/DaedalusScript.hh>
+#include <zenkit/Stream.hh>
 
 #include <algorithm>
 #include <array>
@@ -364,7 +368,7 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
     Tempest::MemWriter writer(bytes);
     {
       Serialize out(writer);
-      out.setEntry("game/daedalus");
+      out.setEntry(ScriptVars::StateEntry);
       out.write(uint32_t(globals.size()));
       for(size_t i=0; i<globals.size(); ++i) {
         auto& [global,owned,saved]=globals[i];
@@ -388,7 +392,7 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
       }
     Tempest::MemReader reader(bytes);
     Serialize in(reader);
-    if(!in.setEntry("game/daedalus")) throw std::runtime_error("Crime memory: save must use the original entry");
+    if(!in.setEntry(ScriptVars::StateEntry)) throw std::runtime_error("Crime memory: save must contain the state entry");
     script.loadVar(in);
     for(size_t i=0; i<globals.size(); ++i) {
       const auto& [global,owned,saved]=globals[i];
@@ -1075,7 +1079,17 @@ static void gameplayDefinitionParity(World& world) {
     return; // Older imported bases retain the original initialization path.
 
   auto& gothic = Gothic::inst();
-  auto original = gothic.createPhoenixVm(gothic.defaultGameDatFile());
+  const auto selected = selectBaseProgram(baseProgramIndex(),gothic.defaultGameDatFile(),Settings::getI("GAME","language"));
+  require(selected.source.origin=="host","the verified stock program oracle requires the loose DAT");
+  const auto path = fs::path(CommandLine::inst().rootPath())/selected.source.path;
+  require(BaseImport::sha256File(path)==selected.source.sha256,"the stock program oracle differs from the imported source");
+  auto reader = zenkit::Read::from(path);
+  zenkit::DaedalusScript dat;
+  dat.load(reader.get());
+  auto originalScript = daedalus::DaedalusScript::from_program(asset::fromZenKit(dat.export_program()));
+  Gothic::setupCommonScriptClasses(originalScript);
+  auto original = std::make_unique<daedalus::DaedalusVm>(std::move(originalScript),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  gothic.setupVmCommonApi(*original);
   auto& live = world.script().getVm();
   size_t definitions = 0, fields = 0;
   const auto verifyUnbound = [&](std::string_view name) {
@@ -1410,7 +1424,7 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
   Tempest::MemWriter writer(legacyBytes);
   {
     Serialize out(writer);
-    out.setEntry("game/daedalus");
+    out.setEntry(ScriptVars::StateEntry);
     out.write(uint32_t(3));
     out.write(uint32_t(daedalus::DaedalusDataType::INSTANCE),uint8_t(3),
               std::string_view("UNAVAILABLE_TEST_INVENTORY_SYMBOL"),uint32_t(0),uint32_t(4242));
@@ -1419,12 +1433,12 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
   }
   Tempest::MemReader reader(legacyBytes);
   Serialize in(reader);
-  require(in.setEntry("game/daedalus"),"world entry: the legacy save entry must be present");
+  require(in.setEntry(ScriptVars::StateEntry),"world entry: the state entry must be present");
   script.loadVar(in);
   require(NpcDefinitionContract::currentStoryWorld(script)==khorinis &&
           std::ranges::count(NpcDefinitionContract::worldEntryLatches(script),7)==1 &&
           script.intSymbol("ENTERADW_KAPITEL2",0)==7,
-          "world entry: the legacy variables after an unknown inventory reference restore the current world and engine latch");
+          "world entry: the saved variables after an unknown inventory reference restore the current world and engine latch");
   level->set_int(before.at("CURRENTLEVEL"));
   script.findSymbol("ENTERADW_KAPITEL2")->set_int(before.at("ENTERADW_KAPITEL2"));
   std::puts("Addon World entry: Init order, live chapter, room assignments, NPC aliases and eight chapter latches match stock");

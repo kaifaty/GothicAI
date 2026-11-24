@@ -18,13 +18,7 @@ struct tm36 {
   int32_t tm_isdst;
   };
 
-static void readTm(Serialize& fin, std::tm& i, uint16_t version) {
-  if(version<=38) {
-    // NOTE: apparently std::tm is not binary same across different C++ compillers
-    // 20 instead of 36
-    fin.readBytes(&i,sizeof(i));
-    return;
-    }
+static void readTm(Serialize& fin, std::tm& i) {
   tm36 tx = {};
   fin.readBytes(&tx,sizeof(tx));
 
@@ -59,10 +53,22 @@ SaveGameHeader::SaveGameHeader(Serialize &fin) {
   fin.readBytes(buf,sizeof(buf));
   if(std::memcmp(tag,buf,sizeof(buf))!=0)
     throw std::runtime_error("invalid file format");
-  fin.read(version,name,world);
-  readTm(fin,pcTime,version);
-  //char b[40]; fin.readBytes(b,20);
+  fin.read(version);
+  if(!isCompatible())
+    return;
+  fin.read(name,world);
+  readTm(fin,pcTime);
   fin.read(wrldTime,playTime,isGothic2);
+  }
+
+bool SaveGameHeader::isCompatible() const {
+  return version==Serialize::Current;
+  }
+
+void SaveGameHeader::requireCompatible() const {
+  if(!isCompatible())
+    throw std::runtime_error("Unsupported save version "+std::to_string(version)+
+                             " (expected "+std::to_string(Serialize::Current)+")");
   }
 
 void SaveGameHeader::save(Serialize &fout) const {

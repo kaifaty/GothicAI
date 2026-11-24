@@ -64,7 +64,6 @@ build_game() {
   fi
   cmake -S "$ROOT/OpenGothic" -B "$BUILD" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DOPENGOTHIC_LEGACY_DAEDALUS=OFF \
     -DOPENGOTHIC_ENABLE_FRAME_PROFILE=ON -DOPENGOTHIC_ENABLE_APP_CADENCE=ON \
     "${flags[@]}" >"$out/configure.log" 2>&1 || { tail -60 "$out/configure.log"; return 1; }
   cmake --build "$BUILD" --target Gothic2Notr --parallel "${RYZEN_JOBS:-8}" \

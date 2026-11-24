@@ -109,9 +109,6 @@ GameScript::GameScript(GameSession &owner)
     symbolCatalog = ScriptSymbolCatalog::load(baseProgramIndex().dir.parent_path(),GameplayDefinitions::stockProgram);
 
   vmLang = Settings::getI("GAME", "language");
-#if !defined(OPENGOTHIC_NATIVE_GAME)
-  vm.register_exception_handler(daedalus::lenient_vm_exception_handler);
-#endif
   Gothic::inst().setupCommonScriptClasses(vm);
   Gothic::inst().setupVmCommonApi(vm);
   aiDefaultPipe.reset(new GlobalOutput(*this));
@@ -552,12 +549,17 @@ void GameScript::loadQuests(Serialize& fin) {
   }
 
 void GameScript::saveVar(Serialize &fout) {
-  auto& dat = vm.symbols();
-  fout.write(uint32_t(dat.size()));
-  for(unsigned i = 0; i < dat.size(); ++i){
-    auto* sym = vm.find_symbol_by_index(i); // never returns nullptr
-    saveSym(fout,*sym);
+  std::vector<ScriptVars::Row> rows;
+  for(uint32_t id=0; id<vm.symbols().size(); ++id) {
+    if(isBennetProgressSymbol(id))
+      continue;
+    auto row = stateRow(*vm.find_symbol_by_index(id));
+    if(!std::holds_alternative<std::monostate>(row.value))
+      rows.push_back(std::move(row));
     }
+  fout.write(uint32_t(rows.size()));
+  for(const auto& row : rows)
+    ScriptVars::writeRow(fout,row);
   }
 
 void GameScript::loadVar(Serialize &fin) {
@@ -576,11 +578,6 @@ void GameScript::loadVar(Serialize &fin) {
         (symbol->*setter)(values[index],uint16_t(index),nullptr);
       };
     if(const auto* values = std::get_if<std::vector<int32_t>>(&row.value)) {
-      if(symbol==nullptr && row.name.starts_with(OwnSymbols::Prefix)) {
-        // Older saves listed director variables only in this entry.
-        std::string why;
-        symbol = own.addInt(vm,row.name,why);
-        }
       loadValues(*values,&daedalus::DaedalusSymbol::set_int);
       }
     else if(const auto* values = std::get_if<std::vector<float>>(&row.value)) {
@@ -601,12 +598,12 @@ void GameScript::loadVar(Serialize &fin) {
           symbol->set_instance(item ? std::static_pointer_cast<daedalus::IItem>(item->handlePtr()) : nullptr);
           break;
           }
-        case ScriptVars::ReferenceKind::InventoryItem:
-          if(auto* npc = world().npcById(ref->object)) {
-            auto* item = npc->getItem(ref->item);
-            symbol->set_instance(item ? std::static_pointer_cast<daedalus::IItem>(item->handlePtr()) : nullptr);
-            }
+        case ScriptVars::ReferenceKind::InventoryItem: {
+          const auto* npc = world().npcById(ref->object);
+          auto* item = npc ? npc->inventory().itemByIndex(ref->item) : nullptr;
+          symbol->set_instance(item ? std::static_pointer_cast<daedalus::IItem>(item->handlePtr()) : nullptr);
           break;
+          }
         default:
           break;
         }
@@ -646,6 +643,10 @@ const QuestLog& GameScript::questLog() const {
   }
 
 void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& symbol) {
+  ScriptVars::writeRow(fout,stateRow(symbol));
+  }
+
+ScriptVars::Row GameScript::stateRow(daedalus::DaedalusSymbol& symbol) {
   using Type = daedalus::DaedalusDataType;
   using Kind = ScriptVars::ReferenceKind;
   ScriptVars::Row row;
@@ -658,19 +659,24 @@ void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& symbol) {
     else if(symbol.is_instance_of<daedalus::IItem>()) {
       const auto* item = static_cast<const daedalus::IItem*>(symbol.get_instance().get());
       const auto id = world().itmId(static_cast<const ItemRecord*>(item));
-      ScriptVars::Reference ref{Kind::WorldItem,id};
-      if(id==uint32_t(-1)) {
-        for(uint32_t npc=0; npc<world().npcCount(); ++npc) {
-          if(world().npcById(npc)->itemCount(item->symbol_index())>0) {
-            ref = {Kind::InventoryItem,npc,item->symbol_index()};
+      ScriptVars::Reference ref{};
+      if(id!=uint32_t(-1)) {
+        ref = {Kind::WorldItem,id};
+        } else {
+        for(uint32_t ownerId=0; ownerId<world().npcCount(); ++ownerId) {
+          if(const auto* npc=world().npcById(ownerId)) {
+            const auto& inv = npc->inventory();
+            const auto index = inv.indexOf(static_cast<const Item*>(item->user_ptr));
+            const auto* owned = inv.itemByIndex(index);
+            if(owned==nullptr || &owned->handle()!=static_cast<const ItemRecord*>(item))
+              continue;
+            ref = {Kind::InventoryItem,ownerId,index};
             break;
             }
           }
         }
-      row = {symbol.name(),ref};
-      }
-    else {
-      row.value = ScriptVars::Reference{};
+      if(ref.kind!=Kind::None)
+        row = {symbol.name(),ref};
       }
     }
   else if(symbol.count()>0 && !symbol.is_member() && !symbol.is_const()) {
@@ -689,7 +695,7 @@ void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& symbol) {
       default: break;
       }
     }
-  ScriptVars::writeRow(fout,row);
+  return row;
   }
 
 void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {
@@ -841,11 +847,11 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
       const daedalus::IInfo& info = *i;
       if(info.important!=important)
         continue;
-      const bool bennet = isBennetOreDialog(info);
+      const auto* bennet = bennetOreDialog(info);
       bool npcKnowsInfo = false;
       if(bennet) {
         BennetLookupAudit audit(bennetLookupScope);
-        npcKnowsInfo = dlgKnownInfos.contains({static_cast<const daedalus::INpc&>(*player).symbol_index(),BennetOreInfoId});
+        npcKnowsInfo = dlgKnownInfos.contains({static_cast<const daedalus::INpc&>(*player).symbol_index(),bennet->infoId});
         } else {
         npcKnowsInfo = doesNpcKnowInfo(*player,vm.find_symbol_by_instance(info)->index());
         }
@@ -867,13 +873,13 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
       if(bennet) {
         auto& overlay = Gothic::inst().dialogScriptFn;
         int32_t result = 0;
-        if(overlay && overlay(*bennetConditionSymbol,result)) {
+        if(overlay && overlay(*bennet->conditionSymbol,result)) {
           valid = result!=0;
           } else {
           BennetLookupAudit audit(bennetLookupScope);
           auto* hero = findNpc(player.get());
           auto* npc = findNpc(hnpc.get());
-          valid = hero!=nullptr && npc!=nullptr && bennetOffer(*hero,*npc);
+          valid = hero!=nullptr && npc!=nullptr && bennetOffer(*bennet,*hero,*npc);
           }
         } else if(info.condition) {
         auto* conditionSymbol = vm.find_symbol_by_index(uint32_t(info.condition));
@@ -954,10 +960,10 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
     player.stopAnim("");
   auto& pl = player.handle();
 
-  if(isBennetOreDialog(info) && dlg.scriptFn==uint32_t(info.information)) {
+  if(const auto* bennet = bennetOreDialog(info); bennet!=nullptr && dlg.scriptFn==uint32_t(info.information)) {
     if(npc.instanceSymbol()!=size_t(info.npc) || &player==&npc)
       return;
-    const std::pair<size_t,size_t> known = {static_cast<const daedalus::INpc&>(pl).symbol_index(),BennetOreInfoId};
+    const std::pair<size_t,size_t> known = {static_cast<const daedalus::INpc&>(pl).symbol_index(),bennet->infoId};
     bool newlyKnown = false;
     {
       BennetLookupAudit audit(bennetLookupScope);
@@ -965,9 +971,9 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
       }
     auto& overlay = Gothic::inst().dialogScriptFn;
     int32_t result = 0;
-    if(!overlay || !overlay(*bennetInfoSymbol,result)) {
+    if(!overlay || !overlay(*bennet->answerSymbol,result)) {
       BennetLookupAudit audit(bennetLookupScope);
-      if(!bennetExecute(player,npc)) {
+      if(!bennetExecute(*bennet,player,npc)) {
         if(newlyKnown)
           dlgKnownInfos.erase(known);
         return;

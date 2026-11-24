@@ -10,7 +10,6 @@
 
 class GameMenu;
 class Npc;
-namespace daedalus { class DaedalusVm; }
 
 class MenuRoot : public Tempest::Widget {
   public:
@@ -48,7 +47,6 @@ class MenuRoot : public Tempest::Widget {
     std::optional<std::pair<int32_t,int32_t>> infoPosition() const;
     void execute(int32_t symbol);
 
-    std::unique_ptr<daedalus::DaedalusVm>    vm;
     std::optional<MenuDefinitions::Catalog> records;
     int32_t                                menuLanguage = -1;
 

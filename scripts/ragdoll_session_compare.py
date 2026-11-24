@@ -173,7 +173,7 @@ def check_archive(path, saved):
         prefix = "worlds/" + saved["world"]
         npc = prefix + "/npc/" + str(saved["actor_id"])
         required = {"header", "preview.jpg", "game/session", "game/camera", "game/quests",
-                    "game/daedalus", prefix + "/version", prefix + "/world",
+                    "game/state", "game/director", "game/bennet", prefix + "/version", prefix + "/world",
                     npc + "/data", npc + "/visual", npc + "/ragdoll", npc + "/ragdoll-recovery"}
         if not required.issubset(names):
             raise ValueError("archive does not contain the complete GameSession/world/NPC entries: " + repr(required-set(names)))

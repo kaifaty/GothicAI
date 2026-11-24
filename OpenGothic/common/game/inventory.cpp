@@ -1129,12 +1129,14 @@ uint32_t Inventory::indexOf(const Item *it) const {
   return uint32_t(-1);
   }
 
-Item *Inventory::readPtr(Serialize &fin) {
-  uint32_t v=uint32_t(-1);
-  fin.read(v);
-  if(v<items.size())
-    return items[v].get();
-  return nullptr;
+Item* Inventory::itemByIndex(uint32_t index) const {
+  return index<items.size() ? items[index].get() : nullptr;
+  }
+
+Item* Inventory::readPtr(Serialize& fin) {
+  uint32_t index=uint32_t(-1);
+  fin.read(index);
+  return itemByIndex(index);
   }
 
 

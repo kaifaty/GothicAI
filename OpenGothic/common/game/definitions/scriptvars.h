@@ -11,7 +11,9 @@ class SaveArchive;
 
 namespace ScriptVars {
 
-// The values and reference kinds in the game/daedalus entry.
+inline constexpr std::string_view StateEntry = "game/state";
+
+// Values and object references for the prepared program state.
 enum class ReferenceKind : uint8_t {
   None          = 0,
   Npc           = 1,
@@ -35,8 +37,8 @@ struct Row {
 Row  readRow(SaveArchive& in);
 void writeRow(SaveArchive& out, const Row& row);
 
-// The game/symbols entry is loaded before world objects resolve their symbol IDs.
-inline constexpr std::string_view SymbolEntry = "game/symbols";
+// Director declarations are loaded before the world creates their NPCs.
+inline constexpr std::string_view SymbolEntry = "game/director";
 inline constexpr uint8_t          SymbolFormat = 1;
 
 enum class SymbolKind : uint8_t {
