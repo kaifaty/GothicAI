@@ -917,6 +917,98 @@ bool stockItemFightSkillEffects(World& world, bool native) {
   return typed;
   }
 
+std::vector<int32_t> stockStartupNpcEquipment(World& world, bool native, bool typed) {
+  auto& script=world.script();
+  auto& vm=script.getVm();
+  auto& floor=script.startupFloor();
+  auto* mika=activityNpc(world,"MIL_337_MIKA");
+  auto* jora=activityNpc(world,"VLK_408_JORA");
+  const auto armor=script.findSymbolIndex("ITAR_MIL_L");
+  const auto sword=script.findSymbolIndex("ITMW_1H_VLK_SWORD");
+  const auto alrik=script.findSymbolIndex("ITMW_ALRIKSSWORD_MIS");
+  require(mika && mika->currentArmor() && mika->currentArmor()->clsId()==armor &&
+          jora && jora->currentMeleeWeapon() && jora->currentMeleeWeapon()->clsId()==alrik &&
+          jora->getItem(sword) && jora->hitChance(TALENT_1H)==60 && jora->talentSkill(TALENT_1H)==2,
+          "startup equipment: need the real guard's armor and merchant's weapons");
+  const auto mikaPosition=mika->position(),joraPosition=jora->position();
+  const auto protection=std::to_array(mika->handle().protection);
+  auto withoutArmor=protection;
+  for(size_t i=0;i<withoutArmor.size();++i)
+    withoutArmor[i]-=mika->currentArmor()->handle().protection[i];
+  const auto armorFlag=script.findSymbol("MILARMOR_EQUIPPED")->get_int();
+  auto* helperActor=script.findSymbol("B_ADDFIGHTSKILL.SLF");
+  auto* helperTalent=script.findSymbol("B_ADDFIGHTSKILL.TALENT");
+  auto* helperPercent=script.findSymbol("B_ADDFIGHTSKILL.PERCENT");
+  const auto joraHandle=std::static_pointer_cast<daedalus::INpc>(jora->handlePtr());
+  const auto helperMatches=[&](int32_t delta) {
+    return helperActor->get_instance()==joraHandle && helperTalent->get_int()==TALENT_1H &&
+           helperPercent->get_int()==delta;
+    };
+  const auto self=vm.global_self()->get_instance(),context=vm.unsafe_get_gi();
+  constexpr std::array callbacks={"UNEQUIP_ITAR_MIL_L","EQUIP_ITAR_MIL_L","UNEQUIP_1H_05","EQUIP_1H_05",
+                                  "UNEQUIP_ALRIKSSWORD","EQUIP_ALRIKSSWORD","B_ADDFIGHTSKILL"};
+  std::array<uint32_t,callbacks.size()> addresses{};
+  std::array<size_t,callbacks.size()> entries{};
+  for(size_t i=0;i<callbacks.size();++i)
+    addresses[i]=script.findSymbol(callbacks[i])->address();
+  std::vector<int32_t> stages;
+  floor.begin();
+  require(floor.active(),"startup equipment: the startup floor must be active");
+  floor.inserted(*mika);
+  floor.inserted(*jora);
+  vm.observe_instructions([&](const auto&) {
+    for(size_t i=0;i<addresses.size();++i)
+      if(vm.pc()==addresses[i]) ++entries[i];
+    });
+  vm.observe_externals([&](const auto& fn) {
+    if(fn.name()=="NPC_SETTALENTSKILL") {
+      const auto& arg=vm.stack_frame(0);
+      stages.push_back(arg.reference ? std::get<daedalus::DaedalusSymbol*>(arg.value)->get_int(arg.index,arg.context.get()) :
+                                       std::get<int32_t>(arg.value));
+      }
+    });
+
+  mika->unequipItem(armor);
+  require(!mika->currentArmor() && !mika->getItem(armor)->isEquipped() &&
+          std::to_array(mika->handle().protection)==withoutArmor,
+          "startup equipment: the real inventory clears the armor slot and removes base protection");
+  mika->useItem(armor);
+  require(mika->currentArmor()==mika->getItem(armor) && mika->currentArmor()->isEquipped() &&
+          std::to_array(mika->handle().protection)==protection && script.findSymbol("MILARMOR_EQUIPPED")->get_int()==armorFlag,
+          "startup equipment: the guard keeps base protection without changing the hero's armor flag");
+  jora->unequipItem(alrik);
+  require(!jora->currentMeleeWeapon() && !jora->getItem(alrik)->isEquipped() &&
+          jora->hitChance(TALENT_1H)==50 && jora->talentSkill(TALENT_1H)==1 && helperMatches(-10),
+          "startup equipment: removing Alrik's sword lowers the saved skill and rank");
+  jora->useItem(sword,Item::NSLOT,true);
+  require(jora->currentMeleeWeapon()==jora->getItem(sword) && jora->currentMeleeWeapon()->isEquipped() &&
+          jora->hitChance(TALENT_1H)==50 && jora->talentSkill(TALENT_1H)==1 && helperMatches(-10),
+          "startup equipment: a plain sword leaves NPC skill and helper arguments alone");
+  jora->unequipItem(sword);
+  require(!jora->currentMeleeWeapon() && !jora->getItem(sword)->isEquipped() &&
+          jora->hitChance(TALENT_1H)==50 && jora->talentSkill(TALENT_1H)==1 && helperMatches(-10),
+          "startup equipment: removing a plain sword has no skill effect for NPCs");
+  jora->useItem(alrik,Item::NSLOT,true);
+  require(jora->currentMeleeWeapon()==jora->getItem(alrik) && jora->currentMeleeWeapon()->isEquipped() &&
+          jora->hitChance(TALENT_1H)==60 && jora->talentSkill(TALENT_1H)==2 && helperMatches(10),
+          "startup equipment: putting Alrik's sword back restores the original slot, skill and rank");
+
+  vm.observe_externals({});
+  vm.observe_instructions({});
+  require(mika->startupFloorPending() && jora->startupFloorPending() &&
+          mika->position()==mikaPosition && jora->position()==joraPosition &&
+          vm.global_self()->get_instance()==self && vm.unsafe_get_gi()==context,
+          "startup equipment: callbacks leave both floor fixes pending and restore the caller context");
+  floor.forget(*mika);
+  floor.forget(*jora);
+  floor.end();
+  const std::array<size_t,callbacks.size()> expected={native ? 0u : 1u,native ? 0u : 1u,native ? 0u : 1u,
+                                                     native ? 0u : 1u,typed ? 0u : 1u,typed ? 0u : 1u,typed ? 0u : 2u};
+  require(entries==expected && !stages.empty(),
+          "startup equipment: only the selected executor runs the equip callbacks and skill stages");
+  return stages;
+  }
+
 std::vector<std::string> heroItemPrograms(Gothic& gothic,World& world,Npc& hero,bool native) {
   auto& script=world.script();
   auto& vm=script.getVm();
@@ -1024,6 +1116,7 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   std::vector<uint8_t> knockedOut,healing,pendingPotion;
   std::pair<std::vector<size_t>,std::vector<std::string>> stockEquipment;
   std::pair<std::array<int32_t,PROT_MAX>,std::array<int32_t,PROT_MAX>> stockArmor;
+  std::vector<int32_t> stockStartupTalentStages;
   bool typedWeaponEffects=false;
   int32_t originalXp=0;
   for(bool native:{false,true}) {
@@ -1054,6 +1147,9 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
     if(native) require(armor==stockArmor,"armor sets: native protection matches the stock callbacks");
     else stockArmor=armor;
     typedWeaponEffects=stockItemFightSkillEffects(world,native);
+    const auto startupTalentStages=stockStartupNpcEquipment(world,native,typedWeaponEffects);
+    if(native) require(startupTalentStages==stockStartupTalentStages,"startup equipment: talent stages match the stock order");
+    else stockStartupTalentStages=startupTalentStages;
     script.setSeed(73106);
     const auto beforeXp=hero.experience();
     const auto wakeAt=int64_t(script.findSymbol("HAI_TIME_UNCONSCIOUS")->get_int())*1000;
@@ -1377,11 +1473,12 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
   auto& potionWorld=*gothic.world();
   auto& potionScript=potionWorld.script();
   auto& potionVm=potionScript.getVm();
-  size_t loadedPotionCalls=0,loadedArmorCalls=0,loadedWeaponCalls=0;
+  size_t loadedPotionCalls=0,loadedArmorCalls=0,loadedWeaponCalls=0,loadedNpcWeaponCalls=0;
   const auto potionObserver=potionVm.add_call_observer([&](const auto& symbol) {
     loadedPotionCalls+=symbol.name()=="USEITPO_HEALTH_03";
     loadedArmorCalls+=symbol.name()=="UNEQUIP_ITAR_MIL_L";
     loadedWeaponCalls+=symbol.name()=="UNEQUIP_1H_05";
+    loadedNpcWeaponCalls+=symbol.name()=="UNEQUIP_ALRIKSSWORD";
     });
   auto& armoredHero=*potionWorld.player();
   const auto armor=potionScript.findSymbolIndex("ITAR_MIL_L");
@@ -1396,12 +1493,21 @@ void npcUnconsciousLifecycle(Gothic& gothic) {
           "armor sets: native unequip removes the saved bonus exactly once");
   const auto sword=potionScript.findSymbolIndex("ITMW_1H_VLK_SWORD");
   require(armoredHero.currentMeleeWeapon() && armoredHero.currentMeleeWeapon()->clsId()==sword &&
-          armoredHero.hitChance(TALENT_1H)==30 && armoredHero.talentSkill(TALENT_1H)==1 &&
+          armoredHero.hitChance(TALENT_1H)==30 && armoredHero.talentSkill(TALENT_1H)==1,
+          "weapon skill: loading the VM-era save must keep the hero's weapon and rank");
+  auto* jora=activityNpc(potionWorld,"VLK_408_JORA");
+  const auto alrik=potionScript.findSymbolIndex("ITMW_ALRIKSSWORD_MIS");
+  require(jora && jora->currentMeleeWeapon() && jora->currentMeleeWeapon()->clsId()==alrik &&
+          jora->hitChance(TALENT_1H)==60 && jora->talentSkill(TALENT_1H)==2 &&
           potionScript.findSymbol("B_ADDFIGHTSKILL.SLF")->get_instance()==
-            std::static_pointer_cast<daedalus::INpc>(armoredHero.handlePtr()) &&
-          potionScript.findSymbol("B_ADDFIGHTSKILL.PERCENT")->get_int()==5 &&
+            std::static_pointer_cast<daedalus::INpc>(jora->handlePtr()) &&
+          potionScript.findSymbol("B_ADDFIGHTSKILL.PERCENT")->get_int()==10 &&
           potionScript.findSymbol("B_ADDFIGHTSKILL.TALENT")->get_int()==TALENT_1H,
-          "weapon skill: loading the VM-era save must keep the weapon, rank, and helper arguments");
+          "startup equipment: loading the VM-era save keeps the NPC's weapon, rank and helper arguments");
+  jora->unequipItem(alrik);
+  require(!jora->currentMeleeWeapon() && jora->hitChance(TALENT_1H)==50 && jora->talentSkill(TALENT_1H)==1 &&
+          loadedNpcWeaponCalls==(typedWeaponEffects ? 0u : 1u),
+          "startup equipment: removing the saved sword reverses its skill bonus exactly once");
   armoredHero.unequipItem(sword);
   require(!armoredHero.currentMeleeWeapon() && armoredHero.hitChance(TALENT_1H)==25 &&
           armoredHero.talentSkill(TALENT_1H)==0 && loadedWeaponCalls==(typedWeaponEffects ? 0u : 1u),
