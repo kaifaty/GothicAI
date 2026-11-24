@@ -35,6 +35,15 @@
 scripts/build-engine.sh
 ```
 
+Сборки для игры на Mac, Windows и Linux используют режим без диспетчера Daedalus. Лаунчер через соседний конвертер готовит базу для проверенной «Ночи Ворона» и передаёт её игре и сервисам.
+
+Для модов с исходными DAT соберите комплект совместимости в отдельном каталоге и укажите его `Gothic2Notr` в `paths.game_bin` лаунчера. С ним используется соседний `content-convert` той же сборки.
+
+```bash
+cmake -S OpenGothic -B OpenGothic/build-legacy -G Ninja -DOPENGOTHIC_LEGACY_DAEDALUS=ON
+cmake --build OpenGothic/build-legacy --target Gothic2Notr
+```
+
 Изменения из upstream OpenGothic при необходимости переносятся вручную: движок сильно отличается от оригинала.
 
 Локальные настройки: адреса GPU-сервера и ключи API. ASR- и TTS-сервисы читают ближайший `.env` выше текущей папки, то есть `.env` в корне репозитория (он в `.gitignore`). Переменные окружения важнее файла.

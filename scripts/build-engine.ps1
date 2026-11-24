@@ -66,7 +66,7 @@ $parallel = if ($Jobs -gt 0) { @('--parallel', "$Jobs") } else { @() }
 $keepGoing = @('--', '-k', '0')
 $engine = Join-Path $Root 'OpenGothic'
 $build = Join-Path $engine 'build'
-Invoke-Step @('-S', $engine, '-B', $build, '-G', 'Ninja', "-DCMAKE_BUILD_TYPE=$BuildType")
+Invoke-Step @('-S', $engine, '-B', $build, '-G', 'Ninja', "-DCMAKE_BUILD_TYPE=$BuildType", '-DOPENGOTHIC_LEGACY_DAEDALUS=OFF')
 Invoke-Step (@('--build', $build, '--target', 'Gothic2Notr', 'engine-platform-link', 'engine-island') + $parallel + $keepGoing)
 
 $graph = Join-Path $engine 'ai_bridge\storygraph'

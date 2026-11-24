@@ -52,7 +52,7 @@
 //       Select or import the base through BaseStore; resolve also prepares videos.
 //       Progress goes to stderr and the selected base path goes to stdout.
 //   content-convert formats
-//       Print the compiled base and video importer format hashes as JSON.
+//       Print the compiled base and video importer hashes and accepted script base profile as JSON.
 //   content-convert no-programs-fixture <ready stock base> <new dir>
 //       Copy a ready base for metadata tests, extracting stock game symbols and omitting executable programs.
 //   content-convert native-base <ready stock base> <new dir>
@@ -1060,7 +1060,13 @@ int main(int argc, char** argv) {
       });
     const std::vector<std::string> args(argv+1,argv+argc);
     if(args.size()==1 && args[0]=="formats") {
-      std::cout << "{\"base\":\"" << BaseFormatSha256 << "\",\"videos\":\"" << VideoData::formatSha256() << "\"}\n";
+#ifdef GOTHIC_NATIVE_BASE_RESOLVE
+      constexpr auto scriptBase="native";
+#else
+      constexpr auto scriptBase="compatibility";
+#endif
+      std::cout << "{\"base\":\"" << BaseFormatSha256 << "\",\"videos\":\"" << VideoData::formatSha256()
+                << "\",\"script_base\":\"" << scriptBase << "\"}\n";
       return 0;
       }
     if(args.size()==1 && args[0]=="--self-test")

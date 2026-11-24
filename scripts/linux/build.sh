@@ -44,7 +44,7 @@ if [[ -n "${JOBS:-}" ]]; then parallel=(--parallel "$JOBS"); fi
 engine="$ROOT/OpenGothic"
 graph="$engine/ai_bridge/storygraph"
 # Ninja keeps compiling the other objects after an error (-k 0): one failed build reports every broken file.
-cmake -S "$engine" -B "$engine/build" "${flags[@]}"
+cmake -S "$engine" -B "$engine/build" "${flags[@]}" -DOPENGOTHIC_LEGACY_DAEDALUS=OFF
 cmake --build "$engine/build" --target Gothic2Notr ${parallel[@]+"${parallel[@]}"} -- -k 0
 cmake -S "$graph" -B "$graph/build" "${flags[@]}"
 cmake --build "$graph/build" --target storygraph ${parallel[@]+"${parallel[@]}"} -- -k 0
