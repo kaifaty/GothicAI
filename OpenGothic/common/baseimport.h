@@ -30,6 +30,7 @@ void convertFightDefinitions(const std::filesystem::path& base);
 void convertCameraDefinitions(const std::filesystem::path& base);
 void convertSfxDefinitions(const std::filesystem::path& base);
 void convertMusicThemes(const std::filesystem::path& base);
+void convertEffectDefinitions(const std::filesystem::path& base);
 void convertGameplayDefinitions(const std::filesystem::path& base);
 // D3a: definitions/<program SHA>/routines.json, verified against fresh function executions.
 int convertRoutineDefinitions(const std::filesystem::path& base);

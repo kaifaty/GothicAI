@@ -493,3 +493,11 @@ const ProgramData::Source* ProgramData::sfxProgram(const Index& index) {
 const ProgramData::Source* ProgramData::musicProgram(const Index& index) {
   return optionalDefinitionProgram(index,"Music.dat");
   }
+
+const ProgramData::Source* ProgramData::particleFxProgram(const Index& index) {
+  return optionalDefinitionProgram(index,"ParticleFx.dat");
+  }
+
+const ProgramData::Source* ProgramData::visualFxProgram(const Index& index) {
+  return optionalDefinitionProgram(index,"VisualFx.dat");
+  }

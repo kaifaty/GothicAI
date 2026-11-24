@@ -789,6 +789,8 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
   convertSfxDefinitions(out);
   if(progress) progress("base import: music themes");
   convertMusicThemes(out);
+  if(progress) progress("base import: effect definitions");
+  convertEffectDefinitions(out);
   if(progress) progress("base import: item definitions");
   require(convertItemDefinitions(out)==0,"item definition import failed");
   if(progress) progress("base import: routine definitions");

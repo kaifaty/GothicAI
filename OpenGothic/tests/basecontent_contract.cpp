@@ -4,6 +4,9 @@
 #include "baseimport.h"
 #include "game/definitions/cameradefinitiondata.h"
 #include "game/definitions/cameradefinitions.h"
+#include "game/definitions/effectdefinitiondata.h"
+#include "game/definitions/particlesdefinitions.h"
+#include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/fightdefinitiondata.h"
 #include "game/definitions/musicdefinitiondata.h"
 #include "game/definitions/musicdefinitions.h"
@@ -2060,6 +2063,123 @@ struct BaseContentContract {
     std::puts("Music records: 74 ordered themes and 518 fields match the original; runtime lookup, fallback and corruption checked");
     }
 
+  template<class Source, class T>
+  static void effectCatalog(daedalus::DaedalusVm& vm, std::string_view className,
+                            const std::vector<EffectDefinitionData::Entry<T>>& imported, size_t stockCount) {
+    const auto names = definitionNames(vm,className);
+    equal(names.size(),stockCount,std::string(className)+" stock instance count");
+    equal(imported.size(),names.size(),std::string(className)+" imported instance count");
+    for(size_t i=0; i<names.size(); ++i) {
+      const auto& [id,name] = names[i];
+      const auto [instance,error] = definitionInstance<Source>(vm,vm.find_symbol_by_index(id));
+      require(instance!=nullptr,name+": original effect initialization failed: "+error);
+      require(imported[i].name==name,name+": imported effect order differs");
+      equal(imported[i].id,instance->symbol_index(),name+" imported source symbol ID");
+      definitionFields(*instance,imported[i].value,name+" imported");
+      }
+    }
+
+  static void effectRecords(const fs::path& base, const fs::path& temporary, const fs::path& censusPath) {
+    const auto index = ProgramData::readIndex(base/"programs");
+    const auto* selectedParticle = ProgramData::particleFxProgram(index);
+    const auto* selectedVisual = ProgramData::visualFxProgram(index);
+    require(selectedParticle!=nullptr && selectedVisual!=nullptr,"effect program source selection missing");
+    const auto& particleSha = selectedParticle->recordSha256;
+    const auto& visualSha = selectedVisual->recordSha256;
+    if(particleSha!=EffectDefinitionData::stockParticleProgram || visualSha!=EffectDefinitionData::stockVisualProgram)
+      return;
+
+    const struct Catalog {
+      const char* request;
+      const char* censusName;
+      const std::string& sha;
+      fs::path section;
+      } particle{"ParticleFx.dat","PARTICLEFX.DAT",particleSha,EffectDefinitionData::particleSection(base,particleSha)},
+        visual{"VisualFx.dat","VISUALFX.DAT",visualSha,EffectDefinitionData::visualSection(base,visualSha)};
+    const auto recordSelected = [&](const rapidjson::Document& census, const Catalog& catalog) {
+      const auto recordPath = "base/"+catalog.section.lexically_relative(base).generic_string();
+      const auto& replacements = census["replacements"];
+      return std::any_of(replacements.Begin(),replacements.End(),[&](const auto& row) {
+        return std::string_view(row["name"].GetString())==catalog.censusName &&
+               std::string_view(row["replacement"].GetString())==recordPath && row["opens"].GetUint64()==1;
+        });
+      };
+    {
+    Resources resources;
+    Resources::loadBase();
+    Gothic gothic;
+    const auto noExternal = [](const auto& symbol) {
+      throw std::runtime_error("stock effect initializer unexpectedly calls "+symbol.name());
+      };
+    auto rawParticles = definitionSourceVm(index,particle.request,gothic);
+    rawParticles->observe_externals(noExternal);
+    auto rawVisuals = definitionSourceVm(index,visual.request,gothic);
+    rawVisuals->observe_externals(noExternal);
+    const auto particles = EffectDefinitionData::readParticles(base,particle.sha);
+    const auto visuals = EffectDefinitionData::readVisuals(base,visual.sha);
+    // definitionInstance applies the legacy quad-poly default before running the PFX initializer.
+    effectCatalog<daedalus::IParticleEffect>(*rawParticles,"C_PARTICLEFX",particles,528);
+    effectCatalog<daedalus::IEffectBase>(*rawVisuals,"CFX_BASE",visuals.effects,277);
+    effectCatalog<daedalus::IParticleEffectEmitKey>(*rawVisuals,"C_PARTICLEFXEMITKEY",visuals.keys,248);
+
+    require(Resources::writeCensus(),"cannot write effect oracle census");
+    const auto before = json(censusPath);
+    const ParticlesDefinitions particleDefinitions;
+    const VisualFxDefinitions visualDefinitions;
+    require(Resources::writeCensus(),"cannot write effect records census");
+    const auto after = json(censusPath);
+    require(after["files"]==before["files"] && after["runtime_programs"]["selections"].Empty(),
+            "effect records must open neither original DAT nor a VM program");
+    require(recordSelected(after,particle) && recordSelected(after,visual),"both runtime effect catalogs must report selection");
+    }
+
+    for(const bool missingParticle : {true,false}) {
+      const auto& missing = missingParticle ? particle : visual;
+      const auto& present = missingParticle ? visual : particle;
+      const auto fixture = temporary/(missingParticle ? "particle-runtime-base" : "visual-runtime-base");
+      const auto fixtureSection = linkBaseForDefinitionTest(base,fixture,missing.section);
+      setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
+      {
+      Resources resources;
+      Resources::loadBase();
+      Gothic gothic;
+      require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private effect record link");
+      const ParticlesDefinitions particleDefinitions;
+      const VisualFxDefinitions visualDefinitions;
+      require(Resources::writeCensus(),"cannot write effect fallback census");
+      const auto fallback = json(censusPath);
+      const auto& programs = fallback["runtime_programs"]["selections"];
+      equal(programs.Size(),1u,"effect fallback program selection count");
+      require(std::string_view(programs[0]["request"].GetString())==missing.request &&
+              std::string_view(programs[0]["record"]["sha256"].GetString())==missing.sha,
+              "only the missing effect catalog must run the selected base program");
+      require(fallback["files"].Empty() && recordSelected(fallback,present),
+              "the other effect catalog must still read its records without original DAT opens");
+
+      auto corrupt = json(missing.section);
+      corrupt["version"].SetInt(0);
+      writeJson(fixtureSection,corrupt);
+      bool rejected = false;
+      try {
+        if(missingParticle) {
+          const ParticlesDefinitions invalid;
+          } else {
+          const VisualFxDefinitions invalid;
+          }
+        }
+      catch(const BaseStore::Error& error) {
+        rejected = std::string_view(error.what()).find(fixtureSection.string())!=std::string_view::npos;
+        }
+      require(rejected,"corrupt selected effect records must report their path");
+      require(Resources::writeCensus(),"cannot write corrupt effect census");
+      const auto failure = json(censusPath);
+      require(failure["runtime_programs"]["selections"]==programs,"a corrupt effect record must not execute VM fallback");
+      }
+      }
+    setenv("OPENGOTHIC_BASE",base.c_str(),1);
+    std::puts("Effect records: 528 particles, 277 effects and 248 emit keys match the original across 51882 scalar fields; mixed fallback and corruption checked");
+    }
+
   static void definitionRecords(const fs::path& base, const fs::path& censusPath) {
     static_assert(std::is_same_v<std::underlying_type_t<Def::FightMove>,std::underlying_type_t<daedalus::FightAiMove>>);
     static_assert(uint32_t(Def::FightMove::NOP)==uint32_t(daedalus::FightAiMove::NOP));
@@ -3526,6 +3646,7 @@ struct BaseContentContract {
     cameraRecords(base,temporary,censusPath);
     sfxRecords(base,temporary,censusPath);
     musicRecords(base,temporary,censusPath);
+    effectRecords(base,temporary,censusPath);
     // Keep parser regression reads separate from the runtime-open census.
     {
     Resources resources;

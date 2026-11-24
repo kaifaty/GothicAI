@@ -1,6 +1,7 @@
 #include "particlecontent.h"
 #include "definitiontypes.h"
 
+#include "basestore.h"
 #include "gothicglb.h"
 #include "programdata.h"
 
@@ -60,17 +61,14 @@ void overrideField(std::string& field, const Json& value, const std::string& nam
   require(value.IsString(),name+": expected string");
   field=text(value);
   }
-void overrideFields(daedalus::DaedalusVm& vm, Def::ParticleEffect& effect, const Json& values) {
+void overrideFields(const Catalog& catalog, Def::ParticleEffect& effect, const Json& values) {
   require(values.IsObject(),"set: expected object");
-  const auto* cls=vm.find_symbol_by_name("C_PARTICLEFX");
   std::set<std::string> seen;
   for(const auto& field:values.GetObject()) {
     const auto name=text(field.name);
     const auto key=uppercase(name);
     require(seen.insert(key).second,"duplicate field "+name);
-    auto* symbol=vm.find_symbol_by_name("C_PARTICLEFX."+key);
-    require(symbol!=nullptr && symbol->is_member() && cls!=nullptr && symbol->parent()==cls->index(),
-            "unknown field "+name);
+    require(catalog.hasField(key),"unknown field "+name);
 #define DEF_OVERRIDE_FIELD(type, fieldName, extent, symbolName) \
     if(key==symbolName) { \
       overrideField(effect.fieldName,field.value,name); \
@@ -199,8 +197,65 @@ std::shared_ptr<Def::ParticleEffect> base(daedalus::DaedalusVm& vm, std::string_
   return std::make_shared<Def::ParticleEffect>(result->copy());
   }
 
-std::unique_ptr<daedalus::DaedalusVm> openProgram(const fs::path& baseRoot) {
-  const auto index=ProgramData::readIndex(baseRoot/"programs");
+Catalog::Catalog(EffectDefinitionData::Particles rows) {
+  for(auto& row:rows)
+    records.emplace(std::move(row.name),std::move(row.value));
+  }
+
+Catalog::Catalog(std::unique_ptr<daedalus::DaedalusVm> vm)
+  :ownedProgram(std::move(vm)),program(ownedProgram.get()) {
+  }
+
+Catalog::Catalog(daedalus::DaedalusVm& vm)
+  :program(&vm) {
+  }
+
+bool Catalog::contains(std::string_view name) const {
+  if(program!=nullptr)
+    return hasBase(*program,name);
+  return records.contains(canonicalName(name));
+  }
+
+bool Catalog::hasField(std::string_view name) const {
+  if(program!=nullptr) {
+    const auto* cls=program->find_symbol_by_name("C_PARTICLEFX");
+    const auto* symbol=program->find_symbol_by_name("C_PARTICLEFX."+std::string(name));
+    return symbol!=nullptr && symbol->is_member() && cls!=nullptr && symbol->parent()==cls->index();
+    }
+#define PARTICLE_FIELD_NAME(type, field, extent, symbol) symbol,
+  static constexpr std::string_view fields[]={DEF_PARTICLE_EFFECT_FIELDS(PARTICLE_FIELD_NAME)};
+#undef PARTICLE_FIELD_NAME
+  return std::find(std::begin(fields),std::end(fields),name)!=std::end(fields);
+  }
+
+std::shared_ptr<Def::ParticleEffect> Catalog::materialize(std::string_view name) const {
+  if(program!=nullptr)
+    return base(*program,name);
+  const auto it=records.find(canonicalName(name));
+  if(it==records.end())
+    return nullptr;
+  return std::make_shared<Def::ParticleEffect>(it->second);
+  }
+
+std::optional<Catalog> openStockCatalog(const ProgramData::Index& index) {
+  const auto* source=ProgramData::particleFxProgram(index);
+  if(source==nullptr || source->recordSha256!=EffectDefinitionData::stockParticleProgram)
+    return std::nullopt;
+
+  const auto baseRoot=index.dir.parent_path();
+  const auto section=EffectDefinitionData::particleSection(baseRoot,source->recordSha256);
+  try {
+    if(fs::exists(section))
+      return Catalog(EffectDefinitionData::readParticles(baseRoot,source->recordSha256));
+    }
+  catch(const std::runtime_error& error) {
+    throw BaseStore::Error(section.string()+": "+error.what());
+    }
+  return std::nullopt;
+  }
+
+namespace {
+std::unique_ptr<daedalus::DaedalusVm> openLegacyProgram(const ProgramData::Index& index) {
   const auto* source=index.findVfs("ParticleFx.dat");
   if(source==nullptr) source=index.findHost("_work/Data/Scripts/_compiled/ParticleFx.dat");
   require(source!=nullptr,"ParticleFx.dat missing from program base index");
@@ -213,7 +268,19 @@ std::unique_ptr<daedalus::DaedalusVm> openProgram(const fs::path& baseRoot) {
       daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   }
 
-Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
+Catalog openCatalog(const fs::path& baseRoot) {
+  const auto index=ProgramData::readIndex(baseRoot/"programs");
+  if(auto stock=openStockCatalog(index))
+    return std::move(*stock);
+  return Catalog(openLegacyProgram(index));
+  }
+}
+
+std::unique_ptr<daedalus::DaedalusVm> openProgram(const fs::path& baseRoot) {
+  return openLegacyProgram(ProgramData::readIndex(baseRoot/"programs"));
+  }
+
+Result load(const Catalog& catalog, const fs::path& contentRoot) {
   Result result;
   if(contentRoot.empty()) return result;
   const auto directory=contentRoot/"particles.d";
@@ -259,17 +326,17 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
           require(entry["replaces"].IsBool(),"replaces: expected boolean");
           replaces=entry["replaces"].GetBool();
           }
-        if(replaces) require(hasBase(vm,name),"replaces: no base PFX "+name);
-        else require(!hasBase(vm,name),"effect name conflicts with base PFX "+name);
+        if(replaces) require(catalog.contains(name),"replaces: no base PFX "+name);
+        else require(!catalog.contains(name),"effect name conflicts with base PFX "+name);
         require(result.effects.count(name)==0 && pending.count(name)==0,"duplicate effect "+name);
         const auto baseName=canonicalName(text(member(entry,"base")));
         std::shared_ptr<Def::ParticleEffect> original;
         if(const auto found=pending.find(baseName); found!=pending.end()) original=found->second;
         else if(const auto found=result.effects.find(baseName); found!=result.effects.end()) original=found->second;
-        else original=base(vm,baseName);
+        else original=catalog.materialize(baseName);
         require(original!=nullptr,"unknown base PFX "+baseName+" for "+name);
         auto definition=std::make_shared<Def::ParticleEffect>(*original);
-        overrideFields(vm,*definition,member(entry,"set"));
+        overrideFields(catalog,*definition,member(entry,"set"));
         // a flipbook comes with the entry, or from an own base that has one
         if(entry.HasMember("flipbook")) {
           const auto& fb=entry["flipbook"];
@@ -372,24 +439,27 @@ Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
   return result;
   }
 
+Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
+  return load(Catalog(vm),contentRoot);
+  }
+
 Result check(const fs::path& baseRoot, const fs::path& contentRoot) {
-  auto vm=openProgram(baseRoot);
-  return load(*vm,contentRoot);
+  return load(openCatalog(baseRoot),contentRoot);
   }
 
 GameHost::ParticleNameCheck nameChecker() {
   struct State {
-    std::unique_ptr<daedalus::DaedalusVm> program;
+    std::optional<Catalog> catalog;
     Result own;
     };
   return [state=std::make_shared<State>()](std::string_view name, const fs::path& baseRoot,
                                          const fs::path& contentRoot, std::vector<std::string>& errors) {
-    if(state->program==nullptr) {
-      state->program=openProgram(baseRoot);
-      state->own=load(*state->program,contentRoot);
+    if(!state->catalog) {
+      state->catalog.emplace(openCatalog(baseRoot));
+      state->own=load(*state->catalog,contentRoot);
       }
     errors=state->own.errors;
-    return state->own.effects.count(std::string(name))!=0 || hasBase(*state->program,name);
+    return state->own.effects.count(std::string(name))!=0 || state->catalog->contains(name);
     };
   }
 
