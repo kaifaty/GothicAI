@@ -73,7 +73,9 @@
 #include <fstream>
 #include <exception>
 #include <functional>
+#include <future>
 #include <map>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -2374,7 +2376,17 @@ struct BaseContentContract {
     std::vector<uint8_t> bin;
     require(resources.readGkMusic(request,"segment",bin)==DmResult_SUCCESS,"private GK reader must verify native record");
     vector(bin,musicRecord(resources.baseMusic,selected.gk),"private GK record bytes");
-    vector(resources.readDxMusic(dirs,name.c_str(),"segment"),musicRecord(resources.baseMusic,selected.dx8),"private Dx8 record bytes");
+    std::future<std::vector<uint8_t>> dx8Read;
+    bool readyWhileLocked = false;
+    {
+      std::lock_guard guard(resources.sync);
+      dx8Read = std::async(std::launch::async,[&] {
+        return Resources::readDxMusic(dirs,name.c_str(),"segment");
+        });
+      readyWhileLocked = dx8Read.wait_for(std::chrono::seconds(5))==std::future_status::ready;
+      }
+    require(readyWhileLocked,"Dx8 music read must not wait for the resource mutex");
+    vector(dx8Read.get(),musicRecord(resources.baseMusic,selected.dx8),"private Dx8 record bytes");
     const auto nativeIndex=resources.baseMusic;
     resources.baseMusic.gk.erase(resources.baseMusic.gk.find(upperMusic(request)));
     bin={1}; require(resources.readGkMusic(request,"segment",bin)==DmResult_NOT_FOUND && bin.empty(),"missing GK index entry must stay missing");
