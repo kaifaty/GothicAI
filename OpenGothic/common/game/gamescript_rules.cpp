@@ -9,7 +9,6 @@
 #include "npcactivityhost.h"
 #include "gothic.h"
 
-#include "world/bodytraces.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 
@@ -4052,23 +4051,6 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
   return true;
   }
 
-int32_t GameScript::intSymbol(std::string_view name, int32_t fallback) {
-  if(baseNativeCatalog()!=nullptr)
-    return globalIntSymbol(name).value_or(fallback);
-  auto* symbol = findSymbol(name);
-  if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT)
-    return fallback;
-  return symbol->get_int(0);
-  }
-
-std::string_view GameScript::stringSymbol(std::string_view name) {
-  if(baseNativeCatalog()!=nullptr)
-    return stringSymbol(name,{});
-  if(auto* symbol = findSymbol(name))
-    return symbol->get_string();
-  return "";
-  }
-
 bool GameScript::isNpcInstance(size_t id) {
   auto* symbol = findSymbol(id);
   for(size_t i=0; i<16 && symbol!=nullptr && symbol->type()!=daedalus::DaedalusDataType::CLASS; ++i)
@@ -4086,14 +4068,6 @@ size_t GameScript::goldItemId() const {
   return itMi_Gold->index();
   }
 
-int GameScript::whirlwindDuration() {
-  if(baseNativeCatalog()!=nullptr)
-    return std::clamp(intSymbol("SPL_TIME_WHIRLWIND",10),1,60);
-  if(auto* duration = findSymbol("SPL_TIME_WHIRLWIND"))
-    return std::clamp(duration->get_int(),1,60);
-  return 10;
-  }
-
 void GameScript::startupFloorForget(Npc& npc) {
   floorDefer.forget(npc);
   }
@@ -4104,22 +4078,6 @@ void GameScript::startupFloorBeforeResetMove(Npc& npc, const Tempest::Vec3& dest
 
 void GameScript::startupFloorBeforeKeep(Npc& npc) {
   floorDefer.beforeKeep(npc);
-  }
-
-std::array<int32_t,3> GameScript::storyNpcTypes() {
-  const char* names[] = {"NPCTYPE_MAIN","NPCTYPE_OCMAIN","NPCTYPE_BL_MAIN"};
-  std::array<std::optional<int32_t>,3> symbols;
-  const bool nativeValues = baseNativeCatalog()!=nullptr;
-  for(size_t i=0;i<symbols.size();++i) {
-    if(nativeValues) {
-      symbols[i] = globalIntSymbol(names[i]);
-      continue;
-      }
-    auto* symbol = vm.find_symbol_by_name(names[i]);
-    if(symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::INT)
-      symbols[i] = symbol->get_int(0);
-    }
-  return BodyTraces::storyTypes(symbols);
   }
 
 size_t GameScript::scriptVmMemorySize() const {
