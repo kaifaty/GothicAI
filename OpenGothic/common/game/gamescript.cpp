@@ -1186,8 +1186,16 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
     return;
 
   ScopeVar self(*vm.global_self(), npc->handlePtr());
-  if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
-     ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
+  const bool nativeItems = nativeRoutineProgram && activityEvents &&
+                           ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  const auto armorAndSkillEffects = [&] {
+    return applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index());
+    };
+  // For NPCs these callbacks only test actor identity or change talent. The
+  // outer equip external still handles the pending floor fix and its neighbours.
+  if(nativeItems && floorDefer.active() && !npc->isPlayer() && armorAndSkillEffects())
+    return;
+  if(nativeItems && !floorDefer.active()) {
     const auto amount = [&](const ItemDefinitionRuntime::RestoreChange& change) {
       const auto* symbol = std::get_if<uint32_t>(&change.amount);
       return symbol ? vm.find_symbol_by_index(*symbol)->get_int() : std::get<int32_t>(change.amount);
@@ -1227,7 +1235,7 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
       return;
       }
     if(applyCumulativeFoodEffect(functionSymbol->name()) || applyStockItemUseEffect(functionSymbol->name()) ||
-       applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index()) ||
+       armorAndSkillEffects() ||
        applyEquipmentStatEffect(*npc,functionSymbol->index()) || applyStatefulEquipmentEffect(*npc,functionSymbol->name()) ||
        invokeStockItemProgram(*functionSymbol))
       return;
