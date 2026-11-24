@@ -161,13 +161,13 @@ PlacementDefinitions::Library PlacementDefinitions::read(const std::filesystem::
     require(!doc.HasParseError(),"invalid JSON");
     require(string(at(doc,"format"))=="gothic-placement-definitions","unsupported format");
     const auto version=DefinitionJson::integer(at(doc,"version"));
-    require(version>=1 && version<=6,"unsupported version");
+    require(version>=1 && version<=7,"unsupported version");
     require(!string(at(doc,"program_name")).empty(),"empty program name");
     require(string(at(doc,"program_sha256"))==programSha256,"program SHA differs");
     require(string(at(doc,"string_encoding"))=="unicode-byte-mapping","unsupported string encoding");
     const auto& records=at(doc,"records");
     require(records.IsArray(),"records must be an array");
-    constexpr std::array fields{6u,7u,9u,11u,13u,14u};
+    constexpr std::array fields{6u,7u,9u,11u,13u,14u,15u};
     require(doc.MemberCount()==fields[size_t(version-1)],"unexpected envelope field");
     Library result;
     if(version>=2) {
@@ -214,6 +214,22 @@ PlacementDefinitions::Library PlacementDefinitions::read(const std::filesystem::
       result.khorinisEarlyChapters=KhorinisEarlyChapters{
         inserts(at(chapters,"chapter_2"),KhorinisEarlyChapters::chapter2Count),
         insertGroups(at(chapters,"chapter_3"),KhorinisEarlyChapters::chapter3Sizes)};
+      }
+    if(version>=7) {
+      const auto& triggers=at(doc,"trigger_inserts");
+      require(triggers.IsObject() && triggers.MemberCount()==std::size(islandRoomSpawns)+std::size(islandTraps)+
+              std::size(cryptTriggers)+6u,"unexpected placement trigger count");
+      for(auto it=triggers.MemberBegin();it!=triggers.MemberEnd();++it) {
+        const auto name=string(it->name);
+        const auto& groups=it->value;
+        require(groups.IsArray() && groups.Size()==(name=="EVT_ORKOBERST" ? 5u : 1u),"unexpected trigger placement group count");
+        auto [entry,inserted]=result.triggerInserts.try_emplace(name);
+        require(inserted && !name.empty(),"invalid or duplicate placement trigger");
+        for(const auto& group:groups.GetArray()) {
+          require(group.IsArray() && !group.Empty(),"empty trigger placement group");
+          entry->second.push_back(inserts(group,group.Size()));
+          }
+        }
       }
     for(const auto& record:records.GetArray()) {
       const auto name=string(at(record,"symbol"));

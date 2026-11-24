@@ -72,6 +72,28 @@ struct FirstEntries {
   static constexpr size_t addonWorldCount = 19;
   std::vector<uint32_t> oldWorld, addonWorld;
   };
+inline constexpr struct IslandRoomSpawn {
+  std::string_view name;
+  int32_t limit = 9;
+  size_t count = 1;
+  } islandRoomSpawns[] = {
+  {"EVT_KEYMASTER_01",1}, {"EVT_KEYMASTER_02",1}, {"EVT_KEYMASTER_03",1}, {"EVT_KEYMASTER_04",1},
+  {"EVT_LEFT_UP_01_SPAWNNEW",3,3},
+  {"EVT_LEFT_DOWN_01_SKEL_01"}, {"EVT_LEFT_DOWN_01_SKEL_02"}, {"EVT_LEFT_DOWN_01_SKEL_03"},
+  {"EVT_LEFT_ROOM_02_SKEL_01"}, {"EVT_LEFT_ROOM_02_SKEL_02"}, {"EVT_LEFT_ROOM_02_SKEL_03"},
+  {"EVT_LEFT_ROOM_02_SKEL_04"}, {"EVT_LEFT_ROOM_02_SKEL_05"},
+  {"EVT_RIGHT_DOWN_01_SKEL_01"}, {"EVT_RIGHT_DOWN_01_SKEL_02"}, {"EVT_RIGHT_DOWN_01_SKEL_03"},
+  {"EVT_RIGHT_DOWN_01_SKEL_04"}, {"EVT_RIGHT_ROOM_01_SKEL_01"}, {"EVT_RIGHT_ROOM_01_SKEL_02"},
+  {"EVT_RIGHT_ROOM_02_SKEL_01"}, {"EVT_RIGHT_ROOM_02_SKEL_02"},
+  {"EVT_RIGHT_UP_01_SKEL_01"}, {"EVT_RIGHT_UP_01_SKEL_02"},
+  {"EVT_RIGHT_UP_02_SKEL_01"}, {"EVT_RIGHT_UP_02_SKEL_02"}, {"EVT_RIGHT_UP_02_SKEL_03"},
+  };
+inline constexpr std::string_view islandTraps[] = {
+  "EVT_UNDEADDRAGON_TRAP_01_FUNC", "EVT_UNDEADDRAGON_TRAP_02_FUNC", "EVT_UNDEADDRAGON_TRAP_03_FUNC",
+  };
+inline constexpr std::string_view cryptTriggers[] = {"EVT_CRYPT_01","EVT_CRYPT_02","EVT_CRYPT_03","EVT_CRYPT_FINAL"};
+using TriggerInsertGroups = std::vector<std::vector<LiteralInsert>>;
+using TriggerInserts = std::map<std::string,TriggerInsertGroups,std::less<>>;
 struct Library {
   static constexpr size_t addonChapter4Count = 137;
   std::map<std::string,Definition> placements;
@@ -84,5 +106,6 @@ struct Library {
   std::map<std::string,RoomInitializer> roomInitializers;
   std::optional<FirstEntries> firstEntries;
   std::optional<KhorinisEarlyChapters> khorinisEarlyChapters;
+  TriggerInserts triggerInserts;
   };
 }

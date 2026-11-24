@@ -85,6 +85,13 @@ PlacementDefinitionRuntime::Definitions PlacementDefinitionRuntime::resolve(
     for(const auto& rows:library.khorinisEarlyChapters->chapter3) validate(rows,false);
     definitions.khorinisEarlyChapters=library.khorinisEarlyChapters;
     }
+  for(const auto& [name,groups]:library.triggerInserts) {
+    const bool onlyNpcs=name!="EVT_ORNAMENT_SWITCH_FOREST_01_FUNC" && name!="EVT_ORNAMENT_SWITCH_BIGFARM_01_FUNC" &&
+                        name!="EVT_TELEPORTSTATION_FUNC";
+    for(const auto& rows:groups)
+      validate(rows,onlyNpcs);
+    }
+  definitions.triggerInserts=library.triggerInserts;
   validate(library.addonChapter4,true);
   definitions.addonChapter4=library.addonChapter4;
   if(library.oldWorldChapters) {

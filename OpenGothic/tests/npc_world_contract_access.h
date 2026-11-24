@@ -33,6 +33,26 @@ struct NpcDefinitionContract {
   static void saveCrimeGlobal(GameScript& script, Serialize& out, daedalus::DaedalusSymbol& symbol) { script.saveSym(out,symbol); }
   static auto& activities(GameScript& script) { return script.activityDefinitions; }
   static const auto& pointGestureRolls(const GameScript& script) { return script.pointGestureRolls; }
+  static bool pointGuardRollMatches(GameScript& script, int32_t actual, int32_t expected) {
+    return actual==expected && (!script.usesVerifiedNpcProgram() || pointGestureRolls(script).guard==expected);
+    }
+  static bool pointAndQuakeRollsMatch(GameScript& script, bool folded, const std::array<int32_t,3>& actual,
+                                      const std::array<int32_t,3>& expected) {
+    if(actual!=expected)
+      return false;
+    if(!script.usesVerifiedNpcProgram())
+      return true;
+    const auto& owned=pointGestureRolls(script);
+    return std::array{folded ? owned.crossedArms : owned.waypoint,owned.portal,owned.earthquake}==expected;
+    }
+  static void checkDirectorNpc(GameScript& script, const daedalus::DaedalusSymbol* owner, const std::string& error) {
+    if(owner==nullptr)
+      throw std::runtime_error("create NPC record template fixture: "+error);
+    if(script.findSymbolIndex("dir_npc_record_contract")!=owner->index() ||
+       script.symbolName(owner->index())!=owner->name() ||
+       script.symbolKind("dir_npc_record_contract")!=GameScript::SymbolKind::Npc)
+      throw std::runtime_error("director-defined NPC metadata must remain visible alongside the stock catalog");
+    }
   static auto& aiState(Npc& npc) { return npc.aiState; }
   static int32_t& lastHitSpell(Npc& npc) { return npc.lastHitSpell; }
   static int32_t activeSpellInfo(const Npc& npc) { return npc.spellInfo; }

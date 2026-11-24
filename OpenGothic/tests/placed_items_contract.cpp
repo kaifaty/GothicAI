@@ -859,11 +859,7 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
   const auto* entry=script.ownSymbols().find("DIR_NPC_RECORD_CONTRACT");
   const auto* own=entry ? vm.find_symbol_by_index(entry->index) :
                          script.ownSymbols().addNpc("DIR_NPC_RECORD_CONTRACT",templateName,error);
-  if(!own) throw std::runtime_error("create NPC record template fixture: "+error);
-  require(script.findSymbolIndex("dir_npc_record_contract")==own->index() &&
-          script.symbolName(own->index())==own->name() &&
-          script.symbolKind("dir_npc_record_contract")==GameScript::SymbolKind::Npc,
-          "director-defined NPC metadata must remain visible alongside the stock catalog");
+  NpcDefinitionContract::checkDirectorNpc(script,own,error);
   names.push_back(own->name());
   std::set<uint32_t> routineAddresses;
   for(const auto& [name,rows]:routines.routines) {
@@ -3776,16 +3772,7 @@ void moverChildSave() {
   savedPose.translate(25,0,0);
   child.item->setObjMatrix(savedPose);
 
-  const auto requireStory=storyBeforeSave(*gothic.world());
-  const bool pointRollsOwned = gothic.world()->script().usesVerifiedNpcProgram();
-  static constexpr std::array pointRollNames = {
-    "ZS_STAND_GUARDING_LOOP.RANDOM", "ZS_STAND_ARMSCROSSED_LOOP.RANDOM", "ZS_STAND_WP_LOOP.RANDOM",
-    "ZS_STAND_ARMSCROSSED_LOOP.EVENTRANDY", "B_EVENT_PORTAL_EARTHQUAKE.RANDY",
-    };
-  static constexpr std::array<int32_t,5> savedPointRolls = {5,2,7,1,3};
-  if(pointRollsOwned)
-    for(size_t i = 0; i<pointRollNames.size(); ++i)
-      gothic.world()->script().findSymbol(pointRollNames[i])->set_int(savedPointRolls[i]);
+  const auto requireStory=storyAndPointRollsBeforeSave(*gothic.world());
   std::vector<uint8_t> bytes;
   {
     Tempest::MemWriter writer(bytes);
@@ -3806,15 +3793,6 @@ void moverChildSave() {
     gothic.setGame(std::make_unique<GameSession>(in));
   }
   requireStory(*gothic.world());
-  if(pointRollsOwned) {
-    auto& script = gothic.world()->script();
-    const auto& rolls = NpcDefinitionContract::pointGestureRolls(script);
-    require(std::array{rolls.guard,rolls.crossedArms,rolls.waypoint,rolls.portal,rolls.earthquake}==savedPointRolls,
-            "the ordinary save restores all five engine-owned point and earthquake rolls");
-    for(size_t i = 0; i<pointRollNames.size(); ++i)
-      require(script.findSymbol(pointRollNames[i])->get_int()==savedPointRolls[i],
-              "the restored point roll must be visible to the original script");
-    }
   const auto& restored=findChild(*gothic.world());
   require(gothic.world()->script().getVm().global_item()->get_instance()==
           std::static_pointer_cast<daedalus::IItem>(restored.item->handlePtr()),

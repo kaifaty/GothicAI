@@ -429,3 +429,29 @@ auto storyBeforeSave(World& world) {
             "the transferred ornament and the script transfer locals must survive saving and loading");
     };
   }
+
+auto storyAndPointRollsBeforeSave(World& world) {
+  const auto requireStory = storyBeforeSave(world);
+  static constexpr std::array names = {
+    "ZS_STAND_GUARDING_LOOP.RANDOM", "ZS_STAND_ARMSCROSSED_LOOP.RANDOM", "ZS_STAND_WP_LOOP.RANDOM",
+    "ZS_STAND_ARMSCROSSED_LOOP.EVENTRANDY", "B_EVENT_PORTAL_EARTHQUAKE.RANDY",
+    };
+  static constexpr std::array<int32_t,5> values = {5,2,7,1,3};
+  const bool pointRollsOwned = world.script().usesVerifiedNpcProgram();
+  if(pointRollsOwned)
+    for(size_t i=0;i<names.size();++i)
+      world.script().findSymbol(names[i])->set_int(values[i]);
+
+  return [requireStory,pointRollsOwned](World& restored) {
+    requireStory(restored);
+    if(!pointRollsOwned)
+      return;
+    auto& script = restored.script();
+    const auto& rolls = NpcDefinitionContract::pointGestureRolls(script);
+    require(std::array{rolls.guard,rolls.crossedArms,rolls.waypoint,rolls.portal,rolls.earthquake}==values,
+            "the ordinary save restores all five engine-owned point and earthquake rolls");
+    for(size_t i=0;i<names.size();++i)
+      require(script.findSymbol(names[i])->get_int()==values[i],
+              "the restored point roll must be visible to the original script");
+    };
+  }

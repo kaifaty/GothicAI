@@ -629,11 +629,36 @@ Json firstEntryActors(const DaedalusScript& script,std::string_view name,size_t 
     }
   return actors;
   }
+Json triggerInserts(const DaedalusScript& script,Allocator& allocator) {
+  const auto* npc=script.find_symbol_by_name("WLD_INSERTNPC");
+  require(npc!=nullptr,"missing NPC insertion external");
+  Json triggers(rapidjson::kObjectType);
+  const auto add=[&](std::string_view name,uint32_t offset,size_t count,bool onlyNpcs) {
+    put(triggers,name.data(),lateChapterGroups(script,name,std::array{offset},std::array{count},allocator,
+                                               false,onlyNpcs ? npc : nullptr),allocator);
+    };
+  add("EVT_CAVALORNSGOBBOS_FUNC",16,3,true);
+  add("EVT_TROLL_GRAVE_01",0,4,true);
+  add("EVT_ORNAMENT_SWITCH_FOREST_01_FUNC",16,2,false);
+  add("EVT_ORNAMENT_SWITCH_BIGFARM_01_FUNC",16,2,false);
+  for(const auto name:cryptTriggers)
+    add(name,16,name=="EVT_CRYPT_FINAL" ? 6u : 7u,true);
+  for(const auto& room:islandRoomSpawns)
+    add(room.name,16,room.count,true);
+  for(const auto name:islandTraps)
+    add(name,44,1,true);
+  add("EVT_TELEPORTSTATION_FUNC",1197,6,false);
+  constexpr std::array<uint32_t,5> attackOffsets{84,160,175,286,351};
+  constexpr std::array<size_t,5> attackCounts{4,1,2,4,4};
+  put(triggers,"EVT_ORKOBERST",lateChapterGroups(script,"EVT_ORKOBERST",attackOffsets,attackCounts,allocator,false,npc),allocator);
+  return triggers;
+  }
+
 Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
   Json json(rapidjson::kObjectType);
   const bool stock=program.sha256==GameplayDefinitions::stockProgram;
   put(json,"format",text("gothic-placement-definitions",allocator),allocator);
-  put(json,"version",Json(stock ? 6 : 1),allocator);
+  put(json,"version",Json(stock ? 7 : 1),allocator);
   put(json,"program_name",text(program.name,allocator),allocator);
   put(json,"program_sha256",text(program.sha256,allocator),allocator);
   put(json,"string_encoding",text("unicode-byte-mapping",allocator),allocator);
@@ -680,6 +705,7 @@ Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
     put(early,"chapter_3",lateChapterGroups(script,"B_ENTER_NEWWORLD_KAPITEL_3",earlyOffsets3,
                                            KhorinisEarlyChapters::chapter3Sizes,allocator),allocator);
     put(json,"khorinis_early_chapters",std::move(early),allocator);
+    put(json,"trigger_inserts",triggerInserts(script,allocator),allocator);
     }
   return json;
   }

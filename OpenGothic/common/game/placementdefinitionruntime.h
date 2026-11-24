@@ -34,6 +34,7 @@ struct Definitions {
   std::map<std::string,PlacementDefinitions::RoomInitializer> roomInitializers;
   std::optional<PlacementDefinitions::FirstEntries> firstEntries;
   std::optional<PlacementDefinitions::KhorinisEarlyChapters> khorinisEarlyChapters;
+  PlacementDefinitions::TriggerInserts triggerInserts;
   };
 
 inline std::vector<uint32_t> startupFunctions(const daedalus::DaedalusScript& script) {
