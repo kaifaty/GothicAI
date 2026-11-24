@@ -56,19 +56,22 @@ int GameScript::npc_getdisttowp(std::shared_ptr<daedalus::INpc> npcRef, std::str
   }
 
 void GameScript::npc_exchangeroutine(std::shared_ptr<daedalus::INpc> npcRef, std::string_view rname) {
-  auto* npc = findNpc(npcRef);
-  if(npc==nullptr)
-    return;
+  if(auto* npc = findNpc(npcRef))
+    exchangeNpcRoutine(*npc,rname);
+  }
 
-  string_frm name("RTN_",rname,'_',npc->handle().id);
-  std::transform(name.begin(),name.end(),name.begin(),[](unsigned char ch) { return char(std::toupper(ch)); });
-  const auto found = routineDefinitions.names.find(std::string_view(name));
+bool GameScript::exchangeNpcRoutine(Npc& npc, std::string_view name) {
+  string_frm key("RTN_",name,'_',npc.handle().id);
+  std::transform(key.begin(),key.end(),key.begin(),[](unsigned char ch) { return char(std::toupper(ch)); });
+  const auto found = routineDefinitions.names.find(std::string_view(key));
   if(found==routineDefinitions.names.end())
-    return;
+    return false;
 
-  npc->clearRoutine();
+  const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  npc.clearRoutine();
   for(const auto& row : routineDefinitions.routines.at(found->second))
-    ta_min(npcRef,row.startHour,row.startMinute,row.endHour,row.endMinute,int(row.state),row.waypoint);
+    ta_min(actor,row.startHour,row.startMinute,row.endHour,row.endMinute,int(row.state),row.waypoint);
+  return true;
   }
 
 bool GameScript::npc_isdead(std::shared_ptr<daedalus::INpc> npcRef) {

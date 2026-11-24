@@ -117,6 +117,7 @@ class GameScript final : public GameRules {
     auto         loadItem(Serialize& fin, Item& owner, uint32_t& kind) -> std::shared_ptr<ItemRecord> override;
     void         attachItem(const std::shared_ptr<ItemRecord>& item, Item& owner) override;
     void         initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance);
+    bool         exchangeNpcRoutine(Npc& npc, std::string_view name);
     void         resetVarPointers();
 
     void         initDialogs();

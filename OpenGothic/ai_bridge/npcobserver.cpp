@@ -904,12 +904,10 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
   else if(action=="set_routine") {
     // Npc_ExchangeRoutine: another set of routine entries (Rtn_<name>_<id>), effective at once
     const auto   name = upper(JsonRead::str(args,"name"));
-    const size_t fn   = world.script().findSymbolIndex("RTN_" + name + "_" + std::to_string(npc->handle().id));
-    if(name.empty() || fn==size_t(-1)) {
+    if(name.empty() || !world.script().exchangeNpcRoutine(*npc,name)) {
       result("rejected","unknown routine: " + name);
       return;
       }
-    npc->excRoutine(fn);
     npc->resumeAiRoutine();
     }
   else if(action=="give") {
