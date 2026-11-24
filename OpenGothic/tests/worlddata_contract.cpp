@@ -6,7 +6,6 @@
 #include "gothic.h"
 #include "settings.h"
 #include "game/definitions/basescripts.h"
-#include "programdata.h"
 #include "outputunits.h"
 #include "resources.h"
 #include "sha256.h"
@@ -32,7 +31,6 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <typeinfo>
@@ -173,11 +171,7 @@ struct WorldDataContract {
         count+=file["opens"].GetUint64();
     return count;
     }
-  static void runtimeSources(const fs::path& census, const fs::path& gothicDir, Resources& resources, Gothic& gothic) {
-    // The existing headless session constructs the six definition programs and
-    // the game program. Cover the menu input without starting another VM/world.
-    const auto menu=gothic.loadScript("MENU.DAT",ScriptLang::NONE);
-    require(!menu.symbols().empty(),"native menu program must contain symbols");
+  static void runtimeSources(const fs::path& census, const fs::path& gothicDir, Gothic& gothic) {
     require(Resources::writeCensus(),"cannot write runtime source census");
     const auto doc=json(census);
     const auto& profile=doc["active_profile"];
@@ -191,57 +185,8 @@ struct WorldDataContract {
     const auto& programs=doc["runtime_programs"];
     require(std::string_view(programs["coverage"].GetString())=="loaded_base_records" &&
             !programs["complete_corpus"].GetBool(),"runtime native programs must not claim original parses or full corpus coverage");
-    bool game=false;
-    std::set<std::string> loaded;
-    for(const auto& row:programs["selections"].GetArray()) {
-      const std::string request=row["request"].GetString(),branch=row["branch"].GetString();
-      require(std::string_view(row["consumer"].GetString())=="Gothic::loadScript",request+": native program consumer");
-      const bool gameRequest=request==gothic.defaultGameDatFile();
-      game|=gameRequest;
-      loaded.insert(request);
-      require(row["language"].GetInt()==(gameRequest ? language : int(ScriptLang::NONE)),
-              request+": native census must retain the language argument");
-      const auto& imported=row["imported_source"];
-      const ProgramData::Source* selected=nullptr;
-      if(branch=="vfs_find_request" || branch=="vfs_find_basename") {
-        std::string_view selectedBranch;
-        selected=baseProgramIndex().findVfs(request,&selectedBranch);
-        require(selectedBranch==branch,request+": native VFS branch differs from the index");
-        const auto lookup=branch=="vfs_find_basename" ? fs::path(request).filename().string() : request;
-        const auto* node=sourceVfs().resolve(imported["path"].GetString());
-        require(node!=nullptr && node==sourceVfs().find(lookup),
-                request+": native provenance must retain the full selected VFS path");
-        }
-      else {
-        require(branch=="host_ordinary" || branch=="host_localized_full" || branch=="host_localized_basename",
-                request+": unexpected native host branch");
-        selected=baseProgramIndex().findHost(imported["path"].GetString());
-        }
-      require(selected!=nullptr && selected->origin==imported["origin"].GetString() &&
-              selected->path==imported["path"].GetString() && selected->size==imported["size"].GetUint64() &&
-              selected->sha256==imported["sha256"].GetString(),request+": imported program identity differs from the index");
-      require(selected->archive.empty() ? imported["archive"].IsNull() :
-              imported["archive"].IsString() && selected->archive==imported["archive"].GetString(),
-              request+": native provenance archive differs from the index");
-      const auto file=baseProgramIndex().path(*selected);
-      auto bin=file; bin.replace_extension(".bin");
-      const auto& record=row["record"];
-      require(std::string(record["json"].GetString())=="base/programs/"+file.filename().string() &&
-              std::string(record["bin"].GetString())=="base/programs/"+bin.filename().string(),
-              request+": native census must identify the loaded JSON and BIN");
-      const auto read=[](const fs::path& path) {
-        std::ifstream input(path,std::ios::binary);
-        require(bool(input),"cannot read native program oracle: "+path.string());
-        return std::string(std::istreambuf_iterator<char>(input),std::istreambuf_iterator<char>());
-        };
-      const auto digest=Sha256::hash(read(file)+read(bin));
-      require(digest==record["sha256"].GetString() && digest==selected->recordSha256,
-              request+": native census SHA-256 differs from actual JSON+BIN bytes");
-      }
-    require(game,"existing GameSession construction must load the actual game program");
-    for(const auto* name:{"Camera.dat","Fight.dat","Sfx.dat","Music.dat","ParticleFx.dat","VisualFx.dat","MENU.DAT"})
-      require(loaded.count(name)==1,std::string(name)+": all eight inputs must load native programs");
-    require(sources["selections"].Empty(),"native programs and OU must not report original source parses");
+    require(programs["selections"].Empty() && sources["selections"].Empty(),
+            "game launch must use prepared catalogs without opening executable records or original scripts");
     const auto basename=[](const char* path) {
       auto name=fs::path(path).filename().string();
       for(auto& c:name) if(c>='a' && c<='z') c=char(c-'a'+'A');
@@ -334,7 +279,7 @@ struct WorldDataContract {
         }
       }
     messageBehavior(gothic,blocks);
-    std::puts("Runtime census: active profile, eight native programs and native OU identities verified; zero Resources DAT/OU opens");
+    std::puts("Runtime census: active profile and prepared OU identities verified; zero executable records or original DAT/OU opens");
     }
   static void messageBehavior(Gothic& gothic, const std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks) {
     const auto named=std::find_if(blocks.begin(),blocks.end(),[&](const auto& block) {
@@ -401,7 +346,7 @@ struct WorldDataContract {
     const auto base=root/"base";
     const std::array<std::string,4> worlds={"NEWWORLD","OLDWORLD","ADDONWORLD","DRAGONISLAND"};
     const auto* supplied=std::getenv("OPENGOTHIC_BASE");
-    require(supplied && *supplied,"OPENGOTHIC_BASE must point to build-base.sh output");
+    require(supplied && *supplied,"OPENGOTHIC_BASE must point to a prepared stock runtime base");
     fs::copy(supplied,base,fs::copy_options::recursive);
     const auto reference=root/"archive-reference";
     fs::create_directory(reference);
@@ -459,7 +404,7 @@ struct WorldDataContract {
         if(useBase)
           require(zenOpens(census)==before,file+": base GameSession opened ZEN");
         if(name==worlds.front() && useBase)
-          runtimeSources(census,gothicDir,resources,gothic);
+          runtimeSources(census,gothicDir,gothic);
         const auto actual=snapshot(*gothic.world(),original);
         if(useBase) compare(expected,actual,file); else expected=actual;
         gothic.clearGame().reset();

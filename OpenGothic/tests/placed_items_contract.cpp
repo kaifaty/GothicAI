@@ -1697,8 +1697,8 @@ void activityEventsSynthetic(World& world,Npc& npc,const ActivityPhases& anvil,c
     const auto* records=std::getenv("OPENGOTHIC_ACTIVITY_RECORDS");
     const std::optional<std::string> kept=records ? std::optional<std::string>(records) : std::nullopt;
     setenv("OPENGOTHIC_ACTIVITY_RECORDS","all",1);
-    std::string sha;
-    loadBaseProgram(Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"),&sha);
+    const auto& sha=selectBaseProgram(baseProgramIndex(),Gothic::inst().defaultGameDatFile(),
+        Settings::getI("GAME","language")).source.recordSha256;
     auto all=ActivityDefinitionRuntime::load(baseProgramIndex().dir.parent_path(),script.getVm(),sha);
     if(kept) setenv("OPENGOTHIC_ACTIVITY_RECORDS",kept->c_str(),1); else unsetenv("OPENGOTHIC_ACTIVITY_RECORDS");
     auto& live=NpcDefinitionContract::activities(script);

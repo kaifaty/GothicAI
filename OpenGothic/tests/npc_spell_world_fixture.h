@@ -853,8 +853,8 @@ void magicHurtStates(World& world) {
 
 std::vector<std::vector<std::string>> spellVictimPhasesWorld(Gothic& gothic, bool events) {
   using Contract=NpcDefinitionContract;
-  std::string program;
-  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  const auto& program=selectBaseProgram(baseProgramIndex(),gothic.defaultGameDatFile(),
+      Settings::getI("GAME","language")).source.recordSha256;
   if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c")
     return {};
 

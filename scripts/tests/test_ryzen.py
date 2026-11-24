@@ -1180,7 +1180,9 @@ remote_run pytest "$TEST_ROOT/worktree" run -rs tests/test_storygraph.py
         game.mkdir()
         part = self.root / 'mac-base'
         part.mkdir()
-        (part / 'base.json').write_text(json.dumps({'format_sha256': 'a' * 64}))
+        (part / 'base.json').write_text(json.dumps({
+            'format_sha256': 'a' * 64, 'native_script_base': {'version': 1},
+        }))
         pointers = self.home / '.cache/gothic-ai/base/current'
         pointers.mkdir(parents=True)
         pointer = pointers / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')

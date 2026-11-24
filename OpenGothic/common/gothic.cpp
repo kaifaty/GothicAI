@@ -635,11 +635,6 @@ std::string_view Gothic::menuMain() const {
   return ::menuMain;
   }
 
-std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
-  (void)lang;
-  throw BaseStore::Error("native game requires a prepared catalog for "+std::string(datFile));
-  }
-
 void Gothic::enableScriptAudit(daedalus::DaedalusVm& vm, std::string_view datFile) {
   vm.require_native_execution(datFile,true);
   Log::i("native-script-audit: armed program=",datFile," (metadata only)");

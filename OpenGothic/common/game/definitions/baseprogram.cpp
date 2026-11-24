@@ -2,7 +2,6 @@
 #include "basestore.h"
 #include "programdata.h"
 #include "resources_internal.h"
-#include "daedalus/script.h"
 
 #include <stdexcept>
 #include <string>
@@ -36,13 +35,4 @@ BaseProgramSelection selectBaseProgram(const ProgramData::Index& index, std::str
     }
   catch(const BaseStore::Error&) { throw; }
   catch(const std::exception& error) { throw BaseStore::Error("program "+std::string(request)+": "+error.what()); }
-  }
-
-daedalus::DaedalusScript loadBaseProgram(std::string_view request, int, std::string*) {
-  throw BaseStore::Error("native game requires a prepared catalog for "+std::string(request));
-  }
-
-daedalus::DaedalusScript loadBaseProgram(std::string_view request, int language,
-                                       std::string_view, std::u16string_view, std::string* recordSha256) {
-  return loadBaseProgram(request,language,recordSha256);
   }

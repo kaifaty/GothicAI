@@ -234,7 +234,6 @@ class Gothic final : public GameServices, public GameHost {
     uint32_t                              messageTime   (std::string_view id) const;
 
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
-    std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
     static void                            enableScriptAudit(daedalus::DaedalusVm& vm, std::string_view datFile);
     static void                            setupCommonScriptClasses(daedalus::DaedalusScript &sc);
     void                                  setupVmCommonApi(daedalus::DaedalusVm &vm);

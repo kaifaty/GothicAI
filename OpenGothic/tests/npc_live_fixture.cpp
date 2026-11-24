@@ -6,7 +6,9 @@
 
 #include "baseidentity.h"
 #include "baseimport.h"
+#include "asset/fromzenkit.h"
 #include "commandline.h"
+#include "game/definitions/baseprogram.h"
 #include "game/definitions/basescripts.h"
 #include "game/definitions/gameplaydefinitions.h"
 #include "game/definitions/spelldefinitions.h"
@@ -27,6 +29,8 @@
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
+#include <zenkit/DaedalusScript.hh>
+#include <zenkit/Stream.hh>
 
 #include <algorithm>
 #include <array>
@@ -1075,7 +1079,17 @@ static void gameplayDefinitionParity(World& world) {
     return; // Older imported bases retain the original initialization path.
 
   auto& gothic = Gothic::inst();
-  auto original = gothic.createPhoenixVm(gothic.defaultGameDatFile());
+  const auto selected = selectBaseProgram(baseProgramIndex(),gothic.defaultGameDatFile(),Settings::getI("GAME","language"));
+  require(selected.source.origin=="host","the verified stock program oracle requires the loose DAT");
+  const auto path = fs::path(CommandLine::inst().rootPath())/selected.source.path;
+  require(BaseImport::sha256File(path)==selected.source.sha256,"the stock program oracle differs from the imported source");
+  auto reader = zenkit::Read::from(path);
+  zenkit::DaedalusScript dat;
+  dat.load(reader.get());
+  auto originalScript = daedalus::DaedalusScript::from_program(asset::fromZenKit(dat.export_program()));
+  Gothic::setupCommonScriptClasses(originalScript);
+  auto original = std::make_unique<daedalus::DaedalusVm>(std::move(originalScript),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  gothic.setupVmCommonApi(*original);
   auto& live = world.script().getVm();
   size_t definitions = 0, fields = 0;
   const auto verifyUnbound = [&](std::string_view name) {

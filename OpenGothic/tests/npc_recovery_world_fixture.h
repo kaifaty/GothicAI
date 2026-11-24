@@ -273,8 +273,8 @@ void stockDeathTrophies(ActivityEventsWorld& test, bool native) {
 void npcDeathLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
-  std::string program;
-  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  const auto& program=selectBaseProgram(baseProgramIndex(),gothic.defaultGameDatFile(),
+      Settings::getI("GAME","language")).source.recordSha256;
   if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
     std::puts("SKIP death: the fixture is for the verified NotR program");
     return;
@@ -1076,8 +1076,8 @@ std::vector<std::string> heroItemPrograms(Gothic& gothic,World& world,Npc& hero,
 void npcUnconsciousLifecycle(Gothic& gothic) {
   using Contract=NpcDefinitionContract;
   constexpr auto* actor="BAU_951_HILDA";
-  std::string program;
-  loadBaseProgram(gothic.defaultGameDatFile(),Settings::getI("GAME","language"),&program);
+  const auto& program=selectBaseProgram(baseProgramIndex(),gothic.defaultGameDatFile(),
+      Settings::getI("GAME","language")).source.recordSha256;
   if(program!="a1918ecb7239b6f48cb98dda5e6ff7eb7ab8099085b3d7adec603c1431de641c") {
     std::puts("SKIP unconscious: the fixture is for the verified NotR program");
     return;
