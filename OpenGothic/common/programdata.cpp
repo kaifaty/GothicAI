@@ -489,3 +489,7 @@ const ProgramData::Source* ProgramData::cameraProgram(const Index& index) {
 const ProgramData::Source* ProgramData::sfxProgram(const Index& index) {
   return optionalDefinitionProgram(index,"Sfx.dat");
   }
+
+const ProgramData::Source* ProgramData::musicProgram(const Index& index) {
+  return optionalDefinitionProgram(index,"Music.dat");
+  }

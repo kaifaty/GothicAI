@@ -5,6 +5,8 @@
 #include "game/definitions/cameradefinitiondata.h"
 #include "game/definitions/cameradefinitions.h"
 #include "game/definitions/fightdefinitiondata.h"
+#include "game/definitions/musicdefinitiondata.h"
+#include "game/definitions/musicdefinitions.h"
 #include "game/definitions/sfxdefinitiondata.h"
 #include "game/definitions/sounddefinitions.h"
 #include "basemesh.h"
@@ -1941,6 +1943,123 @@ struct BaseContentContract {
     std::puts("Sfx records: 1770 ordered presets and 15930 fields match the original; runtime lookup, fallback and corruption checked");
     }
 
+  static void musicRecords(const fs::path& base, const fs::path& temporary, const fs::path& censusPath) {
+    const auto index = ProgramData::readIndex(base/"programs");
+    const auto* selected = ProgramData::musicProgram(index);
+    require(selected!=nullptr,"Music.dat source selection missing");
+    const auto& sha = selected->recordSha256;
+    if(sha!=MusicDefinitionData::stockProgram)
+      return;
+
+    const auto section = MusicDefinitionData::section(base,sha);
+    const auto imported = MusicDefinitionData::read(base,sha);
+    std::vector<std::shared_ptr<daedalus::IMusicTheme>> original;
+    const auto compareRuntime = [&](const MusicDefinitions& music) {
+      std::map<std::string_view,const Def::MusicTheme*> byFile;
+      size_t sharedFiles = 0;
+      for(size_t i=0; i<imported.size(); ++i) {
+        const auto& theme = imported[i];
+        const auto* value = music[theme.name];
+        require(value!=nullptr,theme.name+": runtime theme not found");
+        definitionFields(*original[i],*value,theme.name+" runtime");
+        auto mixed = theme.name;
+        std::transform(mixed.begin()+1,mixed.end(),mixed.begin()+1,[](unsigned char c) {
+          return char(std::tolower(c));
+          });
+        require(music[mixed]==value,theme.name+": mixed-case lookup must return the same theme");
+        if(!theme.value.file.empty()) {
+          const auto [other,first] = byFile.try_emplace(theme.value.file,value);
+          if(!first) {
+            require(other->second!=value,theme.name+": two themes share a file, not an instance");
+            ++sharedFiles;
+            }
+          }
+        }
+      require(sharedFiles>0,"stock music fixture needs different themes for the same file");
+      require(music[byFile.begin()->first]==nullptr,"music file names are not theme names");
+      require(music["__MUSIC_CONTRACT_MISSING__"]==nullptr &&
+              music["JINGLEFOUNDITEM"]==nullptr && music["C_MUSICTHEME"]==nullptr,
+              "unknown, jingle and class symbols must not resolve to a music theme");
+      };
+    {
+    Resources resources;
+    Resources::loadBase();
+    Gothic gothic;
+    auto source = definitionSourceVm(index,"Music.dat",gothic);
+    source->observe_externals([](const auto& symbol) {
+      throw std::runtime_error("stock Music.dat unexpectedly calls "+symbol.name());
+      });
+    const auto names = definitionNames(*source,"C_MUSICTHEME");
+    equal(names.size(),74u,"stock music theme count");
+    equal(imported.size(),names.size(),"imported music theme count");
+    require(source->find_symbol_by_name("JINGLEFOUNDITEM")!=nullptr,"stock music fixture needs a jingle symbol");
+    original.reserve(names.size());
+    for(size_t i=0; i<names.size(); ++i) {
+      const auto& [id,name] = names[i];
+      auto [instance,error] = definitionInstance<daedalus::IMusicTheme>(*source,source->find_symbol_by_index(id));
+      require(instance!=nullptr,name+": original music theme initialization failed: "+error);
+      require(imported[i].name==name,name+": imported theme order differs");
+      equal(imported[i].id,instance->symbol_index(),name+" imported source symbol ID");
+      definitionFields(*instance,imported[i].value,name+" imported");
+      original.push_back(std::move(instance));
+      }
+
+    require(Resources::writeCensus(),"cannot write music oracle census");
+    const auto before = json(censusPath);
+    const MusicDefinitions music;
+    compareRuntime(music);
+    require(Resources::writeCensus(),"cannot write music theme records census");
+    const auto after = json(censusPath);
+    require(after["files"]==before["files"] && after["runtime_programs"]["selections"].Empty(),
+            "music theme records must open neither original Music.dat nor a VM program");
+    const auto recordPath = "base/"+section.lexically_relative(base).generic_string();
+    const auto& replacements = after["replacements"];
+    require(std::any_of(replacements.Begin(),replacements.End(),[&](const auto& row) {
+      return std::string_view(row["name"].GetString())=="MUSIC.DAT" &&
+             std::string_view(row["replacement"].GetString())==recordPath && row["opens"].GetUint64()==1;
+      }),"music theme records must report their actual selection");
+    }
+
+    const auto fixture = temporary/"music-theme-runtime-base";
+    const auto fixtureSection = linkBaseForDefinitionTest(base,fixture,section);
+    setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
+    {
+    Resources resources;
+    Resources::loadBase();
+    Gothic gothic;
+    require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private music theme record link");
+    const MusicDefinitions fallback;
+    compareRuntime(fallback);
+    require(Resources::writeCensus(),"cannot write music theme fallback census");
+    const auto fallbackCensus = json(censusPath);
+    const auto& programs = fallbackCensus["runtime_programs"]["selections"];
+    equal(programs.Size(),1u,"music theme fallback program selection count");
+    require(std::string_view(programs[0]["request"].GetString())=="Music.dat" &&
+            std::string_view(programs[0]["record"]["sha256"].GetString())==sha,
+            "the music theme fallback must run the selected base program");
+    require(fallbackCensus["files"].Empty(),"the music theme fallback must not open an original DAT");
+
+    auto corrupt = json(section);
+    require(corrupt.HasMember("themes") && corrupt["themes"].IsArray() && !corrupt["themes"].Empty() &&
+            corrupt["themes"][0].HasMember("vol"),"music theme corruption fixture is missing its volume field");
+    corrupt["themes"][0]["vol"].SetString("invalid");
+    writeJson(fixtureSection,corrupt);
+    bool rejected = false;
+    try {
+      const MusicDefinitions invalid;
+      }
+    catch(const BaseStore::Error& error) {
+      rejected = std::string_view(error.what()).find(fixtureSection.string())!=std::string_view::npos;
+      }
+    require(rejected,"corrupt selected music theme records must report their path");
+    require(Resources::writeCensus(),"cannot write corrupt music theme census");
+    const auto failure = json(censusPath);
+    require(failure["runtime_programs"]["selections"]==programs,"a corrupt music theme record must not execute VM fallback");
+    }
+    setenv("OPENGOTHIC_BASE",base.c_str(),1);
+    std::puts("Music records: 74 ordered themes and 518 fields match the original; runtime lookup, fallback and corruption checked");
+    }
+
   static void definitionRecords(const fs::path& base, const fs::path& censusPath) {
     static_assert(std::is_same_v<std::underlying_type_t<Def::FightMove>,std::underlying_type_t<daedalus::FightAiMove>>);
     static_assert(uint32_t(Def::FightMove::NOP)==uint32_t(daedalus::FightAiMove::NOP));
@@ -3406,6 +3525,7 @@ struct BaseContentContract {
     census(censusPath,meshCount,modelCount,fontCount,programCount);
     cameraRecords(base,temporary,censusPath);
     sfxRecords(base,temporary,censusPath);
+    musicRecords(base,temporary,censusPath);
     // Keep parser regression reads separate from the runtime-open census.
     {
     Resources resources;

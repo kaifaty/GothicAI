@@ -1,9 +1,12 @@
 #pragma once
 
-#include "daedalus/vm.h"
-#include "records/definitions.h"
+#include "musicdefinitiondata.h"
 
 #include <memory>
+
+namespace daedalus {
+class DaedalusVm;
+}
 
 class MusicDefinitions final {
   public:
@@ -13,6 +16,6 @@ class MusicDefinitions final {
     const Def::MusicTheme* operator[](std::string_view name) const;
 
   private:
-    std::unique_ptr<daedalus::DaedalusVm>  vm;
-    std::vector<std::pair<uint32_t,Def::MusicTheme>> themes;
+    std::unique_ptr<daedalus::DaedalusVm> vm;
+    MusicDefinitionData::Themes          themes;
   };
