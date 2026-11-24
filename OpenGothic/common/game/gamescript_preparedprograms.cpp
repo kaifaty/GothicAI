@@ -365,18 +365,15 @@ bool GameScript::StockPrograms::runPrepared(const daedalus::DaedalusSymbol& fn, 
      entry->second.calls.front()!=transfer->second)
     throw std::runtime_error("prepared ornament dialog identity differs from game symbols");
 
-  // Bridge the current session context. The prepared executor and transfer rule do not read VM state.
-  const auto held = std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance());
-  auto* self = script.findNpc(vm.global_self());
-  OrnamentDialogHost host(*catalog,self,script.findNpc(vm.global_other()),script.world(),
-                          script.inventoryTransferVariables,held ? std::string_view(held->name) : std::string_view{});
+  const auto held = std::dynamic_pointer_cast<daedalus::IItem>(script.storyActorSlot("ITEM"));
+  const auto [self,other] = script.storyActors();
+  OrnamentDialogHost host(*catalog,self,other,script.world(),script.inventoryTransferVariables,
+                          held ? std::string_view(held->name) : std::string_view{});
   const auto run = storygraph::NativeInterpreter(host).run(entry->second.program);
 
-  // The compatibility session still supplies typed instance aliases to legacy callers.
   for(const auto& [name,id] : host.writes) {
-    auto* symbol = binding(name).first;
     auto* npc = script.world().npcById(id);
-    symbol->set_instance(npc!=nullptr ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr);
+    script.storyActorSlot(name) = npc!=nullptr ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr;
     }
   if(host.transfer) {
     if(host.transfer->itemChanged)
