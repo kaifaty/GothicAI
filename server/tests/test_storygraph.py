@@ -251,6 +251,33 @@ def test_ensure_without_converter_reuses_only_cache_for_current_base(tmp_path, m
     assert storygraph.ensure(game, cache, tool) is None
 
 
+def test_ensure_uses_manifest_graph_without_programs_or_converter(tmp_path, monkeypatch):
+    game = tmp_path / "game"
+    graph = json.dumps({**GRAPH, "sources": {"converter_sha256": None}}).encode()
+    directory = _ready_base(tmp_path, monkeypatch, {storygraph.PREPARED_GRAPH: graph})
+    cache = tmp_path / "cache" / "story.json"
+    tool = tmp_path / "converter"
+    tool.touch()
+
+    def unexpected_converter(*args, **kwargs):
+        pytest.fail("a prepared base already contains the story graph")
+
+    monkeypatch.setattr(storygraph.subprocess, "run", unexpected_converter)
+    assert storygraph.ensure(game, cache, tool) == cache
+    assert cache.read_bytes() == graph
+    assert load(cache).node("DIA_LOBART_WORKNOW").description == "Я ищу работу."
+    assert json.loads(cache.with_suffix(".base.json").read_text()) == {
+        "base_fingerprint": "a" * 64,
+        "algorithm_version": storygraph.ALGORITHM_VERSION,
+        "prepared_sha256": hashlib.sha256(graph).hexdigest(),
+    }
+    assert storygraph.ensure(game, cache, tmp_path / "absent-converter") == cache
+    (directory / storygraph.PREPARED_GRAPH).write_bytes(graph[:-1] + b" ")
+    with pytest.raises(RuntimeError, match="base file SHA-256 differs"):
+        storygraph.ensure(game, cache, tool)
+    assert cache.read_bytes() == graph
+
+
 def test_quest_and_its_nodes(graph):
     quest = graph.quest("mis_lobart_rueben")
     assert quest.title == "Убрать поле репы"
@@ -394,6 +421,14 @@ def test_native_ou_metadata_and_overrides_preserve_the_graph(ready_base, tmp_pat
         "ou_source_sha256": source["sha256"],
         "converter_sha256": hashlib.sha256(TOOL.read_bytes()).hexdigest(),
     }
+    if ready_base.has_file(storygraph.PREPARED_GRAPH):
+        stored_graph = ready_base.read(storygraph.PREPARED_GRAPH)
+        prepared = json.loads(stored_graph)
+        assert prepared.pop("sources") == {**sources, "converter_sha256": None}
+        assert prepared == graph
+        prepared_cache = tmp_path / "prepared.json"
+        assert storygraph.ensure(GAME_DIR, prepared_cache, tmp_path / "no-tool") == prepared_cache
+        assert prepared_cache.read_bytes() == stored_graph
     arbitrary = tmp_path / "own-ou.json"
     arbitrary.write_bytes(record.read_bytes())
     own = graph_with("--ou", str(arbitrary))

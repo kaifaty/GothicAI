@@ -27,4 +27,25 @@
 		float mob_elevup;
 		int32_t mob_prio;
 
+		static void fields(auto&& member) {
+			member("C_FOCUS.NPC_LONGRANGE", &FocusRecord::npc_longrange);
+			member("C_FOCUS.NPC_RANGE1", &FocusRecord::npc_range1);
+			member("C_FOCUS.NPC_RANGE2", &FocusRecord::npc_range2);
+			member("C_FOCUS.NPC_AZI", &FocusRecord::npc_azi);
+			member("C_FOCUS.NPC_ELEVDO", &FocusRecord::npc_elevdo);
+			member("C_FOCUS.NPC_ELEVUP", &FocusRecord::npc_elevup);
+			member("C_FOCUS.NPC_PRIO", &FocusRecord::npc_prio);
+			member("C_FOCUS.ITEM_RANGE1", &FocusRecord::item_range1);
+			member("C_FOCUS.ITEM_RANGE2", &FocusRecord::item_range2);
+			member("C_FOCUS.ITEM_AZI", &FocusRecord::item_azi);
+			member("C_FOCUS.ITEM_ELEVDO", &FocusRecord::item_elevdo);
+			member("C_FOCUS.ITEM_ELEVUP", &FocusRecord::item_elevup);
+			member("C_FOCUS.ITEM_PRIO", &FocusRecord::item_prio);
+			member("C_FOCUS.MOB_RANGE1", &FocusRecord::mob_range1);
+			member("C_FOCUS.MOB_RANGE2", &FocusRecord::mob_range2);
+			member("C_FOCUS.MOB_AZI", &FocusRecord::mob_azi);
+			member("C_FOCUS.MOB_ELEVDO", &FocusRecord::mob_elevdo);
+			member("C_FOCUS.MOB_ELEVUP", &FocusRecord::mob_elevup);
+			member("C_FOCUS.MOB_PRIO", &FocusRecord::mob_prio);
+		}
 	};

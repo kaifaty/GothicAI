@@ -33,7 +33,9 @@ std::shared_ptr<DayScriptStats> DayScriptStats::attach(daedalus::DaedalusVm& vm,
       }
     }
   stats->callObserver=vm.add_call_observer([stats,&vm](const auto& symbol) { stats->call(symbol,vm); });
-  vm.observe_instructions([stats,&vm](const auto& instruction) { stats->instruction(instruction,vm.pc()); });
+  stats->instructionObserver=vm.add_instruction_observer([stats](const auto& machine,const auto& instruction) {
+    stats->instruction(instruction,machine.pc());
+    });
   vm.observe_externals([stats](const auto& symbol) { stats->external(symbol); });
   return stats;
   }
@@ -41,7 +43,7 @@ std::shared_ptr<DayScriptStats> DayScriptStats::attach(daedalus::DaedalusVm& vm,
 void DayScriptStats::stop(daedalus::DaedalusVm& vm) {
   active=false;
   vm.remove_call_observer(callObserver);
-  vm.observe_instructions({});
+  vm.remove_instruction_observer(instructionObserver);
   vm.observe_externals({});
   }
 

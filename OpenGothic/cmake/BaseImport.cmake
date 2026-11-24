@@ -26,7 +26,10 @@ set(BASE_RUNTIME_SOURCES
   common/game/definitions/fightdefinitiondata.cpp common/game/definitions/menudefinitions.cpp
   common/game/definitions/cameradefinitiondata.cpp common/game/definitions/sfxdefinitiondata.cpp
   common/game/definitions/musicdefinitiondata.cpp
-  common/game/definitions/effectdefinitiondata.cpp
+  common/game/definitions/questclosuredata.cpp
+  common/game/definitions/effectdefinitiondata.cpp common/game/definitions/dialoginfodata.cpp common/game/definitions/symbolcatalog.cpp
+  common/game/definitions/npcworlddata.cpp common/game/definitions/tradeinventorydata.cpp
+  common/game/definitions/deathtrophydefinitions.cpp
   common/gothicglb.cpp common/gltfmesh.cpp common/utils/fileutil.cpp common/musicdata.cpp common/dmusic/musicrecord.cpp common/musicnative.c
   common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp
   common/dmusic/hydra.cpp common/dmusic/soundfont.cpp)
@@ -54,6 +57,7 @@ target_include_directories(gothic-base-import SYSTEM PRIVATE "${BASE_ROOT}/lib/r
 # including project) and reads its parsed structures, which need C11.
 set_target_properties(gothic-base-import PROPERTIES C_STANDARD 11)
 target_link_libraries(gothic-base-import PUBLIC zenkit miniz dmusic)
+target_link_libraries(gothic-base-import PRIVATE StoryGraph)
 set(NPC_SNAPSHOT_GENERATED_DIR "${CMAKE_BINARY_DIR}/npc-generated")
 file(CONFIGURE OUTPUT "${NPC_SNAPSHOT_GENERATED_DIR}/npcsnapshotfields.h" CONTENT "@BASE_NPC_FIELDS@" @ONLY)
 file(CONFIGURE OUTPUT "${NPC_SNAPSHOT_GENERATED_DIR}/itemrecordfields.h" CONTENT "@BASE_ITEM_FIELDS@" @ONLY)

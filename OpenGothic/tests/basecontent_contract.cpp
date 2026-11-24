@@ -19,6 +19,8 @@
 #include "game/definitions/definitiontypes.h"
 #include "game/definitions/baseprogram.h"
 #include "game/definitions/basescripts.h"
+#include "game/definitions/stockstoryprograms.h"
+#include "game/definitions/symbolcatalog.h"
 #include "gamebasecontent.h"
 #include "gothic.h"
 #include "gltfmesh.h"
@@ -1270,6 +1272,29 @@ struct BaseContentContract {
       equal(raw.size()-end,source.trailingBytes,field+" trailing bytes");
       auto native=daedalus::DaedalusScript::from_program(record);
       programSymbols(original,record,native,field);
+      if(digest==StockStoryPrograms::stockProgram) {
+        using Kind = ScriptSymbolCatalog::Kind;
+        const auto catalog = ScriptSymbolCatalog::load(base,digest);
+        require(catalog!=nullptr,"verified Gothic program needs the non-executable symbol catalog");
+        for(const auto& symbol : native.symbols()) {
+          const auto* entry = catalog->at(symbol.index());
+          const auto* current = native.find_symbol_by_name(symbol.name());
+          const auto expected = current!=nullptr ? std::optional(current->index()) : std::nullopt;
+          require(entry!=nullptr && entry->name==symbol.name() && catalog->find(symbol.name())==expected,
+                  "symbol catalog identity differs from the source at "+std::to_string(symbol.index()));
+          }
+        require(catalog->at(native.symbols().size())==nullptr,"symbol catalog must omit VM-only temporary entries");
+        constexpr std::pair<std::string_view,Kind> kinds[] = {
+          {"vlk_449_lares",Kind::Npc},{"itmi_gold",Kind::Item},{"dia_addon_lares_patch",Kind::Info},
+          {"newworld_zen",Kind::Constant},{"currentlevel",Kind::Variable},{"b_giveinvitems",Kind::Function},
+          {"c_item",Kind::Other},
+          };
+        for(const auto& [name,kind] : kinds) {
+          const auto id = catalog->find(name);
+          require(id && catalog->at(*id)->kind==kind,"stock catalog symbol kind differs for "+std::string(name));
+          }
+        require(!catalog->find("DIR_UNALLOCATED_TEST"),"runtime director symbols do not belong to the stock catalog");
+        }
       const auto count=original.symbols().size();
       const auto* first=count==0 ? nullptr : native.find_symbol_by_index(0);
       daedalus::DaedalusVm sourceVm(daedalus::DaedalusScript::from_program(asset::fromZenKit(original.export_program())));
@@ -1299,6 +1324,8 @@ struct BaseContentContract {
     for(const auto& row:index.selections) {
       if(row.language!=-1 || !row.source) continue;
       const auto& source=index.sources.at(*row.source);
+      const auto identity=selectBaseProgram(index,row.request,row.language);
+      require(&identity.source==&source && identity.branch==row.step,row.request+": program identity differs from imported selection");
       const auto host=row.step.starts_with("host_") ? (gothic/source.path).u16string() : std::u16string{};
       const auto script=loadBaseProgram(row.request,row.language,row.step,host);
       equal(script.symbols().size(),ProgramData::readProgram(index.path(source)).symbols.size(),row.request+" selected symbol count");
@@ -1311,6 +1338,29 @@ struct BaseContentContract {
     equal(after["runtime_programs"]["selections"].Size(),selected,"actual native program census selections");
     std::printf("Programs: %zu sources, %zu symbols and %zu bytecode bytes match independent DAT reads; all eight native selections add zero DAT opens\n",parsed,symbols,code);
     return selected;
+    }
+
+  static void programIdentityPrecedence() {
+    // This index has no program payloads, even for its selected sources.
+    ProgramData::Index index;
+    index.sources.resize(4);
+    index.vfs.emplace("MENU.DAT",0);
+    index.host.emplace("_work/Data/Scripts/_compiled/folder/MENU.DAT",1);
+    index.host.emplace("_work/Data/Scripts_RU/_compiled/folder/MENU.DAT",2);
+    index.host.emplace("_work/Data/Scripts_RU/_compiled/MENU.DAT",3);
+    const auto check = [&](std::string_view request, size_t source, std::string_view branch) {
+      const auto selected=selectBaseProgram(index,request,3);
+      require(&selected.source==&index.sources[source] && selected.branch==branch,
+              "program identity must select "+std::string(branch));
+      };
+    check("MENU.DAT",0,"vfs_find_request");
+    check("folder/MENU.DAT",0,"vfs_find_basename");
+    index.vfs.clear();
+    check("folder/MENU.DAT",1,"host_ordinary");
+    index.host.erase("_work/Data/Scripts/_compiled/folder/MENU.DAT");
+    check("folder/MENU.DAT",2,"host_localized_full");
+    index.host.erase("_work/Data/Scripts_RU/_compiled/folder/MENU.DAT");
+    check("folder/MENU.DAT",3,"host_localized_basename");
     }
 
   // Each old addon field is checked explicitly against the separately bound engine record.
@@ -3600,6 +3650,7 @@ struct BaseContentContract {
             "texture, mesh, model and font indices must contain files");
     modelCount=models(base);
     fontCount=fonts(base,resources);
+    programIdentityPrecedence();
     programCount=programs(base,censusPath);
     modelFixtures(temporary);
     for(const auto& [key,file]:resources.baseTextures.files) {

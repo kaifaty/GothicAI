@@ -108,6 +108,10 @@ namespace daedalus {
 		/// \param scr The script to load into the VM.
 		explicit DaedalusVm(DaedalusScript&& scr, uint8_t flags = DaedalusVmExecutionFlag::NONE);
 
+		/// Retains symbols, externals and native overrides without loading the legacy interpreter.
+		static DaedalusVm without_legacy_dispatcher(DaedalusScript&& scr, uint8_t flags = DaedalusVmExecutionFlag::NONE);
+		[[nodiscard]] bool has_legacy_dispatcher() const noexcept { return _m_execute_bytecode!=nullptr; }
+
 		/// \brief Calls a function by it's name.
 		/// \tparam P The types for the argument values.
 		/// \param sym The name of the function to call.
@@ -633,6 +637,12 @@ namespace daedalus {
 		// Assigned member elements are reported after the write, with their exact context and index.
 		void observe_member_writes(std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> callback) { _m_member_write_observer = std::move(callback); }
 		void observe_instructions(std::function<void(DaedalusInstruction const&)> callback) { _m_instruction_observer = std::move(callback); }
+		// Independent opcode observers coexist with the single offline observer.
+		using InstructionObserver = std::function<void(const DaedalusVm&, const DaedalusInstruction&)>;
+		uint64_t add_instruction_observer(InstructionObserver callback);
+		void remove_instruction_observer(uint64_t id);
+		// Used by the opt-in game audit. Reads and native calls remain available.
+		void require_native_execution(std::string_view program, bool metadataOnly = false);
 		// Optional script-call instrumentation; includes functions reached through BL overrides.
 		using CallObserver = std::function<void(DaedalusSymbol const&)>;
 		size_t call_observer_count() const { return _m_call_observers.size(); }
@@ -742,6 +752,8 @@ namespace daedalus {
 	protected:
 		/// \brief Runs the instruction at the current program counter and advances it properly.
 		/// \return false, the instruction executed was a op_return instruction, otherwise true.
+		using BytecodeExecutor = void (*)(DaedalusVm&);
+		DaedalusVm(DaedalusScript&& scr, uint8_t flags, BytecodeExecutor execute_bytecode);
 		bool exec();
 
 		/// \brief Validates the given address and jumps to it (sets the program counter).
@@ -1059,6 +1071,8 @@ namespace daedalus {
 		std::function<void(DaedalusSymbol const&)> _m_write_observer;
 		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_write_observer;
 		std::function<void(DaedalusInstruction const&)> _m_instruction_observer;
+		uint64_t _m_next_instruction_observer = 0;
+		std::vector<std::pair<uint64_t, InstructionObserver>> _m_instruction_observers;
 		void notify_call(DaedalusSymbol const* symbol) const;
 		uint64_t _m_next_call_observer = 0;
 		std::vector<std::pair<uint64_t, CallObserver>> _m_call_observers;
@@ -1078,6 +1092,7 @@ namespace daedalus {
 
 		std::shared_ptr<DaedalusInstance> _m_instance;
 		std::uint32_t _m_pc {0};
+		BytecodeExecutor _m_execute_bytecode = nullptr;
 		std::uint8_t _m_flags {DaedalusVmExecutionFlag::NONE};
 	};
 

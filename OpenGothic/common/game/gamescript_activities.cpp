@@ -6,7 +6,20 @@
 #include <algorithm>
 
 void GameScript::loadNativeRoutines() {
-  if(!nativeRoutineProgram || !activityEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
+  if(!nativeRoutineProgram)
+    return;
+
+  static constexpr std::pair<std::string_view,int32_t PointGestureRolls::*> pointRolls[] = {
+    {"ZS_STAND_GUARDING_LOOP.RANDOM",       &PointGestureRolls::guard},
+    {"ZS_STAND_ARMSCROSSED_LOOP.RANDOM",    &PointGestureRolls::crossedArms},
+    {"ZS_STAND_WP_LOOP.RANDOM",             &PointGestureRolls::waypoint},
+    {"ZS_STAND_ARMSCROSSED_LOOP.EVENTRANDY",&PointGestureRolls::portal},
+    {"B_EVENT_PORTAL_EARTHQUAKE.RANDY",     &PointGestureRolls::earthquake},
+    };
+  for(const auto& [name,field] : pointRolls)
+    findSymbol(name)->bind_global_int(pointGestureRolls.*field);
+
+  if(!activityEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return;
 
   vm.override_function("B_MM_ASSESSENEMY",std::function<void()>{[this] { runMonsterAssessEnemy(); }},[this] {
@@ -157,7 +170,7 @@ void GameScript::loadNativeRoutines() {
     }},enabled);
   vm.override_function("B_GIVEPLAYERXP",std::function<void(int32_t)>{
     [this](int32_t amount) { givePlayerXp(amount); }},enabled);
-  loadNativeQuestLog(enabled);
+  loadNativeQuestLog([this,enabled] { return !vm.has_legacy_dispatcher() || enabled(); });
   }
 
 bool GameScript::runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol&, int& result) {
@@ -325,17 +338,16 @@ bool GameScript::routineTimerDue(const Npc& npc, ScriptFn loop) const {
   }
 
 void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& activity) {
-  const auto& loop=findSymbol(npc.aiState.funcLoop.ptr)->name();
-  auto draw=[&](int32_t range,const std::string& variable) {
-    const auto value=int32_t(rollRandom(uint32_t(range),&npc,true));
-    if(auto* local=findSymbol(loop+variable))
-      local->set_int(value);
-    return value;
+  const auto storeLoopRoll = [&](std::string_view variable, int32_t roll) {
+    const auto& loop = findSymbol(npc.aiState.funcLoop.ptr)->name();
+    if(auto* local = findSymbol(std::string(loop).append(variable)))
+      local->set_int(roll);
     };
   if(const auto* mob=activity.mob) {
     const auto& timer=*mob->timer;
     if(timer.rollRange>0) {
-      const auto roll=draw(timer.rollRange,timer.rollVariable);
+      const auto roll = int32_t(rollRandom(uint32_t(timer.rollRange),&npc,true));
+      storeLoopRoll(timer.rollVariable,roll);
       for(const auto& gesture:timer.gestures)
         if(roll<=gesture.throughRoll)
           npc.pushActivityCommand(AiQueue::aiPlayAnimBs(gesture.animation,BodyState(mob->busyBodyState)));
@@ -343,16 +355,32 @@ void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& acti
     npc.setStateTime(0);
     return;
     }
-  const auto& point=*activity.point;
-  const auto& gesture=point.gestures[size_t(draw(point.rollRange,".RANDOM"))];
+  const auto& point = *activity.point;
+  const auto gestureRoll = int32_t(rollRandom(uint32_t(point.rollRange),&npc,true));
+  if(nativeRoutineProgram) {
+    using Form = ActivityDefinitions::PointActivity::Form;
+    switch(point.form) {
+      case Form::Guard:       pointGestureRolls.guard = gestureRoll; break;
+      case Form::ArmsCrossed: pointGestureRolls.crossedArms = gestureRoll; break;
+      case Form::Waypoint:    pointGestureRolls.waypoint = gestureRoll; break;
+      default: break;
+      }
+    } else {
+    storeLoopRoll(".RANDOM",gestureRoll);
+    }
+  const auto& gesture = point.gestures[size_t(gestureRoll)];
   if(!gesture.animation.empty())
     npc.pushActivityCommand(AiQueue::aiPlayAnim(gesture.animation));
   if(point.portal) {
-    const auto& portal=*point.portal;
-    const auto roll=draw(portal.rollRange,".EVENTRANDY");
-    const auto guild=npc.handle().guild;
-    const auto dead=findSymbol("RAVENISDEAD")->get_int();
-    const auto level=findSymbol("CURRENTLEVEL")->get_int();
+    const auto& portal = *point.portal;
+    const auto roll = int32_t(rollRandom(uint32_t(portal.rollRange),&npc,true));
+    if(nativeRoutineProgram)
+      pointGestureRolls.portal = roll;
+    else
+      storeLoopRoll(".EVENTRANDY",roll);
+    const auto guild = npc.handle().guild;
+    const auto dead = nativeRoutineProgram ? deathProgress.ravenDead : findSymbol("RAVENISDEAD")->get_int();
+    const auto level = nativeRoutineProgram ? currentStoryWorld : findSymbol("CURRENTLEVEL")->get_int();
     if(roll==portal.triggerRoll && guild!=portal.excludedGuild && dead==portal.ravenDead && level==portal.world)
       npc.invokeRoutine(findFunction(portal.function));
     }

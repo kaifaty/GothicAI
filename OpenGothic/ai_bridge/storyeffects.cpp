@@ -13,12 +13,12 @@
 #include "world/objects/interactive.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "gothic.h"
 #include "world/aiqueue.h"
 
 #include "eval.h"
 #include "jsonread.h"
 #include "npcchests.h"
+#include "storyruntime.h"
 #include "textcodec.h"
 
 using namespace Tempest;
@@ -69,9 +69,60 @@ int32_t intConst(daedalus::DaedalusVm& vm, std::string_view name) {
   return s!=nullptr && s->type()==DaedalusDataType::INT ? s->get_int(0) : 0;
   }
 
-}
+struct EffectSymbols {
+  GameScript* game = nullptr;
+  daedalus::DaedalusVm* vm = nullptr;
 
-std::string StoryEffect::read(const rapidjson::Value& x, daedalus::DaedalusVm* vm, StoryEffect& e) {
+  explicit operator bool() const { return game!=nullptr || vm!=nullptr; }
+
+  bool contains(std::string_view name) const {
+    return game!=nullptr ? game->hasSymbolName(name) : legacySymbol(name)!=nullptr;
+    }
+
+  std::optional<int32_t> constant(std::string_view name) const {
+    if(game!=nullptr)
+      return game->intConstant(name);
+    if(const auto* symbol = legacyConstant(name))
+      return symbol->get_int(0);
+    return std::nullopt;
+    }
+
+  bool constantInt(std::string_view name) const {
+    return (game!=nullptr && game->symbolKind(name)==GameScript::SymbolKind::Constant) || legacyConstant(name)!=nullptr;
+    }
+
+  bool writableInt(std::string_view name) const {
+    if(game!=nullptr)
+      return game->symbolKind(name)==GameScript::SymbolKind::Variable;
+    const auto* symbol = legacySymbol(name);
+    return symbol!=nullptr && symbol->type()==DaedalusDataType::INT && !symbol->is_const() && !symbol->is_member();
+    }
+
+  bool instance(std::string_view name) const {
+    const auto* symbol = legacySymbol(name);
+    return symbol!=nullptr && symbol->type()==DaedalusDataType::INSTANCE;
+    }
+
+  bool info(std::string_view name) const {
+    auto* symbol = legacySymbol(name);
+    return symbol!=nullptr && symbol->type()==DaedalusDataType::INSTANCE && symbol->is_instance_of<daedalus::IInfo>();
+    }
+
+  private:
+    const daedalus::DaedalusSymbol* legacyConstant(std::string_view name) const {
+      const auto* symbol = legacySymbol(name);
+      return symbol!=nullptr && symbol->is_const() && symbol->type()==DaedalusDataType::INT ? symbol : nullptr;
+      }
+
+    // Legacy effects accept any Daedalus INSTANCE for these operands. Keep the
+    // declared type check even when a symbol has no world instance yet.
+    daedalus::DaedalusSymbol* legacySymbol(std::string_view name) const {
+      auto* script = game!=nullptr ? &game->getVm() : vm;
+      return script!=nullptr ? script->find_symbol_by_name(name) : nullptr;
+      }
+  };
+
+std::string readEffect(const rapidjson::Value& x, const EffectSymbols& symbols, StoryEffect& e) {
   e.kind   = std::string(JsonRead::str(x,"do"));
   e.item   = upper(JsonRead::str(x,"item"));
   e.chest  = upper(JsonRead::str(x,"chest"));
@@ -91,8 +142,6 @@ std::string StoryEffect::read(const rapidjson::Value& x, daedalus::DaedalusVm* v
   e.day    = int32_t(JsonRead::integer(x,"day",0));
   e.toNpc  = JsonRead::str(x,"to")=="npc";
   e.toHero = JsonRead::str(x,"to")!="self" && !e.toNpc;
-  auto* item = vm ? vm->find_symbol_by_name(e.item) : nullptr;
-  auto* var  = vm ? vm->find_symbol_by_name(e.var) : nullptr;
   if(e.kind=="knockout" || e.kind=="wound") {
     e.by = upper(JsonRead::str(x,"by"));
     if(e.by.empty())
@@ -110,15 +159,14 @@ std::string StoryEffect::read(const rapidjson::Value& x, daedalus::DaedalusVm* v
     return {};
     }
   if(e.kind=="give" || e.kind=="create" || e.kind=="chest_take") {
-    if(vm && (item==nullptr || item->type()!=DaedalusDataType::INSTANCE))
+    if(symbols && !symbols.instance(e.item))
       return e.kind + ": no item " + e.item;
     if(e.count<=0)
       return e.kind + ": count must be positive";
     if(e.kind=="chest_take" && e.chest.empty())
       return "chest_take: needs a chest";
     if(e.kind=="give" && e.toNpc) {
-      auto* t = vm && !e.target.empty() ? vm->find_symbol_by_name(e.target) : nullptr;
-      if(e.target.empty() || (vm && (t==nullptr || t->type()!=DaedalusDataType::INSTANCE)))
+      if(e.target.empty() || (symbols && !symbols.instance(e.target)))
         return "give: no npc " + e.target;
       }
     return {};
@@ -127,33 +175,31 @@ std::string StoryEffect::read(const rapidjson::Value& x, daedalus::DaedalusVm* v
     auto* t = teaching(e.teach);
     if(t==nullptr)
       return "teach: unknown teaching " + e.teach;
-    if(vm && vm->find_symbol_by_name(t->fn)==nullptr)
+    if(symbols && !symbols.contains(t->fn))
       return std::string("teach: the scripts have no ") + t->fn;
     if(e.teach=="circle")
       return e.count<1 || e.count>6 ? "teach: circle must be 1..6" : "";
-    auto* a = vm && !e.arg.empty() ? vm->find_symbol_by_name(e.arg) : nullptr;
-    if(e.arg.empty() || (vm && (a==nullptr || !a->is_const() || a->type()!=DaedalusDataType::INT)))
+    if(e.arg.empty() || (symbols && !symbols.constantInt(e.arg)))
       return "teach: no constant " + e.arg;
     if((e.teach=="attribute" || e.teach=="fight") && e.count<=0)
       return "teach: count must be positive";
     return {};
     }
   if(e.kind=="set") {
-    if(vm && (var==nullptr || var->type()!=DaedalusDataType::INT || var->is_const() || var->is_member()))
+    if(symbols && !symbols.writableInt(e.var))
       return "set: no variable " + e.var;
     return {};
     }
   if(e.kind=="crime_memory") {
     if(e.count<0 || e.count>4 || e.day<0)
       return "crime_memory: value must be 0..4 and day nonnegative";
-    if(vm) {
+    if(symbols) {
       for(auto name:{"AIV_NPCSAWPLAYERCOMMIT","AIV_NPCSAWPLAYERCOMMITDAY","AIV_CRIMEABSOLUTIONLEVEL"}) {
-        auto* s = vm->find_symbol_by_name(name);
-        if(s==nullptr || !s->is_const() || s->type()!=DaedalusDataType::INT ||
-           s->get_int(0)<0 || uint32_t(s->get_int(0))>=daedalus::INpc::aivar_count)
+        const auto index = symbols.constant(name);
+        if(!index || *index<0 || size_t(*index)>=NpcRecord::aivar_count)
           return std::string("crime_memory: no AIV constant ")+name;
         }
-      if(vm->find_symbol_by_name("B_GETCURRENTABSOLUTIONLEVEL")==nullptr)
+      if(!symbols.contains("B_GETCURRENTABSOLUTIONLEVEL"))
         return "crime_memory: no B_GetCurrentAbsolutionLevel";
       }
     return {};
@@ -161,43 +207,38 @@ std::string StoryEffect::read(const rapidjson::Value& x, daedalus::DaedalusVm* v
   if(e.kind=="journal") {
     if(e.status.empty())
       e.status = "LOG_RUNNING";
-    auto* st = vm ? vm->find_symbol_by_name(e.status) : nullptr;
-    if(vm && (st==nullptr || !st->is_const() || st->type()!=DaedalusDataType::INT))
+    if(symbols && !symbols.constantInt(e.status))
       return "journal: no status " + e.status;
     return e.topic.empty() ? "journal: needs a topic" : "";
     }
   if(e.kind=="attack") {
     if(e.reason.empty())
       e.reason = "AR_NONE";
-    auto* r = vm ? vm->find_symbol_by_name(e.reason) : nullptr;
-    if(vm && (r==nullptr || !r->is_const() || r->type()!=DaedalusDataType::INT))
+    if(symbols && !symbols.constantInt(e.reason))
       return "attack: no reason " + e.reason;
     return {};
     }
   if(e.kind=="calm") {
     if(e.attitude.empty())
       e.attitude = "ATT_NEUTRAL";
-    auto* a = vm ? vm->find_symbol_by_name(e.attitude) : nullptr;
-    if(vm && (a==nullptr || !a->is_const() || a->type()!=DaedalusDataType::INT))
+    if(symbols && !symbols.constantInt(e.attitude))
       return "calm: no attitude " + e.attitude;
     return {};
     }
   if(e.kind=="refuse_talk")
     return e.count<=0 ? "refuse_talk: seconds must be positive" : "";
   if(e.kind=="routine") {
-    auto* t = vm && !e.target.empty() ? vm->find_symbol_by_name(e.target) : nullptr;
-    if(vm && !e.target.empty() && (t==nullptr || t->type()!=DaedalusDataType::INSTANCE))
+    if(symbols && !e.target.empty() && !symbols.instance(e.target))
       return "routine: no npc " + e.target;
     return e.routine.empty() ? "routine: needs a routine" : "";
     }
   if(e.kind=="knows") {
-    auto* i = vm ? vm->find_symbol_by_name(e.info) : nullptr;
-    if(vm && (i==nullptr || i->type()!=DaedalusDataType::INSTANCE || !i->is_instance_of<daedalus::IInfo>()))
+    if(symbols && !symbols.info(e.info))
       return "knows: no dialog " + e.info;
     return e.info.empty() ? "knows: needs a dialog" : "";
     }
   if(e.kind=="party") {
-    if(vm && vm->find_symbol_by_name("AIV_PARTYMEMBER")==nullptr)
+    if(symbols && !symbols.contains("AIV_PARTYMEMBER"))
       return "party: the scripts have no AIV_PARTYMEMBER";
     return {};
     }
@@ -206,11 +247,55 @@ std::string StoryEffect::read(const rapidjson::Value& x, daedalus::DaedalusVm* v
   return "unknown effect " + e.kind;
   }
 
-void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::string_view who) const {
-  auto call = [&](const char* fn, std::vector<Value> args) {
+}
+
+std::string StoryEffect::read(const rapidjson::Value& x, daedalus::DaedalusVm* vm, StoryEffect& e) {
+  return readEffect(x,{nullptr,vm},e);
+  }
+
+std::string StoryEffect::read(const rapidjson::Value& x, GameScript& script, StoryEffect& e) {
+  return readEffect(x,{&script,nullptr},e);
+  }
+
+void StoryEffect::run(GameScript& script, Npc& npc, Npc& player, std::string_view who) const {
+  if(kind=="set") {
+    script.setGlobalIntSymbol(var,count);
+    return;
+    }
+  if(kind=="party") {
+    script.setPartyMember(npc,count!=0);
+    return;
+    }
+  if(kind=="knows") {
+    if(!script.markNpcInfoKnown(player,info))
+      Log::e("[story] ",who,": knows ",info,": no such dialog in the world");
+    return;
+    }
+  if(script.usesVerifiedNpcProgram()) {
+    if(kind=="refuse_talk") {
+      npc.setRefuseTalkSeconds(count);
+      return;
+      }
+    if(kind=="end") {
+      script.endDirectorDialog(npc);
+      return;
+      }
+    }
+
+  auto& vm = script.getVm();
+  StoryRuntime::Bind actors(vm,&npc,&player);
+  auto call = [&](const char* fn, std::vector<Value> args, bool preparedTeaching = false) {
     std::string err;
     auto* s = vm.find_symbol_by_name(fn);
-    auto  r = s ? storygraph::callFunction(vm,*s,args,err) : std::nullopt;
+    std::optional<Value> r;
+    if(s!=nullptr) {
+      if(preparedTeaching && !vm.has_legacy_dispatcher() && !vm.has_active_override(*s)) {
+        if(const auto taught = script.invokePreparedStockInt(*s,args,err))
+          r = Value::integer(*taught);
+        } else {
+        r = storygraph::callFunction(vm,*s,args,err);
+        }
+      }
     if(!r)
       Log::e("[story] ",who,": ",fn," failed: ",s ? err : "no such function");
     return r;
@@ -219,14 +304,6 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
     auto* s = vm.find_symbol_by_name(name);
     return s!=nullptr && s->type()==DaedalusDataType::INT ? s->get_int(0) : def;
     };
-  // the scripts' own functions read self and other
-  auto* self  = vm.global_self();
-  auto* other = vm.global_other();
-  auto  prevSelf  = self->get_instance();
-  auto  prevOther = other->get_instance();
-  self->set_instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
-  other->set_instance(std::static_pointer_cast<daedalus::INpc>(player.handlePtr()));
-
   if(kind=="chest_take") {
     // v48: an outcome far from the hero. Direct transfer sends neither perceptions nor npc_deed;
     // Npc::addItem(chest) is deliberately avoided because it also captures a marked physical deed.
@@ -239,6 +316,9 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
     }
   else if(kind=="give" && toNpc) {
     // to another npc (v39): an errand far from the hero, the walk taken as done (errands.py)
+    if(script.usesVerifiedNpcProgram())
+      if(auto* taker = script.boundStockDirectorNpc(target); taker!=nullptr && script.tryDirectorGiveItems(npc,*taker,item,count))
+        return;
     auto* s = vm.find_symbol_by_name(item);
     auto* t = vm.find_symbol_by_name(target);
     auto  inst = t!=nullptr ? t->get_instance() : nullptr;
@@ -248,15 +328,19 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
       Log::e("[story] ",who,": give to ",target,": no such npc in the world");
     }
   else if(kind=="give") {
+    auto& from = toHero ? npc : player;
+    auto& to   = toHero ? player : npc;
+    if(script.tryDirectorGiveItems(from,to,item,count))
+      return;
     if(auto* s = vm.find_symbol_by_name(item)) {
-      auto& from = toHero ? npc : player;
-      auto& to   = toHero ? player : npc;
       call("B_GIVEINVITEMS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(from.handlePtr())),Value::instance(std::static_pointer_cast<daedalus::INpc>(to.handlePtr())),
                              Value::integer(int32_t(s->index())),Value::integer(count)});
       }
     }
   else if(kind=="create") {
     // into the npc's own hands first: a thing it keeps elsewhere (the server's stash), given after this
+    if(script.tryDirectorCreateItems(npc,item,count))
+      return;
     if(auto* s = vm.find_symbol_by_name(item))
       call("CREATEINVITEMS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::integer(int32_t(s->index())),
                              Value::integer(count)});
@@ -272,17 +356,14 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
         args.push_back(Value::integer(count));
         args.push_back(Value::integer(teach=="attribute" ? AttributeMax : FightMax));
         }
-      auto r = call(t->fn,std::move(args));
+      const bool preparedTeaching = teach!="attribute" && teach!="fight" && teach!="rune";
+      auto r = call(t->fn,std::move(args),preparedTeaching);
       if(r && r->i==0)
         Log::e("[story] ",who,": ",t->fn," ",arg," ",count,": the scripts refused");
       }
     }
   else if(kind=="xp") {
     call("B_GIVEPLAYERXP",{Value::integer(count)});
-    }
-  else if(kind=="set") {
-    if(auto* s = vm.find_symbol_by_name(var))
-      s->set_int(count);
     }
   else if(kind=="crime_memory") {
     // B_MemorizePlayerCrime also writes PETZ counters. Project only its NPC-local fields, with
@@ -323,22 +404,6 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
       npc.aiPush(AiQueue::aiRemoveWeapon());
       }
     }
-  else if(kind=="knows") {
-    // the dialog counts as heard, as when it is played: the menu no longer offers it, conditions see it
-    auto* s    = vm.find_symbol_by_name(info);
-    auto  dlg  = s!=nullptr ? std::dynamic_pointer_cast<daedalus::IInfo>(s->get_instance()) : nullptr;
-    auto* w    = Gothic::inst().world();
-    if(dlg!=nullptr && w!=nullptr)
-      w->script().setNpcInfoKnown(player.handle(),*dlg); else
-      Log::e("[story] ",who,": knows ",info,": no such dialog in the world");
-    }
-  else if(kind=="party") {
-    // the npc goes with the hero (v30), as a companion's dialog marks it: whom it kills gives him the
-    // experience (ZS_Dead), its blows at him are friendly fire
-    const int32_t aiv = intConst(vm,"AIV_PARTYMEMBER");
-    if(aiv>=0 && uint32_t(aiv)<daedalus::INpc::aivar_count)
-      npc.handlePtr()->aivar[size_t(aiv)] = count!=0 ? 1 : 0;
-    }
   else if(kind=="refuse_talk") {
     call("NPC_SETREFUSETALK",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr())),Value::integer(count)});
     }
@@ -351,11 +416,10 @@ void StoryEffect::run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::stri
       Log::e("[story] ",who,": routine of ",target,": no such npc in the world");
     }
 
-  self->set_instance(prevSelf);
-  other->set_instance(prevOther);
   }
 
-int32_t StoryEffect::learnCost(daedalus::DaedalusVm& vm, Npc& player, std::string& error) const {
+int32_t StoryEffect::learnCost(GameScript& script, Npc& player, std::string& error) const {
+  auto& vm = script.getVm();
   auto* t = teaching(teach);
   if(t==nullptr) {
     error = "teach: unknown teaching " + teach;

@@ -561,6 +561,7 @@ namespace daedalus {
 
 		/// Preserve this mutable scalar in storage that outlives the symbol.
 		void bind_global_int(std::int32_t& value);
+		void bind_global_string(std::string& value);
 
 		/// \brief Validates that the symbol is an instance and sets it's value
 		/// \param inst The instance value to set
@@ -728,13 +729,15 @@ namespace daedalus {
 	private:
 		friend class DaedalusScript;
 		std::int32_t* int_data() const;
+		std::string* string_data() const;
 
 		std::string _m_name;
 		std::variant<std::unique_ptr<std::int32_t[]>,
 		             std::unique_ptr<float[]>,
 		             std::unique_ptr<std::string[]>,
 		             std::shared_ptr<DaedalusInstance>,
-		             std::int32_t*>
+		             std::int32_t*,
+		             std::string*>
 		    _m_value;
 
 		std::int32_t _m_address {-1};
@@ -967,6 +970,10 @@ namespace daedalus {
 		void register_as_opaque(DaedalusSymbol* sym);
 
 	protected:
+		void arm_metadata_audit(std::string_view program) { _m_metadata_audit_program = program; }
+		[[nodiscard]] bool metadata_audit_active() const noexcept { return !_m_metadata_audit_program.empty(); }
+		[[noreturn]] void abort_metadata_access(std::uint32_t address, const char* symbol) const;
+
 		template <typename _member, int N>
 		DaedalusSymbol* _check_member(std::string_view name, std::type_info const* type) {
 			auto* sym = find_symbol_by_name(name);
@@ -1018,6 +1025,7 @@ namespace daedalus {
 		std::unordered_map<std::uint32_t, uint32_t> _m_symbols_by_address;
 
 		mutable std::unique_ptr<Bytecode> _m_text;
+		std::string _m_metadata_audit_program;
 		std::uint8_t _m_version {0};
 	};
 } // namespace daedalus

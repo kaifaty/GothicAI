@@ -13,12 +13,9 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 
-#include "bytecode.h"
 #include "eval.h"
 #include "exec.h"
 #include "exprjson.h"
-#include "lifter.h"
-#include "predicates.h"
 
 #include "jsonread.h"
 #include "jsonwriter.h"
@@ -361,24 +358,22 @@ void DialogGraph::check(const daedalus::IInfo& info, bool visible) {
   if(!replaced.empty() && replacedProgram(*v,uint32_t(info.condition))!=nullptr)
     return;  // the director's condition: the lifted one is the scripts'
 
-  rt.ensureLifter();
-  auto& predicates = rt.predicates();
-  auto& e = predicates.condition(uint32_t(info.condition));
-  if(!predicates.whyNotLifted(e).empty() || usesRandom(e))
-    return;  // not lifted, or a dice roll of its own
+  const auto* sym = v->find_symbol_by_index(info.symbol_index());
+  const auto name = sym!=nullptr ? sym->name() : std::string("?");
+  const auto e = rt.originalCondition(uint32_t(info.condition),name);
+  if(!e || usesRandom(e))
+    return;
+  std::string error;
   storygraph::VmExternals engine(*v);
-  storygraph::Evaluator   ev(*v,predicates.helpers(),engine);
-  auto r = ev.eval(e);
+  const auto r = rt.evaluate(e,error,&engine);
   checked++;
-  auto* sym  = v->find_symbol_by_index(info.symbol_index());
-  auto  name = sym ? sym->name() : std::string("?");
   if(r && r->type==storygraph::Value::Int && (r->i!=0)==visible)
     return;
   differ++;
   if(reported.insert("check:" + name).second) {
     differences.push_back(name);
     Log::e("[story] check: ",name," vm ",int(visible),", model ",
-           r ? std::to_string(r->i) : "? (" + ev.why() + ")",": ",e->str());
+           r ? std::to_string(r->i) : "? (" + error + ")",": ",e->str());
     }
   }
 
@@ -462,21 +457,21 @@ void DialogGraph::onExec(const GameScript::DlgChoice& dlg, Npc& player, Npc& npc
   offering.erase(n.id);  // what it offers comes from this run
 
   // lines are queued like AI_Output in an info function; effects happen right away, like there
-  auto* v = vm();
+  auto* sc = rt.script();
   for(auto& l : n.lines) {
     Npc& speaker  = l.hero ? player : npc;
     Npc& listener = l.hero ? npc : player;
     auto id = l.id;
     if(id.empty()) {
-      auto* s = v ? v->find_symbol_by_index(speaker.instanceSymbol()) : nullptr;
-      id = addLine(s ? s->name() : std::string(),l.text);
+      const auto name = sc ? std::string(sc->symbolName(speaker.instanceSymbol())) : std::string{};
+      id = addLine(name,l.text);
       }
     speaker.aiPush(AiQueue::aiOutput(listener,id,0));
     }
-  if(v==nullptr)
+  if(sc==nullptr)
     return;
   for(auto& e : n.effects)
-    e.run(*v,npc,player,n.id);
+    e.run(*sc,npc,player,n.id);
   if(!n.program.steps.empty())
     runOwn(n.id,n.program.steps);
   }
@@ -533,7 +528,6 @@ bool DialogGraph::onScript(daedalus::DaedalusSymbol& fn, int32_t& result) {
   if(v==nullptr || (!running && replaced.empty()))
     return false;
   if(!replaced.empty()) {
-    rt.ensureLifter();
     if(const auto* program = replacedProgram(*v,fn.index())) {
       auto r = interpreter(*v).run(*program);
       replacedRuns++;
@@ -557,12 +551,15 @@ bool DialogGraph::onScript(daedalus::DaedalusSymbol& fn, int32_t& result) {
     runErrors += size_t(failed);
     return true;
     }
-  rt.ensureLifter();
+  if(!v->has_legacy_dispatcher()) {
+    ++notPrograms;
+    return false;
+    }
   auto& interp = interpreter(*v);
-  const auto lift = [this,v](const daedalus::DaedalusSymbol& symbol) -> const storygraph::Program* {
+  const auto lift = [this](const daedalus::DaedalusSymbol& symbol) -> const storygraph::Program* {
     auto it = programs.find(symbol.index());
     if(it==programs.end()) {
-      it = programs.emplace(symbol.index(),storygraph::liftProgram(*v,rt.bytecode(),symbol.index())).first;
+      it = programs.emplace(symbol.index(),rt.originalProgram(symbol)).first;
       if(!it->second.error.empty()) {
         notPrograms++;
         Log::e("[story] ", symbol.name(), " is not a program (", it->second.error, "): the VM runs it");
@@ -786,7 +783,6 @@ std::string DialogGraph::program(std::string_view node, std::string_view part, b
     error = "part is information or condition, not " + std::string(part);
     return {};
     }
-  rt.ensureLifter();
   const auto id = upper(node);
   auto* fn = functionOf(*v,id,part=="condition",error);
   if(fn==nullptr)
@@ -795,7 +791,7 @@ std::string DialogGraph::program(std::string_view node, std::string_view part, b
   const storygraph::Program* p = replaced.empty() ? nullptr : replacedProgram(*v,fn->index());
   const bool patched = p!=nullptr;
   if(p==nullptr || own) {
-    scripts = storygraph::liftProgram(*v,rt.bytecode(),fn->index());
+    scripts = rt.originalProgram(*fn);
     p       = &scripts;
     }
   if(!p->error.empty()) {

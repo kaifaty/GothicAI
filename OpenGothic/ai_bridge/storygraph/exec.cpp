@@ -1,4 +1,5 @@
 #include "exec.h"
+#include "execcore.h"
 
 #include "daedalus/vm.h"
 
@@ -41,8 +42,6 @@ std::optional<Value> asParameter(DaedalusDataType t, const Value& v) {
     }
   }
 
-bool isInt(const std::optional<Value>& v) { return v && v->type==Value::Int; }
-
 }
 
 Interpreter::Result Interpreter::run(const Program& p, const std::vector<Value>& args) {
@@ -56,85 +55,13 @@ Interpreter::Result Interpreter::run(const Program& p, const std::vector<Value>&
   }
 
 Interpreter::Frame Interpreter::execute(const Program& p, const std::vector<Value>& args, bool readReturn) {
-  if(!p.error.empty())
-    return {args, {}, "not a program: " + p.error};
-  if(depth==64)
-    return {args, {}, "program call depth exceeded"};
-
-  // An engine external can also reenter the Interpreter, for example to check dialog conditions.
-  Frame state{args, {}, {}};
-  struct Restore final {
-    Interpreter& self;
-    Frame*       parent;
-    ~Restore() {
-      self.frame = parent;
-      --self.depth;
-      }
-    } restore{*this, std::exchange(frame, &state)};
-  ++depth;
-  try {
-    if(steps(p.steps)==Flow::Fail && state.error.empty())
-      state.error = "failed";
-    if(readReturn && state.returned && state.error.empty())
-      if(auto value = read(*state.returned))
-        state.returned->value = std::move(*value);
-    }
-  catch(const std::exception& e) {
-    fail(std::string("vm: ") + e.what());
-    }
-  return state;
+  return execution::Core::execute(*this,p,args,readReturn,"failed","vm: ");
   }
 
 std::optional<Value> Interpreter::fail(std::string why) {
   if(frame->error.empty())
     frame->error = std::move(why);
   return std::nullopt;
-  }
-
-Interpreter::Flow Interpreter::steps(const std::vector<Step>& s) {
-  for(auto& st : s) {
-    switch(st.kind) {
-      case Step::Call:
-        if(!eval(*st.call))
-          return Flow::Fail;
-        break;
-      case Step::Store:
-        if(!store(st))
-          return Flow::Fail;
-        break;
-      case Step::If: {
-        auto c = eval(*st.cond);
-        if(!isInt(c)) {
-          if(c)
-            fail("condition is not an int: " + st.cond->str());
-          return Flow::Fail;
-          }
-        auto f = steps(c->i!=0 ? st.then : st.otherwise);
-        if(f!=Flow::Next)
-          return f;
-        break;
-        }
-      case Step::Return:
-        if(st.value!=nullptr) {
-          frame->returned = item(*st.value);
-          if(!frame->returned)
-            return Flow::Fail;
-          }
-        return Flow::Return;
-      case Step::Say:
-        if(!say(st))
-          return Flow::Fail;
-        break;
-      case Step::Choice:
-      case Step::ClearChoices:
-        if(!choices || !choices(st)) {
-          fail("choices of its own are for the director's dialogs");
-          return Flow::Fail;
-          }
-        break;
-      }
-    }
-  return Flow::Next;
   }
 
 bool Interpreter::say(const Step& s) {
@@ -350,16 +277,12 @@ std::optional<Interpreter::Item> Interpreter::call(const Expr& e) {
     return failed("wrong argument count: " + e.str());
 
   // pushed first to last, read when the call pops them
-  std::vector<Item> pushed;
-  for(auto& a : e.args) {
-    auto it = item(*a);
-    if(!it)
-      return std::nullopt;
-    pushed.push_back(std::move(*it));
-    }
-  std::vector<Value> args(pushed.size());
-  for(size_t k=0; k<pushed.size(); ++k) {
-    auto v = read(pushed[k]);
+  auto pushed = execution::Core::push(*this,e.args,execution::Core::Order::Arguments);
+  if(!pushed)
+    return std::nullopt;
+  std::vector<Value> args(pushed->size());
+  for(size_t k=0; k<pushed->size(); ++k) {
+    auto v = read((*pushed)[k]);
     if(!v)
       return std::nullopt;
     auto p = asParameter(types[k].type(), *v);
@@ -425,58 +348,10 @@ std::optional<Interpreter::Item> Interpreter::call(const Expr& e) {
   }
 
 std::optional<Interpreter::Item> Interpreter::op(const Expr& e) {
-  // the VM pushes the right operand first: operands are computed last to first, then read
-  const size_t n = e.args.size();
-  std::vector<Item> pushed(n);
-  for(size_t k=n; k>0; --k) {
-    auto it = item(*e.args[k-1]);
-    if(!it)
-      return std::nullopt;
-    pushed[k-1] = std::move(*it);
-    }
-  std::vector<int32_t> v(n);
-  for(size_t k=0; k<n; ++k) {
-    auto x = read(pushed[k]);
-    if(!x)
-      return std::nullopt;
-    if(x->type!=Value::Int)
-      return failed("arithmetic on a non-int: " + e.str());
-    v[k] = x->i;
-    }
-
-  Item r;
-  auto& o = e.name;
-  auto  integer = [&r](int32_t x) { r.value = Value::integer(x); return r; };
-  if(n==1) {
-    if(o=="!")   return integer(v[0]==0);
-    if(o=="neg") return integer(int32_t(0u-uint32_t(v[0])));
-    if(o=="~")   return integer(~v[0]);
-    return failed("unary " + o);
-    }
-  if(n!=2)
-    return failed("operator " + o + " with " + std::to_string(n) + " operands");
-  // like the VM: the left operand is args[0], arithmetic wraps, && and || compute both sides
-  const int32_t a = v[0], b = v[1];
-  const auto ua = uint32_t(a), ub = uint32_t(b);
-  if(o=="&&") return integer(a && b);
-  if(o=="||") return integer(a || b);
-  if(o=="==") return integer(a==b);
-  if(o=="!=") return integer(a!=b);
-  if(o=="<")  return integer(a<b);
-  if(o==">")  return integer(a>b);
-  if(o=="<=") return integer(a<=b);
-  if(o==">=") return integer(a>=b);
-  if(o=="+")  return integer(int32_t(ua+ub));
-  if(o=="-")  return integer(int32_t(ua-ub));
-  if(o=="*")  return integer(int32_t(ua*ub));
-  if(o=="&")  return integer(a & b);
-  if(o=="|")  return integer(a | b);
-  if(o=="<<") return integer(int32_t(ua << (ub & 31)));
-  if(o==">>") return integer(a >> (b & 31));
-  if(o=="/" || o=="%") {
-    if(b==0)
-      return failed("vm: division by zero");
-    return integer(o=="/" ? a/b : a%b);
-    }
-  return failed("operator " + o);
+  auto value = execution::Core::arithmetic(*this,e);
+  if(!value)
+    return std::nullopt;
+  Item result;
+  result.value = Value::integer(*value);
+  return result;
   }

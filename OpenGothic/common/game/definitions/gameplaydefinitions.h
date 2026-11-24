@@ -1,9 +1,15 @@
 #pragma once
 
-#include "daedalus/vm.h"
 #include "definitionjson.h"
+#include "world/records/focusrecord.h"
+#include "world/records/guildrecord.h"
+#include "world/records/spellrecord.h"
 
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <utility>
+#include <vector>
 
 class GameplayDefinitions final {
   public:
@@ -18,27 +24,16 @@ class GameplayDefinitions final {
 
     static std::shared_ptr<const GameplayDefinitions> load(const std::filesystem::path& base);
 
-    template<class T>
-    std::shared_ptr<T> init(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* symbol,
-                            std::shared_ptr<T> instance = std::make_shared<T>()) const {
-      vm.allocate_instance(instance,symbol);
-      restore(vm,*symbol,*instance);
-      return instance;
-      }
-
-    static const daedalus::DaedalusSymbol& instanceClass(daedalus::DaedalusVm& vm,
-                                                         const daedalus::DaedalusSymbol& symbol) {
-      const auto* cls = vm.find_symbol_by_index(symbol.parent());
-      while(cls!=nullptr && cls->type()!=daedalus::DaedalusDataType::CLASS)
-        cls = vm.find_symbol_by_index(cls->parent());
-      DefinitionJson::require(cls!=nullptr,"gameplay definitions: missing class for "+symbol.name());
-      return *cls;
-      }
+    std::vector<std::pair<std::string,SpellRecord>> spells() const;
+    FocusRecord focus(std::string_view name) const;
+    GuildRecord guild() const;
+    std::string_view speech(int voice, std::string_view member) const;
 
   private:
     explicit GameplayDefinitions(rapidjson::Document rows) : rows(std::move(rows)) {}
-    void restore(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& symbol,
-                 daedalus::DaedalusInstance& instance) const;
+
+    using Voice = std::map<std::string,std::string,std::less<>>;
 
     rapidjson::Document rows;
+    mutable std::map<int,Voice> voices;
   };

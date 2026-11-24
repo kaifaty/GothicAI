@@ -476,7 +476,7 @@ def test_smoke_overrides_never_spend_model_quota_or_change_saved_settings(config
     cli._require_credentials(config)
     [server] = services(config, LAYOUT, PORTS, tmp_path)
     assert server.name == "server"
-    assert server.argv[server.argv.index("--llm") + 1] == "fake"
+    assert server.argv[server.argv.index("--llm") + 1] == "off"
     assert {"--no-quick", "--no-voice", "--no-tts"}.issubset(server.argv)
     assert not {"--decider-url", "--quick-url", "--body-url", "--embed-url"}.intersection(server.argv)
     assert server.argv[server.argv.index("--body-policy") + 1] == "service"

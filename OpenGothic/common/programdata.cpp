@@ -153,6 +153,89 @@ fs::path binaryPath(fs::path file) {
   return file;
   }
 
+bool isDigest(std::string_view digest) {
+  return digest.size()==64 && digest.find_first_not_of("0123456789abcdef")==std::string_view::npos;
+  }
+
+uint8_t programVersion(const Json& value) {
+  const auto version=unsignedValue(value,"version");
+  require(version<=std::numeric_limits<uint8_t>::max(),"program version out of range");
+  return uint8_t(version);
+  }
+
+struct ProgramLayout {
+  uint8_t version;
+  uint64_t symbolCount;
+  uint64_t symbolLength;
+  uint64_t codeLength;
+  uint64_t byteLength;
+  };
+
+ProgramLayout readLayout(const Json& doc, const fs::path& payload) {
+  exactMembers(doc,"record",{"format","version","buffer","byte_length","data"});
+  require(gothicglb::jsonToString(doc["format"],"format")=="gothic-program","unsupported format");
+  require(doc["version"].IsInt() && doc["version"].GetInt()==1,"unsupported version");
+  require(gothicglb::jsonToString(doc["buffer"],"buffer")==payload.filename().string(),
+          "binary filename must be the fixed sibling");
+  const auto& data=doc["data"];
+  exactMembers(data,"data",{"version","symbols","bytecode"});
+  const auto& symbols=data["symbols"];
+  const auto& code=data["bytecode"];
+  exactMembers(symbols,"symbols",{"offset","count","length"});
+  exactMembers(code,"bytecode",{"offset","length"});
+  const auto symbolLength=unsignedValue(symbols["length"],"length");
+  const auto byteLength=unsignedValue(doc["byte_length"],"byte_length");
+  const auto codeLength=unsignedValue(code["length"],"length");
+  require(unsignedValue(symbols["offset"],"offset")==0,"symbol offset must be 0");
+  require(unsignedValue(code["offset"],"offset")==symbolLength,"bytecode must follow the symbols");
+  require(symbolLength<=byteLength && byteLength-symbolLength==codeLength,"section lengths do not match the binary");
+  return {programVersion(data["version"]),unsignedValue(symbols["count"],"count"),symbolLength,codeLength,byteLength};
+  }
+
+std::vector<asset::ProgramSymbol> decodeSymbols(const std::vector<uint8_t>& bytes, size_t length, uint64_t count) {
+  // Each symbol takes at least 73 bytes, so a corrupt count cannot allocate past the section.
+  require(length<=bytes.size() && count<=length/73,"symbol count exceeds the symbol section");
+  std::vector<asset::ProgramSymbol> symbols(static_cast<size_t>(count));
+  Cursor in(bytes,length);
+  for(auto& s:symbols) {
+    s.name = in.str();
+    const auto generated = in.u8();
+    require(generated<=1,"invalid generated flag");
+    s.generated     = generated==1;
+    s.type          = in.u32();
+    s.count         = in.u32();
+    s.flags         = in.u32();
+    s.address       = int32_t(in.u32());
+    s.parent        = int32_t(in.u32());
+    s.class_offset  = int32_t(in.u32());
+    s.member_offset = in.u32();
+    s.class_size    = in.u32();
+    s.return_type   = in.u32();
+    s.file_index    = in.u32();
+    s.line_start    = in.u32();
+    s.line_count    = in.u32();
+    s.char_start    = in.u32();
+    s.char_count    = in.u32();
+    s.int_values.resize(in.length(4));
+    for(auto& v:s.int_values)
+      v = int32_t(in.u32());
+    s.float_bits.resize(in.length(4));
+    for(auto& v:s.float_bits)
+      v = in.u32();
+    s.string_values.resize(in.length(4));
+    for(auto& v:s.string_values)
+      v = in.str();
+    }
+  require(in.at==length,"symbol section has trailing bytes");
+  return symbols;
+  }
+
+std::string sha256(const std::vector<uint8_t>& bytes) {
+  Sha256 hash;
+  hash.update(bytes.data(),bytes.size());
+  return hash.finish();
+  }
+
 std::string identity(const void* json, size_t jsonSize, const void* bin, size_t binSize) {
   Sha256 sha;
   sha.update(json,jsonSize);
@@ -257,7 +340,7 @@ Index readIndex(const fs::path& dir) {
     require(doc["programs"].IsObject(),"programs must be an object");
     for(const auto& p:doc["programs"].GetObject()) {
       const auto name = gothicglb::jsonToString(p.name,"program name");
-      require(name.size()==64 && name.find_first_not_of("0123456789abcdef")==std::string::npos,"invalid program name");
+      require(isDigest(name),"invalid program name");
       index.programs[name] = gothicglb::jsonToString(p.value,"program identity");
       }
     require(doc["sources"].IsArray(),"sources must be an array");
@@ -344,78 +427,108 @@ std::string writeProgram(const asset::ProgramRecord& program, const fs::path& di
 
 asset::ProgramRecord readProgram(const fs::path& file, std::string* actualSha256) {
   try {
-    require(file!=binaryPath(file),"JSON and binary paths must differ");
-    const auto json = gothicglb::readFile(file);
-    const auto doc  = parseJson(json);
-    exactMembers(doc,"record",{"format","version","buffer","byte_length","data"});
-    require(gothicglb::jsonToString(doc["format"],"format")=="gothic-program","unsupported format");
-    require(doc["version"].IsInt() && doc["version"].GetInt()==1,"unsupported version");
-    require(gothicglb::jsonToString(doc["buffer"],"buffer")==binaryPath(file).filename().string(),
-            "binary filename must be the fixed sibling");
-    const auto& data = doc["data"];
-    exactMembers(data,"data",{"version","symbols","bytecode"});
-    const auto& symbols = data["symbols"];
-    const auto& code    = data["bytecode"];
-    exactMembers(symbols,"symbols",{"offset","count","length"});
-    exactMembers(code,"bytecode",{"offset","length"});
-    const auto version = unsignedValue(data["version"],"version");
-    require(version<=std::numeric_limits<uint8_t>::max(),"program version out of range");
-
-    const auto bin = gothicglb::readFile(binaryPath(file));
-    const auto symbolCount  = unsignedValue(symbols["count"],"count");
-    const auto symbolLength = unsignedValue(symbols["length"],"length");
-    const auto codeLength   = unsignedValue(code["length"],"length");
-    require(unsignedValue(doc["byte_length"],"byte_length")==bin.size(),"binary byte length mismatch");
-    require(unsignedValue(symbols["offset"],"offset")==0,"symbol offset must be 0");
-    require(unsignedValue(code["offset"],"offset")==symbolLength,"bytecode must follow the symbols");
-    require(symbolLength<=bin.size() && bin.size()-symbolLength==codeLength,"section lengths do not match the binary");
+    const auto payload=binaryPath(file);
+    require(file!=payload,"JSON and binary paths must differ");
+    const auto json=gothicglb::readFile(file);
+    const auto layout=readLayout(parseJson(json),payload);
+    const auto bin=gothicglb::readFile(payload);
+    require(layout.byteLength==bin.size(),"binary byte length mismatch");
 
     asset::ProgramRecord program;
-    program.version = uint8_t(version);
-    Cursor in(bin,size_t(symbolLength));
-    // Each symbol takes at least 73 bytes, so a corrupt count cannot allocate past the file.
-    require(symbolCount<=symbolLength/73,"symbol count exceeds the symbol section");
-    program.symbols.resize(size_t(symbolCount));
-    for(auto& s:program.symbols) {
-      s.name = in.str();
-      const auto generated = in.u8();
-      require(generated<=1,"invalid generated flag");
-      s.generated     = generated==1;
-      s.type          = in.u32();
-      s.count         = in.u32();
-      s.flags         = in.u32();
-      s.address       = int32_t(in.u32());
-      s.parent        = int32_t(in.u32());
-      s.class_offset  = int32_t(in.u32());
-      s.member_offset = in.u32();
-      s.class_size    = in.u32();
-      s.return_type   = in.u32();
-      s.file_index    = in.u32();
-      s.line_start    = in.u32();
-      s.line_count    = in.u32();
-      s.char_start    = in.u32();
-      s.char_count    = in.u32();
-      s.int_values.resize(in.length(4));
-      for(auto& v:s.int_values)
-        v = int32_t(in.u32());
-      s.float_bits.resize(in.length(4));
-      for(auto& v:s.float_bits)
-        v = in.u32();
-      s.string_values.resize(in.length(4));
-      for(auto& v:s.string_values)
-        v = in.str();
-      }
-    require(in.at==symbolLength,"symbol section has trailing bytes");
-    program.bytecode.resize(size_t(codeLength));
-    if(codeLength>0)
-      std::memcpy(program.bytecode.data(),bin.data()+symbolLength,size_t(codeLength));
+    program.version=layout.version;
+    program.symbols=decodeSymbols(bin,size_t(layout.symbolLength),layout.symbolCount);
+    program.bytecode.resize(size_t(layout.codeLength));
+    if(layout.codeLength>0)
+      std::memcpy(program.bytecode.data(),bin.data()+layout.symbolLength,size_t(layout.codeLength));
     if(actualSha256!=nullptr)
-      *actualSha256 = identity(json.data(),json.size(),bin.data(),bin.size());
+      *actualSha256=identity(json.data(),json.size(),bin.data(),bin.size());
     return program;
     }
-  catch(const std::exception& e) {
-    throw std::runtime_error("program data: "+file.string()+": "+e.what());
+  catch(const std::exception& error) {
+    throw std::runtime_error("program data: "+file.string()+": "+error.what());
     }
+  }
+
+std::filesystem::path symbolMetadataPath(const fs::path& base, std::string_view sourceProgramSha256) {
+  require(isDigest(sourceProgramSha256),"program symbol metadata: invalid source program identity");
+  return base/"definitions"/sourceProgramSha256/"program-symbols.json";
+  }
+
+fs::path symbolMetadataPayloadPath(fs::path file) {
+  file.replace_extension(".symbols");
+  return file;
+  }
+
+asset::ProgramRecord readSymbolMetadata(const fs::path& file, std::string_view sourceProgramSha256) {
+  try {
+    require(isDigest(sourceProgramSha256),"invalid source program identity");
+    const auto doc=parseJson(gothicglb::readFile(file));
+    exactMembers(doc,"symbol metadata",{"format","version","source_program_sha256","program_version",
+                                        "symbol_count","symbol_byte_length","buffer","buffer_sha256"});
+    require(gothicglb::jsonToString(doc["format"],"format")=="gothic-program-symbols","unsupported format");
+    require(doc["version"].IsInt() && doc["version"].GetInt()==1,"unsupported version");
+    require(gothicglb::jsonToString(doc["source_program_sha256"],"source_program_sha256")==sourceProgramSha256,
+            "source program identity differs");
+    const auto payload=symbolMetadataPayloadPath(file);
+    require(file!=payload && gothicglb::jsonToString(doc["buffer"],"buffer")==payload.filename().string(),
+            "symbol payload must be the fixed sibling");
+    const auto payloadSha=gothicglb::jsonToString(doc["buffer_sha256"],"buffer_sha256");
+    require(isDigest(payloadSha),"invalid symbol payload SHA-256");
+    const auto bytes=gothicglb::readFile(payload);
+    require(unsignedValue(doc["symbol_byte_length"],"symbol_byte_length")==bytes.size(),"symbol byte length differs");
+    require(sha256(bytes)==payloadSha,"symbol payload SHA-256 differs");
+    asset::ProgramRecord program;
+    program.version=programVersion(doc["program_version"]);
+    program.symbols=decodeSymbols(bytes,bytes.size(),unsignedValue(doc["symbol_count"],"symbol_count"));
+    return program;
+    }
+  catch(const std::exception& error) {
+    throw std::runtime_error("program symbol metadata: "+file.string()+": "+error.what());
+    }
+  }
+
+fs::path writeSymbolMetadata(const fs::path& file, std::string_view sourceProgramSha256,
+                             const asset::ProgramRecord& program) {
+  require(isDigest(sourceProgramSha256),"program symbol metadata: invalid source program identity");
+  const auto payload=symbolMetadataPayloadPath(file);
+  require(file!=payload,"program symbol metadata: JSON and payload paths must differ");
+  const auto bytes=encodeSymbols(program);
+  const std::string json="{\"format\":\"gothic-program-symbols\",\"version\":1,\"source_program_sha256\":"+
+                         gothicglb::jsonString(sourceProgramSha256)+",\"program_version\":"+
+                         std::to_string(unsigned(program.version))+",\"symbol_count\":"+
+                         std::to_string(program.symbols.size())+",\"symbol_byte_length\":"+
+                         std::to_string(bytes.size())+",\"buffer\":"+gothicglb::jsonString(payload.filename().string())+
+                         ",\"buffer_sha256\":\""+sha256(bytes)+"\"}\n";
+  gothicglb::writeFile(payload,bytes.data(),bytes.size());
+  gothicglb::writeFile(file,json.data(),json.size());
+  return payload;
+  }
+
+void validateSymbolProjection(const fs::path& base, std::string_view expectedProgram) {
+  const auto index = readIndex(base/"programs");
+  const auto* game = index.server();
+  require(game!=nullptr && game->recordSha256==expectedProgram,
+          "native game requires the stock GOTHIC.DAT identity in the base program index");
+
+  const auto metadata = symbolMetadataPath(base,expectedProgram);
+  const auto payload = symbolMetadataPayloadPath(metadata);
+  const auto manifest = parseJson(gothicglb::readFile(base/"base-files.json"));
+  require(manifest.HasMember("files") && manifest["files"].IsArray(),"invalid base file manifest");
+  const auto& files = manifest["files"];
+  const auto find = [&](const fs::path& file) {
+    const auto path = file.lexically_relative(base).generic_string();
+    return std::find_if(files.Begin(),files.End(),[&](const auto& entry) {
+      return entry.IsObject() && entry.HasMember("path") && entry["path"]==path.c_str();
+      });
+    };
+  const auto listedPayload = find(payload);
+  require(find(index.dir/"programs.json")!=files.End() && find(metadata)!=files.End() && listedPayload!=files.End(),
+          "base manifest has no stock symbol projection; refresh with content-convert resolve <game directory>");
+  const auto projection = parseJson(gothicglb::readFile(metadata));
+  require(projection.HasMember("buffer_sha256") && listedPayload->HasMember("sha256") &&
+          projection["buffer_sha256"]==(*listedPayload)["sha256"],
+          "base manifest and stock symbol payload checksums differ: "+payload.string());
+  (void)readSymbolMetadata(metadata,expectedProgram);
   }
 
 std::string recordSha256(const fs::path& file) {

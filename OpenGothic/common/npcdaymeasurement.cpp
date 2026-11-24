@@ -173,9 +173,9 @@ bool NpcDayMeasurement::start(World& w, const NpcDayJournal::Options& options, s
               ",\"start_world_ms\":"+std::to_string(w.time().toInt());
     if(options.scriptProbe) {
       // Use the same program selection as GameScript, regardless of the routine playback switch.
-      std::string sha;
-      loadBaseProgram(Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"),&sha);
-      const auto routines=RoutineDefinitions::read(baseProgramIndex().dir.parent_path(),sha);
+      const auto& index=baseProgramIndex();
+      const auto selected=selectBaseProgram(index,Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"));
+      const auto routines=RoutineDefinitions::read(index.dir.parent_path(),selected.source.recordSha256);
       m->stats=DayScriptStats::attach(w.script().getVm(),routines);
       }
     if(m->trace) std::fprintf(m->trace,"{\"kind\":\"header\",\"trace_version\":2,%s}\n",m->header.c_str());

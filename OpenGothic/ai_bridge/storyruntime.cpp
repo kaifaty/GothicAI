@@ -2,14 +2,18 @@
 
 #include <Tempest/Log>
 
+#include "definitionjson.h"
 #include "gothic.h"
+#include "game/definitions/basescripts.h"
 #include "game/gamescript_programs.h"
+#include "programdata.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
 #include "bytecode.h"
 #include "eval.h"
 #include "exec.h"
+#include "exprjson.h"
 #include "lifter.h"
 #include "predicates.h"
 
@@ -17,6 +21,61 @@ using namespace Tempest;
 using storygraph::ExprP;
 using storygraph::Expr;
 using daedalus::DaedalusDataType;
+
+namespace {
+
+struct PreparedQueries {
+  std::map<std::string,storygraph::Helper> helpers;
+  std::map<std::string,ExprP,std::less<>> conditions;
+  };
+
+PreparedQueries readPreparedQueries() {
+  using namespace DefinitionJson;
+  const auto path = baseProgramIndex().dir.parent_path()/"storygraph"/"story.json";
+  if(!std::filesystem::exists(path))
+    return {};
+
+  const auto graph = DefinitionJson::read(path);
+  const auto& sources = at(graph,"sources");
+  require(integer(at(graph,"version"))==1 &&
+          string(at(sources,"program_native_sha256"))==StockStoryPrograms::stockProgram,
+          "prepared story graph differs from the active stock program");
+
+  const auto& functions = at(graph,"functions");
+  const auto& nodes = at(graph,"nodes");
+  require(functions.IsObject() && nodes.IsArray(),"prepared story graph is missing queries");
+  PreparedQueries queries;
+  for(auto it = functions.MemberBegin(); it!=functions.MemberEnd(); ++it) {
+    auto name = storygraph::symbolName(string(it->name));
+    const auto& params = at(it->value,"params");
+    const auto& lifted = at(it->value,"lifted");
+    require(!name.empty() && params.IsUint() && lifted.IsBool(),"invalid prepared story helper");
+    storygraph::Helper helper;
+    helper.name = name;
+    helper.params = params.GetUint();
+    if(lifted.GetBool())
+      helper.body = storygraph::readExpr(at(it->value,"body"),helper.notLifted);
+    else
+      helper.notLifted = string(at(it->value,"not_lifted"));
+    require(queries.helpers.emplace(std::move(name),std::move(helper)).second,"duplicate prepared story helper");
+    }
+  for(const auto& node : nodes.GetArray()) {
+    if(string(at(node,"kind"))!="dialog")
+      continue;
+    const auto& lifted = at(node,"lifted");
+    require(lifted.IsBool(),"invalid prepared story condition");
+    if(!lifted.GetBool())
+      continue;
+    auto name = storygraph::symbolName(string(at(node,"id")));
+    std::string error;
+    auto condition = storygraph::readExpr(at(node,"condition"),error);
+    if(!name.empty() && condition)
+      require(queries.conditions.emplace(std::move(name),std::move(condition)).second,"duplicate prepared story condition");
+    }
+  return queries;
+  }
+
+}
 
 StoryRuntime::StoryRuntime(std::function<std::string(const std::string&,const std::string&)> ownLine)
   :ownLine(std::move(ownLine)) {
@@ -43,6 +102,7 @@ void StoryRuntime::clear() {
   lifted.reset();
   lifter.reset();
   code.reset();
+  preparedConditions.clear();
   liftedFor = nullptr;
   interp.reset();
   engine.reset();
@@ -82,8 +142,8 @@ void StoryRuntime::ensureVars() {
     if(own.find(name)!=nullptr)
       continue;  // a save brought it back with its value
     std::string why;
-    if(auto* s = own.addInt(name,why))
-      s->set_int(value); else
+    if(own.addInt(*v,name,why))
+      own.setInt(name,value); else
       Log::e("[story] vars: ",why);
     }
   }
@@ -99,47 +159,82 @@ std::string StoryRuntime::whyNotVar(GameScript& script, const std::string& name)
 
 std::optional<int32_t> StoryRuntime::intOf(const std::string& name) {
   ensureVars();
-  auto* v = vm();
-  auto* s = v!=nullptr ? v->find_symbol_by_name(name) : nullptr;
-  if(s==nullptr || s->is_member() || s->type()!=DaedalusDataType::INT)
-    return std::nullopt;
-  return s->get_int();
+  if(auto* sc = script())
+    return sc->globalIntSymbol(name);
+  return std::nullopt;
   }
 
 bool StoryRuntime::setInt(const std::string& name, int32_t value) {
   ensureVars();
-  auto* v = vm();
-  auto* s = v!=nullptr ? v->find_symbol_by_name(name) : nullptr;
-  if(s==nullptr || s->is_member() || s->is_const() || s->type()!=DaedalusDataType::INT)
-    return false;
-  s->set_int(value);
-  return true;
+  auto* sc = script();
+  return sc!=nullptr && sc->setGlobalIntSymbol(name,value);
   }
 
-void StoryRuntime::ensureLifter() {
+void StoryRuntime::ensurePredicates() {
   ensureVars();
-  auto* v = vm();
-  if(v==nullptr || v==liftedFor)
+  auto* sc = script();
+  if(sc==nullptr)
+    return;
+  auto& vm = sc->getVm();
+  const bool legacy = vm.has_legacy_dispatcher();
+  if(liftedFor==&vm && lifted!=nullptr && (code!=nullptr)==legacy)
     return;
   lifted.reset();
   lifter.reset();
-  code      = std::make_unique<storygraph::Bytecode>(*v);
-  lifter    = std::make_unique<storygraph::Lifter>(*v,*code);
-  lifted    = std::make_unique<storygraph::Predicates>(*v,*lifter);
-  liftedFor = v;
+  code.reset();
+  preparedConditions.clear();
+  if(legacy) {
+    code   = std::make_unique<storygraph::Bytecode>(vm);
+    lifter = std::make_unique<storygraph::Lifter>(vm,*code);
+    lifted = std::make_unique<storygraph::Predicates>(vm,*lifter);
+    } else {
+    PreparedQueries queries;
+    try {
+      if(sc->usesVerifiedNpcProgram())
+        queries = readPreparedQueries();
+      }
+    catch(const std::exception& e) {
+      Log::e("[story] prepared queries unavailable: ",e.what());
+      }
+    preparedConditions = std::move(queries.conditions);
+    lifted = std::make_unique<storygraph::Predicates>(std::move(queries.helpers));
+    }
+  liftedFor = &vm;
   }
 
-storygraph::Bytecode& StoryRuntime::bytecode() {
-  return *code;
+storygraph::Program StoryRuntime::originalProgram(const daedalus::DaedalusSymbol& fn) {
+  if(auto* sc = script()) {
+    if(const auto* program = sc->preparedStockProgram(fn))
+      return *program;
+    auto& vm = sc->getVm();
+    if(vm.has_legacy_dispatcher()) {
+      ensurePredicates();
+      return storygraph::liftProgram(vm,*code,fn.index());
+      }
+    }
+  storygraph::Program missing;
+  missing.error = "function is missing from the prepared stock catalog";
+  return missing;
   }
 
-storygraph::Predicates& StoryRuntime::predicates() {
-  return *lifted;
+ExprP StoryRuntime::originalCondition(uint32_t fn, std::string_view dialog) {
+  ensurePredicates();
+  if(lifted==nullptr)
+    return {};
+  if(code!=nullptr) {
+    const auto& condition = lifted->condition(fn);
+    return lifted->whyNotLifted(condition).empty() ? condition : nullptr;
+    }
+  const auto entry = preparedConditions.find(dialog);
+  if(entry==preparedConditions.end() || !lifted->whyNotLifted(entry->second).empty())
+    return {};
+  return entry->second;
   }
 
 storygraph::Interpreter& StoryRuntime::interpreter(daedalus::DaedalusVm& v) {
   ensureVars();
-  if(runFor==&v && interp!=nullptr)
+  const bool legacy = v.has_legacy_dispatcher();
+  if(runFor==&v && interp!=nullptr && interp->allowUnresolvedScriptCalls==legacy)
     return *interp;
   interp.reset();
   if(auto* sc=script(); sc!=nullptr && &sc->getVm()==&v)
@@ -147,6 +242,11 @@ storygraph::Interpreter& StoryRuntime::interpreter(daedalus::DaedalusVm& v) {
   else
     engine = std::make_unique<storygraph::VmExternals>(v);
   interp = std::make_unique<storygraph::Interpreter>(v,*engine);
+  interp->allowUnresolvedScriptCalls = legacy;
+  if(!legacy) {
+    if(auto* sc = script(); sc!=nullptr && &sc->getVm()==&v)
+      interp->resolveProgram = [sc](const daedalus::DaedalusSymbol& fn) { return sc->preparedStockProgram(fn); };
+    }
   interp->ownLine = [this](const std::string& npc, const std::string& text) { return ownLine(npc,text); };
   interp->choices = [this](const storygraph::Step& s) { return choices && choices(s); };
   runFor = &v;
@@ -160,7 +260,7 @@ std::string StoryRuntime::checkExpr(const ExprP& e) {
   auto err = checkNames(*v,e);
   if(!err.empty())
     return err;
-  ensureLifter();
+  ensurePredicates();
   return lifted->whyNotLifted(e);
   }
 
@@ -205,6 +305,7 @@ std::string StoryRuntime::checkNames(daedalus::DaedalusVm& vm, const ExprP& e) c
 std::string StoryRuntime::checkProgram(daedalus::DaedalusVm& v, const storygraph::Program& p,
                                        const daedalus::DaedalusSymbol* fn, bool choices) const {
   const size_t params = fn!=nullptr ? v.find_parameters_for_function(fn).size() : 0;
+  auto* sc = v.has_legacy_dispatcher() ? nullptr : script();
   auto member = [&v](const std::string& name) {
     for(auto* cls : {"C_NPC.", "C_ITEM.", "C_INFO.", "C_FOCUS.", "C_MENU_ITEM."})
       if(auto* m = v.find_symbol_by_name(cls + name); m!=nullptr && m->is_member())
@@ -217,10 +318,12 @@ std::string StoryRuntime::checkProgram(daedalus::DaedalusVm& v, const storygraph
       if(!err.empty())
         return;
       if(x.kind==Expr::Fn) {
-        // the VM runs it: it takes what it takes
         auto* s = v.find_symbol_by_name(x.name);
         if(s!=nullptr && v.find_parameters_for_function(s).size()!=x.args.size())
           err = x.name + " takes " + std::to_string(v.find_parameters_for_function(s).size()) + " arguments";
+        else if(s!=nullptr && !v.has_legacy_dispatcher() && !v.has_active_override(*s) &&
+                (sc==nullptr || &sc->getVm()!=&v || sc->preparedStockProgram(*s,true)==nullptr))
+          err = "script function is unavailable without bytecode: " + x.name;
         }
       else if(x.kind==Expr::Param && (x.index<0 || size_t(x.index)>=params))
         err = "no argument " + std::to_string(x.index) + (fn!=nullptr ? " of " + fn->name() : std::string());
@@ -278,16 +381,20 @@ std::string StoryRuntime::checkProgram(daedalus::DaedalusVm& v, const storygraph
   return steps(p.steps);
   }
 
-std::optional<storygraph::Value> StoryRuntime::evaluate(const ExprP& e, std::string& error) {
+std::optional<storygraph::Value> StoryRuntime::evaluate(const ExprP& e, std::string& error, storygraph::Externals* externals) {
   auto* sc=script();
   if(sc==nullptr) {
     error = "no world";
     return std::nullopt;
     }
-  ensureLifter();
-  lifted->whyNotLifted(e);  // lifts the script functions it calls
+  ensurePredicates();
+  auto why = lifted->whyNotLifted(e);
+  if(code==nullptr && !why.empty()) {
+    error = std::move(why);
+    return std::nullopt;
+    }
   GameStoryExternals engine(*sc,false);
-  storygraph::Evaluator ev(sc->getVm(),lifted->helpers(),engine);
+  storygraph::Evaluator ev(sc->getVm(),lifted->helpers(),externals!=nullptr ? *externals : engine);
   auto r=ev.eval(e);
   error = ev.why();
   return r;

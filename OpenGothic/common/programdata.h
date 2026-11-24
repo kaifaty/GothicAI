@@ -88,6 +88,17 @@ std::string writeProgram(const asset::ProgramRecord& program, const std::filesys
 // `file` is <name>.json. With actualSha256, the identity of the bytes that were decoded.
 asset::ProgramRecord readProgram(const std::filesystem::path& file, std::string* actualSha256 = nullptr);
 std::string recordSha256(const std::filesystem::path& file);
+
+// A manifest-bound program metadata record with the original table and no instructions.
+std::filesystem::path symbolMetadataPath(const std::filesystem::path& base, std::string_view sourceProgramSha256);
+std::filesystem::path symbolMetadataPayloadPath(std::filesystem::path file);
+asset::ProgramRecord readSymbolMetadata(const std::filesystem::path& file, std::string_view sourceProgramSha256);
+// Called after base manifest verification by the native game profile.
+void validateSymbolProjection(const std::filesystem::path& base, std::string_view expectedProgram);
+// Returns the fixed sibling that holds the encoded symbol section.
+std::filesystem::path writeSymbolMetadata(const std::filesystem::path& file, std::string_view sourceProgramSha256,
+                                          const asset::ProgramRecord& program);
+
 // Empty when equal: version, symbol count and order, every field, value arrays (float bits), bytecode.
 std::string compare(const asset::ProgramRecord& expected, const asset::ProgramRecord& actual);
 

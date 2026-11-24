@@ -41,4 +41,38 @@
 		std::string blood_emitter[count];
 		std::string blood_texture[count];
 		int32_t turn_speed[count];
+
+		static void fields(auto&& member) {
+			member("C_GILVALUES.WATER_DEPTH_KNEE", &GuildRecord::water_depth_knee);
+			member("C_GILVALUES.WATER_DEPTH_CHEST", &GuildRecord::water_depth_chest);
+			member("C_GILVALUES.JUMPUP_HEIGHT", &GuildRecord::jumpup_height);
+			member("C_GILVALUES.SWIM_TIME", &GuildRecord::swim_time);
+			member("C_GILVALUES.DIVE_TIME", &GuildRecord::dive_time);
+			member("C_GILVALUES.STEP_HEIGHT", &GuildRecord::step_height);
+			member("C_GILVALUES.JUMPLOW_HEIGHT", &GuildRecord::jumplow_height);
+			member("C_GILVALUES.JUMPMID_HEIGHT", &GuildRecord::jumpmid_height);
+			member("C_GILVALUES.SLIDE_ANGLE", &GuildRecord::slide_angle);
+			member("C_GILVALUES.SLIDE_ANGLE2", &GuildRecord::slide_angle2);
+			member("C_GILVALUES.DISABLE_AUTOROLL", &GuildRecord::disable_autoroll);
+			member("C_GILVALUES.SURFACE_ALIGN", &GuildRecord::surface_align);
+			member("C_GILVALUES.CLIMB_HEADING_ANGLE", &GuildRecord::climb_heading_angle);
+			member("C_GILVALUES.CLIMB_HORIZ_ANGLE", &GuildRecord::climb_horiz_angle);
+			member("C_GILVALUES.CLIMB_GROUND_ANGLE", &GuildRecord::climb_ground_angle);
+			member("C_GILVALUES.FIGHT_RANGE_BASE", &GuildRecord::fight_range_base);
+			member("C_GILVALUES.FIGHT_RANGE_FIST", &GuildRecord::fight_range_fist);
+			member("C_GILVALUES.FIGHT_RANGE_1HS", &GuildRecord::fight_range_1hs);
+			member("C_GILVALUES.FIGHT_RANGE_1HA", &GuildRecord::fight_range_1ha);
+			member("C_GILVALUES.FIGHT_RANGE_2HS", &GuildRecord::fight_range_2hs);
+			member("C_GILVALUES.FIGHT_RANGE_2HA", &GuildRecord::fight_range_2ha);
+			member("C_GILVALUES.FALLDOWN_HEIGHT", &GuildRecord::falldown_height);
+			member("C_GILVALUES.FALLDOWN_DAMAGE", &GuildRecord::falldown_damage);
+			member("C_GILVALUES.BLOOD_DISABLED", &GuildRecord::blood_disabled);
+			member("C_GILVALUES.BLOOD_MAX_DISTANCE", &GuildRecord::blood_max_distance);
+			member("C_GILVALUES.BLOOD_AMOUNT", &GuildRecord::blood_amount);
+			member("C_GILVALUES.BLOOD_FLOW", &GuildRecord::blood_flow);
+			member("C_GILVALUES.BLOOD_EMITTER", &GuildRecord::blood_emitter);
+			member("C_GILVALUES.BLOOD_TEXTURE", &GuildRecord::blood_texture);
+			member("C_GILVALUES.TURN_SPEED", &GuildRecord::turn_speed);
+			member("C_GILVALUES.FIGHT_RANGE_G", &GuildRecord::fight_range_g);
+		}
 	};

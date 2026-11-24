@@ -19,6 +19,7 @@ include(../../OpenGothic/cmake/BaseImport.cmake)
 include(../../OpenGothic/cmake/BaseRuntime.cmake)
 include(../../OpenGothic/cmake/VideoImport.cmake)
 add_subdirectory(../../OpenGothic/common/daedalus daedalus)
+add_subdirectory(../../OpenGothic/ai_bridge/storygraph storygraph EXCLUDE_FROM_ALL)
 if(MSVC)
   # M_PI in the Bink decoder; OpenGothic/CMakeLists.txt defines this for every target
   target_compile_definitions(gothic-video-import PRIVATE _USE_MATH_DEFINES)
@@ -38,6 +39,9 @@ configure_file(../../OpenGothic/common/world/movablevobsdata.h.in vob-layer-gene
 target_include_directories(content-convert PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/vob-layer-generated"
   "${CMAKE_BINARY_DIR}/baseimport-generated")
 target_include_directories(content-convert PRIVATE ../../OpenGothic/common)
+if(DEFINED OPENGOTHIC_LEGACY_DAEDALUS AND NOT OPENGOTHIC_LEGACY_DAEDALUS)
+  target_compile_definitions(content-convert PRIVATE GOTHIC_NATIVE_BASE_RESOLVE=1)
+endif()
 # time-world packs static collision's two inputs with the game's PackedMesh PK_Physic. It needs Tempest's graphics
 # library, so only the build with the game (OpenGothic/CMakeLists.txt) has it; the converter alone skips those rows.
 if(TARGET Tempest)
@@ -59,7 +63,7 @@ endif()
 # Definitions import executes item constructors through the shared snapshot library.
 target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
 
-target_link_libraries(content-convert PRIVATE gothic-npc-snapshot)
+target_link_libraries(content-convert PRIVATE gothic-npc-snapshot StoryGraph)
 add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
   ../../OpenGothic/common/game/itemdefinitionruntime.cpp
   ../../OpenGothic/common/game/npcdefinitionruntime.cpp

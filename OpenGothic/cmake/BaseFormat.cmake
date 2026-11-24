@@ -22,6 +22,13 @@ set(BASE_SOURCES
   common/game/definitions/sfxdefinitiondata.cpp common/import/sfxdefinitions.cpp
   common/game/definitions/musicdefinitiondata.cpp common/import/musicthemedefinitions.cpp
   common/game/definitions/effectdefinitiondata.cpp common/import/effectdefinitions.cpp
+  common/import/storygraph.cpp
+  common/import/dialoginfodata.cpp common/game/definitions/dialoginfodata.cpp
+  common/import/questclosuredata.cpp common/game/definitions/questclosuredata.cpp
+  common/import/npcworlddata.cpp common/game/definitions/npcworlddata.cpp
+  common/import/tradeinventorydata.cpp common/game/definitions/tradeinventorydata.cpp
+  common/import/stockstoryprograms.cpp common/game/definitions/symbolcatalog.cpp
+  common/import/deathtrophydefinitions.cpp common/game/definitions/deathtrophydefinitions.cpp
   common/dmusic/directmusicimport.cpp common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp)
 set(BASE_NATIVE_IO
   lib/Tempest/Engine/io/rfile.cpp lib/Tempest/Engine/io/idevice.cpp lib/Tempest/Engine/utility/dir.cpp
@@ -55,13 +62,26 @@ list(APPEND BASE_FORMAT_INPUTS ${BASE_SOURCES} ${BASE_NATIVE_IO}
   lib/Tempest/Engine/system/platform.h lib/Tempest/Engine/include/Tempest/File lib/Tempest/Engine/include/Tempest/Dir
   lib/Tempest/Engine/include/Tempest/TextCodec lib/Tempest/Engine/include/Tempest/Except lib/Tempest/Engine/include/Tempest/IDevice
   lib/Tempest/Engine/include/Tempest/Platform lib/cgltf/cgltf.h lib/miniz/miniz.h lib/miniz/miniz.c
-  common/itemdefinitions.h common/routinedefinitions.h common/npcdefinitions.h common/asset/npcdefinitions.h common/import/npcdefinitions.cpp common/placementdefinitions.h common/import/placementdefinitions.cpp common/activitydefinitions.h common/import/activitydefinitions.cpp cmake/NpcSnapshot.cmake cmake/BaseImport.cmake cmake/BaseFormat.cmake)
+  common/itemdefinitions.h common/routinedefinitions.h common/npcdefinitions.h common/asset/npcdefinitions.h common/import/npcdefinitions.cpp common/asset/placementdefinitions.h common/placementdefinitions.h common/game/placementdefinitionruntime.h common/import/placementdefinitions.cpp common/activitydefinitions.h common/import/activitydefinitions.cpp cmake/NpcSnapshot.cmake cmake/BaseImport.cmake cmake/BaseFormat.cmake)
 list(APPEND BASE_FORMAT_INPUTS common/npchelperdefinitions.h common/import/npchelperdefinitions.cpp common/definitionjson.h
   common/game/definitions/fightdefinitiondata.h common/game/definitions/fightdefinitioncapture.h common/game/fighttactic.h common/records/definitions.h
   common/import/gameplaydefinitions.cpp common/game/definitions/gameplaydefinitions.h
+  common/game/definitions/questclosuredata.h
+  common/game/definitions/dialoginfodata.h common/game/definitions/npcworlddata.h
+  common/game/definitions/tradeinventorydata.h
   common/game/definitions/menudefinitions.h common/game/definitions/menurecord.h
   common/game/definitions/cameradefinitiondata.h common/game/definitions/sfxdefinitiondata.h
   common/game/definitions/musicdefinitiondata.h common/game/definitions/effectdefinitiondata.h)
+list(APPEND BASE_FORMAT_INPUTS common/game/definitions/symbolcatalog.h common/game/definitions/stockstoryprograms.h common/game/definitions/stockstoryprograms.cpp
+  common/game/definitions/deathtrophydefinitions.h
+  ai_bridge/storygraph/bytecode.h ai_bridge/storygraph/bytecode.cpp
+  ai_bridge/storygraph/program.h ai_bridge/storygraph/program.cpp ai_bridge/storygraph/vocab.h
+  ai_bridge/storygraph/expr.h ai_bridge/storygraph/expr.cpp ai_bridge/storygraph/exprjson.h ai_bridge/storygraph/exprjson.cpp
+  ai_bridge/textcodec.h ai_bridge/textcodec.cpp)
+list(APPEND BASE_FORMAT_INPUTS ai_bridge/storygraph/graphjson.h ai_bridge/storygraph/graphjson.cpp
+  ai_bridge/storygraph/lifter.h ai_bridge/storygraph/lifter.cpp
+  ai_bridge/storygraph/model.h ai_bridge/storygraph/model.cpp
+  ai_bridge/storygraph/predicates.h ai_bridge/storygraph/predicates.cpp)
 list(REMOVE_DUPLICATES BASE_FORMAT_INPUTS)
 list(SORT BASE_FORMAT_INPUTS)
 set(BASE_FORMAT_SUMS "")

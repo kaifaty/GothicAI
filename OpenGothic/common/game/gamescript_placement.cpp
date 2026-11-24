@@ -4,38 +4,28 @@
 #include <array>
 #include <bit>
 #include <initializer_list>
-#include <stdexcept>
 #include <variant>
 #include <vector>
 
 namespace {
-struct LiteralPlacement {
-  const daedalus::DaedalusSymbol* instance;
-  daedalus::DaedalusSymbol* point;
-  const daedalus::DaedalusSymbol* external;
-  };
+using PlacementDefinitions::LiteralInsert;
+using PlacementDefinitions::TriggerInsertGroups;
 
-LiteralPlacement readLiteralPlacement(daedalus::DaedalusScript& vm,uint32_t& pc,std::string_view section) {
-  using Op = daedalus::DaedalusOpcode;
-  using Type = daedalus::DaedalusDataType;
-  // The three literal operations each have a four-byte operand.
-  if(pc>=vm.size() || vm.size()-pc<15)
-    throw std::runtime_error("Stock placement: truncated call in "+std::string(section));
-  const auto instance = vm.instruction_at(pc);
-  const auto point = vm.instruction_at(pc+5);
-  const auto insert = vm.instruction_at(pc+10);
-  const auto* what = vm.find_symbol_by_index(uint32_t(instance.immediate));
-  auto* where = vm.find_symbol_by_index(point.symbol);
-  const auto* external = vm.find_symbol_by_index(insert.symbol);
-  if(instance.op!=Op::PUSHI || !what || what->type()!=Type::INSTANCE || !what->is_const() ||
-     point.op!=Op::PUSHV || !where || where->type()!=Type::STRING || !where->is_const() ||
-     insert.op!=Op::BE || !external || (external->name()!="WLD_INSERTNPC" && external->name()!="WLD_INSERTITEM"))
-    throw std::runtime_error("Stock placement: unexpected literal in "+std::string(section));
-  pc+=15;
-  return {what,where,external};
+const daedalus::DaedalusSymbol* placeInsert(daedalus::DaedalusVm& vm,const LiteralInsert& row) {
+  const auto* external=vm.find_symbol_by_index(row.external);
+  vm.push_int(int32_t(row.instance));
+  vm.push_reference(vm.find_symbol_by_index(row.point));
+  vm.unsafe_call_external(external);
+  return external;
   }
 
-bool runKhorinisNpcTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger) {
+void placeInserts(daedalus::DaedalusVm& vm,const std::vector<LiteralInsert>& rows) {
+  for(const auto& row:rows)
+    placeInsert(vm,row);
+  }
+
+bool runKhorinisNpcTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger,
+                         const TriggerInsertGroups* groups) {
   const auto symbol = [&vm](std::string_view name) { return vm.find_symbol_by_name(name); };
   const auto ref = [&vm,symbol](std::string_view name) { vm.push_reference(symbol(name)); };
   const auto actor = [&vm,symbol](std::string_view name) { vm.push_instance(symbol(name)->get_instance()); };
@@ -69,32 +59,26 @@ bool runKhorinisNpcTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymb
 
   struct Spawn {
     std::string_view trigger, once;
-    uint32_t offset, count;
     std::array<std::string_view,7> ornamentText;
     };
   static constexpr Spawn spawns[] = {
-    {"EVT_CAVALORNSGOBBOS_FUNC","EVT_CAVALORNSGOBBOS_FUNC_ONETIME",16,3,{}},
-    {"EVT_TROLL_GRAVE_01",{},0,4,{}},
-    {"EVT_ORNAMENT_SWITCH_FOREST_01_FUNC","ORNAMENT_SWITCHED_FOREST",16,2,
+    {"EVT_CAVALORNSGOBBOS_FUNC","EVT_CAVALORNSGOBBOS_FUNC_ONETIME",{}},
+    {"EVT_TROLL_GRAVE_01",{},{}},
+    {"EVT_ORNAMENT_SWITCH_FOREST_01_FUNC","ORNAMENT_SWITCHED_FOREST",
      {"$52164","$52165","$52166","$52167","$52168","$52169","$52170"}},
-    {"EVT_ORNAMENT_SWITCH_BIGFARM_01_FUNC","ORNAMENT_SWITCHED_BIGFARM",16,2,
+    {"EVT_ORNAMENT_SWITCH_BIGFARM_01_FUNC","ORNAMENT_SWITCHED_BIGFARM",
      {"$52153","$52154","$52155","$52156","$52157","$52158","$52159"}},
     };
   const auto spawn = std::ranges::find(spawns,trigger.name(),&Spawn::trigger);
-  if(spawn==std::end(spawns))
+  if(spawn==std::end(spawns) || !groups)
     return false;
   auto* once = spawn->once.empty() ? nullptr : symbol(spawn->once);
   if(once && once->get_int()!=value("FALSE"))
     return true;
-  auto pc = trigger.address()+spawn->offset;
   daedalus::DaedalusSymbol* placedItem = nullptr;
-  for(uint32_t i=0;i<spawn->count;++i) {
-    const auto row = readLiteralPlacement(vm,pc,trigger.name());
-    vm.push_int(int32_t(row.instance->index()));
-    vm.push_reference(row.point);
-    vm.unsafe_call_external(row.external);
-    if(row.external->name()=="WLD_INSERTITEM")
-      placedItem = vm.find_symbol_by_index(row.instance->index());
+  for(const auto& row:groups->front()) {
+    if(placeInsert(vm,row)->name()=="WLD_INSERTITEM")
+      placedItem=vm.find_symbol_by_index(row.instance);
     }
   if(placedItem) {
     const auto& text = spawn->ornamentText;
@@ -130,56 +114,28 @@ bool runKhorinisNpcTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymb
   return true;
   }
 
-void insertLiteralNpcs(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger,uint32_t offset,uint32_t count) {
-  auto pc = trigger.address()+offset;
-  for(uint32_t i=0;i<count;++i) {
-    const auto spawn = readLiteralPlacement(vm,pc,trigger.name());
-    if(spawn.external->name()!="WLD_INSERTNPC")
-      throw std::runtime_error("Stock NPC spawn trigger: expected NPC placement");
-    vm.push_int(int32_t(spawn.instance->index()));
-    vm.push_reference(spawn.point);
-    vm.unsafe_call_external(spawn.external);
-    }
-  }
-
-bool runIslandSpawnTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger) {
-  struct Spawn {
-    std::string_view name;
-    int32_t          limit = 9;
-    uint32_t         npcs = 1;
-    };
-  static constexpr Spawn rooms[] = {
-    {"EVT_KEYMASTER_01",1}, {"EVT_KEYMASTER_02",1}, {"EVT_KEYMASTER_03",1}, {"EVT_KEYMASTER_04",1},
-    {"EVT_LEFT_UP_01_SPAWNNEW",3,3},
-    {"EVT_LEFT_DOWN_01_SKEL_01"}, {"EVT_LEFT_DOWN_01_SKEL_02"}, {"EVT_LEFT_DOWN_01_SKEL_03"},
-    {"EVT_LEFT_ROOM_02_SKEL_01"}, {"EVT_LEFT_ROOM_02_SKEL_02"}, {"EVT_LEFT_ROOM_02_SKEL_03"},
-    {"EVT_LEFT_ROOM_02_SKEL_04"}, {"EVT_LEFT_ROOM_02_SKEL_05"},
-    {"EVT_RIGHT_DOWN_01_SKEL_01"}, {"EVT_RIGHT_DOWN_01_SKEL_02"}, {"EVT_RIGHT_DOWN_01_SKEL_03"},
-    {"EVT_RIGHT_DOWN_01_SKEL_04"},
-    {"EVT_RIGHT_ROOM_01_SKEL_01"}, {"EVT_RIGHT_ROOM_01_SKEL_02"},
-    {"EVT_RIGHT_ROOM_02_SKEL_01"}, {"EVT_RIGHT_ROOM_02_SKEL_02"},
-    {"EVT_RIGHT_UP_01_SKEL_01"}, {"EVT_RIGHT_UP_01_SKEL_02"},
-    {"EVT_RIGHT_UP_02_SKEL_01"}, {"EVT_RIGHT_UP_02_SKEL_02"}, {"EVT_RIGHT_UP_02_SKEL_03"},
-    };
-  static constexpr std::string_view traps[] = {
-    "EVT_UNDEADDRAGON_TRAP_01_FUNC", "EVT_UNDEADDRAGON_TRAP_02_FUNC", "EVT_UNDEADDRAGON_TRAP_03_FUNC",
-    };
+bool runIslandSpawnTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger,
+                         const TriggerInsertGroups* groups) {
+  if(!groups)
+    return false;
+  using PlacementDefinitions::IslandRoomSpawn;
+  using PlacementDefinitions::islandRoomSpawns;
+  using PlacementDefinitions::islandTraps;
   const auto read = [&vm](daedalus::DaedalusSymbol* field) { return vm.get_int(nullptr,field,0); };
   const auto increment = [&vm,&read](daedalus::DaedalusSymbol* field) {
     vm.set_int(nullptr,field,0,std::bit_cast<int32_t>(uint32_t(read(field))+1u));
     };
   const auto& name = trigger.name();
-  const auto room = std::ranges::find(rooms,name,&Spawn::name);
-  if(room!=std::end(rooms)) {
+  const auto room = std::ranges::find(islandRoomSpawns,name,&IslandRoomSpawn::name);
+  if(room!=std::end(islandRoomSpawns)) {
     auto* attempts = vm.find_symbol_by_name(name+"_ANTIEXPLOID");
     if(read(attempts)<room->limit) {
-      // Each room's initial counter comparison and jump occupy 16 bytes.
-      insertLiteralNpcs(vm,trigger,16,room->npcs);
+      placeInserts(vm,groups->front());
       increment(attempts);
       }
     return true;
     }
-  if(std::ranges::find(traps,name)==std::end(traps))
+  if(std::ranges::find(islandTraps,name)==std::end(islandTraps))
     return false;
 
   auto* activations = vm.find_symbol_by_name(name+"_COUNT_NOMORE");
@@ -187,8 +143,7 @@ bool runIslandSpawnTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymb
     auto* count = vm.find_symbol_by_name(name+"_COUNT");
     const auto before = read(count);
     if(before!=0 && before<2) {
-      // The two count tests precede the trap's one literal placement.
-      insertLiteralNpcs(vm,trigger,44,1);
+      placeInserts(vm,groups->front());
       }
     increment(count);
     if(read(count)>2)
@@ -198,39 +153,19 @@ bool runIslandSpawnTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymb
   return true;
   }
 
-void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
+void loadKhorinisLateChapters(daedalus::DaedalusVm& vm,const PlacementDefinitions::KhorinisLateChapters& chapters) {
   static constexpr auto chapter4 = "B_ENTER_NEWWORLD_KAPITEL_4";
   static constexpr auto chapter5 = "B_ENTER_NEWWORLD_KAPITEL_5";
-  struct Group {
-    uint32_t offset, count;
-    };
-  // Offsets and lengths in the verified stock program. Only the immutable
-  // insert calls are read here, while the conditions are evaluated at entry.
-  static constexpr std::array groups4 = {Group{82,15}, Group{328,61}, Group{1281,6},
-                                          Group{1552,90}, Group{2923,23}, Group{3330,1}};
-  static constexpr std::array groups5 = {Group{160,1}, Group{191,1}, Group{206,17},
-                                          Group{482,2}, Group{554,26}, Group{1000,9}, Group{1772,1}};
-  const auto read = [&]<size_t count>(const char* name,const std::array<Group,count>& groups) {
-    const auto start = vm.find_symbol_by_name(name)->address();
-    std::array<std::vector<LiteralPlacement>,count> rows;
-    for(size_t i=0;i<groups.size();++i) {
-      auto pc = start+groups[i].offset;
-      rows[i].reserve(groups[i].count);
-      for(uint32_t j=0;j<groups[i].count;++j)
-        rows[i].push_back(readLiteralPlacement(vm,pc,name));
-      }
-    return rows;
-    };
   const auto symbol = [&vm](std::string_view name) { return vm.find_symbol_by_name(name); };
   const auto number = [symbol](std::string_view name) { return symbol(name)->get_int(); };
   const auto set = [&vm,symbol,number](std::string_view target,std::string_view value) {
     vm.set_int(nullptr,symbol(target),0,number(value));
     };
-  const auto insert = [&vm](const std::vector<LiteralPlacement>& rows) {
+  const auto insert = [&vm](const std::vector<PlacementDefinitions::LiteralInsert>& rows) {
     for(const auto& row:rows) {
-      vm.push_int(int32_t(row.instance->index()));
-      vm.push_reference(row.point);
-      vm.unsafe_call_external(row.external);
+      vm.push_int(int32_t(row.instance));
+      vm.push_reference(vm.find_symbol_by_index(row.point));
+      vm.unsafe_call_external(vm.find_symbol_by_index(row.external));
       }
     };
   const auto guildIs = [&vm,symbol,number](std::string_view guild) {
@@ -260,7 +195,7 @@ void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
     };
 
   vm.override_function(chapter4,std::function<void()>{[&vm,symbol,number,set,insert,guildIs,call,routine,
-                                                       salandrilAtAltar,giveObsessionBook,rows=read(chapter4,groups4)] {
+                                                       salandrilAtAltar,giveObsessionBook,rows=chapters.chapter4] {
     if(number("ENTERNW_KAPITEL4")==number("FALSE")) {
       if(salandrilAtAltar("$28240"))
         routine("SALANDRIL","$28241"); // Start
@@ -303,7 +238,7 @@ void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
     }},PlacementDefinitionRuntime::enabled);
 
   vm.override_function(chapter5,std::function<void()>{[&vm,symbol,number,set,insert,guildIs,call,routine,
-                                                       salandrilAtAltar,giveObsessionBook,rows=read(chapter5,groups5)] {
+                                                       salandrilAtAltar,giveObsessionBook,rows=chapters.chapter5] {
     const auto sekobAlive = [&] {
       vm.push_reference(symbol("SEKOB"));
       vm.unsafe_call_external(symbol("NPC_ISDEAD"));
@@ -383,9 +318,10 @@ void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
     }},PlacementDefinitionRuntime::enabled);
   }
 
-bool runDragonIslandCrewTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger) {
+bool runDragonIslandCrewTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& trigger,
+                             const TriggerInsertGroups* groups) {
   const bool orcAttack = trigger.name()=="EVT_ORKOBERST";
-  if(!orcAttack && trigger.name()!="EVT_UNDEADDRAGONDEAD_ENDSITUATION")
+  if(orcAttack ? groups==nullptr : trigger.name()!="EVT_UNDEADDRAGONDEAD_ENDSITUATION")
     return false;
 
   struct RestoreContext {
@@ -431,31 +367,19 @@ bool runDragonIslandCrewTrigger(daedalus::DaedalusVm& vm,const daedalus::Daedalu
       vm.set_int(actor,aivar,enemyOverride,no);
       }
 
-    // Offsets and lengths of the verified stock trigger's literal NPC placements.
-    const auto insert = [&](uint32_t offset,uint32_t count) {
-      auto pc = trigger.address()+offset;
-      for(uint32_t i=0;i<count;++i) {
-        const auto spawn = readLiteralPlacement(vm,pc,trigger.name());
-        if(spawn.external->name()!="WLD_INSERTNPC")
-          throw std::runtime_error("Stock orc attack trigger: expected NPC placement");
-        vm.push_int(int32_t(spawn.instance->index()));
-        vm.push_reference(spawn.point);
-        vm.unsafe_call_external(spawn.external);
-        }
-      };
-    insert(84,4); // On and near the ship.
+    placeInserts(vm,(*groups)[0]); // On and near the ship.
     if(symbol("TORLOFISCAPTAIN")->get_int()==yes)
-      insert(160,1);
-    insert(175,2); // Island patrol.
+      placeInserts(vm,(*groups)[1]);
+    placeInserts(vm,(*groups)[2]); // Island patrol.
 
     routine("BIFF_DI","$52137"); // OrkSturmDI
     routine("JACK_DI","$52138");
     routine("TORLOF_DI","$52139");
     routine("MARIO_DI","$52140");
     if(dead("MARIO_DI")==no)
-      insert(286,4); // Mario's skeletons.
+      placeInserts(vm,(*groups)[3]); // Mario's skeletons.
     else
-      insert(351,4); // Undead orcs at the same points.
+      placeInserts(vm,(*groups)[4]); // Undead orcs at the same points.
 
     symbol("ORKSTURMDI")->set_int(yes);
     vm.push_reference(symbol("TOPIC_HALLENVONIRDORATH"));
@@ -592,7 +516,8 @@ void runDragonIslandFirstEntry(daedalus::DaedalusVm& vm) {
     (void)vm.pop_int();
   }
 
-PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::DaedalusScript& vm) {
+PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::DaedalusScript& vm,
+                      const std::vector<PlacementDefinitions::LiteralInsert>& placements) {
   using Value = PlacementDefinitions::Value;
   struct Captain {
     std::string_view flag, npc;
@@ -646,20 +571,11 @@ PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::Daedalus
   aboard("NOV_600_PEDRO_DI");
   for(const auto* point : {"FP_ITEM_SHIP_03", "FP_ITEM_SHIP_07"})
     call("WLD_INSERTITEM",{name("ITMI_FLASK"),string(point)});
-  // These authored sections consist only of literal placement calls. Read their
-  // data from the stock package without executing any of their instructions.
-  using Op = daedalus::DaedalusOpcode;
-  for(const auto* section : {"STARTUP_NEWWORLD_PART_DRAGON_ISLAND_01", "STARTUP_NEWWORLD_PART_DRAGON_UNDEAD_01",
-                             "STARTUP_NEWWORLD_PART_DRAGON_FINAL_01"}) {
-    auto pc = vm.find_symbol_by_name(section)->address();
-    for(;;) {
-      if(pc>=vm.size())
-        throw std::runtime_error("Dragon Island placement: missing return in "+std::string(section));
-      if(vm.instruction_at(pc).op==Op::RSR)
-        break;
-      const auto placement = readLiteralPlacement(vm,pc,section);
-      call(placement.external->name().c_str(),{name(placement.instance->name()),string(placement.point->get_string())});
-      }
+  for(const auto& row:placements) {
+    const auto* external=vm.find_symbol_by_index(row.external);
+    const auto* instance=vm.find_symbol_by_index(row.instance);
+    const auto* point=vm.find_symbol_by_index(row.point);
+    call(external->name().c_str(),{name(instance->name()),string(point->get_string())});
     }
 
   call("PLAYVIDEO",{string("SHIP.BIK")});
@@ -671,7 +587,7 @@ PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::Daedalus
   return PlacementDefinitionRuntime::resolve(library,vm);
   }
 
-void runTeleportStation(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& function) {
+void runTeleportStation(daedalus::DaedalusVm& vm,const std::vector<LiteralInsert>& pirateCamp) {
   const auto symbol = [&vm](std::string_view name) { return vm.find_symbol_by_name(name); };
   const auto number = [&](std::string_view name) { return symbol(name)->get_int(); };
   const auto set = [&](std::string_view name) { vm.set_int(vm.unsafe_get_gi(),symbol(name),0,number("TRUE")); };
@@ -777,14 +693,7 @@ void runTeleportStation(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol
     if(std::string_view(station.visited)=="SCUSED_ADW_TELEPORTSTATION_PIRATES" &&
        number("SCUSED_ADW_TELEPORTSTATION_PIRATES_JACKSMONSTER")==number("FALSE") &&
        number("MIS_KROKOJAGD")==number("LOG_SUCCESS")) {
-      // Six literal inserts follow the stock pirate-camp quest guard.
-      auto pc = function.address()+1197u;
-      for(int i=0;i<6;++i) {
-        const auto spawn = readLiteralPlacement(vm,pc,function.name());
-        vm.push_int(int32_t(spawn.instance->index()));
-        vm.push_reference(spawn.point);
-        vm.unsafe_call_external(spawn.external);
-        }
+      placeInserts(vm,pirateCamp);
       set("SCUSED_ADW_TELEPORTSTATION_PIRATES_JACKSMONSTER");
       }
     set(station.visited);
@@ -793,7 +702,8 @@ void runTeleportStation(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol
   teleport("$17872"); // ADW_ENTRANCE
   }
 
-bool runAddonNpcTrigger(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& function) {
+bool runAddonNpcTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol& function,
+                       const TriggerInsertGroups* groups) {
   const auto& name = function.name();
   if(name=="B_FUNCTION_TOUCH_AND_GET_KILLED") {
     // The script passes the SELF symbol ID, even when its instance is unset.
@@ -809,7 +719,8 @@ bool runAddonNpcTrigger(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol
     return true;
     }
   if(name=="EVT_TELEPORTSTATION_FUNC") {
-    runTeleportStation(vm,function);
+    if(!groups) return false;
+    runTeleportStation(vm,groups->front());
     return true;
     }
   const bool entrance = name=="ADW_ADANOSTEMPEL_STONEGRD_TRIGG_FUNC_01";
@@ -916,7 +827,9 @@ bool runAddonNpcTrigger(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol
 void GameScript::invokeWorldTrigger(std::string_view fn) {
   const auto* symbol = findSymbol(fn);
   if(symbol!=nullptr && nativeRoutineProgram && PlacementDefinitionRuntime::enabled()) {
-    if(runKhorinisNpcTrigger(vm,*symbol))
+    const auto found=placementDefinitions.triggerInserts.find(symbol->name());
+    const auto* groups=found==placementDefinitions.triggerInserts.end() ? nullptr : &found->second;
+    if(runKhorinisNpcTrigger(vm,*symbol,groups))
       return;
     if(symbol->name()=="ENTER_OLDWORLD_FIRSTTIME_TRIGGER" || symbol->name()=="ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC") {
       vm.unsafe_call_bl(symbol);
@@ -926,25 +839,18 @@ void GameScript::invokeWorldTrigger(std::string_view fn) {
       runDragonIslandFirstEntry(vm);
       return;
       }
-    if(runDragonIslandCrewTrigger(vm,*symbol))
+    if(runDragonIslandCrewTrigger(vm,*symbol,groups))
       return;
-    struct Room {
-      std::string_view trigger;
-      uint32_t         spawnCount;
-      };
-    static constexpr Room rooms[] = {{"EVT_CRYPT_01",7}, {"EVT_CRYPT_02",7},
-                                     {"EVT_CRYPT_03",7}, {"EVT_CRYPT_FINAL",6}};
-    const auto room = std::ranges::find(rooms,symbol->name(),&Room::trigger);
-    if(room!=std::end(rooms)) {
+    using PlacementDefinitions::cryptTriggers;
+    if(groups && std::ranges::find(cryptTriggers,symbol->name())!=std::end(cryptTriggers)) {
       auto* once = findSymbol(symbol->name()+"_ONETIME");
       if(vm.get_int(nullptr,once,0)==findSymbol("FALSE")->get_int()) {
-        // The stock comparison and conditional jump precede the literal spawn calls.
-        insertLiteralNpcs(vm,*symbol,16,room->spawnCount);
+        placeInserts(vm,groups->front());
         vm.set_int(nullptr,once,0,findSymbol("TRUE")->get_int());
         }
       return;
       }
-    if(runIslandSpawnTrigger(vm,*symbol) || runAddonNpcTrigger(vm,*symbol))
+    if(runIslandSpawnTrigger(vm,*symbol,groups) || runAddonNpcTrigger(vm,*symbol,groups))
       return;
 
     static constexpr std::string_view storyTriggers[] = {
@@ -954,32 +860,22 @@ void GameScript::invokeWorldTrigger(std::string_view fn) {
       "EVT_ORNAMENT_SWITCH_FARM_01_FUNC", "EVT_SC_ENTER_LIBRARY",
       };
     int32_t result = 0;
-    if(std::ranges::find(storyTriggers,symbol->name())!=std::end(storyTriggers) && invokeStockProgram(*symbol,result))
+    const bool preparedOnly = !vm.has_legacy_dispatcher();
+    if((preparedOnly || std::ranges::find(storyTriggers,symbol->name())!=std::end(storyTriggers)) &&
+       invokeStockProgram(*symbol,result,nullptr,preparedOnly))
       return;
     }
   vm.call_function(symbol);
   }
 
 void GameScript::runWorldFirstEntryTrigger(bool oldWorld) {
-  using Op = daedalus::DaedalusOpcode;
-  using Type = daedalus::DaedalusDataType;
   auto* once = findSymbol(oldWorld ? "ENTER_OLDWORLD_FIRSTTIME_TRIGGER_ONETIME" :
                                      "ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_ONETIME");
   const auto* yes = findSymbol("TRUE");
   if(vm.get_int(nullptr,once,0)==findSymbol("FALSE")->get_int()) {
-    const auto* trigger = findSymbol(oldWorld ? "ENTER_OLDWORLD_FIRSTTIME_TRIGGER" :
-                                               "ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC");
-    const auto kill = findSymbol("B_KILLNPC")->address();
-    auto pc = trigger->address()+16u; // The guard precedes the fixed literal calls.
-    for(uint32_t i=0;i<(oldWorld ? 18u : 19u);++i) {
-      const auto instance = vm.instruction_at(pc);
-      const auto call = vm.instruction_at(pc+instance.size);
-      const auto* actor = instance.op==Op::PUSHI ? findSymbol(uint32_t(instance.immediate)) : nullptr;
-      if(!actor || actor->type()!=Type::INSTANCE || call.op!=Op::BL || call.address!=kill)
-        throw std::runtime_error("Unexpected stock first-entry actor in "+trigger->name());
-      invokeKillNpc(instance.immediate);
-      pc+=instance.size+call.size;
-      }
+    const auto& first=*placementDefinitions.firstEntries;
+    for(const auto actor:oldWorld ? first.oldWorld : first.addonWorld)
+      invokeKillNpc(int32_t(actor));
     if(oldWorld) {
       vm.push_reference(findSymbol("$52006")); // DRAGONATTACK.BIK.
       vm.unsafe_call_external(findSymbol("PLAYVIDEO")); // The void trigger discards the result on return.
@@ -994,8 +890,9 @@ void GameScript::runWorldFirstEntryTrigger(bool oldWorld) {
 
 void GameScript::runStartup(std::string_view fn) {
   const auto* function = vm.find_symbol_by_name(fn);
-  if(nativeRoutineProgram && PlacementDefinitionRuntime::enabled() && function && function->name()=="STARTUP_DRAGONISLAND") {
-    PlacementDefinitionRuntime::execute(vm,function,dragonIslandPlacement(vm));
+  if(nativeRoutineProgram && PlacementDefinitionRuntime::enabled() && function && function->name()=="STARTUP_DRAGONISLAND" &&
+     !placementDefinitions.dragonIsland.empty()) {
+    PlacementDefinitionRuntime::execute(vm,function,dragonIslandPlacement(vm,placementDefinitions.dragonIsland));
     return;
     }
   PlacementDefinitionRuntime::execute(vm,function,placementDefinitions);
@@ -1153,24 +1050,18 @@ void GameScript::loadNewWorldChapterEntries() {
     }},PlacementDefinitionRuntime::enabled);
 
   constexpr auto chapterTwo="B_ENTER_NEWWORLD_KAPITEL_2";
-  // The verified callback starts its block of 50 literal NPC rows after the two tests.
-  auto pc=findSymbol(chapterTwo)->address()+42;
-  std::array<LiteralPlacement,50> population{};
-  for(auto& row:population) {
-    row=readLiteralPlacement(vm,pc,chapterTwo);
-    if(row.external->name()!="WLD_INSERTNPC")
-      throw std::runtime_error("Unexpected NPC placement in "+std::string(chapterTwo));
-    }
-  vm.override_function(chapterTwo,std::function<void()>{[this,place,remove,number,population] {
+  if(!placementDefinitions.khorinisEarlyChapters)
+    return;
+  vm.override_function(chapterTwo,std::function<void()>{[this,place,remove,number] {
     if(number("GREGISBACK")==number("TRUE"))
       remove("PIR_1300_ADDON_GREG_NW");
     auto* entered=findSymbol("ENTERNW_KAPITEL2");
     if(entered->get_int()!=number("FALSE"))
       return;
-    for(const auto& row:population) {
-      vm.push_int(int32_t(row.instance->index()));
-      vm.push_reference(row.point);
-      vm.unsafe_call_external(row.external);
+    for(const auto& row:placementDefinitions.khorinisEarlyChapters->chapter2) {
+      vm.push_int(int32_t(row.instance));
+      vm.push_reference(findSymbol(row.point));
+      vm.unsafe_call_external(findSymbol(row.external));
       }
 
     const auto heroGuild=[this] {
@@ -1203,12 +1094,14 @@ void GameScript::loadNativeWorldEntry() {
     return;
 
   findSymbol("CURRENTLEVEL")->bind_global_int(currentStoryWorld);
-  vm.override_function("ENTER_OLDWORLD_FIRSTTIME_TRIGGER",std::function<void()>{[this] {
-    runWorldFirstEntryTrigger(true);
-    }},PlacementDefinitionRuntime::enabled);
-  vm.override_function("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC",std::function<void()>{[this] {
-    runWorldFirstEntryTrigger(false);
-    }},PlacementDefinitionRuntime::enabled);
+  if(placementDefinitions.firstEntries) {
+    vm.override_function("ENTER_OLDWORLD_FIRSTTIME_TRIGGER",std::function<void()>{[this] {
+      runWorldFirstEntryTrigger(true);
+      }},PlacementDefinitionRuntime::enabled);
+    vm.override_function("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC",std::function<void()>{[this] {
+      runWorldFirstEntryTrigger(false);
+      }},PlacementDefinitionRuntime::enabled);
+    }
   static constexpr std::pair<std::string_view,int32_t GhostProgress::*> ghostFlags[]={
     {"GHOST_SCKNOWSHOW2GETINADANOSTEMPEL",&GhostProgress::knowsTempleEntrance},
     {"SC_SUMMONEDANCIENTGHOST",&GhostProgress::summonedAncientGhost},
@@ -1259,8 +1152,6 @@ void GameScript::loadNativeWorldEntry() {
                          "INIT_SUB_ADDON_PART_VALLEY_01", "INIT_SUB_ADDON_PART_ADANOSTEMPLE_01"})
     vm.override_function(stage,std::function<void()>{[] {}},PlacementDefinitionRuntime::enabled);
 
-  using Op = daedalus::DaedalusOpcode;
-  using Type = daedalus::DaedalusDataType;
   using Symbol = daedalus::DaedalusSymbol;
   vm.override_function("INIT_GLOBAL",std::function<void()>{[this] {
     // The void script frame discards GAME_INITGERMAN's integer result.
@@ -1269,58 +1160,19 @@ void GameScript::loadNativeWorldEntry() {
 
   auto* yes = findSymbol("TRUE");
   auto* no = findSymbol("FALSE");
-  auto* enteredAddon4 = findSymbol("ENTERADW_KAPITEL4");
-  const auto* insertNpc = findSymbol("WLD_INSERTNPC");
-  auto pc = findSymbol("B_ENTER_ADDONWORLD_KAPITEL_4")->address();
-  const auto takeAddon4 = [&] {
-    const auto instruction = vm.instruction_at(pc);
-    pc += instruction.size;
-    return instruction;
-    };
-  const auto expectAddon4 = [](bool match) {
-    if(!match)
-      throw std::runtime_error("Unexpected Addon World chapter 4 placement");
-    };
-  const auto compareAddon4 = takeAddon4();
-  const auto latchAddon4 = takeAddon4();
-  expectAddon4(compareAddon4.op==Op::PUSHV && compareAddon4.symbol==no->index() &&
-               latchAddon4.op==Op::PUSHV && latchAddon4.symbol==enteredAddon4->index() &&
-               takeAddon4().op==Op::EQ);
-  const auto skipAddon4 = takeAddon4();
-  expectAddon4(skipAddon4.op==Op::BZ);
-
-  struct NpcPlacement {
-    int32_t instance;
-    Symbol* point;
-    };
-  std::array<NpcPlacement,137> addon4Spawns;
-  for(auto& spawn : addon4Spawns) {
-    const auto instance = takeAddon4();
-    const auto point = takeAddon4();
-    const auto call = takeAddon4();
-    const auto* actor = instance.op==Op::PUSHI ? findSymbol(uint32_t(instance.immediate)) : nullptr;
-    auto* waypoint = point.op==Op::PUSHV ? findSymbol(point.symbol) : nullptr;
-    expectAddon4(actor && actor->type()==Type::INSTANCE && actor->is_const() &&
-                 waypoint && waypoint->type()==Type::STRING && waypoint->is_const() &&
-                 !waypoint->is_member() && waypoint->count()==1 &&
-                 call.op==Op::BE && call.symbol==insertNpc->index());
-    spawn = {instance.immediate,waypoint};
+  if(!placementDefinitions.addonChapter4.empty()) {
+    auto* entered = findSymbol("ENTERADW_KAPITEL4");
+    vm.override_function("B_ENTER_ADDONWORLD_KAPITEL_4",std::function<void()>{[this,yes,no,entered] {
+      if(entered->get_int()!=no->get_int())
+        return;
+      for(const auto& spawn:placementDefinitions.addonChapter4) {
+        vm.push_int(int32_t(spawn.instance));
+        vm.push_reference(findSymbol(spawn.point));
+        vm.unsafe_call_external(findSymbol(spawn.external));
+        }
+      entered->set_int(yes->get_int());
+      }},PlacementDefinitionRuntime::enabled);
     }
-  const auto valueAddon4 = takeAddon4();
-  const auto updateAddon4 = takeAddon4();
-  expectAddon4(valueAddon4.op==Op::PUSHV && valueAddon4.symbol==yes->index() &&
-               updateAddon4.op==Op::PUSHV && updateAddon4.symbol==enteredAddon4->index() &&
-               takeAddon4().op==Op::MOVI && pc==skipAddon4.address && takeAddon4().op==Op::RSR);
-  vm.override_function("B_ENTER_ADDONWORLD_KAPITEL_4",std::function<void()>{[this,yes,no,enteredAddon4,insertNpc,addon4Spawns] {
-    if(enteredAddon4->get_int()!=no->get_int())
-      return;
-    for(const auto& spawn : addon4Spawns) {
-      vm.push_int(spawn.instance);
-      vm.push_reference(spawn.point);
-      vm.unsafe_call_external(insertNpc);
-      }
-    enteredAddon4->set_int(yes->get_int());
-    }},PlacementDefinitionRuntime::enabled);
 
   const auto removeActor = [this](std::string_view actor) {
     vm.push_int(int32_t(findSymbolIndex(actor)));
@@ -1369,16 +1221,6 @@ void GameScript::loadNativeWorldEntry() {
     Symbol* label;
     Symbol* guild;
     };
-  struct RoomChoice {
-    Symbol* expected;
-    Symbol* flag;
-    Room equal, otherwise;
-    };
-  struct MobRoutine {
-    int32_t hour, minute;
-    Symbol* name;
-    int32_t state;
-    };
   const auto* assign = findSymbol("WLD_ASSIGNROOMTOGUILD");
   const auto* setMobRoutine = findSymbol("WLD_SETMOBROUTINE");
   const auto assignRoom = [this,assign](const Room& room) {
@@ -1389,97 +1231,24 @@ void GameScript::loadNativeWorldEntry() {
       vm.push_int(-1);
     vm.unsafe_call_external(assign);
     };
-  static constexpr struct Region {
-    const char* name;
-    size_t roomCount, choiceCount = 0, mobCount = 0;
-    } roomSections[] = {
-    {"INIT_SUB_ADDON_PART_BANDITSCAMP_01",6}, {"INIT_SUB_NEWWORLD_PART_MONASTERY_01",13}, {"INIT_SUB_OLDCAMP",25},
-    {"INIT_SUB_NEWWORLD_PART_CITY_01",44,4,3}, {"INIT_SUB_NEWWORLD_PART_GREATPEASANT_01",13,2},
-    };
-  for(const auto& region : roomSections) {
-    auto pc = findSymbol(region.name)->address();
-    const auto malformed = [&] { throw std::runtime_error("Unexpected room initializer in "+std::string(region.name)); };
-    const auto take = [&] {
-      const auto op = vm.instruction_at(pc);
-      pc += op.size;
-      return op;
-      };
-    const auto reference = [&](const daedalus::DaedalusInstruction& op) {
-      return op.op==Op::PUSHV ? findSymbol(op.symbol) : nullptr;
-      };
-    const auto constant = [](const Symbol* symbol,Type type) {
-      return symbol && symbol->type()==type && symbol->is_const() && !symbol->is_member() && symbol->count()==1;
-      };
-    const auto readRoom = [&](Symbol* room) {
-      const auto owner = take();
-      auto* guild = reference(owner);
-      if(!constant(room,Type::STRING))
-        malformed();
-      if(guild) {
-        if(!constant(guild,Type::INT))
-          malformed();
-        } else if(owner.op!=Op::PUSHI || owner.immediate!=1 || take().op!=Op::NEGATE) {
-        malformed();
-        }
-      const auto call = take();
-      if(call.op!=Op::BE || call.symbol!=assign->index())
-        malformed();
-      return Room{room,guild};
-      };
-
-    std::vector<MobRoutine> mobs;
-    for(size_t i=0;i<region.mobCount;++i) {
-      const auto hour = take();
-      const auto minute = take();
-      auto* name = reference(take());
-      const auto state = take();
-      const auto call = take();
-      if(hour.op!=Op::PUSHI || minute.op!=Op::PUSHI || !constant(name,Type::STRING) ||
-         state.op!=Op::PUSHI || call.op!=Op::BE || call.symbol!=setMobRoutine->index())
-        malformed();
-      mobs.push_back({hour.immediate,minute.immediate,name,state.immediate});
-      }
-    std::vector<std::variant<Room,RoomChoice>> rooms;
-    rooms.reserve(region.roomCount);
-    size_t choices = 0;
-    for(size_t i=0;i<region.roomCount;++i) {
-      auto* first = reference(take());
-      if(constant(first,Type::STRING)) {
-        rooms.emplace_back(readRoom(first));
-        continue;
-        }
-
-      auto* flag = reference(take());
-      if(!constant(first,Type::INT) || !flag || flag->type()!=Type::INT || flag->is_member() ||
-         flag->is_const() || flag->count()!=1 || take().op!=Op::EQ)
-        malformed();
-      const auto branch = take();
-      const auto equal = readRoom(reference(take()));
-      const auto skip = take();
-      if(branch.op!=Op::BZ || skip.op!=Op::B || pc!=branch.address)
-        malformed();
-      const auto otherwise = readRoom(reference(take()));
-      if(pc!=skip.address)
-        malformed();
-      rooms.emplace_back(RoomChoice{first,flag,equal,otherwise});
-      ++choices;
-      }
-    if(choices!=region.choiceCount || take().op!=Op::RSR)
-      malformed();
-    vm.override_function(region.name,std::function<void()>{[this,assignRoom,setMobRoutine,mobs=std::move(mobs),rooms=std::move(rooms)] {
-      for(const auto& mob : mobs) {
+  for(const auto& [name,region]:placementDefinitions.roomInitializers) {
+    vm.override_function(name,std::function<void()>{[this,assignRoom,setMobRoutine,&region] {
+      for(const auto& mob:region.mobs) {
         vm.push_int(mob.hour);
         vm.push_int(mob.minute);
-        vm.push_reference(mob.name);
+        vm.push_reference(findSymbol(mob.name));
         vm.push_int(mob.state);
         vm.unsafe_call_external(setMobRoutine);
         }
-      for(const auto& room : rooms) {
-        if(const auto* fixed = std::get_if<Room>(&room)) {
-          assignRoom(*fixed);
+      const auto place=[this,assignRoom](const PlacementDefinitions::RoomAssignment& room) {
+        assignRoom({findSymbol(room.label),room.guild ? findSymbol(*room.guild) : nullptr});
+        };
+      for(const auto& room:region.rooms) {
+        if(const auto* fixed=std::get_if<PlacementDefinitions::RoomAssignment>(&room)) {
+          place(*fixed);
           } else {
-          const auto& choice = std::get<RoomChoice>(room);
-          assignRoom(choice.flag->get_int()==choice.expected->get_int() ? choice.equal : choice.otherwise);
+          const auto& choice=std::get<PlacementDefinitions::RoomChoice>(room);
+          place(findSymbol(choice.flag)->get_int()==findSymbol(choice.expected)->get_int() ? choice.equal : choice.otherwise);
           }
         }
       }},PlacementDefinitionRuntime::enabled);
@@ -1500,27 +1269,23 @@ void GameScript::loadNativeWorldEntry() {
     vm.unsafe_call_bl(findSymbol("B_ENTER_OLDWORLD"));
     }},PlacementDefinitionRuntime::enabled);
 
-  loadKhorinisLateChapters(vm);
+  if(placementDefinitions.khorinisLateChapters)
+    loadKhorinisLateChapters(vm,*placementDefinitions.khorinisLateChapters);
   vm.override_function("B_KAPITELWECHSEL",std::function<void(int32_t,int32_t)>{
     [this](int32_t chapter,int32_t level) { changeChapter(chapter,level); }},PlacementDefinitionRuntime::enabled);
   loadOldWorldChapterEntries();
   }
 
 void GameScript::loadOldWorldChapterEntries() {
+  if(!placementDefinitions.oldWorldChapters)
+    return;
+  const auto& chapters=*placementDefinitions.oldWorldChapters;
   constexpr std::string_view old3 = "B_ENTER_OLDWORLD_KAPITEL_3";
   constexpr std::string_view old4 = "B_ENTER_OLDWORLD_KAPITEL_4";
-  const auto batch = [this](std::string_view root,uint32_t offset,size_t count) {
-    std::vector<LiteralPlacement> rows;
-    rows.reserve(count);
-    auto pc = findSymbol(root)->address()+offset;
-    for(size_t i=0;i<count;++i)
-      rows.push_back(readLiteralPlacement(vm,pc,root));
-    return rows;
-    };
-  const auto place = [this](const LiteralPlacement& row) {
-    vm.push_int(int32_t(row.instance->index()));
-    vm.push_reference(row.point);
-    vm.unsafe_call_external(row.external);
+  const auto place = [this](const PlacementDefinitions::LiteralInsert& row) {
+    vm.push_int(int32_t(row.instance));
+    vm.push_reference(findSymbol(row.point));
+    vm.unsafe_call_external(findSymbol(row.external));
     };
   const auto remove = [this](std::string_view npc) {
     vm.push_int(int32_t(findSymbolIndex(npc)));
@@ -1538,10 +1303,9 @@ void GameScript::loadOldWorldChapterEntries() {
     vm.set_int(vm.unsafe_get_gi(),findSymbol(name),0,number(value));
     };
 
-  // Fixed placement ranges in the verified world script, relative to each chapter root.
-  const auto chapter3Placements = batch(old3,46,44);
-  const auto mageItem = batch(old3,727,1).front();
-  const auto otherItem = batch(old3,747,1).front();
+  const auto& [chapter3Placements,mageItems,otherItems]=chapters.chapter3;
+  const auto mageItem=mageItems.front();
+  const auto otherItem=otherItems.front();
   vm.override_function(old3,std::function<void()>{[place,remove,isMage,number,setFlag,chapter3Placements,mageItem,otherItem] {
     if(number("ENTEROW_KAPITEL3")!=number("FALSE"))
       return;
@@ -1553,23 +1317,9 @@ void GameScript::loadOldWorldChapterEntries() {
     setFlag("ENTEROW_KAPITEL3","TRUE");
     }},PlacementDefinitionRuntime::enabled);
 
-  auto pc = findSymbol(old4)->address()+291;
-  std::array<LiteralPlacement,11> deadHunters{};
-  using Op = daedalus::DaedalusOpcode;
-  for(auto& row : deadHunters) {
-    row = readLiteralPlacement(vm,pc,old4);
-    const auto instance = vm.instruction_at(pc);
-    const auto kill = vm.instruction_at(pc+5);
-    if(instance.op!=Op::PUSHI || instance.immediate!=int32_t(row.instance->index()) ||
-       kill.op!=Op::BL || kill.address!=findSymbol("B_KILLNPC")->address())
-      throw std::runtime_error("Stock placement: unexpected Old World chapter four insert and kill pair");
-    pc+=10;
-    }
-  const auto camp = batch(old4,581,5);
-  const std::array optionalCamp={batch(old4,672,1).front(),batch(old4,703,1).front(),
-                                 batch(old4,734,1).front(),batch(old4,765,1).front()};
-  const auto valley = batch(old4,780,235);
-  const auto talbinSnapper = batch(old4,4417,1).front();
+  const auto& [deadHunters,camp,bullco,rod,cipher,gorn,valley,talbinSnappers]=chapters.chapter4;
+  const std::array optionalCamp={bullco.front(),rod.front(),cipher.front(),gorn.front()};
+  const auto talbinSnapper=talbinSnappers.front();
   vm.override_function(old4,std::function<void()>{[this,place,remove,isMage,push,external,number,setFlag,
                                                   deadHunters,camp,optionalCamp,valley,talbinSnapper] {
     const auto alive = [this,push,external,number](std::string_view npc) {
@@ -1618,7 +1368,7 @@ void GameScript::loadOldWorldChapterEntries() {
         }
       for(const auto& row : deadHunters) {
         place(row);
-        invokeKillNpc(int32_t(row.instance->index()));
+        invokeKillNpc(int32_t(row.instance));
         }
       push("BRUTUS");
       push("$27809");
@@ -1661,23 +1411,11 @@ void GameScript::loadOldWorldChapterEntries() {
   }
 
 void GameScript::loadKhorinisChapter3() {
+  if(!placementDefinitions.khorinisEarlyChapters)
+    return;
   constexpr auto section = "B_ENTER_NEWWORLD_KAPITEL_3";
-  const auto start = findSymbol(section)->address();
-  // Offsets identify strictly literal runs in this verified stock function.
   enum PlacementGroup { Diego, Gorn, FirstSeeker, Bugs, SekobFarm, ChapterPopulation, Mercenaries, BlessedStones, VinoRitual };
-  static constexpr std::pair<uint32_t,size_t> runs[] = {
-    {116,1}, {161,1}, {227,1}, {293,3}, {479,4}, {625,61}, {1824,8}, {1965,2}, {2092,4},
-    };
-  std::array<std::vector<LiteralPlacement>,std::size(runs)> placements;
-  for(size_t i=0;i<placements.size();++i) {
-    auto [offset,count] = runs[i];
-    auto pc = start+offset;
-    placements[i].reserve(count);
-    for(size_t row=0;row<count;++row)
-      placements[i].push_back(readLiteralPlacement(vm,pc,section));
-    }
-
-  vm.override_function(section,std::function<void()>{[this,placements=std::move(placements)] {
+  vm.override_function(section,std::function<void()>{[this] {
     const auto number = [this](std::string_view symbol) { return findSymbol(symbol)->get_int(); };
     auto* entered = findSymbol("ENTERNW_KAPITEL3");
     if(entered->get_int()!=number("FALSE"))
@@ -1704,10 +1442,10 @@ void GameScript::loadKhorinisChapter3() {
       return a || b;
       };
     const auto place = [&](PlacementGroup group) {
-      for(const auto& row : placements[group]) {
-        vm.push_int(int32_t(row.instance->index()));
-        vm.push_reference(row.point);
-        vm.unsafe_call_external(row.external);
+      for(const auto& row:placementDefinitions.khorinisEarlyChapters->chapter3[group]) {
+        vm.push_int(int32_t(row.instance));
+        vm.push_reference(findSymbol(row.point));
+        vm.unsafe_call_external(findSymbol(row.external));
         }
       };
     const auto routine = [this](std::string_view actor,std::string_view name) {

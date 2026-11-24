@@ -444,6 +444,10 @@ void GameScript::ai_stopprocessinfos(std::shared_ptr<daedalus::INpc> selfRef) {
     }
   }
 
+void GameScript::endDirectorDialog(Npc& npc) {
+  ai_stopprocessinfos(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+  }
+
 void GameScript::ai_standup(std::shared_ptr<daedalus::INpc> selfRef) {
   auto self = findNpc(selfRef);
   if(self!=nullptr)
@@ -768,15 +772,18 @@ void GameScript::ai_pointatnpc(std::shared_ptr<daedalus::INpc> npcRef, std::shar
   }
 
 int GameScript::ai_printscreen(std::string_view msg, int posx, int posy, std::string_view font, int timesec) {
-  auto npc = findNpc(vm.global_self());
+  printScreenFor(findNpc(vm.global_self()),msg,posx,posy,font,timesec);
+  return 0;
+  }
+
+void GameScript::printScreenFor(Npc* npc, std::string_view msg, int posx, int posy, std::string_view font, int timesec) {
   if(npc==nullptr)
     npc = owner.player();
   if(npc==nullptr) {
     Gothic::inst().onPrintScreen(msg,posx,posy,timesec,Resources::font(font,Resources::FontType::Normal,1.0));
-    return 0;
+    return;
     }
   npc->aiPush(AiQueue::aiPrintScreen(timesec,font,posx,posy,msg));
-  return 0;
   }
 
 int GameScript::mob_hasitems(std::string_view tag, int item) {

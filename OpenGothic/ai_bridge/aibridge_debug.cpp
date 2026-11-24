@@ -274,7 +274,7 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     // an npc of the director's (v33): a symbol of ours made like the script's npc `like`, put at a waypoint
     // or `distance` cm in front of the player. The save keeps both
     std::string why;
-    auto*       sym = world->script().ownSymbols().addNpc(JsonRead::str(msg,"npc"),JsonRead::str(msg,"like"),why);
+    auto*       sym = world->script().ownSymbols().addNpc(world->script().getVm(),JsonRead::str(msg,"npc"),JsonRead::str(msg,"like"),why);
     if(sym==nullptr) {
       sendResult(req,false,why);
       return;

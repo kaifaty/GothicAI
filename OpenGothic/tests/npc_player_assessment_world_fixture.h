@@ -1,5 +1,7 @@
 #pragma once
 
+#include "storygraph/bytecode.h"
+
 void talkTopicAssignments(World& world,Npc& npc,Npc& hero) {
   using Contract=NpcDefinitionContract;
   auto& script=world.script();
@@ -294,8 +296,8 @@ void productionDialogEnd(World& world,Npc& npc,Npc& hero) {
   const auto player=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
   auto* close=vm.find_symbol_by_name("B_ENDPRODUCTIONDIALOG");
   StoryRuntime story(nullptr);
-  story.ensureLifter();
-  const auto program=storygraph::liftProgram(vm,story.bytecode(),script.findFunction("PC_GOLDHACKEN_END_INFO").ptr);
+  const storygraph::Bytecode bytecode(vm);
+  const auto program=storygraph::liftProgram(vm,bytecode,script.findFunction("PC_GOLDHACKEN_END_INFO").ptr);
   require(program.error.empty(),program.error.c_str());
   StoryRuntime::Bind binding(vm,&hero,&hero);
   vm.unsafe_set_gi(context);
@@ -730,13 +732,13 @@ void stockPickpocket(World& world,Npc& npc,Npc& hero) {
     Contract::outputOrder(script)=savedOrder;
     };
   StoryRuntime story(nullptr);
-  story.ensureLifter();
+  const storygraph::Bytecode bytecode(vm);
   StoryRuntime::Bind binding(vm,&npc,&hero);
   auto& interpreter=story.interpreter(vm);
   constexpr auto conditionName="DIA_HILDA_PICKPOCKET_CONDITION";
   constexpr auto attemptName="DIA_HILDA_PICKPOCKET_DOIT";
-  const auto condition=storygraph::liftProgram(vm,story.bytecode(),symbol(conditionName).index());
-  const auto attempt=storygraph::liftProgram(vm,story.bytecode(),symbol(attemptName).index());
+  const auto condition=storygraph::liftProgram(vm,bytecode,symbol(conditionName).index());
+  const auto attempt=storygraph::liftProgram(vm,bytecode,symbol(attemptName).index());
   require(condition.error.empty() && attempt.error.empty(),"pickpocket: the real Hilda dialogue must be available");
   const auto talk=script.findFunction("ZS_TALK");
   const auto check=[&] {

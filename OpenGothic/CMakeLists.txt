@@ -7,6 +7,7 @@ set(BUILD_SHARED_LIBS OFF)
 
 option(OPENGOTHIC_ENABLE_FRAME_PROFILE "Compile opt-in frame profiling diagnostics" OFF)
 option(OPENGOTHIC_ENABLE_APP_CADENCE "Compile the normal-game death cadence benchmark" OFF)
+option(OPENGOTHIC_LEGACY_DAEDALUS "Link the legacy Daedalus interpreter into the game and headless runner" ON)
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)
@@ -75,7 +76,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/vm_bytecode daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -88,6 +89,14 @@ list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/npchelpe
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/fightdefinitiondata.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/fightdefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/gameplaydefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/dialoginfodata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/questclosuredata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/questclosuredata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/dialoginfodata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/npcworlddata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/npcworlddata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/tradeinventorydata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/tradeinventorydata.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/menudefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/menudefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/cameradefinitiondata.cpp"
@@ -97,7 +106,13 @@ list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/def
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/musicdefinitiondata.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/musicthemedefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/effectdefinitiondata.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/effectdefinitions.cpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/effectdefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/stockstoryprograms.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/deathtrophydefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/deathtrophydefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/symbolcatalog.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/stockstoryprograms.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/storygraph.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/meshclusterlod.cpp")
 if(NOT OPENGOTHIC_ENABLE_FRAME_PROFILE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/frameprofile.cpp")
@@ -213,7 +228,12 @@ if(NOT MSVC)
   target_compile_options(gothic-cluster-lod-test PRIVATE -Wall -Wconversion -Werror -ffp-contract=off)
 endif()
 add_subdirectory(common/daedalus)
-target_link_libraries(${PROJECT_NAME} gothic-daedalus)
+if(OPENGOTHIC_LEGACY_DAEDALUS)
+  target_link_libraries(${PROJECT_NAME} gothic-daedalus)
+else()
+  target_compile_definitions(${PROJECT_NAME} PRIVATE OPENGOTHIC_NATIVE_GAME=1)
+  target_link_libraries(${PROJECT_NAME} gothic-script-state)
+endif()
 target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/convert/CMakeLists.txt")
   add_subdirectory(../scripts/convert content-convert)
@@ -336,7 +356,7 @@ if(UNIX)
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
   add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp)
-  target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge gothic-daedalus)
   target_include_directories(gothic-npc-day-contract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   # Real NPC/world fixture for growing and shrinking the live observation subscription.
   add_executable(gothic-body-watch-test tests/body_watch_test.cpp)

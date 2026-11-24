@@ -12,5 +12,6 @@ if [[ "$(uname -s)" == Linux ]]; then
   source "$ROOT/scripts/ryzen-build.sh"
 fi
 cmake -S "$ROOT/OpenGothic" -B "$ROOT/OpenGothic/build" -G Ninja -DCMAKE_BUILD_TYPE="${BUILD_TYPE:-RelWithDebInfo}" \
+  -DOPENGOTHIC_LEGACY_DAEDALUS=OFF \
   ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"}
 cmake --build "$ROOT/OpenGothic/build" --target Gothic2Notr

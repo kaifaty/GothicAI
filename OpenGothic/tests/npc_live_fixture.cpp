@@ -1076,54 +1076,68 @@ static void gameplayDefinitionParity(World& world) {
 
   auto& gothic = Gothic::inst();
   auto original = gothic.createPhoenixVm(gothic.defaultGameDatFile());
-  auto imported = gothic.createPhoenixVm(gothic.defaultGameDatFile());
-  size_t instructions=0, definitions=0, fields=0;
-  imported->observe_instructions([&](const auto&) { ++instructions; });
-
-  auto compare = [&](const daedalus::DaedalusSymbol& symbol, const daedalus::DaedalusInstance& old,
-                     const daedalus::DaedalusInstance& now) {
-    require(imported->find_symbol_by_instance(now)==&symbol,"gameplay definition must keep its original symbol binding");
-    for(auto* member : imported->find_class_members(GameplayDefinitions::instanceClass(*imported,symbol))) {
-      const auto* expected = original->find_symbol_by_name(member->name());
-      for(uint16_t i=0; i<member->count(); ++i) {
-        using Type = daedalus::DaedalusDataType;
-        bool equal=false;
-        switch(member->type()) {
-          case Type::INT: equal=expected->get_int(i,&old)==member->get_int(i,&now); break;
-          case Type::FLOAT: equal=std::bit_cast<uint32_t>(expected->get_float(i,&old))==
-                                 std::bit_cast<uint32_t>(member->get_float(i,&now)); break;
-          case Type::STRING: equal=expected->get_string(i,&old)==member->get_string(i,&now); break;
-          default: break;
-          }
-        require(equal,("gameplay definition differs: "+symbol.name()+" "+member->name()).c_str());
+  auto& live = world.script().getVm();
+  size_t definitions = 0, fields = 0;
+  const auto verifyUnbound = [&](std::string_view name) {
+    if(NpcDefinitionRuntime::enabled())
+      require(live.find_symbol_by_name(name)->get_instance()==nullptr,
+              "the stock gameplay definition must not bind a live VM instance");
+    };
+  const auto compare = [&](std::string_view name, const daedalus::DaedalusInstance& old, const auto& now) {
+    using Record = std::decay_t<decltype(now)>;
+    Record::fields([&](const char* field, auto member) {
+      const auto* expected = original->find_symbol_by_name(field);
+      const auto sameValue = [&](const auto& actual, uint16_t index) {
+        using T = std::decay_t<decltype(actual)>;
+        bool same = false;
+        if constexpr(std::is_same_v<T,float>)
+          same = std::bit_cast<uint32_t>(expected->get_float(index,&old))==std::bit_cast<uint32_t>(actual);
+        else if constexpr(std::is_same_v<T,int32_t>)
+          same = expected->get_int(index,&old)==actual;
+        else
+          same = expected->get_string(index,&old)==actual;
+        require(same,("gameplay definition differs: "+std::string(name)+" "+field).c_str());
         ++fields;
+        };
+      const auto& values = now.*member;
+      using T = std::remove_reference_t<decltype(values)>;
+      if constexpr(std::is_array_v<T>) {
+        for(uint16_t index = 0; index<expected->count(); ++index)
+          sameValue(values[index],index);
         }
-      }
+      else {
+        sameValue(values,0);
+        }
+      });
+    verifyUnbound(name);
     ++definitions;
     };
 
-  SpellDefinitions spells(*imported,records.get());
-  imported->enumerate_instances_by_class_name("C_SPELL",[&](auto& symbol) {
-    compare(symbol,*original->init_instance<daedalus::ISpell>(symbol.name()),spells.find(std::string_view(symbol.name()).substr(6)));
+  SpellDefinitions spells(*records);
+  original->enumerate_instances_by_class_name("C_SPELL",[&](auto& symbol) {
+    compare(symbol.name(),*original->init_instance<daedalus::ISpell>(&symbol),
+            spells.find(std::string_view(symbol.name()).substr(6)));
     });
-  for(auto name : GameplayDefinitions::focusNames) {
-    auto* symbol = imported->find_symbol_by_name(name);
-    compare(*symbol,*original->init_instance<daedalus::IFocus>(name),*records->init<daedalus::IFocus>(*imported,symbol));
-    }
-  auto* guild = imported->find_symbol_by_name("GIL_VALUES");
-  compare(*guild,*original->init_instance<daedalus::IGuildValues>(guild->name()),
-          *records->init<daedalus::IGuildValues>(*imported,guild));
+  for(auto name : GameplayDefinitions::focusNames)
+    compare(name,*original->init_instance<daedalus::IFocus>(name),records->focus(name));
+  compare("GIL_VALUES",*original->init_instance<daedalus::IGuildValues>("GIL_VALUES"),records->guild());
 
-  SvmDefinitions voices(*imported,records);
-  imported->enumerate_instances_by_class_name("C_SVM",[&](auto& symbol) {
-    require(symbol.get_instance()==nullptr,"SVM instance must stay lazy until its first lookup");
+  SvmDefinitions voices(records);
+  const auto members = original->find_class_members(*original->find_symbol_by_name("C_SVM"));
+  original->enumerate_instances_by_class_name("C_SVM",[&](auto& symbol) {
     const auto id = std::stoi(symbol.name().substr(4));
-    voices.find("$MISSING_CONTRACT_LINE",id); // Unknown lines still trigger the first voice lookup.
-    compare(symbol,*original->init_opaque_instance(original->find_symbol_by_name(symbol.name())),*symbol.get_instance());
-    voices.find("$MISSING_CONTRACT_LINE",id);
+    const auto expected = original->init_opaque_instance(&symbol);
+    require(voices.find("$MISSING_CONTRACT_LINE",id).empty(),"an unknown SVM line must remain empty");
+    for(const auto* member : members) {
+      const auto line = "$"+member->name().substr(6);
+      require(voices.find(line,id)==member->get_string(0,expected.get()),"stock SVM line differs from the source");
+      ++fields;
+      }
+    verifyUnbound(symbol.name());
+    ++definitions;
     });
-  require(definitions==78 && instructions==0,"all stock gameplay definitions must load without VM instructions");
-  std::printf("Gameplay definitions: %zu instances, %zu fields match, no native VM instructions\n",definitions,fields);
+  require(definitions==78,"all stock gameplay definitions must load as typed values");
+  std::printf("Gameplay definitions: %zu typed instances, %zu fields match the original VM\n",definitions,fields);
   }
 
 void oldWorldNpcCases(World& world,Npc& npc) {
@@ -1397,7 +1411,9 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
   {
     Serialize out(writer);
     out.setEntry("game/daedalus");
-    out.write(uint32_t(2));
+    out.write(uint32_t(3));
+    out.write(uint32_t(daedalus::DaedalusDataType::INSTANCE),uint8_t(3),
+              std::string_view("UNAVAILABLE_TEST_INVENTORY_SYMBOL"),uint32_t(0),uint32_t(4242));
     out.write(uint32_t(daedalus::DaedalusDataType::INT),std::string("CURRENTLEVEL"),uint32_t(1),khorinis);
     out.write(uint32_t(daedalus::DaedalusDataType::INT),std::string("ENTERADW_KAPITEL2"),uint32_t(1),int32_t(7));
   }
@@ -1408,7 +1424,7 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
   require(NpcDefinitionContract::currentStoryWorld(script)==khorinis &&
           std::ranges::count(NpcDefinitionContract::worldEntryLatches(script),7)==1 &&
           script.intSymbol("ENTERADW_KAPITEL2",0)==7,
-          "world entry: the legacy variables restore the current world and the engine latch");
+          "world entry: the legacy variables after an unknown inventory reference restore the current world and engine latch");
   level->set_int(before.at("CURRENTLEVEL"));
   script.findSymbol("ENTERADW_KAPITEL2")->set_int(before.at("ENTERADW_KAPITEL2"));
   std::puts("Addon World entry: Init order, live chapter, room assignments, NPC aliases and eight chapter latches match stock");

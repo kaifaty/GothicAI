@@ -104,21 +104,12 @@ Json readDocumentCalls(DaedalusVm& vm,const DaedalusSymbol& fn,const StaticDocum
   }
 
 size_t writeItemDocuments(const fs::path& items,const NpcSnapshot::Program& program) {
-  const auto library=DefinitionJson::read(items);
   auto vm=DaedalusVm(DaedalusScript::from_program(program.data));
-  std::set<std::string> roots;
-  for(const auto& record:library["records"].GetArray()) {
-    if(std::string_view(record["status"].GetString())!="captured")
-      continue;
-    const auto& callback=record["fields"]["on_state"][rapidjson::SizeType(0)];
-    if(callback.IsString())
-      roots.insert(DefinitionJson::string(callback));
-    }
   rapidjson::Document out;
   auto& allocator=out.GetAllocator();
   out.SetObject();
   Json entries(rapidjson::kObjectType);
-  for(const auto& name:roots) {
+  for(const auto& name:BaseImport::itemUseFunctions(items)) {
     const auto* fn=vm.find_symbol_by_name(name);
     if(fn==nullptr)
       continue;
@@ -143,6 +134,19 @@ size_t writeItemDocuments(const fs::path& items,const NpcSnapshot::Program& prog
   return count;
   }
 }
+
+std::set<std::string> BaseImport::itemUseFunctions(const fs::path& items) {
+  const auto library=DefinitionJson::read(items);
+  std::set<std::string> roots;
+  for(const auto& record:library["records"].GetArray()) {
+    if(std::string_view(record["status"].GetString())!="captured")
+      continue;
+    const auto& callback=record["fields"]["on_state"][rapidjson::SizeType(0)];
+    if(callback.IsString())
+      roots.insert(DefinitionJson::string(callback));
+    }
+  return roots;
+  }
 
 int BaseImport::convertItemDefinitions(const fs::path& base) {
   const auto start=std::chrono::steady_clock::now();

@@ -9,8 +9,6 @@
 
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
-#include "daedalus/vm.h"
-#include "daedalus/classes.h"
 
 #include "game/inventory.h"
 #include "world/objects/interactive.h"
@@ -33,9 +31,7 @@ std::string upper(std::string_view s) {
   }
 
 std::string symbolOf(World& world, size_t cls) {
-  if(auto sym = world.script().findSymbol(cls))
-    return sym->name();
-  return {};
+  return std::string(world.script().symbolName(cls));
   }
 
 std::string npcSymbol(World& world, const Npc& npc) {
@@ -52,23 +48,6 @@ bool hasKey(World& world, Npc& npc, Interactive& chest) {
     return false;
   const size_t key = world.script().findSymbolIndex(upper(chest.keyName()));
   return key!=size_t(-1) && npc.inventory().itemCount(key)>0;
-  }
-
-// an item's name by its instance, as the engine reads it (the symbol keeps the instance it had)
-std::string itemName(World& world, std::string_view inst) {
-  auto& vm = world.script().getVm();
-  auto* s  = vm.find_symbol_by_name(upper(inst));
-  if(s==nullptr)
-    return {};
-  std::string out;
-  auto prev = s->get_instance();
-  try {
-    out = TextCodec::toUtf8(world.script().createItemForQuery(s->index())->name);
-    }
-  catch(const std::exception&) {
-    }
-  s->set_instance(prev);
-  return out;
   }
 
 // what the world's data put in the chest at the start: "ItMi_Gold:29, ItRw_Arrow:15"
@@ -88,9 +67,13 @@ void writeStart(World& world, Interactive& chest, rapidjson::Writer<rapidjson::S
     const size_t colon = part.find(':');
     const auto   inst  = upper(part.substr(0,colon));
     const long   count = colon==std::string_view::npos ? 1 : std::strtol(std::string(part.substr(colon+1)).c_str(),nullptr,10);
-    if(count<=0 || world.script().findSymbolIndex(inst)==size_t(-1))
+    if(count<=0)
       continue;
-    const auto name = itemName(world,inst);
+    auto& script = world.script();
+    const auto id = script.findSymbolIndex(inst);
+    if(id==size_t(-1))
+      continue;
+    const auto name = TextCodec::toUtf8(script.itemNameForQuery(id).value_or(""));
     w.StartObject();
     w.Key("item");  w.String(inst.data(),rapidjson::SizeType(inst.size()));
     w.Key("name");  w.String(name.data(),rapidjson::SizeType(name.size()));

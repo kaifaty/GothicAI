@@ -9,8 +9,10 @@
 #include <Tempest/Log>
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -176,7 +178,7 @@ namespace daedalus {
 				break;
 			case DaedalusDataType::STRING:
 				record.string_values.resize(sym._m_count);
-				std::copy_n(std::get<std::unique_ptr<std::string[]>>(sym._m_value).get(),
+				std::copy_n(sym.string_data(),
 				            sym._m_count,
 				            record.string_values.begin());
 				break;
@@ -281,12 +283,26 @@ namespace daedalus {
 	}
 
 	DaedalusInstruction DaedalusScript::instruction_at(std::uint32_t address) const {
+		if (metadata_audit_active()) abort_metadata_access(address, nullptr);
 		// Out-of-range seeks leave the cursor unchanged, as in ZenKit's memory reader.
 		if (address <= _m_text->bytes.size()) _m_text->position = address;
 		auto code = std::span<std::byte const>(_m_text->bytes).subspan(_m_text->position);
 		auto instruction = DaedalusInstruction::decode(code);
 		_m_text->position += std::min(code.size(), std::size_t(instruction.size));
 		return instruction;
+	}
+
+	void DaedalusScript::abort_metadata_access(std::uint32_t address, const char* symbol) const {
+		if (symbol != nullptr) {
+			std::fprintf(stderr, "native-script-audit: bytecode execution attempted program=%s symbol=%s pc=%" PRIu32 " (metadata only)\n",
+			             _m_metadata_audit_program.c_str(), symbol, address);
+		} else {
+			std::fprintf(stderr, "native-script-audit: bytecode read attempted program=%s pc=%" PRIu32 " (metadata only)\n",
+			             _m_metadata_audit_program.c_str(), address);
+		}
+		std::fflush(stderr);
+		// A compatibility handler may ignore a script error. The diagnostic must stop at the first access.
+		std::_Exit(EXIT_FAILURE);
 	}
 
 	DaedalusSymbol const* DaedalusScript::find_symbol_by_index(std::uint32_t index) const {
@@ -515,7 +531,7 @@ namespace daedalus {
 			return *get_member_ptr<std::string>(index, context);
 		}
 
-		return std::get<std::unique_ptr<std::string[]>>(_m_value)[index];
+		return string_data()[index];
 	}
 
 	float DaedalusSymbol::get_float(std::uint16_t index, DaedalusInstance const* context) const {
@@ -587,7 +603,7 @@ namespace daedalus {
 
 			*get_member_ptr<std::string>(index, context) = value;
 		} else {
-			std::get<std::unique_ptr<std::string[]>>(_m_value).get()[index] = value;
+			string_data()[index] = value;
 		}
 	}
 
@@ -655,6 +671,22 @@ namespace daedalus {
 		if (const auto* bound = std::get_if<std::int32_t*>(&_m_value))
 			return *bound;
 		return std::get<std::unique_ptr<std::int32_t[]>>(_m_value).get();
+	}
+
+	void DaedalusSymbol::bind_global_string(std::string& value) {
+		if (type() != DaedalusDataType::STRING || is_member() || is_const() || count() != 1 ||
+		    !std::holds_alternative<std::unique_ptr<std::string[]>>(_m_value)) {
+			throw DaedalusScriptError {"cannot bind mutable global string " + name()};
+		}
+
+		value = get_string();
+		_m_value = &value;
+	}
+
+	std::string* DaedalusSymbol::string_data() const {
+		if (const auto* bound = std::get_if<std::string*>(&_m_value))
+			return *bound;
+		return std::get<std::unique_ptr<std::string[]>>(_m_value).get();
 	}
 
 	std::shared_ptr<DaedalusInstance> const& DaedalusSymbol::get_instance() {

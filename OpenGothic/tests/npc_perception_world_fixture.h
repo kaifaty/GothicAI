@@ -509,7 +509,7 @@ void stockDialogMetadata(World& world, Npc& npc, Npc& player) {
   events=savedEvents;
   }
 
-void stockQuestJournalEntry(GameScript& script, const std::string& topic) {
+void stockQuestJournalEntry(GameScript& script, const std::string& topic, bool nativeOnly) {
   auto& vm=script.getVm();
   auto& session=*Gothic::inst().gameSession();
   auto& events=NpcDefinitionContract::activityEventsOn(script);
@@ -523,6 +523,8 @@ void stockQuestJournalEntry(GameScript& script, const std::string& topic) {
   const auto* getDay=vm.find_symbol_by_name("B_GETDAYPLUS");
   const std::string entry="stock journal helper";
   for(const bool native:{false,true}) {
+    if(nativeOnly && !native)
+      continue;
     events=native;
     std::vector<std::string> feedback;
     unsigned bytecode=0;

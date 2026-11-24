@@ -78,9 +78,12 @@ class RuntimeHost final : public Host {
           }
         case Kind::String: {
           const auto found=definitions.literals.find(value.text);
-          if(found==definitions.literals.end())
+          if(found!=definitions.literals.end())
+            vm.push_reference(vm.find_symbol_by_index(found->second.first),found->second.second);
+          else if(!vm.has_legacy_dispatcher()) // Director appearances can use head names outside the program.
+            vm.push_string(value.text);
+          else
             throw std::runtime_error("NPC helper definitions: no immutable string literal: "+value.text);
-          vm.push_reference(vm.find_symbol_by_index(found->second.first),found->second.second);
           break;
           }
         }

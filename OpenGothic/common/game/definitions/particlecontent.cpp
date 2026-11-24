@@ -256,6 +256,10 @@ std::optional<Catalog> openStockCatalog(const ProgramData::Index& index) {
 
 namespace {
 std::unique_ptr<daedalus::DaedalusVm> openLegacyProgram(const ProgramData::Index& index) {
+#if defined(OPENGOTHIC_NATIVE_GAME)
+  (void)index;
+  throw BaseStore::Error("native game requires a prepared ParticleFx.dat catalog");
+#else
   const auto* source=index.findVfs("ParticleFx.dat");
   if(source==nullptr) source=index.findHost("_work/Data/Scripts/_compiled/ParticleFx.dat");
   require(source!=nullptr,"ParticleFx.dat missing from program base index");
@@ -266,6 +270,7 @@ std::unique_ptr<daedalus::DaedalusVm> openLegacyProgram(const ProgramData::Index
   VmDef::ParticleEffect::register_(script);
   return std::make_unique<daedalus::DaedalusVm>(std::move(script),
       daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+#endif
   }
 
 Catalog openCatalog(const fs::path& baseRoot) {

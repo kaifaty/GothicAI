@@ -47,6 +47,8 @@ def test_parse_nm_both_formats():
         assert s.defined["_Z3foov"] is False and s.defined["_Z3inlv"] is True and s.defined["_ZZ3inlvE1x"] is True
         assert "common_var" in s.defined and s.defined["_ZN1A1sE"] is False and not any(n.startswith(("ltmp", "_ZL", "-[")) for n in s.defined)
     assert "_Z9hidden_fnv" in census.parse_nm(MACHO, "macho").defined
+    assert "_ZL8local_fnv" in census.parse_nm(ELF, "elf", include_local_text=True).defined
+    assert "ltmp0" in census.parse_nm(MACHO, "macho", include_local_text=True).defined
 
 
 def unit(source, layer, undefined=(), strong=(), weak=(), library="OpenGothic"):
@@ -145,3 +147,55 @@ def test_real_objects(tmp_path):
     r = census.report(units, "c++filt")
     assert [(h["file"], h["symbol"], h["defined_in"][0]["file"], h["defined_in"][0]["layer"]) for h in r["holes"]] == [
         ("common/plat.cpp", "up()", "common/world/up.cpp", "rpg")]
+
+
+@pytest.mark.skipif(not all(shutil.which(tool) for tool in ("c++", "cmake", "ninja", "nm")),
+                    reason="needs a C++ compiler, CMake, Ninja and nm")
+def test_native_game_check_on_linked_targets(tmp_path):
+    source = tmp_path / "source"
+    build = tmp_path / "build"
+    vm_source = source / "common/daedalus/vm_bytecode.cpp"
+    vm_source.parent.mkdir(parents=True)
+    vm_source.write_text("int unrelated() { return 0; }\n")
+    vm_source.with_name("vm.cpp").write_text("int scriptState() { return 0; }\n")
+    (source / "main.cpp").write_text("int main() { return 0; }\n")
+    (source / "dispatch.cpp").write_text(
+        "namespace daedalus { struct DaedalusVm { void exec(); }; void DaedalusVm::exec() {} }\n"
+        "int main() { daedalus::DaedalusVm vm; vm.exec(); return 0; }\n")
+    (source / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.15)\n"
+        "project(LinkCensusTest LANGUAGES CXX)\n"
+        "set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)\n"
+        "add_library(gothic-daedalus STATIC common/daedalus/vm_bytecode.cpp)\n"
+        "add_executable(Gothic2Notr main.cpp)\n"
+        "target_link_libraries(Gothic2Notr PRIVATE gothic-daedalus)\n"
+        "add_executable(gothic-body-runner main.cpp common/daedalus/vm.cpp)\n"
+        "add_executable(direct-vm main.cpp common/daedalus/vm_bytecode.cpp)\n"
+        "add_executable(embedded-dispatch dispatch.cpp)\n")
+    subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja"], capture_output=True, check=True)
+    subprocess.run(["cmake", "--build", str(build)], capture_output=True, check=True)
+
+    def run(target):
+        run = subprocess.run([sys.executable, str(SPEC.origin), str(build), "--target", target,
+                              "--check-native-game", "--json"], capture_output=True, text=True)
+        return run.returncode, json.loads(run.stdout)
+
+    status, clean = run("gothic-body-runner")
+    assert status == 0 and clean["status"] == "clean"
+    assert Path(clean["binary"]) == build / "opengothic/gothic-body-runner"
+    status, archive = run("Gothic2Notr")
+    assert status == 1 and archive["status"] == "leaked"
+    assert archive["daedalus_archives"] == ["libgothic-daedalus.a"]
+    assert not archive["opcode_dispatch_symbols"]
+    status, direct = run("direct-vm")
+    assert status == 1 and direct["vm_objects"] == ["CMakeFiles/direct-vm.dir/common/daedalus/vm_bytecode.cpp.o"]
+    assert not direct["daedalus_archives"] and not direct["opcode_dispatch_symbols"]
+    status, embedded = run("embedded-dispatch")
+    assert status == 1 and embedded["opcode_dispatch_symbols"] == ["_ZN8daedalus10DaedalusVm4execEv"]
+    assert not embedded["daedalus_archives"] and not embedded["vm_objects"]
+    status, missing = run("missing")
+    assert status == 2 and missing["status"] == "error"
+    if strip := shutil.which("strip"):
+        subprocess.run([strip, clean["binary"]], check=True)
+        status, stripped = run("gothic-body-runner")
+        assert status == 2 and stripped["status"] == "error"

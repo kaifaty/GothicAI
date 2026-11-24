@@ -5,6 +5,7 @@
 #include <atomic>
 #include <future>
 #include <stdexcept>
+#include <string_view>
 
 namespace VideoData { struct Identity; }
 
@@ -26,6 +27,7 @@ struct Selection {
 // Off: a cache hit never starts the background copy to the store. The headless body runner
 // forks its loaded world, which needs a single thread, and does not live long enough to own it.
 void setPublication(bool enabled);
+bool metadataAuditEnabled() noexcept;
 std::filesystem::path cacheRoot();
 // A nonempty OPENGOTHIC_BASE selects and validates an explicit base.
 // Otherwise OPENGOTHIC_BASE_FINGERPRINT selects a ready cache/store base without an installation.
@@ -33,8 +35,21 @@ std::filesystem::path cacheRoot();
 // Import-only callers provide these hooks through basestoreimport.h; the game leaves them empty.
 using Import = std::function<void(const std::filesystem::path&)>;
 using IdentifyVideos = std::function<VideoData::Identity()>;
+struct Profile {
+  // An empty value keeps the compatibility selection rules.
+  std::string_view stockProgram;
+  // The launcher's automatic path looks for its production projection before preparing one.
+  bool             projectedOnly=false;
+  void           (*validateProgramMetadata)(const std::filesystem::path&, std::string_view)=nullptr;
+  };
+bool isNativeProjection(const std::filesystem::path& base);
+// Derive the production projection identity from an already verified combined base.
+BaseImport::Identity nativeProjectionIdentity(const std::filesystem::path& combined);
+BaseImport::Identity nativeProjectionIdentity(const BaseImport::Identity& combined, std::string_view manifestSha256);
+// A projector uses the existing import/cache path with its derived identity.
 Selection resolve(const std::filesystem::path& gothic, const BaseImport::Files& mounted,
-                  const BaseImport::Progress& log, const Import& import={});
+                  const BaseImport::Progress& log, const Import& import={}, Profile profile={},
+                  const BaseImport::Identity* projected=nullptr);
 // P17: the independently fingerprinted video part. OPENGOTHIC_BASE does not
 // select this part; OPENGOTHIC_VIDEOS_FINGERPRINT selects a ready part without an installation.
 // An explicitly empty video fingerprint disables selection; unset retains automatic selection.

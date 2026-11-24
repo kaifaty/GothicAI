@@ -895,7 +895,7 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         self.assertFalse(manifest.exists())
         self.assertEqual(environment(self.home, overrides), overrides)
 
-    def format_setup(self):
+    def format_setup(self, script_base=None):
         self.base_cache = self.root / 'base-cache'
         self.base_store = self.root / 'base-store'
         for key in tuple(self.env):
@@ -903,9 +903,12 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
                 self.env.pop(key)
         self.env.update(OPENGOTHIC_BASE_CACHE=str(self.base_cache), OPENGOTHIC_BASE_STORE=str(self.base_store))
         self.converter = self.bin / 'content-convert'
+        formats = {'base': '2' * 64, 'videos': '4' * 64}
+        if script_base is not None:
+            formats['script_base'] = script_base
         self.converter.write_text(
             f'#!{sys.executable}\nimport json, sys\nassert sys.argv[1:] == ["formats"]\n'
-            f'print(json.dumps({{"base": {"2" * 64!r}, "videos": {"4" * 64!r}}}))\n')
+            f'print(json.dumps({formats!r}))\n')
         self.converter.chmod(0o755)
         self.base_part('c' * 64, '1' * 64)
 
@@ -950,6 +953,29 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE_FINGERPRINT'], 'd' * 64)
         self.assertEqual(pointer.read_bytes(), previous)
+
+    def test_game_settings_selects_automatic_base_by_script_profile(self):
+        pointer = self.home / 'gothic-ai/game-base.json'
+        old, fixture, projected, combined = (digit * 64 for digit in 'cabd')
+        for profile in (None, 'compatibility', 'native'):
+            with self.subTest(profile=profile):
+                self.format_setup(profile)
+                self.base_part(fixture, '2' * 64, no_programs_fixture={'version': 2})
+                native_path = self.base_part(projected, '2' * 64, native_script_base={'version': 1})
+                self.base_part(combined, '2' * 64)
+                expected = projected if profile == 'native' else combined
+                for fingerprint in (old, projected):
+                    pointer.write_text(json.dumps({'base': fingerprint, 'videos': ''}))
+                    result = self.game_result()
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE_FINGERPRINT'], expected)
+
+                result = self.game_result(OPENGOTHIC_BASE_FINGERPRINT=projected)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE_FINGERPRINT'], projected)
+                result = self.game_result(OPENGOTHIC_BASE=str(native_path))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE'], str(native_path))
 
     def test_mac_and_ryzen_select_the_same_installation_across_formats(self):
         self.format_setup()

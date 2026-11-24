@@ -26,7 +26,7 @@ struct Sink final : NpcActivityProbe {
   void point(const Npc&,const WayPoint*,const WayPoint*) override {}
   void mob(const Npc&,const Interactive&,bool) override {}
   };
-daedalus::DaedalusVm makeVm() {
+daedalus::DaedalusVm makeVm(bool legacy = true) {
   asset::ProgramRecord program;
   program.version=50;
   program.bytecode.push_back(std::byte(Op::RSR));
@@ -75,6 +75,10 @@ daedalus::DaedalusVm makeVm() {
   call(Op::PUSHI,40);call(Op::PUSHV,right);call(Op::BL,rememberAddress);
   call(Op::PUSHI,2);call(Op::PUSHV,left);call(Op::BL,rememberAddress);
   op(Op::ADD);op(Op::RSR);
+  if(!legacy) {
+    program.bytecode.clear();
+    return daedalus::DaedalusVm::without_legacy_dispatcher(daedalus::DaedalusScript::from_program(std::move(program)));
+    }
   return daedalus::DaedalusVm(daedalus::DaedalusScript::from_program(std::move(program)));
   }
 std::string measure(daedalus::DaedalusVm& vm, DayScriptStats& stats, const std::vector<std::string>& sources) {
@@ -138,6 +142,9 @@ void checkOverrides() {
   vm.unsafe_call_bl(vm.find_symbol_by_name("HELPER"));
   check(overrides==3 && notifications==2,"unsafe_call_bl reports an overridden call once");
 
+  unsigned independentInstructions=0, offlineInstructions=0;
+  const auto observer=vm.add_instruction_observer([&](const auto&,const auto&) { ++independentInstructions; });
+  vm.observe_instructions([&](const auto&) { ++offlineInstructions; });
   stats=DayScriptStats::attach(vm,{});
   vm.call_function<void>("OUTSIDE");
   rapidjson::Document counters;
@@ -145,7 +152,18 @@ void checkOverrides() {
   check(counters["symbols"]["HELPER"]==1 && !counters["instructions_by_symbol"].HasMember("HELPER") &&
         counters["instructions_by_symbol"]["OUTSIDE"]==2 && counters["unattributed_instructions"]==0,
         "overridden engine calls leave no executed bytecode for the helper");
+  check(independentInstructions==2 && offlineInstructions==2,"day probing coexists with other instruction observers");
   stats->stop(vm);
+  vm.call_function<void>("OUTSIDE");
+  check(independentInstructions==4 && offlineInstructions==4,"stopping the day probe preserves other instruction observers");
+  vm.remove_instruction_observer(observer);
+  vm.observe_instructions({});
+  vm.call_function<void>("OUTSIDE");
+  check(independentInstructions==4 && offlineInstructions==4,"instruction observers stop independently");
+
+  vm.require_native_execution("synthetic");
+  vm.unsafe_call_bl(vm.find_symbol_by_name("HELPER"));
+  check(overrides==7,"strict instruction audit permits native overrides");
   }
 
 void checkNestedStoryPrograms() {
@@ -196,6 +214,32 @@ void checkNestedStoryPrograms() {
   interpreter.allowUnresolvedScriptCalls=true;
   result=interpreter.run(root);
   check(result.ok && result.returned.i==4 && externals==6,"the next dialog starts with a clean interpreter frame");
+
+  auto native=makeVm(false);
+  native.require_native_execution("synthetic",true);
+  const auto* function=native.find_symbol_by_name("REMEMBER");
+  const std::vector arguments={storygraph::Value::integer(5),storygraph::Value::str("direct")};
+  std::string error;
+  native.push_int(123);
+  check(!storygraph::callFunction(native,*function,arguments,error) &&
+        error=="script function is unavailable without bytecode: REMEMBER" && native.pop_int()==123,
+        "a native-only direct call rejects a missing override before changing the stack");
+  storygraph::VmExternals nativeExternals(native);
+  storygraph::Interpreter prepared(native,nativeExternals);
+  prepared.allowUnresolvedScriptCalls=false;
+  unsigned preparedCalls=0;
+  native.register_external("HLP_RANDOM",[&] { ++preparedCalls; });
+  const auto preparedResult=prepared.run(nested,arguments);
+  check(preparedResult.ok && preparedResult.returned.i==5 && preparedCalls==1 &&
+        native.find_symbol_by_name("REMEMBER.LABEL")->get_string()=="direct",
+        "a prepared root receives direct call arguments without a legacy dispatcher");
+  native.override_function("REMEMBER",[&](int32_t number,std::string_view label) {
+    check(label=="direct","native direct calls keep argument order");
+    return number+10;
+    });
+  const auto returned=storygraph::callFunction(native,*function,arguments,error);
+  check(returned && returned->type==storygraph::Value::Int && returned->i==15,
+        "a native-only direct call uses the active override outside the legacy allowlist");
   }
 
 void checkNativePhaseAccounting() {

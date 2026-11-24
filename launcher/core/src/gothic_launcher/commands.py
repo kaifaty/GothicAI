@@ -307,10 +307,11 @@ def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Pr
     """In start order: ASR and TTS (when on), then the AI server that uses them."""
     s, keys = config.settings, config.secrets
     procs: list[Proc] = []
+    backend = "off" if s.llm.backend == "fake" else s.llm.backend
     server_args = [
         "--port", str(ports.server), "--no-console", "--journal",
         "--game-dir", str(layout.game_dir),
-        "--llm", s.llm.backend, "--reasoning-effort", s.llm.reasoning_effort,
+        "--llm", backend, "--reasoning-effort", s.llm.reasoning_effort,
     ]  # fmt: skip
     server_args += _opt("--model", s.llm.model) + _opt("--base-url", s.llm.base_url)
     server_args += _opt("--decider-url", s.llm.decider_url) + _opt("--quick-url", s.llm.quick_url)

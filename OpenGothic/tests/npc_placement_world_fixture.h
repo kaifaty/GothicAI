@@ -574,6 +574,36 @@ void routineSwitchWorld(World& world) {
   std::puts("Routine switch: saved aliases, same-instance rule, validity, schedule and queue match stock");
   }
 
+void startNativePlacementWorld(Gothic& gothic) {
+  for(const auto& file : std::filesystem::directory_iterator(baseProgramIndex().dir))
+    require(file.path().filename()=="programs.json","native stock contract requires a base without program payloads");
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  require(gothic.world()!=nullptr && gothic.player()!=nullptr,"native stock contract requires a live world and player");
+  auto& script=gothic.world()->script();
+  require(script.usesVerifiedNpcProgram() && script.getVm().size()==0 &&
+          !NpcDefinitionContract::placements(script).placements.empty(),
+          "native stock contract requires prepared stock placements and no bytecode");
+  }
+
+const WorldObjects::PlacedItem& placedMoverChild(World& world) {
+  const auto& catalogue=world.placedItemCensus();
+  const auto child=std::find_if(catalogue.begin(),catalogue.end(),[](const auto& row) { return row.zenId==2839; });
+  require(child!=catalogue.end() && child->item!=nullptr,
+          "the authored catalogue must contain Item 2839 below mover 2838 on both startup and reload");
+  const auto attachments=world.vobAttachmentSnapshot(2838);
+  require(std::any_of(attachments.begin(),attachments.end(),[](const auto& row) {
+            return row.zenId==2839 && row.parentZenId==2838;
+            }),"the save fixture must contain an actual mover-child Item");
+  return *child;
+  }
+
+uint32_t placedWorldItemCount(World& world) {
+  uint32_t count=0;
+  while(world.itmById(count)!=nullptr)
+    ++count;
+  return count;
+  }
+
 std::vector<std::string> placementFirstWorld(Gothic& gothic) {
   const auto* configured=std::getenv("OPENGOTHIC_PLACEMENT_RECORDS");
   const bool configuredBefore=configured!=nullptr;

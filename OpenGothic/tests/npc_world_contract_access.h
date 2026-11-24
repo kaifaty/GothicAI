@@ -2,6 +2,7 @@
 
 #include "storygraph/eval.h"
 #include "game/gamescript.h"
+#include "game/gamescript_programs.h"
 #include "game/serialize.h"
 #include "graphics/mesh/skeleton.h"
 #include "world/objects/interactive.h"
@@ -31,6 +32,27 @@ struct NpcDefinitionContract {
   static auto& questLog(GameScript& script) { return script.quests; }
   static void saveCrimeGlobal(GameScript& script, Serialize& out, daedalus::DaedalusSymbol& symbol) { script.saveSym(out,symbol); }
   static auto& activities(GameScript& script) { return script.activityDefinitions; }
+  static const auto& pointGestureRolls(const GameScript& script) { return script.pointGestureRolls; }
+  static bool pointGuardRollMatches(GameScript& script, int32_t actual, int32_t expected) {
+    return actual==expected && (!script.usesVerifiedNpcProgram() || pointGestureRolls(script).guard==expected);
+    }
+  static bool pointAndQuakeRollsMatch(GameScript& script, bool folded, const std::array<int32_t,3>& actual,
+                                      const std::array<int32_t,3>& expected) {
+    if(actual!=expected)
+      return false;
+    if(!script.usesVerifiedNpcProgram())
+      return true;
+    const auto& owned=pointGestureRolls(script);
+    return std::array{folded ? owned.crossedArms : owned.waypoint,owned.portal,owned.earthquake}==expected;
+    }
+  static void checkDirectorNpc(GameScript& script, const daedalus::DaedalusSymbol* owner, const std::string& error) {
+    if(owner==nullptr)
+      throw std::runtime_error("create NPC record template fixture: "+error);
+    if(script.findSymbolIndex("dir_npc_record_contract")!=owner->index() ||
+       script.symbolName(owner->index())!=owner->name() ||
+       script.symbolKind("dir_npc_record_contract")!=GameScript::SymbolKind::Npc)
+      throw std::runtime_error("director-defined NPC metadata must remain visible alongside the stock catalog");
+    }
   static auto& aiState(Npc& npc) { return npc.aiState; }
   static int32_t& lastHitSpell(Npc& npc) { return npc.lastHitSpell; }
   static int32_t activeSpellInfo(const Npc& npc) { return npc.spellInfo; }
@@ -38,7 +60,15 @@ struct NpcDefinitionContract {
   static auto& activityEvents(Npc& npc) { return npc.activityEvents; }
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
   static const auto& dialogInfos(const GameScript& script) { return script.dialogsInfo; }
+  static const auto& transferVariables(const GameScript& script) { return script.inventoryTransferVariables; }
   static int32_t dialogCondition(GameScript& script,daedalus::DaedalusSymbol* fn) { return script.dialogFunction(fn,true); }
+  static bool hasPreparedStockProgram(const GameScript& script, const daedalus::DaedalusSymbol& fn) {
+    if(!script.stockPrograms || !script.stockPrograms->prepared)
+      return false;
+    const auto& programs=script.stockPrograms->prepared->programs;
+    const auto entry=programs.find(fn.index());
+    return entry!=programs.end() && entry->second.name==fn.name();
+    }
   static auto& previousState(Npc& npc) { return npc.aiPrevState; }
   static void lastHitSpell(Npc& npc, int32_t spell) { npc.lastHitSpell=spell; }
   static ScriptFn perceptionCallback(const Npc& npc, PercType type) { return npc.perception[type].func; }

@@ -8,7 +8,11 @@
 
 #include <Tempest/Log>
 
+#include "game/definitions/basescripts.h"
+#include "basestore.h"
+#include "game/definitions/dialoginfodata.h"
 #include "game/serialize.h"
+#include "programdata.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 
@@ -591,7 +595,6 @@ void GameScript::loadNativeAmbientInfos() {
   if(!nativeRoutineProgram)
     return;
 
-  using Op = daedalus::DaedalusOpcode;
   using Type = daedalus::DaedalusDataType;
   using Symbol = daedalus::DaedalusSymbol;
   using Actor = std::shared_ptr<daedalus::INpc>;
@@ -649,6 +652,9 @@ void GameScript::loadNativeAmbientInfos() {
     Symbol* savedActor = nullptr;
     std::vector<Symbol*> topics;
     };
+  const auto ambientData = DialogInfoData::loadAmbient(baseProgramIndex().dir.parent_path());
+  if(!ambientData)
+    return;
   std::array<Binding,std::size(selectors)> bindings;
   auto* infoClass = findSymbol("C_INFO");
   auto* npcMember = findSymbol("C_INFO.NPC");
@@ -657,38 +663,18 @@ void GameScript::loadNativeAmbientInfos() {
     if(selectors[i].suffix.empty())
       continue;
     const auto name = std::string("B_ASSIGNAMBIENTINFOS_").append(selectors[i].suffix);
-    auto* helper = findSymbol(name);
+    const auto found = ambientData->find(name);
+    if(found==ambientData->end())
+      throw BaseStore::Error("missing stock ambient dialog binding: "+name);
     auto& binding = bindings[i];
-    binding.savedActor = findSymbol(name+".SLF");
-    if(helper==nullptr || binding.savedActor==nullptr)
-      return;
-
-    // Accept only the saved parameter followed by ordered C_INFO.NPC assignments.
-    uint32_t pc = helper->address();
-    const auto take = [&](Op expected) -> std::optional<daedalus::DaedalusInstruction> {
-      if(pc>=vm.size())
-        return {};
-      const auto instr = vm.instruction_at(pc);
-      if(instr.op!=expected)
-        return {};
-      pc += instr.size;
-      return instr;
-      };
-    const auto symbol = [&](Op op,const Symbol* expected) {
-      const auto instr = take(op);
-      return instr && instr->symbol==expected->index();
-      };
-    if(!symbol(Op::PUSHVI,binding.savedActor) || !take(Op::MOVVI))
-      return;
-    while(!take(Op::RSR)) {
-      if(!symbol(Op::PUSHVI,binding.savedActor) || !symbol(Op::BE,instanceId))
-        return;
-      const auto target = take(Op::GMOVI);
-      auto* info = target ? vm.find_symbol_by_index(target->symbol) : nullptr;
-      if(info==nullptr || info->type()!=Type::INSTANCE || info->parent()!=infoClass->index() ||
-         !symbol(Op::PUSHV,npcMember) || !take(Op::MOVI))
-        return;
-      binding.topics.push_back(info);
+    binding.savedActor = findSymbol(found->second.actor);
+    if(binding.savedActor==nullptr || binding.savedActor->name()!=name+".SLF" || binding.savedActor->type()!=Type::INSTANCE)
+      throw BaseStore::Error("invalid stock ambient dialog actor: "+name);
+    for(auto id : found->second.topics) {
+      auto* topic = findSymbol(id);
+      if(topic==nullptr || topic->type()!=Type::INSTANCE || topic->parent()!=infoClass->index())
+        throw BaseStore::Error("invalid stock ambient dialog topic: "+name);
+      binding.topics.push_back(topic);
       }
     }
 
@@ -875,117 +861,57 @@ auto GameScript::buildLearnString(std::string_view title) -> daedalus::DaedalusS
   return result;
   }
 
-auto GameScript::readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_ptr<daedalus::IInfo> {
-  using Op = daedalus::DaedalusOpcode;
-  using Type = daedalus::DaedalusDataType;
+bool GameScript::readDialogInfos() {
+  const auto rows = DialogInfoData::load(baseProgramIndex().dir.parent_path());
+  if(!rows)
+    return false;
 
-  const auto* parent = vm.find_symbol_by_index(sym.parent());
-  if(parent==nullptr || parent->type()!=Type::CLASS)
-    return nullptr;
-
-  // Read the whole constructor before binding the instance or updating helper locals.
-  struct Lesson {
-    int32_t talent;
-    int32_t skill;
-    };
-  struct Field {
-    daedalus::DaedalusSymbol* member = nullptr;
-    int32_t value = 0;
-    const std::string* text = nullptr;
-    std::optional<Lesson> lesson;
-    };
-  std::array<Field,8> fields;
-  size_t count = 0;
-  uint32_t pc = sym.address();
-  const auto next = [&] {
-    const auto instruction = pc<vm.size() ? vm.instruction_at(pc) : daedalus::DaedalusInstruction{};
-    pc += instruction.size;
-    return instruction;
-    };
-  const auto scalar = [&](const daedalus::DaedalusInstruction& operand) -> const daedalus::DaedalusSymbol* {
-    const auto* symbol = operand.op==Op::PUSHV ? vm.find_symbol_by_index(operand.symbol) : nullptr;
-    return symbol && symbol->is_const() && !symbol->is_member() && symbol->count()==1 ? symbol : nullptr;
-    };
-  const auto integer = [&](const daedalus::DaedalusInstruction& operand) -> std::optional<int32_t> {
-    if(operand.op==Op::PUSHI)
-      return operand.immediate;
-    const auto* symbol = scalar(operand);
-    if(symbol && symbol->type()==Type::INT)
-      return symbol->get_int();
-    return std::nullopt;
-    };
-  for(;;) {
-    const auto source = next();
-    if(source.op==Op::RSR)
-      break;
-    if(count==fields.size() || (source.op!=Op::PUSHI && source.op!=Op::PUSHV))
-      return nullptr;
-    auto target = next();
-    auto& field = fields[count++];
-    const auto* constant = scalar(source);
-    if(target.op==Op::PUSHVI && target.symbol==vm.global_other()->index() &&
-       constant && constant->type()==Type::STRING) {
-      // Only these stock topics use fixed prices in the constructor's learn-string expression.
-      static constexpr std::string_view teachers[] = {
-        "DIA_BENNET_TEACHCOMMON", "DIA_WOLF_TEACHCRAWLERPLATES", "DIA_DOBAR_TEACH",
-        "DIA_BARTOK_TEACHSNEAK", "DIA_THORBEN_TEACH",
-        };
-      const auto teacher = std::ranges::find(teachers,sym.name());
-      const auto talent = integer(next());
-      const auto skill = integer(next());
-      const auto costCall = next();
-      const auto textCall = next();
-      if(teacher==std::end(teachers) || !talent || !skill ||
-         costCall.op!=Op::BL || costCall.address!=vm.find_symbol_by_name("B_GETLEARNCOSTTALENT")->address() ||
-         textCall.op!=Op::BL || textCall.address!=vm.find_symbol_by_name("B_BUILDLEARNSTRING")->address())
-        return nullptr;
-      field.lesson = Lesson{*talent,*skill};
-      target = next();
+  const auto* cls = vm.find_symbol_by_name("C_INFO");
+  dialogsInfo.reserve(rows->size());
+  vm.enumerate_instances_by_class_name("C_INFO",[&](auto& symbol) {
+    const auto fields = rows->find(symbol.index());
+    if(fields==rows->end())
+      throw std::runtime_error("dialog infos: missing instance "+symbol.name());
+    auto info = vm.allocate_instance<daedalus::IInfo>(&symbol);
+    for(const auto& field : fields->second) {
+      auto* member = vm.find_symbol_by_index(field.member);
+      if(member==nullptr || !member->is_member() || member->parent()!=cls->index())
+        throw std::runtime_error("dialog infos: invalid member for "+symbol.name());
+      if(const auto* lesson = std::get_if<DialogInfoData::Lesson>(&field.value)) {
+        vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.SKILL")->set_int(lesson->skill);
+        vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.TALENT")->set_int(lesson->talent);
+        vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.OTH")->set_instance(vm.global_other()->get_instance());
+        const auto cost = fixedTalentLearnCost(lesson->talent,lesson->skill);
+        vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.KOSTEN")->set_int(cost);
+        vm.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->set_int(cost);
+        member->set_string(buildLearnString(lesson->title).get_string(),0,info.get());
+        }
+      else if(const auto* title = std::get_if<std::string>(&field.value))
+        member->set_string(*title,0,info.get());
+      else
+        member->set_int(std::get<int32_t>(field.value),0,info.get());
       }
-    const auto store = next().op;
-    auto* member = target.op==Op::PUSHV ? vm.find_symbol_by_index(target.symbol) : nullptr;
-    if(member==nullptr || member->parent()!=parent->index() || !member->is_member() ||
-       member->is_const() || member->count()!=1)
-      return nullptr;
-    if(source.op==Op::PUSHV && constant==nullptr)
-      return nullptr;
-
-    field.member = member;
-    if(member->type()==Type::STRING && store==Op::MOVS && constant && constant->type()==Type::STRING)
-      field.text = &constant->get_string();
-    else if(field.lesson)
-      return nullptr;
-    else if(member->type()==Type::INT && store==Op::MOVI && (!constant || constant->type()==Type::INT))
-      field.value = constant ? constant->get_int() : source.immediate;
-    else if(member->type()==Type::FUNCTION && store==Op::MOVVF && source.op==Op::PUSHI)
-      field.value = source.immediate;
-    else
-      return nullptr;
-    }
-
-  auto info = vm.allocate_instance<daedalus::IInfo>(&sym);
-  for(const auto& field : std::span(fields).first(count)) {
-    if(field.lesson) {
-      const auto& lesson = *field.lesson;
-      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.SKILL")->set_int(lesson.skill);
-      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.TALENT")->set_int(lesson.talent);
-      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.OTH")->set_instance(vm.global_other()->get_instance());
-      const auto cost = fixedTalentLearnCost(lesson.talent,lesson.skill);
-      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.KOSTEN")->set_int(cost);
-      vm.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->set_int(cost);
-      field.member->set_string(buildLearnString(*field.text).get_string(),0,info.get());
-      }
-    else if(field.text!=nullptr)
-      field.member->set_string(*field.text,0,info.get());
-    else
-      field.member->set_int(field.value,0,info.get());
-    }
-  return info;
+    dialogsInfo.push_back(std::move(info));
+    });
+  if(dialogsInfo.size()!=rows->size())
+    throw std::runtime_error("dialog infos: unexpected instance in stock records");
+  return true;
   }
 
 void GameScript::setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info) {
   auto id = std::make_pair(vm.find_symbol_by_instance(static_cast<const daedalus::INpc&>(npc))->index(),vm.find_symbol_by_instance(info)->index());
   dlgKnownInfos.insert(id);
+  }
+
+bool GameScript::markNpcInfoKnown(const Npc& npc, std::string_view name) {
+  auto* symbol = vm.find_symbol_by_name(name);
+  if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)
+    return false;
+  const auto info = std::dynamic_pointer_cast<daedalus::IInfo>(symbol->get_instance());
+  if(!info)
+    return false;
+  setNpcInfoKnown(*npc.handlePtr(),*info);
+  return true;
   }
 
 bool GameScript::doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const {

@@ -16,6 +16,8 @@ namespace daedalus {
 
 namespace storygraph {
 
+namespace execution { struct Core; }
+
 // Runs programs (program.h) the way the VM runs their functions: variables and members are read and written in
 // the VM's symbols and engine functions go to `ext`. Script calls use an enabled native override, a resolved
 // graph program, or the VM. self, other and hero are what the caller set, as for the VM.
@@ -47,7 +49,7 @@ class Interpreter final {
     std::function<bool(const Step& s)> choices;
 
   private:
-    enum class Flow : uint8_t { Next, Return, Fail };
+    friend struct execution::Core;
     // A value on the VM's stack: a computed value, or a variable or member it reads when the value is popped.
     struct Item final {
       Value                                      value;
@@ -63,7 +65,6 @@ class Interpreter final {
       };
 
     Frame                execute(const Program& p, const std::vector<Value>& args, bool readReturn);
-    Flow                 steps(const std::vector<Step>& s);
     bool                 store(const Step& s);
     bool                 say(const Step& s);
     std::optional<Value> eval(const Expr& e);
