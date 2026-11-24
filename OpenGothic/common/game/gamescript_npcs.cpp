@@ -80,7 +80,7 @@ void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& 
         auto& value=arguments[index];
         value=argument.value;
         switch(argument.type) {
-          case Type::STRING: value.text=vm.find_symbol_by_index(argument.literal)->get_string(argument.literalIndex); break;
+          case Type::STRING: break;
           case Type::INT:
           case Type::FUNCTION: value.kind=Kind::Int; break;
           case Type::FLOAT: break;
@@ -108,7 +108,7 @@ void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& 
       const auto& value = argument.value;
       switch(argument.type) {
         case Type::FLOAT:  values[index] = NativeValue::real(value.real); break;
-        case Type::STRING: values[index] = NativeValue::str(vm.find_symbol_by_index(argument.literal)->get_string(argument.literalIndex)); break;
+        case Type::STRING: values[index] = NativeValue::str(value.text); break;
         case Type::INT:
         case Type::FUNCTION: values[index] = NativeValue::integer(value.integer); break;
         case Type::INSTANCE:

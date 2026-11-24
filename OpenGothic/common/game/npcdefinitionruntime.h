@@ -6,7 +6,9 @@
 #include "daedalus/vm.h"
 
 #include <functional>
+#include <optional>
 #include <unordered_map>
+#include <utility>
 
 namespace NpcDefinitionRuntime {
 struct Field {
@@ -18,8 +20,7 @@ struct Field {
 struct Argument {
   NpcDefinitions::Value value;
   daedalus::DaedalusDataType type = daedalus::DaedalusDataType::INT;
-  uint32_t literal = 0;
-  uint8_t literalIndex = 0;
+  std::optional<std::pair<uint32_t,uint8_t>> oracleLiteral;
   };
 struct Call {
   uint32_t function = 0;

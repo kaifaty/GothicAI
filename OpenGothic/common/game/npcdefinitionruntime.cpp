@@ -57,7 +57,16 @@ void push(daedalus::DaedalusVm& vm, const NpcDefinitionRuntime::Argument& arg,
   switch(value.kind) {
     case Kind::Int: vm.push_int(value.integer); break;
     case Kind::Float: vm.push_float(value.real); break;
-    case Kind::String: vm.push_reference(vm.find_symbol_by_index(arg.literal),arg.literalIndex); break;
+    case Kind::String:
+      if(arg.oracleLiteral) {
+        const auto [symbol,index] = *arg.oracleLiteral;
+        vm.push_reference(vm.find_symbol_by_index(symbol),index);
+        } else if(vm.has_legacy_dispatcher()) {
+        throw std::runtime_error("NPC definitions: no immutable string literal for the VM replay");
+        } else {
+        vm.push_string(value.text);
+        }
+      break;
     case Kind::Self: vm.push_instance(npc); break;
     case Kind::Symbol:
       if(arg.type==Type::INSTANCE) vm.push_reference(vm.find_symbol_by_index(uint32_t(value.integer)));
@@ -79,8 +88,7 @@ bool NpcDefinitionRuntime::enabled() {
 NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinitions::Library& library,
                                                                const daedalus::DaedalusScript& script) {
   Definitions definitions;
-  // Reusing compiled literals avoids changing the VM's saved temporary-string
-  // scratch symbol, which a constructor's literal references leave untouched.
+  // Retain original constant references for VM comparisons when the input has them.
   std::map<std::string,std::pair<uint32_t,uint8_t>> literals;
   for(const auto& symbol:script.symbols())
     if(symbol.type()==Type::STRING && symbol.is_const() && !symbol.is_member())
@@ -119,13 +127,11 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinit
           resolved.function=function->index(); resolved.deferred=call.deferred;
           for(size_t i=0;i<parameters.size();++i) {
             checkValue(call.args[i],parameters[i].type());
-            Argument argument{resolveValue(call.args[i],script),parameters[i].type()};
+            Argument argument{resolveValue(call.args[i],script),parameters[i].type(),{}};
             if(argument.value.kind==Kind::String) {
               const auto literal=literals.find(argument.value.text);
-              if(literal==literals.end()) throw std::runtime_error("no immutable string literal for "+call.function);
-              argument.literal=literal->second.first;
-              argument.literalIndex=literal->second.second;
-              argument.value.text.clear();
+              if(literal!=literals.end())
+                argument.oracleLiteral=literal->second;
               }
             resolved.args.push_back(std::move(argument));
             }

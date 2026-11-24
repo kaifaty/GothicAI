@@ -547,6 +547,40 @@ void npcDefinitions(const fs::path& dir) {
           "constructor replay preserves the existing stack, probe order and caller context");
     vm.observe_externals({});
     }
+  {
+    auto metadata=program.data;
+    metadata.bytecode.clear();
+    for(auto& symbol:metadata.symbols)
+      for(auto& text:symbol.string_values)
+        if(text=="TEST_WP")
+          text.clear();
+    auto script=DaedalusScript::from_program(std::move(metadata));
+    INpc::register_(script);
+    auto vm=DaedalusVm::without_legacy_dispatcher(std::move(script));
+    auto definitions=NpcDefinitionRuntime::resolve(library,vm);
+    auto* captured=vm.find_symbol_by_name("NPC_NO_ID");
+    const auto taMin=vm.find_symbol_by_name("TA_MIN")->index();
+    auto& steps=definitions.npcs.at(captured->index());
+    std::erase_if(steps,[taMin](const auto& step) {
+      const auto* call=std::get_if<NpcDefinitionRuntime::Call>(&step);
+      return call==nullptr || call->function!=taMin;
+      });
+    check(steps.size()==1,"native literal fixture selects the captured routine call");
+    int observed=0;
+    vm.observe_externals([&](const auto& function) {
+      check(function.index()==taMin && vm.pop_string()=="TEST_WP","native probe receives the authored text without a VM literal");
+      ++observed;
+      });
+    const auto apply=[&](const auto&,const auto& call,const auto& observe) {
+      const auto& waypoint=call.args.back();
+      check(waypoint.value.text=="TEST_WP" && !waypoint.oracleLiteral,
+            "native constructor retains the authored waypoint when the compatibility literal is absent");
+      observe();
+      return true;
+      };
+    check(NpcDefinitionRuntime::initialize(vm,std::make_shared<INpc>(),captured,definitions,nullptr,apply) && observed==1,
+          "captured construction and its observer work without bytecode or string slots for constructor arguments");
+    }
   auto changed=read(file);
   for(auto& record:changed["records"].GetArray()) {
     if(std::string_view(record["symbol"].GetString())!="NPC_NO_ID") continue;
