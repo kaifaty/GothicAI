@@ -3,14 +3,16 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
 namespace NativeBaseCatalog {
 
 inline constexpr int projectionVersion = 3;
-inline constexpr int catalogVersion = 3;
+inline constexpr int catalogVersion = 4;
 
 struct State {
   uint32_t id = 0;
@@ -26,6 +28,7 @@ using InitialValue = std::variant<std::vector<int32_t>,std::vector<float>,std::v
 // The ID identifies the same state in a v57 save. Aliases start without a live object.
 struct InitialRow {
   uint32_t id = 0;
+  std::string name;
   InitialValue value;
   bool operator==(const InitialRow&) const = default;
   };
@@ -48,6 +51,9 @@ struct Selection {
   std::vector<InitialRow> initialState;
   Identities identities;
   };
+
+const Identity* findIdentity(std::span<const Identity> rows, uint32_t id);
+const Identity* findIdentity(std::span<const Identity> rows, std::string_view name);
 
 std::filesystem::path section(const std::filesystem::path& base);
 Selection read(const std::filesystem::path& base);

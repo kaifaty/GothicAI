@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -11,6 +12,7 @@
 
 class SaveArchive;
 namespace daedalus { class DaedalusInstance; class DaedalusSymbol; }
+namespace NativeBaseCatalog { struct InitialRow; }
 
 namespace ScriptVars {
 
@@ -50,15 +52,22 @@ using Slot = std::variant<Array<int32_t>,Array<float>,Array<std::string>,Object>
 
 class State final {
   public:
+    void loadInitial(std::span<const NativeBaseCatalog::InitialRow> rows);
     void bind(daedalus::DaedalusSymbol& symbol);
+    void bind(std::string_view name, int32_t& value);
+    void bind(std::string_view name, std::string& value);
+    std::optional<uint32_t> id(std::string_view name) const;
     Slot* find(uint32_t id);
     const Slot* find(uint32_t id) const;
+    Slot* find(std::string_view name);
+    const Slot* find(std::string_view name) const;
     auto& slots() { return values; }
     const auto& slots() const { return values; }
 
   private:
     // The VM compatibility views may keep pointers to these cells for the session lifetime.
     std::map<uint32_t,Slot> values;
+    std::map<std::string,uint32_t,std::less<>> names;
   };
 
 // Director declarations are loaded before the world creates their NPCs.

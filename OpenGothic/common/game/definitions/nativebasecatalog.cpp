@@ -2,7 +2,9 @@
 
 #include "definitionjson.h"
 
+#include <algorithm>
 #include <bit>
+#include <cctype>
 #include <cmath>
 #include <map>
 #include <set>
@@ -93,8 +95,8 @@ void validate(const NativeBaseCatalog::Selection& selection) {
   require(!selection.initialState.empty(),"missing initial session state");
   previous.reset();
   for(const auto& row : selection.initialState) {
-    require((!previous || *previous<row.id) && ids.insert(row.id).second,
-            "duplicate or unordered initial state identity");
+    require((!previous || *previous<row.id) && ids.insert(row.id).second && !row.name.empty() &&
+            names.emplace(row.name,row.id).second,"invalid, duplicate or unordered initial state identity "+row.name);
     previous=row.id;
     std::visit([](const auto& value) {
       using T = std::decay_t<decltype(value)>;
@@ -146,10 +148,24 @@ Json writeInitialRow(const NativeBaseCatalog::InitialRow& row, Allocator& alloc)
       }
     },row.value);
   Json result(rapidjson::kArrayType);
-  result.PushBack(row.id,alloc).PushBack(text(kind,alloc),alloc).PushBack(std::move(values),alloc);
+  result.PushBack(row.id,alloc).PushBack(text(encode(row.name),alloc),alloc);
+  result.PushBack(text(kind,alloc),alloc).PushBack(std::move(values),alloc);
   return result;
   }
 }
+
+const NativeBaseCatalog::Identity* NativeBaseCatalog::findIdentity(std::span<const Identity> rows, uint32_t id) {
+  const auto found = std::ranges::lower_bound(rows,id,{},&Identity::id);
+  return found!=rows.end() && found->id==id ? &*found : nullptr;
+  }
+
+const NativeBaseCatalog::Identity* NativeBaseCatalog::findIdentity(std::span<const Identity> rows, std::string_view name) {
+  const auto toUpper = [](unsigned char ch) { return char(std::toupper(ch)); };
+  const auto found = std::ranges::find_if(rows,[&](const auto& row) {
+    return std::ranges::equal(row.name,name,std::equal_to{},std::identity{},toUpper);
+    });
+  return found!=rows.end() ? &*found : nullptr;
+  }
 
 std::filesystem::path NativeBaseCatalog::section(const std::filesystem::path& base) {
   return base/"definitions"/"native-catalog.json";
@@ -174,8 +190,8 @@ NativeBaseCatalog::Selection NativeBaseCatalog::read(const std::filesystem::path
     require(initialState.IsArray(),"invalid initial session state");
     selection.initialState.reserve(initialState.Size());
     for(const auto& row : initialState.GetArray()) {
-      require(row.IsArray() && row.Size()==3,"invalid initial state row");
-      selection.initialState.push_back({number(row[0]),readInitialValue(string(row[1]),row[2])});
+      require(row.IsArray() && row.Size()==4,"invalid initial state row");
+      selection.initialState.push_back({number(row[0]),bytes(row[1]),readInitialValue(string(row[2]),row[3])});
       }
     selection.identities={
       readIdentities(doc["npc_archetypes"]),

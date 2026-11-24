@@ -119,7 +119,7 @@ std::vector<NativeBaseCatalog::InitialRow> NativeBaseCatalog::prepareInitialStat
     if(type==Type::INSTANCE) {
       const auto* parent=program.find_symbol_by_index(uint32_t(symbol.parent()));
       if(parent==npcClass || parent==itemClass)
-        rows.push_back({symbol.index(),parent==npcClass ? Alias::Npc : Alias::Item});
+        rows.push_back({symbol.index(),name,parent==npcClass ? Alias::Npc : Alias::Item});
       continue;
       }
     if(symbol.count()==0)
@@ -133,9 +133,9 @@ std::vector<NativeBaseCatalog::InitialRow> NativeBaseCatalog::prepareInitialStat
       return result;
       };
     switch(type) {
-      case Type::INT:    rows.push_back({symbol.index(),values([&](uint16_t i) { return symbol.get_int(i); })}); break;
-      case Type::FLOAT:  rows.push_back({symbol.index(),values([&](uint16_t i) { return symbol.get_float(i); })}); break;
-      case Type::STRING: rows.push_back({symbol.index(),values([&](uint16_t i) { return symbol.get_string(i); })}); break;
+      case Type::INT:    rows.push_back({symbol.index(),name,values([&](uint16_t i) { return symbol.get_int(i); })}); break;
+      case Type::FLOAT:  rows.push_back({symbol.index(),name,values([&](uint16_t i) { return symbol.get_float(i); })}); break;
+      case Type::STRING: rows.push_back({symbol.index(),name,values([&](uint16_t i) { return symbol.get_string(i); })}); break;
       default: break;
       }
     }

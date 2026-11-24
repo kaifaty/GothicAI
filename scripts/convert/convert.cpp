@@ -1116,11 +1116,11 @@ int selfTest() {
     {12,"ZS_LOOP_ONLY_LOOP",std::nullopt,std::nullopt},
     };
   expectedCatalog.initialState={
-    {20,std::vector<int32_t>{0,-1,12}},
-    {21,std::vector<float>{-0.f,1.25f}},
-    {22,std::vector<std::string>{"",std::string("text\xFF",5)}},
-    {23,NativeBaseCatalog::Alias::Npc},
-    {24,NativeBaseCatalog::Alias::Item},
+    {20,"INTS",std::vector<int32_t>{0,-1,12}},
+    {21,"REALS",std::vector<float>{-0.f,1.25f}},
+    {22,"STRINGS",std::vector<std::string>{"",std::string("text\xFF",5)}},
+    {23,"ACTOR",NativeBaseCatalog::Alias::Npc},
+    {24,"ITEM",NativeBaseCatalog::Alias::Item},
     };
   expectedCatalog.identities={{{100,"NPC_TEST"}},{{200,"IT_TEST"}},{{300,"DIA_TEST"}}};
   const auto output=dir/"native-catalog";
@@ -1154,6 +1154,17 @@ int selfTest() {
     }
   require(rejected,"native catalog rejects duplicate initial state IDs");
   invalid["initial_session_state"][1][0].SetUint(21);
+  invalid["initial_session_state"][1][1].SetString("INTS");
+  DefinitionJson::write(stateFile,invalid);
+  rejected=false;
+  try {
+    (void)NativeBaseCatalog::read(output);
+    }
+  catch(const std::runtime_error& error) {
+    rejected=std::string_view(error.what()).find("duplicate or unordered initial state identity")!=std::string_view::npos;
+    }
+  require(rejected,"native catalog rejects duplicate initial state names");
+  invalid["initial_session_state"][1][1].SetString("REALS");
   invalid["item_archetypes"][0][0].SetUint(24);
   DefinitionJson::write(stateFile,invalid);
   rejected=false;

@@ -1,8 +1,11 @@
 #include "scriptvars.h"
 
 #include "daedalus/script.h"
+#include "nativebasecatalog.h"
 #include "savearchive.h"
 
+#include <algorithm>
+#include <cctype>
 #include <stdexcept>
 #include <utility>
 
@@ -29,6 +32,16 @@ std::vector<T> readValues(SaveArchive& in) {
     values.push_back(std::move(value));
     }
   return values;
+  }
+
+template<class T>
+void bindField(ScriptVars::Slot* slot, std::string_view name, T& value) {
+  auto* array = std::get_if<ScriptVars::Array<T>>(slot);
+  if(array==nullptr || array->values.size()!=1 || array->storage==nullptr)
+    throw std::runtime_error("Cannot bind mutable runtime field "+std::string(name));
+  value = std::move(array->values.front());
+  array->values = {&value,1};
+  array->storage.reset();
   }
 
 } // namespace
@@ -84,6 +97,29 @@ void ScriptVars::writeRow(SaveArchive& out, const Row& row) {
     }
   }
 
+void ScriptVars::State::loadInitial(std::span<const NativeBaseCatalog::InitialRow> rows) {
+  if(!values.empty())
+    throw std::runtime_error("Session state is already initialized");
+  for(const auto& row : rows) {
+    names.emplace(row.name,row.id);
+    auto slot = std::visit([](const auto& initial) -> Slot {
+      using T = std::decay_t<decltype(initial)>;
+      if constexpr(std::is_same_v<T,NativeBaseCatalog::Alias>) {
+        return Object{};
+        }
+      else {
+        using Field = typename T::value_type;
+        Array<Field> array;
+        array.storage = std::make_unique<Field[]>(initial.size());
+        array.values = {array.storage.get(),initial.size()};
+        std::ranges::copy(initial,array.values.begin());
+        return array;
+        }
+      },row.value);
+    values.emplace(row.id,std::move(slot));
+    }
+  }
+
 void ScriptVars::State::bind(daedalus::DaedalusSymbol& symbol) {
   using Type = daedalus::DaedalusDataType;
   if(symbol.is_member())
@@ -115,6 +151,26 @@ void ScriptVars::State::bind(daedalus::DaedalusSymbol& symbol) {
     }
   }
 
+void ScriptVars::State::bind(std::string_view name, int32_t& value) {
+  bindField(find(name),name,value);
+  }
+
+void ScriptVars::State::bind(std::string_view name, std::string& value) {
+  bindField(find(name),name,value);
+  }
+
+std::optional<uint32_t> ScriptVars::State::id(std::string_view name) const {
+  if(const auto it = names.find(name); it!=names.end())
+    return it->second;
+  const auto lower = [](unsigned char ch) { return std::islower(ch)!=0; };
+  if(std::ranges::none_of(name,lower))
+    return std::nullopt;
+  std::string upper(name);
+  std::ranges::transform(upper,upper.begin(),[](unsigned char ch) { return char(std::toupper(ch)); });
+  const auto it = names.find(upper);
+  return it==names.end() ? std::nullopt : std::optional(it->second);
+  }
+
 ScriptVars::Slot* ScriptVars::State::find(uint32_t id) {
   const auto it = values.find(id);
   return it==values.end() ? nullptr : &it->second;
@@ -123,6 +179,16 @@ ScriptVars::Slot* ScriptVars::State::find(uint32_t id) {
 const ScriptVars::Slot* ScriptVars::State::find(uint32_t id) const {
   const auto it = values.find(id);
   return it==values.end() ? nullptr : &it->second;
+  }
+
+ScriptVars::Slot* ScriptVars::State::find(std::string_view name) {
+  const auto key = id(name);
+  return key ? find(*key) : nullptr;
+  }
+
+const ScriptVars::Slot* ScriptVars::State::find(std::string_view name) const {
+  const auto key = id(name);
+  return key ? find(*key) : nullptr;
   }
 
 ScriptVars::SymbolHeader ScriptVars::readSymbolHeader(SaveArchive& in) {
