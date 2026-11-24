@@ -11,7 +11,7 @@ file(GLOB_RECURSE RUNTIME_BINDING_CONSUMERS CONFIGURE_DEPENDS
   "${BASE_ROOT}/common/game/*.cpp" "${BASE_ROOT}/common/game/*.h"
   "${BASE_ROOT}/ai_bridge/*.cpp" "${BASE_ROOT}/ai_bridge/*.h")
 set(RUNTIME_BINDING_CODEC "${BASE_ROOT}/common/game/definitions/runtimebindings.cpp")
-set(RUNTIME_BINDING_COLLECTOR "${BASE_ROOT}/../scripts/convert/runtimebindingroots.cpp")
+set(RUNTIME_BINDING_COLLECTOR "${BASE_ROOT}/tools/runtimebindingroots.cpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RUNTIME_BINDING_CONSUMERS}
   "${RUNTIME_BINDING_CODEC}" "${RUNTIME_BINDING_COLLECTOR}")
 set(RUNTIME_BINDING_NAMES)
