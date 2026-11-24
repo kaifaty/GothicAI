@@ -1,0 +1,34 @@
+# Literal references in native game code are part of the derived runtime binding
+# recipe. A change rebuilds the derived base without invalidating the source import.
+if(NOT DEFINED BASE_ROOT)
+  get_filename_component(BASE_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+endif()
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+  set(RUNTIME_BINDING_GLOB CONFIGURE_DEPENDS)
+endif()
+file(GLOB_RECURSE RUNTIME_BINDING_CONSUMERS ${RUNTIME_BINDING_GLOB}
+  "${BASE_ROOT}/common/game/*.cpp" "${BASE_ROOT}/common/game/*.h"
+  "${BASE_ROOT}/ai_bridge/*.cpp" "${BASE_ROOT}/ai_bridge/*.h")
+set(RUNTIME_BINDING_CODEC "${BASE_ROOT}/common/game/definitions/runtimebindings.cpp")
+set(RUNTIME_BINDING_COLLECTOR "${BASE_ROOT}/tools/runtimebindingroots.cpp")
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RUNTIME_BINDING_CONSUMERS}
+    "${RUNTIME_BINDING_CODEC}" "${RUNTIME_BINDING_COLLECTOR}")
+endif()
+set(RUNTIME_BINDING_NAMES)
+foreach(source IN LISTS RUNTIME_BINDING_CONSUMERS)
+  file(READ "${source}" contents)
+  string(REGEX MATCHALL "\"[$][0-9]+\"" matches "${contents}")
+  list(APPEND RUNTIME_BINDING_NAMES ${matches})
+endforeach()
+list(REMOVE_DUPLICATES RUNTIME_BINDING_NAMES)
+list(SORT RUNTIME_BINDING_NAMES)
+list(LENGTH RUNTIME_BINDING_NAMES RUNTIME_BINDING_NAME_COUNT)
+string(JOIN ",\n    " RUNTIME_BINDING_NAME_ROWS ${RUNTIME_BINDING_NAMES})
+file(SHA256 "${RUNTIME_BINDING_CODEC}" RUNTIME_BINDING_CODEC_SHA)
+file(SHA256 "${RUNTIME_BINDING_COLLECTOR}" RUNTIME_BINDING_COLLECTOR_SHA)
+string(SHA256 RUNTIME_BINDING_ROOTS_SHA
+  "${RUNTIME_BINDING_CODEC_SHA}\n${RUNTIME_BINDING_COLLECTOR_SHA}\n${RUNTIME_BINDING_NAME_ROWS}")
+if(CMAKE_SCRIPT_MODE_FILE)
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E echo "${RUNTIME_BINDING_ROOTS_SHA}")
+endif()

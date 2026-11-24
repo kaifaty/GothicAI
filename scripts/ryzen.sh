@@ -410,6 +410,9 @@ remote_probe() {
       (cd "$ROOT/$project" && uv sync --check --frozen) || return 1
     done < <(dependency_projects "$scenario")
   fi
+  if [[ "${RYZEN_PREPARE_NATIVE_BASE:-0}" == 1 && ! -s "$state/inputs/$run/native-base-path" ]]; then
+    return 1
+  fi
 }
 
 remote_prepare() {
@@ -432,6 +435,17 @@ remote_prepare() {
       (cd "$ROOT/$project" && uv sync --frozen)
     done < <(dependency_projects "$scenario")
   fi
+  if [[ "${RYZEN_PREPARE_NATIVE_BASE:-0}" == 1 ]]; then
+    game_settings || return
+    local prepared path="$state/inputs/$run/native-base-path"
+    prepared="$("${RYZEN_GAME_BIN%/*}/content-convert" resolve "$GOTHIC_DIR")" || return
+    [[ "$prepared" == /* && -f "$prepared/base.json" ]] || {
+      echo "Ryzen: converter did not return a ready native base path" >&2
+      return 1
+    }
+    printf '%s\n' "$prepared" >"$path.tmp"
+    mv -- "$path.tmp" "$path"
+  fi
   echo "Ryzen: build preparation $((SECONDS - started))s"
 }
 
@@ -450,6 +464,16 @@ require_prepared() {
       echo 'Ryzen: storygraph does not match snapshot storygraph.sha256; refusing to build with the display reserved. Run preparation again.' >&2
       return 1
     fi
+  fi
+  if [[ "${RYZEN_PREPARE_NATIVE_BASE:-0}" == 1 ]]; then
+    local prepared
+    if ! IFS= read -r prepared <"$state/inputs/$run/native-base-path" ||
+       [[ "$prepared" != /* || ! -f "$prepared/base.json" ]]; then
+      echo "Ryzen: native base preparation is missing. Run preparation again." >&2
+      return 1
+    fi
+    export OPENGOTHIC_BASE="$prepared"
+    unset OPENGOTHIC_BASE_FINGERPRINT
   fi
   if [[ "$RYZEN_GAME_BIN" == "$HOME/gothic-ai/engine-cache/$digest/Gothic2Notr" ]]; then
     echo "Ryzen: engine from cache ${digest:0:12} (0s)"
@@ -806,12 +830,17 @@ PY
 
 select_mac_base_parts() {
   local parts
-  base_format='' videos_format=''
-  if [[ "$auto_base" == 1 ]]; then base_format="$(cmake -DBASE_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/BaseFormat.cmake")"; fi
+  base_format='' videos_format='' base_recipe=''
+  if [[ "$auto_base" == 1 ]]; then
+    base_format="$(cmake -DBASE_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/BaseFormat.cmake")"
+    if [[ "$ACTION" != pytest ]]; then
+      base_recipe="$(cmake -DBASE_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/RuntimeBindingRecipe.cmake")"
+    fi
+  fi
   if [[ "$auto_videos" == 1 ]]; then videos_format="$(cmake -DVIDEO_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/VideoFormat.cmake")"; fi
   GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
   # Select checkout-compatible ready parts without identifying or changing the installation.
-  parts="$(python3 - "$GOTHIC_DIR" "$base_format" "$videos_format" "$auto_base" "$auto_videos" "$ACTION" "$ROOT/scripts" <<'PY'
+  parts="$(python3 - "$GOTHIC_DIR" "$base_format" "$videos_format" "$auto_base" "$auto_videos" "$ACTION" "$ROOT/scripts" "$base_recipe" <<'PY'
 import hashlib
 import json
 import os
@@ -830,7 +859,7 @@ def identity(kind, directory):
     metadata = json.loads((directory / ('base.json' if kind == 'base' else 'videos.json')).read_bytes())
     return metadata if kind == 'base' else json.loads(metadata['identity'])
 
-action = sys.argv[6]
+action, recipe = sys.argv[6], sys.argv[8]
 
 def import_required(message):
     if action == 'setup':
@@ -845,44 +874,76 @@ def select(kind, expected):
     if kind == 'videos' and part is None:
         print('\n')
         return
-    if (not isinstance(part, dict) or not re.fullmatch('[0-9a-f]{64}', part.get('fingerprint', ''))
-            or not isinstance(part.get('path'), str) or not Path(part['path']).is_absolute()
-            or '\n' in part['path']):
-        raise ValueError(f'invalid {kind} pointer')
-    fingerprint, path = part['fingerprint'], Path(part['path'])
-    pointed = identity(kind, path)
-    actual = pointed['format_sha256']
-    def ready(directory):
-        return not native or _ready_script_base(directory, native=True)
+    def read_part(part):
+        if (not isinstance(part, dict) or not re.fullmatch('[0-9a-f]{64}', part.get('fingerprint', ''))
+                or not isinstance(part.get('path'), str) or not Path(part['path']).is_absolute()
+                or '\n' in part['path']):
+            raise ValueError(f'invalid {kind} pointer')
+        return part['fingerprint'], Path(part['path'])
 
+    combined = current.get('base') if native else None
+    try:
+        fingerprint, path = read_part(part)
+        pointed = identity(kind, path)
+    except (OSError, ValueError, KeyError, TypeError):
+        if combined is None or combined == part:
+            raise
+        part = combined
+        fingerprint, path = read_part(part)
+        pointed = identity(kind, path)
+    actual = pointed['format_sha256']
+
+    def ready(directory):
+        return not native or _ready_script_base(directory, native=True, recipe=recipe)
+
+    project = False
     if actual != expected or not ready(path):
         sources = _installation_identity(pointed, kind)
         root = cache if kind == 'base' else cache / 'videos'
-        for candidate in sorted(root.glob('*/base.json' if kind == 'base' else '*/videos.json')):
-            if not re.fullmatch('[0-9a-f]{64}', candidate.parent.name):
-                continue
+        candidates = [(fingerprint, path)]
+        if combined is not None and combined != part:
             try:
-                cached = identity(kind, candidate.parent)
-                if (cached['format_sha256'] != expected or _installation_identity(cached, kind) != sources
-                        or not ready(candidate.parent)):
+                candidates.append(read_part(combined))
+            except (ValueError, TypeError):
+                pass
+        candidates.extend((candidate.parent.name, candidate.parent)
+                          for candidate in sorted(root.glob('*/base.json' if kind == 'base' else '*/videos.json'))
+                          if re.fullmatch('[0-9a-f]{64}', candidate.parent.name))
+        fallback = None
+        for candidate, directory in candidates:
+            try:
+                cached = identity(kind, directory)
+                if cached['format_sha256'] != expected or _installation_identity(cached, kind) != sources:
+                    continue
+                if not ready(directory):
+                    if fallback is None and native and _ready_script_base(directory, native=False):
+                        fallback = candidate, directory
                     continue
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 continue
-            fingerprint, path = candidate.parent.name, candidate.parent
-            if action == 'setup':
-                if actual != expected:
-                    print(f'Ryzen: Mac pointer has importer format {actual}, using Mac cache part '
-                          f'{fingerprint} of format {expected}', file=sys.stderr)
-                else:
-                    print(f'Ryzen: using prepared native base {fingerprint}', file=sys.stderr)
+            fingerprint, path = candidate, directory
             break
         else:
-            import_required(
-                f'needs_decision: Mac {kind} part {fingerprint} has importer format {actual}, '
-                f'this checkout builds {expected}; build the engine from this checkout and run the game '
-                'once on Mac through the launcher to prepare the base in ~/.cache/gothic-ai/base, then retry setup')
+            if fallback is not None:
+                fingerprint, path = fallback
+                project = True
+            else:
+                import_required(
+                    f'needs_decision: Mac {kind} part {fingerprint} has importer format {actual}, '
+                    f'this checkout builds {expected}; build the engine from this checkout and run the game '
+                    'once on Mac through the launcher to prepare the base in ~/.cache/gothic-ai/base, then retry setup')
+        if action == 'setup':
+            if project:
+                print(f'Ryzen: using combined base {fingerprint} to prepare the current native projection', file=sys.stderr)
+            elif actual != expected:
+                print(f'Ryzen: Mac pointer has importer format {actual}, using Mac cache part '
+                      f'{fingerprint} of format {expected}', file=sys.stderr)
+            else:
+                print(f'Ryzen: using prepared native base {fingerprint}', file=sys.stderr)
     print(fingerprint)
     print(path)
+    if kind == 'base':
+        print('1' if project else '')
 
 try:
     current = json.loads(pointer.read_bytes()) if '1' in sys.argv[4:6] else {}
@@ -898,23 +959,26 @@ for kind, expected, enabled in zip(('base', 'videos'), sys.argv[2:4], sys.argv[4
         name = 'OPENGOTHIC_BASE_FINGERPRINT' if kind == 'base' else 'OPENGOTHIC_VIDEOS_FINGERPRINT'
         print(os.environ.get(name, ''))
         print('')
+        if kind == 'base':
+            print('')
         continue
     try:
         select(kind, expected)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         if action == 'setup':
             import_required(f'needs_decision: cannot read ready Mac base pointer {pointer}: {error}')
-        print('\n')
+        print('\n\n' if kind == 'base' else '\n')
     except SystemExit:
         if action == 'setup':
             raise
-        print('\n')
+        print('\n\n' if kind == 'base' else '\n')
 PY
 )"
   base_fingerprint="$(sed -n '1p' <<<"$parts")"
   base_path="$(sed -n '2p' <<<"$parts")"
-  videos_fingerprint="$(sed -n '3p' <<<"$parts")"
-  videos_path="$(sed -n '4p' <<<"$parts")"
+  base_project="$(sed -n '3p' <<<"$parts")"
+  videos_fingerprint="$(sed -n '4p' <<<"$parts")"
+  videos_path="$(sed -n '5p' <<<"$parts")"
 }
 
 host_base_part() {
@@ -927,7 +991,7 @@ export -f verify_base_part
   printf "__name__ = 'ryzen_game'\n"
   printf '%s\n' "$3"
   cat <<'PY_HOST'
-kind, expected, profile = sys.argv[1:]
+kind, expected, profile, recipe = sys.argv[1:]
 fingerprint = ''
 try:
     parts = json.loads((Path.home() / 'gothic-ai/game-base.json').read_text())
@@ -940,29 +1004,36 @@ try:
     if store.is_dir():
         roots.append(store)
 
-    def ready(directory):
-        if kind == 'base' and profile != 'pytest' and not _ready_script_base(directory, native=True):
-            return False
-        return subprocess.run(
-            ['bash', '-c', 'verify_base_part "$@"', '--', kind, str(directory), directory.name, 'quick'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        ).returncode == 0
+    game_base = kind == 'base' and profile != 'pytest'
+    for projected in (True, False) if game_base else (False,):
+        def ready(directory):
+            if game_base and not _ready_script_base(directory, native=projected, recipe=recipe):
+                return False
+            return subprocess.run(
+                ['bash', '-c', 'verify_base_part "$@"', '--', kind, str(directory), directory.name, 'quick'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ).returncode == 0
 
-    selected = _compatible_fingerprint(kind, fingerprint, expected, roots, ready=ready)
-    for root in roots:
-        directory = root / selected if kind == 'base' else root / 'videos' / selected
-        identity = _identity(directory, kind)
-        if identity is not None and identity[0] == expected and ready(directory):
-            print(selected)
-            sys.exit(0)
+        try:
+            selected = _compatible_fingerprint(kind, fingerprint, expected, roots, ready=ready)
+        except ValueError:
+            continue
+        for root in roots:
+            directory = root / selected if kind == 'base' else root / 'videos' / selected
+            identity = _identity(directory, kind)
+            if identity is not None and identity[0] == expected and ready(directory):
+                print(selected)
+                if kind == 'base':
+                    print('1' if game_base and not projected else '')
+                sys.exit(0)
 except (OSError, ValueError, KeyError, TypeError):
     pass
 print(fingerprint)
 sys.exit(3)
 PY_HOST
-} | python3 - "$1" "$2" "$4"
+} | python3 - "$1" "$2" "$4" "$5"
 REMOTE
-  } | remote bash -s -- "$1" "$2" "$(cat "$ROOT/scripts/ryzen_game.py")" "$ACTION"
+  } | remote bash -s -- "$1" "$2" "$(cat "$ROOT/scripts/ryzen_game.py")" "$ACTION" "$base_recipe"
 }
 
 resolve_host_base_parts() {
@@ -975,6 +1046,10 @@ resolve_host_base_parts() {
     fi
     [[ "$enabled" == 1 && -z "$fingerprint" ]] || continue
     if selected="$(host_base_part "$kind" "$expected")"; then
+      if [[ "$kind" == base ]]; then
+        base_project="$(sed -n '2p' <<<"$selected")"
+        selected="$(sed -n '1p' <<<"$selected")"
+      fi
       echo "$RYZEN_HOST: $kind ${selected:0:12} ready (host)"
     else
       rc=$?
@@ -1107,6 +1182,7 @@ fi
 
 # Validate prepared content before creating a run directory, lock or queue request.
 BASE_ENV_ARGS=()
+if [[ "${base_project:-}" == 1 ]]; then BASE_ENV_ARGS+=("RYZEN_PREPARE_NATIVE_BASE=1"); fi
 while IFS= read -r name; do
   case "$name" in
     OPENGOTHIC_BASE*|OPENGOTHIC_VIDEOS_FINGERPRINT) BASE_ENV_ARGS+=("$name=${!name}") ;;
@@ -1258,6 +1334,7 @@ take_lock
 $(if [[ "$ACTION" != clean ]]; then echo auto_clean; fi)
 disk_usage
 $(if [[ "$ACTION" == bench ]]; then printf 'export BENCH_HEADLESS=%q\n' "$BENCH_HEADLESS"; fi)
+$(if [[ "${base_project:-}" == 1 ]]; then echo 'export RYZEN_PREPARE_NATIVE_BASE=1'; fi)
 $(if [[ -n "${GQ_HOME+set}" ]]; then printf 'export GQ_HOME=%q\n' "$GQ_HOME"; fi)
 $(printf 'exec python3 -u -c %q %q %q' "$(cat "$ROOT/scripts/ryzen-lock.py")" "$STATE" "$REMOTE_HOME/gothic-ai/bin/gq")"
 printf -v bootstrap_command 'bash -c %q' "$bootstrap"

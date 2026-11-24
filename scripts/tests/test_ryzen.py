@@ -986,7 +986,7 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
                 self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE'], str(native_path))
 
     def test_mac_and_ryzen_select_the_same_installation_across_formats(self):
-        self.format_setup('native')
+        self.format_setup('native', '2' * 64)
         shared_cache = self.home / '.cache/gothic-ai/base'
         shared_cache.parent.mkdir(parents=True)
         shutil.move(self.base_cache, shared_cache)
@@ -1015,10 +1015,10 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         ):
             with self.subTest(kind=kind, field=field):
                 base = self.base_part('c' * 64, ('1' if kind == 'base' else '2') * 64,
-                                      sources=binding, native_script_base={'version': 2})
+                                      sources=binding, native_script_base={'version': 2, 'runtime_recipe': '2' * 64})
                 if kind == 'base':
                     pointed, candidate = base, self.base_part(
-                        'd' * 64, '2' * 64, sources=binding, native_script_base={'version': 2})
+                        'd' * 64, '2' * 64, sources=binding, native_script_base={'version': 2, 'runtime_recipe': '2' * 64})
                     metadata = json.loads((candidate / 'base.json').read_text())
                     metadata[field] = value
                     (candidate / 'base.json').write_text(json.dumps(metadata))
@@ -1189,7 +1189,7 @@ remote_run pytest "$TEST_ROOT/worktree" run -rs tests/test_storygraph.py
         part = self.root / 'mac-base'
         part.mkdir()
         (part / 'base.json').write_text(json.dumps({
-            'format_sha256': 'a' * 64, 'native_script_base': {'version': 2},
+            'format_sha256': 'a' * 64, 'native_script_base': {'version': 2, 'runtime_recipe': 'a' * 64},
         }))
         pointers = self.home / '.cache/gothic-ai/base/current'
         pointers.mkdir(parents=True)
@@ -1227,14 +1227,17 @@ rsync() {
                 self.assertEqual(list(remote_cache.glob('.setup-*')), [foreign])
                 self.assertTrue((foreign / 'keep').exists())
 
-    def setup_part(self, kind, fingerprint, format_digest, *, path=None, source='installation'):
+    def setup_part(self, kind, fingerprint, format_digest, *, path=None, source='installation',
+                   native_recipe='e' * 64):
         cache = self.home / '.cache/gothic-ai/base'
         part = path or cache / ('' if kind == 'base' else 'videos') / fingerprint
         part.mkdir(parents=True)
         identity = {'format_sha256': format_digest}
         if kind == 'base':
             identity.update(archives=[{'name': source}], loose_files=[{'path': source}], sources=[{'name': source}])
-            metadata = dict(identity, fingerprint=fingerprint, native_script_base={'version': 2})
+            metadata = dict(identity, fingerprint=fingerprint)
+            if native_recipe is not None:
+                metadata['native_script_base'] = {'version': 2, 'runtime_recipe': native_recipe}
         else:
             identity['sources'] = [{'name': source}]
             metadata = {'fingerprint': fingerprint, 'identity': json.dumps(identity)}
@@ -1326,6 +1329,7 @@ cmake() {
   case "$1 $2 $3" in
     "-DBASE_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/BaseFormat.cmake") printf '%064d\n' 0 | tr 0 a ;;
     "-DVIDEO_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/VideoFormat.cmake") printf '%064d\n' 0 | tr 0 b ;;
+    "-DBASE_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/RuntimeBindingRecipe.cmake") printf '%064d\n' 0 | tr 0 e ;;
     *) return 99 ;;
   esac
 }
@@ -1404,6 +1408,73 @@ preparation_needed() { return 1; }
         for kind, digest in (('base', 'a'), ('videos', 'b')):
             self.assertIn(f"Ryzen: Mac pointer has importer format {'f' * 64}, using Mac cache part "
                           f"{expected[kind]['fingerprint']} of format {digest * 64}", result.stderr)
+
+    def test_autosync_prefers_current_recipe_and_falls_back_to_combined_base(self):
+        stale = self.setup_part('base', 'c' * 64, 'a' * 64, native_recipe='b' * 64)
+        combined = self.setup_part('base', 'd' * 64, 'a' * 64, native_recipe=None)
+        native = self.setup_part('base', 'f' * 64, 'a' * 64)
+        cache = self.root / 'remote/.cache/gothic-ai/base'
+        self.remote_game_setup(base=stale['fingerprint'])
+        parts = {'native_base': stale, 'base': combined}
+        for part in (stale, combined, native):
+            shutil.copytree(part['path'], cache / part['fingerprint'])
+        for local_parts in (parts, None):
+            with self.subTest(source='Mac' if local_parts else 'host'):
+                result, copies = self.run_setup(local_parts, action='bench')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assert_synced_environment({'OPENGOTHIC_BASE_FINGERPRINT': native['fingerprint']},
+                                               absent=('RYZEN_PREPARE_NATIVE_BASE',))
+        shutil.rmtree(native['path'])
+        shutil.rmtree(cache / native['fingerprint'])
+        for local_parts in (parts, None):
+            with self.subTest(source='Mac' if local_parts else 'host', projection='needed'):
+                result, copies = self.run_setup(local_parts, action='bench')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assert_synced_environment({'OPENGOTHIC_BASE_FINGERPRINT': combined['fingerprint'],
+                                                'RYZEN_PREPARE_NATIVE_BASE': '1'})
+
+        shutil.rmtree(stale['path'])
+        result, _ = self.run_setup(parts, action='bench')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_synced_environment({'OPENGOTHIC_BASE_FINGERPRINT': combined['fingerprint'],
+                                        'RYZEN_PREPARE_NATIVE_BASE': '1'})
+
+    def test_combined_base_is_projected_by_preparation_only(self):
+        cache = self.home / 'gothic-ai/engine-cache/current'
+        cache.mkdir(parents=True)
+        converter = cache / 'content-convert'
+        converter.write_text('#!/bin/bash\n'
+                             '[[ "$1" == resolve && "$2" == "$GOTHIC_DIR" && '
+                             '"$OPENGOTHIC_BASE_FINGERPRINT" == combined ]] || exit 9\n'
+                             'touch "$TEST_ROOT/converter-called"\n'
+                             'printf "%s\\n" "$TEST_ROOT/projected"\n')
+        converter.chmod(0o755)
+        projected = self.root / 'projected'
+        projected.mkdir()
+        (projected / 'base.json').touch()
+        harness = '\n'.join([
+            'set -euo pipefail',
+            *(function(name) for name in ('remote_probe', 'remote_prepare', 'require_prepared')),
+            'toolchain() { :; }',
+            'source_digest() { echo current; }',
+            'engine_ready() { export RYZEN_GAME_BIN="$HOME/gothic-ai/engine-cache/current/Gothic2Notr"; }',
+            'build_engine() { engine_ready; }',
+            'game_settings() { export GOTHIC_DIR="$TEST_ROOT/settings"; }',
+            'export RYZEN_PREPARE_NATIVE_BASE=1 OPENGOTHIC_BASE_FINGERPRINT=combined',
+            'state="$TEST_ROOT/state"',
+            'mkdir -p "$state/inputs/run"',
+            'if remote_probe bench "$state" run smoke; then exit 10; fi',
+            'if require_prepared bench "$state" run smoke; then exit 11; fi',
+            'test ! -e "$TEST_ROOT/converter-called"',
+            'remote_prepare bench "$state" run smoke',
+            'test -e "$TEST_ROOT/converter-called"',
+            'remote_probe bench "$state" run smoke',
+            'chmod -x "$HOME/gothic-ai/engine-cache/current/content-convert"',
+            'require_prepared bench "$state" run smoke',
+            '[[ "$OPENGOTHIC_BASE" == "$TEST_ROOT/projected" && -z "${OPENGOTHIC_BASE_FINGERPRINT+x}" ]]',
+        ])
+        result = subprocess.run(['bash', '-c', harness], env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_setup_requires_decision_before_copying_when_checkout_format_is_missing(self):
         for kind, digest in (('base', 'a'), ('videos', 'b')):

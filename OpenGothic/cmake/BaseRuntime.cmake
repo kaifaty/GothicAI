@@ -5,29 +5,7 @@
 # (BaseFormat.cmake): a runtime source or a flag must not change the base fingerprint.
 include(${CMAKE_CURRENT_LIST_DIR}/ClusterLod.cmake)
 target_link_libraries(gothic-base-runtime PRIVATE gothic-cluster-lod)
-# Literal references in native game code are part of the derived runtime binding
-# recipe. A change rebuilds the derived base without invalidating the source import.
-file(GLOB_RECURSE RUNTIME_BINDING_CONSUMERS CONFIGURE_DEPENDS
-  "${BASE_ROOT}/common/game/*.cpp" "${BASE_ROOT}/common/game/*.h"
-  "${BASE_ROOT}/ai_bridge/*.cpp" "${BASE_ROOT}/ai_bridge/*.h")
-set(RUNTIME_BINDING_CODEC "${BASE_ROOT}/common/game/definitions/runtimebindings.cpp")
-set(RUNTIME_BINDING_COLLECTOR "${BASE_ROOT}/tools/runtimebindingroots.cpp")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RUNTIME_BINDING_CONSUMERS}
-  "${RUNTIME_BINDING_CODEC}" "${RUNTIME_BINDING_COLLECTOR}")
-set(RUNTIME_BINDING_NAMES)
-foreach(source IN LISTS RUNTIME_BINDING_CONSUMERS)
-  file(READ "${source}" contents)
-  string(REGEX MATCHALL "\"[$][0-9]+\"" matches "${contents}")
-  list(APPEND RUNTIME_BINDING_NAMES ${matches})
-endforeach()
-list(REMOVE_DUPLICATES RUNTIME_BINDING_NAMES)
-list(SORT RUNTIME_BINDING_NAMES)
-list(LENGTH RUNTIME_BINDING_NAMES RUNTIME_BINDING_NAME_COUNT)
-string(JOIN ",\n    " RUNTIME_BINDING_NAME_ROWS ${RUNTIME_BINDING_NAMES})
-file(SHA256 "${RUNTIME_BINDING_CODEC}" RUNTIME_BINDING_CODEC_SHA)
-file(SHA256 "${RUNTIME_BINDING_COLLECTOR}" RUNTIME_BINDING_COLLECTOR_SHA)
-string(SHA256 RUNTIME_BINDING_ROOTS_SHA
-  "${RUNTIME_BINDING_CODEC_SHA}\n${RUNTIME_BINDING_COLLECTOR_SHA}\n${RUNTIME_BINDING_NAME_ROWS}")
+include(${CMAKE_CURRENT_LIST_DIR}/RuntimeBindingRecipe.cmake)
 set(RUNTIME_BINDING_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/runtime-bindings-generated")
 file(CONFIGURE OUTPUT "${RUNTIME_BINDING_GENERATED_DIR}/runtimebindingroots.h" CONTENT [=[
 #pragma once
