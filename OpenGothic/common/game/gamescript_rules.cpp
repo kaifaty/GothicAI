@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <bit>
 #include <stdexcept>
+#include <unordered_map>
 #include <variant>
 #include <array>
 
@@ -47,9 +48,9 @@ enum class AttackAnnouncementReason : int32_t {
 }
 
 std::string_view GameScript::symbolName(size_t id) {
-  if(symbolCatalog)
-    if(const auto* entry = symbolCatalog->at(id))
-      return entry->name;
+  if(stockPrograms && id<=UINT32_MAX)
+    if(const auto name = storySymbolName(uint32_t(id)); !name.empty())
+      return name;
   if(id<=UINT32_MAX)
     if(const auto* entry = own.find(uint32_t(id)))
       return entry->name;
@@ -3492,6 +3493,19 @@ bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& s
   return true;
   }
 
+namespace {
+void printQuestNotice(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& print,
+                      daedalus::DaedalusSymbol* text, daedalus::DaedalusSymbol* y, daedalus::DaedalusSymbol* font) {
+  vm.call_bound_native(print,[&] {
+    vm.push_reference(text);
+    vm.push_int(-1);
+    vm.push_reference(y);
+    vm.push_reference(font);
+    vm.push_int(2);
+    },[&] { (void)vm.pop_int(); });
+  }
+}
+
 void GameScript::givePlayerXp(int32_t amount) {
   struct RestoreContext {
     daedalus::DaedalusVm& vm;
@@ -3505,17 +3519,11 @@ void GameScript::givePlayerXp(int32_t amount) {
     return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
     };
   const auto print=[&](daedalus::DaedalusSymbol* text,const char* y,const char* font) {
-    vm.push_reference(text);
-    vm.push_int(-1);
-    vm.push_reference(findSymbol(y));
-    vm.push_reference(findSymbol(font));
-    vm.push_int(2);
-    if(vm.unsafe_call_external(findSymbol("PRINTSCREEN")))
-      (void)vm.pop_int();
+    printQuestNotice(vm,*storySlot("PRINTSCREEN"),text,storySlot(y),storySlot(font));
     };
 
-  auto* savedAmount=findSymbol("B_GIVEPLAYERXP.ADD_XP");
-  auto* text=findSymbol("B_GIVEPLAYERXP.CONCATTEXT");
+  auto* savedAmount=storySlot("B_GIVEPLAYERXP.ADD_XP");
+  auto* text=storySlot("B_GIVEPLAYERXP.CONCATTEXT");
   savedAmount->set_int(amount);
   const auto current=hero();
   vm.unsafe_set_gi(current);
@@ -3526,12 +3534,14 @@ void GameScript::givePlayerXp(int32_t amount) {
     }
 
   // The original formatting calls also update the VM's temporary strings.
-  text->set_string(findSymbol("PRINT_XPGAINED")->get_string());
-  vm.push_reference(text);
-  vm.push_reference(savedAmount);
-  vm.unsafe_call_external(findSymbol("INTTOSTRING"));
-  vm.unsafe_call_external(findSymbol("CONCATSTRINGS"));
-  text->set_string(vm.pop_string());
+  text->set_string(storySlot("PRINT_XPGAINED")->get_string());
+  std::string amountText;
+  vm.call_bound_native(*storySlot("INTTOSTRING"),[&] { vm.push_reference(savedAmount); },
+                       [&] { amountText = vm.pop_string(); });
+  vm.call_bound_native(*storySlot("CONCATSTRINGS"),[&] {
+    vm.push_reference(text);
+    vm.push_string(amountText);
+    },[&] { text->set_string(vm.pop_string()); });
   print(text,"YPOS_XPGAINED","FONT_SCREENSMALL");
 
   const auto levelUp=hero();
@@ -3541,25 +3551,23 @@ void GameScript::givePlayerXp(int32_t amount) {
       levelUp->level=add(levelUp->level,1);
       const auto threshold=std::bit_cast<int32_t>(500u*(uint32_t(levelUp->level)+1u));
       levelUp->exp_next=add(levelUp->exp_next,threshold);
-      const auto health=findSymbol("HP_PER_LEVEL")->get_int();
+      const auto health=storySlot("HP_PER_LEVEL")->get_int();
       levelUp->attribute[ATR_HITPOINTSMAX]=add(levelUp->attribute[ATR_HITPOINTSMAX],health);
       levelUp->attribute[ATR_HITPOINTS]=add(levelUp->attribute[ATR_HITPOINTS],health);
-      levelUp->lp=add(levelUp->lp,findSymbol("LP_PER_LEVEL")->get_int());
+      levelUp->lp=add(levelUp->lp,storySlot("LP_PER_LEVEL")->get_int());
       }
-    print(findSymbol("PRINT_LEVELUP"),"YPOS_LEVELUP","FONT_SCREEN");
-    // Reference the verified program's LevelUp literal to preserve the temporary string slots.
-    vm.push_reference(findSymbol("$12941"));
-    vm.unsafe_call_external(findSymbol("SND_PLAY"));
+    print(storySlot("PRINT_LEVELUP"),"YPOS_LEVELUP","FONT_SCREEN");
+    vm.call_bound_native(*storySlot("SND_PLAY"),[&] { vm.push_reference(levelUpSound); },[] {});
     }
 
-  vm.unsafe_call_bl(findSymbol("B_CHECKLOG"));
+  vm.unsafe_call_bl(storySlot("B_CHECKLOG"));
   }
 
 void GameScript::closeQuestTopic(std::string_view topic, int32_t mission, int32_t common, int32_t endChapter) {
-  auto* savedTopic=findSymbol("B_CLOSETOPIC.TOPIC");
-  findSymbol("B_CLOSETOPIC.ENDCHAPTER")->set_int(endChapter);
-  findSymbol("B_CLOSETOPIC.COMMONVAR")->set_int(common);
-  findSymbol("B_CLOSETOPIC.MISSIONVAR")->set_int(mission);
+  auto* savedTopic=storySlot("B_CLOSETOPIC.TOPIC");
+  storySlot("B_CLOSETOPIC.ENDCHAPTER")->set_int(endChapter);
+  storySlot("B_CLOSETOPIC.COMMONVAR")->set_int(common);
+  storySlot("B_CLOSETOPIC.MISSIONVAR")->set_int(mission);
   savedTopic->set_string(topic);
 
   using Status=QuestLog::Status;
@@ -3570,29 +3578,26 @@ void GameScript::closeQuestTopic(std::string_view topic, int32_t mission, int32_
     status=Status(mission);
   else if((common==0 || mission==int32_t(Status::Running)) && storyChapter>=endChapter)
     status=Status::Obsolete;
-  if(status!=Status::Running) {
-    vm.push_reference(savedTopic);
-    vm.push_int(int32_t(status));
-    vm.unsafe_call_external(findSymbol("LOG_SETTOPICSTATUS"));
-    }
+  if(status!=Status::Running)
+    vm.call_bound_native(*storySlot("LOG_SETTOPICSTATUS"),[&] {
+      vm.push_reference(savedTopic);
+      vm.push_int(int32_t(status));
+      },[] {});
   }
 
 void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
+  levelUpSound = findSymbol("$12941");
+  auto* logEntrySound = findSymbol("$12894");
   vm.override_function("B_LOGENTRY",std::function<void(std::string_view,std::string_view)>{
-    [this](std::string_view topic, std::string_view entry) {
-      auto* savedTopic=findSymbol("B_LOGENTRY.TOPIC");
-      auto* savedEntry=findSymbol("B_LOGENTRY.ENTRY");
+    [this,logEntrySound](std::string_view topic, std::string_view entry) {
+      auto* savedTopic=storySlot("B_LOGENTRY.TOPIC");
+      auto* savedEntry=storySlot("B_LOGENTRY.ENTRY");
       savedEntry->set_string(entry);
       savedTopic->set_string(topic);
       log_addentry(savedTopic->get_string(),savedEntry->get_string());
-      vm.push_reference(findSymbol("PRINT_NEWLOGENTRY"));
-      vm.push_int(-1);
-      vm.push_reference(findSymbol("YPOS_LOGENTRY"));
-      vm.push_reference(findSymbol("FONT_SCREENSMALL"));
-      vm.push_int(2);
-      vm.unsafe_call_external(findSymbol("PRINTSCREEN"));
-      vm.push_reference(findSymbol("$12894")); // LogEntry
-      vm.unsafe_call_external(findSymbol("SND_PLAY"));
+      printQuestNotice(vm,*storySlot("PRINTSCREEN"),storySlot("PRINT_NEWLOGENTRY"),
+                       storySlot("YPOS_LOGENTRY"),storySlot("FONT_SCREENSMALL"));
+      vm.call_bound_native(*storySlot("SND_PLAY"),[&] { vm.push_reference(logEntrySound); },[] {});
       }},enabled);
   vm.override_function("B_GETDAYPLUS",std::function<int32_t()>{[this] {
     const bool nextDay=wld_istime(22,0,23,59);
@@ -3609,10 +3614,12 @@ void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
     return;
   auto groups = QuestClosureData::read(base);
   using Type = daedalus::DaedalusDataType;
+  auto slots = std::make_shared<std::unordered_map<uint32_t,daedalus::DaedalusSymbol*>>();
   const auto checkSymbol = [&](uint32_t id, Type type) {
-    const auto* symbol = findSymbol(id);
+    auto* symbol = findSymbol(id);
     if(symbol==nullptr || symbol->type()!=type || symbol->is_member())
       throw BaseStore::Error(QuestClosureData::section(base).string()+": invalid quest symbol "+std::to_string(id));
+    slots->try_emplace(id,symbol);
     };
   for(const auto& group : groups) {
     for(const auto& row : group.rows) {
@@ -3629,39 +3636,41 @@ void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
       }
     }
 
-  const auto close = findSymbol("B_CLOSETOPIC")->index();
-  const auto setStatus = findSymbol("LOG_SETTOPICSTATUS")->index();
+  auto* close = findSymbol("B_CLOSETOPIC");
+  auto* setStatus = findSymbol("LOG_SETTOPICSTATUS");
+  std::array<daedalus::DaedalusSymbol*,QuestClosureData::names.size()> callbacks = {};
   for(size_t i=0;i<groups.size();++i) {
     const auto name = QuestClosureData::names[i];
+    callbacks[i] = findSymbol(name);
     auto& [rows,guildRule] = groups[i];
-    vm.override_function(name,std::function<void()>{[this, rows=std::move(rows), guildRule, close, setStatus] {
+    vm.override_function(name,std::function<void()>{[this, rows=std::move(rows), guildRule, slots, close, setStatus] {
       for(size_t i=0;i<rows.size();++i) {
         if(guildRule && i==guildRule->before) {
           const auto context=vm.global_hero()->get_instance();
           vm.unsafe_set_gi(context);
           const auto hero=std::dynamic_pointer_cast<daedalus::INpc>(context);
           const auto guild=hero ? hero->guild : 0;
-          if(std::ranges::none_of(guildRule->excluded,[&](uint32_t id) { return findSymbol(id)->get_int()==guild; })) {
-            vm.push_reference(findSymbol(guildRule->topic));
-            vm.push_reference(findSymbol(guildRule->status));
-            vm.unsafe_call_external(findSymbol(setStatus));
-            }
+          if(std::ranges::none_of(guildRule->excluded,[&](uint32_t id) { return slots->at(id)->get_int()==guild; }))
+            vm.call_bound_native(*setStatus,[&] {
+              vm.push_reference(slots->at(guildRule->topic));
+              vm.push_reference(slots->at(guildRule->status));
+              },[] {});
           }
         const auto& row=rows[i];
-        vm.push_reference(findSymbol(row.topic));
+        vm.push_reference(slots->at(row.topic));
         for(const auto& value:row.values) {
           if(const auto* literal=std::get_if<int32_t>(&value))
             vm.push_int(*literal);
           else
-            vm.push_reference(findSymbol(std::get<uint32_t>(value)));
+            vm.push_reference(slots->at(std::get<uint32_t>(value)));
           }
-        vm.unsafe_call_bl(findSymbol(close));
+        vm.unsafe_call_bl(close);
         }
       }},enabled);
     }
-  vm.override_function("B_CHECKLOG",std::function<void()>{[this] {
-    for(const auto name : QuestClosureData::names)
-      vm.unsafe_call_bl(findSymbol(name));
+  vm.override_function("B_CHECKLOG",std::function<void()>{[this,callbacks] {
+    for(auto* callback : callbacks)
+      vm.unsafe_call_bl(callback);
     }},enabled);
   }
 

@@ -11,201 +11,257 @@
 #include "world/objects/npc.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 
-GameStoryExternals::GameStoryExternals(GameScript& script, bool effects)
-  : script(script), fallback(script.getVm()), effects(effects) {
-  }
-
-storygraph::Value GameStoryExternals::call(const daedalus::DaedalusSymbol& fn, const std::vector<storygraph::Value>& args) {
-  using storygraph::Value;
-  const std::string_view name=fn.name();
-  if(effects && !fn.has_return() && args.size()==2 && args[0].type==Value::Str) {
-    if(name=="LOG_CREATETOPIC" && args[1].type==Value::Int)
-      script.log_createtopic(args[0].s,args[1].i);
-    else if(name=="LOG_SETTOPICSTATUS" && args[1].type==Value::Int)
-      script.log_settopicstatus(args[0].s,args[1].i);
-    else if(name=="LOG_ADDENTRY" && args[1].type==Value::Str)
-      script.log_addentry(args[0].s,args[1].s);
-    else
-      return fallback.call(fn,args);
-    return Value::integer(0);
-    }
-
-  const bool deadQuery=name=="NPC_ISDEAD";
-  const bool query=fn.has_return() && fn.rtype()==daedalus::DaedalusDataType::INT &&
-                   (deadQuery || name=="NPC_KNOWSINFO" || name=="NPC_HASITEMS" ||
-                    name=="NPC_ISINSTATE" || name=="NPC_WASINSTATE" || name=="NPC_ISINROUTINE");
-  const bool effect=effects && (name=="NPC_SETREFUSETALK" || name=="NPC_SETATTITUDE") && !fn.has_return();
-  if((!query && !effect) || args.size()!=(deadQuery ? 1u : 2u) || args[0].type!=Value::Inst ||
-     (!deadQuery && args[1].type!=Value::Int))
-    return fallback.call(fn,args);
-
-  auto* record=dynamic_cast<daedalus::INpc*>(args[0].inst.get());
-  auto* npc=script.findNpc(static_cast<NpcRecord*>(record));
-  if(args[0].inst && !npc)
-    return fallback.call(fn,args);
-  if(deadQuery)
-    return Value::integer(npc==nullptr || script.isDead(*npc));
-  if(!npc)
-    return Value::integer(0);
-
-  const auto value=args[1].i;
-  if(name=="NPC_KNOWSINFO")
-    return Value::integer(script.doesNpcKnowInfo(npc->handle(),uint32_t(value)));
-  if(name=="NPC_HASITEMS")
-    return Value::integer(int32_t(npc->itemCount(uint32_t(value))));
-  if(name=="NPC_ISINSTATE")
-    return Value::integer(npc->isInState(uint32_t(value)));
-  if(name=="NPC_WASINSTATE")
-    return Value::integer(npc->wasInState(uint32_t(value)));
-  if(name=="NPC_ISINROUTINE")
-    return Value::integer(npc->isInRoutine(uint32_t(value)));
-  if(name=="NPC_SETREFUSETALK")
-    npc->setRefuseTalkSeconds(value);
-  else
-    npc->setAttitude(Attitude(value));
-  return Value::integer(0);
-  }
-
 GameScript::StockPrograms::StockPrograms(GameScript& script)
-  : script(script), vm(script.getVm()), engine(script,true), interpreter(vm,engine) {
-  interpreter.allowUnresolvedScriptCalls = false;
-  interpreter.resolveProgram = [this](const daedalus::DaedalusSymbol& fn) {
-    return &entry(fn.index()).program;
-    };
-  }
-
-const StockStoryPrograms::Catalog* GameScript::StockPrograms::preparedCatalog() {
-  if(!preparedChecked) {
-    const auto base = baseProgramIndex().dir.parent_path();
-    const auto section = StockStoryPrograms::section(base);
-    try {
+  : script(script), vm(script.getVm()) {
+  try {
+    if(script.nativeRoutineProgram) {
+      const auto base = baseProgramIndex().dir.parent_path();
+      const auto section = StockStoryPrograms::section(base);
       if(std::filesystem::exists(section)) {
         prepared = StockStoryPrograms::read(base);
+        bindCatalog(*prepared);
         if(auto* census = Resources::contentCensus())
           census->replaced("GOTHIC.DAT:story-programs","base/"+section.lexically_relative(base).generic_string());
         }
       }
-    catch(const std::runtime_error& error) {
-      throw BaseStore::Error(error.what());
+
+    // Director references include definitions that no stock quest happens to name.
+    using enum daedalus::DaedalusDataType;
+    for(const auto& [name,kind] : std::array{
+          std::pair{"C_NPC",SymbolKind::Npc}, std::pair{"C_ITEM",SymbolKind::Item},
+          std::pair{"C_INFO",SymbolKind::Info}})
+      vm.enumerate_instances_by_class_name(name,[&](auto& symbol) { bindSymbol(symbol,kind); });
+
+    for(const auto& symbol : vm.symbols()) {
+      const auto type = symbol.type();
+      if(symbol.is_member())
+        continue;
+      const bool callable = type==FUNCTION && (symbol.is_external() || vm.has_active_override(symbol));
+      const bool state = type==FUNCTION && symbol.is_const() && symbol.name().starts_with("ZS_");
+      const bool value = (type==INT || type==FLOAT || type==STRING) && !symbol.is_generated() &&
+                         symbol.name().find('.')==std::string::npos;
+      if(!callable && !state && !value)
+        continue;
+      auto& slot = *vm.find_symbol_by_index(symbol.index());
+      bindSymbol(slot, callable || state ? SymbolKind::Function :
+                       symbol.is_const() ? SymbolKind::Constant : SymbolKind::Variable);
+      if(callable)
+        calls.try_emplace(slot.name(),vm,slot);
       }
-    preparedChecked = true;
+
+    constexpr std::array classes = {"C_NPC","C_ITEM","C_INFO","C_FOCUS","C_MENU_ITEM"};
+    for(size_t i=0; i<classes.size(); ++i) {
+      const auto* cls = vm.find_symbol_by_name(classes[i]);
+      if(cls==nullptr)
+        continue;
+      for(auto* member : vm.find_class_members(*cls)) {
+        const std::string_view field = member->name();
+        members[i].emplace(field.substr(field.find('.')+1),member);
+        bindSymbol(*member,SymbolKind::Other);
+        }
+      }
+    for(auto* alias : {vm.global_self(), vm.global_other(), vm.global_victim(), vm.global_hero()})
+      if(alias!=nullptr)
+        bindSymbol(*alias,SymbolKind::Npc);
+    if(auto* alias = vm.global_item())
+      bindSymbol(*alias,SymbolKind::Item);
     }
+  catch(const std::runtime_error& error) {
+    throw BaseStore::Error(error.what());
+    }
+  }
+
+void GameScript::StockPrograms::bindSymbol(daedalus::DaedalusSymbol& symbol, SymbolKind kind) {
+  bindings.insert_or_assign(symbol.name(),Binding{&symbol,kind});
+  ids.try_emplace(symbol.index(),&symbol);
+  }
+
+void GameScript::StockPrograms::bindCatalog(const StockStoryPrograms::Catalog& catalog) {
+  using enum daedalus::DaedalusDataType;
+  for(const auto& [name,id] : catalog.symbols) {
+    auto* symbol = vm.find_symbol_by_index(id);
+    if(symbol==nullptr || symbol->name()!=name)
+      throw BaseStore::Error("prepared story identity differs from game records: "+name);
+    auto kind = SymbolKind::Other;
+    switch(symbol->type()) {
+      case FUNCTION:
+        kind = SymbolKind::Function;
+        break;
+      case FLOAT:
+      case INT:
+      case STRING:
+        kind = symbol->is_const() ? SymbolKind::Constant : SymbolKind::Variable;
+        break;
+      default:
+        break;
+      }
+    bindSymbol(*symbol,kind);
+    if(symbol->type()==FUNCTION && (symbol->is_external() || symbol->is_const()))
+      calls.try_emplace(name,vm,*symbol);
+    }
+
+  for(const auto& [id,record] : catalog.programs) {
+    const auto found = ids.find(id);
+    if(found==ids.end())
+      throw BaseStore::Error("prepared story program is missing its identity: "+record.name);
+    const auto& symbol = *found->second;
+    if(symbol.name()!=record.name || symbol.type()!=FUNCTION || symbol.is_external() ||
+       symbol.has_local_variables_enabled() ||
+       (symbol.has_return() ? uint32_t(symbol.rtype()) : 0u)!=record.returnType)
+      throw BaseStore::Error("prepared story function differs from game records: "+record.name);
+    const auto params = vm.find_parameters_for_function(&symbol);
+    if(!std::equal(params.begin(),params.end(),record.parameters.begin(),record.parameters.end(),
+                   [](const auto& actual, uint32_t expected) { return uint32_t(actual.type())==expected; }))
+      throw BaseStore::Error("prepared story function signature differs: "+record.name);
+    for(auto child : record.calls)
+      if(!catalog.programs.contains(child))
+        throw BaseStore::Error("prepared story function dependency is missing: "+record.name);
+    calls.try_emplace(record.name,vm,*found->second);
+    }
+  }
+
+auto GameScript::StockPrograms::binding(std::string_view name) const -> Binding {
+  if(const auto found = bindings.find(name); found!=bindings.end())
+    return found->second;
+  if(auto* own = script.own.binding(name))
+    return {own,own->type()==daedalus::DaedalusDataType::INSTANCE ? SymbolKind::Npc : SymbolKind::Variable};
+  if(std::any_of(name.begin(),name.end(),[](unsigned char c) { return std::islower(c)!=0; })) {
+    std::string upper(name);
+    for(auto& ch : upper)
+      ch = char(std::toupper(static_cast<unsigned char>(ch)));
+    return binding(upper);
+    }
+  return {};
+  }
+
+const StockStoryPrograms::Catalog* GameScript::StockPrograms::preparedCatalog() {
   return prepared ? &*prepared : nullptr;
   }
 
-const storygraph::Program* GameScript::StockPrograms::findPrepared(const daedalus::DaedalusSymbol& fn, bool requireDependencies) {
-  if(vm.find_symbol_by_index(fn.index())!=&fn)
+const StockStoryPrograms::Entry* GameScript::StockPrograms::program(uint32_t id) const {
+  if(!prepared)
     return nullptr;
-  const auto* catalog = preparedCatalog();
-  if(catalog==nullptr || !catalog->programs.contains(fn.index()))
+  const auto it = prepared->programs.find(id);
+  return it!=prepared->programs.end() ? &it->second : nullptr;
+  }
+
+std::optional<storygraph::NativeFunction> GameScript::StockPrograms::function(std::string_view name) const {
+  const auto [slot,kind] = binding(name);
+  if(slot==nullptr || kind!=SymbolKind::Function)
+    return std::nullopt;
+  const auto call = calls.find(slot->name());
+  if(call==calls.end())
+    return std::nullopt;
+  auto fn = call->second.signature();
+  const auto* prepared = program(slot->index());
+  // This stock helper has complete prepared logic; its compatibility override
+  // still peeks up routines and static locals in the original table.
+  if(call->second.active() && (prepared==nullptr || slot->name()!="B_STARTOTHERROUTINE"))
+    return fn;
+  if(prepared==nullptr)
+    return std::nullopt;
+  fn.program = &prepared->program;
+  return fn;
+  }
+
+auto GameScript::storyPrograms() -> StockPrograms& {
+  if(stockPrograms==nullptr)
+    stockPrograms = std::make_unique<StockPrograms>(*this);
+  return *stockPrograms;
+  }
+
+const storygraph::Program* GameScript::preparedStockProgram(uint32_t id) {
+  if(const auto* entry = storyPrograms().program(id))
+    return &entry->program;
+  return nullptr;
+  }
+
+const storygraph::Program* GameScript::preparedStockProgram(const daedalus::DaedalusSymbol& fn, bool requireDependencies) {
+  const auto* entry = storyPrograms().program(fn.index());
+  if(entry==nullptr || entry->name!=fn.name())
     return nullptr;
-  if(requireDependencies) {
-    std::unordered_set<uint32_t> checked;
-    if(!isSupported(fn,checked,true))
-      return nullptr;
-    }
-  return &entry(fn.index()).program;
+  if(requireDependencies && !checkStoryProgram(entry->program,entry->parameters.size()).empty())
+    return nullptr;
+  return &entry->program;
   }
 
-const GameScript::StockPrograms::Entry& GameScript::StockPrograms::entry(uint32_t id) {
-  if(const auto it = programs.find(id); it!=programs.end())
-    return it->second;
-  Entry entry;
-  if(const auto* catalog = preparedCatalog()) {
-    const auto found = catalog->programs.find(id);
-    if(found!=catalog->programs.end()) {
-      const auto& record = found->second;
-      const auto* symbol = vm.find_symbol_by_index(id);
-      if(symbol==nullptr || symbol->name()!=record.name || symbol->type()!=daedalus::DaedalusDataType::FUNCTION ||
-         symbol->is_external() || symbol->has_local_variables_enabled() ||
-         (symbol->has_return() ? uint32_t(symbol->rtype()) : 0u)!=record.returnType)
-        throw BaseStore::Error("prepared story function differs from game symbols: "+record.name);
-      const auto params = vm.find_parameters_for_function(symbol);
-      if(!std::equal(params.begin(),params.end(),record.parameters.begin(),record.parameters.end(),
-                     [](const auto& actual, uint32_t expected) { return uint32_t(actual.type())==expected; }))
-        throw BaseStore::Error("prepared story function signature differs: "+record.name);
-      for(auto id : record.calls) {
-        const auto* child = vm.find_symbol_by_index(id);
-        if(child==nullptr || !catalog->symbols.contains(child->name()) || catalog->symbols.at(child->name())!=id)
-          throw BaseStore::Error("prepared story function dependency differs: "+record.name);
-        entry.calls.insert(child->name());
-        }
-      entry.program = record.program;
-      return programs.emplace(id,std::move(entry)).first->second;
-      }
-    }
-
-  if(vm.has_legacy_dispatcher()) {
-    if(!code)
-      code = std::make_unique<storygraph::Bytecode>(vm);
-    entry.program = storygraph::liftProgram(vm,*code,id);
-    if(entry.program.error.empty())
-      entry.calls = code->summarize(id).calls;
-    }
-  else {
-    entry.program.error = "function is missing from the prepared stock catalog";
-    }
-  return programs.emplace(id,std::move(entry)).first->second;
+std::string_view GameScript::storyProgramName(uint32_t id) {
+  const auto& programs = storyPrograms();
+  if(const auto* program = programs.program(id))
+    return program->name;
+  const auto found = programs.ids.find(id);
+  if(found!=programs.ids.end() && found->second->type()==daedalus::DaedalusDataType::FUNCTION)
+    return found->second->name();
+  return {};
   }
 
-bool GameScript::StockPrograms::isSupported(const daedalus::DaedalusSymbol& fn, std::unordered_set<uint32_t>& checked,
-                                            bool preparedOnly) {
-  if(!checked.insert(fn.index()).second)
-    return true;
-  if(preparedOnly) {
-    const auto* catalog = preparedCatalog();
-    if(catalog==nullptr || !catalog->programs.contains(fn.index()))
-      return false;
-    }
-  const auto& program = entry(fn.index());
-  if(!program.program.error.empty())
+std::string_view GameScript::storySymbolName(uint32_t id) {
+  const auto& programs = storyPrograms();
+  if(const auto found = programs.ids.find(id); found!=programs.ids.end())
+    return found->second->name();
+  if(const auto* entry = own.find(id))
+    return entry->name;
+  return {};
+  }
+
+std::optional<int32_t> GameScript::storySymbolIndex(std::string_view name) {
+  if(const auto [slot,kind] = storyPrograms().binding(name); slot!=nullptr)
+    return int32_t(slot->index());
+  return std::nullopt;
+  }
+
+std::optional<GameScript::SymbolKind> GameScript::storySymbolKind(std::string_view name) {
+  if(const auto [slot,kind] = storyPrograms().binding(name); slot!=nullptr)
+    return kind;
+  return std::nullopt;
+  }
+
+daedalus::DaedalusSymbol* GameScript::storySlot(std::string_view name, SymbolKind* kind) const {
+  if(!stockPrograms)
+    return nullptr;
+  const auto [symbol, symbolKind] = stockPrograms->binding(name);
+  if(kind!=nullptr)
+    *kind = symbolKind;
+  return symbol;
+  }
+
+std::optional<uint32_t> GameScript::storyScriptFunctionId(std::string_view name) {
+  const auto [slot,kind] = storyPrograms().binding(name);
+  if(kind==SymbolKind::Function && slot->is_const() && !slot->is_external())
+    return slot->index();
+  return std::nullopt;
+  }
+
+bool GameScript::storySlotWritable(std::string_view name) {
+  using enum daedalus::DaedalusDataType;
+  const auto [slot,kind] = storyPrograms().binding(name);
+  if(slot==nullptr || slot->is_const() || slot->is_external() || slot->is_member())
     return false;
-  for(const auto& name : program.calls) {
-    const auto* child = vm.find_symbol_by_name(name);
-    if(child==nullptr)
-      return false;
-    if(vm.has_active_override(*child))
-      continue;
-    if(child->has_local_variables_enabled() || !isSupported(*child,checked,preparedOnly))
-      return false;
-    }
-  return true;
+  const auto type = slot->type();
+  return type==INT || type==FLOAT || type==STRING || type==FUNCTION || type==INSTANCE;
   }
 
-bool GameScript::StockPrograms::run(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly) {
-  if(fn.type()!=daedalus::DaedalusDataType::FUNCTION || fn.is_external() || fn.has_local_variables_enabled() ||
-     !vm.find_parameters_for_function(&fn).empty())
-    return false;
-  if(runPrepared(fn,result,failed))
-    return true;
-  // Preflight every nested function before the first effect. The interpreter also
-  // rejects an unresolved call if an active override changes during execution.
-  std::unordered_set<uint32_t> checked;
-  if(!isSupported(fn,checked,preparedOnly))
-    return false;
-  auto run = interpreter.run(entry(fn.index()).program);
-  if(failed!=nullptr)
-    *failed = !run.ok;
-  if(!run.ok)
-    Tempest::Log::e("[story] program ",fn.name(),": ",run.error);
-  result = run.returned.type==storygraph::Value::Int ? run.returned.i : 0;
-  return true;
+Npc* GameScript::directorNpc(std::string_view name) {
+  const auto [slot,kind] = storyPrograms().binding(name);
+  if(slot==nullptr || slot->type()!=daedalus::DaedalusDataType::INSTANCE)
+    return nullptr;
+  return findNpc(dynamic_cast<daedalus::INpc*>(slot->get_instance().get()));
   }
 
-std::optional<int32_t> GameScript::StockPrograms::runPreparedInt(const storygraph::Program& program,
-                                                                const std::vector<storygraph::Value>& args, std::string& error) {
-  auto run = interpreter.run(program,args);
-  if(!run.ok) {
-    error = std::move(run.error);
-    return std::nullopt;
-    }
-  if(run.returned.type!=storygraph::Value::Int) {
-    error = "prepared program returned a non-integer value";
-    return std::nullopt;
-    }
-  return run.returned.i;
+std::optional<storygraph::NativeFunction> GameScript::storyFunction(std::string_view name) {
+  return storyPrograms().function(name);
+  }
+
+bool GameScript::invokeStockProgram(uint32_t id, int32_t& result, bool* failed) {
+  if(!nativeRoutineProgram)
+    return false;
+  const auto* enabled = std::getenv("GOTHIC_AI_STORYEXEC");
+  if(vm.has_legacy_dispatcher() && enabled!=nullptr && std::string_view(enabled)=="0")
+    return false;
+  return storyPrograms().run(id,result,failed,false);
   }
 
 bool GameScript::invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly) {
@@ -214,45 +270,30 @@ bool GameScript::invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t&
   const auto* enabled = std::getenv("GOTHIC_AI_STORYEXEC");
   if(vm.has_legacy_dispatcher() && enabled!=nullptr && std::string_view(enabled)=="0")
     return false;
-  if(stockPrograms==nullptr)
-    stockPrograms = std::make_unique<StockPrograms>(*this);
-  return stockPrograms->run(fn,result,failed,preparedOnly);
+  return storyPrograms().run(fn.index(),result,failed,preparedOnly);
   }
 
-std::optional<int32_t> GameScript::invokePreparedStockInt(const daedalus::DaedalusSymbol& fn,
-                                                        const std::vector<storygraph::Value>& args, std::string& error) {
-  if(!fn.has_return() || fn.rtype()!=daedalus::DaedalusDataType::INT ||
-     vm.find_parameters_for_function(&fn).size()!=args.size()) {
-    error = "unexpected prepared program signature";
-    return std::nullopt;
-    }
-  const auto* program = preparedStockProgram(fn,true);
-  if(program==nullptr) {
-    error = "function or its dependencies are missing from the prepared stock catalog";
-    return std::nullopt;
-    }
-  return stockPrograms->runPreparedInt(*program,args,error);
-  }
-
-const storygraph::Program* GameScript::preparedStockProgram(const daedalus::DaedalusSymbol& fn, bool requireDependencies) {
-  if(!nativeRoutineProgram)
-    return nullptr;
-  if(!stockPrograms)
-    stockPrograms = std::make_unique<StockPrograms>(*this);
-  return stockPrograms->findPrepared(fn,requireDependencies);
-  }
-
-int32_t GameScript::dialogFunction(daedalus::DaedalusSymbol* fn, bool returns) {
+int32_t GameScript::dialogFunction(uint32_t id, bool returns) {
+  if(id==0)
+    return 0;
+  auto& gothic = Gothic::inst();
+  auto& overlay = gothic.dialogScriptFn;
   int32_t result = 0;
-  if(fn!=nullptr) {
-    auto& overlay = Gothic::inst().dialogScriptFn;
-    if(overlay && overlay(*fn,result))
-      return result;
-    if(invokeStockProgram(*fn,result))
-      return result;
+  if(overlay && overlay(id,result))
+    return result;
+  bool failed = false;
+  const bool ran = invokeStockProgram(id,result,&failed);
+  if(gothic.dialogStockResultFn)
+    gothic.dialogStockResultFn(ran,failed);
+  if(ran)
+    return result;
+  if(!vm.has_legacy_dispatcher()) {
+    Tempest::Log::e("[story] no native dialog program for ",id);
+    return 0;
     }
+  auto* symbol = vm.find_symbol_by_index(id);
   if(returns)
-    return vm.call_function<int32_t>(fn);
-  vm.call_function(fn);
+    return vm.call_function<int32_t>(symbol);
+  vm.call_function(symbol);
   return 0;
   }

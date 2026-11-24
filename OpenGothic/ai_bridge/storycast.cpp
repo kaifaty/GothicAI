@@ -96,8 +96,8 @@ std::string read(World& world, const rapidjson::Value& msg, Description& d) {
         return "look: no armor " + armor;
       armorId = int32_t(*id);
       }
-    if(!script.hasSymbolName("B_SETNPCVISUAL"))
-      return "look: the scripts have no B_SETNPCVISUAL";
+    if(!script.hasDirectorNpcVisual())
+      return "look: no prepared visual helper";
     d.look = GameScript::DirectorNpcLook{std::move(head),*genderId,*faceId,*skinId,armorId};
     }
 
@@ -118,12 +118,12 @@ std::string read(World& world, const rapidjson::Value& msg, Description& d) {
     for(auto& x : it->value.GetArray()) {
       Entry      e;
       const auto state = upper(JsonRead::str(x,"state"));
-      const auto fn    = script.findFunction(state);
       if(!clock(JsonRead::str(x,"start"),e.start) || !clock(JsonRead::str(x,"end"),e.end))
         return "routine: times are HH:MM";
-      if(!fn.isValid() || !state.starts_with("ZS_"))
+      const auto fn = script.storyScriptFunctionId(state);
+      if(!state.starts_with("ZS_") || !fn)
         return "routine: no state " + state;
-      e.state    = uint32_t(fn.ptr);
+      e.state    = *fn;
       e.waypoint = std::string(JsonRead::str(x,"waypoint"));
       if(world.findPoint(e.waypoint,false)==nullptr)
         return "routine: no waypoint " + e.waypoint;

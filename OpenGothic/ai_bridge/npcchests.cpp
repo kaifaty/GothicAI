@@ -30,12 +30,8 @@ std::string upper(std::string_view s) {
   return out;
   }
 
-std::string symbolOf(World& world, size_t cls) {
-  return std::string(world.script().symbolName(cls));
-  }
-
 std::string npcSymbol(World& world, const Npc& npc) {
-  return upper(symbolOf(world,npc.instanceSymbol()));
+  return std::string(world.script().storyNpcName(npc.instanceSymbol()));
   }
 
 float dist(const Tempest::Vec3& a, const Tempest::Vec3& b) {
@@ -46,8 +42,8 @@ float dist(const Tempest::Vec3& a, const Tempest::Vec3& b) {
 bool hasKey(World& world, Npc& npc, Interactive& chest) {
   if(chest.keyName().empty())
     return false;
-  const size_t key = world.script().findSymbolIndex(upper(chest.keyName()));
-  return key!=size_t(-1) && npc.inventory().itemCount(key)>0;
+  const auto key = world.script().findItemInstance(chest.keyName());
+  return key && npc.inventory().itemCount(*key)>0;
   }
 
 // what the world's data put in the chest at the start: "ItMi_Gold:29, ItRw_Arrow:15"
@@ -70,10 +66,10 @@ void writeStart(World& world, Interactive& chest, rapidjson::Writer<rapidjson::S
     if(count<=0)
       continue;
     auto& script = world.script();
-    const auto id = script.findSymbolIndex(inst);
-    if(id==size_t(-1))
+    const auto id = script.findItemInstance(inst);
+    if(!id)
       continue;
-    const auto name = TextCodec::toUtf8(script.itemNameForQuery(id).value_or(""));
+    const auto name = TextCodec::toUtf8(script.itemNameForQuery(*id).value_or(""));
     w.StartObject();
     w.Key("item");  w.String(inst.data(),rapidjson::SizeType(inst.size()));
     w.Key("name");  w.String(name.data(),rapidjson::SizeType(name.size()));
@@ -86,7 +82,7 @@ void writeStart(World& world, Interactive& chest, rapidjson::Writer<rapidjson::S
 void writeItems(World& world, Interactive& chest, rapidjson::Writer<rapidjson::StringBuffer>& w) {
   w.StartArray();
   for(auto it = chest.inventory().iterator(Inventory::T_Ransack); it.isValid(); ++it) {
-    const auto sym  = symbolOf(world,it->clsId());
+    const auto sym  = world.script().storyItemName(uint32_t(it->clsId()));
     const auto name = TextCodec::toUtf8(it->displayName());
     w.StartObject();
     w.Key("item");  w.String(sym.data(),rapidjson::SizeType(sym.size()));

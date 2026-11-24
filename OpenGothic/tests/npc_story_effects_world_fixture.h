@@ -61,7 +61,7 @@ void assessTalkEntry(World& world,Npc& npc,Npc& player) {
         refusalBytecode+=vm.pc()==refusal;
         });
       if(site.nested) {
-        StoryRuntime::Bind context(vm,&npc,&player);
+        StockOracleActors context(vm,&npc,&player);
         vm.unsafe_call_bl(callback);
         } else {
         require(npc.perceptionProcess(player,nullptr,0,PERC_ASSESSTALK),
@@ -122,7 +122,7 @@ void nestedStockDialogue(World& world, Npc& npc, Npc& player) {
   const auto* configured=std::getenv("GOTHIC_AI_STORYEXEC");
   Restore restore{gothic.dialogScriptFn,std::exchange(gothic.dialogScriptFn,{}),
                   configured ? std::optional<std::string>(configured) : std::nullopt};
-  StoryRuntime::Bind context(vm,&npc,&player);
+  StockOracleActors context(vm,&npc,&player);
   size_t entries=0,instructions=0;
   vm.observe_instructions([&](const auto&) { ++instructions; entries+=vm.pc()==helper->address(); });
 
@@ -135,8 +135,8 @@ void nestedStockDialogue(World& world, Npc& npc, Npc& player) {
   const auto stock=NpcDefinitionContract::dialogCondition(script,condition);
   require(stock==original && instructions==0,"the game session must resolve nested stock dialogue without a bridge");
 
-  gothic.dialogScriptFn=[&](const auto& fn,int32_t& result) {
-    if(&fn!=condition)
+  gothic.dialogScriptFn=[&](uint32_t fn,int32_t& result) {
+    if(fn!=condition->index())
       return false;
     result=original+11;
     return true;
@@ -281,7 +281,7 @@ auto storyJournalBeforeSave(GameScript& script, bool nativeOnly) {
     size_t journalCalls=0;
     vm.observe_externals([&](const auto& fn) { journalCalls+=fn.name().starts_with("LOG_"); });
     StoryRuntime story(nullptr);
-    const auto result=story.interpreter(vm).run(program);
+    const auto result=story.run(program,nullptr,nullptr);
     vm.observe_externals({});
     require(result.ok,result.error.c_str());
     require(journalCalls==0,"live StoryGraph journal effects must bypass VM externals");
@@ -340,15 +340,21 @@ auto storyBeforeSave(World& world, bool nativeOnly) {
   const auto savedQueue=NpcDefinitionContract::queue(*giver);
   const auto savedItem=vm.global_item()->get_instance();
   StoryRuntime story(nullptr);
-  StoryRuntime::Bind dialogContext(vm,giver,player);
+  StockOracleActors dialogContext(vm,giver,player);
 
   storygraph::Program handIn;
   handIn.returns=true;
   auto& ret=handIn.steps.emplace_back();
   ret.kind=storygraph::Step::Return;
   ret.value=fn("B_GIVEINVITEMS",{inst("OTHER"),inst("SELF"),sym(itemName),param(0)});
-  auto& interpreter=story.interpreter(vm);
+  GameStoryExternals engine(script,true);
+  storygraph::Interpreter interpreter(vm,engine);
   const auto give=[&](int32_t count) {
+    if(nativeOnly) {
+      const auto result=story.run(handIn,giver,player,false,{storygraph::NativeValue::integer(count)});
+      require(result.ok,result.error.c_str());
+      return result.returned.i;
+      }
     const auto result=interpreter.run(handIn,{storygraph::Value::integer(count)});
     require(result.ok,result.error.c_str());
     return result.returned.i;
@@ -399,7 +405,7 @@ auto storyBeforeSave(World& world, bool nativeOnly) {
       countDialog=true;
       int32_t result=0;
       bool failed=true;
-      const bool handled=script.invokeStockProgram(*dialog,result,&failed);
+      const bool handled=script.invokeStockProgram(dialog->index(),result,&failed);
       countDialog=false;
       require(handled && !failed && NpcDefinitionContract::hasPreparedStockProgram(script,*dialog) && opcodes==0,
               "the exact stock Lares dialog must execute from the prepared catalog without VM instructions");
@@ -699,8 +705,8 @@ void bennetOreContract(const std::filesystem::path& caseDir) {
       bennet->getItem(ore)->handle().value=219;
       }
 
-    gothic.dialogScriptFn=[](auto& fn,int32_t& result) {
-      if(fn.index()!=conditionFn)
+    gothic.dialogScriptFn=[](uint32_t fn,int32_t& result) {
+      if(fn!=conditionFn)
         return false;
       result=0;
       return true;
@@ -798,8 +804,8 @@ void bennetOreContract(const std::filesystem::path& caseDir) {
       const auto training=offer(*hero,*bennet,startFn);
       require(bool(training),"the ore smithing topic must remain available after successful delivery");
       bool overridden=false;
-      gothic.dialogScriptFn=[&](auto& fn,int32_t&) {
-        overridden=fn.index()==startFn;
+      gothic.dialogScriptFn=[&](uint32_t fn,int32_t&) {
+        overridden=fn==startFn;
         return overridden;
         };
       reloaded.exec(*training,*hero,*bennet);
@@ -815,4 +821,201 @@ void bennetOreContract(const std::filesystem::path& caseDir) {
     }
   gothic.clearGame().reset();
 #endif
+  }
+
+void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
+#if !defined(GOTHIC_BENNET_LOOKUP_AUDIT)
+  (void)caseDir;
+  require(false,"native StoryGraph contract requires the full-symbol lookup guard");
+#else
+  using Contract = NpcDefinitionContract;
+  constexpr auto stock = "DIA_ADDON_CAVALORN_LETSKILLBANDITS";
+  constexpr auto actorName = "BAU_4300_ADDON_CAVALORN";
+  constexpr auto directorVar = "DIR_NATIVE_STORY_RESULT";
+  constexpr auto directorNpc = "DIR_NATIVE_STORY_ACTOR";
+  constexpr auto authored = "DIR_NATIVE_STORY";
+  constexpr auto continuation = "DIR_NATIVE_STORY_CONTINUE";
+  constexpr auto topic = "Native StoryGraph contract";
+  require(caseDir.is_absolute(),"native StoryGraph contract case directory must be absolute");
+  const auto* game=std::getenv("GOTHIC_DIR");
+  require(game && *game,"GOTHIC_DIR must point to prepared Gothic II settings");
+  setenv("GOTHIC_AI","0",1);
+  const char* args[]={"gothic-placed-items-contract","-g",game};
+  CommandLine commandLine(3,args);
+  Resources resources;
+  Gothic gothic;
+  gothic.isNpcInDialogFn=[](const Npc*) { return false; };
+  gothic.setupGlobalScripts();
+  GameMusic music;
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  const auto journalBefore = gothic.world()->script().questLog().questCount();
+  const auto stockId = gothic.world()->script().findSymbolIndex(stock);
+  std::optional<uint32_t> directorNpcId;
+  {
+    auto& world=*gothic.world();
+    auto& script=world.script();
+    auto& vm=script.getVm();
+    auto* hero=world.player();
+    auto* actor=activityNpc(world,actorName);
+    require(hero && actor && script.usesVerifiedNpcProgram() && vm.size()==0 && stockId!=size_t(-1),
+            "native StoryGraph contract needs stock Cavalorn and no bytecode");
+    Contract::checkBennetLookupProbe(script);
+
+    constexpr std::array names={"BDT_1013_BANDIT_L","BDT_1014_BANDIT_L","BDT_1015_BANDIT_L"};
+    constexpr std::array aliases={"AMBUSHER_1013","AMBUSHER_1014","AMBUSHER_1015"};
+    std::array<Npc*,names.size()> bandits={};
+    std::array<daedalus::DaedalusSymbol*,aliases.size()> aliasSlots={};
+    for(size_t i=0;i<bandits.size();++i) {
+      bandits[i]=activityNpc(world,names[i]);
+      if(bandits[i]==nullptr)
+        bandits[i]=world.addNpc(script.findSymbolIndex(names[i]),actor->position());
+      aliasSlots[i]=vm.find_symbol_by_name(aliases[i]);
+      require(bandits[i] && aliasSlots[i] && !bandits[i]->isDead(),"the ambush fixture needs three live actors");
+      aliasSlots[i]->set_instance(nullptr);
+      bandits[i]->handle().aivar[61]=1;
+      }
+    require(script.setGlobalIntSymbol("MIS_ADDON_CAVALORN_KILLBRAGO",1) &&
+            script.setGlobalIntSymbol("MIS_ADDON_CAVALORN_LETTER2VATRAS",0) &&
+            script.setGlobalIntSymbol("MIS_ADDON_NEFARIUS_BRINGMISSINGORNAMENTS",0) &&
+            script.setGlobalIntSymbol("BDT_1013_AWAY",0) &&
+            script.setGlobalIntSymbol("CAVALORN_ADDON_TEACHPLAYER",1),"Cavalorn contract needs the stock quest flags");
+    hero->handle().aivar[86]=35; // REAL_TALENT_BOW, the two-point price tier.
+    const auto teachFn=script.findSymbolIndex("DIA_ADDON_CAVALORN_TEACH_INFO");
+    const auto bowFn=script.findSymbolIndex("DIA_ADDON_CAVALORN_TEACH_BOW_1");
+    Contract::queue(*hero).clear();
+    Contract::queue(*actor).clear();
+
+    std::vector<std::string> chosen;
+    StoryRuntime runtime(nullptr);
+    DialogGraph graph([](std::string&&) {},nullptr,runtime);
+    graph.chosen=[&](Npc& speaker,const std::string& node) {
+      require(&speaker==actor,"the StoryGraph event must name Cavalorn");
+      chosen.push_back(node);
+      };
+    const auto apply=[&](const char* operation) {
+      rapidjson::Document json;
+      require(!json.Parse(operation).HasParseError(),"invalid StoryGraph contract patch");
+      const auto error=graph.applyOp(json);
+      require(error.empty(),error.c_str());
+      };
+    const auto offered=[&](std::string_view name) {
+      const auto nodes=graph.offered(world,*actor);
+      return std::ranges::find(nodes,name)!=nodes.end();
+      };
+    const auto choose=[&](std::string_view name) {
+      std::string error;
+      require(graph.choose(world,*actor,name,error),error.c_str());
+      };
+
+    const auto reads=BennetLookupAudit::lookups;
+    size_t instructions=0;
+    const auto observer=vm.add_instruction_observer([&](const auto&,const auto&) { ++instructions; });
+    {
+      struct Guard {
+        Guard() { ++BennetLookupAudit::depth; }
+        ~Guard() { --BennetLookupAudit::depth; }
+        } guard;
+      std::string symbolError;
+      directorNpcId=script.addDirectorNpcSymbol(directorNpc,actorName,symbolError);
+      require(directorNpcId.has_value(),symbolError.c_str());
+      require(script.storyNpcId(directorNpc)==directorNpcId,"native story lookup must resolve the new director NPC id");
+      require(!offered(stock),"Cavalorn must hide the topic when the ambush actors are absent");
+      for(size_t i=0;i<bandits.size();++i)
+        aliasSlots[i]->set_instance(std::static_pointer_cast<daedalus::INpc>(bandits[i]->handlePtr()));
+      require(offered(stock),"Cavalorn must offer the stock topic after its nested ambush check");
+      apply(R"({"op":"program","node":"DIA_ADDON_CAVALORN_LETSKILLBANDITS","part":"condition",
+                "steps":[{"do":"return","value":["int",0]}]})");
+      require(!offered(stock),"the director's condition must replace the stock condition");
+      apply(R"({"op":"program","node":"DIA_ADDON_CAVALORN_LETSKILLBANDITS","part":"condition","steps":null})");
+      choose(stock);
+      const auto* waypoint=actor->currentTaPoint();
+      require(script.doesNpcKnowInfo(hero->handle(),stockId) &&
+              std::ranges::all_of(bandits,[](Npc* bandit) { return bandit->handle().aivar[61]==0; }) &&
+              hero->aiQueueFront() && hero->aiQueueFront()->s0=="DIA_Addon_Cavalorn_LETSKILLBANDITS_15_00" &&
+              waypoint && waypoint->name=="NW_XARDAS_BANDITS_LEFT",
+              "Cavalorn must mark the topic heard, update the ambush, queue the stock line and change routine");
+
+      apply(R"({"op":"vars","vars":{"DIR_NATIVE_STORY_RESULT":0}})");
+      apply(R"({"op":"add_node","node":{"id":"DIR_NATIVE_STORY","npc":"BAU_4300_ADDON_CAVALORN",
+        "description":"Discuss the ambush","condition":["!",["fn","C_BRAGOBANDITSDEAD"]],"program":[
+        {"do":"set","target":["var","DIR_NATIVE_STORY_RESULT"],"value":["int",10]},
+        {"do":"choice","id":"DIR_NATIVE_STORY_CONTINUE","text":"Record the ambush","steps":[
+          {"do":"set","target":["var","DIR_NATIVE_STORY_RESULT"],"value":["int",42]},
+          {"do":"call","call":["call","LOG_CREATETOPIC",["str","Native StoryGraph contract"],["int",0]]},
+          {"do":"call","call":["call","LOG_ADDENTRY",["str","Native StoryGraph contract"],["str","Ambush recorded"]]}
+        ]}]}})");
+      require(offered(authored),"the director's new topic must use the same stock helper");
+      choose(authored);
+      const auto choices=graph.choices(world,*actor,authored);
+      require(choices==std::vector<std::pair<std::string,std::string>>{{continuation,"Record the ambush"}},
+              "the authored program must expose its continuation in the normal menu");
+      choose(continuation);
+      require(chosen==std::vector<std::string>{stock,authored,continuation},"the director must see all three choices");
+
+      const auto menu=actor->dialogChoices(*hero,{},false);
+      const auto teach=std::ranges::find(menu,teachFn,&GameScript::DlgChoice::scriptFn);
+      require(teach!=menu.end(),"Cavalorn must offer the stock training dialogue");
+      script.exec(*teach,*hero,*actor);
+      const auto lessons=script.updateDialog(*teach,*hero,*actor);
+      const auto bow=std::ranges::find(lessons,bowFn,&GameScript::DlgChoice::scriptFn);
+      require(bow!=lessons.end() && bow->title.ends_with("2 LP"),
+              "Cavalorn's bow lesson must display the learner's two-point price");
+
+      rapidjson::Document invalid;
+      invalid.Parse(R"([{"do":"set","target":["var","DIR_NATIVE_STORY_RESULT"],"value":["int",99]},
+                         {"do":"call","call":["fn","MISSING_STORY_CONTRACT_HELPER"]}])");
+      const auto rejected=runtime.run(storygraph::readProgram(invalid,false),actor,hero);
+      require(!rejected.ok && !rejected.started,"an unresolved dependency must be rejected before executing the first effect");
+    }
+    vm.remove_instruction_observer(observer);
+    require(BennetLookupAudit::lookups==reads && instructions==0,"normal StoryGraph and bridge paths must avoid full table reads and bytecode");
+  }
+
+  std::filesystem::create_directories(caseDir);
+  const auto savePath=caseDir/"native-storygraph.sav";
+  std::vector<uint8_t> bytes;
+  {
+    Tempest::MemWriter writer(bytes);
+    Serialize out(writer);
+    Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+    std::memset(preview.data(),0,4);
+    gothic.gameSession()->save(out,"Native StoryGraph contract",preview);
+  }
+  std::ofstream file(savePath,std::ios::binary|std::ios::trunc);
+  file.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
+  file.close();
+  require(bool(file),"could not write the native StoryGraph save");
+  gothic.clearGame().reset();
+  std::ifstream saved(savePath,std::ios::binary);
+  require(bool(saved),"could not reopen the native StoryGraph save");
+  const std::string savedBytes{std::istreambuf_iterator<char>{saved},std::istreambuf_iterator<char>{}};
+  Tempest::MemReader reader(savedBytes.data(),savedBytes.size());
+  Serialize in(reader);
+  gothic.setGame(std::make_unique<GameSession>(in));
+  auto& script=gothic.world()->script();
+  const auto& journal=script.questLog();
+  const auto* directorEntry=script.ownSymbols().find(directorNpc);
+  require(directorEntry && directorEntry->like==actorName && script.storyNpcId(directorNpc)==directorNpcId,
+          "ordinary reload must restore the director NPC definition and its id");
+  require(script.globalIntSymbol(directorVar)==42 && script.doesNpcKnowInfo(gothic.world()->player()->handle(),stockId) &&
+          journal.questCount()==journalBefore+1 && journal.quest(journalBefore).name==topic &&
+          journal.quest(journalBefore).entry==std::vector<std::string>{"Ambush recorded"},
+          "ordinary reload must restore the stock dialogue and the authored variable and journal effects");
+  gothic.clearGame().reset();
+#endif
+  }
+
+bool runStoryContract(int argc, const char** argv) {
+  if(argc==3 && std::string_view(argv[1])=="--bennet-ore") {
+    bennetOreContract(argv[2]);
+    std::puts("Bennet ore contract passed");
+    return true;
+    }
+  if(argc==3 && std::string_view(argv[1])=="--native-storygraph") {
+    nativeStoryGraphContract(argv[2]);
+    std::puts("Native StoryGraph contract passed");
+    return true;
+    }
+  require(argc==1,"usage: gothic-placed-items-contract [--bennet-ore CASE_DIR | --native-storygraph CASE_DIR]");
+  return false;
   }

@@ -226,8 +226,9 @@ class Gothic final : public GameServices, public GameHost {
     // a dialog or a choice was chosen and has run
     Tempest::Signal<void(const GameScript::DlgChoice&,Npc&,Npc&)>       onDialogChosen;
     // a dialog's script function (its condition, its information or a choice) is about to run, self and other
-    // set: true if the story graph ran it in place of the VM, a condition's answer in `result`
-    std::function<bool(daedalus::DaedalusSymbol&,int32_t&)>               dialogScriptFn;
+    // set: true if the director handled the function, a condition's answer in result
+    std::function<bool(uint32_t,int32_t&)>                              dialogScriptFn;
+    std::function<void(bool ran,bool failed)>                           dialogStockResultFn;
 
     std::string_view                      messageFromSvm(std::string_view id, int voice) const;
     std::string_view                      messageByName (std::string_view id) const;

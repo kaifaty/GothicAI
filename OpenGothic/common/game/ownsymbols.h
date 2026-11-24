@@ -34,10 +34,13 @@ class OwnSymbols final {
     daedalus::DaedalusSymbol* addInt(daedalus::DaedalusVm& vm, std::string_view name, std::string& why);
     // an npc instance made like the script's npc `like`, to be put in the world by its index; nullptr and why not
     daedalus::DaedalusSymbol* addNpc(daedalus::DaedalusVm& vm, std::string_view name, std::string_view like, std::string& why);
+    daedalus::DaedalusSymbol* addNpc(daedalus::DaedalusVm& vm, std::string_view name, const daedalus::DaedalusSymbol& prototype,
+                                    std::string& why);
 
     const std::vector<Entry>& entries() const { return list; }
     const Entry*              find(std::string_view name) const;
     const Entry*              find(uint32_t index) const;
+    daedalus::DaedalusSymbol* binding(std::string_view name) const;
     std::optional<int32_t>    intValue(std::string_view name) const;
     bool                      setInt(std::string_view name, int32_t value);
     // the script's instance an npc of ours is made like; nullptr for any other symbol
@@ -49,10 +52,11 @@ class OwnSymbols final {
     bool load(daedalus::DaedalusVm& vm, SaveArchive& fin);
 
   private:
-    std::string             whyNot(const daedalus::DaedalusVm& vm, const std::string& name) const;
-    daedalus::DaedalusSymbol* add(daedalus::DaedalusVm& vm, const Entry& e, std::string& why);
+    daedalus::DaedalusSymbol* add(daedalus::DaedalusVm& vm, const Entry& e, std::string& why,
+                                 const daedalus::DaedalusSymbol* prototype = nullptr);
 
     std::vector<Entry> list;
     // A symbol keeps a reference to its value across additions to this table.
     std::map<std::string,int32_t,std::less<>> integers;
+    std::map<std::string,daedalus::DaedalusSymbol*,std::less<>> bindings;
   };

@@ -14,6 +14,7 @@ struct Row {
   };
 struct Definitions {
   std::unordered_map<uint32_t,std::vector<Row>> routines;
+  std::map<std::string,uint32_t,std::less<>> names;
   };
 bool enabled();
 Definitions resolve(const RoutineDefinitions::Library& library, const daedalus::DaedalusScript& script);

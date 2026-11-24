@@ -5,10 +5,10 @@
 #include <algorithm>
 #include <cctype>
 
+#include "game/gamescript.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
-#include "exec.h"
 #include "exprjson.h"
 
 #include "jsonread.h"
@@ -19,7 +19,6 @@
 #include <rapidjson/writer.h>
 
 using namespace Tempest;
-using daedalus::DaedalusDataType;
 
 namespace {
 
@@ -36,13 +35,12 @@ std::string upper(std::string_view s) {
 std::string symbolOf(World& world, const Npc* npc) {
   if(npc==nullptr)
     return {};
-  auto sym = world.script().findSymbol(npc->instanceSymbol());
-  return sym!=nullptr ? sym->name() : std::string();
+  return std::string(world.script().storyNpcName(npc->instanceSymbol()));
   }
 
 Npc* bySymbol(World& world, const std::string& symbol) {
-  const size_t id = world.script().findSymbolIndex(symbol);
-  return id==size_t(-1) ? nullptr : world.findNpcByInstance(id);
+  const auto id = world.script().storyNpcId(symbol);
+  return id ? world.findNpcByInstance(*id) : nullptr;
   }
 
 const char* nameOf(int on) {
@@ -110,11 +108,11 @@ std::string StoryTriggers::apply(const rapidjson::Value& op) {
   // its count: a variable of the director's, made at 0; one a save brought back keeps its value
   if(auto err = rt.addVar(t.id,0); !err.empty())
     return "trigger " + t.id + ": " + err;
-  if(auto* v = rt.vm()) {
+  if(auto* sc = rt.script()) {
     // with a world, names are checked now; without, when it first runs
-    if(auto err = check(t,*v); !err.empty())
+    if(auto err = check(t,*sc); !err.empty())
       return "trigger " + t.id + ": " + err;
-    t.checkedFor = v;
+    t.checkedFor = sc;
     }
   if(at!=triggers.end())
     *at = std::move(t); else
@@ -122,26 +120,23 @@ std::string StoryTriggers::apply(const rapidjson::Value& op) {
   return {};
   }
 
-std::string StoryTriggers::check(const Trigger& t, daedalus::DaedalusVm& v) const {
-  if(!t.npc.empty()) {
-    auto* s = v.find_symbol_by_name(t.npc);
-    if(s==nullptr || s->type()!=DaedalusDataType::INSTANCE)
-      return "no npc " + t.npc;
-    }
+std::string StoryTriggers::check(const Trigger& t, GameScript& sc) const {
+  if(!t.npc.empty() && !sc.storyNpcId(t.npc))
+    return "no npc " + t.npc;
   if(t.when!=nullptr) {
     if(auto err = rt.checkExpr(t.when); !err.empty())
       return "when: " + err;
     }
   // outside a dialog: there is no menu for choices
-  if(auto err = rt.checkProgram(v,t.program,nullptr,false); !err.empty())
+  if(auto err = rt.checkProgram(t.program,0,false); !err.empty())
     return "steps: " + err;
   return {};
   }
 
-bool StoryTriggers::ready(Trigger& t, daedalus::DaedalusVm& v) {
-  if(t.checkedFor!=&v) {
-    t.checkedFor = &v;
-    t.broken     = check(t,v);
+bool StoryTriggers::ready(Trigger& t, GameScript& sc) {
+  if(t.checkedFor!=&sc) {
+    t.checkedFor = &sc;
+    t.broken     = check(t,sc);
     if(!t.broken.empty())
       Log::e("[story] trigger ",t.id,": ",t.broken);
     }
@@ -156,17 +151,17 @@ bool StoryTriggers::spent(const Trigger& t) {
   return !t.repeat && rt.intOf(t.id).value_or(1)!=0;
   }
 
-std::optional<bool> StoryTriggers::holds(const Trigger& t) {
+std::optional<bool> StoryTriggers::holds(const Trigger& t, std::pair<Npc*,Npc*>& actors) {
   if(t.when==nullptr)
     return true;
-  return rt.test(t.when,t.id);
+  return rt.test(t.when,t.id,actors.first,actors.second,&actors);
   }
 
 void StoryTriggers::tick(World& world) {
-  auto*          v   = rt.vm();
+  auto*          sc  = rt.script();
   Npc*           pl  = world.player();
   const uint64_t now = world.tickCount();
-  if(v==nullptr || pl==nullptr)
+  if(sc==nullptr || pl==nullptr)
     return;
   if(now>=nextDeaths || nextDeaths>now+DeathsMs) {
     nextDeaths = now+DeathsMs;
@@ -179,13 +174,13 @@ void StoryTriggers::tick(World& world) {
   nextState = now+StateMs;
   for(size_t i=0; i<triggers.size(); ++i) {
     auto& t = triggers[i];
-    if(t.on!=On::State || !inWorld(t,world) || !ready(t,*v) || spent(t))
+    if(t.on!=On::State || !inWorld(t,world) || !ready(t,*sc) || spent(t))
       continue;
     Npc* self = t.npc.empty() ? pl : bySymbol(world,t.npc);
     if(self==nullptr)
       continue;  // not in this world, or not yet
-    StoryRuntime::Bind bind(*v,self,pl);
-    const bool is = holds(t).value_or(false);
+    auto actors = std::pair{self,pl};
+    const bool is = holds(t,actors).value_or(false);
     if(t.repeat) {
       const bool came = t.was.has_value() && !*t.was && is;
       t.was = is;
@@ -195,50 +190,51 @@ void StoryTriggers::tick(World& world) {
     else if(!is) {
       continue;
       }
-    fire(world,t,self,pl);
+    fire(world,t,self,pl,actors);
     }
   }
 
 void StoryTriggers::onDeath(World& world, Npc& dead, Npc* killer) {
-  auto* v = rt.vm();
-  if(v==nullptr)
+  auto* sc = rt.script();
+  if(sc==nullptr)
     return;
   const auto who = symbolOf(world,&dead);
   for(size_t i=0; i<triggers.size(); ++i) {
     auto& t = triggers[i];
-    if(t.on!=On::Death || (!t.npc.empty() && t.npc!=who) || !inWorld(t,world) || !ready(t,*v) || spent(t))
+    if(t.on!=On::Death || (!t.npc.empty() && t.npc!=who) || !inWorld(t,world) || !ready(t,*sc) || spent(t))
       continue;
-    StoryRuntime::Bind bind(*v,&dead,killer);
-    if(holds(t).value_or(false))
-      fire(world,t,&dead,killer);
+    auto actors = std::pair{&dead,killer};
+    if(holds(t,actors).value_or(false))
+      fire(world,t,&dead,killer,actors);
     }
   }
 
 void StoryTriggers::onDialog(World& world, Npc& npc, const std::string& node) {
-  auto* v  = rt.vm();
+  auto* sc = rt.script();
   Npc*  pl = world.player();
-  if(v==nullptr || pl==nullptr)
+  if(sc==nullptr || pl==nullptr)
     return;
   const auto who = symbolOf(world,&npc);
   for(size_t i=0; i<triggers.size(); ++i) {
     auto& t = triggers[i];
     if(t.on!=On::Dialog || (!t.npc.empty() && t.npc!=who) || (!t.node.empty() && t.node!=node) ||
-       !inWorld(t,world) || !ready(t,*v) || spent(t))
+       !inWorld(t,world) || !ready(t,*sc) || spent(t))
       continue;
-    StoryRuntime::Bind bind(*v,&npc,pl);
-    if(holds(t).value_or(false))
-      fire(world,t,&npc,pl);
+    auto actors = std::pair{&npc,pl};
+    if(holds(t,actors).value_or(false))
+      fire(world,t,&npc,pl,actors);
     }
   }
 
-void StoryTriggers::fire(World& world, Trigger& t, Npc* self, Npc* other) {
-  auto* v = rt.vm();
-  if(v==nullptr)
+void StoryTriggers::fire(World& world, Trigger& t, Npc* self, Npc* other, const std::pair<Npc*,Npc*>& actors) {
+  auto* sc = rt.script();
+  if(sc==nullptr)
     return;
   // the count first: the program sees itself fired, and one that fails half way does not run again
   const int32_t count = rt.intOf(t.id).value_or(0)+1;
   rt.setInt(t.id,count);
-  auto r = rt.interpreter(*v).run(t.program);
+  // A query such as NPC_GETTARGET can replace OTHER for the trigger program.
+  auto r = rt.run(t.program,actors.first,actors.second);
   fired++;
   JsonWriter j("trigger_fired");
   j.str("id",t.id).integer("count",count).str("npc",symbolOf(world,self)).str("other",symbolOf(world,other));
@@ -253,7 +249,7 @@ void StoryTriggers::fire(World& world, Trigger& t, Npc* self, Npc* other) {
   }
 
 std::string StoryTriggers::list(World& world) {
-  auto* v  = rt.vm();
+  auto* sc = rt.script();
   Npc*  pl = world.player();
   rapidjson::StringBuffer                    buf;
   rapidjson::Writer<rapidjson::StringBuffer> w(buf);
@@ -272,9 +268,9 @@ std::string StoryTriggers::list(World& world) {
     w.Key("count");  w.Int(rt.intOf(t.id).value_or(0));
     w.Key("holds");
     Npc* self = t.npc.empty() ? pl : bySymbol(world,t.npc);
-    if(v!=nullptr && pl!=nullptr && self!=nullptr && t.on==On::State && ready(t,*v)) {
-      StoryRuntime::Bind bind(*v,self,pl);
-      auto is = holds(t);
+    if(sc!=nullptr && pl!=nullptr && self!=nullptr && t.on==On::State && ready(t,*sc)) {
+      auto actors = std::pair{self,pl};
+      auto is = holds(t,actors);
       if(is)
         w.Bool(*is); else
         w.Null();

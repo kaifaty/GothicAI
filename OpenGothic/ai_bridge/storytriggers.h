@@ -6,19 +6,17 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "deathscan.h"
 #include "expr.h"
 #include "program.h"
 
+class GameScript;
 class Npc;
 class StoryRuntime;
 class World;
-
-namespace daedalus {
-  class DaedalusVm;
-  }
 
 // The director's triggers (docs/director.md, stage 3): an event, a condition and a program, as a graph_patch
 // operation ("trigger"). The bridge counts them: it has the engine's events and runs the programs
@@ -66,20 +64,20 @@ class StoryTriggers final {
       storygraph::Program program;
       bool                repeat = false;
       std::optional<bool> was;      // repeat: the condition as last computed, none yet
-      daedalus::DaedalusVm* checkedFor = nullptr;
+      GameScript*         checkedFor = nullptr;
       std::string         broken;   // why it can't run in checkedFor
       };
 
-    // its names exist in this VM; logged once if not
-    bool        ready(Trigger& t, daedalus::DaedalusVm& v);
-    std::string check(const Trigger& t, daedalus::DaedalusVm& v) const;
+    // Validate names in the current game session, logging any error once.
+    bool        ready(Trigger& t, GameScript& script);
+    std::string check(const Trigger& t, GameScript& script) const;
     bool        inWorld(const Trigger& t, World& world) const;
     // a trigger that fires once and fired: it does not any more
     bool        spent(const Trigger& t);
     // with self and other bound: the condition (nullopt: not computed)
-    std::optional<bool> holds(const Trigger& t);
+    std::optional<bool> holds(const Trigger& t, std::pair<Npc*,Npc*>& actors);
     // with self and other bound: the count grows, the program runs, the server hears it
-    void        fire(World& world, Trigger& t, Npc* self, Npc* other);
+    void        fire(World& world, Trigger& t, Npc* self, Npc* other, const std::pair<Npc*,Npc*>& actors);
     void        onDeath(World& world, Npc& dead, Npc* killer);
 
     StoryRuntime&                      rt;

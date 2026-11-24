@@ -3,6 +3,7 @@
 #include <Tempest/Log>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 
@@ -55,16 +56,19 @@ int GameScript::npc_getdisttowp(std::shared_ptr<daedalus::INpc> npcRef, std::str
   }
 
 void GameScript::npc_exchangeroutine(std::shared_ptr<daedalus::INpc> npcRef, std::string_view rname) {
-  auto npc = findNpc(npcRef);
-  if(npc!=nullptr) {
-    auto& v = npc->handle();
-    string_frm name("Rtn_",rname,'_',v.id);
+  auto* npc = findNpc(npcRef);
+  if(npc==nullptr)
+    return;
 
-    auto* sym = vm.find_symbol_by_name(name);
-    size_t d = sym != nullptr ? sym->index() : 0;
-    if(d>0)
-      npc->excRoutine(d);
-    }
+  string_frm name("RTN_",rname,'_',npc->handle().id);
+  std::transform(name.begin(),name.end(),name.begin(),[](unsigned char ch) { return char(std::toupper(ch)); });
+  const auto found = routineDefinitions.names.find(std::string_view(name));
+  if(found==routineDefinitions.names.end())
+    return;
+
+  npc->clearRoutine();
+  for(const auto& row : routineDefinitions.routines.at(found->second))
+    ta_min(npcRef,row.startHour,row.startMinute,row.endHour,row.endMinute,int(row.state),row.waypoint);
   }
 
 bool GameScript::npc_isdead(std::shared_ptr<daedalus::INpc> npcRef) {
@@ -524,11 +528,8 @@ bool GameScript::npc_checkinfo(std::shared_ptr<daedalus::INpc> npcRef, int imp) 
     if(npcKnowsInfo && !info->permanent)
       continue;
     bool valid=false;
-    if(info->condition) {
-      auto* conditionSymbol = vm.find_symbol_by_index(uint32_t(info->condition));
-      if (conditionSymbol != nullptr)
-        valid = dialogFunction(conditionSymbol,true)!=0;
-      }
+    if(info->condition)
+      valid = dialogFunction(uint32_t(info->condition),true)!=0;
     if(Gothic::inst().dialogFilterFn)
       Gothic::inst().dialogFilterFn(*info,valid);
     if(valid) {

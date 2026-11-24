@@ -44,12 +44,12 @@ std::string upper(std::string_view s) {
   }
 
 std::string symbolOf(World& world, const Npc& npc) {
-  return std::string(world.script().symbolName(npc.instanceSymbol()));
+  return std::string(world.script().storyNpcName(npc.instanceSymbol()));
   }
 
 Npc* bySymbol(World& world, std::string_view symbol) {
-  const size_t id = world.script().findSymbolIndex(upper(symbol));
-  return id==size_t(-1) ? nullptr : world.findNpcByInstance(id);
+  const auto id = world.script().storyNpcId(symbol);
+  return id ? world.findNpcByInstance(*id) : nullptr;
   }
 
 float distance(const Npc& a, const Npc& b) {
@@ -99,10 +99,10 @@ int StoryWorld::spawn(World& world, const rapidjson::Value& msg, std::string& er
   const auto tag   = std::string(JsonRead::str(msg,"tag"));
   const auto near  = JsonRead::str(msg,"near");
   const auto count = std::clamp<int64_t>(JsonRead::integer(msg,"count",1),1,20);
-  const size_t id  = world.script().findSymbolIndex(inst);
+  const auto id    = world.script().storyNpcId(inst);
   Npc*       at    = near.empty() ? pl : bySymbol(world,near);
-  if(id==size_t(-1) || at==nullptr || pl==nullptr || tag.empty()) {
-    error = tag.empty() ? "no tag" : id==size_t(-1) ? "unknown instance " + inst : "unknown npc to spawn near";
+  if(!id || at==nullptr || pl==nullptr || tag.empty()) {
+    error = tag.empty() ? "no tag" : !id ? "unknown instance " + inst : "unknown npc to spawn near";
     return 0;
     }
   if(auto name = JsonRead::str(msg,"waypoint"); !name.empty()) {
@@ -113,7 +113,7 @@ int StoryWorld::spawn(World& world, const rapidjson::Value& msg, std::string& er
       }
     int made = 0;
     for(int64_t i=0; i<count; ++i)
-      if(Npc* n = world.addNpc(id,name)) {
+      if(Npc* n = world.addNpc(*id,name)) {
         tags[tag].push_back(n);
         made++;
         }
@@ -140,7 +140,7 @@ int StoryWorld::spawn(World& world, const rapidjson::Value& msg, std::string& er
     float side = float(i-count/2)*150.f;
     pos.x += dist*dx - side*dz;
     pos.z += dist*dz + side*dx;
-    if(Npc* n = world.addNpc(id,pos)) {
+    if(Npc* n = world.addNpc(*id,pos)) {
       tags[tag].push_back(n);
       made++;
       }
@@ -197,8 +197,8 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     if(e.kind=="chest_take")
       takes.push_back({e.chest,e.item,e.count});
     // v39: a mission item (ITEM_MISSION) never goes from one npc to another
-    const size_t id = e.kind=="give" && e.toNpc ? script.findSymbolIndex(e.item) : size_t(-1);
-    if(auto* it = id==size_t(-1) ? nullptr : const_cast<Inventory&>(npc->inventory()).getItem(id); it!=nullptr && it->isMission()) {
+    const auto id = e.kind=="give" && e.toNpc ? script.findItemInstance(e.item) : std::nullopt;
+    if(auto* it = id ? const_cast<Inventory&>(npc->inventory()).getItem(*id) : nullptr; it!=nullptr && it->isMission()) {
       error = "a mission item: " + e.item;
       return false;
       }
@@ -210,9 +210,11 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     auto* source = NpcChests::find(world,chest);
     if(source==nullptr)
       return std::nullopt;
-    const auto id = script.findSymbolIndex(item);
-    auto* stock = source->inventory().getItem(id);
-    return ChestTake::Stock{int64_t(source->inventory().itemCount(id)),stock!=nullptr && stock->isMission()};
+    const auto id = script.findItemInstance(item);
+    if(!id)
+      return std::nullopt;
+    auto* stock = source->inventory().getItem(*id);
+    return ChestTake::Stock{int64_t(source->inventory().itemCount(*id)),stock!=nullptr && stock->isMission()};
     });
   if(!error.empty())
     return false;
@@ -231,7 +233,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     state.externalControl = actor->isExternalControl();
     state.hp = actor->attribute(ATR_HITPOINTS);
     if(auto* weapon = actor->currentMeleeWeapon())
-      state.weapon = actor->world().script().symbolName(weapon->clsId());
+      state.weapon = actor->world().script().storyItemName(uint32_t(weapon->clsId()));
     return state;
     };
   // Mandatory even without check:true, before any other effect or controller release.
@@ -283,7 +285,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       else if(e.kind=="create")
         made[e.item] += e.count;
       else if(e.kind=="teach") {
-        const int32_t cost = e.learnCost(script,*pl,error);
+        const int32_t cost = e.learnCost(script,*npc,*pl,error);
         if(cost<0)
           return false;
         lp += cost;
@@ -291,8 +293,8 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       }
     for(auto& [k,count] : need) {
       Npc&         giver = k.first ? *pl : *npc;
-      const size_t id    = script.findSymbolIndex(k.second);
-      const auto   has   = int64_t(id==size_t(-1) ? 0 : giver.itemCount(id)) + (k.first ? 0 : made[k.second]);
+      const auto   id    = script.findItemInstance(k.second);
+      const auto   has   = int64_t(id ? giver.itemCount(*id) : 0) + (k.first ? 0 : made[k.second]);
       if(has<count) {
         error = "missing: " + std::string(k.first ? "hero " : "npc ") + k.second + " " + std::to_string(count) +
                 " (has " + std::to_string(has) + ")";
@@ -327,7 +329,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       outcome.dropped.clear();
       if(auto* weapon = npc->currentMeleeWeapon()) {
         const auto id = weapon->clsId();
-        outcome.dropped = script.symbolName(id);
+        outcome.dropped = script.storyItemName(uint32_t(id));
         Matrix4x4 at;
         at.identity();
         at.translate(npc->position());
@@ -447,7 +449,7 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
   w.Key("symbols");
   w.StartObject();
   eachString(msg,"symbols",[&](const std::string& name) {
-    if(const auto kind = script.symbolKind(name)) {
+    if(const auto kind = script.storySymbolKind(name)) {
       key(name);
       const auto label = symbolKindName(*kind);
       w.String(label.data(),rapidjson::SizeType(label.size()));
@@ -458,9 +460,10 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
   w.Key("items");
   w.StartObject();
   eachString(msg,"items",[&](const std::string& name) {
-    if(script.symbolKind(name)!=GameScript::SymbolKind::Item)
+    const auto id = script.findItemInstance(name);
+    if(!id)
       return;
-    if(const auto display = script.itemNameForQuery(script.findSymbolIndex(name))) {
+    if(const auto display = script.itemNameForQuery(*id)) {
       const auto text = TextCodec::toUtf8(*display);
       key(name);
       w.String(text.data(),rapidjson::SizeType(text.size()));

@@ -43,10 +43,17 @@ struct NativeFunction final {
   const Program* program = nullptr;       // null for a host function
   };
 
+struct NativeCall final {
+  NativeValue value;
+  std::optional<NativeSlot> reference;
+  };
+
 class NativeExecutionHost {
   public:
     virtual ~NativeExecutionHost() = default;
     virtual bool hasVariable(std::string_view name, bool instanceOnly) const = 0;
+    virtual bool hasMember(std::string_view, uint16_t) const { return true; }
+    virtual bool acceptsCall(std::string_view, bool) const { return true; }
     virtual std::optional<int32_t> symbolIndex(std::string_view name) const = 0;
     virtual std::optional<NativeValue> read(const NativeSlot& slot, std::string& error) = 0;
     virtual bool write(const NativeSlot& slot, const NativeValue& value, std::string& error) = 0;
@@ -54,6 +61,8 @@ class NativeExecutionHost {
     virtual std::optional<NativeFunction> findFunction(std::string_view name) const = 0;
     virtual std::optional<NativeValue> invoke(std::string_view name, const std::vector<NativeValue>& args,
                                               std::string& error) = 0;
+    virtual std::optional<NativeCall> invokeBound(std::string_view name, const std::vector<NativeValue>& args,
+                                                  std::string& error);
     virtual std::string instanceName(NativeInstance) const { return {}; }
   };
 
@@ -67,6 +76,7 @@ class NativeInterpreter final {
       NativeValue returned;
       bool        started = false; // Only preflight failures are safe to retry elsewhere.
       };
+    std::string check(const Program& p, size_t arguments) const;
     Result run(const Program& p, const std::vector<NativeValue>& args = {});
 
     std::function<std::string(const std::string& npc, const std::string& text)> ownLine;
@@ -84,7 +94,6 @@ class NativeInterpreter final {
       std::string                     error;
       };
 
-    std::string preflight(const Program& p, size_t arguments) const;
     Frame execute(const Program& p, const std::vector<NativeValue>& args, bool readReturn);
     bool store(const Step& s);
     bool say(const Step& s);

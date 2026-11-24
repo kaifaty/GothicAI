@@ -32,6 +32,13 @@ const OwnSymbols::Entry* OwnSymbols::find(uint32_t index) const {
   return nullptr;
   }
 
+daedalus::DaedalusSymbol* OwnSymbols::binding(std::string_view name) const {
+  if(!name.starts_with(Prefix))
+    return nullptr;
+  const auto found = bindings.find(name);
+  return found!=bindings.end() ? found->second : nullptr;
+  }
+
 std::optional<int32_t> OwnSymbols::intValue(std::string_view name) const {
   if(!integers.empty()) {
     const auto entry = integers.find(upper(name));
@@ -56,14 +63,6 @@ daedalus::DaedalusSymbol* OwnSymbols::likeOf(daedalus::DaedalusVm& vm, uint32_t 
   const auto* entry = find(index);
   return entry!=nullptr && entry->kind==Kind::Npc ? vm.find_symbol_by_name(entry->like) : nullptr;
   }
-std::string OwnSymbols::whyNot(const daedalus::DaedalusVm& vm, const std::string& name) const {
-  if(name.size()<=Prefix.size() || name.rfind(Prefix,0)!=0)
-    return name + ": a symbol of ours is named " + std::string(Prefix) + "...";
-  if(vm.find_symbol_by_name(name)!=nullptr)
-    return name + " is taken";
-  return {};
-  }
-
 daedalus::DaedalusSymbol* OwnSymbols::addInt(daedalus::DaedalusVm& vm, std::string_view name, std::string& why) {
   return add(vm,Entry{Kind::Int,upper(name),{},0},why);
   }
@@ -72,10 +71,21 @@ daedalus::DaedalusSymbol* OwnSymbols::addNpc(daedalus::DaedalusVm& vm, std::stri
   return add(vm,Entry{Kind::Npc,upper(name),upper(like),0},why);
   }
 
-daedalus::DaedalusSymbol* OwnSymbols::add(daedalus::DaedalusVm& vm, const Entry& e, std::string& why) {
-  why = whyNot(vm,e.name);
-  if(!why.empty())
+daedalus::DaedalusSymbol* OwnSymbols::addNpc(daedalus::DaedalusVm& vm, std::string_view name,
+                                          const daedalus::DaedalusSymbol& prototype, std::string& why) {
+  return add(vm,Entry{Kind::Npc,upper(name),prototype.name(),0},why,&prototype);
+  }
+
+daedalus::DaedalusSymbol* OwnSymbols::add(daedalus::DaedalusVm& vm, const Entry& e, std::string& why,
+                                        const daedalus::DaedalusSymbol* prototype) {
+  if(e.name.size()<=Prefix.size() || !e.name.starts_with(Prefix)) {
+    why = e.name + ": a symbol of ours is named " + std::string(Prefix) + "...";
     return nullptr;
+    }
+  if(bindings.contains(e.name)) {
+    why = e.name + " is taken";
+    return nullptr;
+    }
 
   daedalus::DaedalusSymbol* s = nullptr;
   if(e.kind==Kind::Int) {
@@ -84,21 +94,22 @@ daedalus::DaedalusSymbol* OwnSymbols::add(daedalus::DaedalusVm& vm, const Entry&
       s->bind_global_int(integers.try_emplace(e.name,0).first->second);
     }
   else if(e.kind==Kind::Npc) {
-    auto* like = vm.find_symbol_by_name(e.like);
-    if(like==nullptr || like->type()!=DaedalusDataType::INSTANCE || like->is_generated()) {
-      why = e.like + " is not an instance of the scripts";
-      return nullptr;
+    if(prototype==nullptr) {
+      prototype = vm.find_symbol_by_name(e.like);
+      if(prototype==nullptr || prototype->type()!=DaedalusDataType::INSTANCE || prototype->is_generated()) {
+        why = e.like + " is not an instance of the scripts";
+        return nullptr;
+        }
+      auto* cls = vm.find_symbol_by_index(prototype->parent());
+      while(cls!=nullptr && cls->type()!=DaedalusDataType::CLASS)
+        cls = vm.find_symbol_by_index(cls->parent());
+      auto* npc = vm.find_symbol_by_name("C_NPC");
+      if(cls==nullptr || npc==nullptr || cls->index()!=npc->index()) {
+        why = e.like + " is not an npc";
+        return nullptr;
+        }
       }
-    // of the class the engine has npc's in: what the instance is made like decides its kind
-    auto* cls = vm.find_symbol_by_index(like->parent());
-    while(cls!=nullptr && cls->type()!=DaedalusDataType::CLASS)
-      cls = vm.find_symbol_by_index(cls->parent());
-    auto* npc = vm.find_symbol_by_name("C_NPC");
-    if(cls==nullptr || npc==nullptr || cls->index()!=npc->index()) {
-      why = e.like + " is not an npc";
-      return nullptr;
-      }
-    s = vm.add_instance_symbol(e.name,*like);
+    s = vm.add_instance_symbol(e.name,*prototype);
     }
   if(s==nullptr) {
     why = "no room for " + e.name;
@@ -107,6 +118,7 @@ daedalus::DaedalusSymbol* OwnSymbols::add(daedalus::DaedalusVm& vm, const Entry&
 
   Entry made = e;
   made.index = s->index();
+  bindings.emplace(made.name,s);
   Log::i("[symbols] ",made.name," (",made.index,")",made.kind==Kind::Npc ? " made like " + made.like : "");
   list.push_back(std::move(made));
   return s;

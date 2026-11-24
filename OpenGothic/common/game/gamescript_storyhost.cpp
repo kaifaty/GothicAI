@@ -1,0 +1,342 @@
+#include "gamescript_programs.h"
+
+#include <Tempest/Log>
+
+#include "storygraph/vocab.h"
+#include "world/objects/npc.h"
+
+#include <algorithm>
+#include <bit>
+
+using namespace storygraph;
+using daedalus::DaedalusDataType;
+using daedalus::DaedalusInstance;
+using daedalus::DaedalusSymbol;
+
+class GameScript::StockPrograms::Host final : public NativeExecutionHost {
+  public:
+    explicit Host(StockPrograms& owner, bool effects) : owner(owner), effects(effects) {}
+    ~Host() override {
+      if(scoped) {
+        owner.vm.global_self()->set_instance(savedSelf);
+        owner.vm.global_other()->set_instance(savedOther);
+        }
+      }
+
+    void bindContext(Npc* self, Npc* other) {
+      auto* selfAlias = owner.vm.global_self();
+      auto* otherAlias = owner.vm.global_other();
+      savedSelf = selfAlias->get_instance();
+      savedOther = otherAlias->get_instance();
+      scoped = true;
+      selfAlias->set_instance(actor(self));
+      otherAlias->set_instance(actor(other));
+      }
+
+    static std::shared_ptr<DaedalusInstance> actor(Npc* npc) {
+      if(npc==nullptr)
+        return {};
+      return std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+      }
+
+    bool hasVariable(std::string_view name, bool instanceOnly) const override {
+      const auto* symbol = owner.binding(name).first;
+      if(symbol==nullptr || symbol->is_member() || symbol->is_external())
+        return false;
+      using enum DaedalusDataType;
+      const auto type = symbol->type();
+      if(type==INSTANCE)
+        return true;
+      return !instanceOnly && (type==INT || type==FUNCTION || type==FLOAT || type==STRING);
+      }
+
+    bool hasMember(std::string_view name, uint16_t index) const override {
+      for(const auto& fields : owner.members)
+        if(const auto field = fields.find(name); field!=fields.end() && index<field->second->count())
+          return true;
+      return false;
+      }
+
+    bool acceptsCall(std::string_view name, bool external) const override {
+      const auto* symbol = owner.binding(name).first;
+      return symbol!=nullptr && symbol->is_external()==external;
+      }
+
+    std::optional<int32_t> symbolIndex(std::string_view name) const override {
+      const auto* slot = owner.binding(name).first;
+      if(slot==nullptr)
+        return std::nullopt;
+      return int32_t(slot->index());
+      }
+
+    std::string instanceName(NativeInstance id) const override {
+      if(auto value = resolveInstance(id))
+        return std::string(owner.script.storySymbolName(value->symbol_index()));
+      return {};
+      }
+
+    std::optional<NativeValue> read(const NativeSlot& slot, std::string& error) override {
+      using enum DaedalusDataType;
+      const auto context = resolveInstance(slot.context);
+      auto* symbol = resolve(slot,context.get());
+      if(slot.kind==NativeSlot::Member && context==nullptr)
+        return symbol!=nullptr && symbol->type()==STRING ? NativeValue::str("") : NativeValue::integer(0);
+      if(symbol==nullptr || (slot.kind==NativeSlot::Instance && symbol->type()!=INSTANCE)) {
+        error = "Unknown story slot "+std::string(slot.name);
+        return std::nullopt;
+        }
+      try {
+        switch(symbol->type()) {
+          case INT:
+          case FUNCTION: return NativeValue::integer(symbol->get_int(slot.index,context.get()));
+          case FLOAT:    return NativeValue::real(symbol->get_float(slot.index,context.get()));
+          case STRING:   return NativeValue::str(symbol->get_string(slot.index,context.get()));
+          case INSTANCE: return NativeValue::instance(bind(symbol->get_instance()));
+          default:       break;
+          }
+        }
+      catch(const std::exception& e) {
+        error = e.what();
+        return std::nullopt;
+        }
+      error = "Unsupported value type for "+std::string(slot.name);
+      return std::nullopt;
+      }
+
+    bool write(const NativeSlot& slot, const NativeValue& value, std::string& error) override {
+      using enum DaedalusDataType;
+      const auto context = resolveInstance(slot.context);
+      auto* symbol = resolve(slot,context.get());
+      if(!effects || symbol==nullptr || (symbol->is_const() && slot.kind!=NativeSlot::Instance)) {
+        error = "Cannot write story slot "+std::string(slot.name);
+        return false;
+        }
+      const auto type = symbol->type();
+      if((type==INT || type==FUNCTION) && value.type==NativeValue::Int)
+        symbol->set_int(value.i,slot.index,context.get());
+      else if(type==FLOAT && (value.type==NativeValue::Int || value.type==NativeValue::Float))
+        symbol->set_float(value.type==NativeValue::Float ? value.f : std::bit_cast<float>(value.i),slot.index,context.get());
+      else if(type==STRING && value.type==NativeValue::Str)
+        symbol->set_string(value.s,slot.index,context.get());
+      else if(type==INSTANCE && slot.kind==NativeSlot::Instance && value.type==NativeValue::Inst)
+        symbol->set_instance(resolveInstance(value.inst));
+      else {
+        error = "Wrong value type for story slot "+std::string(slot.name);
+        return false;
+        }
+      return true;
+      }
+
+    std::optional<NativeFunction> findFunction(std::string_view name) const override {
+      if(!effects) {
+        const auto* slot = owner.binding(name).first;
+        if(slot==nullptr || (!vocab::PredicateExternals.contains(slot->name()) &&
+                             !vocab::PureExternals.contains(slot->name())))
+          return std::nullopt;
+        }
+      return owner.function(name);
+      }
+
+    std::optional<NativeValue> invoke(std::string_view name, const std::vector<NativeValue>& args, std::string& error) override {
+      auto call = invokeBound(name,args,error);
+      if(!call)
+        return std::nullopt;
+      if(call->reference)
+        return read(*call->reference,error);
+      return std::move(call->value);
+      }
+
+    std::optional<NativeCall> invokeBound(std::string_view name, const std::vector<NativeValue>& args,
+                                          std::string& error) override {
+      const auto* slot = owner.binding(name).first;
+      const auto fn = findFunction(name);
+      if(slot==nullptr || !fn || fn->program!=nullptr) {
+        error = "Unknown native story operation "+std::string(name);
+        return std::nullopt;
+        }
+      // Journal writes have a direct engine API shared with other native game systems.
+      const auto& key = slot->name();
+      if(effects && key.starts_with("LOG_") && args.size()==2 && args[0].type==NativeValue::Str) {
+        if(key=="LOG_CREATETOPIC" && args[1].type==NativeValue::Int) {
+          owner.script.log_createtopic(args[0].s,args[1].i);
+          return NativeCall{};
+          }
+        if(key=="LOG_SETTOPICSTATUS" && args[1].type==NativeValue::Int) {
+          owner.script.log_settopicstatus(args[0].s,args[1].i);
+          return NativeCall{};
+          }
+        if(key=="LOG_ADDENTRY" && args[1].type==NativeValue::Str) {
+          owner.script.log_addentry(args[0].s,args[1].s);
+          return NativeCall{};
+          }
+        }
+      return owner.calls.at(slot->name()).invoke(args,
+        [this](NativeInstance id) { return resolveInstance(id); },
+        [this](const auto& value) { return bind(value); },
+        [this](const auto& symbol,uint16_t index,const auto& context) { return reference(symbol,index,context); },
+        error);
+      }
+
+    NativeInterpreter::Result run(std::string_view name, const std::vector<NativeValue>& args) {
+      const auto fn = findFunction(name);
+      if(!fn || fn->parameters.size()!=args.size())
+        return {false,"Unavailable story function or wrong signature: "+std::string(name),{},false};
+
+      std::vector<ExprP> parameters;
+      parameters.reserve(args.size());
+      for(size_t i=0; i<args.size(); ++i)
+        parameters.push_back(ex::param(int32_t(i)));
+      Program program;
+      program.returns = fn->result.has_value();
+      auto& step = program.steps.emplace_back();
+      auto call = acceptsCall(name,true) ? ex::call(std::string(name),std::move(parameters)) :
+                                           ex::fn(std::string(name),std::move(parameters));
+      if(program.returns) {
+        step.kind = Step::Return;
+        step.value = std::move(call);
+        } else {
+        step.kind = Step::Call;
+        step.call = std::move(call);
+        }
+      return NativeInterpreter(*this).run(program,args);
+      }
+
+    NativeInstance bind(const std::shared_ptr<DaedalusInstance>& value) {
+      if(value==nullptr)
+        return 0;
+      const auto found = std::find(instances.begin(),instances.end(),value);
+      if(found!=instances.end())
+        return NativeInstance(found-instances.begin()+1);
+      instances.push_back(value);
+      return instances.size();
+      }
+
+  private:
+    std::shared_ptr<DaedalusInstance> resolveInstance(NativeInstance index) const {
+      if(index==0 || index>instances.size())
+        return {};
+      return instances[size_t(index)-1];
+      }
+
+    const Members* classMembers(const DaedalusInstance& inst) const {
+      constexpr size_t count = 5;
+      static const std::array<const std::type_info*,count> types = {
+        &typeid(daedalus::INpc), &typeid(daedalus::IItem), &typeid(daedalus::IInfo),
+        &typeid(daedalus::IFocus), &typeid(daedalus::IMenuItem)
+        };
+      for(size_t i=0; i<types.size(); ++i)
+        if(types[i]==inst.instance_type())
+          return &owner.members[i];
+      return nullptr;
+      }
+
+    DaedalusSymbol* resolve(const NativeSlot& slot, const DaedalusInstance* context) const {
+      if(const auto bound = returned.find(slot.name); bound!=returned.end())
+        return bound->second;
+      if(slot.kind!=NativeSlot::Member)
+        return owner.binding(slot.name).first;
+      if(context!=nullptr) {
+        const auto* fields = classMembers(*context);
+        if(fields==nullptr)
+          return nullptr;
+        const auto field = fields->find(slot.name);
+        return field!=fields->end() ? field->second : nullptr;
+        }
+      for(const auto& fields : owner.members)
+        if(const auto field = fields.find(slot.name); field!=fields.end())
+          return field->second;
+      return nullptr;
+      }
+
+    std::optional<NativeSlot> reference(const DaedalusSymbol& symbol, uint16_t index,
+                                        const std::shared_ptr<DaedalusInstance>& context) {
+      // A registered engine function may return a reference instead of a value.
+      // Keep its exact slot so that later operands can update it before it is read.
+      returned.emplace(symbol.name(),const_cast<DaedalusSymbol*>(&symbol));
+      const auto kind = symbol.is_member() ? NativeSlot::Member :
+                        symbol.type()==DaedalusDataType::INSTANCE ? NativeSlot::Instance : NativeSlot::Variable;
+      return NativeSlot{kind,symbol.name(),index,bind(context)};
+      }
+
+    StockPrograms& owner;
+    bool effects;
+    bool scoped = false;
+    std::shared_ptr<DaedalusInstance> savedSelf, savedOther;
+    std::vector<std::shared_ptr<DaedalusInstance>> instances;
+    std::unordered_map<std::string_view,DaedalusSymbol*> returned;
+  };
+
+std::unique_ptr<GameScript::StockPrograms::Host> GameScript::StockPrograms::host(bool effects) {
+  return std::make_unique<Host>(*this,effects);
+  }
+
+bool GameScript::StockPrograms::run(uint32_t id, int32_t& result, bool* failed, bool preparedOnly) {
+  const auto found = ids.find(id);
+  if(found==ids.end() || found->second->type()!=DaedalusDataType::FUNCTION)
+    return false;
+  const auto& symbol = *found->second;
+  const auto* entry = program(id);
+  if(preparedOnly && entry==nullptr)
+    return false;
+  if(runPrepared(symbol,result,failed))
+    return true;
+  const auto fn = function(symbol.name());
+  if(!fn || !fn->parameters.empty())
+    return false;
+
+  Host execution(*this,true);
+  const auto run = preparedOnly ? NativeInterpreter(execution).run(entry->program) :
+                                 execution.run(symbol.name(),{});
+  if(failed!=nullptr)
+    *failed = !run.ok;
+  if(!run.ok)
+    Tempest::Log::e("[story] program ",symbol.name(),": ",run.error);
+  result = run.returned.type==NativeValue::Int ? run.returned.i : 0;
+  return run.started;
+  }
+
+std::unique_ptr<NativeExecutionHost> GameScript::makeStoryHost(Npc* self, Npc* other, bool effects) {
+  auto host = storyPrograms().host(effects);
+  host->bindContext(self,other);
+  return host;
+  }
+
+std::string GameScript::checkStoryProgram(const Program& program, size_t arguments, bool choices, bool effects) {
+  auto host = storyPrograms().host(effects);
+  NativeInterpreter interpreter(*host);
+  if(choices)
+    interpreter.choices = [](const Step&) { return true; };
+  return interpreter.check(program,arguments);
+  }
+
+NativeInterpreter::Result GameScript::runStoryProgram(const Program& program, Npc* self, Npc* other, bool effects,
+   std::function<std::string(const std::string&,const std::string&)> ownLine,
+   std::function<bool(const Step&)> choices, const std::vector<NativeValue>& args) {
+  auto host = makeStoryHost(self,other,effects);
+  NativeInterpreter interpreter(*host);
+  interpreter.ownLine = std::move(ownLine);
+  interpreter.choices = std::move(choices);
+  return interpreter.run(program,args);
+  }
+
+NativeInterpreter::Result GameScript::callStoryFunction(std::string_view name, Npc* self, Npc* other,
+                                                        const std::vector<StoryArgument>& args) {
+  auto host = storyPrograms().host(true);
+  host->bindContext(self,other);
+  std::vector<NativeValue> native;
+  native.reserve(args.size());
+  for(const auto& argument : args) {
+    native.push_back(std::visit([&](const auto& value) -> NativeValue {
+      using T = std::remove_cvref_t<decltype(value)>;
+      if constexpr(std::is_same_v<T,Npc*>)
+        return NativeValue::instance(host->bind(StockPrograms::Host::actor(value)));
+      else if constexpr(std::is_same_v<T,int32_t>)
+        return NativeValue::integer(value);
+      else if constexpr(std::is_same_v<T,float>)
+        return NativeValue::real(value);
+      else
+        return NativeValue::str(value);
+      },argument));
+    }
+  return host->run(name,native);
+  }
