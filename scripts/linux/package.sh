@@ -6,7 +6,7 @@
 #   Setup-GothicAI.sh, Start-GothicAI.sh, START_HERE.linux.ru.md, LICENSE, scripts/linux/common.sh
 #   launcher/core, server, asr-service, tts-service, libs/chatgpt-auth
 #                                          sources, pyproject.toml, uv.lock, .python-version (no tests)
-#   OpenGothic/build/opengothic/           Gothic2Notr and its runtime files
+#   OpenGothic/build/opengothic/           Gothic2Notr
 #   OpenGothic/ai_bridge/storygraph/build/ storygraph (native OU reader)
 #   tools/uv/                              the pinned official uv and its licenses
 #   licenses/                              the licenses of everything compiled in or shipped
@@ -118,9 +118,10 @@ for needed in "$GAME/Gothic2Notr" "$GAME/content-convert" "$STORYGRAPH/storygrap
   [[ -x "$ROOT/$needed" ]] || fail "not built: $ROOT/$needed (scripts/linux/build.sh)"
 done
 while IFS= read -r -d '' file; do
-  [[ "$file" == "$ROOT/$GAME/content-convert" ]] && continue
-  copy_from_repo "${file#"$ROOT/"}"
+  relative="${file#"$ROOT/"}"
+  if forbidden "$relative"; then fail "not for the archive: $relative"; fi
 done < <(find "$ROOT/$GAME" -maxdepth 1 -type f -print0)
+copy_from_repo "$GAME/Gothic2Notr"
 copy_into "$ROOT/$STORYGRAPH/storygraph-ou" "$STORYGRAPH/storygraph"
 
 # uv, pinned and checked by the caller

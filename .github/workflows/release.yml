@@ -334,8 +334,6 @@ jobs:
           cmake --build OpenGothic/build --target gothic-body-runner
           python3 scripts/engine_link_census.py OpenGothic/build --target Gothic2Notr --check-native-game --json
           python3 scripts/engine_link_census.py OpenGothic/build --target gothic-body-runner --check-native-game --json
-          # Packaging copies opengothic in full. Keep the validation-only runner outside it.
-          mv OpenGothic/build/opengothic/gothic-body-runner "$RUNNER_TEMP/gothic-body-runner"
 
       - name: The converter passes its self-test and refuses a folder without Gothic II
         env:
