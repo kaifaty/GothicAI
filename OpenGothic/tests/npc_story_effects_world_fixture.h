@@ -539,7 +539,7 @@ void bennetOreContract(const std::filesystem::path& caseDir) {
       Tempest::MemWriter writer(oldBytes);
       Serialize out(writer);
       SaveGameHeader header;
-      header.version=55;
+      header.version=56;
       header.world="NEWWORLD.ZEN";
       out.setEntry("header");
       out.write(header);
@@ -551,10 +551,10 @@ void bennetOreContract(const std::filesystem::path& caseDir) {
       GameSession legacy(in);
       }
     catch(const std::runtime_error& error) {
-      rejected=std::string_view(error.what()).starts_with("Unsupported save version 55");
+      rejected=std::string_view(error.what()).starts_with("Unsupported save version 56");
       }
-    require(rejected && gothic.world()==nullptr,"the normal loader must reject v55 before creating a world");
-    std::puts("Bennet save contract: v55 rejected before world creation");
+    require(rejected && gothic.world()==nullptr,"the normal loader must reject v56 before creating a world");
+    std::puts("Bennet save contract: v56 rejected before world creation");
   }
 
   const auto actors = [&] {
@@ -579,9 +579,9 @@ void bennetOreContract(const std::filesystem::path& caseDir) {
     SaveGameHeader header;
     require(in.setEntry("header"),"Bennet save must have the normal save header");
     in.read(header);
-    require(header.version==Serialize::Current && in.setEntry("game/bennet") && in.setEntry("game/state") &&
-            in.setEntry("game/director") && !in.setEntry("game/daedalus") && !in.setEntry("game/symbols"),
-            "Bennet save must use only the current session layout");
+    require(header.version==57 && in.setEntry("game/bennet") && in.setEntry(ScriptVars::StateEntry) &&
+            in.setEntry("game/director") && !in.setEntry("game/state") && !in.setEntry("game/daedalus") && !in.setEntry("game/symbols"),
+            "Bennet save must use only the native v57 session layout");
     std::ofstream out(path,std::ios::binary|std::ios::trunc);
     out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
     require(bool(out),"Bennet contract could not write a new save");

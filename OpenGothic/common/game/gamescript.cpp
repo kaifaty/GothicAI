@@ -129,6 +129,11 @@ GameScript::GameScript(GameSession &owner)
   loadNativeAmbientInfos();
   loadNativeTrainingHelpers();
   initBennetOre();
+  for(uint32_t id=0; id<vm.symbols().size(); ++id) {
+    auto& symbol = *vm.find_symbol_by_index(id);
+    if(!isBennetProgressSymbol(id) && symbol.name()!="$PHOENIX_FAKE_STRINGS")
+      runtimeState.bind(symbol);
+    }
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }
@@ -635,12 +640,10 @@ void GameScript::loadQuests(Serialize& fin) {
 
 void GameScript::saveVar(Serialize &fout) {
   std::vector<ScriptVars::Row> rows;
-  for(uint32_t id=0; id<vm.symbols().size(); ++id) {
-    if(isBennetProgressSymbol(id))
-      continue;
-    auto row = stateRow(*vm.find_symbol_by_index(id));
-    if(!std::holds_alternative<std::monostate>(row.value))
-      rows.push_back(std::move(row));
+  for(const auto& [id,slot] : runtimeState.slots()) {
+    auto value = stateValue(slot);
+    if(!std::holds_alternative<std::monostate>(value))
+      rows.push_back({id,std::move(value)});
     }
   fout.write(uint32_t(rows.size()));
   for(const auto& row : rows)
@@ -652,47 +655,44 @@ void GameScript::loadVar(Serialize &fin) {
   fin.read(count);
   for(uint32_t i=0; i<count; ++i) {
     const auto row = ScriptVars::readRow(fin);
-    if(std::holds_alternative<std::monostate>(row.value))
+    auto* slot = runtimeState.find(row.id);
+    if(slot==nullptr)
       continue;
-
-    auto* symbol = findSymbol(row.name);
-    const auto loadValues = [&](const auto& values, auto setter) {
-      if(symbol==nullptr || symbol->is_member() || symbol->is_const())
-        return;
-      for(size_t index=0; index<values.size(); ++index)
-        (symbol->*setter)(values[index],uint16_t(index),nullptr);
-      };
-    if(const auto* values = std::get_if<std::vector<int32_t>>(&row.value)) {
-      loadValues(*values,&daedalus::DaedalusSymbol::set_int);
-      }
-    else if(const auto* values = std::get_if<std::vector<float>>(&row.value)) {
-      loadValues(*values,&daedalus::DaedalusSymbol::set_float);
-      }
-    else if(const auto* values = std::get_if<std::vector<std::string>>(&row.value)) {
-      loadValues(*values,&daedalus::DaedalusSymbol::set_string);
-      }
-    else if(const auto* ref = std::get_if<ScriptVars::Reference>(&row.value); ref!=nullptr && symbol!=nullptr) {
-      switch(ref->kind) {
-        case ScriptVars::ReferenceKind::Npc: {
-          const auto* npc = world().npcById(ref->object);
-          symbol->set_instance(npc ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr);
-          break;
+    std::visit([&](auto& value) {
+      using T = std::decay_t<decltype(value)>;
+      if constexpr(std::is_same_v<T,ScriptVars::Object>) {
+        const auto* ref = std::get_if<ScriptVars::Reference>(&row.value);
+        if(ref==nullptr)
+          throw std::runtime_error("Invalid object binding in save");
+        switch(ref->kind) {
+          case ScriptVars::ReferenceKind::Npc: {
+            const auto* npc = world().npcById(ref->object);
+            value = npc ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr;
+            break;
+            }
+          case ScriptVars::ReferenceKind::WorldItem: {
+            auto* item = world().itmById(ref->object);
+            value = item ? std::static_pointer_cast<daedalus::IItem>(item->handlePtr()) : nullptr;
+            break;
+            }
+          case ScriptVars::ReferenceKind::InventoryItem: {
+            const auto* npc = world().npcById(ref->object);
+            auto* item = npc ? npc->inventory().itemByIndex(ref->item) : nullptr;
+            value = item ? std::static_pointer_cast<daedalus::IItem>(item->handlePtr()) : nullptr;
+            break;
+            }
+          case ScriptVars::ReferenceKind::None:
+            value.reset();
+            break;
           }
-        case ScriptVars::ReferenceKind::WorldItem: {
-          auto* item = world().itmById(ref->object);
-          symbol->set_instance(item ? std::static_pointer_cast<daedalus::IItem>(item->handlePtr()) : nullptr);
-          break;
-          }
-        case ScriptVars::ReferenceKind::InventoryItem: {
-          const auto* npc = world().npcById(ref->object);
-          auto* item = npc ? npc->inventory().itemByIndex(ref->item) : nullptr;
-          symbol->set_instance(item ? std::static_pointer_cast<daedalus::IItem>(item->handlePtr()) : nullptr);
-          break;
-          }
-        default:
-          break;
+        } else {
+        using Field = typename decltype(value.values)::value_type;
+        const auto* saved = std::get_if<std::vector<Field>>(&row.value);
+        if(saved==nullptr || saved->size()!=value.values.size())
+          throw std::runtime_error("Invalid value binding in save");
+        std::copy(saved->begin(),saved->end(),value.values.begin());
         }
-      }
+      },*slot);
     }
   }
 
@@ -715,11 +715,11 @@ void GameScript::loadPerc(Serialize& fin) {
   }
 
 void GameScript::resetVarPointers() {
-  for(uint32_t i=0;i<vm.symbols().size();++i){
-    auto* s = vm.find_symbol_by_index(i); // never returns nullptr
-    if(s->is_instance_of<daedalus::INpc>() || s->is_instance_of<daedalus::IItem>()){
-      s->set_instance(nullptr);
-      }
+  for(auto& [id,slot] : runtimeState.slots()) {
+    auto* object = std::get_if<ScriptVars::Object>(&slot);
+    if(object!=nullptr && *object!=nullptr &&
+       ((*object)->instance_type()==&typeid(daedalus::INpc) || (*object)->instance_type()==&typeid(daedalus::IItem)))
+      object->reset();
     }
   }
 
@@ -728,59 +728,49 @@ const QuestLog& GameScript::questLog() const {
   }
 
 void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& symbol) {
-  ScriptVars::writeRow(fout,stateRow(symbol));
+  const auto* slot = runtimeState.find(symbol.index());
+  if(slot==nullptr)
+    throw std::runtime_error("Cannot save an unregistered runtime field");
+  ScriptVars::writeRow(fout,{symbol.index(),stateValue(*slot)});
   }
 
-ScriptVars::Row GameScript::stateRow(daedalus::DaedalusSymbol& symbol) {
-  using Type = daedalus::DaedalusDataType;
+ScriptVars::Value GameScript::stateValue(const ScriptVars::Slot& slot) {
+  return std::visit([&](const auto& value) -> ScriptVars::Value {
+    using T = std::decay_t<decltype(value)>;
+    if constexpr(std::is_same_v<T,ScriptVars::Object>) {
+      const auto ref = stateReference(value);
+      if(ref.kind==ScriptVars::ReferenceKind::None)
+        return {};
+      return ref;
+      } else {
+      using Field = typename decltype(value.values)::value_type;
+      return std::vector<Field>(value.values.begin(),value.values.end());
+      }
+    },slot);
+  }
+
+ScriptVars::Reference GameScript::stateReference(const ScriptVars::Object& object) {
   using Kind = ScriptVars::ReferenceKind;
-  ScriptVars::Row row;
-  if(symbol.type()==Type::INSTANCE) {
-    if(symbol.is_instance_of<daedalus::INpc>()) {
-      const auto* record = static_cast<const daedalus::INpc*>(symbol.get_instance().get());
-      const auto* npc = static_cast<const Npc*>(record->user_ptr);
-      row = {symbol.name(),ScriptVars::Reference{Kind::Npc,world().npcId(npc)}};
-      }
-    else if(symbol.is_instance_of<daedalus::IItem>()) {
-      const auto* item = static_cast<const daedalus::IItem*>(symbol.get_instance().get());
-      const auto id = world().itmId(static_cast<const ItemRecord*>(item));
-      ScriptVars::Reference ref{};
-      if(id!=uint32_t(-1)) {
-        ref = {Kind::WorldItem,id};
-        } else {
-        for(uint32_t ownerId=0; ownerId<world().npcCount(); ++ownerId) {
-          if(const auto* npc=world().npcById(ownerId)) {
-            const auto& inv = npc->inventory();
-            const auto index = inv.indexOf(static_cast<const Item*>(item->user_ptr));
-            const auto* owned = inv.itemByIndex(index);
-            if(owned==nullptr || &owned->handle()!=static_cast<const ItemRecord*>(item))
-              continue;
-            ref = {Kind::InventoryItem,ownerId,index};
-            break;
-            }
-          }
-        }
-      if(ref.kind!=Kind::None)
-        row = {symbol.name(),ref};
+  if(object==nullptr)
+    return {};
+  if(object->instance_type()==&typeid(daedalus::INpc))
+    return {Kind::Npc,world().npcId(static_cast<const Npc*>(object->user_ptr))};
+  if(object->instance_type()!=&typeid(daedalus::IItem))
+    return {};
+  const auto* item = static_cast<const daedalus::IItem*>(object.get());
+  const auto id = world().itmId(static_cast<const ItemRecord*>(item));
+  if(id!=uint32_t(-1))
+    return {Kind::WorldItem,id};
+  for(uint32_t ownerId=0; ownerId<world().npcCount(); ++ownerId) {
+    if(const auto* npc=world().npcById(ownerId)) {
+      const auto& inv = npc->inventory();
+      const auto index = inv.indexOf(static_cast<const Item*>(item->user_ptr));
+      const auto* owned = inv.itemByIndex(index);
+      if(owned!=nullptr && &owned->handle()==static_cast<const ItemRecord*>(item))
+        return {Kind::InventoryItem,ownerId,index};
       }
     }
-  else if(symbol.count()>0 && !symbol.is_member() && !symbol.is_const()) {
-    const auto values = [&](auto getter) {
-      using Value = std::decay_t<decltype((symbol.*getter)(uint16_t(0),nullptr))>;
-      std::vector<Value> result;
-      result.reserve(symbol.count());
-      for(uint32_t index=0; index<symbol.count(); ++index)
-        result.push_back((symbol.*getter)(uint16_t(index),nullptr));
-      return result;
-      };
-    switch(symbol.type()) {
-      case Type::INT:    row = {symbol.name(),values(&daedalus::DaedalusSymbol::get_int)}; break;
-      case Type::FLOAT:  row = {symbol.name(),values(&daedalus::DaedalusSymbol::get_float)}; break;
-      case Type::STRING: row = {symbol.name(),values(&daedalus::DaedalusSymbol::get_string)}; break;
-      default: break;
-      }
-    }
-  return row;
+  return {};
   }
 
 void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {

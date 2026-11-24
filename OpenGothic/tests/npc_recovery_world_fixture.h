@@ -391,16 +391,16 @@ void npcDeathLifecycle(Gothic& gothic) {
     auto* canyon=script.findSymbol("CANYONRAZORBODYCOUNT");
     auto* swamp=script.findSymbol("SWAPDRAGNISDEAD");
     const auto oldCanyon=canyon->get_int(), oldSwamp=swamp->get_int();
-    std::vector<uint8_t> legacy;
-    Tempest::MemWriter writer(legacy);
+    std::vector<uint8_t> savedProgress;
+    Tempest::MemWriter writer(savedProgress);
     {
       Serialize out(writer);
       out.setEntry(ScriptVars::StateEntry);
       out.write(uint32_t(2));
-      out.write(uint32_t(daedalus::DaedalusDataType::INT),canyon->name(),uint32_t(1),int32_t(7));
-      out.write(uint32_t(daedalus::DaedalusDataType::INT),swamp->name(),uint32_t(1),int32_t(2));
+      ScriptVars::writeRow(out,{canyon->index(),std::vector<int32_t>{7}});
+      ScriptVars::writeRow(out,{swamp->index(),std::vector<int32_t>{2}});
     }
-    Tempest::MemReader reader(legacy);
+    Tempest::MemReader reader(savedProgress);
     Serialize in(reader);
     require(in.setEntry(ScriptVars::StateEntry),"death progress: save state is present");
     script.loadVar(in);

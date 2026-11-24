@@ -172,7 +172,7 @@ namespace daedalus {
 				record.float_bits.resize(sym._m_count);
 				if (sym._m_count != 0) {
 					std::memcpy(record.float_bits.data(),
-					            std::get<std::unique_ptr<float[]>>(sym._m_value).get(),
+					            sym.float_data(),
 					            sym._m_count * sizeof(std::uint32_t));
 				}
 				break;
@@ -555,7 +555,7 @@ namespace daedalus {
 			return *get_member_ptr<float>(static_cast<uint8_t>(index), context);
 		}
 
-		return std::get<std::unique_ptr<float[]>>(_m_value)[index];
+		return float_data()[index];
 	}
 
 	std::int32_t DaedalusSymbol::get_int(std::uint16_t index, DaedalusInstance const* context) const {
@@ -628,7 +628,7 @@ namespace daedalus {
 
 			*get_member_ptr<float>(index, context) = value;
 		} else {
-			std::get<std::unique_ptr<float[]>>(_m_value)[index] = value;
+			float_data()[index] = value;
 		}
 	}
 
@@ -667,10 +667,22 @@ namespace daedalus {
 		_m_value = &value;
 	}
 
+	std::span<std::int32_t> DaedalusSymbol::bound_global_int() {
+		if (const auto* bound = std::get_if<std::int32_t*>(&_m_value))
+			return {*bound, count()};
+		return {};
+	}
+
 	std::int32_t* DaedalusSymbol::int_data() const {
 		if (const auto* bound = std::get_if<std::int32_t*>(&_m_value))
 			return *bound;
 		return std::get<std::unique_ptr<std::int32_t[]>>(_m_value).get();
+	}
+
+	float* DaedalusSymbol::float_data() const {
+		if (const auto* bound = std::get_if<float*>(&_m_value))
+			return *bound;
+		return std::get<std::unique_ptr<float[]>>(_m_value).get();
 	}
 
 	void DaedalusSymbol::bind_global_string(std::string& value) {
@@ -683,10 +695,56 @@ namespace daedalus {
 		_m_value = &value;
 	}
 
+	std::span<std::string> DaedalusSymbol::bound_global_string() {
+		if (const auto* bound = std::get_if<std::string*>(&_m_value))
+			return {*bound, count()};
+		return {};
+	}
+
 	std::string* DaedalusSymbol::string_data() const {
 		if (const auto* bound = std::get_if<std::string*>(&_m_value))
 			return *bound;
 		return std::get<std::unique_ptr<std::string[]>>(_m_value).get();
+	}
+
+	template<class T>
+	std::unique_ptr<T[]> DaedalusSymbol::take_global_values(DaedalusDataType expected) {
+		auto* values = std::get_if<std::unique_ptr<T[]>>(&_m_value);
+		if (type() != expected || is_member() || is_const() || values == nullptr) {
+			throw DaedalusScriptError {"cannot transfer global storage for " + name()};
+		}
+
+		auto owned = std::move(*values);
+		_m_value = owned.get();
+		return owned;
+	}
+
+	std::unique_ptr<std::int32_t[]> DaedalusSymbol::take_global_int() {
+		return take_global_values<std::int32_t>(DaedalusDataType::INT);
+	}
+
+	std::unique_ptr<float[]> DaedalusSymbol::take_global_float() {
+		return take_global_values<float>(DaedalusDataType::FLOAT);
+	}
+
+	std::unique_ptr<std::string[]> DaedalusSymbol::take_global_string() {
+		return take_global_values<std::string>(DaedalusDataType::STRING);
+	}
+
+	void DaedalusSymbol::bind_global_instance(std::shared_ptr<DaedalusInstance>& value) {
+		auto* instance = std::get_if<std::shared_ptr<DaedalusInstance>>(&_m_value);
+		if (type() != DaedalusDataType::INSTANCE || instance == nullptr) {
+			throw DaedalusScriptError {"cannot bind global instance " + name()};
+		}
+
+		value = std::move(*instance);
+		_m_value = &value;
+	}
+
+	std::shared_ptr<DaedalusInstance>& DaedalusSymbol::instance_data() {
+		if (const auto* bound = std::get_if<std::shared_ptr<DaedalusInstance>*>(&_m_value))
+			return **bound;
+		return std::get<std::shared_ptr<DaedalusInstance>>(_m_value);
 	}
 
 	std::shared_ptr<DaedalusInstance> const& DaedalusSymbol::get_instance() {
@@ -694,7 +752,7 @@ namespace daedalus {
 			throw DaedalusIllegalTypeAccess(this, DaedalusDataType::INSTANCE);
 		}
 
-		return std::get<std::shared_ptr<DaedalusInstance>>(_m_value);
+		return instance_data();
 	}
 
 	void DaedalusSymbol::set_instance(std::shared_ptr<DaedalusInstance> const& inst) {
@@ -702,7 +760,7 @@ namespace daedalus {
 			throw DaedalusIllegalTypeAccess(this, DaedalusDataType::INSTANCE);
 		}
 
-		std::get<std::shared_ptr<DaedalusInstance>>(_m_value) = inst;
+		instance_data() = inst;
 	}
 
 	void DaedalusSymbol::grow(uint32_t n) {

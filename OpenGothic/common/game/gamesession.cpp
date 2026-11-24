@@ -234,7 +234,7 @@ GameSession::GameSession(Serialize &fin) {
   vm->loadQuests(fin);
 
   if(!fin.setEntry(ScriptVars::StateEntry))
-    throw std::runtime_error("Missing program state in save");
+    throw std::runtime_error("Missing runtime state in save");
   vm->loadVar(fin);
 
   if(!fin.setEntry("game/bennet"))

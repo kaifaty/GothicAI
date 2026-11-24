@@ -363,7 +363,7 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
   const auto savedValue=[](size_t index) { return int32_t(index)-(index<12 ? 12 : 11); };
   auto& location=symbol("B_GRANTABSOLUTION.LOCATION");
   const auto savedLocation=location.get_int();
-  for(const bool legacy : {true,false}) {
+  for(const bool fromRecord : {true,false}) {
     std::vector<uint8_t> bytes;
     Tempest::MemWriter writer(bytes);
     {
@@ -375,8 +375,8 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
         owned=savedValue(i);
         if(global.get_int()!=owned)
           throw std::runtime_error("Crime memory: Daedalus must read the engine-owned value of "+global.name());
-        if(legacy)
-          out.write(uint32_t(daedalus::DaedalusDataType::INT),global.name(),uint32_t(1),savedValue(i));
+        if(fromRecord)
+          ScriptVars::writeRow(out,{global.index(),std::vector<int32_t>{savedValue(i)}});
         else
           Contract::saveCrimeGlobal(script,out,global);
         }
@@ -1420,18 +1420,17 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
     }
   for(const auto& [name,value]:before)
     script.findSymbol(name)->set_int(value);
-  std::vector<uint8_t> legacyBytes;
-  Tempest::MemWriter writer(legacyBytes);
+  std::vector<uint8_t> savedState;
+  Tempest::MemWriter writer(savedState);
   {
     Serialize out(writer);
     out.setEntry(ScriptVars::StateEntry);
     out.write(uint32_t(3));
-    out.write(uint32_t(daedalus::DaedalusDataType::INSTANCE),uint8_t(3),
-              std::string_view("UNAVAILABLE_TEST_INVENTORY_SYMBOL"),uint32_t(0),uint32_t(4242));
-    out.write(uint32_t(daedalus::DaedalusDataType::INT),std::string("CURRENTLEVEL"),uint32_t(1),khorinis);
-    out.write(uint32_t(daedalus::DaedalusDataType::INT),std::string("ENTERADW_KAPITEL2"),uint32_t(1),int32_t(7));
+    ScriptVars::writeRow(out,{uint32_t(-1),ScriptVars::Reference{ScriptVars::ReferenceKind::InventoryItem,0,4242}});
+    ScriptVars::writeRow(out,{level->index(),std::vector<int32_t>{khorinis}});
+    ScriptVars::writeRow(out,{script.findSymbol("ENTERADW_KAPITEL2")->index(),std::vector<int32_t>{7}});
   }
-  Tempest::MemReader reader(legacyBytes);
+  Tempest::MemReader reader(savedState);
   Serialize in(reader);
   require(in.setEntry(ScriptVars::StateEntry),"world entry: the state entry must be present");
   script.loadVar(in);

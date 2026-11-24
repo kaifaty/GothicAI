@@ -40,23 +40,18 @@ daedalus::DaedalusSymbol* OwnSymbols::binding(std::string_view name) const {
   }
 
 std::optional<int32_t> OwnSymbols::intValue(std::string_view name) const {
-  if(!integers.empty()) {
-    const auto entry = integers.find(upper(name));
-    if(entry!=integers.end())
-      return entry->second;
-    }
+  const auto* entry = find(name);
+  if(entry!=nullptr && entry->kind==Kind::Int)
+    return std::get<ScriptVars::Array<int32_t>>(*state.find(entry->index)).values.front();
   return std::nullopt;
   }
 
 bool OwnSymbols::setInt(std::string_view name, int32_t value) {
-  if(!integers.empty()) {
-    const auto entry = integers.find(upper(name));
-    if(entry!=integers.end()) {
-      entry->second = value;
-      return true;
-      }
-    }
-  return false;
+  const auto* entry = find(name);
+  if(entry==nullptr || entry->kind!=Kind::Int)
+    return false;
+  std::get<ScriptVars::Array<int32_t>>(*state.find(entry->index)).values.front() = value;
+  return true;
   }
 
 daedalus::DaedalusSymbol* OwnSymbols::likeOf(daedalus::DaedalusVm& vm, uint32_t index) {
@@ -90,8 +85,6 @@ daedalus::DaedalusSymbol* OwnSymbols::add(daedalus::DaedalusVm& vm, const Entry&
   daedalus::DaedalusSymbol* s = nullptr;
   if(e.kind==Kind::Int) {
     s = vm.add_int_symbol(e.name);
-    if(s!=nullptr)
-      s->bind_global_int(integers.try_emplace(e.name,0).first->second);
     }
   else if(e.kind==Kind::Npc) {
     if(prototype==nullptr) {
@@ -116,6 +109,7 @@ daedalus::DaedalusSymbol* OwnSymbols::add(daedalus::DaedalusVm& vm, const Entry&
     return nullptr;
     }
 
+  state.bind(*s);
   Entry made = e;
   made.index = s->index();
   bindings.emplace(made.name,s);

@@ -26,7 +26,7 @@ class OwnSymbols final {
     static constexpr std::string_view SaveEntry = ScriptVars::SymbolEntry;
     static constexpr std::string_view Prefix    = "DIR_";  // every name of ours
 
-    OwnSymbols() = default;
+    explicit OwnSymbols(ScriptVars::State& state) : state(state) {}
     OwnSymbols(const OwnSymbols&) = delete;
     OwnSymbols& operator=(const OwnSymbols&) = delete;
 
@@ -55,8 +55,7 @@ class OwnSymbols final {
     daedalus::DaedalusSymbol* add(daedalus::DaedalusVm& vm, const Entry& e, std::string& why,
                                  const daedalus::DaedalusSymbol* prototype = nullptr);
 
+    ScriptVars::State& state;
     std::vector<Entry> list;
-    // A symbol keeps a reference to its value across additions to this table.
-    std::map<std::string,int32_t,std::less<>> integers;
     std::map<std::string,daedalus::DaedalusSymbol*,std::less<>> bindings;
   };
