@@ -1,9 +1,6 @@
 // Live NPC dialogue and StoryGraph save/load cases for placed_items_contract.cpp.
 
 #include "storyeffects.h"
-#include "game/savegameheader.h"
-
-#include <sstream>
 
 void assessTalkEntry(World& world,Npc& npc,Npc& player) {
   using Contract=NpcDefinitionContract;

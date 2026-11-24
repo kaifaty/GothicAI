@@ -36,6 +36,7 @@
 #include "world/objects/interactive.h"
 #include "world/waypoint.h"
 #include "game/gamesession.h"
+#include "game/savegameheader.h"
 #include "sha256.h"
 #include "loadprobe.h"
 #include "world/objects/item.h"
@@ -59,6 +60,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <array>
 #include <bit>
