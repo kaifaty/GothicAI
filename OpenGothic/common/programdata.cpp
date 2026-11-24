@@ -467,3 +467,15 @@ const ProgramData::Source* ProgramData::fightProgram(const Index& index) {
     return source;
   return index.findHost("_work/Data/Scripts/_compiled/Fight.dat");
   }
+
+const ProgramData::Source* ProgramData::cameraProgram(const Index& index) {
+  try {
+    if(auto* source = index.findVfs("Camera.dat"))
+      return source;
+    return index.findHost("_work/Data/Scripts/_compiled/Camera.dat");
+    }
+  catch(const std::runtime_error&) {
+    // The legacy loader still reports a skipped or ambiguous program on use.
+    return nullptr;
+    }
+  }

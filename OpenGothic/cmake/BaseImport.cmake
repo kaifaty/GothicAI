@@ -24,6 +24,7 @@ set(BASE_RUNTIME_SOURCES
   common/itemdefinitions.cpp common/routinedefinitions.cpp common/npcdefinitions.cpp common/placementdefinitions.cpp common/activitydefinitions.cpp
   common/npchelperdefinitions.cpp common/asset/npchelperdefinitions.cpp
   common/game/definitions/fightdefinitiondata.cpp common/game/definitions/menudefinitions.cpp
+  common/game/definitions/cameradefinitiondata.cpp
   common/gothicglb.cpp common/gltfmesh.cpp common/utils/fileutil.cpp common/musicdata.cpp common/dmusic/musicrecord.cpp common/musicnative.c
   common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp
   common/dmusic/hydra.cpp common/dmusic/soundfont.cpp)

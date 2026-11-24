@@ -783,6 +783,8 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
   convertMenuDefinitions(out);
   if(progress) progress("base import: fight definitions");
   convertFightDefinitions(out);
+  if(progress) progress("base import: camera definitions");
+  convertCameraDefinitions(out);
   if(progress) progress("base import: item definitions");
   require(convertItemDefinitions(out)==0,"item definition import failed");
   if(progress) progress("base import: routine definitions");

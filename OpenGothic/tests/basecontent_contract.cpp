@@ -2,6 +2,8 @@
 #include "asset/fromzenkit.h"
 #include "audiodata.h"
 #include "baseimport.h"
+#include "game/definitions/cameradefinitiondata.h"
+#include "game/definitions/cameradefinitions.h"
 #include "game/definitions/fightdefinitiondata.h"
 #include "basemesh.h"
 #include "commandline.h"
@@ -1698,6 +1700,141 @@ struct BaseContentContract {
                 names.size(),groups);
     }
 
+  using CameraOracle = std::map<std::string,std::shared_ptr<daedalus::ICamera>>;
+
+  static void cameraRuntimePresets(const CameraDefinitions& cameras, const CameraOracle& original) {
+    using Getter = const Def::Camera& (CameraDefinitions::*)() const;
+    const std::pair<const char*,Getter> getters[] = {
+      {"CAMMODDIALOG",&CameraDefinitions::dialogCam},
+      {"CAMMODINVENTORY",&CameraDefinitions::inventoryCam},
+      {"CAMMODNORMAL",&CameraDefinitions::stdCam},
+      {"CAMMODLOOKBACK",&CameraDefinitions::backCam},
+      {"CAMMODFIRSTPERSON",&CameraDefinitions::fpCam},
+      {"CAMMODDEATH",&CameraDefinitions::deathCam},
+      {"CAMMODMELEE",&CameraDefinitions::meleeCam},
+      {"CAMMODRANGED",&CameraDefinitions::rangeCam},
+      {"CAMMODMAGIC",&CameraDefinitions::mageCam},
+      {"CAMMODSWIM",&CameraDefinitions::swimCam},
+      {"CAMMODDIVE",&CameraDefinitions::diveCam},
+      {"CAMMODFALL",&CameraDefinitions::fallCam},
+      };
+    for(const auto& [name,get] : getters)
+      definitionFields(*original.at(name),(cameras.*get)(),name);
+    definitionFields(*original.at("CAMMODMOBBED_FRONT"),cameras.mobsiCam("BED","FRONT"),"MOBSI position");
+    definitionFields(*original.at("CAMMODMOBBED"),cameras.mobsiCam("BED","MISSING"),"MOBSI tag fallback");
+    definitionFields(*original.at("CAMMODMOBBENCH"),cameras.mobsiCam("BENCH",""),"MOBSI tag without position");
+    definitionFields(*original.at("CAMMODMOBDEFAULT"),cameras.mobsiCam("MISSING","MISSING"),"MOBSI default fallback");
+    }
+
+  static void cameraRecords(const fs::path& base, const fs::path& temporary, const fs::path& censusPath) {
+    const auto index = ProgramData::readIndex(base/"programs");
+    const auto* selected = ProgramData::cameraProgram(index);
+    require(selected!=nullptr,"Camera.dat source selection missing");
+    const auto& sha = selected->recordSha256;
+    if(sha!=CameraDefinitionData::stockProgram)
+      return;
+
+    const auto section = CameraDefinitionData::section(base,sha);
+    const auto imported = CameraDefinitionData::read(base,sha);
+    CameraOracle original;
+    {
+    Resources resources;
+    Resources::loadBase();
+    Gothic gothic;
+    auto source = definitionSourceVm(index,"Camera.dat",gothic);
+    source->register_external("hlp_random",[](int) -> int {
+      throw std::runtime_error("stock Camera.dat unexpectedly calls HLP_RANDOM");
+      });
+    const auto names = definitionNames(*source,"CCAMSYS");
+    equal(names.size(),33u,"stock camera count");
+    equal(imported.size(),names.size(),"imported camera count");
+    for(size_t i=0; i<names.size(); ++i) {
+      const auto& [id,name] = names[i];
+      const auto [instance,error] = definitionInstance<daedalus::ICamera>(*source,source->find_symbol_by_index(id));
+      require(instance!=nullptr,name+": original camera initialization failed: "+error);
+      require(imported[i].first==name,name+": imported camera order differs");
+      definitionFields(*instance,imported[i].second,name+" imported");
+      original.emplace(name,instance);
+      }
+
+    require(Resources::writeCensus(),"cannot write camera oracle census");
+    const auto before = json(censusPath);
+    const CameraDefinitions cameras;
+    cameraRuntimePresets(cameras,original);
+    require(Resources::writeCensus(),"cannot write camera records census");
+    const auto after = json(censusPath);
+    require(after["files"]==before["files"] && after["runtime_programs"]["selections"].Empty(),
+            "camera records must open neither original Camera.dat nor a VM program");
+    const auto recordPath = "base/"+section.lexically_relative(base).generic_string();
+    const auto& replacements = after["replacements"];
+    require(std::any_of(replacements.Begin(),replacements.End(),[&](const auto& row) {
+      return std::string_view(row["name"].GetString())=="CAMERA.DAT" &&
+             std::string_view(row["replacement"].GetString())==recordPath && row["opens"].GetUint64()==1;
+      }),"camera records must report their actual selection");
+    }
+
+    // Validate a private copy of the base before removing only its camera record.
+    const auto fixture = temporary/"camera-runtime-base";
+    fs::create_directories(fixture/"definitions"/sha);
+    for(const auto& entry : fs::directory_iterator(base))
+      if(entry.path().filename()!="definitions")
+        fs::create_symlink(entry.path(),fixture/entry.path().filename());
+    for(const auto& entry : fs::directory_iterator(base/"definitions"))
+      if(entry.path().filename()!=sha)
+        fs::create_symlink(entry.path(),fixture/"definitions"/entry.path().filename());
+    for(const auto& entry : fs::directory_iterator(section.parent_path()))
+      fs::create_symlink(entry.path(),fixture/"definitions"/sha/entry.path().filename());
+
+    setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
+    {
+    Resources resources;
+    Resources::loadBase();
+    Gothic gothic;
+    const auto fixtureSection = CameraDefinitionData::section(fixture,sha);
+    require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private camera record link");
+    const CameraDefinitions fallback;
+    cameraRuntimePresets(fallback,original);
+    require(Resources::writeCensus(),"cannot write camera fallback census");
+    const auto fallbackCensus = json(censusPath);
+    const auto& programs = fallbackCensus["runtime_programs"]["selections"];
+    equal(programs.Size(),1u,"camera fallback program selection count");
+    require(std::string_view(programs[0]["request"].GetString())=="Camera.dat" &&
+            std::string_view(programs[0]["record"]["sha256"].GetString())==sha,
+            "the camera fallback must run the selected base program");
+    require(fallbackCensus["files"].Empty(),"the camera fallback must not open an original DAT");
+
+    auto renamed = imported;
+    const auto mobDefault = std::find_if(renamed.begin(),renamed.end(),[](const auto& row) { return row.first=="CAMMODMOBDEFAULT"; });
+    const auto dialog = std::find_if(renamed.begin(),renamed.end(),[](const auto& row) { return row.first=="CAMMODDIALOG"; });
+    require(mobDefault!=renamed.end() && dialog!=renamed.end(),"stock catalog must contain the fallback fixtures");
+    mobDefault->first = "CAMMODUNUSEDMOB";
+    dialog->first = "CAMMODUNUSEDDIALOG";
+    CameraDefinitionData::write(fixture,sha,renamed);
+    const CameraDefinitions withoutDefault;
+    definitionFields(*original.at("CAMMODNORMAL"),withoutDefault.mobsiCam("MISSING","MISSING"),"MOBSI normal fallback");
+    definitionFields(daedalus::ICamera{},withoutDefault.dialogCam(),"missing named camera remains value initialized");
+
+    auto corrupt = json(fixtureSection);
+    require(corrupt.HasMember("presets") && corrupt["presets"].IsArray() && !corrupt["presets"].Empty() &&
+            corrupt["presets"][0].HasMember("best_range"),"camera corruption fixture is missing its range field");
+    corrupt["presets"][0]["best_range"].SetString("invalid");
+    writeJson(fixtureSection,corrupt);
+    bool rejected = false;
+    try {
+      const CameraDefinitions invalid;
+      }
+    catch(const std::runtime_error&) {
+      rejected = true;
+      }
+    require(rejected,"corrupt selected camera records must be rejected");
+    require(Resources::writeCensus(),"cannot write corrupt camera census");
+    const auto failure = json(censusPath);
+    require(failure["runtime_programs"]["selections"]==programs,"a corrupt camera record must not execute VM fallback");
+    }
+    setenv("OPENGOTHIC_BASE",base.c_str(),1);
+    std::puts("Camera records: 33 ordered presets and 759 fields match the original; runtime lookup, fallback and corruption checked");
+    }
+
   static void definitionRecords(const fs::path& base, const fs::path& censusPath) {
     static_assert(std::is_same_v<std::underlying_type_t<Def::FightMove>,std::underlying_type_t<daedalus::FightAiMove>>);
     static_assert(uint32_t(Def::FightMove::NOP)==uint32_t(daedalus::FightAiMove::NOP));
@@ -3151,6 +3288,7 @@ struct BaseContentContract {
     meshKey=resources.baseMeshes.files.begin()->first;
     }
     census(censusPath,meshCount,modelCount,fontCount,programCount);
+    cameraRecords(base,temporary,censusPath);
     // Keep parser regression reads separate from the runtime-open census.
     {
     Resources resources;
