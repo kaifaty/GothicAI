@@ -135,6 +135,10 @@ class Device {
     DescriptorArray       descriptors(const Texture2d* const *tex, size_t size);
     DescriptorArray       descriptors(const std::vector<const Texture2d*>& tex, const Sampler& smp);
     DescriptorArray       descriptors(const Texture2d* const *tex, size_t size, const Sampler& smp);
+    // The caller owns the finished frame slot. A fresh array can remember its
+    // current bindings without writing them again. A different size requires a new array.
+    std::optional<size_t> updateDescriptors(DescriptorArray& dst, const std::vector<const Texture2d*>& tex, bool initialize = false);
+    std::optional<size_t> updateDescriptors(DescriptorArray& dst, const std::vector<const StorageBuffer*>& buf, bool initialize = false);
 
     Texture2d             texture    (const Pixmap& pm, const bool mips = true);
     // Use the texture after uploadReady() returns true.

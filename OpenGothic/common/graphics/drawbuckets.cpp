@@ -108,16 +108,90 @@ const std::vector<DrawBuckets::Bucket>& DrawBuckets::buckets() const {
   return bucketsCpu;
   }
 
-void DrawBuckets::updateTextureArrays(uint8_t fId) {
+const DescriptorArray& DrawBuckets::textures() const { return textureDesc[currentFrame].arrays[0]; }
+const DescriptorArray& DrawBuckets::normals() const  { return textureDesc[currentFrame].arrays[1]; }
+const DescriptorArray& DrawBuckets::orm() const      { return textureDesc[currentFrame].arrays[2]; }
+
+const DescriptorArray& DrawBuckets::vbo() const {
+  const auto& bank = textureDesc[currentFrame];
+  return bank.updateBuffers ? bank.buffers.vbo : desc.vbo;
+  }
+
+const DescriptorArray& DrawBuckets::ibo() const {
+  const auto& bank = textureDesc[currentFrame];
+  return bank.updateBuffers ? bank.buffers.ibo : desc.ibo;
+  }
+
+const DescriptorArray& DrawBuckets::morphId() const {
+  const auto& bank = textureDesc[currentFrame];
+  return bank.updateBuffers ? bank.buffers.morphId : desc.morphId;
+  }
+
+const DescriptorArray& DrawBuckets::morph() const {
+  const auto& bank = textureDesc[currentFrame];
+  return bank.updateBuffers ? bank.buffers.morph : desc.morph;
+  }
+
+template<class T>
+static void publishArray(DescriptorArray& array, const std::vector<const T*>& slots, FrameProfile::Scope& timing,
+                         FrameProfile::Amount allocated) {
+  auto& device = Resources::device();
+  if(const auto count = device.updateDescriptors(array, slots)) {
+    timing.add(FrameProfile::Amount::BindlessPatchedSlots,*count);
+    return;
+    }
+  Resources::recycle(std::move(array));
+  array = device.descriptors(slots);
+  device.updateDescriptors(array,slots,true);
+  timing.add(allocated,slots.size());
+  }
+
+void DrawBuckets::updateTextureArrays(uint8_t fId, FrameProfile::Scope& timing) {
   auto& bank=textureDesc[fId];
   for(size_t i=0;i<textureSlots.size();++i) {
-    Resources::recycle(std::move(bank.arrays[i]));
-    if(!textureSlots[i].empty())
-      bank.arrays[i]=Resources::device().descriptors(textureSlots[i]);
+    if(textureSlots[i].empty())
+      Resources::recycle(std::move(bank.arrays[i]));
+    else
+      publishArray(bank.arrays[i],textureSlots[i],timing,FrameProfile::Amount::BindlessTextureSlots);
     }
+  bank.updateBuffers = bank.arrays[0].supportsBatchUpdates();
   bank.pending.clear();
   bank.rebuild=false;
   rebuiltTextureBank = true;
+  }
+
+void DrawBuckets::updateBufferArrays(uint8_t fId, FrameProfile::Scope& timing) {
+  std::vector<const StorageBuffer*> vbo, ibo, morphId, morph;
+  const auto capacity = roundup(bucketsCpu.size());
+  for(auto* slots : {&vbo,&ibo,&morphId,&morph})
+    slots->reserve(capacity);
+  for(const auto& bucket : bucketsCpu) {
+    if(bucket.staticMesh!=nullptr) {
+      ibo    .push_back(&bucket.iboBuffer());
+      vbo    .push_back(&bucket.vboBuffer());
+      morphId.push_back(bucket.staticMesh->morph.index);
+      morph  .push_back(bucket.staticMesh->morph.samples);
+      } else if(bucket.animMesh!=nullptr) {
+      ibo    .push_back(&bucket.animMesh->ibo8);
+      vbo    .push_back(&bucket.animMesh->vbo);
+      morphId.push_back(nullptr);
+      morph  .push_back(nullptr);
+      } else {
+      ibo    .push_back(nullptr);
+      vbo    .push_back(nullptr);
+      morphId.push_back(nullptr);
+      morph  .push_back(nullptr);
+      }
+    }
+  for(auto* slots : {&vbo,&ibo,&morphId,&morph})
+    slots->resize(capacity);
+
+  auto& bank = textureDesc[fId];
+  auto& dst  = bank.updateBuffers ? bank.buffers : desc;
+  publishArray(dst.vbo,    vbo,    timing,FrameProfile::Amount::BindlessBufferSlots);
+  publishArray(dst.ibo,    ibo,    timing,FrameProfile::Amount::BindlessBufferSlots);
+  publishArray(dst.morphId,morphId,timing,FrameProfile::Amount::BindlessBufferSlots);
+  publishArray(dst.morph,  morph,  timing,FrameProfile::Amount::BindlessBufferSlots);
   }
 
 void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
@@ -139,9 +213,9 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
     if(bank.rebuild) {
       timing.finish();
       FrameProfile::Scope rebuildTiming(FrameProfile::Zone::BindlessRebuild);
-      updateTextureArrays(fId);
-      rebuildTiming.add(FrameProfile::Amount::BindlessTextureSlots,
-                        textureSlots[0].size()+textureSlots[1].size()+textureSlots[2].size());
+      updateTextureArrays(fId,rebuildTiming);
+      if(bank.updateBuffers)
+        updateBufferArrays(fId,rebuildTiming);
       return;
       }
     std::sort(bank.pending.begin(),bank.pending.end());
@@ -161,29 +235,11 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
   auto& tex=textureSlots[0];
   auto& normal=textureSlots[1];
   auto& orm=textureSlots[2];
-  std::vector<const Tempest::StorageBuffer*> vbo, ibo;
-  std::vector<const Tempest::StorageBuffer*> morphId, morph;
   for(auto& i:bucketsCpu) {
     tex.push_back(i.mat.tex);
     if(Shaders::options().doMaterialMaps) {
       normal.push_back(i.mat.normal!=nullptr ? i.mat.normal : &Resources::fallbackTexture());
       orm.push_back(i.mat.orm!=nullptr ? i.mat.orm : &Resources::fallbackTexture());
-      }
-    if(i.staticMesh!=nullptr) {
-      ibo    .push_back(&i.iboBuffer());
-      vbo    .push_back(&i.vboBuffer());
-      morphId.push_back(i.staticMesh->morph.index);
-      morph  .push_back(i.staticMesh->morph.samples);
-      } else if(i.animMesh!=nullptr) {
-      ibo    .push_back(&i.animMesh->ibo8);
-      vbo    .push_back(&i.animMesh->vbo);
-      morphId.push_back(nullptr);
-      morph  .push_back(nullptr);
-      } else {
-      ibo    .push_back(nullptr);
-      vbo    .push_back(nullptr);
-      morphId.push_back(nullptr);
-      morph  .push_back(nullptr);
       }
     }
 
@@ -218,23 +274,8 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
     bank.pending.clear();
     bank.rebuild=true;
     }
-  updateTextureArrays(fId);
-
-  auto& device = Resources::device();
-  vbo    .resize(roundup(vbo.size()));
-  ibo    .resize(roundup(ibo.size()));
-  morphId.resize(roundup(morphId.size()));
-  morph  .resize(roundup(morph.size()));
-  Resources::recycle(std::move(desc.vbo));
-  Resources::recycle(std::move(desc.ibo));
-  Resources::recycle(std::move(desc.morphId));
-  Resources::recycle(std::move(desc.morph));
-  desc.vbo     = device.descriptors(vbo);
-  desc.ibo     = device.descriptors(ibo);
-  desc.morphId = device.descriptors(morphId);
-  desc.morph   = device.descriptors(morph);
-  timing.add(FrameProfile::Amount::BindlessTextureSlots,tex.size()+normal.size()+orm.size());
-  timing.add(FrameProfile::Amount::BindlessBufferSlots,vbo.size()+ibo.size()+morphId.size()+morph.size());
+  updateTextureArrays(fId,timing);
+  updateBufferArrays(fId,timing);
   }
 
 void DrawBuckets::updatePrimitiveCounts(Encoder<CommandBuffer>& cmd) {

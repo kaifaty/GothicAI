@@ -7,6 +7,7 @@
 #include "vaccelerationstructure.h"
 
 #include <stdexcept>
+#include <type_traits>
 
 using namespace Tempest;
 using namespace Tempest::Detail;
@@ -51,17 +52,29 @@ size_t VDescriptorArray::size() const {
   return cnt;
   }
 
+static VkDescriptorImageInfo imageBinding(AbstractGraphicsApi::Texture* texture, VkSampler sampler, uint32_t mipLevel) {
+  auto* native = static_cast<VTexture*>(texture);
+  assert(native==nullptr || native->nonUniqId==0);
+  VkDescriptorImageInfo image{};
+  image.imageLayout = native!=nullptr ? native->defaultLayout() : VK_IMAGE_LAYOUT_UNDEFINED;
+  image.imageView   = native!=nullptr ? native->view(ComponentMapping(),mipLevel,false,false) : VK_NULL_HANDLE;
+  image.sampler     = sampler;
+  return image;
+  }
+
+static VkDescriptorBufferInfo bufferBinding(VDevice& dev, AbstractGraphicsApi::Buffer* buffer) {
+  auto* native = static_cast<VBuffer*>(buffer);
+  if(native==nullptr && !dev.props.hasRobustness2)
+    return {dev.dummySsbo().impl, 0, 0};
+  return {native!=nullptr ? native->impl : VK_NULL_HANDLE, 0, VK_WHOLE_SIZE};
+  }
+
 void VDescriptorArray::setTexture(size_t index, AbstractGraphicsApi::Texture* texture) {
   if(!textureArray)
     throw std::system_error(GraphicsErrc::UnsupportedExtension,"texture update of a buffer descriptor array");
   if(index>=cnt)
     throw std::out_of_range("descriptor array index");
-  auto* native=reinterpret_cast<VTexture*>(texture);
-  VkDescriptorImageInfo image{};
-  image.imageLayout=native!=nullptr ? native->defaultLayout() : VK_IMAGE_LAYOUT_UNDEFINED;
-  image.imageView=native!=nullptr ? native->view(ComponentMapping(),mipLevel,false,false) : VK_NULL_HANDLE;
-  image.sampler=sampler;
-  assert(native==nullptr || native->nonUniqId==0);
+  const auto image = imageBinding(texture,sampler,mipLevel);
   VkWriteDescriptorSet write{};
   write.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   write.dstSet=dset;
@@ -72,6 +85,81 @@ void VDescriptorArray::setTexture(size_t index, AbstractGraphicsApi::Texture* te
   write.pImageInfo=&image;
   vkUpdateDescriptorSets(dev.device.impl,1,&write,0,nullptr);
   dev.descPool.notifyUpdate(*this,uint32_t(index));
+  if(!textures.empty())
+    textures[index] = AbstractGraphicsApi::PTexture(texture);
+  }
+
+template<class Resource, class Describe>
+std::optional<size_t> VDescriptorArray::updateSlots(std::vector<DSharedPtr<Resource*>>& retained, Resource* const* src,
+                                                    bool initialize, VkDescriptorType type, Describe describe) {
+  if(initialize) {
+    if(!retained.empty())
+      return std::nullopt;
+    retained.reserve(cnt);
+    for(size_t i=0; i<cnt; ++i)
+      retained.emplace_back(src[i]);
+    return 0;
+    }
+  if(retained.size()!=cnt)
+    return std::nullopt;
+
+  using Info = std::invoke_result_t<Describe,Resource*>;
+  std::vector<Info> values;
+  std::vector<VPoolCache::Range> ranges;
+  for(uint32_t i=0; i<cnt; ++i) {
+    if(retained[i].handler==src[i])
+      continue;
+    if(ranges.empty() || ranges.back().first+ranges.back().count!=i)
+      ranges.push_back({i,0});
+    ++ranges.back().count;
+    values.push_back(describe(src[i]));
+    }
+  if(values.empty())
+    return 0;
+
+  std::vector<VkWriteDescriptorSet> writes;
+  writes.reserve(ranges.size());
+  size_t offset = 0;
+  for(const auto& range : ranges) {
+    auto& write            = writes.emplace_back();
+    write.sType            = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet           = dset;
+    write.dstArrayElement  = range.first;
+    write.descriptorType   = type;
+    write.descriptorCount  = range.count;
+    if constexpr(std::is_same_v<Info,VkDescriptorImageInfo>)
+      write.pImageInfo  = values.data()+offset;
+    else
+      write.pBufferInfo = values.data()+offset;
+    offset += range.count;
+    }
+  vkUpdateDescriptorSets(dev.device.impl,uint32_t(writes.size()),writes.data(),0,nullptr);
+  dev.descPool.notifyUpdate(*this,ranges);
+  for(const auto& range : ranges)
+    for(uint32_t i=range.first; i<range.first+range.count; ++i)
+      retained[i] = DSharedPtr<Resource*>(src[i]);
+  return values.size();
+  }
+
+std::optional<size_t> VDescriptorArray::update(AbstractGraphicsApi::Texture* const* tex, size_t count, bool initialize) {
+  if(!textureArray || count!=cnt)
+    return std::nullopt;
+  const auto type = sampler!=VK_NULL_HANDLE ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  return updateSlots(textures,tex,initialize,type,[this](auto* value) { return imageBinding(value,sampler,mipLevel); });
+  }
+
+std::optional<size_t> VDescriptorArray::update(AbstractGraphicsApi::Buffer* const* buf, size_t count, bool initialize) {
+  if(textureArray || count!=cnt)
+    return std::nullopt;
+  const auto changed = updateSlots(buffers,buf,initialize,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                   [this](auto* value) { return bufferBinding(dev,value); });
+  if(changed && *changed!=0) {
+    nonUniqId = NonUniqResId::I_None;
+    for(size_t i=0; i<cnt; ++i)
+      if(buf[i]!=nullptr)
+        nonUniqId |= static_cast<VBuffer*>(buf[i])->nonUniqId;
+    }
+  return changed;
   }
 
 void VDescriptorArray::alloc(VkDescriptorSetLayout lay, VDevice &dev, ShaderReflection::Class cls, size_t cnt) {
