@@ -274,6 +274,7 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     auto script=daedalus::DaedalusScript::from_program(std::move(program.data));
     catalogs->states=NativeBaseCatalog::prepareStates(script);
     catalogs->initialState=NativeBaseCatalog::prepareInitialState(script);
+    catalogs->constants=NativeBaseCatalog::prepareConstants(script);
     catalogs->identities=NativeBaseCatalog::prepareIdentities(script,base);
     }
 

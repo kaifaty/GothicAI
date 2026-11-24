@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -12,7 +13,7 @@
 namespace NativeBaseCatalog {
 
 inline constexpr int projectionVersion = 3;
-inline constexpr int catalogVersion = 4;
+inline constexpr int catalogVersion = 5;
 
 struct State {
   uint32_t id = 0;
@@ -44,12 +45,21 @@ struct Identities {
   bool operator==(const Identities&) const = default;
   };
 
+struct Constant {
+  uint32_t id = 0;
+  InitialValue values;
+  bool operator==(const Constant&) const = default;
+  };
+
+using Constants = std::map<std::string,Constant,std::less<>>;
+
 struct Selection {
   std::string fight;
   int language = -1;
   std::vector<State> states;
   std::vector<InitialRow> initialState;
   Identities identities;
+  Constants constants;
   };
 
 const Identity* findIdentity(std::span<const Identity> rows, uint32_t id);
@@ -57,6 +67,7 @@ const Identity* findIdentity(std::span<const Identity> rows, std::string_view na
 
 std::filesystem::path section(const std::filesystem::path& base);
 Selection read(const std::filesystem::path& base);
+const Constant* findConstant(const Selection& selection,std::string_view name);
 void write(const std::filesystem::path& base, const Selection& selection);
 
 }

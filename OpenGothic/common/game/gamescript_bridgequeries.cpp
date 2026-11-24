@@ -1,10 +1,17 @@
 #include "gamescript.h"
 
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "world/objects/npc.h"
 
 std::optional<int32_t> GameScript::globalIntSymbol(std::string_view name) const {
   if(const auto value = own.intValue(name))
     return value;
+  if(baseNativeCatalog()!=nullptr) {
+    if(const auto* field = std::get_if<ScriptVars::Array<int32_t>>(runtimeState.find(name)))
+      return field->values.front();
+    return intConstant(name);
+    }
   const auto* symbol = nativeRoutineProgram ? storySlot(name) : vm.find_symbol_by_name(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT || symbol->is_member())
     return std::nullopt;
@@ -15,6 +22,12 @@ std::optional<int32_t> GameScript::globalIntSymbol(std::string_view name) const 
 std::optional<int32_t> GameScript::intConstant(std::string_view name) const {
   if(name.empty())
     return std::nullopt;
+  if(const auto* catalog = baseNativeCatalog()) {
+    if(const auto* constant = NativeBaseCatalog::findConstant(*catalog,name))
+      if(const auto* values = std::get_if<std::vector<int32_t>>(&constant->values))
+        return values->front();
+    return std::nullopt;
+    }
   const auto* symbol = nativeRoutineProgram ? storySlot(name) : vm.find_symbol_by_name(name);
   if(symbol!=nullptr && symbol->is_const() && symbol->type()==daedalus::DaedalusDataType::INT)
     return symbol->get_int(0);
@@ -84,6 +97,14 @@ std::optional<uint32_t> GameScript::addDirectorNpcSymbol(std::string_view name, 
   }
 
 std::string_view GameScript::stringSymbol(std::string_view name, std::string_view fallback) const {
+  if(const auto* catalog = baseNativeCatalog()) {
+    if(const auto* field = std::get_if<ScriptVars::Array<std::string>>(runtimeState.find(name)))
+      return field->values.front();
+    if(const auto* constant = NativeBaseCatalog::findConstant(*catalog,name))
+      if(const auto* values = std::get_if<std::vector<std::string>>(&constant->values))
+        return values->front();
+    return fallback;
+    }
   const auto* symbol = vm.find_symbol_by_name(name);
   if(symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::STRING)
     return symbol->get_string();
@@ -98,6 +119,13 @@ bool GameScript::isPartyMember(const Npc& npc) {
 bool GameScript::setGlobalIntSymbol(std::string_view name, int32_t value) {
   if(own.setInt(name,value))
     return true;
+  if(baseNativeCatalog()!=nullptr) {
+    auto* field = std::get_if<ScriptVars::Array<int32_t>>(runtimeState.find(name));
+    if(field==nullptr)
+      return false;
+    field->values.front() = value;
+    return true;
+    }
   auto* symbol = nativeRoutineProgram ? storySlot(name) : vm.find_symbol_by_name(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT || symbol->is_member() || symbol->is_const())
     return false;

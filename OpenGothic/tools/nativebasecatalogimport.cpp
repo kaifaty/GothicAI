@@ -78,7 +78,7 @@ NativeBaseCatalog::Selection NativeBaseCatalog::prepare(const ProgramData::Index
           "native base needs the stock menu catalog for the selected language");
   const auto* fight = ProgramData::fightProgram(programs);
   require(fight!=nullptr,"native base needs a fight catalog");
-  return {fight->recordSha256,language,{}, {}, {}};
+  return {fight->recordSha256,language,{}, {}, {}, {}};
   }
 
 std::vector<NativeBaseCatalog::State> NativeBaseCatalog::prepareStates(const daedalus::DaedalusScript& program) {
@@ -142,6 +142,32 @@ std::vector<NativeBaseCatalog::InitialRow> NativeBaseCatalog::prepareInitialStat
   return rows;
   }
 
+NativeBaseCatalog::Constants NativeBaseCatalog::prepareConstants(const daedalus::DaedalusScript& program) {
+  using enum daedalus::DaedalusDataType;
+  Constants result;
+  for(const auto& symbol : program.symbols()) {
+    if(!symbol.is_const() || symbol.is_member() || symbol.is_generated() || symbol.count()==0)
+      continue;
+    const auto values = [&]<class T>(auto get) {
+      std::vector<T> array;
+      array.reserve(symbol.count());
+      for(uint16_t index=0;index<symbol.count();++index)
+        array.emplace_back(get(index));
+      return array;
+      };
+    InitialValue data;
+    switch(symbol.type()) {
+      case INT: data=values.operator()<int32_t>([&](uint16_t i) { return symbol.get_int(i); }); break;
+      case FLOAT: data=values.operator()<float>([&](uint16_t i) { return symbol.get_float(i); }); break;
+      case STRING: data=values.operator()<std::string>([&](uint16_t i) { return symbol.get_string(i); }); break;
+      default: continue;
+      }
+    DefinitionJson::require(result.emplace(symbol.name(),Constant{symbol.index(),std::move(data)}).second,
+                            "duplicate named constant "+symbol.name());
+    }
+  return result;
+  }
+
 NativeBaseCatalog::Identities NativeBaseCatalog::prepareIdentities(daedalus::DaedalusScript& program,
                                                                     const std::filesystem::path& base) {
   const auto declarations = [&](std::string_view cls) {
@@ -162,7 +188,8 @@ void NativeBaseCatalog::verify(const std::filesystem::path& base, const Selectio
   require(!std::filesystem::exists(base/"programs"),"native catalog base contains the program directory");
   const auto selected = read(base);
   require(selected.fight==expected.fight && selected.language==expected.language && selected.states==expected.states &&
-          selected.initialState==expected.initialState && selected.identities==expected.identities,
+          selected.initialState==expected.initialState && selected.identities==expected.identities &&
+          selected.constants==expected.constants,
           "native catalog selection differs from its source");
   verifyIdentities(base,selected.identities);
   require(!FightDefinitions::read(base,selected.fight).empty(),"native catalog base has no fight tactics");

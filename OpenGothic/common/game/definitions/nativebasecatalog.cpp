@@ -66,6 +66,21 @@ Json writeIdentities(const std::vector<NativeBaseCatalog::Identity>& names, Allo
   return rows;
   }
 
+void validateValues(const NativeBaseCatalog::InitialValue& values,bool allowAlias) {
+  std::visit([allowAlias](const auto& value) {
+    using T = std::decay_t<decltype(value)>;
+    if constexpr(std::is_same_v<T,NativeBaseCatalog::Alias>) {
+      require(allowAlias && (value==NativeBaseCatalog::Alias::Npc || value==NativeBaseCatalog::Alias::Item),
+              "invalid native catalog alias");
+      }
+    else {
+      require(!value.empty() && value.size()<=maxStateValues,"invalid native catalog values");
+      if constexpr(std::is_same_v<T,std::vector<float>>)
+        require(std::ranges::all_of(value,[](float f) { return std::isfinite(f); }),"non-finite native catalog float");
+      }
+    },values);
+  }
+
 void validate(const NativeBaseCatalog::Selection& selection) {
   require(selection.fight.size()==64 && std::ranges::all_of(selection.fight,[](char c) {
     return (c>='0' && c<='9') || (c>='a' && c<='f');
@@ -98,17 +113,7 @@ void validate(const NativeBaseCatalog::Selection& selection) {
     require((!previous || *previous<row.id) && ids.insert(row.id).second && !row.name.empty() &&
             names.emplace(row.name,row.id).second,"invalid, duplicate or unordered initial state identity "+row.name);
     previous=row.id;
-    std::visit([](const auto& value) {
-      using T = std::decay_t<decltype(value)>;
-      if constexpr(std::is_same_v<T,NativeBaseCatalog::Alias>) {
-        require(value==NativeBaseCatalog::Alias::Npc || value==NativeBaseCatalog::Alias::Item,"invalid initial state alias");
-        }
-      else {
-        require(!value.empty() && value.size()<=maxStateValues,"invalid initial state array");
-        if constexpr(std::is_same_v<T,std::vector<float>>)
-          require(std::ranges::all_of(value,[](float f) { return std::isfinite(f); }),"non-finite initial state float");
-        }
-      },row.value);
+    validateValues(row.value,true);
     }
 
   for(const auto* rows : {&selection.identities.npcs,&selection.identities.items,&selection.identities.dialogs}) {
@@ -120,9 +125,16 @@ void validate(const NativeBaseCatalog::Selection& selection) {
       previous=id;
       }
     }
+
+  require(!selection.constants.empty(),"missing named constants");
+  for(const auto& [name,constant] : selection.constants) {
+    require(!name.empty() && ids.insert(constant.id).second && names.emplace(name,constant.id).second,
+            "invalid or duplicate constant identity "+name);
+    validateValues(constant.values,false);
+    }
   }
 
-Json writeInitialRow(const NativeBaseCatalog::InitialRow& row, Allocator& alloc) {
+Json writeValueRow(uint32_t id,std::string_view name,const NativeBaseCatalog::InitialValue& data,Allocator& alloc) {
   using NativeBaseCatalog::Alias;
   Json values;
   const auto kind = std::visit([&](const auto& value) -> std::string_view {
@@ -146,9 +158,9 @@ Json writeInitialRow(const NativeBaseCatalog::InitialRow& row, Allocator& alloc)
         return "string";
         }
       }
-    },row.value);
+    },data);
   Json result(rapidjson::kArrayType);
-  result.PushBack(row.id,alloc).PushBack(text(encode(row.name),alloc),alloc);
+  result.PushBack(id,alloc).PushBack(text(encode(name),alloc),alloc);
   result.PushBack(text(kind,alloc),alloc).PushBack(std::move(values),alloc);
   return result;
   }
@@ -176,9 +188,9 @@ NativeBaseCatalog::Selection NativeBaseCatalog::read(const std::filesystem::path
   try {
     const auto doc = DefinitionJson::read(file);
     object(doc,{"format","version","fight_catalog","language","npc_states","initial_session_state",
-                "npc_archetypes","item_archetypes","dialog_infos"});
+                "npc_archetypes","item_archetypes","dialog_infos","named_constants"});
     require(string(doc["format"])==format && integer(doc["version"])==catalogVersion,"unsupported native base catalog");
-    Selection selection{string(doc["fight_catalog"]),integer(doc["language"]),{}, {}, {}};
+    Selection selection{string(doc["fight_catalog"]),integer(doc["language"]),{}, {}, {}, {}};
     const auto& states = doc["npc_states"];
     require(states.IsArray(),"invalid NPC state catalog");
     selection.states.reserve(states.Size());
@@ -198,12 +210,30 @@ NativeBaseCatalog::Selection NativeBaseCatalog::read(const std::filesystem::path
       readIdentities(doc["item_archetypes"]),
       readIdentities(doc["dialog_infos"]),
       };
+    const auto& constants = doc["named_constants"];
+    require(constants.IsArray(),"invalid named constants");
+    for(const auto& row : constants.GetArray()) {
+      require(row.IsArray() && row.Size()==4,"invalid named constant row");
+      auto name=bytes(row[1]);
+      Constant value{number(row[0]),readInitialValue(string(row[2]),row[3])};
+      require(selection.constants.emplace(std::move(name),std::move(value)).second,"duplicate named constant");
+      }
     validate(selection);
     return selection;
     }
   catch(const std::runtime_error& error) {
     throw std::runtime_error(file.string()+": "+error.what());
     }
+  }
+
+const NativeBaseCatalog::Constant* NativeBaseCatalog::findConstant(const Selection& selection,std::string_view name) {
+  const auto& constants=selection.constants;
+  if(const auto it=constants.find(name); it!=constants.end())
+    return &it->second;
+  std::string upper(name);
+  std::ranges::transform(name,upper.begin(),[](unsigned char c) { return char(std::toupper(c)); });
+  const auto it=constants.find(upper);
+  return it==constants.end() ? nullptr : &it->second;
   }
 
 void NativeBaseCatalog::write(const std::filesystem::path& base, const Selection& selection) {
@@ -227,11 +257,16 @@ void NativeBaseCatalog::write(const std::filesystem::path& base, const Selection
   Json initialState(rapidjson::kArrayType);
   initialState.Reserve(rapidjson::SizeType(selection.initialState.size()),alloc);
   for(const auto& row : selection.initialState)
-    initialState.PushBack(writeInitialRow(row,alloc),alloc);
+    initialState.PushBack(writeValueRow(row.id,row.name,row.value,alloc),alloc);
   put(doc,"initial_session_state",std::move(initialState),alloc);
   put(doc,"npc_archetypes",writeIdentities(selection.identities.npcs,alloc),alloc);
   put(doc,"item_archetypes",writeIdentities(selection.identities.items,alloc),alloc);
   put(doc,"dialog_infos",writeIdentities(selection.identities.dialogs,alloc),alloc);
+  Json constants(rapidjson::kArrayType);
+  constants.Reserve(rapidjson::SizeType(selection.constants.size()),alloc);
+  for(const auto& [name,constant] : selection.constants)
+    constants.PushBack(writeValueRow(constant.id,name,constant.values,alloc),alloc);
+  put(doc,"named_constants",std::move(constants),alloc);
   const auto file = section(base);
   std::filesystem::create_directories(file.parent_path());
   DefinitionJson::write(file,doc);
