@@ -468,14 +468,24 @@ const ProgramData::Source* ProgramData::fightProgram(const Index& index) {
   return index.findHost("_work/Data/Scripts/_compiled/Fight.dat");
   }
 
-const ProgramData::Source* ProgramData::cameraProgram(const Index& index) {
+namespace {
+const ProgramData::Source* optionalDefinitionProgram(const ProgramData::Index& index, const char* name) {
   try {
-    if(auto* source = index.findVfs("Camera.dat"))
+    if(auto* source = index.findVfs(name))
       return source;
-    return index.findHost("_work/Data/Scripts/_compiled/Camera.dat");
+    return index.findHost(std::string("_work/Data/Scripts/_compiled/")+name);
     }
   catch(const std::runtime_error&) {
     // The legacy loader still reports a skipped or ambiguous program on use.
     return nullptr;
     }
+  }
+}
+
+const ProgramData::Source* ProgramData::cameraProgram(const Index& index) {
+  return optionalDefinitionProgram(index,"Camera.dat");
+  }
+
+const ProgramData::Source* ProgramData::sfxProgram(const Index& index) {
+  return optionalDefinitionProgram(index,"Sfx.dat");
   }

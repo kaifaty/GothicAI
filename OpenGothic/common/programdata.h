@@ -66,6 +66,7 @@ struct Index {
 
 const Source* fightProgram(const Index& index);
 const Source* cameraProgram(const Index& index);
+const Source* sfxProgram(const Index& index);
 
 // Throws std::runtime_error("program data: <file>: <reason>") on missing, corrupt or
 // unsupported data.
