@@ -18,7 +18,7 @@ build are system ones; they are only counted.
     python3 scripts/engine_link_census.py OpenGothic/build --check-native-game --target gothic-body-runner
 
 The native game check requires the unstripped linked executable. Exit codes are 0 for a clean
-check, 1 for a Daedalus dependency or interpreter symbol, and 2 for an uninspectable build.
+check, 1 for linked offline script code, and 2 for an uninspectable build.
 
 Step 8.2 of the engine layers plan: reports/engine/2026-11-13-empty-island/README.md.
 """
@@ -52,6 +52,17 @@ MACHO_LINE = re.compile(r"^(?:[0-9a-fA-F]+)?\s*\((?P<section>[^)]*)\)(?:\s+\(ali
                         r"(?:\(was a private external\)\s+)?(?:\[[a-z ]+\]\s+)*(?P<name>\S.*?)"
                         r"(?:\s+\((?:from|weak import)[^)]*\))?$")
 DAEDALUS_DISPATCH = re.compile(r"^_ZN8daedalus10DaedalusVm4execEv(?:[.$@].*)?$")
+OFFLINE_ARCHIVES = {"StoryGraph", "StoryGraphLift", "gothic-program-codec"}
+OFFLINE_SOURCE = re.compile(
+    r"/(?:ai_bridge/storygraph/(?:bytecode|eval|exec|graphjson|lifter|model|program)"
+    r"|common/import/programcodec|common/game/definitions/symbolcatalog)\.cpp$"
+)
+OFFLINE_SYMBOL = re.compile(
+    r"^(?:_ZN10storygraph11liftProgram|_ZNK?10storygraph8Bytecode"
+    r"|_ZN11ProgramData(?:11readProgram|12(?:writeProgram|recordSha256)|13encodeProgram"
+    r"|18(?:readSymbolMetadata|symbolMetadataPath)|19writeSymbolMetadata|25symbolMetadataPayloadPath|7compare)"
+    r"|_ZN19ScriptSymbolCatalog(?:4load|5write))"
+)
 
 
 @dataclass
@@ -214,12 +225,19 @@ def check_native_game(build: Path, target: str, nm: str, fmt: str) -> dict:
                         if sources.get(obj, "").endswith("/common/daedalus/vm_bytecode.cpp"))
     dispatch_symbols = sorted(name for name in symbols.defined.keys() | symbols.undefined
                               if DAEDALUS_DISPATCH.fullmatch(name))
+    offline_archives = sorted(path for path in archives if archive_name(path) in OFFLINE_ARCHIVES)
+    offline_objects = sorted(obj for obj, _ in objects if OFFLINE_SOURCE.search(sources.get(obj, "")))
+    offline_symbols = sorted(name for name in symbols.defined.keys() | symbols.undefined if OFFLINE_SYMBOL.match(name))
     return {
         "binary": str(binary),
         "daedalus_archives": daedalus_archives,
         "vm_objects": vm_objects,
         "opcode_dispatch_symbols": dispatch_symbols,
-        "status": "leaked" if daedalus_archives or vm_objects or dispatch_symbols else "clean",
+        "offline_archives": offline_archives,
+        "offline_objects": offline_objects,
+        "offline_symbols": offline_symbols,
+        "status": "leaked" if any((daedalus_archives, vm_objects, dispatch_symbols, offline_archives,
+                                   offline_objects, offline_symbols)) else "clean",
     }
 
 
@@ -382,7 +400,7 @@ def main() -> int:
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--check-native-game", action="store_true",
-                    help="verify the unstripped executable and link inputs contain no Daedalus interpreter")
+                    help="verify the unstripped executable and link inputs contain no offline script code")
     args = ap.parse_args()
     build = args.build.resolve()
     if args.check_native_game:
@@ -399,7 +417,8 @@ def main() -> int:
             print(json.dumps(result, indent=1))
         else:
             print(f"Native game link check: {result['status']} ({result['binary']})")
-            for key in ("daedalus_archives", "vm_objects", "opcode_dispatch_symbols"):
+            for key in ("daedalus_archives", "vm_objects", "opcode_dispatch_symbols",
+                        "offline_archives", "offline_objects", "offline_symbols"):
                 for item in result[key]:
                     print(f"{key}: {item}")
         return int(result["status"] == "leaked")

@@ -83,7 +83,6 @@ using LineTexts = std::unordered_map<std::string,std::string>;
 Model       buildModel(daedalus::DaedalusVm& vm, const Bytecode& code, const Lifter& lifter, const LineTexts& lines);
 
 std::string toJson(const Model& m, bool pretty);
-std::string toJson(const ExprP& e);
 // readable views, UTF-8
 std::string describeNode (const Model& m, const std::string& id, int depth = 3);
 std::string describeQuest(const Model& m, const std::string& var);

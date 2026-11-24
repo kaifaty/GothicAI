@@ -137,6 +137,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/gamemusic", "gothic"),
     ("common/dmusic/*", "gothic"),
     ("common/programdata", "gothic"),
+    ("common/programdatajson", "gothic"),
     ("common/itemdefinitions", "rpg"),
     ("common/placementdefinitions", "rpg"),
     ("common/activitydefinitions", "rpg"),

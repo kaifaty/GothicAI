@@ -78,7 +78,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source zenkitlog daedalus/vm daedalus/vm_bytecode daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/vm_bytecode daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata import/programcodec outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -332,7 +332,7 @@ target_link_libraries(Gothic2Notr PRIVATE OpenGothic)
 # The authored game runs StoryGraph even when the networking bridge is disabled.
 set(STORYGRAPH_TOOL OFF CACHE BOOL "" FORCE)
 add_subdirectory(ai_bridge/storygraph)
-target_link_libraries(${PROJECT_NAME} StoryGraph)
+target_link_libraries(${PROJECT_NAME} StoryGraphRuntime)
 
 # external AI control bridge (fork-specific, see ai_bridge/)
 add_subdirectory(ai_bridge)
@@ -355,7 +355,7 @@ if(UNIX)
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
   add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp)
-  target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge gothic-daedalus)
+  target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge StoryGraph gothic-daedalus)
   target_include_directories(gothic-npc-day-contract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   # Real NPC/world fixture for growing and shrinking the live observation subscription.
   add_executable(gothic-body-watch-test tests/body_watch_test.cpp)

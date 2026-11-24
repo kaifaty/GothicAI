@@ -41,7 +41,7 @@ class Catalog final {
     std::unordered_map<std::string_view,uint32_t>   names;
   };
 
-// The active program identity selects the catalog. Older bases may omit it.
+// Offline importer and contracts. The program identity selects the catalog.
 std::unique_ptr<Catalog> load(const std::filesystem::path& base, std::string_view program);
 void write(const std::filesystem::path& base, std::string_view program, std::span<const Entry> entries);
 

@@ -27,7 +27,7 @@ set(BASE_RUNTIME_SOURCES
   common/game/definitions/cameradefinitiondata.cpp common/game/definitions/sfxdefinitiondata.cpp
   common/game/definitions/musicdefinitiondata.cpp
   common/game/definitions/questclosuredata.cpp
-  common/game/definitions/effectdefinitiondata.cpp common/game/definitions/dialoginfodata.cpp common/game/definitions/symbolcatalog.cpp
+  common/game/definitions/effectdefinitiondata.cpp common/game/definitions/dialoginfodata.cpp
   common/game/definitions/npcworlddata.cpp common/game/definitions/tradeinventorydata.cpp
   common/game/definitions/deathtrophydefinitions.cpp
   common/gothicglb.cpp common/gltfmesh.cpp common/utils/fileutil.cpp common/musicdata.cpp common/dmusic/musicrecord.cpp common/musicnative.c
@@ -48,6 +48,9 @@ target_include_directories(gothic-base-runtime SYSTEM PRIVATE "${BASE_ROOT}/lib/
   "${BASE_ROOT}/lib/dmusic/src" "${BASE_ROOT}/lib/dmusic/vendor/TinySoundFont")
 set_target_properties(gothic-base-runtime PROPERTIES C_STANDARD 11)
 target_link_libraries(gothic-base-runtime PUBLIC miniz dmusic)
+add_library(gothic-program-codec STATIC "${BASE_ROOT}/common/import/programcodec.cpp")
+target_include_directories(gothic-program-codec SYSTEM PRIVATE "${BASE_ROOT}/lib/rapidjson/include")
+target_link_libraries(gothic-program-codec PUBLIC gothic-base-runtime)
 target_link_libraries(gothic-base-import PUBLIC gothic-base-runtime)
 target_include_directories(gothic-base-import PUBLIC "${BASE_ROOT}/common" "${BASE_ROOT}/lib/Tempest/Engine/include")
 target_include_directories(gothic-base-import PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/baseimport-generated")
@@ -69,7 +72,7 @@ target_sources(gothic-npc-snapshot PRIVATE "${BASE_ROOT}/common/import/npchelper
   "${BASE_ROOT}/common/import/gameplaydefinitions.cpp")
 target_include_directories(gothic-npc-snapshot PUBLIC "${BASE_ROOT}/common/import" "${NPC_SNAPSHOT_GENERATED_DIR}")
 target_include_directories(gothic-npc-snapshot SYSTEM PRIVATE "${BASE_ROOT}/lib/rapidjson/include")
-target_link_libraries(gothic-npc-snapshot PUBLIC gothic-daedalus gothic-base-runtime)
+target_link_libraries(gothic-npc-snapshot PUBLIC gothic-daedalus gothic-program-codec)
 target_link_libraries(gothic-base-import PUBLIC gothic-npc-snapshot)
 if(TARGET Tempest)
   target_link_libraries(gothic-base-runtime PUBLIC Tempest)
@@ -93,4 +96,5 @@ target_compile_definitions(zenkit PRIVATE squish=gothic_import_squish)
 if(NOT MSVC)
   target_compile_options(gothic-base-import PRIVATE -Wall -Wconversion)
   target_compile_options(gothic-base-runtime PRIVATE -Wall -Wconversion)
+  target_compile_options(gothic-program-codec PRIVATE -Wall -Wconversion)
 endif()

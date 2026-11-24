@@ -1,15 +1,12 @@
 #include "program.h"
 
 #include "bytecode.h"
-#include "model.h"
 #include "textcodec.h"
 #include "vocab.h"
 
 #include "daedalus/script.h"
 
-#include <rapidjson/stringbuffer.h>
-#include <rapidjson/writer.h>
-
+#include <algorithm>
 #include <memory>
 #include <unordered_map>
 
@@ -468,68 +465,6 @@ void describe(const std::vector<Step>& steps, const std::string& indent, std::st
     }
   }
 
-template<class W>
-void writeExprRaw(W& w, const ExprP& e) {
-  auto text = toJson(e);
-  w.RawValue(text.c_str(), text.size(), rapidjson::kArrayType);
-  }
-
-template<class W>
-void writeSteps(W& w, const std::vector<Step>& steps) {
-  w.StartArray();
-  for(auto& s : steps) {
-    w.StartObject();
-    switch(s.kind) {
-      case Step::Call:
-        w.Key("do"); w.String("call");
-        w.Key("call"); writeExprRaw(w, s.call);
-        break;
-      case Step::Store:
-        w.Key("do"); w.String("set");
-        w.Key("target"); writeExprRaw(w, s.target);
-        w.Key("value");  writeExprRaw(w, s.value);
-        break;
-      case Step::Return:
-        w.Key("do"); w.String("return");
-        if(s.value) {
-          w.Key("value"); writeExprRaw(w, s.value);
-          }
-        break;
-      case Step::If:
-        w.Key("do"); w.String("if");
-        w.Key("cond"); writeExprRaw(w, s.cond);
-        w.Key("then"); writeSteps(w, s.then);
-        if(!s.otherwise.empty()) {
-          w.Key("else"); writeSteps(w, s.otherwise);
-          }
-        break;
-      case Step::Say: {
-        w.Key("do");      w.String("say");
-        w.Key("speaker"); w.String(s.hero ? "other" : "self");
-        auto text = s.line.empty() ? TextCodec::toUtf8(s.text) : s.line;
-        w.Key(s.line.empty() ? "text" : "line");
-        w.String(text.c_str(), rapidjson::SizeType(text.size()));
-        break;
-        }
-      case Step::Choice: {
-        w.Key("do"); w.String("choice");
-        if(!s.id.empty()) {
-          w.Key("id"); w.String(s.id.c_str(), rapidjson::SizeType(s.id.size()));
-          }
-        auto text = TextCodec::toUtf8(s.text);
-        w.Key("text");  w.String(text.c_str(), rapidjson::SizeType(text.size()));
-        w.Key("steps"); writeSteps(w, s.then);
-        break;
-        }
-      case Step::ClearChoices:
-        w.Key("do"); w.String("clear_choices");
-        break;
-      }
-    w.EndObject();
-    }
-  w.EndArray();
-  }
-
 }
 
 Program storygraph::liftProgram(const daedalus::DaedalusScript& script, const Bytecode& code, uint32_t fnSymbol) {
@@ -543,17 +478,10 @@ Program storygraph::liftProgram(const daedalus::DaedalusScript& script, const By
   return b.run();
   }
 
-std::string storygraph::describe(const Program& p) {
+std::string storygraph::describeProgram(const Program& p) {
   if(!p.error.empty())
     return "not a program: " + p.error + "\n";
   std::string out;
   ::describe(p.steps, "", out);
   return out;
-  }
-
-std::string storygraph::toJson(const Program& p) {
-  rapidjson::StringBuffer buf;
-  rapidjson::Writer<rapidjson::StringBuffer> w(buf);
-  writeSteps(w, p.steps);
-  return std::string(buf.GetString(), buf.GetSize());
   }

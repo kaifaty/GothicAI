@@ -36,7 +36,8 @@ endif()
 
 add_library(StoryGraphRuntime STATIC
   expr.cpp expr.h
-  exprjson.cpp exprjson.h
+  exprjson.cpp exprjson.h exprjsonwrite.h
+  predicates.cpp predicates.h
   nativeexec.cpp nativeexec.h execcore.h
   program.h vocab.h
   ../textcodec.cpp ../textcodec.h
@@ -47,8 +48,7 @@ target_include_directories(StoryGraphRuntime SYSTEM PUBLIC ${CMAKE_CURRENT_SOURC
 
 add_library(StoryGraphLift STATIC
   bytecode.cpp bytecode.h
-  lifter.cpp lifter.h
-  predicates.cpp predicates.h)
+  lifter.cpp lifter.h)
 target_link_libraries(StoryGraphLift PUBLIC StoryGraphRuntime gothic-script-data)
 
 add_library(StoryGraph STATIC

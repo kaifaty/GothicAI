@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <functional>
 #include <map>
-#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -11,13 +10,10 @@
 #include <utility>
 
 #include "storygraph/nativeexec.h"
+#include "storygraph/predicates.h"
 
 class GameScript;
 class Npc;
-
-namespace storygraph {
-  class Predicates;
-  }
 
 // The director's programs, read-only queries and story variables shared by dialogs and triggers.
 class StoryRuntime final {
@@ -56,6 +52,7 @@ class StoryRuntime final {
   private:
     void ensureVars();
     void ensurePredicates();
+    std::string checkPredicate(const storygraph::ExprP& e) const;
 
     std::function<std::string(const std::string&,const std::string&)> ownLine;
 
@@ -64,7 +61,7 @@ class StoryRuntime final {
     GameScript*                                    varsFor = nullptr;
 
     GameScript*                                    preparedFor = nullptr;
-    std::unique_ptr<storygraph::Predicates>        lifted;
+    std::map<std::string,storygraph::Helper>       preparedHelpers;
     std::map<std::string,storygraph::ExprP,std::less<>> preparedConditions;
     std::set<std::string>                          reported;
   };
