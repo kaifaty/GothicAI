@@ -284,10 +284,18 @@ void StoryEffect::run(GameScript& script, Npc& npc, Npc& player, std::string_vie
 
   auto& vm = script.getVm();
   StoryRuntime::Bind actors(vm,&npc,&player);
-  auto call = [&](const char* fn, std::vector<Value> args) {
+  auto call = [&](const char* fn, std::vector<Value> args, bool preparedTeaching = false) {
     std::string err;
     auto* s = vm.find_symbol_by_name(fn);
-    auto  r = s ? storygraph::callFunction(vm,*s,args,err) : std::nullopt;
+    std::optional<Value> r;
+    if(s!=nullptr) {
+      if(preparedTeaching && !vm.has_legacy_dispatcher() && !vm.has_active_override(*s)) {
+        if(const auto taught = script.invokePreparedStockInt(*s,args,err))
+          r = Value::integer(*taught);
+        } else {
+        r = storygraph::callFunction(vm,*s,args,err);
+        }
+      }
     if(!r)
       Log::e("[story] ",who,": ",fn," failed: ",s ? err : "no such function");
     return r;
@@ -348,7 +356,8 @@ void StoryEffect::run(GameScript& script, Npc& npc, Npc& player, std::string_vie
         args.push_back(Value::integer(count));
         args.push_back(Value::integer(teach=="attribute" ? AttributeMax : FightMax));
         }
-      auto r = call(t->fn,std::move(args));
+      const bool preparedTeaching = teach!="attribute" && teach!="fight" && teach!="rune";
+      auto r = call(t->fn,std::move(args),preparedTeaching);
       if(r && r->i==0)
         Log::e("[story] ",who,": ",t->fn," ",arg," ",count,": the scripts refused");
       }

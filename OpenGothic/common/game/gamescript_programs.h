@@ -25,6 +25,8 @@ class GameScript::StockPrograms final {
     explicit StockPrograms(GameScript& script);
 
     bool run(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly);
+    std::optional<int32_t> runPreparedInt(const storygraph::Program& program,
+                                          const std::vector<storygraph::Value>& args, std::string& error);
     const storygraph::Program* findPrepared(const daedalus::DaedalusSymbol& fn, bool requireDependencies);
 
   private:

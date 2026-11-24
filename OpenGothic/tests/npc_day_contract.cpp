@@ -224,6 +224,15 @@ void checkNestedStoryPrograms() {
   check(!storygraph::callFunction(native,*function,arguments,error) &&
         error=="script function is unavailable without bytecode: REMEMBER" && native.pop_int()==123,
         "a native-only direct call rejects a missing override before changing the stack");
+  storygraph::VmExternals nativeExternals(native);
+  storygraph::Interpreter prepared(native,nativeExternals);
+  prepared.allowUnresolvedScriptCalls=false;
+  unsigned preparedCalls=0;
+  native.register_external("HLP_RANDOM",[&] { ++preparedCalls; });
+  const auto preparedResult=prepared.run(nested,arguments);
+  check(preparedResult.ok && preparedResult.returned.i==5 && preparedCalls==1 &&
+        native.find_symbol_by_name("REMEMBER.LABEL")->get_string()=="direct",
+        "a prepared root receives direct call arguments without a legacy dispatcher");
   native.override_function("REMEMBER",[&](int32_t number,std::string_view label) {
     check(label=="direct","native direct calls keep argument order");
     return number+10;

@@ -194,6 +194,20 @@ bool GameScript::StockPrograms::run(const daedalus::DaedalusSymbol& fn, int32_t&
   return true;
   }
 
+std::optional<int32_t> GameScript::StockPrograms::runPreparedInt(const storygraph::Program& program,
+                                                                const std::vector<storygraph::Value>& args, std::string& error) {
+  auto run = interpreter.run(program,args);
+  if(!run.ok) {
+    error = std::move(run.error);
+    return std::nullopt;
+    }
+  if(run.returned.type!=storygraph::Value::Int) {
+    error = "prepared program returned a non-integer value";
+    return std::nullopt;
+    }
+  return run.returned.i;
+  }
+
 bool GameScript::invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly) {
   if(!nativeRoutineProgram)
     return false;
@@ -203,6 +217,21 @@ bool GameScript::invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t&
   if(stockPrograms==nullptr)
     stockPrograms = std::make_unique<StockPrograms>(*this);
   return stockPrograms->run(fn,result,failed,preparedOnly);
+  }
+
+std::optional<int32_t> GameScript::invokePreparedStockInt(const daedalus::DaedalusSymbol& fn,
+                                                        const std::vector<storygraph::Value>& args, std::string& error) {
+  if(!fn.has_return() || fn.rtype()!=daedalus::DaedalusDataType::INT ||
+     vm.find_parameters_for_function(&fn).size()!=args.size()) {
+    error = "unexpected prepared program signature";
+    return std::nullopt;
+    }
+  const auto* program = preparedStockProgram(fn,true);
+  if(program==nullptr) {
+    error = "function or its dependencies are missing from the prepared stock catalog";
+    return std::nullopt;
+    }
+  return stockPrograms->runPreparedInt(*program,args,error);
   }
 
 const storygraph::Program* GameScript::preparedStockProgram(const daedalus::DaedalusSymbol& fn, bool requireDependencies) {

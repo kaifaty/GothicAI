@@ -34,7 +34,7 @@
 #include "world/npcactivityprobe.h"
 #include "asset/worldtypes.h"
 
-namespace storygraph { struct Program; }
+namespace storygraph { struct Program; struct Value; }
 
 class GameSession;
 class GameStoryExternals;
@@ -129,6 +129,8 @@ class GameScript final : public GameRules {
     // The caller binds script context. A rejected root can use the compatibility VM.
     bool         invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed = nullptr,
                                     bool preparedOnly = false);
+    std::optional<int32_t> invokePreparedStockInt(const daedalus::DaedalusSymbol& fn,
+                                                 const std::vector<storygraph::Value>& args, std::string& error);
     const storygraph::Program* preparedStockProgram(const daedalus::DaedalusSymbol& fn, bool requireDependencies = false);
     // symbols of ours: the AI director's story variables and npc's
     inline auto& ownSymbols() { return own; }
