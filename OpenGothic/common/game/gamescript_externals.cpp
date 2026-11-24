@@ -816,8 +816,8 @@ void GameScript::log_addentry(std::string_view topicName, std::string_view entry
 
 void GameScript::equipitem(std::shared_ptr<daedalus::INpc> npcRef, int cls) {
   LoadProbe::Startup::Detail::Scope detail("equipitem",[&]{
-    const auto* symbol=vm.find_symbol_by_index(uint32_t(cls));
-    return symbol!=nullptr ? symbol->name() : std::to_string(cls);
+    const auto name=storyItemName(uint32_t(cls));
+    return name.empty() ? std::to_string(cls) : std::string(name);
     });
   auto self = findNpc(npcRef);
   if(self!=nullptr)
@@ -826,8 +826,8 @@ void GameScript::equipitem(std::shared_ptr<daedalus::INpc> npcRef, int cls) {
 
 void GameScript::createinvitem(std::shared_ptr<daedalus::INpc> npcRef, int itemInstance) {
   LoadProbe::Startup::Detail::Scope detail("createinvitem",[&]{
-    const auto* symbol=vm.find_symbol_by_index(uint32_t(itemInstance));
-    return symbol!=nullptr ? symbol->name() : std::to_string(itemInstance);
+    const auto name=storyItemName(uint32_t(itemInstance));
+    return name.empty() ? std::to_string(itemInstance) : std::string(name);
     });
   auto self = findNpc(npcRef);
   if(self!=nullptr) {
@@ -838,8 +838,8 @@ void GameScript::createinvitem(std::shared_ptr<daedalus::INpc> npcRef, int itemI
 
 void GameScript::createinvitems(std::shared_ptr<daedalus::INpc> npcRef, int itemInstance, int amount) {
   LoadProbe::Startup::Detail::Scope detail("createinvitems",[&]{
-    const auto* symbol=vm.find_symbol_by_index(uint32_t(itemInstance));
-    return (symbol!=nullptr ? symbol->name() : std::to_string(itemInstance))+":"+std::to_string(amount);
+    const auto name=storyItemName(uint32_t(itemInstance));
+    return (name.empty() ? std::to_string(itemInstance) : std::string(name))+":"+std::to_string(amount);
     });
   auto self = findNpc(npcRef);
   if(self!=nullptr && amount>0) {

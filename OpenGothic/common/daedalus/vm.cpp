@@ -147,10 +147,63 @@ namespace daedalus {
 			return true;
 		}
 
-		push_call(sym);
-		cb->second(*this);
-		pop_call();
+		invoke_external(*sym, cb->second);
 		guard.inhibit();
+		return true;
+	}
+
+	void DaedalusVm::invoke_external(DaedalusSymbol& sym, std::function<void(DaedalusVm&)> const& call) {
+		push_call(&sym);
+		call(*this);
+		pop_call();
+	}
+
+	bool DaedalusVm::has_bound_native(DaedalusSymbol& sym) const {
+		return sym.is_external() ? _m_externals.contains(&sym) : has_active_override(sym);
+	}
+
+	bool DaedalusVm::call_bound_native(DaedalusSymbol& sym, std::function<void()> const& push,
+	                                  std::function<void()> const& pop) {
+		auto const external = _m_externals.find(&sym);
+		auto const* override = sym.is_external() ? nullptr : active_override(sym);
+		if (external == _m_externals.end() && override == nullptr)
+			return false;
+		if (_m_stack_ptr + sym.count() > stack_size)
+			throw DaedalusVmException {"Stack overflow entering bound function " + sym.name()};
+
+		auto const stack = _m_stack_ptr;
+		auto const calls = _m_call_stack.size();
+		auto const pc = _m_pc;
+		auto const context = _m_instance;
+		try {
+			push();
+			if (_m_stack_ptr != stack + sym.count())
+				throw DaedalusVmException {"Incorrect argument count for bound function " + sym.name()};
+			if (override != nullptr) {
+				notify_call(&sym);
+				override->call(*this);
+			} else {
+				if (_m_external_observer) _m_external_observer(sym);
+				invoke_external(sym, external->second);
+			}
+			if (_m_call_stack.size() != calls || _m_stack_ptr != stack + unsigned(sym.has_return()))
+				throw DaedalusVmException {"Unbalanced stack after bound function " + sym.name()};
+			pop();
+			if (_m_stack_ptr != stack)
+				throw DaedalusVmException {"Unconsumed result of bound function " + sym.name()};
+		} catch (...) {
+			while (_m_stack_ptr > stack) {
+				if (top_is_reference())
+					(void)pop_reference();
+				else
+					_m_stack[--_m_stack_ptr] = {};
+			}
+			_m_stack_ptr = stack;
+			_m_call_stack.resize(calls);
+			_m_pc = pc;
+			_m_instance = context;
+			throw;
+		}
 		return true;
 	}
 
@@ -170,7 +223,7 @@ namespace daedalus {
 		if (sym->has_local_variables_enabled()) {
 			push_local_variables(sym);
 		}
-		auto var_count = this->find_parameters_for_function(sym).size();
+		auto var_count = sym->count();
 		_m_call_stack.push_back({sym, _m_pc, _m_stack_ptr - static_cast<uint32_t>(var_count), _m_instance});
 	}
 
@@ -473,6 +526,10 @@ namespace daedalus {
 		}
 
 		return _m_stack[_m_stack_ptr - 1].reference;
+	}
+
+	bool DaedalusVm::top_is_named_reference() const {
+		return top_is_reference() && std::get<DaedalusSymbol*>(stack_frame(0).value) != _m_temporary_strings;
 	}
 
 	std::shared_ptr<DaedalusInstance> DaedalusVm::pop_instance() {

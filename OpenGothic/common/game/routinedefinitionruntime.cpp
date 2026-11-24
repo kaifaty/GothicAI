@@ -24,6 +24,7 @@ RoutineDefinitionRuntime::Definitions RoutineDefinitionRuntime::resolve(const Ro
         resolved.push_back({row.startHour,row.startMinute,row.endHour,row.endMinute,state->index(),row.waypoint});
         }
       definitions.routines.emplace(function->index(),std::move(resolved));
+      definitions.names.emplace(function->name(),function->index());
       }
     catch(const std::exception& e) { throw std::runtime_error("routine definitions: "+name+": "+e.what()); }
     }

@@ -48,6 +48,9 @@
 #include "gameservices.h"
 #include "graphics/visualfx.h"
 #include "graphics/pfx/particlefx.h"
+#include "dialoggraph.h"
+#include "storygraph/bytecode.h"
+#include "storygraph/exprjson.h"
 #include "world/bullet.h"
 #include "game/physicssave.h"
 
@@ -81,7 +84,6 @@
 void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
                       void (*placement)(World&), void (*placementDisabled)(World&), void (*activities)(World&));
 #include "npc_world_contract_access.h"
-#include "storygraph/eval.h"
 namespace {
 
 using NpcWorldFixture::activityNpc;
@@ -592,7 +594,7 @@ void routineTables(Npc& npc) {
       require(instructions>0,"the routine reference must execute the VM");
       const auto expected=rows(npc);
       instructions=0;
-      npc.excRoutine(function->index());
+      NpcDefinitionContract::runRoutine(script,npc,function->index());
       if(recordsEnabled ? instructions!=0 : instructions==0)
         throw std::runtime_error(name+": routine exchange chose the wrong record/VM path");
       vm.observe_instructions({});
@@ -3819,12 +3821,8 @@ int main(int argc, const char** argv) {
   try {
     const auto* native=std::getenv("OPENGOTHIC_CONTRACT_NATIVE_STOCK");
     const bool nativeOnly=native && std::strcmp(native,"1")==0;
-    if(argc==3 && std::string_view(argv[1])=="--bennet-ore") {
-      bennetOreContract(argv[2]);
-      std::puts("Bennet ore contract passed");
+    if(runStoryContract(argc,argv))
       return EXIT_SUCCESS;
-      }
-    require(argc==1,"usage: gothic-placed-items-contract [--bennet-ore CASE_DIR]");
     census();
     rootedAndStack();
     censusCache();

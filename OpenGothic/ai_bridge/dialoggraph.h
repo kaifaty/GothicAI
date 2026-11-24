@@ -23,21 +23,7 @@
 class Npc;
 class World;
 
-namespace storygraph {
-  class Interpreter;
-  }
-
-// The story graph in the game (docs/story-graph.md, stage 3): which dialogs npc's offer, through the
-// engine's dialog hooks (Gothic::dialogFilterFn...). Without patches every dialog keeps its script
-// condition. The server's patches (graph_patch) switch a dialog or a choice off, add a condition to it,
-// or add dialogs of its own, whose lines and effects the bridge plays.
-// With -devmode (or GOTHIC_AI_STORYCHECK=1) every script condition is also computed from its lifted form
-// and differences are logged: the check of stage 2, on the live game.
-// The script functions of dialogs (conditions, information, choices) run as their programs (program.h), by
-// the game session for the verified stock program, and the bridge for director replacements and other programs.
-// GOTHIC_AI_STORYEXEC=0 selects the script path. A patch may put a program of the
-// director in place of a dialog's own (op "program"), and a dialog of the director may have one: those run
-// in any case.
+// The director may filter stock dialogs, replace their native programs or add its own dialogs.
 class DialogGraph final {
   public:
     // send: a message to the server; addLine: registers a runtime line (npc symbol, text in the game
@@ -114,21 +100,15 @@ class DialogGraph final {
     void        onExec(const GameScript::DlgChoice& dlg, Npc& player, Npc& npc);
     void        onChoices(const GameScript::DlgChoice& dlg, std::vector<GameScript::DlgChoice>& out);
     // runs steps of a dialog of the director: its program, or a choice it offered; `node` gets the choices
-    void        runOwn(const std::string& node, const std::vector<storygraph::Step>& steps);
+    void        runOwn(const std::string& node, const std::vector<storygraph::Step>& steps, Npc& npc, Npc& player);
     void        onChosen(const GameScript::DlgChoice& dlg, Npc& player, Npc& npc);
-    // a dialog's condition, information or choice: run as its program (docs/story-graph.md, «Исполнение без VM»)
-    bool        onScript(daedalus::DaedalusSymbol& fn, int32_t& result);
+    bool        onScript(uint32_t fn, int32_t& result);
 
     std::string readNode(const rapidjson::Value& v, Node& n);
-    // the script function behind a dialog's condition or information, or a choice's function
-    daedalus::DaedalusSymbol* functionOf(daedalus::DaedalusVm& v, const std::string& node, bool condition,
+    std::optional<uint32_t> functionOf(GameScript& script, const std::string& node, bool condition,
                                        std::string& error) const;
-    // the director's program in place of this function, nullptr if there is none
-    const storygraph::Program* replacedProgram(daedalus::DaedalusVm& v, uint32_t fn);
-    // the interpreter for this VM; a new VM: the lifted programs are lifted again
-    storygraph::Interpreter& interpreter(daedalus::DaedalusVm& v);
+    const storygraph::Program* replacedProgram(GameScript& script, uint32_t fn);
     void        check(const daedalus::IInfo& info, bool visible);
-    daedalus::DaedalusVm* vm() const { return rt.vm(); }
 
     std::function<void(std::string&&)>                               send;
     std::function<std::string(const std::string&,const std::string&)> addLine;
@@ -143,12 +123,8 @@ class DialogGraph final {
     std::string                                            runningOwn;  // the dialog of the director whose steps run
     std::map<std::string,Replaced>                         replaced;    // by node, or node + ":CONDITION"
     std::unordered_map<uint32_t,const storygraph::Program*> replacedFns; // by function symbol, for replacedFor
-    daedalus::DaedalusVm*                                    replacedFor = nullptr;
+    GameScript*                                            replacedFor = nullptr;
 
-    // the graph runs dialogs' script functions in place of the VM; GOTHIC_AI_STORYEXEC=0: the VM runs them
-    bool                                                   running = true;
-    daedalus::DaedalusVm*                                    programsFor = nullptr;
-    std::unordered_map<uint32_t,storygraph::Program>       programs;   // by function symbol, lifted when it first runs
     size_t                                                 ran = 0, notPrograms = 0, runErrors = 0, replacedRuns = 0;
 
     bool                                                   checking = false;

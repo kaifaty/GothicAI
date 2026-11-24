@@ -335,6 +335,7 @@ namespace daedalus {
 		[[nodiscard]] std::tuple<DaedalusSymbol*, std::uint8_t, std::shared_ptr<DaedalusInstance>>
 		pop_reference();
 		[[nodiscard]] bool top_is_reference() const;
+		[[nodiscard]] bool top_is_named_reference() const;
 
 		/// \brief Registers a Daedalus external function.
 		///
@@ -693,6 +694,11 @@ namespace daedalus {
 		/// \note Local addition (OpenGothic ai_bridge), see lib/VENDORED.md.
 		void unsafe_call_bl(DaedalusSymbol const* sym);
 		[[nodiscard]] bool has_active_override(DaedalusSymbol const& sym) const;
+		/// Invoke a registered C++ implementation for a symbol bound during setup.
+		/// An unavailable implementation leaves the stack unchanged.
+		[[nodiscard]] bool has_bound_native(DaedalusSymbol& sym) const;
+		bool call_bound_native(DaedalusSymbol& sym, std::function<void()> const& push,
+		                       std::function<void()> const& pop);
 		std::shared_ptr<DaedalusInstance> unsafe_get_gi();
 		void unsafe_set_gi(std::shared_ptr<DaedalusInstance> i);
 
@@ -1065,6 +1071,7 @@ namespace daedalus {
 		[[nodiscard]] FunctionOverride const* active_override(DaedalusSymbol const& sym) const;
 		std::unordered_map<uint32_t, FunctionOverride> _m_function_overrides;
 		std::optional<std::function<void(DaedalusVm&, DaedalusSymbol&)>> _m_default_external {std::nullopt};
+		void invoke_external(DaedalusSymbol& sym, std::function<void(DaedalusVm&)> const& call);
 		std::function<void(DaedalusSymbol&)> _m_access_trap;
 		std::function<void(DaedalusSymbol const&)> _m_read_observer;
 		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_read_observer;

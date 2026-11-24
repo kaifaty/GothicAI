@@ -5,11 +5,13 @@
 
 #include <array>
 #include <memory>
+#include <map>
 #include <optional>
 #include <set>
 #include <random>
 #include <span>
 #include <unordered_map>
+#include <variant>
 
 #include <Tempest/Matrix4x4>
 #include <Tempest/Painter>
@@ -33,6 +35,7 @@
 #include "game/activitydefinitionruntime.h"
 #include "world/npcactivityprobe.h"
 #include "asset/worldtypes.h"
+#include "storygraph/nativeexec.h"
 
 namespace storygraph { struct Program; struct Value; }
 
@@ -46,6 +49,8 @@ class ParticleFx;
 class Serialize;
 class Gothic;
 
+namespace storygraph { using StoryArgument = std::variant<int32_t,float,std::string,Npc*>; }
+
 class GameScript final : public GameRules {
   public:
     GameScript(GameSession &owner);
@@ -57,7 +62,6 @@ class GameScript final : public GameRules {
 
     using SymbolKind = ScriptSymbolCatalog::Kind;
 
-    std::optional<SymbolKind> symbolKind(std::string_view name) const;
     std::optional<int32_t>    globalIntSymbol(std::string_view name) const;
     std::string_view          stringSymbol(std::string_view name, std::string_view fallback) const;
     bool                      isPartyMember(const Npc& npc);
@@ -113,6 +117,7 @@ class GameScript final : public GameRules {
     auto         loadItem(Serialize& fin, Item& owner, uint32_t& kind) -> std::shared_ptr<ItemRecord> override;
     void         attachItem(const std::shared_ptr<ItemRecord>& item, Item& owner) override;
     void         initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance);
+    bool         exchangeNpcRoutine(Npc& npc, std::string_view name);
     void         resetVarPointers();
 
     void         initDialogs();
@@ -130,12 +135,32 @@ class GameScript final : public GameRules {
     inline auto& getVm() { return vm; }
     bool         usesVerifiedNpcProgram() const { return nativeRoutineProgram; }
     bool         ownsNativeBennetProgram(uint32_t function) const;
-    // The caller binds script context. A rejected root can use the compatibility VM.
+    // The caller binds the ambient NPC context for stock dialogs.
+    bool         invokeStockProgram(uint32_t id, int32_t& result, bool* failed = nullptr);
     bool         invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed = nullptr,
                                     bool preparedOnly = false);
-    std::optional<int32_t> invokePreparedStockInt(const daedalus::DaedalusSymbol& fn,
-                                                 const std::vector<storygraph::Value>& args, std::string& error);
     const storygraph::Program* preparedStockProgram(const daedalus::DaedalusSymbol& fn, bool requireDependencies = false);
+    const storygraph::Program* preparedStockProgram(uint32_t id);
+    std::string_view storyProgramName(uint32_t id);
+    std::string_view storySymbolName(uint32_t id);
+    std::optional<int32_t> storySymbolIndex(std::string_view name);
+    std::optional<SymbolKind> storySymbolKind(std::string_view name);
+    std::optional<uint32_t> storyScriptFunctionId(std::string_view name);
+    bool storySlotWritable(std::string_view name);
+    std::string addStoryVariable(std::string_view name, int32_t first);
+    Npc* directorNpc(std::string_view name);
+    std::optional<uint32_t> storyNpcId(std::string_view name);
+    std::string_view storyNpcName(uint32_t id);
+    std::string_view storyItemName(uint32_t id);
+    std::optional<storygraph::NativeFunction> storyFunction(std::string_view name);
+    std::unique_ptr<storygraph::NativeExecutionHost> makeStoryHost(Npc* self, Npc* other, bool effects = false);
+    std::string checkStoryProgram(const storygraph::Program& program, size_t arguments = 0, bool choices = false,
+                                  bool effects = true);
+    storygraph::NativeInterpreter::Result runStoryProgram(const storygraph::Program& program, Npc* self, Npc* other,
+      bool effects = true, std::function<std::string(const std::string&,const std::string&)> ownLine = {},
+      std::function<bool(const storygraph::Step&)> choices = {}, const std::vector<storygraph::NativeValue>& args = {});
+    storygraph::NativeInterpreter::Result callStoryFunction(std::string_view name, Npc* self, Npc* other,
+      const std::vector<storygraph::StoryArgument>& args = {});
     // symbols of ours: the AI director's story variables and npc's
     inline auto& ownSymbols() { return own; }
     std::optional<uint32_t> addDirectorNpcSymbol(std::string_view name, std::string_view like, std::string& why);
@@ -144,12 +169,9 @@ class GameScript final : public GameRules {
       std::string head;
       int32_t     gender = 0, face = 0, skin = 0, armor = -1;
       };
+    bool hasDirectorNpcVisual() const;
     void setupDirectorNpcEquipment(Npc& npc, const DirectorNpcLook* look,
                                    std::span<const std::pair<uint32_t,int32_t>> items);
-    // The caller binds SELF and OTHER. A false result leaves the effect to the compatibility path.
-    bool tryDirectorGiveItems(Npc& giver, Npc& taker, std::string_view item, int32_t count);
-    bool tryDirectorCreateItems(Npc& npc, std::string_view item, int32_t count);
-    Npc* boundStockDirectorNpc(std::string_view name);
 
     auto         questLog() const -> const QuestLog&;
 
@@ -202,6 +224,9 @@ class GameScript final : public GameRules {
     // the hero has heard this dialog of the npc's, as when it is played (Npc_KnowsInfo)
     void                        setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info);
     bool                        doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const;
+    std::pair<Npc*,Npc*>         storyActors();
+    std::string_view            storyDialogName(uint32_t info) const;
+    std::optional<uint32_t>      storyDialogFunction(std::string_view name, bool condition = false) const;
     size_t                      findSymbolIndex(std::string_view s) override;
     size_t                      symbolsCount() const;
 
@@ -297,6 +322,9 @@ class GameScript final : public GameRules {
     friend class StoryRuntime;
     friend class GameStoryExternals;
     class StockPrograms;
+    StockPrograms& storyPrograms();
+    daedalus::DaedalusSymbol* storySlot(uint32_t id) const;
+    daedalus::DaedalusSymbol* storySlot(std::string_view name, SymbolKind* kind = nullptr) const;
     struct BennetOre;
     struct BennetOreDialog;
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
@@ -502,7 +530,6 @@ class GameScript final : public GameRules {
     auto  findInfo    (size_t id) -> daedalus::IInfo*;
     auto  findFocus(std::string_view name) -> daedalus::IFocus;
 
-    bool isStockDirectorActor(const Npc& npc) const;
     void storeItem(Item* it);
     bool invokeNativeMobState(const daedalus::DaedalusSymbol& symbol);
     void runStockPickLock(int32_t success, int32_t brokenOrOpen);
@@ -851,9 +878,13 @@ class GameScript final : public GameRules {
 
     void sort(std::vector<DlgChoice>& dlg);
     // a dialog's condition, information or choice: the story graph runs it if it takes it, else the VM
-    int32_t dialogFunction(daedalus::DaedalusSymbol* fn, bool returns);
+    int32_t dialogFunction(uint32_t function, bool returns);
+    void rememberStoryDialog(std::string_view name, daedalus::IInfo& info);
+    const daedalus::IInfo* storyDialog(std::string_view name) const;
 
     void initBennetOre();
+    void bindPreparedInventory();
+    bool bindPreparedItem(const std::shared_ptr<daedalus::IItem>& item, uint32_t instance);
     const BennetOreDialog* bennetOreDialog(const daedalus::IInfo& info) const;
     bool bennetOffer(const BennetOreDialog& dialog, Npc& player, Npc& npc);
     bool bennetExecute(const BennetOreDialog& dialog, Npc& player, Npc& npc);
@@ -873,7 +904,6 @@ class GameScript final : public GameRules {
     bool                                                        activityEvents = ActivityDefinitionRuntime::events();
     QuietSoundReaction                                          quietSound;
     bool                                                        nativeRoutineProgram = false;
-    std::unique_ptr<ScriptSymbolCatalog::Catalog>                symbolCatalog;
     ScriptFn                                                    drawWeaponCallback;
     ScriptFn                                                    threatCallback;
     ScriptFn                                                    warnCallback;
@@ -909,6 +939,19 @@ class GameScript final : public GameRules {
       int32_t attackWarn=0;
       } ghostProgress;
     InventoryTransfer::Variables                                inventoryTransferVariables;
+    InventoryTransfer::Text                                     inventoryTransferText;
+    std::string_view                                            inventoryTransferFont;
+    daedalus::DaedalusSymbol*                                    inventoryGiver = nullptr;
+    daedalus::DaedalusSymbol*                                    inventoryTaker = nullptr;
+    const daedalus::DaedalusSymbol*                              directorVisual = nullptr;
+    struct PreparedItem {
+      daedalus::DaedalusInstance identity;
+      daedalus::DaedalusSymbol*   alias;
+      };
+    std::unordered_map<uint32_t,PreparedItem>                     preparedItems;
+    ItemRecord                                                  brokenEyePrepared;
+    const daedalus::DaedalusSymbol*                              brokenEyeSetting = nullptr;
+    const daedalus::DaedalusSymbol*                              brokenEyeGem = nullptr;
     int32_t                                                     bennetOreMission = 0, bennetOreTeaching = 0;
     struct PointGestureRolls {
       int32_t guard = 0, crossedArms = 0, waypoint = 0, portal = 0, earthquake = 0;
@@ -917,6 +960,7 @@ class GameScript final : public GameRules {
     daedalus::DaedalusVm                                          vm;
     std::unique_ptr<StockPrograms>                                stockPrograms;
     std::unique_ptr<BennetOre>                                    bennetOre;
+    daedalus::DaedalusSymbol*                                     levelUpSound = nullptr;
     std::function<void(bool)>                                    bennetLookupScope;
     std::function<void(Npc&,Npc&)>                               bennetTransferObserver;
     StartupFloor                                                floorDefer{*this};
@@ -931,6 +975,8 @@ class GameScript final : public GameRules {
 
     std::set<std::pair<size_t,size_t>>                          dlgKnownInfos;
     std::vector<std::shared_ptr<daedalus::IInfo>>                 dialogsInfo;
+    std::map<std::string,const daedalus::IInfo*,std::less<>>     storyDialogs;
+    std::unordered_map<uint32_t,std::pair<std::string_view,daedalus::IInfo*>> storyDialogsById;
     std::vector<std::shared_ptr<asset::CutsceneBlock>>           dialogs;
     std::unordered_map<size_t,AiState>                          aiStates;
     std::unique_ptr<AiOuputPipe>                                aiDefaultPipe;

@@ -131,6 +131,8 @@ struct Preflight final {
       case Expr::Field:
         if(e.args.size()!=1)
           return "wrong member reference: " + e.str();
+        if(!host.hasMember(e.name,uint16_t(std::max(e.index,0))))
+          return "no member " + e.str();
         break;
       case Expr::Sym:
         if(!host.symbolIndex(e.name))
@@ -145,8 +147,10 @@ struct Preflight final {
         const auto fn = host.findFunction(e.name);
         if(!fn)
           return "unresolved native program function: " + ident(e.name);
+        if(!host.acceptsCall(e.name,e.kind==Expr::Call))
+          return "wrong kind of story function: " + e.str();
         if(fn->parameters.size()!=e.args.size())
-          return "wrong argument count: " + e.str();
+          return ident(e.name) + " takes " + std::to_string(fn->parameters.size()) + " arguments";
         if(fn->program!=nullptr) {
           auto error = program(*fn->program, e.args.size());
           if(!error.empty())
@@ -207,6 +211,10 @@ struct Preflight final {
           break;
           }
         case Step::Choice:
+          if(!ownChoices)
+            return "choices of its own are for the director's dialogs";
+          error = steps(s.then,0);
+          break;
         case Step::ClearChoices:
           if(!ownChoices)
             return "choices of its own are for the director's dialogs";
@@ -223,13 +231,21 @@ struct Preflight final {
 
 }
 
-std::string NativeInterpreter::preflight(const Program& p, size_t arguments) const {
+std::optional<NativeCall> NativeExecutionHost::invokeBound(std::string_view name, const std::vector<NativeValue>& args,
+                                                           std::string& error) {
+  auto value = invoke(name,args,error);
+  if(!value)
+    return std::nullopt;
+  return NativeCall{std::move(*value),{}};
+  }
+
+std::string NativeInterpreter::check(const Program& p, size_t arguments) const {
   return Preflight{host,bool(choices),{}}.program(p, arguments);
   }
 
 NativeInterpreter::Result NativeInterpreter::run(const Program& p, const std::vector<NativeValue>& args) {
   try {
-    auto error = preflight(p, args.size());
+    auto error = check(p, args.size());
     if(!error.empty())
       return {false,std::move(error),{},false};
     }
@@ -376,10 +392,12 @@ std::optional<NativeInterpreter::Item> NativeInterpreter::call(const Expr& e) {
 
   if(fn->program==nullptr) {
     std::string error;
-    auto result = host.invoke(e.name, args, error);
+    auto result = host.invokeBound(e.name, args, error);
     if(!result)
       return fail(error.empty() ? "native function failed: " + ident(e.name) : std::move(error));
-    return Item{fn->result ? asReturned(*fn->result, std::move(*result)) : NativeValue{}, {}};
+    if(!fn->result)
+      return Item{};
+    return Item{asReturned(*fn->result,std::move(result->value)),result->reference};
     }
 
   auto nested = execute(*fn->program, args, false);

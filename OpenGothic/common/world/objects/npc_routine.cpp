@@ -341,9 +341,3 @@ void Npc::addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point
 void Npc::clearRoutine() {
   routines.clear();
   }
-
-void Npc::excRoutine(size_t callback) {
-  routines.clear();
-  owner.rules().invokeState(this,currentOther,currentVictim,callback);
-  // aiState.eTime = gtime();
-  }

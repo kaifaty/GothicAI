@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cctype>
 #include <optional>
 #include <span>
 
@@ -25,10 +26,9 @@ struct RestoreContext {
   };
 
 void pushTieredLearnCost(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& result,
-                        const std::shared_ptr<daedalus::DaedalusInstance>& learner, std::string_view slot,
+                        const std::shared_ptr<daedalus::DaedalusInstance>& learner,
+                        daedalus::DaedalusSymbol* aivar, uint16_t index,
                         std::optional<int32_t> points = std::nullopt) {
-  const auto index = uint16_t(vm.find_symbol_by_name(slot)->get_int());
-  auto* aivar = vm.find_symbol_by_name("C_NPC.AIVAR");
   // The result reference holds the learner's context before BL restores the caller's.
   RestoreContext restore{vm,vm.unsafe_get_gi()};
   vm.unsafe_set_gi(learner);
@@ -734,19 +734,19 @@ void GameScript::loadNativeTrainingHelpers() {
     };
   vm.override_function("B_BUILDLEARNSTRING",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
     [this](auto& machine) -> daedalus::DaedalusNakedCall {
-      machine.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->set_int(machine.pop_int());
+      storySlot("B_BUILDLEARNSTRING.KOSTEN")->set_int(machine.pop_int());
       // The script returns its global string slot, which a later call can overwrite before it is read.
       machine.push_reference(&buildLearnString(machine.pop_string()));
       return {};
       }
     },enabled);
   vm.override_function("B_GETLEARNCOSTATTRIBUTE",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [](auto& machine) -> daedalus::DaedalusNakedCall {
+    [this](auto& machine) -> daedalus::DaedalusNakedCall {
       const auto attribute = machine.pop_int();
-      machine.find_symbol_by_name("B_GETLEARNCOSTATTRIBUTE.ATTRIBUT")->set_int(attribute);
+      storySlot("B_GETLEARNCOSTATTRIBUTE.ATTRIBUT")->set_int(attribute);
       const auto learner = machine.pop_instance();
-      machine.find_symbol_by_name("B_GETLEARNCOSTATTRIBUTE.OTH")->set_instance(learner);
-      auto* result = machine.find_symbol_by_name("B_GETLEARNCOSTATTRIBUTE.KOSTEN");
+      storySlot("B_GETLEARNCOSTATTRIBUTE.OTH")->set_instance(learner);
+      auto* result = storySlot("B_GETLEARNCOSTATTRIBUTE.KOSTEN");
       result->set_int(0);
       std::string_view slot;
       switch(attribute) {
@@ -755,25 +755,26 @@ void GameScript::loadNativeTrainingHelpers() {
         case ATR_MANAMAX:   slot = "REAL_MANA_MAX";  break;
         default: machine.push_reference(result); return {};
         }
-      pushTieredLearnCost(machine,*result,learner,slot);
+      pushTieredLearnCost(machine,*result,learner,storySlot("C_NPC.AIVAR"),uint16_t(storySlot(slot)->get_int()));
       return {};
       }
     },enabled);
   vm.override_function("B_GETLEARNCOSTTALENT",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [](auto& machine) -> daedalus::DaedalusNakedCall {
+    [this](auto& machine) -> daedalus::DaedalusNakedCall {
       const auto skill = machine.pop_int();
-      machine.find_symbol_by_name("B_GETLEARNCOSTTALENT.SKILL")->set_int(skill);
+      storySlot("B_GETLEARNCOSTTALENT.SKILL")->set_int(skill);
       const auto talent = machine.pop_int();
-      machine.find_symbol_by_name("B_GETLEARNCOSTTALENT.TALENT")->set_int(talent);
+      storySlot("B_GETLEARNCOSTTALENT.TALENT")->set_int(talent);
       const auto learner = machine.pop_instance();
-      machine.find_symbol_by_name("B_GETLEARNCOSTTALENT.OTH")->set_instance(learner);
-      auto* result = machine.find_symbol_by_name("B_GETLEARNCOSTTALENT.KOSTEN");
+      storySlot("B_GETLEARNCOSTTALENT.OTH")->set_instance(learner);
+      auto* result = storySlot("B_GETLEARNCOSTTALENT.KOSTEN");
       result->set_int(0);
       if(TALENT_1H<=talent && talent<=TALENT_CROSSBOW) {
         static constexpr std::string_view slots[] = {
           "REAL_TALENT_1H","REAL_TALENT_2H","REAL_TALENT_BOW","REAL_TALENT_CROSSBOW"
           };
-        pushTieredLearnCost(machine,*result,learner,slots[size_t(talent-TALENT_1H)],skill);
+        const auto index = uint16_t(storySlot(slots[size_t(talent-TALENT_1H)])->get_int());
+        pushTieredLearnCost(machine,*result,learner,storySlot("C_NPC.AIVAR"),index,skill);
         } else {
         result->set_int(fixedTalentLearnCost(talent,skill));
         machine.push_reference(result);
@@ -849,14 +850,14 @@ void GameScript::loadNativeTrainingHelpers() {
   }
 
 auto GameScript::buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol& {
-  auto& savedTitle = *vm.find_symbol_by_name("B_BUILDLEARNSTRING.TEXT");
+  auto& savedTitle = *storySlot("B_BUILDLEARNSTRING.TEXT");
   savedTitle.set_string(title);
-  const auto cost = vm.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->get_int();
-  const auto text = savedTitle.get_string() + vm.find_symbol_by_name("PRINT_KOSTEN")->get_string() +
-                    std::to_string(cost) + vm.find_symbol_by_name("PRINT_LP")->get_string();
+  const auto cost = storySlot("B_BUILDLEARNSTRING.KOSTEN")->get_int();
+  const auto text = savedTitle.get_string() + storySlot("PRINT_KOSTEN")->get_string() +
+                    std::to_string(cost) + storySlot("PRINT_LP")->get_string();
   // The formatting externals reuse one temporary slot, which the legacy save also stores.
   vm.push_string(text);
-  auto& result = *vm.find_symbol_by_name("B_BUILDLEARNSTRING.CONCATTEXT");
+  auto& result = *storySlot("B_BUILDLEARNSTRING.CONCATTEXT");
   result.set_string(vm.pop_string());
   return result;
   }
@@ -891,6 +892,7 @@ bool GameScript::readDialogInfos() {
       else
         member->set_int(std::get<int32_t>(field.value),0,info.get());
       }
+    rememberStoryDialog(symbol.name(),*info);
     dialogsInfo.push_back(std::move(info));
     });
   if(dialogsInfo.size()!=rows->size())
@@ -899,33 +901,58 @@ bool GameScript::readDialogInfos() {
   }
 
 void GameScript::setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info) {
-  auto id = std::make_pair(vm.find_symbol_by_instance(static_cast<const daedalus::INpc&>(npc))->index(),vm.find_symbol_by_instance(info)->index());
-  dlgKnownInfos.insert(id);
+  const auto actor = static_cast<const daedalus::INpc&>(npc).symbol_index();
+  if(actor!=uint32_t(-1) && info.symbol_index()!=uint32_t(-1))
+    dlgKnownInfos.emplace(actor,info.symbol_index());
   }
 
 bool GameScript::markNpcInfoKnown(const Npc& npc, std::string_view name) {
-  auto* symbol = vm.find_symbol_by_name(name);
-  if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)
-    return false;
-  const auto info = std::dynamic_pointer_cast<daedalus::IInfo>(symbol->get_instance());
-  if(!info)
+  const auto* info = storyDialog(name);
+  if(info==nullptr)
     return false;
   setNpcInfoKnown(*npc.handlePtr(),*info);
   return true;
   }
 
 bool GameScript::doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const {
-  auto id = std::make_pair(vm.find_symbol_by_instance(static_cast<const daedalus::INpc&>(npc))->index(),infoInstance);
-  return dlgKnownInfos.find(id)!=dlgKnownInfos.end();
+  const auto actor = static_cast<const daedalus::INpc&>(npc).symbol_index();
+  return dlgKnownInfos.contains({actor,infoInstance});
+  }
+
+void GameScript::rememberStoryDialog(std::string_view name, daedalus::IInfo& info) {
+  const auto [entry, inserted] = storyDialogs.emplace(name,&info);
+  if(!inserted || !storyDialogsById.try_emplace(info.symbol_index(),entry->first,&info).second)
+    throw std::runtime_error("duplicate story dialog: "+std::string(name));
+  }
+
+const daedalus::IInfo* GameScript::storyDialog(std::string_view name) const {
+  if(const auto entry=storyDialogs.find(name); entry!=storyDialogs.end())
+    return entry->second;
+  std::string upper(name);
+  for(auto& ch : upper)
+    ch = char(std::toupper(static_cast<unsigned char>(ch)));
+  const auto entry = storyDialogs.find(upper);
+  return entry!=storyDialogs.end() ? entry->second : nullptr;
+  }
+
+std::string_view GameScript::storyDialogName(uint32_t id) const {
+  const auto entry = storyDialogsById.find(id);
+  return entry!=storyDialogsById.end() ? entry->second.first : std::string_view{};
+  }
+
+std::optional<uint32_t> GameScript::storyDialogFunction(std::string_view name, bool condition) const {
+  const auto* info = storyDialog(name);
+  if(info==nullptr)
+    return std::nullopt;
+  const auto function = condition ? info->condition : info->information;
+  return function>0 ? std::optional<uint32_t>(uint32_t(function)) : std::nullopt;
   }
 
 auto GameScript::createItem(Item& owner, size_t instance, uint32_t& kind) -> std::shared_ptr<ItemRecord> {
   auto item = std::make_shared<daedalus::IItem>();
   owner.hitem = item;
   item->user_ptr = &owner;
-  kind = item->symbol_index();
-  if(auto* sym = vm.find_symbol_by_index(uint32_t(instance)))
-    kind = sym->index();
+  kind = uint32_t(instance);
   initializeInstanceItem(item,instance);
   kind = item->symbol_index();
   return item;
@@ -943,10 +970,11 @@ auto GameScript::loadItem(Serialize& fin, Item& owner, uint32_t& kind) -> std::s
   item->user_ptr = &owner;
   uint32_t symbol = 0;
   fin.read(symbol);
-  if(auto* sym = vm.find_symbol_by_index(symbol)) {
-    vm.allocate_instance(item,sym);
-    } else {
-    Tempest::Log::e("Loading unknown item from save: " , symbol);
+  if(!bindPreparedItem(item,symbol)) {
+    if(auto* sym = vm.find_symbol_by_index(symbol))
+      vm.allocate_instance(item,sym);
+    else
+      Tempest::Log::e("Loading unknown item from save: ",symbol);
     }
   kind = item->symbol_index();
   fin.readItem(*item);

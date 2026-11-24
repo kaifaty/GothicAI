@@ -1135,7 +1135,7 @@ bool AiBridge::Impl::onRaiseDead(World& world, const rapidjson::Value& msg, std:
   }
 
 void AiBridge::Impl::onStoryEval(World& world, const rapidjson::Value& msg) {
-  // story graph expressions on the live VM, self = `npc`, other = the hero: what the director's rules ask
+  // Evaluate the director's expressions with self = the NPC and other = the hero.
   const auto req = JsonRead::str(msg,"req");
   Npc*       npc = npcBySymbol(world,JsonRead::str(msg,"npc"));
   auto       it  = msg.FindMember("exprs");

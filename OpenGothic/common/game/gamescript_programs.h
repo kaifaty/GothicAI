@@ -3,54 +3,37 @@
 #include "gamescript.h"
 #include "game/definitions/stockstoryprograms.h"
 
-#include "storygraph/bytecode.h"
-#include "storygraph/exec.h"
-
-#include <unordered_set>
-
-class GameStoryExternals final : public storygraph::Externals {
-  public:
-    GameStoryExternals(GameScript& script, bool effects);
-
-    storygraph::Value call(const daedalus::DaedalusSymbol& fn, const std::vector<storygraph::Value>& args) override;
-
-  private:
-    GameScript&               script;
-    storygraph::VmExternals   fallback;
-    bool                      effects;
-  };
+#include "gamescript_nativecall.h"
 
 class GameScript::StockPrograms final {
   public:
     explicit StockPrograms(GameScript& script);
 
-    bool run(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly);
-    std::optional<int32_t> runPreparedInt(const storygraph::Program& program,
-                                          const std::vector<storygraph::Value>& args, std::string& error);
-    const storygraph::Program* findPrepared(const daedalus::DaedalusSymbol& fn, bool requireDependencies);
-
   private:
     friend class GameScript;
     friend struct NpcDefinitionContract;
 
-    struct Entry {
-      storygraph::Program program;
-      std::set<std::string> calls;
-      };
+    class Host;
+    using Members = std::map<std::string_view,daedalus::DaedalusSymbol*,std::less<>>;
+    using Binding = std::pair<daedalus::DaedalusSymbol*,SymbolKind>;
 
+    bool run(uint32_t id, int32_t& result, bool* failed, bool preparedOnly);
     bool runPrepared(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed);
     const StockStoryPrograms::Catalog* preparedCatalog();
-    const Entry& entry(uint32_t id);
-    bool isSupported(const daedalus::DaedalusSymbol& fn, std::unordered_set<uint32_t>& checked, bool preparedOnly);
+    void bindCatalog(const StockStoryPrograms::Catalog& catalog);
+    void bindSymbol(daedalus::DaedalusSymbol& symbol, SymbolKind kind);
+    Binding binding(std::string_view name) const;
+    const StockStoryPrograms::Entry* program(uint32_t id) const;
+    std::optional<storygraph::NativeFunction> function(std::string_view name) const;
+    std::unique_ptr<Host> host(bool effects);
 
     GameScript&                          script;
-    std::optional<StockStoryPrograms::Catalog> prepared;
-    bool                                 preparedChecked = false;
     daedalus::DaedalusVm&                 vm;
-    std::unique_ptr<storygraph::Bytecode>  code;
-    GameStoryExternals                    engine;
-    storygraph::Interpreter               interpreter;
-    std::unordered_map<uint32_t,Entry>    programs;
+    std::optional<StockStoryPrograms::Catalog> prepared;
+    std::unordered_map<std::string_view,Binding> bindings;
+    std::unordered_map<uint32_t,daedalus::DaedalusSymbol*> ids;
+    std::unordered_map<std::string_view,storygraph::BoundNativeCall> calls;
+    std::array<Members,5> members;
   };
 
 struct GameScript::BennetOreDialog final {

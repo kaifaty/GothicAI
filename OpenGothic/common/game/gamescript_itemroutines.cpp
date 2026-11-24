@@ -1108,26 +1108,18 @@ int32_t GameScript::giveInventoryItems(const std::shared_ptr<daedalus::INpc>& gi
                                        const std::shared_ptr<daedalus::INpc>& taker, int32_t item, int32_t amount) {
   inventoryTransferVariables.amount = amount;
   inventoryTransferVariables.item = item;
-  findSymbol("B_GIVEINVITEMS.TAKER")->set_instance(taker);
-  findSymbol("B_GIVEINVITEMS.GIVER")->set_instance(giver);
-  const auto string = [this](const char* symbol) -> const std::string& { return findSymbol(symbol)->get_string(); };
-  const auto integer = [this](const char* symbol) { return findSymbol(symbol)->get_int(); };
-  const InventoryTransfer::Text text {
-    uint32_t(findSymbolIndex("ITMI_GOLD")),
-    string("PRINT_GOLDGEGEBEN"), string("PRINT_GOLDERHALTEN"),
-    string("PRINT_ADDON_GEGEBEN"), string("PRINT_ADDON_ERHALTEN"),
-    string("PRINT_ITEMSGEGEBEN"), string("PRINT_ITEMSERHALTEN"),
-    integer("YPOS_GOLDGIVEN"), integer("YPOS_GOLDTAKEN"), integer("YPOS_ITEMGIVEN"), integer("YPOS_ITEMTAKEN")};
+  inventoryTaker->set_instance(taker);
+  inventoryGiver->set_instance(giver);
   const auto held = std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance());
   const auto transfer = InventoryTransfer::run(findNpc(giver),findNpc(taker),uint32_t(item),amount,
-                                              held ? std::string_view(held->name) : std::string_view{},text);
+                                              held ? std::string_view(held->name) : std::string_view{},inventoryTransferText);
   if(transfer.itemChanged)
     storeItem(transfer.item);
   if(transfer.itemName)
     inventoryTransferVariables.itemName = *transfer.itemName;
   if(transfer.notice) {
     inventoryTransferVariables.notice = transfer.notice->text;
-    ai_printscreen(transfer.notice->text,-1,transfer.notice->y,string("FONT_SCREENSMALL"),2);
+    ai_printscreen(transfer.notice->text,-1,transfer.notice->y,inventoryTransferFont,2);
     }
   return transfer.value;
   }

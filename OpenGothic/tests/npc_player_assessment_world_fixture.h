@@ -295,11 +295,12 @@ void productionDialogEnd(World& world,Npc& npc,Npc& hero) {
   const auto context=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto player=std::static_pointer_cast<daedalus::INpc>(hero.handlePtr());
   auto* close=vm.find_symbol_by_name("B_ENDPRODUCTIONDIALOG");
-  StoryRuntime story(nullptr);
+  GameStoryExternals engine(script,true);
+  storygraph::Interpreter interpreter(vm,engine);
   const storygraph::Bytecode bytecode(vm);
   const auto program=storygraph::liftProgram(vm,bytecode,script.findFunction("PC_GOLDHACKEN_END_INFO").ptr);
   require(program.error.empty(),program.error.c_str());
-  StoryRuntime::Bind binding(vm,&hero,&hero);
+  StockOracleActors binding(vm,&hero,&hero);
   vm.unsafe_set_gi(context);
   for(bool native:{false,true}) {
     if(native && (!wasEnabled || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
@@ -316,7 +317,7 @@ void productionDialogEnd(World& world,Npc& npc,Npc& hero) {
     vm.push_int(173);
     size_t bytecode=0;
     vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==close->address(); });
-    const auto result=story.interpreter(vm).run(program);
+    const auto result=interpreter.run(program);
     vm.observe_instructions({});
     require(result.ok,result.error.c_str());
     auto queue=Contract::queue(hero);
@@ -364,7 +365,7 @@ void itemUseRoutes(World& world,Npc& npc,Npc& hero,bool seated) {
   const auto previousQueue=Contract::queue(npc);
   auto* previousLook=npc.lookAtTarget();
   const auto previousContext=vm.unsafe_get_gi();
-  StoryRuntime::Bind binding(vm,&hero,&npc);
+  StockOracleActors binding(vm,&hero,&npc);
   vm.unsafe_set_gi(target);
   for(bool looking:{false,true}) {
     const bool resumesLook=looking && !seated;
@@ -731,10 +732,10 @@ void stockPickpocket(World& world,Npc& npc,Npc& hero) {
     vm.unsafe_set_gi(savedContext);
     Contract::outputOrder(script)=savedOrder;
     };
-  StoryRuntime story(nullptr);
+  GameStoryExternals engine(script,true);
+  storygraph::Interpreter interpreter(vm,engine);
   const storygraph::Bytecode bytecode(vm);
-  StoryRuntime::Bind binding(vm,&npc,&hero);
-  auto& interpreter=story.interpreter(vm);
+  StockOracleActors binding(vm,&npc,&hero);
   constexpr auto conditionName="DIA_HILDA_PICKPOCKET_CONDITION";
   constexpr auto attemptName="DIA_HILDA_PICKPOCKET_DOIT";
   const auto condition=storygraph::liftProgram(vm,bytecode,symbol(conditionName).index());

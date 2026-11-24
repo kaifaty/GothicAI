@@ -1,6 +1,6 @@
 #pragma once
 
-#include "storygraph/eval.h"
+#include "storygraph/exec.h"
 #include "game/gamescript.h"
 #include "game/gamescript_programs.h"
 #include "game/serialize.h"
@@ -18,6 +18,22 @@
 #include <vector>
 void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled);
 
+struct StockOracleActors {
+  daedalus::DaedalusVm& vm;
+  std::shared_ptr<daedalus::DaedalusInstance> self, other;
+
+  StockOracleActors(daedalus::DaedalusVm& vm, Npc* npc, Npc* player)
+    : vm(vm), self(vm.global_self()->get_instance()), other(vm.global_other()->get_instance()) {
+    vm.global_self()->set_instance(npc ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr);
+    vm.global_other()->set_instance(player ? std::static_pointer_cast<daedalus::INpc>(player->handlePtr()) : nullptr);
+    }
+
+  ~StockOracleActors() {
+    vm.global_self()->set_instance(self);
+    vm.global_other()->set_instance(other);
+    }
+  };
+
 #if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
 namespace BennetLookupAudit {
   inline thread_local size_t depth = 0;
@@ -32,7 +48,7 @@ namespace BennetLookupAudit {
     if(depth==0)
       return;
     ++lookups;
-    throw Rejected(std::string("Bennet ore branch queried the full symbol table: ")+method);
+    throw Rejected(std::string("StoryGraph queried the full symbol table: ")+method);
     }
 }
 #endif
@@ -63,6 +79,73 @@ GOTHIC_WRAP_LOOKUP(_ZNK8daedalus14DaedalusScript22find_symbol_by_addressEj,
 #endif
 
 // Test-only access keeps the production creation entry point unchanged.
+class GameStoryExternals final : public storygraph::Externals {
+  public:
+    GameStoryExternals(GameScript& script, bool effects);
+
+    storygraph::Value call(const daedalus::DaedalusSymbol& fn, const std::vector<storygraph::Value>& args) override;
+
+  private:
+    GameScript&               script;
+    storygraph::VmExternals   fallback;
+    bool                      effects;
+  };
+
+inline GameStoryExternals::GameStoryExternals(GameScript& script, bool effects)
+  : script(script), fallback(script.getVm()), effects(effects) {
+  }
+
+inline storygraph::Value GameStoryExternals::call(const daedalus::DaedalusSymbol& fn, const std::vector<storygraph::Value>& args) {
+  using storygraph::Value;
+  const std::string_view name=fn.name();
+  if(effects && !fn.has_return() && args.size()==2 && args[0].type==Value::Str) {
+    if(name=="LOG_CREATETOPIC" && args[1].type==Value::Int)
+      script.log_createtopic(args[0].s,args[1].i);
+    else if(name=="LOG_SETTOPICSTATUS" && args[1].type==Value::Int)
+      script.log_settopicstatus(args[0].s,args[1].i);
+    else if(name=="LOG_ADDENTRY" && args[1].type==Value::Str)
+      script.log_addentry(args[0].s,args[1].s);
+    else
+      return fallback.call(fn,args);
+    return Value::integer(0);
+    }
+
+  const bool deadQuery=name=="NPC_ISDEAD";
+  const bool query=fn.has_return() && fn.rtype()==daedalus::DaedalusDataType::INT &&
+                   (deadQuery || name=="NPC_KNOWSINFO" || name=="NPC_HASITEMS" ||
+                    name=="NPC_ISINSTATE" || name=="NPC_WASINSTATE" || name=="NPC_ISINROUTINE");
+  const bool effect=effects && (name=="NPC_SETREFUSETALK" || name=="NPC_SETATTITUDE") && !fn.has_return();
+  if((!query && !effect) || args.size()!=(deadQuery ? 1u : 2u) || args[0].type!=Value::Inst ||
+     (!deadQuery && args[1].type!=Value::Int))
+    return fallback.call(fn,args);
+
+  auto* record=dynamic_cast<daedalus::INpc*>(args[0].inst.get());
+  auto* npc=script.findNpc(static_cast<NpcRecord*>(record));
+  if(args[0].inst && !npc)
+    return fallback.call(fn,args);
+  if(deadQuery)
+    return Value::integer(npc==nullptr || script.isDead(*npc));
+  if(!npc)
+    return Value::integer(0);
+
+  const auto value=args[1].i;
+  if(name=="NPC_KNOWSINFO")
+    return Value::integer(script.doesNpcKnowInfo(npc->handle(),uint32_t(value)));
+  if(name=="NPC_HASITEMS")
+    return Value::integer(int32_t(npc->itemCount(uint32_t(value))));
+  if(name=="NPC_ISINSTATE")
+    return Value::integer(npc->isInState(uint32_t(value)));
+  if(name=="NPC_WASINSTATE")
+    return Value::integer(npc->wasInState(uint32_t(value)));
+  if(name=="NPC_ISINROUTINE")
+    return Value::integer(npc->isInRoutine(uint32_t(value)));
+  if(name=="NPC_SETREFUSETALK")
+    npc->setRefuseTalkSeconds(value);
+  else
+    npc->setAttitude(Attitude(value));
+  return Value::integer(0);
+  }
+
 struct NpcDefinitionContract {
 #if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
   static void watchBennetLookups(GameScript& script) {
@@ -111,6 +194,10 @@ struct NpcDefinitionContract {
 #endif
 
   static auto& definitions(GameScript& script) { return script.npcDefinitions; }
+  static void runRoutine(GameScript& script, Npc& npc, uint32_t function) {
+    npc.clearRoutine();
+    script.invokeState(&npc,npc.currentOther,npc.currentVictim,ScriptFn(function));
+    }
   static auto& placements(GameScript& script) { return script.placementDefinitions; }
   static int32_t& storyChapter(GameScript& script) { return script.storyChapter; }
   static int32_t currentStoryWorld(GameScript& script) { return script.currentStoryWorld; }
@@ -140,7 +227,7 @@ struct NpcDefinitionContract {
       throw std::runtime_error("create NPC record template fixture: "+error);
     if(script.findSymbolIndex("dir_npc_record_contract")!=owner->index() ||
        script.symbolName(owner->index())!=owner->name() ||
-       script.symbolKind("dir_npc_record_contract")!=GameScript::SymbolKind::Npc)
+       script.storySymbolKind("dir_npc_record_contract")!=GameScript::SymbolKind::Npc)
       throw std::runtime_error("director-defined NPC metadata must remain visible alongside the stock catalog");
     }
   static auto& aiState(Npc& npc) { return npc.aiState; }
@@ -151,7 +238,7 @@ struct NpcDefinitionContract {
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
   static const auto& dialogInfos(const GameScript& script) { return script.dialogsInfo; }
   static const auto& transferVariables(const GameScript& script) { return script.inventoryTransferVariables; }
-  static int32_t dialogCondition(GameScript& script,daedalus::DaedalusSymbol* fn) { return script.dialogFunction(fn,true); }
+  static int32_t dialogCondition(GameScript& script,daedalus::DaedalusSymbol* fn) { return script.dialogFunction(fn->index(),true); }
   static bool hasPreparedStockProgram(const GameScript& script, const daedalus::DaedalusSymbol& fn) {
     if(!script.stockPrograms || !script.stockPrograms->prepared)
       return false;

@@ -105,8 +105,6 @@ GameScript::GameScript(GameSession &owner)
   if (vm.global_self() == nullptr || vm.global_other() == nullptr || vm.global_item() == nullptr ||
       vm.global_victim() == nullptr || vm.global_hero() == nullptr)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
-  if(nativeRoutineProgram)
-    symbolCatalog = ScriptSymbolCatalog::load(baseProgramIndex().dir.parent_path(),GameplayDefinitions::stockProgram);
 
   vmLang = Settings::getI("GAME", "language");
   Gothic::inst().setupCommonScriptClasses(vm);
@@ -120,20 +118,15 @@ GameScript::GameScript(GameSession &owner)
   loadNativeMonsterAttitudes();
   loadNativeWorldEntry();
   loadNativeRoutineExchange();
-  if(nativeRoutineProgram) {
-    findSymbol("B_GIVEINVITEMS.AMOUNT")->bind_global_int(inventoryTransferVariables.amount);
-    findSymbol("B_GIVEINVITEMS.ITEMINSTANCE")->bind_global_int(inventoryTransferVariables.item);
-    findSymbol("B_GIVEINVITEMS.ITEMNAME")->bind_global_string(inventoryTransferVariables.itemName);
-    findSymbol("B_GIVEINVITEMS.CONCATTEXT")->bind_global_string(inventoryTransferVariables.notice);
-    }
+  bindPreparedInventory();
   loadNativeRoutines();
-  initBennetOre();
   loadNativeRoomReaction();
   loadNativeHumanPerceptions();
   loadNativeEquipment();
   loadNativeTalkReaction();
   loadNativeAmbientInfos();
   loadNativeTrainingHelpers();
+  initBennetOre();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }
@@ -472,12 +465,15 @@ void GameScript::initSettings() {
 void GameScript::initDialogs() {
   loadDialogOU();
 
+  storyDialogsById.clear();
+  storyDialogs.clear();
   dialogsInfo.clear();
   const bool native = nativeRoutineProgram && activityEvents && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
   if(native && readDialogInfos())
     return;
   vm.enumerate_instances_by_class_name("C_INFO", [this](daedalus::DaedalusSymbol& sym){
     dialogsInfo.push_back(vm.init_instance<daedalus::IInfo>(&sym));
+    rememberStoryDialog(sym.name(),*dialogsInfo.back());
     });
   }
 
@@ -787,9 +783,8 @@ daedalus::DaedalusSymbol* GameScript::findSymbol(const size_t s) {
   }
 
 size_t GameScript::findSymbolIndex(std::string_view name) {
-  if(symbolCatalog)
-    if(const auto id = symbolCatalog->find(name))
-      return *id;
+  if(auto* slot = storySlot(name))
+    return slot->index();
   if(const auto* entry = own.find(name))
     return entry->index;
   auto sym = vm.find_symbol_by_name(name);
@@ -853,7 +848,7 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
         BennetLookupAudit audit(bennetLookupScope);
         npcKnowsInfo = dlgKnownInfos.contains({static_cast<const daedalus::INpc&>(*player).symbol_index(),bennet->infoId});
         } else {
-        npcKnowsInfo = doesNpcKnowInfo(*player,vm.find_symbol_by_instance(info)->index());
+        npcKnowsInfo = doesNpcKnowInfo(*player,info.symbol_index());
         }
       if(npcKnowsInfo && !info.permanent)
         continue;
@@ -873,7 +868,7 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
       if(bennet) {
         auto& overlay = Gothic::inst().dialogScriptFn;
         int32_t result = 0;
-        if(overlay && overlay(*bennet->conditionSymbol,result)) {
+        if(overlay && overlay(bennet->conditionSymbol->index(),result)) {
           valid = result!=0;
           } else {
           BennetLookupAudit audit(bennetLookupScope);
@@ -882,10 +877,7 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
           valid = hero!=nullptr && npc!=nullptr && bennetOffer(*bennet,*hero,*npc);
           }
         } else if(info.condition) {
-        auto* conditionSymbol = vm.find_symbol_by_index(uint32_t(info.condition));
-        if (conditionSymbol != nullptr) {
-          valid = dialogFunction(conditionSymbol,true) != 0;
-          }
+        valid = dialogFunction(uint32_t(info.condition),true)!=0;
         }
       if(Gothic::inst().dialogFilterFn)
         Gothic::inst().dialogFilterFn(info,valid);
@@ -971,7 +963,7 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
       }
     auto& overlay = Gothic::inst().dialogScriptFn;
     int32_t result = 0;
-    if(!overlay || !overlay(*bennet->answerSymbol,result)) {
+    if(!overlay || !overlay(bennet->answerSymbol->index(),result)) {
       BennetLookupAudit audit(bennetLookupScope);
       if(!bennetExecute(*bennet,player,npc)) {
         if(newlyKnown)
@@ -992,17 +984,17 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
         ++i;
       }
     }
-  auto* function = vm.find_symbol_by_index(dlg.scriptFn);
+  const auto function = storyProgramName(dlg.scriptFn);
   std::shared_ptr<HeroDeed> pickpocket;
-  if(function!=nullptr && function->name().ends_with("_DOIT") &&
-     (function->name().find("PICKPOCKET")!=std::string::npos || function->name()=="DIA_CASSIA_PICKME_DOIT")) {
+  if(function.ends_with("_DOIT") &&
+     (function.find("PICKPOCKET")!=std::string::npos || function=="DIA_CASSIA_PICKME_DOIT")) {
     pickpocket = HeroDeed::capture(player,"pickpocket",&npc);
     if(pickpocket!=nullptr) {
       pickpocket->inventoryBefore = HeroDeed::inventory(player);
       pickpocket->pickedPocketBefore = HeroDeed::aivar(npc,"AIV_PLAYERHASPICKEDMYPOCKET");
       }
     }
-  dialogFunction(function,false);
+  dialogFunction(dlg.scriptFn,false);
   Gothic::inst().onDialogChosen(dlg,player,npc);
   if(pickpocket!=nullptr) {
     pickpocket->inventoryAfter = HeroDeed::inventory(player);
@@ -1654,6 +1646,10 @@ std::string GameScript::randomState(const Npc* actor) const {
   return out.str();
   }
 
+std::pair<Npc*,Npc*> GameScript::storyActors() {
+  return {findNpc(vm.global_self()),findNpc(vm.global_other())};
+  }
+
 Npc* GameScript::findNpc(daedalus::DaedalusSymbol* s) {
   if(s->is_instance_of<daedalus::INpc>()) {
     auto cNpc = reinterpret_cast<daedalus::INpc*>(s->get_instance().get());
@@ -1713,7 +1709,7 @@ Item* GameScript::findItemById(const std::shared_ptr<daedalus::DaedalusInstance>
   }
 
 Npc* GameScript::findNpcById(size_t id) {
-  auto* handle = vm.find_symbol_by_index(uint32_t(id));
+  auto* handle = nativeRoutineProgram ? storySlot(uint32_t(id)) : vm.find_symbol_by_index(uint32_t(id));
   if(handle==nullptr || !handle->is_instance_of<daedalus::INpc>())
     return nullptr;
 
@@ -1727,6 +1723,10 @@ Npc* GameScript::findNpcById(size_t id) {
   }
 
 daedalus::IInfo* GameScript::findInfo(size_t id) {
+  if(nativeRoutineProgram) {
+    const auto entry = storyDialogsById.find(uint32_t(id));
+    return entry!=storyDialogsById.end() ? entry->second.second : nullptr;
+    }
   auto* sym = vm.find_symbol_by_index(uint32_t(id));
   if(sym==nullptr||!sym->is_instance_of<daedalus::IInfo>())
     return nullptr;

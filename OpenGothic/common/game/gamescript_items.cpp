@@ -8,11 +8,8 @@
 #include "loadprobe.h"
 #include "programdata.h"
 #include "settings.h"
-#include "storygraph/eval.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
-
-#include <cstdlib>
 
 daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                          RoutineDefinitionRuntime::Definitions& routines,
@@ -60,25 +57,23 @@ auto GameScript::createItemForQuery(size_t instance) -> std::shared_ptr<ItemReco
   }
 
 std::optional<std::string> GameScript::itemNameForQuery(size_t instance) {
-  auto* symbol = findSymbol(instance);
-  if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)
-    return std::nullopt;
+  if(instance<=UINT32_MAX) {
+    const auto definition = itemDefinitions.items.find(uint32_t(instance));
+    if(definition!=itemDefinitions.items.end())
+      return definition->second.name;
+    if(itemDefinitions.brokenEye==instance)
+      return brokenEyePrepared.name;
+    }
+  return std::nullopt;
+  }
 
-  // A query may use a legacy initializer. Preserve the gameplay instance the symbol refers to.
-  const auto previous = symbol->get_instance();
-  std::optional<std::string> result;
-  try {
-    result = createItemForQuery(instance)->name;
-    }
-  catch(const std::exception&) {
-    }
-  symbol->set_instance(previous);
-  return result;
+bool GameScript::hasDirectorNpcVisual() const {
+  return directorVisual!=nullptr && NpcHelperRuntime::enabled() &&
+         npcDefinitions.helpers.helpers.contains(directorVisual->index());
   }
 
 void GameScript::setupDirectorNpcEquipment(Npc& npc, const DirectorNpcLook* look,
                                           std::span<const std::pair<uint32_t,int32_t>> items) {
-  using storygraph::Value;
   struct RestoreSelf {
     daedalus::DaedalusSymbol& self;
     std::shared_ptr<daedalus::DaedalusInstance> previous;
@@ -87,20 +82,10 @@ void GameScript::setupDirectorNpcEquipment(Npc& npc, const DirectorNpcLook* look
 
   const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   restore.self.set_instance(actor);
-  const std::string id(symbolName(npc.instanceSymbol()));
-  const auto call = [&](const char* function, std::vector<Value> args) {
-    std::string error;
-    const auto* symbol = vm.find_symbol_by_name(function);
-    if(symbol==nullptr || !storygraph::callFunction(vm,*symbol,args,error))
-      Tempest::Log::e("[story] ",id,": ",function," failed: ",symbol==nullptr ? "no such function" : error);
-    };
 
   if(look!=nullptr) {
-    const bool native = !vm.has_legacy_dispatcher();
-    const auto* visual = native ? vm.find_symbol_by_name("B_SETNPCVISUAL") : nullptr;
-    if(native && (visual==nullptr || !NpcHelperRuntime::enabled() ||
-                  !npcDefinitions.helpers.helpers.contains(visual->index()))) {
-      Tempest::Log::e("[story] ",id,": B_SETNPCVISUAL failed: no prepared visual helper");
+    if(!hasDirectorNpcVisual()) {
+      Tempest::Log::e("[story] ",storyNpcName(npc.instanceSymbol()),": no prepared visual helper");
       return;
       }
     // Remove the template's armor before dressing the new actor.
@@ -109,73 +94,94 @@ void GameScript::setupDirectorNpcEquipment(Npc& npc, const DirectorNpcLook* look
       npc.unequipItem(instance);
       npc.delItem(instance,1);
       }
-    if(native) {
-      struct RestoreContext {
-        daedalus::DaedalusVm& vm;
-        std::shared_ptr<daedalus::DaedalusInstance> previous;
-        ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
-        } context{vm,vm.unsafe_get_gi()};
-      vm.push_instance(actor);
-      vm.push_int(look->gender);
-      vm.push_string(look->head);
-      vm.push_int(look->face);
-      vm.push_int(look->skin);
-      vm.push_int(look->armor);
-      NpcHelperRuntime::invoke(vm,actor,visual,npcDefinitions.helpers);
-      } else {
-      call("B_SETNPCVISUAL",{Value::instance(actor),Value::integer(look->gender),Value::str(look->head),
-                            Value::integer(look->face),Value::integer(look->skin),Value::integer(look->armor)});
-      }
+    struct RestoreContext {
+      daedalus::DaedalusVm& vm;
+      std::shared_ptr<daedalus::DaedalusInstance> previous;
+      ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
+      } context{vm,vm.unsafe_get_gi()};
+    vm.push_instance(actor);
+    vm.push_int(look->gender);
+    vm.push_string(look->head);
+    vm.push_int(look->face);
+    vm.push_int(look->skin);
+    vm.push_int(look->armor);
+    NpcHelperRuntime::invoke(vm,actor,directorVisual,npcDefinitions.helpers);
     }
   for(const auto& [item,count] : items)
-    call("CREATEINVITEMS",{Value::instance(actor),Value::integer(int32_t(item)),Value::integer(count)});
+    createinvitems(actor,int32_t(item),count);
   }
 
-bool GameScript::isStockDirectorActor(const Npc& npc) const {
-  const auto* symbol = vm.find_symbol_by_index(npc.instanceSymbol());
-  return symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::INSTANCE && !symbol->is_generated();
+void GameScript::bindPreparedInventory() {
+  if(!nativeRoutineProgram)
+    return;
+
+  // Keep the native item type and its alias ready for new inventory stacks.
+  preparedItems.reserve(itemDefinitions.items.size()+1);
+  const auto bind = [&](uint32_t id, const auto& prepare) {
+    auto* symbol = vm.find_symbol_by_index(id);
+    const auto previous = symbol->get_instance();
+    auto item = std::make_shared<daedalus::IItem>();
+    prepare(item,symbol);
+    symbol->set_instance(previous);
+    preparedItems.emplace(id,PreparedItem{*item,symbol});
+    };
+  for(const auto& [id,fields] : itemDefinitions.items) {
+    (void)fields;
+    bind(id,[&](const auto& item, auto* symbol) { vm.allocate_instance(item,symbol); });
+    }
+  if(const auto id = itemDefinitions.brokenEye) {
+    bind(*id,[&](const auto& item, auto* symbol) {
+      ItemDefinitionRuntime::initialize(vm,item,symbol,itemDefinitions);
+      brokenEyePrepared = *item;
+      });
+    brokenEyeSetting = findSymbol("TEXT_INNOSEYE_SETTING");
+    brokenEyeGem = findSymbol("TEXT_INNOSEYE_GEM");
+    }
+
+  findSymbol("B_GIVEINVITEMS.AMOUNT")->bind_global_int(inventoryTransferVariables.amount);
+  findSymbol("B_GIVEINVITEMS.ITEMINSTANCE")->bind_global_int(inventoryTransferVariables.item);
+  findSymbol("B_GIVEINVITEMS.ITEMNAME")->bind_global_string(inventoryTransferVariables.itemName);
+  findSymbol("B_GIVEINVITEMS.CONCATTEXT")->bind_global_string(inventoryTransferVariables.notice);
+  inventoryGiver = findSymbol("B_GIVEINVITEMS.GIVER");
+  inventoryTaker = findSymbol("B_GIVEINVITEMS.TAKER");
+  directorVisual = findSymbol("B_SETNPCVISUAL");
+  const auto string = [this](const char* name) -> std::string_view { return findSymbol(name)->get_string(); };
+  const auto integer = [this](const char* name) { return findSymbol(name)->get_int(); };
+  inventoryTransferText = {
+    findSymbol("ITMI_GOLD")->index(),
+    string("PRINT_GOLDGEGEBEN"),string("PRINT_GOLDERHALTEN"),
+    string("PRINT_ADDON_GEGEBEN"),string("PRINT_ADDON_ERHALTEN"),
+    string("PRINT_ITEMSGEGEBEN"),string("PRINT_ITEMSERHALTEN"),
+    integer("YPOS_GOLDGIVEN"),integer("YPOS_GOLDTAKEN"),
+    integer("YPOS_ITEMGIVEN"),integer("YPOS_ITEMTAKEN")
+    };
+  inventoryTransferFont = string("FONT_SCREENSMALL");
   }
 
-Npc* GameScript::boundStockDirectorNpc(std::string_view name) {
-  auto* symbol = vm.find_symbol_by_name(name);
-  if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INSTANCE || symbol->is_generated())
-    return nullptr;
-  auto record = std::dynamic_pointer_cast<daedalus::INpc>(symbol->get_instance());
-  return findNpc(static_cast<NpcRecord*>(record.get()));
-  }
-
-bool GameScript::tryDirectorGiveItems(Npc& giver, Npc& taker, std::string_view item, int32_t count) {
-  if(!nativeRoutineProgram || count<=0 || !isStockDirectorActor(giver) || !isStockDirectorActor(taker))
+bool GameScript::bindPreparedItem(const std::shared_ptr<daedalus::IItem>& item, uint32_t instance) {
+  const auto found = preparedItems.find(instance);
+  if(found==preparedItems.end())
     return false;
-  const auto* enabled = std::getenv("GOTHIC_AI_STORYEXEC");
-  if(enabled!=nullptr && std::string_view(enabled)=="0")
-    return false;
-  const auto* function = vm.find_symbol_by_name("B_GIVEINVITEMS");
-  if(function==nullptr || !vm.has_active_override(*function))
-    return false;
-  const auto id = findItemInstance(item);
-  if(!id || !itemDefinitions.items.contains(*id))
-    return false;
-
-  giveInventoryItems(std::static_pointer_cast<daedalus::INpc>(giver.handlePtr()),
-                    std::static_pointer_cast<daedalus::INpc>(taker.handlePtr()),int32_t(*id),count);
-  return true;
-  }
-
-bool GameScript::tryDirectorCreateItems(Npc& npc, std::string_view item, int32_t count) {
-  if(!nativeRoutineProgram || count<=0 || !isStockDirectorActor(npc))
-    return false;
-  const auto id = findItemInstance(item);
-  if(!id || !itemDefinitions.items.contains(*id))
-    return false;
-
-  createinvitems(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int32_t(*id),count);
+  const auto owner = item->user_ptr;
+  static_cast<daedalus::DaedalusInstance&>(*item) = found->second.identity;
+  item->user_ptr = owner;
+  found->second.alias->set_instance(item);
   return true;
   }
 
 void GameScript::initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance) {
   LoadProbe::Vobs::Scope probe("script_item");
   LoadProbe::Startup::Scope itemProbe(LoadProbe::Startup::Script,false,"placed-items");
+  if(instance<=UINT32_MAX && bindPreparedItem(item,uint32_t(instance))) {
+    if(itemDefinitions.brokenEye==instance) {
+      static_cast<ItemRecord&>(*item) = brokenEyePrepared;
+      item->text[0] = brokenEyeSetting->get_string();
+      item->text[1] = brokenEyeGem->get_string();
+      } else {
+      static_cast<ItemRecord&>(*item) = itemDefinitions.items.at(uint32_t(instance));
+      }
+    return;
+    }
   auto* symbol=vm.find_symbol_by_index(uint32_t(instance));
   if(symbol==nullptr) {
     Tempest::Log::e("Cannot initialize item ",instance,": Symbol not found.");

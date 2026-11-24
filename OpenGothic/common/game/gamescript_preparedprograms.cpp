@@ -378,7 +378,7 @@ bool GameScript::StockPrograms::runPrepared(const daedalus::DaedalusSymbol& fn, 
 
   // The compatibility session still supplies typed instance aliases to legacy callers.
   for(const auto& [name,value] : host.writes) {
-    auto* symbol = vm.find_symbol_by_name(name);
+    auto* symbol = binding(name).first;
     const auto& ref = std::get<ScriptVars::Reference>(value);
     auto* npc = script.world().npcById(ref.object);
     symbol->set_instance(npc!=nullptr ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr);

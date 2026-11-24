@@ -3,6 +3,7 @@
 #include <Tempest/Log>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 
@@ -55,16 +56,22 @@ int GameScript::npc_getdisttowp(std::shared_ptr<daedalus::INpc> npcRef, std::str
   }
 
 void GameScript::npc_exchangeroutine(std::shared_ptr<daedalus::INpc> npcRef, std::string_view rname) {
-  auto npc = findNpc(npcRef);
-  if(npc!=nullptr) {
-    auto& v = npc->handle();
-    string_frm name("Rtn_",rname,'_',v.id);
+  if(auto* npc = findNpc(npcRef))
+    exchangeNpcRoutine(*npc,rname);
+  }
 
-    auto* sym = vm.find_symbol_by_name(name);
-    size_t d = sym != nullptr ? sym->index() : 0;
-    if(d>0)
-      npc->excRoutine(d);
-    }
+bool GameScript::exchangeNpcRoutine(Npc& npc, std::string_view name) {
+  string_frm key("RTN_",name,'_',npc.handle().id);
+  std::transform(key.begin(),key.end(),key.begin(),[](unsigned char ch) { return char(std::toupper(ch)); });
+  const auto found = routineDefinitions.names.find(std::string_view(key));
+  if(found==routineDefinitions.names.end())
+    return false;
+
+  const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  npc.clearRoutine();
+  for(const auto& row : routineDefinitions.routines.at(found->second))
+    ta_min(actor,row.startHour,row.startMinute,row.endHour,row.endMinute,int(row.state),row.waypoint);
+  return true;
   }
 
 bool GameScript::npc_isdead(std::shared_ptr<daedalus::INpc> npcRef) {
@@ -524,11 +531,8 @@ bool GameScript::npc_checkinfo(std::shared_ptr<daedalus::INpc> npcRef, int imp) 
     if(npcKnowsInfo && !info->permanent)
       continue;
     bool valid=false;
-    if(info->condition) {
-      auto* conditionSymbol = vm.find_symbol_by_index(uint32_t(info->condition));
-      if (conditionSymbol != nullptr)
-        valid = dialogFunction(conditionSymbol,true)!=0;
-      }
+    if(info->condition)
+      valid = dialogFunction(uint32_t(info->condition),true)!=0;
     if(Gothic::inst().dialogFilterFn)
       Gothic::inst().dialogFilterFn(*info,valid);
     if(valid) {
@@ -736,7 +740,8 @@ bool GameScript::npc_isdetectedmobownedbynpc(std::shared_ptr<daedalus::INpc> usr
   auto usr = findNpc(usrRef);
 
   if(npc!=nullptr && usr!=nullptr && usr->interactive()!=nullptr){
-    auto* inst = vm.find_symbol_by_index(npc->instanceSymbol());
+    const auto id = npc->instanceSymbol();
+    auto* inst = nativeRoutineProgram ? storySlot(id) : vm.find_symbol_by_index(id);
     auto  ow   = usr->interactive()->ownerName();
     return inst->name() == ow;
     }
@@ -778,7 +783,8 @@ bool GameScript::npc_ownedbynpc(std::shared_ptr<daedalus::IItem> itmRef, std::sh
     return false;
     }
 
-  auto* sym = vm.find_symbol_by_index(uint32_t(itm->handle().owner));
+  const auto id = uint32_t(itm->handle().owner);
+  auto* sym = nativeRoutineProgram ? storySlot(id) : vm.find_symbol_by_index(id);
   return sym != nullptr && std::static_pointer_cast<daedalus::INpc>(npc->handlePtr())==sym->get_instance();
   }
 
