@@ -50,7 +50,7 @@ struct EquipmentStatEffect {
   bool equip;
   };
 struct DocumentCall {
-  uint32_t function;
+  std::string function;
   std::vector<ItemDefinitions::DocumentArgument> arguments;
   };
 struct Document {
@@ -83,5 +83,4 @@ void registerStockEquipmentStatEffects(Definitions& definitions, const daedalus:
 // Returns true when a definition supplied the fields, false after a VM constructor.
 bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::IItem>& item,
                 daedalus::DaedalusSymbol* symbol, const Definitions& definitions);
-bool showDocument(daedalus::DaedalusVm& vm,uint32_t function,const Definitions& definitions);
 }

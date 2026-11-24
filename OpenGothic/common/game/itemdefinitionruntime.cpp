@@ -61,7 +61,7 @@ ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolve(const ItemDefi
       const auto* external=script.find_symbol_by_name(call.function);
       if(external==nullptr || !external->is_external() || external->count()!=call.arguments.size()+1 || external->has_return())
         throw std::runtime_error("invalid document action "+call.function);
-      resolved.calls.push_back({external->index(),call.arguments});
+      resolved.calls.push_back({call.function,call.arguments});
       }
     definitions.documents.emplace(root->index(),std::move(resolved));
     }
@@ -111,33 +111,6 @@ bool ItemDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shar
   LoadProbe::Items::Constructor probe;
   vm.init_instance(item,symbol);
   return false;
-  }
-
-bool ItemDefinitionRuntime::showDocument(daedalus::DaedalusVm& vm,uint32_t function,const Definitions& definitions) {
-  const auto it=definitions.documents.find(function);
-  if(it==definitions.documents.end())
-    return false;
-  const auto& doc=it->second;
-  const auto invoke=[&](const daedalus::DaedalusSymbol* external) {
-    if(!vm.unsafe_call_external(external))
-      throw std::runtime_error("missing engine action for an item document");
-    };
-  invoke(vm.find_symbol_by_name(doc.map ? "DOC_CREATEMAP" : "DOC_CREATE"));
-  const auto id=vm.pop_int();
-  vm.find_symbol_by_index(doc.handle)->set_int(id);
-  for(const auto& call:doc.calls) {
-    vm.push_int(id);
-    for(const auto& arg:call.arguments) {
-      if(const auto* str=std::get_if<std::string>(&arg))
-        vm.push_string(*str);
-      else
-        vm.push_int(std::get<int32_t>(arg));
-      }
-    invoke(vm.find_symbol_by_index(call.function));
-    }
-  vm.push_int(id);
-  invoke(vm.find_symbol_by_name("DOC_SHOW"));
-  return true;
   }
 
 void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {

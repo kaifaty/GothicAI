@@ -1204,7 +1204,11 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
 
   struct DocumentCapture {
     std::string text;
-    void record(const DocumentMenu::Show& document) { text=document.pages.at(0).text; }
+    std::string image;
+    void record(const DocumentMenu::Show& document) {
+      text=document.pages.at(0).text;
+      image=document.pages.at(0).img;
+      }
     } documentCapture;
   gothic.onShowDocument.bind(&documentCapture,&DocumentCapture::record);
   const auto document=script.callStoryFunction("DOC_CREATE",bandit,hero,{});
@@ -1213,11 +1217,19 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
   const auto pages=script.callStoryFunction("DOC_SETPAGES",bandit,hero,{handle,1});
   const auto line=script.callStoryFunction("DOC_PRINTLINE",bandit,hero,{handle,0,text.returned.s});
   const auto show=script.callStoryFunction("DOC_SHOW",bandit,hero,{handle});
-  gothic.onShowDocument.ubind(&documentCapture,&DocumentCapture::record);
-  vm.observe_externals({});
   require(pages.ok && line.ok && show.ok && documentCapture.text=="native document\n" &&
           commonCalls==std::vector<std::string>{"INTTOFLOAT","HLP_RANDOM","DOC_CREATE","DOC_SETPAGES","DOC_PRINTLINE","DOC_SHOW"},
           "native documents must preserve contents and the existing external observer order");
+  commonCalls.clear();
+  auto* letterHandle=script.findSymbol("USEBANDITLETTER.NDOCID");
+  require(letterHandle!=nullptr,"the prepared letter must have an engine-owned handle");
+  letterHandle->set_int(-1);
+  script.invokeItem(hero,script.findFunction("USEBANDITLETTER"));
+  gothic.onShowDocument.ubind(&documentCapture,&DocumentCapture::record);
+  vm.observe_externals({});
+  require(letterHandle->get_int()>=0 && documentCapture.image=="letters.TGA" && !documentCapture.text.empty() &&
+          commonCalls.size()==28 && commonCalls.front()=="DOC_CREATE" && commonCalls.back()=="DOC_SHOW",
+          "the stock letter must use the prepared document with the original action order and handle");
   gothic.clearGame().reset();
 #endif
   }

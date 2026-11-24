@@ -191,6 +191,41 @@ void GameScript::initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& 
 bool GameScript::invokeStockItemProgram(const daedalus::DaedalusSymbol& function) {
   if(!itemDefinitions.itemUsePrograms.contains(function.index()))
     return false;
+
+  if(const auto it=itemDefinitions.documents.find(function.index()); it!=itemDefinitions.documents.end()) {
+    using storygraph::NativeValue;
+    const auto& document=it->second;
+    auto* slot=runtimeState.find(document.handle);
+    auto* handle=slot ? std::get_if<ScriptVars::Array<int32_t>>(slot) : nullptr;
+    if(handle==nullptr || handle->values.size()!=1)
+      throw std::runtime_error("missing runtime handle for an item document");
+
+    const auto invoke=[&](std::string_view name,std::span<const NativeValue> arguments) {
+      const auto action=nativeExternals.find(name);
+      if(action==nativeExternals.end())
+        throw std::runtime_error("missing engine action for an item document: "+std::string(name));
+      if(vm.has_external_observer())
+        storygraph::BoundNativeCall::observeExternal(vm,*vm.find_symbol_by_name(name),arguments,{});
+      return action->second.call(arguments,{},{});
+      };
+    const auto id=invoke(document.map ? "DOC_CREATEMAP" : "DOC_CREATE",{}).value.i;
+    handle->values[0]=id;
+    std::vector<NativeValue> arguments{NativeValue::integer(id)};
+    for(const auto& call:document.calls) {
+      arguments.resize(1);
+      for(const auto& arg:call.arguments) {
+        if(const auto* str=std::get_if<std::string>(&arg))
+          arguments.push_back(NativeValue::str(*str));
+        else
+          arguments.push_back(NativeValue::integer(std::get<int32_t>(arg)));
+        }
+      invoke(call.function,arguments);
+      }
+    arguments.resize(1);
+    invoke("DOC_SHOW",arguments);
+    return true;
+    }
+
   int32_t result=0;
-  return ItemDefinitionRuntime::showDocument(vm,function.index(),itemDefinitions) || invokeStockProgram(function,result);
+  return invokeStockProgram(function,result);
   }
