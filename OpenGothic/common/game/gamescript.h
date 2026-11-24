@@ -877,6 +877,7 @@ class GameScript final : public GameRules {
     bool bennetExecute(const BennetOreDialog& dialog, Npc& player, Npc& npc);
 
     void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
+    ScriptVars::Object& storyActorSlot(std::string_view name);
     ScriptVars::Value stateValue(const ScriptVars::Slot& slot);
     ScriptVars::Reference stateReference(const ScriptVars::Object& object);
 

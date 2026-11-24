@@ -1719,10 +1719,6 @@ std::string GameScript::randomState(const Npc* actor) const {
   return out.str();
   }
 
-std::pair<Npc*,Npc*> GameScript::storyActors() {
-  return {findNpc(vm.global_self()),findNpc(vm.global_other())};
-  }
-
 Npc* GameScript::findNpc(daedalus::DaedalusSymbol* s) {
   if(s->is_instance_of<daedalus::INpc>()) {
     auto cNpc = reinterpret_cast<daedalus::INpc*>(s->get_instance().get());

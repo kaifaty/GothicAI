@@ -148,20 +148,19 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
   public:
     explicit Host(StockPrograms& owner, bool effects) : owner(owner), effects(effects) {}
     ~Host() override {
-      if(scoped) {
-        owner.vm.global_self()->set_instance(savedSelf);
-        owner.vm.global_other()->set_instance(savedOther);
+      if(selfAlias!=nullptr) {
+        *selfAlias = std::move(savedSelf);
+        *otherAlias = std::move(savedOther);
         }
       }
 
     void bindContext(Npc* self, Npc* other) {
-      auto* selfAlias = owner.vm.global_self();
-      auto* otherAlias = owner.vm.global_other();
-      savedSelf = selfAlias->get_instance();
-      savedOther = otherAlias->get_instance();
-      scoped = true;
-      selfAlias->set_instance(actor(self));
-      otherAlias->set_instance(actor(other));
+      auto& selfSlot = owner.script.storyActorSlot("SELF");
+      auto& otherSlot = owner.script.storyActorSlot("OTHER");
+      selfAlias = &selfSlot;
+      otherAlias = &otherSlot;
+      savedSelf = std::exchange(selfSlot,actor(self));
+      savedOther = std::exchange(otherSlot,actor(other));
       }
 
     static std::shared_ptr<DaedalusInstance> actor(Npc* npc) {
@@ -460,8 +459,9 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
 
     StockPrograms& owner;
     bool effects;
-    bool scoped = false;
-    std::shared_ptr<DaedalusInstance> savedSelf, savedOther;
+    ScriptVars::Object* selfAlias = nullptr;
+    ScriptVars::Object* otherAlias = nullptr;
+    ScriptVars::Object savedSelf, savedOther;
     std::vector<std::shared_ptr<DaedalusInstance>> instances;
     std::unordered_map<std::string_view,DaedalusSymbol*> returned;
   };
@@ -493,6 +493,19 @@ bool GameScript::StockPrograms::run(uint32_t id, int32_t& result, bool* failed, 
     Tempest::Log::e("[story] program ",symbol.name(),": ",run.error);
   result = run.returned.type==NativeValue::Int ? run.returned.i : 0;
   return run.started;
+  }
+
+ScriptVars::Object& GameScript::storyActorSlot(std::string_view name) {
+  const auto* binding = storySlot(name);
+  if(binding!=nullptr)
+    if(auto* object = std::get_if<ScriptVars::Object>(runtimeState.find(binding->index())))
+      return *object;
+  throw std::runtime_error("Missing runtime story actor "+std::string(name));
+  }
+
+std::pair<Npc*,Npc*> GameScript::storyActors() {
+  return {findNpc(dynamic_cast<daedalus::INpc*>(storyActorSlot("SELF").get())),
+          findNpc(dynamic_cast<daedalus::INpc*>(storyActorSlot("OTHER").get()))};
   }
 
 std::unique_ptr<NativeExecutionHost> GameScript::makeStoryHost(Npc* self, Npc* other, bool effects) {
