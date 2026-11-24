@@ -364,7 +364,7 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
     Tempest::MemWriter writer(bytes);
     {
       Serialize out(writer);
-      out.setEntry("game/daedalus");
+      out.setEntry(ScriptVars::StateEntry);
       out.write(uint32_t(globals.size()));
       for(size_t i=0; i<globals.size(); ++i) {
         auto& [global,owned,saved]=globals[i];
@@ -388,7 +388,7 @@ void npcPetzCrimeParity(World& world,Npc& witness,Npc& hero,bool& enabled) {
       }
     Tempest::MemReader reader(bytes);
     Serialize in(reader);
-    if(!in.setEntry("game/daedalus")) throw std::runtime_error("Crime memory: save must use the original entry");
+    if(!in.setEntry(ScriptVars::StateEntry)) throw std::runtime_error("Crime memory: save must contain the state entry");
     script.loadVar(in);
     for(size_t i=0; i<globals.size(); ++i) {
       const auto& [global,owned,saved]=globals[i];
@@ -1410,7 +1410,7 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
   Tempest::MemWriter writer(legacyBytes);
   {
     Serialize out(writer);
-    out.setEntry("game/daedalus");
+    out.setEntry(ScriptVars::StateEntry);
     out.write(uint32_t(3));
     out.write(uint32_t(daedalus::DaedalusDataType::INSTANCE),uint8_t(3),
               std::string_view("UNAVAILABLE_TEST_INVENTORY_SYMBOL"),uint32_t(0),uint32_t(4242));
@@ -1419,12 +1419,12 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
   }
   Tempest::MemReader reader(legacyBytes);
   Serialize in(reader);
-  require(in.setEntry("game/daedalus"),"world entry: the legacy save entry must be present");
+  require(in.setEntry(ScriptVars::StateEntry),"world entry: the state entry must be present");
   script.loadVar(in);
   require(NpcDefinitionContract::currentStoryWorld(script)==khorinis &&
           std::ranges::count(NpcDefinitionContract::worldEntryLatches(script),7)==1 &&
           script.intSymbol("ENTERADW_KAPITEL2",0)==7,
-          "world entry: the legacy variables after an unknown inventory reference restore the current world and engine latch");
+          "world entry: the saved variables after an unknown inventory reference restore the current world and engine latch");
   level->set_int(before.at("CURRENTLEVEL"));
   script.findSymbol("ENTERADW_KAPITEL2")->set_int(before.at("ENTERADW_KAPITEL2"));
   std::puts("Addon World entry: Init order, live chapter, room assignments, NPC aliases and eight chapter latches match stock");

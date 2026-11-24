@@ -486,23 +486,29 @@ auto storyAndPointRollsBeforeSave(World& world, bool nativeOnly) {
     };
   }
 
-void bennetOreContract(const std::filesystem::path& oldSave, const std::filesystem::path& caseDir, bool native) {
+void bennetOreContract(const std::filesystem::path& caseDir) {
+#if !defined(GOTHIC_BENNET_LOOKUP_AUDIT)
+  (void)caseDir;
+  require(false,"Bennet native contract requires the full-symbol lookup guard");
+#else
   using Contract = NpcDefinitionContract;
   using Counts = std::pair<size_t,size_t>;
   constexpr auto mission = "MIS_BENNET_BRINGORE";
-  constexpr uint32_t startFn = 23818, infoId = 23822, conditionFn = 23823, answerFn = 23824, ore = 6928;
-  constexpr std::array<const char*,4> lines = {
+  constexpr auto trained = "BENNET_TEACHSMITH";
+  constexpr auto directorVar = "DIR_BENNET_SAVE_CONTRACT";
+  constexpr auto directorNpc = "DIR_BENNET_WITNESS_CONTRACT";
+  constexpr uint32_t startId = 23816, startFn = 23818, leadId = 23819, leadFn = 23821;
+  constexpr uint32_t infoId = 23822, conditionFn = 23823, answerFn = 23824, ore = 6928;
+  constexpr std::array starterLines = {"15_00", "06_07", "15_08", "06_09", "15_10", "06_11"};
+  constexpr std::array leadLines = {"15_00", "06_01", "06_02", "06_03", "06_04"};
+  constexpr std::array handInLines = {
     "DIA_Bennet_BringOre_15_00", "DIA_Bennet_BringOre_06_01",
     "DIA_Bennet_BringOre_06_02", "DIA_Bennet_BringOre_06_03"};
-  require(oldSave.is_absolute() && caseDir.is_absolute(),"Bennet contract paths must be absolute");
+  constexpr std::array trainingLines = {"15_00", "06_12", "15_13", "06_14", "06_15", "06_16", "06_17"};
+  require(caseDir.is_absolute(),"Bennet contract case directory must be absolute");
   const auto* game = std::getenv("GOTHIC_DIR");
   require(game && *game,"GOTHIC_DIR must point to prepared Gothic II settings");
-#if !defined(GOTHIC_BENNET_LOOKUP_AUDIT)
-  require(!native,"Bennet native contract requires the full-symbol lookup guard");
-#endif
   setenv("GOTHIC_AI","0",1);
-  setenv("GOTHIC_AI_STORYEXEC",native ? "1" : "0",1);
-  setenv("OPENGOTHIC_ACTIVITY_RECORDS",native ? "1" : "0",1);
   const char* args[] = {"gothic-placed-items-contract","-g",game};
   CommandLine commandLine(3,args);
   Resources resources;
@@ -512,23 +518,39 @@ void bennetOreContract(const std::filesystem::path& oldSave, const std::filesyst
   GameMusic music;
   std::filesystem::create_directories(caseDir);
 
-  const auto read = [](const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::binary);
-    require(bool(file),"Bennet contract could not open save or oracle trace");
-    return std::string{std::istreambuf_iterator<char>{file},std::istreambuf_iterator<char>{}};
-    };
-  const auto load = [&](const auto& bytes) {
-    gothic.clearGame().reset();
-    Tempest::MemReader reader(bytes.data(),bytes.size());
+  {
+    std::vector<uint8_t> oldBytes;
+    {
+      Tempest::MemWriter writer(oldBytes);
+      Serialize out(writer);
+      SaveGameHeader header;
+      header.version=55;
+      header.world="NEWWORLD.ZEN";
+      out.setEntry("header");
+      out.write(header);
+    }
+    Tempest::MemReader reader(oldBytes.data(),oldBytes.size());
     Serialize in(reader);
-    gothic.setGame(std::make_unique<GameSession>(in));
+    bool rejected=false;
+    try {
+      GameSession legacy(in);
+      }
+    catch(const std::runtime_error& error) {
+      rejected=std::string_view(error.what()).starts_with("Unsupported save version 55");
+      }
+    require(rejected && gothic.world()==nullptr,"the normal loader must reject v55 before creating a world");
+    std::puts("Bennet save contract: v55 rejected before world creation");
+  }
+
+  const auto actors = [&] {
     auto& world=*gothic.world();
     auto* smith=activityNpc(world,"SLD_809_BENNET");
     require(world.player()!=nullptr && smith!=nullptr,"Bennet contract needs both the hero and Bennet");
-    require(world.script().getVm().has_legacy_dispatcher()!=native,"Bennet contract has the wrong engine profile");
+    require(world.script().usesVerifiedNpcProgram() && world.script().getVm().size()==0,
+            "Bennet contract requires prepared stock records and no bytecode");
     return std::pair{world.player(),smith};
     };
-  const auto save = [&](const char* title) {
+  const auto save = [&](const char* title, const std::filesystem::path& path) {
     std::vector<uint8_t> bytes;
     {
       Tempest::MemWriter writer(bytes);
@@ -537,116 +559,139 @@ void bennetOreContract(const std::filesystem::path& oldSave, const std::filesyst
       std::memset(preview.data(),0,4);
       gothic.gameSession()->save(out,title,preview);
     }
-    return bytes;
+    Tempest::MemReader reader(bytes.data(),bytes.size());
+    Serialize in(reader);
+    SaveGameHeader header;
+    require(in.setEntry("header"),"Bennet save must have the normal save header");
+    in.read(header);
+    require(header.version==Serialize::Current && in.setEntry("game/bennet") && in.setEntry("game/state") &&
+            in.setEntry("game/director") && !in.setEntry("game/daedalus") && !in.setEntry("game/symbols"),
+            "Bennet save must use only the current session layout");
+    std::ofstream out(path,std::ios::binary|std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
+    require(bool(out),"Bennet contract could not write a new save");
+    };
+  const auto load = [&](const std::filesystem::path& path) {
+    gothic.clearGame().reset();
+    std::ifstream file(path,std::ios::binary);
+    require(bool(file),"Bennet contract could not read its new save");
+    const std::string bytes{std::istreambuf_iterator<char>{file},std::istreambuf_iterator<char>{}};
+    Tempest::MemReader reader(bytes.data(),bytes.size());
+    Serialize in(reader);
+    gothic.setGame(std::make_unique<GameSession>(in));
+    return actors();
     };
   const auto offer = [](Npc& hero, Npc& bennet, uint32_t scriptFn) -> std::optional<GameScript::DlgChoice> {
     const auto choices=hero.world().script().dialogChoices(hero.handlePtr(),bennet.handlePtr(),{},false);
     const auto found=std::find_if(choices.begin(),choices.end(),[=](const auto& c) { return c.scriptFn==scriptFn; });
     return found==choices.end() ? std::nullopt : std::optional<GameScript::DlgChoice>(*found);
     };
-  const auto setOre = [&](Npc& npc, size_t count) {
+  const auto run = [](const GameScript::DlgChoice& choice, Npc& hero, Npc& bennet, const char* label) {
+    auto& script=hero.world().script();
+    auto& vm=script.getVm();
+    const auto scopes=Contract::bennetLookupScopeCount();
+    size_t opcodes=0;
+    const auto observer=vm.add_instruction_observer([&](const auto&,const auto&) { ++opcodes; });
+    script.exec(choice,hero,bennet);
+    vm.remove_instruction_observer(observer);
+    const auto reads=Contract::bennetLookupCount();
+    require(Contract::bennetLookupScopeCount()>scopes && reads==0 && opcodes==0,
+            "Bennet's normal route must run under the lookup guard without table reads or bytecode");
+    std::printf("Bennet %s: full table reads=%zu, opcodes=%zu\n",label,reads,opcodes);
+    };
+  const auto setOre = [](Npc& npc, size_t count) {
     npc.delItem(ore,uint32_t(npc.itemCount(ore)));
     if(count!=0)
-      require(npc.addItem(ore,count)!=nullptr,"Bennet contract could not prepare ore inventory");
+      require(npc.addItem(ore,count)!=nullptr,"Bennet contract could not prepare an ore stack");
     };
   const auto clearQueues = [](Npc& hero, Npc& bennet) {
     Contract::queue(hero).clear();
     Contract::queue(bennet).clear();
     Contract::outputOrder(hero.world().script())=0;
     };
-  const auto holdings = [&](Npc& hero, Npc& bennet) -> Counts {
+  const auto holdings = [](Npc& hero, Npc& bennet) -> Counts {
     return {hero.itemCount(ore),bennet.itemCount(ore)};
     };
-
-  const auto historical = read(oldSave);
-  require(Sha256::hash(historical)=="c2852f4c009f23225e1c9c70f564ca36b4c12e8220736d1c72a1dbfce8d3372f",
-          "Bennet contract requires the unchanged historical save");
-  SaveGameHeader header;
-  {
-    Tempest::MemReader reader(historical.data(),historical.size());
-    Serialize in(reader);
-    require(in.setEntry("header"),"Bennet historical save needs its original header");
-    in.read(header);
-    require(header.version==55 && in.setEntry("game/daedalus") && !in.setEntry("game/symbols"),
-            "Bennet historical save must retain its original v55 symbol layout");
-  }
-  auto [hero,bennet]=load(historical);
-  auto& original=hero->world().script();
-  require(hero->world().name()==header.world && original.globalIntSymbol("KAPITEL")==1 &&
-          original.globalIntSymbol(mission)==0 && !offer(*hero,*bennet,answerFn),
-          "The historical save must restore its world, chapter and unstarted Bennet quest");
-  std::printf("Bennet historical v55: %s, chapter 1, quest not started\n",header.world.c_str());
-
-  const auto writeSave = [](const std::filesystem::path& path, const std::vector<uint8_t>& bytes) {
-    std::ofstream out(path,std::ios::binary|std::ios::trunc);
-    out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
-    require(bool(out),"Bennet contract could not write the save");
-    };
-  const auto readySave=caseDir/"bennet-legacy-ready.sav";
-  if(!native) {
-    auto& script=hero->world().script();
-    hero->handle().guild=int32_t(GIL_SLD);
-    hero->setTalentSkill(TALENT_SMITH,1);
-    require(script.setGlobalIntSymbol("PLAYER_TALENT_SMITH",1),"Bennet contract must teach smithing");
-    setOre(*hero,5);
-    setOre(*bennet,0);
-    clearQueues(*hero,*bennet);
-    const auto entry=offer(*hero,*bennet,startFn);
-    require(bool(entry),"Bennet must offer the normal introduction to ore smithing");
-    auto& vm=script.getVm();
-    const auto addr=vm.find_symbol_by_index(startFn)->address();
-    size_t starter=0;
-    const auto observer=vm.add_instruction_observer([&](const auto& m,const auto&) { starter+=m.pc()==addr; });
-    script.exec(*entry,*hero,*bennet);
-    vm.remove_instruction_observer(observer);
-    require(starter==1 && script.globalIntSymbol(mission)==1 && holdings(*hero,*bennet)==Counts{5,0},
-            "Bennet's original starter must set LOG_RUNNING without taking ore");
-    clearQueues(*hero,*bennet);
-    writeSave(readySave,save("Bennet legacy LOG_RUNNING"));
-    }
-
-  const auto ready=read(readySave);
-  std::printf("Bennet legacy LOG_RUNNING save SHA-256 %s\n",Sha256::hash(ready).c_str());
-  std::ostringstream trace;
-  const auto itemOwner = [&](World& world, const daedalus::DaedalusInstance* handle) -> size_t {
-    for(uint32_t i=0;i<world.npcCount();++i) {
-      auto* owner=world.npcById(i);
-      auto* item=owner==nullptr ? nullptr : owner->getItem(ore);
-      if(item!=nullptr && static_cast<const daedalus::IItem*>(item->handlePtr().get())==handle)
-        return i;
-      }
-    return size_t(-1);
-    };
-
-  const auto transferState = [&](GameScript& script, Npc& player, Npc& smith) {
-    const auto& vars=Contract::transferVariables(script);
-    auto& vm=script.getVm();
-    require(vars.amount==2 && vars.item==int32_t(ore) && !vars.itemName.empty() && !vars.notice.empty() &&
-            vm.find_symbol_by_name("B_GIVEINVITEMS.GIVER")->get_instance().get()==static_cast<daedalus::INpc*>(smith.handlePtr().get()) &&
-            vm.find_symbol_by_name("B_GIVEINVITEMS.TAKER")->get_instance().get()==static_cast<daedalus::INpc*>(player.handlePtr().get()),
-            "Bennet's final transfer variables and actor aliases must persist");
-    const auto held=vm.global_item()->get_instance();
-    require(held && held->symbol_index()==ore,"the compatibility save must retain the ore ITEM alias");
-    trace << vars.amount << ':' << vars.item << ':' << vars.itemName << ':' << vars.notice << '\n';
-    trace << itemOwner(player.world(),held.get()) << '\n';
-    };
-  const auto queueTrace = [](Npc& hero, Npc& bennet) {
-    std::ostringstream out;
-    for(auto* actor : {&hero,&bennet}) {
-      auto queue=Contract::queue(*actor);
+  const auto requireReplies = [](Npc& hero, Npc& bennet, std::string_view prefix, const auto& suffixes) {
+    std::array<bool,std::tuple_size_v<std::decay_t<decltype(suffixes)>>> seen={};
+    for(auto* speaker : {&hero,&bennet}) {
+      auto queue=Contract::queue(*speaker);
       while(queue.size()>0) {
-        const auto row=queue.pop();
-        out << uint32_t(row.act) << ':' << row.i0 << ':' << row.i1 << ':' << row.i2 << ':'
-            << (row.target ? row.target->instanceSymbol() : 0u) << ':' << row.s0 << ':' << row.s1 << '\n';
+        const auto reply=queue.pop();
+        require(reply.act==AI_Output && reply.i0>=0 && size_t(reply.i0)<seen.size(),
+                "Bennet reply must use the stock output order");
+        const size_t index=reply.i0;
+        const std::string_view suffix=suffixes[index];
+        require(!seen[index] && reply.s0==std::string(prefix)+std::string(suffix) &&
+                (speaker==&hero)==suffix.starts_with("15_") && reply.target==(speaker==&hero ? &bennet : &hero),
+                "Bennet reply must preserve its text key, speaker and listener");
+        seen[index]=true;
         }
       }
-    return out.str();
+    require(std::all_of(seen.begin(),seen.end(),[](bool value) { return value; }),"every Bennet reply must be queued");
     };
+  const auto queueTrace = [](Npc& hero, Npc& bennet) {
+    return std::pair{activityQueue(hero),activityQueue(bennet)};
+    };
+
+  for(const auto& file : std::filesystem::directory_iterator(baseProgramIndex().dir))
+    require(file.path().filename()=="programs.json","Bennet contract requires a base without program payloads");
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  auto [hero,bennet]=actors();
+  auto& original=hero->world().script();
+  Contract::checkBennetLookupProbe(original);
+  Contract::watchBennetLookups(original);
+  require(original.globalIntSymbol(mission)==0 && original.globalIntSymbol(trained)==0 &&
+          !offer(*hero,*bennet,answerFn) && !offer(*hero,*bennet,leadFn),
+          "new game must have neither accepted the quest nor learned ore smithing");
+  hero->handle().guild=int32_t(GIL_SLD);
+  hero->setTalentSkill(TALENT_SMITH,1);
+  require(original.setGlobalIntSymbol("PLAYER_TALENT_SMITH",1),"Bennet fixture needs the normal smithing prerequisite");
+  setOre(*hero,5);
+  setOre(*bennet,0);
+
+  std::string error;
+  auto* ownVar=original.ownSymbols().addInt(original.getVm(),directorVar,error);
+  require(ownVar!=nullptr,error.c_str());
+  ownVar->set_int(37);
+  const auto* ownNpc=original.ownSymbols().addNpc(original.getVm(),directorNpc,"NONE_100_XARDAS",error);
+  require(ownNpc!=nullptr,error.c_str());
+  const auto directorId=ownNpc->index();
+  require(hero->world().addNpc(directorId,hero->position())!=nullptr,"Bennet fixture must add the director NPC to the world");
+
+  clearQueues(*hero,*bennet);
+  const auto starter=offer(*hero,*bennet,startFn);
+  require(starter && starter->sort==7 && !starter->title.empty(),"fresh Bennet must offer the normal ore smithing topic");
+  run(*starter,*hero,*bennet,"offer accepted");
+  requireReplies(*hero,*bennet,"DIA_Bennet_WannaSmithORE_",starterLines);
+  require(original.globalIntSymbol(mission)==1 && original.globalIntSymbol(trained)==0 &&
+          original.doesNpcKnowInfo(hero->handle(),startId) && holdings(*hero,*bennet)==Counts{5,0},
+          "Bennet's starter must set LOG_RUNNING through its normal dialogue without taking ore");
+
+  clearQueues(*hero,*bennet);
+  const auto lead=offer(*hero,*bennet,leadFn);
+  require(lead && lead->sort==8,"the active quest must offer the ore location");
+  run(*lead,*hero,*bennet,"ore location");
+  requireReplies(*hero,*bennet,"DIA_Bennet_WhereOre_",leadLines);
+  require(original.doesNpcKnowInfo(hero->handle(),leadId) && !offer(*hero,*bennet,leadFn),
+          "Bennet's ore location reply must only be offered once");
+
+  setOre(*hero,4);
+  require(!offer(*hero,*bennet,answerFn),"Bennet must decline delivery with four ore");
+  setOre(*hero,5);
+  clearQueues(*hero,*bennet);
+  const auto ready=caseDir/"bennet-native-running.sav";
+  save("Bennet LOG_RUNNING",ready);
+
   for(const bool merge:{false,true}) {
     std::tie(hero,bennet)=load(ready);
     auto& script=hero->world().script();
+    auto& vm=script.getVm();
+    Contract::watchBennetLookups(script);
     require(script.globalIntSymbol(mission)==1 && holdings(*hero,*bennet)==Counts{5,0} &&
-            !script.doesNpcKnowInfo(hero->handle(),infoId),"legacy LOG_RUNNING must restore into the active field");
+            script.doesNpcKnowInfo(hero->handle(),startId) && script.doesNpcKnowInfo(hero->handle(),leadId) &&
+            !script.doesNpcKnowInfo(hero->handle(),infoId),
+            "reloading the active archive must restore the started quest and its known topics");
     if(merge) {
       setOre(*hero,6);
       setOre(*bennet,1);
@@ -654,116 +699,6 @@ void bennetOreContract(const std::filesystem::path& oldSave, const std::filesyst
       bennet->getItem(ore)->handle().value=219;
       }
 
-#if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
-    if(native) {
-      Contract::checkBennetLookupProbe(script);
-      Contract::watchBennetLookups(script);
-      }
-#endif
-    const int32_t heroXp=hero->experience();
-    const auto journal=script.questLog().questCount();
-    const auto choice=offer(*hero,*bennet,answerFn);
-    require(choice && choice->sort==9 && !choice->title.empty(),"Bennet's stock hand-in must have its prepared title and order");
-#if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
-    const auto scopesAfterOffer=Contract::bennetLookupScopeCount();
-    require(!native || scopesAfterOffer>0,"the normal offer must enter the Bennet lookup guard");
-#endif
-    clearQueues(*hero,*bennet);
-    std::vector<Counts> counts;
-    auto& vm=script.getVm();
-    size_t opcodes=0, transfers=0;
-    uint32_t transfer=0;
-    if(!native) {
-      const auto* helper=vm.find_symbol_by_name("B_GIVEINVITEMS");
-      require(helper!=nullptr,"The compatibility oracle requires the stock transfer helper");
-      transfer=helper->address();
-      }
-    const auto observer=vm.add_instruction_observer([&](const auto& machine,const auto&) {
-      ++opcodes;
-      if(!native && machine.pc()==transfer && ++transfers==2)
-        counts.push_back(holdings(*hero,*bennet));
-      });
-#if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
-    if(native)
-      Contract::bennetTransferObserver(script)=[&](Npc& player,Npc& other) { counts.push_back(holdings(player,other)); };
-#endif
-    script.exec(*choice,*hero,*bennet);
-#if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
-    if(native) {
-      Contract::bennetTransferObserver(script)={};
-      require(Contract::bennetLookupScopeCount()>scopesAfterOffer && Contract::bennetLookupCount()==0,
-              "Bennet's real answer must run under the lookup guard without accessing the table");
-      std::printf("Bennet lookup guard (%s): scopes=%zu, full table reads=%zu\n",
-                  merge ? "merging" : "cold",Contract::bennetLookupScopeCount(),Contract::bennetLookupCount());
-      }
-#endif
-    vm.remove_instruction_observer(observer);
-    require(native ? opcodes==0 && transfers==0 : opcodes>0 && transfers==2,
-            "Bennet's cold and merging cases must execute the selected executor");
-    if(!native)
-      counts.push_back(holdings(*hero,*bennet));
-    require(counts==std::vector<Counts>{merge ? Counts{1,6} : Counts{0,5},merge ? Counts{3,4} : Counts{2,3}},
-            "Bennet must receive five ore before returning two");
-    require(script.globalIntSymbol(mission)==2 && script.doesNpcKnowInfo(hero->handle(),infoId) &&
-            hero->experience()==heroXp && script.questLog().questCount()==journal,
-            "Bennet must finish the quest without changing experience or journal");
-    if(merge)
-      require(hero->getItem(ore)->handle().value==217 && bennet->getItem(ore)->handle().value==219,
-              "both original ore stacks must retain their properties");
-    require(vm.global_item()->get_instance().get()==static_cast<daedalus::IItem*>(hero->getItem(ore)->handlePtr().get()),
-            "Bennet's last transfer must point ITEM at the hero's ore before saving");
-
-    trace << merge << '\n' << choice->title << '\n';
-    for(const auto& amount:counts)
-      trace << amount.first << '/' << amount.second << '\n';
-    auto heroQueue=Contract::queue(*hero);
-    auto bennetQueue=Contract::queue(*bennet);
-    require(heroQueue.size()==1 && bennetQueue.size()==5 && heroQueue.front()->act==AI_Output &&
-            heroQueue.front()->s0==lines[0] && heroQueue.front()->i0==0,"Bennet quest must open with the hero's stock reply");
-    for(int i=1;i<=3;++i) {
-      const auto row=bennetQueue.pop();
-      require(row.act==AI_Output && row.s0==lines[size_t(i)] && row.i0==i,"Bennet's reply order must stay stock");
-      if(i==1 || i==3)
-        require(bennetQueue.pop().act==AI_PrintScreen,"Bennet's two transfers must each queue a notice in order");
-      }
-    const auto queue=queueTrace(*hero,*bennet);
-    trace << queue;
-    transferState(script,*hero,*bennet);
-    const auto finished=save("Bennet LOG_SUCCESS");
-    if(native && !merge)
-      writeSave(caseDir/"bennet-native-finished.sav",finished);
-    std::tie(hero,bennet)=load(finished);
-    auto& reloaded=hero->world().script();
-    require(reloaded.globalIntSymbol(mission)==2 && holdings(*hero,*bennet)==counts.back() &&
-            reloaded.doesNpcKnowInfo(hero->handle(),infoId) && !offer(*hero,*bennet,answerFn) &&
-            queueTrace(*hero,*bennet)==queue,"ordinary reload must restore Bennet's result and prevent another hand-in");
-    transferState(reloaded,*hero,*bennet);
-    std::printf("Bennet %s: %zu/%zu then %zu/%zu, LOG_SUCCESS restored, transfers=%zu, opcodes=%zu\n",
-                merge ? "merging" : "cold",counts[0].first,counts[0].second,counts[1].first,counts[1].second,counts.size(),opcodes);
-    }
-
-  const auto oracle=caseDir/"bennet-legacy-trace.txt";
-  {
-    std::ofstream out(native ? caseDir/"bennet-native-trace.txt" : oracle,std::ios::binary|std::ios::trunc);
-    out << trace.str();
-    require(bool(out),"Bennet contract could not write the execution trace");
-    }
-  if(native) {
-    require(trace.str()==read(oracle),"Bennet's dialogue, notices, transfer state and reload must match the compatibility oracle");
-    std::tie(hero,bennet)=load(ready);
-    auto& script=hero->world().script();
-#if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
-    Contract::watchBennetLookups(script);
-#endif
-    for(int32_t state : {0,1,2}) {
-      require(script.setGlobalIntSymbol(mission,state),"Bennet condition fixture needs the stock mission variable");
-      for(size_t qty : {4u,5u}) {
-        setOre(*hero,qty);
-        require(bool(offer(*hero,*bennet,answerFn))==(state==1 && qty==5),
-                "Bennet's offer must require LOG_RUNNING and five ore");
-        }
-      }
-    require(script.setGlobalIntSymbol(mission,1),"Bennet override fixture must restore LOG_RUNNING");
     gothic.dialogScriptFn=[](auto& fn,int32_t& result) {
       if(fn.index()!=conditionFn)
         return false;
@@ -773,43 +708,111 @@ void bennetOreContract(const std::filesystem::path& oldSave, const std::filesyst
     require(!offer(*hero,*bennet,answerFn),"the director's condition override must have priority");
     gothic.dialogScriptFn={};
     const auto choice=offer(*hero,*bennet,answerFn);
-    require(bool(choice),"Bennet's own condition must resume when the director override is removed");
-#if defined(GOTHIC_BENNET_LOOKUP_AUDIT)
-    daedalus::IInfo wrongId;
-    wrongId.npc=choice->handle->npc;
-    wrongId.condition=choice->handle->condition;
-    wrongId.information=choice->handle->information;
-    require(Contract::isBennetOreDialog(script,*choice->handle) && !Contract::isBennetOreDialog(script,wrongId),
-            "Bennet's route must require the prepared dialogue ID");
-    auto& binding=Contract::bennetAnswer(script);
-    const auto* answer=binding;
-    auto incomplete=*answer;
-    storygraph::Step missing;
-    missing.kind=storygraph::Step::Call;
-    missing.call=storygraph::ex::call("BENNET_MISSING_DEPENDENCY",{});
-    incomplete.steps.push_back(std::move(missing));
-    const auto oreBefore=holdings(*hero,*bennet);
-    const auto missionBefore=script.globalIntSymbol(mission);
-    const auto knownBefore=script.doesNpcKnowInfo(hero->handle(),infoId);
-    const auto before=queueTrace(*hero,*bennet);
-    binding=&incomplete;
-    script.exec(*choice,*hero,*bennet);
-    binding=answer;
-    require(holdings(*hero,*bennet)==oreBefore,"Bennet dependency failure must preserve ore counts");
-    require(script.globalIntSymbol(mission)==missionBefore,"Bennet dependency failure must preserve the mission flag");
-    require(script.doesNpcKnowInfo(hero->handle(),infoId)==knownBefore,"Bennet dependency failure must preserve known dialogue");
-    require(queueTrace(*hero,*bennet)==before,"Bennet dependency failure must preserve queued effects");
-    require(Contract::bennetLookupCount()==0,"Bennet preflight must avoid the full symbol table");
-#endif
-    bool overridden=false;
-    gothic.dialogScriptFn=[&](auto& fn,int32_t&) {
-      overridden=fn.index()==answerFn;
-      return overridden;
+    require(choice && choice->sort==9 && !choice->title.empty(),"Bennet must offer to take five ore");
+    clearQueues(*hero,*bennet);
+    if(!merge) {
+      daedalus::IInfo wrongId;
+      wrongId.npc=choice->handle->npc;
+      wrongId.condition=choice->handle->condition;
+      wrongId.information=choice->handle->information;
+      require(Contract::isBennetOreDialog(script,*choice->handle) && !Contract::isBennetOreDialog(script,wrongId),
+              "Bennet's route must require the prepared dialogue ID");
+      auto& binding=Contract::bennetAnswer(script);
+      const auto* answer=binding;
+      auto incomplete=*answer;
+      storygraph::Step missing;
+      missing.kind=storygraph::Step::Call;
+      missing.call=storygraph::ex::call("BENNET_MISSING_DEPENDENCY",{});
+      incomplete.steps.push_back(std::move(missing));
+      const auto before=queueTrace(*hero,*bennet);
+      binding=&incomplete;
+      run(*choice,*hero,*bennet,"failed preflight");
+      binding=answer;
+      require(holdings(*hero,*bennet)==Counts{5,0} && script.globalIntSymbol(mission)==1 &&
+              !script.doesNpcKnowInfo(hero->handle(),infoId) && queueTrace(*hero,*bennet)==before,
+              "Bennet dependency failure must preserve counts, mission, known dialogue and queued effects");
+      }
+    const int32_t heroXp=hero->experience();
+    const auto journal=script.questLog().questCount();
+    std::vector<Counts> counts;
+    Contract::bennetTransferObserver(script)=[&](Npc& player,Npc& smith) { counts.push_back(holdings(player,smith)); };
+    run(*choice,*hero,*bennet,merge ? "merge hand-in" : "cold hand-in");
+    Contract::bennetTransferObserver(script)={};
+    require(counts==std::vector<Counts>{merge ? Counts{1,6} : Counts{0,5},merge ? Counts{3,4} : Counts{2,3}},
+            "Bennet must receive five ore before returning two");
+    require(script.globalIntSymbol(mission)==2 && script.doesNpcKnowInfo(hero->handle(),infoId) &&
+            hero->experience()==heroXp && script.questLog().questCount()==journal,
+            "Bennet must finish the quest without changing experience or journal");
+    if(merge)
+      require(hero->getItem(ore)->handle().value==217 && bennet->getItem(ore)->handle().value==219,
+              "both original ore stacks must retain their properties");
+
+    auto heroQueue=Contract::queue(*hero);
+    auto bennetQueue=Contract::queue(*bennet);
+    require(heroQueue.size()==1 && bennetQueue.size()==5 && heroQueue.front()->act==AI_Output &&
+            heroQueue.front()->s0==handInLines[0] && heroQueue.front()->i0==0,
+            "Bennet hand-in must open with the hero's stock reply");
+    for(int i=1;i<=3;++i) {
+      const auto row=bennetQueue.pop();
+      require(row.act==AI_Output && row.s0==handInLines[size_t(i)] && row.i0==i,"Bennet's reply order must stay stock");
+      if(i==1 || i==3)
+        require(bennetQueue.pop().act==AI_PrintScreen,"Bennet's two transfers must each queue a notice in order");
+      }
+    const auto queue=queueTrace(*hero,*bennet);
+
+    const auto assertTransfer = [](Npc& player, Npc& smith) {
+      auto& script=player.world().script();
+      auto& vm=script.getVm();
+      const auto& vars=Contract::transferVariables(script);
+      require(vars.amount==2 && vars.item==int32_t(ore) && !vars.itemName.empty() && !vars.notice.empty() &&
+              vm.find_symbol_by_name("B_GIVEINVITEMS.GIVER")->get_instance().get()==static_cast<daedalus::INpc*>(smith.handlePtr().get()) &&
+              vm.find_symbol_by_name("B_GIVEINVITEMS.TAKER")->get_instance().get()==static_cast<daedalus::INpc*>(player.handlePtr().get()) &&
+              vm.global_item()->get_instance().get()==static_cast<daedalus::IItem*>(player.getItem(ore)->handlePtr().get()),
+              "Bennet transfer must preserve its variables, actors and the hero's exact ITEM reference");
       };
-    script.exec(*choice,*hero,*bennet);
-    require(overridden && holdings(*hero,*bennet)==Counts{5,0} && script.globalIntSymbol(mission)==1,
-            "the director's answer override must take priority over Bennet's transfer");
-    gothic.dialogScriptFn={};
+    assertTransfer(*hero,*bennet);
+    // Two references to different inventory objects of the same item class.
+    vm.find_symbol_by_index(ore)->set_instance(std::static_pointer_cast<daedalus::IItem>(bennet->getItem(ore)->handlePtr()));
+    const auto finished=caseDir/(merge ? "bennet-native-merged.sav" : "bennet-native-finished.sav");
+    save("Bennet LOG_SUCCESS",finished);
+    std::tie(hero,bennet)=load(finished);
+    auto& reloaded=hero->world().script();
+    Contract::watchBennetLookups(reloaded);
+    require(reloaded.globalIntSymbol(mission)==2 && holdings(*hero,*bennet)==counts.back() &&
+            reloaded.doesNpcKnowInfo(hero->handle(),infoId) && !offer(*hero,*bennet,answerFn) &&
+            !offer(*hero,*bennet,leadFn) && queueTrace(*hero,*bennet)==queue,
+            "ordinary reload must restore Bennet's result, exact queue and one-shot topics");
+    assertTransfer(*hero,*bennet);
+    require(reloaded.getVm().find_symbol_by_index(ore)->get_instance().get()==
+              static_cast<daedalus::IItem*>(bennet->getItem(ore)->handlePtr().get()),
+            "the other ore reference must retain Bennet as its owner after reload");
+    const auto* witness=hero->world().findNpcByInstance(directorId);
+    require(reloaded.globalIntSymbol(directorVar)==37 && witness && reloaded.symbolName(directorId)==directorNpc,
+            "ordinary reload must preserve director variables and the spawned NPC identity");
+    std::printf("Bennet %s: %zu/%zu then %zu/%zu, LOG_SUCCESS restored in v%u\n",
+                merge ? "merging" : "cold",counts[0].first,counts[0].second,counts[1].first,counts[1].second,unsigned(Serialize::Current));
+
+    if(!merge) {
+      // The permanent smithing topic teaches ore smithing after the hand-in.
+      clearQueues(*hero,*bennet);
+      const auto training=offer(*hero,*bennet,startFn);
+      require(bool(training),"the ore smithing topic must remain available after successful delivery");
+      bool overridden=false;
+      gothic.dialogScriptFn=[&](auto& fn,int32_t&) {
+        overridden=fn.index()==startFn;
+        return overridden;
+        };
+      reloaded.exec(*training,*hero,*bennet);
+      require(overridden && reloaded.globalIntSymbol(trained)==0 &&
+              Contract::queue(*hero).size()==0 && Contract::queue(*bennet).size()==0,
+              "the director's starter-topic override must have priority");
+      gothic.dialogScriptFn={};
+      run(*training,*hero,*bennet,"ore smithing unlocked");
+      requireReplies(*hero,*bennet,"DIA_Bennet_WannaSmithORE_",trainingLines);
+      require(reloaded.globalIntSymbol(trained)==1 && !offer(*hero,*bennet,startFn),
+              "Bennet must unlock ore smithing through the stock follow-up and then hide the topic");
+      }
     }
   gothic.clearGame().reset();
+#endif
   }

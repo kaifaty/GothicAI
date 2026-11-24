@@ -964,7 +964,7 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
                 native_path = self.base_part(projected, '2' * 64, native_script_base={'version': 1})
                 self.base_part(combined, '2' * 64)
                 expected = projected if profile == 'native' else combined
-                for fingerprint in (old, projected):
+                for fingerprint in (old, projected, combined):
                     pointer.write_text(json.dumps({'base': fingerprint, 'videos': ''}))
                     result = self.game_result()
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -978,7 +978,7 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
                 self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE'], str(native_path))
 
     def test_mac_and_ryzen_select_the_same_installation_across_formats(self):
-        self.format_setup()
+        self.format_setup('native')
         shared_cache = self.home / '.cache/gothic-ai/base'
         shared_cache.parent.mkdir(parents=True)
         shutil.move(self.base_cache, shared_cache)
@@ -1007,9 +1007,10 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         ):
             with self.subTest(kind=kind, field=field):
                 base = self.base_part('c' * 64, ('1' if kind == 'base' else '2') * 64,
-                                      sources=binding)
+                                      sources=binding, native_script_base={'version': 1})
                 if kind == 'base':
-                    pointed, candidate = base, self.base_part('d' * 64, '2' * 64, sources=binding)
+                    pointed, candidate = base, self.base_part(
+                        'd' * 64, '2' * 64, sources=binding, native_script_base={'version': 1})
                     metadata = json.loads((candidate / 'base.json').read_text())
                     metadata[field] = value
                     (candidate / 'base.json').write_text(json.dumps(metadata))
@@ -1223,7 +1224,7 @@ rsync() {
         identity = {'format_sha256': format_digest}
         if kind == 'base':
             identity.update(archives=[{'name': source}], loose_files=[{'path': source}], sources=[{'name': source}])
-            metadata = dict(identity, fingerprint=fingerprint)
+            metadata = dict(identity, fingerprint=fingerprint, native_script_base={'version': 1})
         else:
             identity['sources'] = [{'name': source}]
             metadata = {'fingerprint': fingerprint, 'identity': json.dumps(identity)}

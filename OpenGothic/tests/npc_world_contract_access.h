@@ -82,9 +82,9 @@ struct NpcDefinitionContract {
   static size_t bennetLookupCount() { return BennetLookupAudit::lookups; }
   static size_t bennetLookupScopeCount() { return BennetLookupAudit::scopes; }
   static bool isBennetOreDialog(const GameScript& script, const daedalus::IInfo& info) {
-    return script.isBennetOreDialog(info);
+    return script.bennetOreDialog(info)!=nullptr;
     }
-  static auto& bennetAnswer(GameScript& script) { return script.bennetOre->answer; }
+  static auto& bennetAnswer(GameScript& script) { return script.bennetOre->dialogs.back().answer; }
   static auto& bennetTransferObserver(GameScript& script) { return script.bennetTransferObserver; }
 
   static void checkBennetLookupProbe(GameScript& script) {

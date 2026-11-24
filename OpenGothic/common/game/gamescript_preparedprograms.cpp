@@ -1,11 +1,13 @@
 #include "gamescript_programs.h"
 
 #include <Tempest/Log>
+#include <algorithm>
 #include <array>
 #include <stdexcept>
 
 #include "gamescript_inventorytransfer.h"
 #include "game/definitions/scriptvars.h"
+#include "game/serialize.h"
 #include "storygraph/nativeexec.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
@@ -19,8 +21,6 @@ using storygraph::NativeSlot;
 using storygraph::NativeValue;
 
 constexpr uint32_t BennetNpcId      = 11668;
-constexpr uint32_t BennetCondition = 23823;
-constexpr uint32_t BennetAnswer    = 23824;
 constexpr uint32_t BennetNugget    = 6928;
 
 InventoryTransfer::Text inventoryNoticeText(const StockStoryPrograms::Catalog& catalog) {
@@ -36,14 +36,24 @@ InventoryTransfer::Text inventoryNoticeText(const StockStoryPrograms::Catalog& c
 
 class BennetOreHost final : public storygraph::NativeExecutionHost {
   public:
+    struct Progress {
+      int32_t& mission;
+      int32_t& teaching;
+      int32_t  chapter;
+      int32_t  smithTalent;
+      int32_t  rescueMission;
+      };
+
     using Transfer = std::function<int32_t(Npc&,Npc&,int32_t)>;
     using Output = std::function<void(Npc&,Npc&,std::string_view)>;
 
-    BennetOreHost(Npc& player, Npc& npc, int32_t& mission, Transfer transfer = {}, Output output = {})
-      : actors{nullptr,&npc,&player}, mission(mission), transfer(std::move(transfer)), output(std::move(output)) {}
+    BennetOreHost(Npc& player, Npc& npc, Progress progress, Transfer transfer = {}, Output output = {})
+      : actors{nullptr,&npc,&player}, progress(progress), transfer(std::move(transfer)), output(std::move(output)) {}
 
     bool hasVariable(std::string_view name, bool instanceOnly) const override {
-      return name=="SELF" || name=="OTHER" || (!instanceOnly && name=="MIS_BENNET_BRINGORE");
+      return name=="SELF" || name=="OTHER" ||
+             (!instanceOnly && (name=="MIS_BENNET_BRINGORE" || name=="BENNET_TEACHSMITH" ||
+                                name=="KAPITEL" || name=="PLAYER_TALENT_SMITH" || name=="MIS_RESCUEBENNET"));
       }
 
     std::optional<int32_t> symbolIndex(std::string_view name) const override {
@@ -59,17 +69,36 @@ class BennetOreHost final : public storygraph::NativeExecutionHost {
         if(slot.name=="OTHER")
           return NativeValue::instance(2);
         }
-      if(slot.index==0 && slot.kind==NativeSlot::Variable && slot.name=="MIS_BENNET_BRINGORE")
-        return NativeValue::integer(mission);
+      if(slot.index==0 && slot.kind==NativeSlot::Variable) {
+        if(slot.name=="MIS_BENNET_BRINGORE")
+          return NativeValue::integer(progress.mission);
+        if(slot.name=="BENNET_TEACHSMITH")
+          return NativeValue::integer(progress.teaching);
+        if(slot.name=="KAPITEL")
+          return NativeValue::integer(progress.chapter);
+        if(slot.name=="PLAYER_TALENT_SMITH")
+          return NativeValue::integer(progress.smithTalent);
+        if(slot.name=="MIS_RESCUEBENNET")
+          return NativeValue::integer(progress.rescueMission);
+        }
+      if(slot.index==0 && slot.kind==NativeSlot::Member && slot.name=="GUILD") {
+        if(auto* npc = actor(slot.context))
+          return NativeValue::integer(npc->handle().guild);
+        }
       error = "unsupported Bennet ore variable: "+std::string(slot.name);
       return std::nullopt;
       }
 
     bool write(const NativeSlot& slot, const NativeValue& value, std::string& error) override {
-      if(transfer && slot.index==0 && slot.kind==NativeSlot::Variable && slot.name=="MIS_BENNET_BRINGORE" &&
-         value.type==NativeValue::Int) {
-        mission = value.i;
-        return true;
+      if(output && slot.index==0 && slot.kind==NativeSlot::Variable && value.type==NativeValue::Int) {
+        if(slot.name=="MIS_BENNET_BRINGORE") {
+          progress.mission = value.i;
+          return true;
+          }
+        if(slot.name=="BENNET_TEACHSMITH") {
+          progress.teaching = value.i;
+          return true;
+          }
         }
       error = "unsupported Bennet ore write: "+std::string(slot.name);
       return false;
@@ -115,7 +144,7 @@ class BennetOreHost final : public storygraph::NativeExecutionHost {
       }
 
     const std::array<Npc*,3> actors;
-    int32_t&                 mission;
+    Progress                 progress;
     Transfer                 transfer;
     Output                   output;
   };
@@ -204,62 +233,94 @@ void GameScript::initBennetOre() {
   if(!nativeRoutineProgram || vm.has_legacy_dispatcher())
     return;
 
-  auto* condition = vm.find_symbol_by_index(BennetCondition);
-  auto* answer = vm.find_symbol_by_index(BennetAnswer);
-  auto* info = vm.find_symbol_by_index(BennetOreInfoId);
-  auto* flag = vm.find_symbol_by_name("MIS_BENNET_BRINGORE");
+  const auto bindDialog = [&](uint32_t infoId, uint32_t conditionId, uint32_t answerId, const std::string& name) {
+    auto* info = vm.find_symbol_by_index(infoId);
+    auto* condition = vm.find_symbol_by_index(conditionId);
+    auto* answer = vm.find_symbol_by_index(answerId);
+    if(info==nullptr || info->name()!=name || condition==nullptr || condition->name()!=name+"_CONDITION" ||
+       answer==nullptr || answer->name()!=name+"_INFO")
+      throw std::runtime_error("Bennet ore dialog identity differs from game symbols: "+name);
+    const auto* preparedCondition = preparedStockProgram(*condition);
+    const auto* preparedAnswer = preparedStockProgram(*answer);
+    if(preparedCondition==nullptr || preparedAnswer==nullptr)
+      throw std::runtime_error("Bennet ore dialog lacks prepared game data: "+name);
+    return BennetOreDialog{infoId,preparedCondition,preparedAnswer,condition,answer};
+    };
+  const std::array dialogs = {
+    bindDialog(23816,23817,23818,"DIA_BENNET_WANNASMITHORE"),
+    bindDialog(23819,23820,23821,"DIA_BENNET_WHEREORE"),
+    bindDialog(23822,23823,23824,"DIA_BENNET_BRINGORE")
+    };
+
+  auto* mission = vm.find_symbol_by_name("MIS_BENNET_BRINGORE");
+  auto* teaching = vm.find_symbol_by_name("BENNET_TEACHSMITH");
+  const auto* smithTalent = vm.find_symbol_by_name("PLAYER_TALENT_SMITH");
+  const auto* rescueMission = vm.find_symbol_by_name("MIS_RESCUEBENNET");
   auto* nugget = vm.find_symbol_by_index(BennetNugget);
   auto* giver = vm.find_symbol_by_name("B_GIVEINVITEMS.GIVER");
   auto* taker = vm.find_symbol_by_name("B_GIVEINVITEMS.TAKER");
-  if(condition==nullptr || condition->name()!="DIA_BENNET_BRINGORE_CONDITION" ||
-     answer==nullptr || answer->name()!="DIA_BENNET_BRINGORE_INFO" ||
-     info==nullptr || info->name()!="DIA_BENNET_BRINGORE" ||
-     flag==nullptr || nugget==nullptr || nugget->name()!="ITMI_NUGGET" ||
-     giver==nullptr || taker==nullptr)
-    throw std::runtime_error("Bennet ore dialog identity differs from game symbols");
-
-  const auto* preparedCondition = preparedStockProgram(*condition);
-  const auto* preparedAnswer = preparedStockProgram(*answer);
   const auto* catalog = stockPrograms->preparedCatalog();
-  if(preparedCondition==nullptr || preparedAnswer==nullptr || catalog==nullptr ||
-     !itemDefinitions.items.contains(BennetNugget))
-    throw std::runtime_error("Bennet ore dialog lacks prepared game data");
+  if(mission==nullptr || teaching==nullptr || smithTalent==nullptr || rescueMission==nullptr ||
+     nugget==nullptr || nugget->name()!="ITMI_NUGGET" || giver==nullptr || taker==nullptr ||
+     catalog==nullptr || !itemDefinitions.items.contains(BennetNugget))
+    throw std::runtime_error("Bennet ore quest lacks prepared game data");
 
   auto ore = std::make_shared<daedalus::IItem>();
   const auto previous = nugget->get_instance();
   ItemDefinitionRuntime::initialize(vm,ore,nugget,itemDefinitions);
   nugget->set_instance(previous);
 
-  flag->bind_global_int(bennetOreMission);
-  bennetConditionSymbol = condition;
-  bennetInfoSymbol = answer;
+  mission->bind_global_int(bennetOreMission);
+  teaching->bind_global_int(bennetOreTeaching);
   bennetOre = std::make_unique<BennetOre>(BennetOre{
-    preparedCondition,preparedAnswer,std::move(ore),inventoryNoticeText(*catalog),
-    catalog->strings.at("FONT_SCREENSMALL"),nugget,giver,taker,vm.global_item()
+    dialogs,std::move(ore),inventoryNoticeText(*catalog),catalog->strings.at("FONT_SCREENSMALL"),
+    mission->index(),teaching->index(),smithTalent,rescueMission,nugget,giver,taker,vm.global_item()
     });
   }
 
+void GameScript::saveBennetProgress(Serialize& fout) const {
+  fout.write(bennetOreMission,bennetOreTeaching);
+  }
+
+void GameScript::loadBennetProgress(Serialize& fin) {
+  fin.read(bennetOreMission,bennetOreTeaching);
+  }
+
+bool GameScript::isBennetProgressSymbol(uint32_t symbol) const {
+  return bennetOre!=nullptr && (bennetOre->missionId==symbol || bennetOre->teachingId==symbol);
+  }
+
 bool GameScript::ownsNativeBennetProgram(uint32_t function) const {
-  return bennetOre!=nullptr && (function==BennetCondition || function==BennetAnswer);
+  return bennetOre!=nullptr && std::any_of(bennetOre->dialogs.begin(),bennetOre->dialogs.end(),[&](const BennetOreDialog& dialog) {
+    return dialog.conditionSymbol->index()==function || dialog.answerSymbol->index()==function;
+    });
   }
 
-bool GameScript::isBennetOreDialog(const daedalus::IInfo& info) const {
-  return bennetOre!=nullptr && info.symbol_index()==BennetOreInfoId && info.npc==int32_t(BennetNpcId) &&
-         info.condition==int32_t(BennetCondition) && info.information==int32_t(BennetAnswer);
+const GameScript::BennetOreDialog* GameScript::bennetOreDialog(const daedalus::IInfo& info) const {
+  if(bennetOre==nullptr || info.npc!=int32_t(BennetNpcId))
+    return nullptr;
+  for(const auto& dialog : bennetOre->dialogs)
+    if(dialog.infoId==info.symbol_index() && info.condition==int32_t(dialog.conditionSymbol->index()) &&
+       info.information==int32_t(dialog.answerSymbol->index()))
+      return &dialog;
+  return nullptr;
   }
 
-bool GameScript::bennetOffer(Npc& player, Npc& npc) {
-  BennetOreHost host(player,npc,bennetOreMission);
-  const auto result = storygraph::NativeInterpreter(host).run(*bennetOre->condition);
+bool GameScript::bennetOffer(const BennetOreDialog& dialog, Npc& player, Npc& npc) {
+  const auto& binding = *bennetOre;
+  BennetOreHost host(player,npc,{bennetOreMission,bennetOreTeaching,storyChapter,
+                               binding.smithTalent->get_int(),binding.rescueMission->get_int()});
+  const auto result = storygraph::NativeInterpreter(host).run(*dialog.condition);
   if(!result.ok)
     Tempest::Log::e("[story] Bennet ore condition: ",result.error);
   return result.ok && result.returned.type==NativeValue::Int && result.returned.i!=0;
   }
 
-bool GameScript::bennetExecute(Npc& player, Npc& npc) {
+bool GameScript::bennetExecute(const BennetOreDialog& dialog, Npc& player, Npc& npc) {
   auto& binding = *bennetOre;
   auto& vars = inventoryTransferVariables;
-  BennetOreHost host(player,npc,bennetOreMission,
+  BennetOreHost host(player,npc,{bennetOreMission,bennetOreTeaching,storyChapter,
+                               binding.smithTalent->get_int(),binding.rescueMission->get_int()},
     [&](Npc& giver, Npc& taker, int32_t amount) {
       const bool newStack = taker.itemCount(BennetNugget)==0;
       binding.giverAlias->set_instance(std::static_pointer_cast<daedalus::INpc>(giver.handlePtr()));
@@ -288,7 +349,7 @@ bool GameScript::bennetExecute(Npc& player, Npc& npc) {
       from.aiPush(AiQueue::aiOutput(to,line,aiOutOrderId));
       ++aiOutOrderId;
     });
-  const auto result = storygraph::NativeInterpreter(host).run(*binding.answer);
+  const auto result = storygraph::NativeInterpreter(host).run(*dialog.answer);
   if(!result.ok)
     Tempest::Log::e("[story] Bennet ore answer: ",result.error);
   return result.started;

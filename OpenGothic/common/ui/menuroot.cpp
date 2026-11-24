@@ -2,9 +2,8 @@
 
 #include <Tempest/Log>
 
+#include "basestore.h"
 #include "contentcensus.h"
-#include "daedalus/classes.h"
-#include "daedalus/vm.h"
 #include "game/definitions/baseprogram.h"
 #include "game/definitions/basescripts.h"
 #include "programdata.h"
@@ -35,8 +34,8 @@ MenuRoot::MenuRoot(KeyCodec& keyCodec)
   :keyCodec(keyCodec) {
   setCursorShape(CursorShape::Hidden);
 
-  Settings::inst().onSettingsChanged.bind(this,&MenuRoot::initSettings);
   initSettings();
+  Settings::inst().onSettingsChanged.bind(this,&MenuRoot::initSettings);
   }
 
 MenuRoot::~MenuRoot() {
@@ -45,22 +44,22 @@ MenuRoot::~MenuRoot() {
 
 void MenuRoot::initSettings() {
   const auto lang = Settings::getI("GAME", "language");
-  if(lang==menuLanguage && (vm!=nullptr || records.has_value()))
+  if(lang==menuLanguage && records.has_value())
     return;
 
   const auto& index = baseProgramIndex();
   const auto& sha = selectBaseProgram(index,"MENU.DAT",lang).source.recordSha256;
   const auto base = index.dir.parent_path();
   const auto section = MenuDefinitions::section(base,sha);
-  if(sha==MenuDefinitions::stockProgram && std::filesystem::exists(section)) {
+  if(sha!=MenuDefinitions::stockProgram)
+    throw BaseStore::Error("menus require the supported prepared catalog");
+  try {
     records = MenuDefinitions::read(base,sha);
     if(auto* census = Resources::contentCensus())
       census->replaced("MENU.DAT","base/"+section.lexically_relative(base).generic_string());
-    vm.reset();
-    } else {
-    vm = Gothic::inst().createPhoenixVm(loadBaseProgram("MENU.DAT",lang),"MENU.DAT");
-    vm->register_external("apply_options_video",applyVideoOptions);
-    records.reset();
+    }
+  catch(const std::runtime_error& error) {
+    throw BaseStore::Error(section.string()+": "+error.what());
     }
   menuLanguage = lang;
 
@@ -73,47 +72,28 @@ void MenuRoot::initSettings() {
   }
 
 bool MenuRoot::hasMenu(std::string_view name) const {
-  if(records)
-    return records->menus.contains(menuSymbol(name));
-  return vm->find_symbol_by_name(name)!=nullptr;
+  return records->menus.contains(menuSymbol(name));
   }
 
 std::shared_ptr<MenuDefinitions::Menu> MenuRoot::menu(std::string_view name) {
-  if(records)
-    return std::make_shared<MenuDefinitions::Menu>(records->menus.at(menuSymbol(name)));
-  return vm->init_instance<daedalus::IMenu>(name);
+  return std::make_shared<MenuDefinitions::Menu>(records->menus.at(menuSymbol(name)));
   }
 
 std::shared_ptr<MenuDefinitions::MenuItem> MenuRoot::menuItem(std::string_view name) {
-  if(records) {
-    const auto item = records->items.find(menuSymbol(name));
-    if(item!=records->items.end())
-      return std::make_shared<MenuDefinitions::MenuItem>(item->second);
-    } else if(auto* symbol = vm->find_symbol_by_name(name)) {
-    return vm->init_instance<daedalus::IMenuItem>(symbol);
-    }
-  Log::e("Cannot initialize menu item ",name,": Symbol not found.");
+  const auto item = records->items.find(menuSymbol(name));
+  if(item!=records->items.end())
+    return std::make_shared<MenuDefinitions::MenuItem>(item->second);
+  Log::e("Unknown menu item: ",name);
   return std::make_shared<MenuDefinitions::MenuItem>();
   }
 
 std::optional<std::pair<int32_t,int32_t>> MenuRoot::infoPosition() const {
-  if(records)
-    return records->infoPosition;
-  const auto* x = vm->find_symbol_by_name("MENU_INFO_X");
-  const auto* y = vm->find_symbol_by_name("MENU_INFO_Y");
-  if(x!=nullptr && y!=nullptr)
-    return {{x->get_int(),y->get_int()}};
-  return std::nullopt;
+  return records->infoPosition;
   }
 
 void MenuRoot::execute(int32_t symbol) {
   if(symbol<=0)
     return;
-  if(!records) {
-    if(const auto* fn = vm->find_symbol_by_index(uint32_t(symbol)))
-      vm->call_function(fn);
-    return;
-    }
 
   // The callbacks may publish an event that changes settings and reloads this catalog.
   const auto actions = records->actions.at(symbol);

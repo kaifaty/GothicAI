@@ -142,7 +142,6 @@ def prepare():
     build = repo / "OpenGothic/build"
     run(["cmake", "-S", repo / "OpenGothic", "-B", build, "-G", "Ninja",
          "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", *flags,
-         "-DOPENGOTHIC_LEGACY_DAEDALUS=OFF",
          "-DOPENGOTHIC_ENABLE_APP_CADENCE=ON", f"-DCMAKE_CXX_FLAGS=-I{sdk}/include",
          f"-DCMAKE_EXE_LINKER_FLAGS=-L{sdk}/lib"])
     run(["cmake", "--build", build, "--target", "Gothic2Notr", "--parallel", "12"])

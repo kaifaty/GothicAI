@@ -19,7 +19,6 @@
 #include "basestore.h"
 
 #include "game/definitions/definitiontypes.h"
-#include "game/definitions/baseprogram.h"
 #include "game/definitions/gameplaydefinitions.h"
 #include "programdata.h"
 #include "game/bodyenginepolicy.h"
@@ -68,13 +67,6 @@ Gothic::Gothic() {
 
   settings.load(nestedPath({u"system",u"Gothic.ini"},Dir::FT_File),u"Gothic.ini");
 
-#if defined(OPENGOTHIC_NATIVE_GAME)
-  Resources::loadBase({.stockProgram=GameplayDefinitions::stockProgram,
-                       .validateProgramMetadata=ProgramData::validateSymbolProjection});
-#else
-  Resources::loadBase();
-#endif
-
   std::u16string_view mod = CommandLine::inst().modPath();
   if(!mod.empty()){
     modFile.reset(new IniFile(mod));
@@ -86,7 +78,11 @@ Gothic::Gothic() {
     if(split!=std::string::npos)
       wrldDef = wrldDef.substr(split+1);
     plDef      = modFile->getS("SETTINGS","PLAYER");
-    gameDatDef = modFile->getS("FILES","GAME");
+    std::string program(modFile->getS("FILES","GAME"));
+    for(auto& ch : program)
+      ch = char(std::toupper(static_cast<unsigned char>(ch)));
+    if(!program.empty() && program!="GOTHIC" && program!="GOTHIC.DAT")
+      throw BaseStore::Error("DAT script mods are unsupported: "+program);
     ouDef      = modFile->getS("FILES","OUTPUTUNITS");
     }
 
@@ -97,14 +93,14 @@ Gothic::Gothic() {
   if(plDef.empty())
     plDef = "PC_HERO";
 
-  if(gameDatDef.empty())
-    gameDatDef  = "GOTHIC.DAT"; else
-    gameDatDef += ".DAT";
-
   if(ouDef.empty()) {
     // suffixes added later in GameScript::loadDialogOU()
     ouDef = "OU";
     }
+
+  Resources::loadBase({.stockProgram=GameplayDefinitions::stockProgram,
+                       .projectedOnly=true,
+                       .validateProgramMetadata=ProgramData::validateSymbolProjection});
 
   Settings::inst().onSettingsChanged.bind(this,&Gothic::setupSettings);
   setupSettings();
@@ -626,7 +622,7 @@ std::string_view Gothic::defaultSave() const {
   }
 
 std::string_view Gothic::defaultGameDatFile() const {
-  return gameDatDef;
+  return "GOTHIC.DAT";
   }
 
 std::string_view Gothic::defaultOutputUnits() const {
@@ -640,43 +636,13 @@ std::string_view Gothic::menuMain() const {
   }
 
 std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
-#if defined(OPENGOTHIC_NATIVE_GAME)
   (void)lang;
   throw BaseStore::Error("native game requires a prepared catalog for "+std::string(datFile));
-#else
-  return createPhoenixVm(loadScript(datFile,lang),datFile);
-#endif
-  }
-
-std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(daedalus::DaedalusScript sc, std::string_view datFile) {
-#if defined(OPENGOTHIC_NATIVE_GAME)
-  (void)sc;
-  throw BaseStore::Error("native game requires a prepared catalog for "+std::string(datFile));
-#else
-  setupCommonScriptClasses(sc);
-
-  auto vm = std::make_unique<daedalus::DaedalusVm>(std::move(sc), daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
-  enableScriptAudit(*vm,datFile);
-  setupVmCommonApi(*vm);
-  return vm;
-#endif
   }
 
 void Gothic::enableScriptAudit(daedalus::DaedalusVm& vm, std::string_view datFile) {
-#if defined(OPENGOTHIC_NATIVE_GAME)
-  constexpr bool metadata = true;
-#else
-  const auto* enabled = std::getenv("OPENGOTHIC_NATIVE_SCRIPT_AUDIT");
-  const bool metadata = BaseStore::metadataAuditEnabled();
-  if(!metadata && (enabled==nullptr || std::string_view(enabled)!="1"))
-    return;
-#endif
-  vm.require_native_execution(datFile,metadata);
-  Log::i("native-script-audit: armed program=",datFile,metadata ? " (metadata only)" : "");
-  }
-
-daedalus::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {
-  return loadBaseProgram(datFile,int(lang));
+  vm.require_native_execution(datFile,true);
+  Log::i("native-script-audit: armed program=",datFile," (metadata only)");
   }
 
 void Gothic::setupCommonScriptClasses(daedalus::DaedalusScript& sc) {
@@ -720,7 +686,7 @@ void Gothic::setupSettings() {
   Resources::configureTextures(Settings::getS("GAME","texture_budget_mb"),Settings::getS("GAME","texture_far_skip_mips"),
                                Settings::getS("GAME","texture_target_mb"),Settings::getS("GAME","texture_screen_mips"),
                                Settings::getS("GAME","texture_lookahead"));
-  Resources::censusProfile(gameDatDef,ouDef,Settings::getI("GAME","language"));
+  Resources::censusProfile(defaultGameDatFile(),ouDef,Settings::getI("GAME","language"));
   // Settings::setI/S/F emit onSettingsChanged synchronously. Publish before any
   // same-dispatch actor creation, prepare or input query can consume the change.
   settings.refreshPhysicsFlags();

@@ -185,15 +185,16 @@ GameSession::GameSession(std::string file) {
   }
 
 GameSession::GameSession(Serialize &fin) {
+  SaveGameHeader hdr;
+  fin.setEntry("header");
+  fin.read(hdr);
+  hdr.requireCompatible();
+  fin.setGlobalVersion(hdr.version);
+
   if(!Resources::isHeadless())
     sound = std::make_unique<Tempest::SoundDevice>();
   Gothic::inst().setLoadingProgress(0);
   setupSettings();
-
-  SaveGameHeader hdr;
-  fin.setEntry("header");
-  fin.read(hdr);
-  fin.setGlobalVersion(hdr.version);
 
   {
   uint16_t wssSize=0;
@@ -212,9 +213,9 @@ GameSession::GameSession(Serialize &fin) {
   cam.reset(new Camera());
   vm.reset(new GameScript(*this));
   vm->initDialogs();
-  // before the world: its npc's of ours find their symbols by index
-  if(fin.setEntry(OwnSymbols::SaveEntry))
-    vm->ownSymbols().load(vm->getVm(),fin);
+  // The world resolves director NPCs by their declared IDs.
+  if(!fin.setEntry(OwnSymbols::SaveEntry) || !vm->ownSymbols().load(vm->getVm(),fin))
+    throw std::runtime_error("Invalid director state in save");
 
   if(true) {
     setWorld(std::unique_ptr<World>(new World(*this,*vm,wname,false,[&](int v){
@@ -232,8 +233,13 @@ GameSession::GameSession(Serialize &fin) {
   fin.setEntry("game/quests");
   vm->loadQuests(fin);
 
-  fin.setEntry("game/daedalus");
+  if(!fin.setEntry(ScriptVars::StateEntry))
+    throw std::runtime_error("Missing program state in save");
   vm->loadVar(fin);
+
+  if(!fin.setEntry("game/bennet"))
+    throw std::runtime_error("Missing Bennet progression in save");
+  vm->loadBennetProgress(fin);
 
   if(auto hero = wrld->player())
     vm->setInstanceNPC("HERO",*hero);
@@ -302,8 +308,10 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   fout.setEntry("game/quests");
   vm->saveQuests(fout);
 
-  fout.setEntry("game/daedalus");
+  fout.setEntry(ScriptVars::StateEntry);
   vm->saveVar(fout);
+  fout.setEntry("game/bennet");
+  vm->saveBennetProgress(fout);
   if(auto& fn = Gothic::inst().saveExtFn)
     fn(fout);
   Gothic::inst().setLoadingProgress(80);

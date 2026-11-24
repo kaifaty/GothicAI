@@ -118,6 +118,9 @@ class GameScript final : public GameRules {
     void         initDialogs();
     void         saveQuests(Serialize& fout);
     void         loadQuests(Serialize& fin);
+    void         saveBennetProgress(Serialize& fout) const;
+    void         loadBennetProgress(Serialize& fin);
+    bool         isBennetProgressSymbol(uint32_t symbol) const;
     void         saveVar(Serialize& fout);
     void         loadVar(Serialize& fin);
     void         initPerceptions();
@@ -295,6 +298,7 @@ class GameScript final : public GameRules {
     friend class GameStoryExternals;
     class StockPrograms;
     struct BennetOre;
+    struct BennetOreDialog;
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
     bool invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe);
     bool runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result);
@@ -849,13 +853,13 @@ class GameScript final : public GameRules {
     // a dialog's condition, information or choice: the story graph runs it if it takes it, else the VM
     int32_t dialogFunction(daedalus::DaedalusSymbol* fn, bool returns);
 
-    static constexpr uint32_t BennetOreInfoId = 23822;
     void initBennetOre();
-    bool isBennetOreDialog(const daedalus::IInfo& info) const;
-    bool bennetOffer(Npc& player, Npc& npc);
-    bool bennetExecute(Npc& player, Npc& npc);
+    const BennetOreDialog* bennetOreDialog(const daedalus::IInfo& info) const;
+    bool bennetOffer(const BennetOreDialog& dialog, Npc& player, Npc& npc);
+    bool bennetExecute(const BennetOreDialog& dialog, Npc& player, Npc& npc);
 
     void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
+    ScriptVars::Row stateRow(daedalus::DaedalusSymbol& symbol);
 
     void onWldInstanceRemoved(const daedalus::DaedalusInstance* obj);
     void makeCurrent(Item* w);
@@ -905,7 +909,7 @@ class GameScript final : public GameRules {
       int32_t attackWarn=0;
       } ghostProgress;
     InventoryTransfer::Variables                                inventoryTransferVariables;
-    int32_t                                                     bennetOreMission = 0;
+    int32_t                                                     bennetOreMission = 0, bennetOreTeaching = 0;
     struct PointGestureRolls {
       int32_t guard = 0, crossedArms = 0, waypoint = 0, portal = 0, earthquake = 0;
       } pointGestureRolls;
@@ -913,8 +917,6 @@ class GameScript final : public GameRules {
     daedalus::DaedalusVm                                          vm;
     std::unique_ptr<StockPrograms>                                stockPrograms;
     std::unique_ptr<BennetOre>                                    bennetOre;
-    daedalus::DaedalusSymbol*                                     bennetConditionSymbol = nullptr;
-    daedalus::DaedalusSymbol*                                     bennetInfoSymbol = nullptr;
     std::function<void(bool)>                                    bennetLookupScope;
     std::function<void(Npc&,Npc&)>                               bennetTransferObserver;
     StartupFloor                                                floorDefer{*this};

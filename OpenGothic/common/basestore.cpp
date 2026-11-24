@@ -269,7 +269,7 @@ bool requireRunnableBase(const BaseImport::Identity& identity, BaseStore::Profil
     return false;
     }
   if(profile.stockProgram.empty())
-    throw std::runtime_error("this base has no executable programs; use the native game or prepare a compatibility base");
+    throw std::runtime_error("this prepared base has no executable program records required by this offline operation");
   projectionSource(identity,doc["native_script_base"],1,"native-script-base-v1");
   return true;
   }
@@ -558,7 +558,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   const auto* explicitName=std::getenv("OPENGOTHIC_BASE");
 #endif
   const auto explicitBase=explicitName!=nullptr ? fs::path(explicitName) : fs::path();
-  if(metadataAuditEnabled())
+  if(!profile.projectedOnly && metadataAuditEnabled())
     return metadataAuditBase(explicitBase,log,profile);
   if(projected && !requireRunnableBase(*projected,profile))
     throw std::runtime_error("native projection selection requires a production projected base identity");

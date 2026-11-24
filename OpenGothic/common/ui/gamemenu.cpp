@@ -797,7 +797,7 @@ void GameMenu::execSingle(Item &it, int slideDx, KeyCodec::Action hint) {
     ctrlInput = &it;
     if(item->on_chg_set_option.empty()) {
       SavNameDialog dlg{item->text[0]};
-      if(it.savHdr.version==0)
+      if(!it.savHdr.isCompatible())
         dlg.text = "";
       dlg.resize(owner.size());
       dlg.exec();
@@ -918,7 +918,7 @@ void GameMenu::execSaveGame(const GameMenu::Item& item) {
 
 bool GameMenu::execLoadGame(const GameMenu::Item &item) {
   const size_t id = saveSlotId(item);
-  if(id==size_t(-1))
+  if(id==size_t(-1) || !item.savHdr.isCompatible())
     return false;
 
   string_frm fname("save_slot_",int(id),".sav");
@@ -990,6 +990,8 @@ void GameMenu::updateSavTitle(GameMenu::Item& sel) {
   char fname[64]={};
   std::snprintf(fname,sizeof(fname)-1,"save_slot_%d.sav",int(id));
 
+  sel.savHdr = {};
+  sel.savPriview = {};
   if(!FileUtil::exists(TextCodec::toUtf16(fname))) {
     sel.handle->text[0] = "---";
     return;
@@ -1001,15 +1003,15 @@ void GameMenu::updateSavTitle(GameMenu::Item& sel) {
     Serialize reader(fin);
     reader.setEntry("header");
     reader.read(hdr);
+    if(!hdr.isCompatible()) {
+      sel.handle->text[0] = "Incompatible save version";
+      return;
+      }
     if(id!=0 || sel.handle->text[0].empty())
       sel.handle->text[0] = hdr.name;
     sel.savHdr = std::move(hdr);
 
-    if(reader.setEntry("priview.png"))
-      reader.read(sel.savPriview); // legacy
-    else if(reader.setEntry("preview.png"))
-      reader.read(sel.savPriview);
-    else if(reader.setEntry("preview.jpg"))
+    if(reader.setEntry("preview.jpg"))
       reader.read(sel.savPriview);
     }
   catch(std::bad_alloc&) {
@@ -1048,14 +1050,7 @@ void GameMenu::setDefaultKeys(std::string_view preset) {
   }
 
 bool GameMenu::implUpdateSavThumb(GameMenu::Item& sel) {
-  const size_t id = saveSlotId(sel);
-  if(id==size_t(-1))
-    return false;
-
-  char fname[64]={};
-  std::snprintf(fname,sizeof(fname)-1,"save_slot_%d.sav",int(id));
-
-  if(!FileUtil::exists(TextCodec::toUtf16(fname)))
+  if(!sel.savHdr.isCompatible())
     return false;
 
   const SaveGameHeader& hdr = sel.savHdr;

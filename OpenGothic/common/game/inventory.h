@@ -67,6 +67,8 @@ class Inventory final {
     static void  transfer(Inventory& to, Inventory& from, Npc *fromNpc, size_t cls, size_t count, World &wrld);
 
     Item*  getItem(size_t instance);
+    Item*  itemByIndex(uint32_t index) const;
+    uint32_t indexOf(const Item* item) const;
     Item*  addItem(std::unique_ptr<Item>&& p);
     Item*  addItem(std::string_view name, size_t count, World &owner);
     Item*  addItem(size_t cls, size_t count, World &owner);
@@ -165,7 +167,6 @@ class Inventory final {
     mutable std::vector<std::unique_ptr<Item>> items;
     mutable bool                               sorted=false;
 
-    uint32_t                           indexOf(const Item* it) const;
     Item*                              readPtr(Serialize& fin);
 
     Item*                              armor      = nullptr;

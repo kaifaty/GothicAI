@@ -5,6 +5,7 @@ import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
@@ -260,10 +261,14 @@ def test_content_without_materials_is_not_enabled(tmp_path, monkeypatch, exists)
 
 def test_latest_save(tmp_path):
     assert latest_save(tmp_path) is None
-    for i, slot in enumerate(["1", "0", "12"]):
+    for i, (slot, version) in enumerate([("1", 56), ("0", 56), ("12", 56), ("13", 55), ("14", 57)]):
         p = tmp_path / f"save_slot_{slot}.sav"
-        p.write_bytes(b"")
+        with ZipFile(p, "w") as archive:
+            archive.writestr("header", b"OpenGothic/Save\0" + version.to_bytes(2, "little"))
         os.utime(p, (time.time() + i, time.time() + i))
+    corrupt = tmp_path / "save_slot_15.sav"
+    corrupt.write_bytes(b"broken archive")
+    os.utime(corrupt, (time.time() + 10, time.time() + 10))
     (tmp_path / "save_slot_x.sav").write_bytes(b"")
     assert latest_save(tmp_path) == "12"
 

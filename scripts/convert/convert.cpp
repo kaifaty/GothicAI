@@ -318,16 +318,15 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
               << " (" << identity.fingerprint << ", " << programs.size() << " program files omitted).\n";
   }
 
-#ifdef GOTHIC_NATIVE_BASE_RESOLVE
 BaseStore::Selection resolveNativeBase(const fs::path& gothic, const BaseImport::Files& archives,
                                       const BaseImport::Progress& progress, bool explicitBase) {
   BaseStore::Profile profile{.stockProgram=StockStoryPrograms::stockProgram,
+                             .projectedOnly=true,
                              .validateProgramMetadata=ProgramData::validateSymbolProjection};
   if(explicitBase)
     return BaseStore::resolve(gothic,archives,progress,{},profile);
 
   // Settings-only launches can supply the fingerprint of the ready combined base.
-  profile.projectedOnly=true;
   try {
     return BaseStore::resolve(gothic,archives,progress,{},profile);
     }
@@ -343,7 +342,6 @@ BaseStore::Selection resolveNativeBase(const fs::path& gothic, const BaseImport:
     prepareProgramProjection(combined.path,temporary,ProgramProjection::Native,true);
     },profile,&identity);
   }
-#endif
 
 asset::Material material(const std::string& name, const std::string& texture, asset::MaterialGroup group) {
   asset::Material m;
@@ -1060,13 +1058,8 @@ int main(int argc, char** argv) {
       });
     const std::vector<std::string> args(argv+1,argv+argc);
     if(args.size()==1 && args[0]=="formats") {
-#ifdef GOTHIC_NATIVE_BASE_RESOLVE
-      constexpr auto scriptBase="native";
-#else
-      constexpr auto scriptBase="compatibility";
-#endif
       std::cout << "{\"base\":\"" << BaseFormatSha256 << "\",\"videos\":\"" << VideoData::formatSha256()
-                << "\",\"script_base\":\"" << scriptBase << "\"}\n";
+                << "\",\"script_base\":\"native\"}\n";
       return 0;
       }
     if(args.size()==1 && args[0]=="--self-test")
@@ -1189,11 +1182,9 @@ int main(int argc, char** argv) {
         if((explicitBase && *explicitBase) || !fingerprint || !*fingerprint)
           for(const auto& archive:BaseImport::runtimeArchives(args[1]))
             if(!archive.mod) archives.emplace_back(archive.name,archive.size);
-#ifdef GOTHIC_NATIVE_BASE_RESOLVE
         if(args[0]=="resolve")
           base=resolveNativeBase(args[1],archives,progress,explicitBase && *explicitBase);
         else
-#endif
           base=BaseStore::ensure(args[1],archives,progress);
         if(base.publication.valid()) base.publication.get();
         selected=base.path;

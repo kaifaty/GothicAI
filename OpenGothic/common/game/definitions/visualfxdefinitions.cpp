@@ -7,10 +7,8 @@
 #include "basescripts.h"
 #include "basestore.h"
 #include "contentcensus.h"
-#include "definitiontypes.h"
 #include "effectdefinitiondata.h"
 #include "graphics/visualfx.h"
-#include "gothic.h"
 #include "programdata.h"
 #include "resources.h"
 #include "utils/string_frm.h"
@@ -29,30 +27,26 @@ std::string symbolName(std::string_view name) {
 
 VisualFxDefinitions::VisualFxDefinitions() {
   const auto& index = baseProgramIndex();
-  if(const auto* source = ProgramData::visualFxProgram(index);
-     source!=nullptr && source->recordSha256==EffectDefinitionData::stockVisualProgram) {
-    const auto base = index.dir.parent_path();
-    const auto section = EffectDefinitionData::visualSection(base,source->recordSha256);
-    try {
-      if(std::filesystem::exists(section)) {
-        auto records = EffectDefinitionData::readVisuals(base,source->recordSha256);
-        effects.reserve(records.effects.size());
-        keys.reserve(records.keys.size());
-        for(auto& effect : records.effects)
-          effects.emplace(std::move(effect.name),std::move(effect.value));
-        for(auto& key : records.keys)
-          keys.emplace(std::move(key.name),std::move(key.value));
-        if(auto* census = Resources::contentCensus())
-          census->replaced("VisualFx.dat","base/"+section.lexically_relative(base).generic_string());
-        return;
-        }
-      }
-    catch(const std::runtime_error& error) {
-      throw BaseStore::Error(section.string()+": "+error.what());
-      }
-    }
+  const auto* source = ProgramData::visualFxProgram(index);
+  if(source==nullptr || source->recordSha256!=EffectDefinitionData::stockVisualProgram)
+    throw BaseStore::Error("visual effects require the supported prepared catalog");
 
-  vm = Gothic::inst().createPhoenixVm("VisualFx.dat");
+  const auto base = index.dir.parent_path();
+  const auto section = EffectDefinitionData::visualSection(base,source->recordSha256);
+  try {
+    auto records = EffectDefinitionData::readVisuals(base,source->recordSha256);
+    effects.reserve(records.effects.size());
+    keys.reserve(records.keys.size());
+    for(auto& effect : records.effects)
+      effects.emplace(std::move(effect.name),std::move(effect.value));
+    for(auto& key : records.keys)
+      keys.emplace(std::move(key.name),std::move(key.value));
+    if(auto* census = Resources::contentCensus())
+      census->replaced("VisualFx.dat","base/"+section.lexically_relative(base).generic_string());
+    }
+  catch(const std::runtime_error& error) {
+    throw BaseStore::Error(section.string()+": "+error.what());
+    }
   }
 
 VisualFxDefinitions::~VisualFxDefinitions() = default;
@@ -100,37 +94,16 @@ std::optional<Def::EffectBase> VisualFxDefinitions::findEffect(std::string_view 
   if(name.empty())
     return std::nullopt;
 
-  if(!vm) {
-    const auto it = effects.find(symbolName(name));
-    if(it!=effects.end())
-      return it->second;
-    Log::e("invalid visual effect: \"",name,"\"");
-    return std::nullopt;
-    }
-
-  auto id = vm->find_symbol_by_name(name);
-  if(id==nullptr) {
-    Log::e("invalid visual effect: \"",name,"\"");
-    return std::nullopt;
-    }
-
-  try {
-    return vm->init_instance<VmDef::EffectBase>(id)->copy();
-    }
-  catch (const daedalus::DaedalusScriptError&) {
-    return std::nullopt;
-    }
+  const auto it = effects.find(symbolName(name));
+  if(it!=effects.end())
+    return it->second;
+  Log::e("invalid visual effect: \"",name,"\"");
+  return std::nullopt;
   }
 
 std::optional<Def::ParticleEffectEmitKey> VisualFxDefinitions::findKey(std::string_view name) {
-  if(vm) {
-    if(auto* id = vm->find_symbol_by_name(name))
-      return vm->init_instance<VmDef::ParticleEffectEmitKey>(id)->copy();
-    }
-  else {
-    const auto it = keys.find(symbolName(name));
-    if(it!=keys.end())
-      return it->second;
-    }
+  const auto it = keys.find(symbolName(name));
+  if(it!=keys.end())
+    return it->second;
   return std::nullopt;
   }

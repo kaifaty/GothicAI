@@ -22,49 +22,31 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
   const auto lang=Settings::getI("GAME", "language");
   const auto& index=baseProgramIndex();
   const auto base=index.dir.parent_path();
-#if defined(OPENGOTHIC_NATIVE_GAME)
-  constexpr bool metadata=true;
-#else
-  const bool metadata=BaseStore::metadataAuditEnabled();
-#endif
-  std::string sha256;
-  auto script=[&] {
-    if(!metadata)
-      return loadBaseProgram(gothic.defaultGameDatFile(),lang,&sha256);
-    const auto selected=selectBaseProgram(index,gothic.defaultGameDatFile(),lang);
-    if(selected.source.recordSha256!=GameplayDefinitions::stockProgram)
-      throw BaseStore::Error("native game requires the verified stock GOTHIC.DAT program");
-    const auto file=ProgramData::symbolMetadataPath(base,selected.source.recordSha256);
-    auto symbols=ProgramData::readSymbolMetadata(file,selected.source.recordSha256);
-    sha256=selected.source.recordSha256;
-    return daedalus::DaedalusScript::from_program(std::move(symbols));
-    }();
+  const auto selected=selectBaseProgram(index,gothic.defaultGameDatFile(),lang);
+  const auto& sha256=selected.source.recordSha256;
+  if(sha256!=GameplayDefinitions::stockProgram)
+    throw BaseStore::Error("native game requires the prepared catalog for the verified stock program");
+  const auto file=ProgramData::symbolMetadataPath(base,sha256);
+  auto script=daedalus::DaedalusScript::from_program(ProgramData::readSymbolMetadata(file,sha256));
   items=ItemDefinitionRuntime::load(base,script,sha256);
   routines=RoutineDefinitionRuntime::load(base,script,sha256);
   npcs=NpcDefinitionRuntime::load(base,script,sha256);
   placements=PlacementDefinitionRuntime::load(base,script,sha256);
   activities=ActivityDefinitionRuntime::load(base,script,sha256);
   // Native behavior is verified against this particular stock Night of the Raven program.
-  nativeRoutineProgram=sha256==GameplayDefinitions::stockProgram;
-  if(nativeRoutineProgram) {
-    if(!items.items.empty())
-      items.brokenEye=script.find_symbol_by_name("ITMI_INNOSEYE_BROKEN_MIS")->index();
-    ItemDefinitionRuntime::registerStockRestoreEffects(items,script);
-    ItemDefinitionRuntime::registerStockArmorSetEffects(items,script);
-    ItemDefinitionRuntime::registerStockFightSkillEffects(items,script);
-    ItemDefinitionRuntime::registerStockEquipmentStatEffects(items,script);
-    const auto* callback=script.find_symbol_by_name("B_ASSESSQUIETSOUND");
-    const auto* height=script.find_symbol_by_name("PERC_DIST_HEIGHT");
-    const auto* indoorHeight=script.find_symbol_by_name("PERC_DIST_INDOOR_HEIGHT");
-    quietSound={ScriptFn(callback->index()),height->get_int(0),indoorHeight->get_int(0)};
-    }
+  nativeRoutineProgram=true;
+  if(!items.items.empty())
+    items.brokenEye=script.find_symbol_by_name("ITMI_INNOSEYE_BROKEN_MIS")->index();
+  ItemDefinitionRuntime::registerStockRestoreEffects(items,script);
+  ItemDefinitionRuntime::registerStockArmorSetEffects(items,script);
+  ItemDefinitionRuntime::registerStockFightSkillEffects(items,script);
+  ItemDefinitionRuntime::registerStockEquipmentStatEffects(items,script);
+  const auto* callback=script.find_symbol_by_name("B_ASSESSQUIETSOUND");
+  const auto* height=script.find_symbol_by_name("PERC_DIST_HEIGHT");
+  const auto* indoorHeight=script.find_symbol_by_name("PERC_DIST_INDOOR_HEIGHT");
+  quietSound={ScriptFn(callback->index()),height->get_int(0),indoorHeight->get_int(0)};
   const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
-#if defined(OPENGOTHIC_NATIVE_GAME)
   auto vm=daedalus::DaedalusVm::without_legacy_dispatcher(std::move(script),flags);
-#else
-  auto vm=metadata ? daedalus::DaedalusVm::without_legacy_dispatcher(std::move(script),flags)
-                   : daedalus::DaedalusVm(std::move(script),flags);
-#endif
   Gothic::enableScriptAudit(vm,gothic.defaultGameDatFile());
   NpcDefinitionRuntime::observeCalls(vm,npcs,base,sha256);
   PlacementDefinitionRuntime::observeCalls(vm,base,sha256);

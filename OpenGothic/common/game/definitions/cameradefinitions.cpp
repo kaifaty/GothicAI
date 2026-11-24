@@ -1,15 +1,13 @@
 #include "cameradefinitions.h"
 #include "cameradefinitiondata.h"
 #include "basescripts.h"
-#include "definitiontypes.h"
-
 #include <Tempest/Log>
 #include "asset/worldtypes.h"
 
 #include "basestore.h"
 #include "contentcensus.h"
-#include "gothic.h"
 #include "programdata.h"
+#include "resources.h"
 #include "worlddata.h"
 #include "utils/string_frm.h"
 
@@ -18,33 +16,21 @@ using namespace Tempest;
 CameraDefinitions::CameraDefinitions() {
   const auto& index = baseProgramIndex();
   const auto* source = ProgramData::cameraProgram(index);
-  const auto base = index.dir.parent_path();
-  if(source!=nullptr && source->recordSha256==CameraDefinitionData::stockProgram) {
-    try {
-      const auto section = CameraDefinitionData::section(base,source->recordSha256);
-      if(std::filesystem::exists(section)) {
-        cameras = CameraDefinitionData::read(base,source->recordSha256);
-        if(auto* census = Resources::contentCensus())
-          census->replaced("Camera.dat","base/"+section.lexically_relative(base).generic_string());
-        }
-      }
-    catch(const std::runtime_error& error) {
-      throw BaseStore::Error(error.what());
-      }
-    }
-  if(cameras.empty()) {
-    auto vm = Gothic::inst().createPhoenixVm("Camera.dat");
+  if(source==nullptr || source->recordSha256!=CameraDefinitionData::stockProgram)
+    throw BaseStore::Error("camera presets require the supported prepared catalog");
 
-    vm->enumerate_instances_by_class_name("CCAMSYS", [this, &vm](daedalus::DaedalusSymbol& s) {
-      try {
-        auto cam = vm->init_instance<VmDef::Camera>(&s);
-        cameras.emplace_back(s.name(), cam->copy());
-        }
-      catch(const daedalus::DaedalusScriptError&) {
-        // There was an error initializing the Def::Camera. Ignore it.
-        }
-      });
+  const auto base = index.dir.parent_path();
+  const auto section = CameraDefinitionData::section(base,source->recordSha256);
+  try {
+    cameras = CameraDefinitionData::read(base,source->recordSha256);
     }
+  catch(const std::runtime_error& error) {
+    throw BaseStore::Error(section.string()+": "+error.what());
+    }
+  if(cameras.empty())
+    throw BaseStore::Error(section.string()+": empty camera catalog");
+  if(auto* census = Resources::contentCensus())
+    census->replaced("Camera.dat","base/"+section.lexically_relative(base).generic_string());
 
   camModDialog    = getCam("CAMMODDIALOG");
   camModInventory = getCam("CAMMODINVENTORY");

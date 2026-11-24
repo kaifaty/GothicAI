@@ -83,7 +83,7 @@ def _up(args: argparse.Namespace, session: SessionFile) -> int:
     if args.continue_:
         save = latest_save(layout.game_home)
         if save is None:
-            print(f"no saves in {layout.game_home} yet: starting with the menu")
+            print(f"no compatible saves in {layout.game_home}: starting with the menu")
     _warn_login(config)
     print(f"logs: {log_dir}")
     if sys.platform == "linux":

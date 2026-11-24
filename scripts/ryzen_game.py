@@ -34,7 +34,7 @@ def _ready_script_base(directory, *, native):
     except (OSError, ValueError):
         return False
     return (isinstance(metadata, dict) and "no_programs_fixture" not in metadata
-            and (native or "native_script_base" not in metadata))
+            and ("native_script_base" in metadata) == native)
 
 
 def _compatible_fingerprint(kind, fingerprint, expected, roots, ready=None):
