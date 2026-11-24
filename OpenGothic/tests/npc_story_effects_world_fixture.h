@@ -788,13 +788,18 @@ void bennetOreContract(const std::filesystem::path& oldSave, const std::filesyst
     missing.kind=storygraph::Step::Call;
     missing.call=storygraph::ex::call("BENNET_MISSING_DEPENDENCY",{});
     incomplete.steps.push_back(std::move(missing));
+    const auto oreBefore=holdings(*hero,*bennet);
+    const auto missionBefore=script.globalIntSymbol(mission);
+    const auto knownBefore=script.doesNpcKnowInfo(hero->handle(),infoId);
     const auto before=queueTrace(*hero,*bennet);
     binding=&incomplete;
     script.exec(*choice,*hero,*bennet);
     binding=answer;
-    require(holdings(*hero,*bennet)==Counts{5,0} && script.globalIntSymbol(mission)==1 &&
-            !script.doesNpcKnowInfo(hero->handle(),infoId) && queueTrace(*hero,*bennet)==before &&
-            Contract::bennetLookupCount()==0,"Bennet must check dependencies before changing dialogue or quest state");
+    require(holdings(*hero,*bennet)==oreBefore,"Bennet dependency failure must preserve ore counts");
+    require(script.globalIntSymbol(mission)==missionBefore,"Bennet dependency failure must preserve the mission flag");
+    require(script.doesNpcKnowInfo(hero->handle(),infoId)==knownBefore,"Bennet dependency failure must preserve known dialogue");
+    require(queueTrace(*hero,*bennet)==before,"Bennet dependency failure must preserve queued effects");
+    require(Contract::bennetLookupCount()==0,"Bennet preflight must avoid the full symbol table");
 #endif
     bool overridden=false;
     gothic.dialogScriptFn=[&](auto& fn,int32_t&) {
