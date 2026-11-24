@@ -633,6 +633,12 @@ namespace daedalus {
 		// Assigned member elements are reported after the write, with their exact context and index.
 		void observe_member_writes(std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> callback) { _m_member_write_observer = std::move(callback); }
 		void observe_instructions(std::function<void(DaedalusInstruction const&)> callback) { _m_instruction_observer = std::move(callback); }
+		// Independent opcode observers coexist with the single offline observer.
+		using InstructionObserver = std::function<void(const DaedalusVm&, const DaedalusInstruction&)>;
+		uint64_t add_instruction_observer(InstructionObserver callback);
+		void remove_instruction_observer(uint64_t id);
+		// Used by the opt-in game audit. Reads and native calls remain available.
+		void require_native_execution(std::string_view program);
 		// Optional script-call instrumentation; includes functions reached through BL overrides.
 		using CallObserver = std::function<void(DaedalusSymbol const&)>;
 		size_t call_observer_count() const { return _m_call_observers.size(); }
@@ -1059,6 +1065,8 @@ namespace daedalus {
 		std::function<void(DaedalusSymbol const&)> _m_write_observer;
 		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_write_observer;
 		std::function<void(DaedalusInstruction const&)> _m_instruction_observer;
+		uint64_t _m_next_instruction_observer = 0;
+		std::vector<std::pair<uint64_t, InstructionObserver>> _m_instruction_observers;
 		void notify_call(DaedalusSymbol const* symbol) const;
 		uint64_t _m_next_call_observer = 0;
 		std::vector<std::pair<uint64_t, CallObserver>> _m_call_observers;

@@ -22,6 +22,8 @@ set(BASE_SOURCES
   common/game/definitions/sfxdefinitiondata.cpp common/import/sfxdefinitions.cpp
   common/game/definitions/musicdefinitiondata.cpp common/import/musicthemedefinitions.cpp
   common/game/definitions/effectdefinitiondata.cpp common/import/effectdefinitions.cpp
+  common/import/dialoginfodata.cpp common/game/definitions/dialoginfodata.cpp
+  common/import/stockstoryprograms.cpp
   common/dmusic/directmusicimport.cpp common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp)
 set(BASE_NATIVE_IO
   lib/Tempest/Engine/io/rfile.cpp lib/Tempest/Engine/io/idevice.cpp lib/Tempest/Engine/utility/dir.cpp
@@ -59,9 +61,15 @@ list(APPEND BASE_FORMAT_INPUTS ${BASE_SOURCES} ${BASE_NATIVE_IO}
 list(APPEND BASE_FORMAT_INPUTS common/npchelperdefinitions.h common/import/npchelperdefinitions.cpp common/definitionjson.h
   common/game/definitions/fightdefinitiondata.h common/game/definitions/fightdefinitioncapture.h common/game/fighttactic.h common/records/definitions.h
   common/import/gameplaydefinitions.cpp common/game/definitions/gameplaydefinitions.h
+  common/game/definitions/dialoginfodata.h
   common/game/definitions/menudefinitions.h common/game/definitions/menurecord.h
   common/game/definitions/cameradefinitiondata.h common/game/definitions/sfxdefinitiondata.h
   common/game/definitions/musicdefinitiondata.h common/game/definitions/effectdefinitiondata.h)
+list(APPEND BASE_FORMAT_INPUTS common/game/definitions/stockstoryprograms.h common/game/definitions/stockstoryprograms.cpp
+  ai_bridge/storygraph/bytecode.h ai_bridge/storygraph/bytecode.cpp
+  ai_bridge/storygraph/program.h ai_bridge/storygraph/program.cpp ai_bridge/storygraph/vocab.h
+  ai_bridge/storygraph/expr.h ai_bridge/storygraph/expr.cpp ai_bridge/storygraph/exprjson.h ai_bridge/storygraph/exprjson.cpp
+  ai_bridge/textcodec.h ai_bridge/textcodec.cpp)
 list(REMOVE_DUPLICATES BASE_FORMAT_INPUTS)
 list(SORT BASE_FORMAT_INPUTS)
 set(BASE_FORMAT_SUMS "")

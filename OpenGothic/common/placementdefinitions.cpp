@@ -80,6 +80,24 @@ PlacementDefinitions::Step step(const Json& json) {
   require(json.MemberCount()==3,"unexpected call step member");
   return call;
   }
+
+template<size_t N>
+std::array<std::vector<PlacementDefinitions::LiteralInsert>,N> insertGroups(const Json& source,
+                                                                           const std::array<size_t,N>& sizes) {
+  require(source.IsArray() && source.Size()==N,"unexpected chapter placement group count");
+  std::array<std::vector<PlacementDefinitions::LiteralInsert>,N> groups;
+  for(rapidjson::SizeType i=0;i<source.Size();++i) {
+    const auto& group=source[i];
+    require(group.IsArray() && group.Size()==sizes[i],"unexpected chapter placement count");
+    groups[i].reserve(group.Size());
+    for(const auto& row:group.GetArray()) {
+      require(row.IsArray() && row.Size()==3 && row[0].IsUint() && row[1].IsUint() && row[2].IsUint(),
+              "expected instance, point and external symbol indices");
+      groups[i].push_back({row[0].GetUint(),row[1].GetUint(),row[2].GetUint()});
+      }
+    }
+  return groups;
+}
 }
 
 PlacementDefinitions::Library PlacementDefinitions::read(const std::filesystem::path& base,
@@ -93,15 +111,22 @@ PlacementDefinitions::Library PlacementDefinitions::read(const std::filesystem::
     doc.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
     require(!doc.HasParseError(),"invalid JSON");
     require(string(at(doc,"format"))=="gothic-placement-definitions","unsupported format");
-    const auto& version=at(doc,"version");
-    require(version.IsInt() && version.GetInt()==1,"unsupported version");
+    const auto version=DefinitionJson::integer(at(doc,"version"));
+    require(version==1 || version==2,"unsupported version");
     require(!string(at(doc,"program_name")).empty(),"empty program name");
     require(string(at(doc,"program_sha256"))==programSha256,"program SHA differs");
     require(string(at(doc,"string_encoding"))=="unicode-byte-mapping","unsupported string encoding");
     const auto& records=at(doc,"records");
     require(records.IsArray(),"records must be an array");
-    require(doc.MemberCount()==6,"unexpected envelope field");
+    require(doc.MemberCount()==(version==1 ? 6u : 7u),"unexpected envelope field");
     Library result;
+    if(version==2) {
+      const auto& chapters=at(doc,"khorinis_late_chapters");
+      DefinitionJson::object(chapters,{"chapter_4","chapter_5"});
+      result.khorinisLateChapters=KhorinisLateChapters{
+        insertGroups(at(chapters,"chapter_4"),KhorinisLateChapters::chapter4Sizes),
+        insertGroups(at(chapters,"chapter_5"),KhorinisLateChapters::chapter5Sizes)};
+      }
     for(const auto& record:records.GetArray()) {
       const auto name=string(at(record,"symbol"));
       try {

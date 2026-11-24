@@ -8,8 +8,7 @@
 #include <limits>
 #include <map>
 
-#include "daedalus/vm.h"
-#include "daedalus/classes.h"
+#include "game/gamescript.h"
 
 #include "game/bodycontroller.h"
 #include "game/inventory.h"
@@ -19,7 +18,6 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 
-#include "eval.h"
 #include "chesttake.h"
 #include "jsonread.h"
 #include "jsonwriter.h"
@@ -35,15 +33,6 @@ using namespace Tempest;
 
 namespace {
 
-// the npc goes with the hero: a companion's dialog, or the server's `party` effect (v30), marked it
-bool partyMember(World& world, const Npc& npc) {
-  auto* s = world.script().getVm().find_symbol_by_name("AIV_PARTYMEMBER");
-  if(s==nullptr || s->type()!=daedalus::DaedalusDataType::INT)
-    return false;
-  const int32_t aiv = s->get_int(0);
-  return aiv>=0 && uint32_t(aiv)<daedalus::INpc::aivar_count && npc.handlePtr()->aivar[size_t(aiv)]!=0;
-  }
-
 constexpr uint64_t ScanMs   = 500;   // how often deaths are looked for
 constexpr uint64_t ReportMs = 1000;  // how often tags are reported
 
@@ -55,9 +44,7 @@ std::string upper(std::string_view s) {
   }
 
 std::string symbolOf(World& world, const Npc& npc) {
-  if(auto sym = world.script().findSymbol(npc.instanceSymbol()))
-    return sym->name();
-  return {};
+  return std::string(world.script().symbolName(npc.instanceSymbol()));
   }
 
 Npc* bySymbol(World& world, std::string_view symbol) {
@@ -70,30 +57,18 @@ float distance(const Npc& a, const Npc& b) {
   return std::sqrt(d.x*d.x+d.y*d.y+d.z*d.z);
   }
 
-// the class an instance (or prototype) is of: C_NPC, C_ITEM, C_INFO...
-std::string classOf(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& sym) {
-  auto* s = &sym;
-  for(int i=0; i<8 && s!=nullptr && s->type()!=daedalus::DaedalusDataType::CLASS; ++i)
-    s = vm.find_symbol_by_index(s->parent());
-  return s!=nullptr && s->type()==daedalus::DaedalusDataType::CLASS ? std::string(s->name()) : std::string();
-  }
-
-std::string kindOf(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& sym) {
-  using daedalus::DaedalusDataType;
-  if(sym.is_member())
-    return "other";
-  switch(sym.type()) {
-    case DaedalusDataType::INSTANCE: {
-      const auto cls = classOf(vm,sym);
-      return cls=="C_NPC" ? "npc" : cls=="C_ITEM" ? "item" : cls=="C_INFO" ? "info" : "other";
-      }
-    case DaedalusDataType::INT:
-      return sym.is_const() ? "const" : "var";
-    case DaedalusDataType::FUNCTION:
-      return "func";
-    default:
-      return "other";
+std::string_view symbolKindName(GameScript::SymbolKind kind) {
+  using Kind = GameScript::SymbolKind;
+  switch(kind) {
+    case Kind::Npc:      return "npc";
+    case Kind::Item:     return "item";
+    case Kind::Info:     return "info";
+    case Kind::Constant: return "const";
+    case Kind::Variable: return "var";
+    case Kind::Function: return "func";
+    case Kind::Other:    return "other";
     }
+  return "other";
   }
 
 template<class F>
@@ -256,8 +231,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     state.externalControl = actor->isExternalControl();
     state.hp = actor->attribute(ATR_HITPOINTS);
     if(auto* weapon = actor->currentMeleeWeapon())
-      if(auto* symbol = actor->world().script().findSymbol(weapon->clsId()))
-        state.weapon = symbol->name();
+      state.weapon = actor->world().script().symbolName(weapon->clsId());
     return state;
     };
   // Mandatory even without check:true, before any other effect or controller release.
@@ -413,9 +387,8 @@ std::string StoryWorld::nearby(World& world, const rapidjson::Value& msg) {
   }
 
 std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
-  using daedalus::DaedalusDataType;
-  auto&  vm = world.script().getVm();
-  Npc*   pl = world.player();
+  auto& script = world.script();
+  Npc*       pl = world.player();
   rapidjson::StringBuffer                    buf;
   rapidjson::Writer<rapidjson::StringBuffer> w(buf);
   auto key = [&](const std::string& k) { w.Key(k.data(),rapidjson::SizeType(k.size())); };
@@ -424,10 +397,9 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
   w.Key("vars");
   w.StartObject();
   eachString(msg,"vars",[&](const std::string& name) {
-    auto* s = vm.find_symbol_by_name(name);
-    if(s!=nullptr && s->type()==DaedalusDataType::INT && !s->is_member()) {
+    if(const auto value = script.globalIntSymbol(name)) {
       key(name);
-      w.Int(s->get_int(0));
+      w.Int(*value);
       }
     });
   w.EndObject();
@@ -463,28 +435,23 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
 
   w.Key("knows");
   w.StartObject();
-  auto* knows = vm.find_symbol_by_name("NPC_KNOWSINFO");
-  eachString(msg,"knows",[&](const std::string& name) {
-    auto*       s = vm.find_symbol_by_name(name);
-    std::string err;
-    auto        r = s!=nullptr && pl!=nullptr && knows!=nullptr
-                    ? storygraph::callFunction(vm,*knows,{storygraph::Value::instance(std::static_pointer_cast<daedalus::INpc>(pl->handlePtr())),
-                                                          storygraph::Value::integer(int32_t(s->index()))},err)
-                    : std::nullopt;
-    if(r && r->type==storygraph::Value::Int) {
-      key(name);
-      w.Bool(r->i!=0);
-      }
-    });
+  if(pl!=nullptr) {
+    eachString(msg,"knows",[&](const std::string& name) {
+      if(const auto known = script.queryNpcKnowsInfo(*pl,name)) {
+        key(name);
+        w.Bool(*known);
+        }
+      });
+    }
   w.EndObject();
 
   w.Key("symbols");
   w.StartObject();
   eachString(msg,"symbols",[&](const std::string& name) {
-    if(auto* s = vm.find_symbol_by_name(name)) {
+    if(const auto kind = script.symbolKind(name)) {
       key(name);
-      auto kind = kindOf(vm,*s);
-      w.String(kind.data(),rapidjson::SizeType(kind.size()));
+      const auto label = symbolKindName(*kind);
+      w.String(label.data(),rapidjson::SizeType(label.size()));
       }
     });
   w.EndObject();
@@ -492,20 +459,13 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
   w.Key("items");
   w.StartObject();
   eachString(msg,"items",[&](const std::string& name) {
-    auto* s = vm.find_symbol_by_name(name);
-    if(s==nullptr || kindOf(vm,*s)!="item")
+    if(script.symbolKind(name)!=GameScript::SymbolKind::Item)
       return;
-    // the engine reads names the same way (the gold's); the symbol keeps the instance it had
-    auto prev = s->get_instance();
-    try {
-      auto item = world.script().createItemForQuery(s->index());
-      auto text = TextCodec::toUtf8(item->name);
+    if(const auto display = script.itemNameForQuery(script.findSymbolIndex(name))) {
+      const auto text = TextCodec::toUtf8(*display);
       key(name);
       w.String(text.data(),rapidjson::SizeType(text.size()));
       }
-    catch(const std::exception&) {
-      }
-    s->set_instance(prev);
     });
   w.EndObject();
 
@@ -584,7 +544,7 @@ void StoryWorld::tick(World& world) {
     for(auto& death : deaths.look(world)) {
       Npc* n  = death.npc;
       Npc* by = death.killer;
-      if(by!=nullptr && (by->isPlayer() || partyMember(world,*by))) {
+      if(by!=nullptr && (by->isPlayer() || world.script().isPartyMember(*by))) {
         // whoever the hero killed, person or creature (v17): an npc's contract may count it. One of his
         // companions killed counts too (v30), as the scripts give him the experience for it (ZS_Dead)
         JsonWriter k("hero_kill");

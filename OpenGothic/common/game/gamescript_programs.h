@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gamescript.h"
+#include "game/definitions/stockstoryprograms.h"
 
 #include "storygraph/bytecode.h"
 #include "storygraph/exec.h"
@@ -26,16 +27,23 @@ class GameScript::StockPrograms final {
     bool run(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed);
 
   private:
+    friend struct NpcDefinitionContract;
+
     struct Entry {
       storygraph::Program program;
       std::set<std::string> calls;
       };
 
+    bool runPrepared(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed);
+    const StockStoryPrograms::Catalog* preparedCatalog();
     const Entry& entry(uint32_t id);
     bool isSupported(const daedalus::DaedalusSymbol& fn, std::unordered_set<uint32_t>& checked);
 
+    GameScript&                          script;
+    std::optional<StockStoryPrograms::Catalog> prepared;
+    bool                                 preparedChecked = false;
     daedalus::DaedalusVm&                 vm;
-    storygraph::Bytecode                  code;
+    std::unique_ptr<storygraph::Bytecode>  code;
     GameStoryExternals                    engine;
     storygraph::Interpreter               interpreter;
     std::unordered_map<uint32_t,Entry>    programs;

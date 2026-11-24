@@ -1299,6 +1299,8 @@ struct BaseContentContract {
     for(const auto& row:index.selections) {
       if(row.language!=-1 || !row.source) continue;
       const auto& source=index.sources.at(*row.source);
+      const auto identity=selectBaseProgram(index,row.request,row.language);
+      require(&identity.source==&source && identity.branch==row.step,row.request+": program identity differs from imported selection");
       const auto host=row.step.starts_with("host_") ? (gothic/source.path).u16string() : std::u16string{};
       const auto script=loadBaseProgram(row.request,row.language,row.step,host);
       equal(script.symbols().size(),ProgramData::readProgram(index.path(source)).symbols.size(),row.request+" selected symbol count");
@@ -1311,6 +1313,29 @@ struct BaseContentContract {
     equal(after["runtime_programs"]["selections"].Size(),selected,"actual native program census selections");
     std::printf("Programs: %zu sources, %zu symbols and %zu bytecode bytes match independent DAT reads; all eight native selections add zero DAT opens\n",parsed,symbols,code);
     return selected;
+    }
+
+  static void programIdentityPrecedence() {
+    // This index has no program payloads, even for its selected sources.
+    ProgramData::Index index;
+    index.sources.resize(4);
+    index.vfs.emplace("MENU.DAT",0);
+    index.host.emplace("_work/Data/Scripts/_compiled/folder/MENU.DAT",1);
+    index.host.emplace("_work/Data/Scripts_RU/_compiled/folder/MENU.DAT",2);
+    index.host.emplace("_work/Data/Scripts_RU/_compiled/MENU.DAT",3);
+    const auto check = [&](std::string_view request, size_t source, std::string_view branch) {
+      const auto selected=selectBaseProgram(index,request,3);
+      require(&selected.source==&index.sources[source] && selected.branch==branch,
+              "program identity must select "+std::string(branch));
+      };
+    check("MENU.DAT",0,"vfs_find_request");
+    check("folder/MENU.DAT",0,"vfs_find_basename");
+    index.vfs.clear();
+    check("folder/MENU.DAT",1,"host_ordinary");
+    index.host.erase("_work/Data/Scripts/_compiled/folder/MENU.DAT");
+    check("folder/MENU.DAT",2,"host_localized_full");
+    index.host.erase("_work/Data/Scripts_RU/_compiled/folder/MENU.DAT");
+    check("folder/MENU.DAT",3,"host_localized_basename");
     }
 
   // Each old addon field is checked explicitly against the separately bound engine record.
@@ -3600,6 +3625,7 @@ struct BaseContentContract {
             "texture, mesh, model and font indices must contain files");
     modelCount=models(base);
     fontCount=fonts(base,resources);
+    programIdentityPrecedence();
     programCount=programs(base,censusPath);
     modelFixtures(temporary);
     for(const auto& [key,file]:resources.baseTextures.files) {

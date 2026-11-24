@@ -25,6 +25,7 @@ struct GlobalWrite {
 using Step = std::variant<Call,GlobalWrite>;
 struct Definitions {
   std::unordered_map<uint32_t,std::vector<Step>> placements;
+  std::optional<PlacementDefinitions::KhorinisLateChapters> khorinisLateChapters;
   };
 
 bool enabled();

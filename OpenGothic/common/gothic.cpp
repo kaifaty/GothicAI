@@ -8,10 +8,10 @@
 #include <cstring>
 #include <cctype>
 #include <cassert>
+#include <cstdlib>
 
 #if defined(__GLIBC__)
 #include <chrono>
-#include <cstdlib>
 #include <malloc.h>
 #endif
 
@@ -632,15 +632,24 @@ std::string_view Gothic::menuMain() const {
   }
 
 std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
-  return createPhoenixVm(loadScript(datFile,lang));
+  return createPhoenixVm(loadScript(datFile,lang),datFile);
   }
 
-std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(daedalus::DaedalusScript sc) {
+std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(daedalus::DaedalusScript sc, std::string_view datFile) {
   setupCommonScriptClasses(sc);
 
   auto vm = std::make_unique<daedalus::DaedalusVm>(std::move(sc), daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  enableScriptAudit(*vm,datFile);
   setupVmCommonApi(*vm);
   return vm;
+  }
+
+void Gothic::enableScriptAudit(daedalus::DaedalusVm& vm, std::string_view datFile) {
+  const auto* enabled = std::getenv("OPENGOTHIC_NATIVE_SCRIPT_AUDIT");
+  if(enabled==nullptr || std::string_view(enabled)!="1")
+    return;
+  vm.require_native_execution(datFile);
+  Log::i("native-script-audit: armed program=",datFile);
   }
 
 daedalus::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {

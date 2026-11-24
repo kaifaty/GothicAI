@@ -10,8 +10,6 @@
 using namespace Tempest;
 using daedalus::DaedalusDataType;
 
-static constexpr uint8_t SaveFormat = 1;
-
 static std::string upper(std::string_view s) {
   std::string r(s);
   for(auto& c:r)
@@ -93,29 +91,21 @@ daedalus::DaedalusSymbol* OwnSymbols::add(const Entry& e, std::string& why) {
   }
 
 void OwnSymbols::save(Serialize& fout) const {
-  fout.write(SaveFormat,uint32_t(list.size()));
-  for(auto& e:list)
-    fout.write(uint8_t(e.kind),e.name,e.like,e.index);
+  ScriptVars::writeSymbolDefinitions(fout,list);
   }
 
 bool OwnSymbols::load(Serialize& fin) {
-  uint8_t  format = 0;
-  uint32_t size   = 0;
-  fin.read(format,size);
-  if(format!=SaveFormat) {
-    Log::e("[symbols] a save of format ",int(format),", this game reads ",int(SaveFormat),": none made");
+  const auto [format,count] = ScriptVars::readSymbolHeader(fin);
+  if(format!=ScriptVars::SymbolFormat) {
+    Log::e("[symbols] a save of format ",int(format),", this game reads ",int(ScriptVars::SymbolFormat),": none made");
     return false;
     }
 
   bool same = true;
-  for(uint32_t i=0; i<size; ++i) {
-    uint8_t kind = 0;
-    Entry   e;
-    fin.read(kind,e.name,e.like,e.index);
-    e.kind = Kind(kind);
-
+  for(uint32_t i=0; i<count; ++i) {
+    const auto e = ScriptVars::readSymbolDefinition(fin);
     std::string why;
-    auto*       s = kind<=uint8_t(Kind::Npc) ? add(e,why) : nullptr;
+    auto*       s = e.kind==Kind::Int || e.kind==Kind::Npc ? add(e,why) : nullptr;
     if(s==nullptr) {
       Log::e("[symbols] ",e.name," is not made again: ",why.empty() ? "unknown kind" : why);
       same = false;

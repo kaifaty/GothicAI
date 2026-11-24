@@ -94,6 +94,23 @@ bool PlacementDefinitionRuntime::enabled() {
 PlacementDefinitionRuntime::Definitions PlacementDefinitionRuntime::resolve(
     const PlacementDefinitions::Library& library, const daedalus::DaedalusScript& script) {
   Definitions definitions;
+  if(library.khorinisLateChapters) {
+    const auto validate = [&script](const auto& groups) {
+      for(const auto& group:groups)
+        for(const auto& row:group) {
+          const auto* instance=script.find_symbol_by_index(row.instance);
+          const auto* point=script.find_symbol_by_index(row.point);
+          const auto* external=script.find_symbol_by_index(row.external);
+          if(!instance || instance->type()!=Type::INSTANCE || !instance->is_const() ||
+             !point || point->type()!=Type::STRING || !point->is_const() || point->count()==0 || point->is_member() ||
+             !external || !external->is_external() || (external->name()!="WLD_INSERTNPC" && external->name()!="WLD_INSERTITEM"))
+            throw std::runtime_error("placement definitions: invalid Khorinis chapter placement symbol");
+          }
+      };
+    validate(library.khorinisLateChapters->chapter4);
+    validate(library.khorinisLateChapters->chapter5);
+    definitions.khorinisLateChapters=library.khorinisLateChapters;
+    }
   std::map<std::string,std::pair<uint32_t,uint8_t>> literals;
   for(const auto& symbol:script.symbols())
     if(symbol.type()==Type::STRING && symbol.is_const() && !symbol.is_member())

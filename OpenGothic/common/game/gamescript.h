@@ -50,6 +50,15 @@ class GameScript final : public GameRules {
     using PerDist = ::PerDist;
     using PhysicalSpell = ::PhysicalSpell;
 
+    enum class SymbolKind { Other, Npc, Item, Info, Constant, Variable, Function };
+
+    std::optional<SymbolKind> symbolKind(std::string_view name) const;
+    std::optional<int32_t>    globalIntSymbol(std::string_view name) const;
+    std::string_view          stringSymbol(std::string_view name, std::string_view fallback) const;
+    bool                      isPartyMember(const Npc& npc);
+    std::optional<bool>       queryNpcKnowsInfo(const Npc& npc, std::string_view name);
+    std::optional<std::string> itemNameForQuery(size_t instance);
+
     std::string_view symbolName(size_t id) override;
     ScriptFn         findFunction(std::string_view name) override;
     int32_t          intSymbol(std::string_view name, int32_t fallback) override;
@@ -446,7 +455,7 @@ class GameScript final : public GameRules {
     void  loadNativeAmbientInfos();
     void  loadNativeTrainingHelpers();
     auto  buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol&;
-    auto  readDialogInfo(daedalus::DaedalusSymbol& sym) -> std::shared_ptr<daedalus::IInfo>;
+    bool  readDialogInfos();
 
     Item* findItem(daedalus::IItem* handle);
     Item* findItemById(size_t id);
@@ -780,6 +789,7 @@ class GameScript final : public GameRules {
     void ai_pointat          (std::shared_ptr<daedalus::INpc> npcRef, std::string_view waypoint);
     void ai_pointatnpc       (std::shared_ptr<daedalus::INpc> npcRef, std::shared_ptr<daedalus::INpc> otherRef);
     int  ai_printscreen      (std::string_view msg, int posx, int posy, std::string_view font, int timesec);
+    void printScreenFor(Npc* npc, std::string_view msg, int posx, int posy, std::string_view font, int timesec);
 
     int  mob_hasitems        (std::string_view tag, int item);
 

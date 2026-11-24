@@ -235,7 +235,8 @@ class Gothic final : public GameServices, public GameHost {
 
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
     std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
-    std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(daedalus::DaedalusScript sc);
+    std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(daedalus::DaedalusScript sc, std::string_view datFile);
+    static void                            enableScriptAudit(daedalus::DaedalusVm& vm, std::string_view datFile);
     daedalus::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
     void                                  setupCommonScriptClasses(daedalus::DaedalusScript &sc);
     void                                  setupVmCommonApi(daedalus::DaedalusVm &vm);

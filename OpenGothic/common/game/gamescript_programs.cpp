@@ -2,9 +2,15 @@
 
 #include <Tempest/Log>
 
+#include "basestore.h"
+#include "contentcensus.h"
+#include "game/definitions/basescripts.h"
 #include "gothic.h"
+#include "programdata.h"
+#include "resources.h"
 #include "world/objects/npc.h"
 
+#include <algorithm>
 #include <cstdlib>
 
 GameStoryExternals::GameStoryExternals(GameScript& script, bool effects)
@@ -63,21 +69,66 @@ storygraph::Value GameStoryExternals::call(const daedalus::DaedalusSymbol& fn, c
   }
 
 GameScript::StockPrograms::StockPrograms(GameScript& script)
-  : vm(script.getVm()), code(vm), engine(script,true), interpreter(vm,engine) {
+  : script(script), vm(script.getVm()), engine(script,true), interpreter(vm,engine) {
   interpreter.allowUnresolvedScriptCalls = false;
   interpreter.resolveProgram = [this](const daedalus::DaedalusSymbol& fn) {
     return &entry(fn.index()).program;
     };
   }
 
-const GameScript::StockPrograms::Entry& GameScript::StockPrograms::entry(uint32_t id) {
-  const auto [it,inserted] = programs.try_emplace(id);
-  if(inserted) {
-    it->second.program = storygraph::liftProgram(vm,code,id);
-    if(it->second.program.error.empty())
-      it->second.calls = code.summarize(id).calls;
+const StockStoryPrograms::Catalog* GameScript::StockPrograms::preparedCatalog() {
+  if(!preparedChecked) {
+    const auto base = baseProgramIndex().dir.parent_path();
+    const auto section = StockStoryPrograms::section(base);
+    try {
+      if(std::filesystem::exists(section)) {
+        prepared = StockStoryPrograms::read(base);
+        if(auto* census = Resources::contentCensus())
+          census->replaced("GOTHIC.DAT:story-programs","base/"+section.lexically_relative(base).generic_string());
+        }
+      }
+    catch(const std::runtime_error& error) {
+      throw BaseStore::Error(error.what());
+      }
+    preparedChecked = true;
     }
-  return it->second;
+  return prepared ? &*prepared : nullptr;
+  }
+
+const GameScript::StockPrograms::Entry& GameScript::StockPrograms::entry(uint32_t id) {
+  if(const auto it = programs.find(id); it!=programs.end())
+    return it->second;
+  Entry entry;
+  if(const auto* catalog = preparedCatalog()) {
+    const auto found = catalog->programs.find(id);
+    if(found!=catalog->programs.end()) {
+      const auto& record = found->second;
+      const auto* symbol = vm.find_symbol_by_index(id);
+      if(symbol==nullptr || symbol->name()!=record.name || symbol->type()!=daedalus::DaedalusDataType::FUNCTION ||
+         symbol->is_external() || symbol->has_local_variables_enabled() ||
+         (symbol->has_return() ? uint32_t(symbol->rtype()) : 0u)!=record.returnType)
+        throw BaseStore::Error("prepared story function differs from game symbols: "+record.name);
+      const auto params = vm.find_parameters_for_function(symbol);
+      if(!std::equal(params.begin(),params.end(),record.parameters.begin(),record.parameters.end(),
+                     [](const auto& actual, uint32_t expected) { return uint32_t(actual.type())==expected; }))
+        throw BaseStore::Error("prepared story function signature differs: "+record.name);
+      for(auto id : record.calls) {
+        const auto* child = vm.find_symbol_by_index(id);
+        if(child==nullptr || !catalog->symbols.contains(child->name()) || catalog->symbols.at(child->name())!=id)
+          throw BaseStore::Error("prepared story function dependency differs: "+record.name);
+        entry.calls.insert(child->name());
+        }
+      entry.program = record.program;
+      return programs.emplace(id,std::move(entry)).first->second;
+      }
+    }
+
+  if(!code)
+    code = std::make_unique<storygraph::Bytecode>(vm);
+  entry.program = storygraph::liftProgram(vm,*code,id);
+  if(entry.program.error.empty())
+    entry.calls = code->summarize(id).calls;
+  return programs.emplace(id,std::move(entry)).first->second;
   }
 
 bool GameScript::StockPrograms::isSupported(const daedalus::DaedalusSymbol& fn, std::unordered_set<uint32_t>& checked) {
@@ -102,6 +153,8 @@ bool GameScript::StockPrograms::run(const daedalus::DaedalusSymbol& fn, int32_t&
   if(fn.type()!=daedalus::DaedalusDataType::FUNCTION || fn.is_external() || fn.has_local_variables_enabled() ||
      !vm.find_parameters_for_function(&fn).empty())
     return false;
+  if(runPrepared(fn,result,failed))
+    return true;
   // Preflight every nested function before the first effect. The interpreter also
   // rejects an unresolved call if an active override changes during execution.
   std::unordered_set<uint32_t> checked;

@@ -805,6 +805,10 @@ void build(const fs::path& gothic, const fs::path& out, const Progress& progress
   require(convertActivityDefinitions(out)==0,"activity definition import failed");
   if(progress) progress("base import: gameplay definitions");
   convertGameplayDefinitions(out);
+  if(progress) progress("base import: dialog metadata");
+  convertDialogInfos(out);
+  if(progress) progress("base import: stock story programs");
+  convertStockStoryPrograms(out);
   if(progress) progress("base import: dialog line library");
   require(convertOutputUnits(gothic,out/"outputunits",false)==0,"dialog line library import failed");
   if(progress) progress("base import: sounds and speech");

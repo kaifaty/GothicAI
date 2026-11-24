@@ -19,6 +19,7 @@ include(../../OpenGothic/cmake/BaseImport.cmake)
 include(../../OpenGothic/cmake/BaseRuntime.cmake)
 include(../../OpenGothic/cmake/VideoImport.cmake)
 add_subdirectory(../../OpenGothic/common/daedalus daedalus)
+add_subdirectory(../../OpenGothic/ai_bridge/storygraph storygraph EXCLUDE_FROM_ALL)
 if(MSVC)
   # M_PI in the Bink decoder; OpenGothic/CMakeLists.txt defines this for every target
   target_compile_definitions(gothic-video-import PRIVATE _USE_MATH_DEFINES)

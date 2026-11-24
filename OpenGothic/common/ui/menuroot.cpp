@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 
+#include "contentcensus.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
 #include "game/definitions/baseprogram.h"
@@ -9,6 +10,7 @@
 #include "programdata.h"
 #include "ui/gamemenu.h"
 #include "gothic.h"
+#include "resources.h"
 #include "settings.h"
 
 #include <algorithm>
@@ -46,14 +48,17 @@ void MenuRoot::initSettings() {
   if(lang==menuLanguage && (vm!=nullptr || records.has_value()))
     return;
 
-  std::string sha;
-  auto script = loadBaseProgram("MENU.DAT",lang,&sha);
-  const auto base = baseProgramIndex().dir.parent_path();
-  if(sha==MenuDefinitions::stockProgram && std::filesystem::exists(MenuDefinitions::section(base,sha))) {
+  const auto& index = baseProgramIndex();
+  const auto& sha = selectBaseProgram(index,"MENU.DAT",lang).source.recordSha256;
+  const auto base = index.dir.parent_path();
+  const auto section = MenuDefinitions::section(base,sha);
+  if(sha==MenuDefinitions::stockProgram && std::filesystem::exists(section)) {
     records = MenuDefinitions::read(base,sha);
+    if(auto* census = Resources::contentCensus())
+      census->replaced("MENU.DAT","base/"+section.lexically_relative(base).generic_string());
     vm.reset();
     } else {
-    vm = Gothic::inst().createPhoenixVm(std::move(script));
+    vm = Gothic::inst().createPhoenixVm(loadBaseProgram("MENU.DAT",lang),"MENU.DAT");
     vm->register_external("apply_options_video",applyVideoOptions);
     records.reset();
     }

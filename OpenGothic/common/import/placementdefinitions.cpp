@@ -4,6 +4,7 @@
 #include "asset/placementdefinitions.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
+#include "game/definitions/gameplaydefinitions.h"
 #include "programdata.h"
 
 #include <rapidjson/document.h>
@@ -431,13 +432,58 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
   put(json,"steps",std::move(steps),allocator);
   return json;
   }
+template<size_t N>
+Json lateChapterGroups(const DaedalusScript& script,std::string_view root,const std::array<uint32_t,N>& offsets,
+                       const std::array<size_t,N>& sizes,Allocator& allocator) {
+  const auto* chapter=script.find_symbol_by_name(root);
+  require(chapter && chapter->type()==Type::FUNCTION && !chapter->is_external(),"missing placement chapter "+std::string(root));
+  Json groups(rapidjson::kArrayType);
+  for(size_t i=0;i<N;++i) {
+    auto pc=chapter->address()+offsets[i];
+    Json rows(rapidjson::kArrayType);
+    for(size_t j=0;j<sizes[i];++j) {
+      require(pc<script.size() && script.size()-pc>=15,"truncated chapter placement in "+std::string(root));
+      const auto instance=script.instruction_at(pc);
+      const auto point=script.instruction_at(pc+5);
+      const auto insert=script.instruction_at(pc+10);
+      const auto* what=script.find_symbol_by_index(uint32_t(instance.immediate));
+      const auto* where=script.find_symbol_by_index(point.symbol);
+      const auto* external=script.find_symbol_by_index(insert.symbol);
+      require(instance.op==Op::PUSHI && what && what->type()==Type::INSTANCE && what->is_const() &&
+              point.op==Op::PUSHV && where && where->type()==Type::STRING && where->is_const() &&
+              insert.op==Op::BE && external && (external->name()=="WLD_INSERTNPC" || external->name()=="WLD_INSERTITEM"),
+              "unexpected literal chapter placement in "+std::string(root));
+      Json row(rapidjson::kArrayType);
+      row.PushBack(Json(what->index()),allocator);
+      row.PushBack(Json(where->index()),allocator);
+      row.PushBack(Json(external->index()),allocator);
+      rows.PushBack(row,allocator);
+      pc+=15;
+      }
+    groups.PushBack(rows,allocator);
+    }
+  return groups;
+  }
 Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
   Json json(rapidjson::kObjectType);
+  const bool stock=program.sha256==GameplayDefinitions::stockProgram;
   put(json,"format",text("gothic-placement-definitions",allocator),allocator);
-  put(json,"version",Json(1),allocator);
+  put(json,"version",Json(stock ? 2 : 1),allocator);
   put(json,"program_name",text(program.name,allocator),allocator);
   put(json,"program_sha256",text(program.sha256,allocator),allocator);
   put(json,"string_encoding",text("unicode-byte-mapping",allocator),allocator);
+  if(stock) {
+    const auto script=DaedalusScript::from_program(program.data);
+    // Offsets of the literal insert calls within the verified stock functions.
+    constexpr std::array<uint32_t,6> offsets4{82,328,1281,1552,2923,3330};
+    constexpr std::array<uint32_t,7> offsets5{160,191,206,482,554,1000,1772};
+    Json chapters(rapidjson::kObjectType);
+    put(chapters,"chapter_4",lateChapterGroups(script,"B_ENTER_NEWWORLD_KAPITEL_4",offsets4,
+                                              KhorinisLateChapters::chapter4Sizes,allocator),allocator);
+    put(chapters,"chapter_5",lateChapterGroups(script,"B_ENTER_NEWWORLD_KAPITEL_5",offsets5,
+                                              KhorinisLateChapters::chapter5Sizes,allocator),allocator);
+    put(json,"khorinis_late_chapters",std::move(chapters),allocator);
+    }
   return json;
   }
 using DefinitionJson::difference;

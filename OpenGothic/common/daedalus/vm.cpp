@@ -6,6 +6,9 @@
 #include "vm.h"
 
 
+#include <cinttypes>
+#include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 namespace daedalus {
@@ -103,6 +106,27 @@ namespace daedalus {
 		auto inst = std::make_shared<DaedalusOpaqueInstance>(*cls, find_class_members(*cls));
 		init_instance(inst, sym);
 		return inst;
+	}
+
+	uint64_t DaedalusVm::add_instruction_observer(InstructionObserver callback) {
+		auto id = ++_m_next_instruction_observer;
+		_m_instruction_observers.emplace_back(id, std::move(callback));
+		return id;
+	}
+
+	void DaedalusVm::remove_instruction_observer(uint64_t id) {
+		std::erase_if(_m_instruction_observers, [id](auto const& entry) { return entry.first == id; });
+	}
+
+	void DaedalusVm::require_native_execution(std::string_view program) {
+		add_instruction_observer([program = std::string(program)](const auto& vm, const auto& instruction) {
+			const auto* symbol = vm._m_call_stack.empty() ? nullptr : vm._m_call_stack.back().function;
+			std::fprintf(stderr, "native-script-audit: bytecode execution attempted program=%s symbol=%s pc=%" PRIu32 " opcode=%u\n",
+			             program.c_str(), symbol ? symbol->name().c_str() : "<unknown>", vm.pc(), unsigned(instruction.op));
+			std::fflush(stderr);
+			// Compatibility paths catch script errors; an audit violation must reach the runner.
+			std::_Exit(EXIT_FAILURE);
+		});
 	}
 
 	void DaedalusVm::observe_calls(CallObserver callback) {
@@ -203,6 +227,7 @@ namespace daedalus {
 
 	bool DaedalusVm::exec() {
 		auto instr = instruction_at(_m_pc);
+		for (auto const& observer : _m_instruction_observers) observer.second(*this, instr);
 		if (_m_instruction_observer) _m_instruction_observer(instr);
 
 		try {

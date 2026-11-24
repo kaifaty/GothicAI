@@ -53,8 +53,7 @@ void utf8(Writer& w, std::string_view k, std::string_view v) {
   }
 
 std::string symbolOf(World& world, size_t cls) {
-  auto sym = world.script().findSymbol(cls);
-  return sym!=nullptr ? sym->name() : std::string();
+  return std::string(world.script().symbolName(cls));
   }
 
 std::string npcId(World& world, Npc& npc) {
@@ -65,10 +64,7 @@ std::string npcId(World& world, Npc& npc) {
 
 // what a mob is called in the game: its focus name is a script string (MOBNAME_BOOKSBOARD), shown by value
 std::string mobName(World& world, std::string_view focus) {
-  auto sym = world.script().findSymbol(focus);
-  if(sym!=nullptr && sym->type()==daedalus::DaedalusDataType::STRING)
-    return sym->get_string();
-  return std::string(focus);
+  return std::string(world.script().stringSymbol(focus,focus));
   }
 
 std::string_view weapon(const Npc& npc) {
@@ -126,17 +122,9 @@ std::string_view attitude(Attitude a) {
   return "neutral";
   }
 
-bool partyMember(World& world, const Npc& npc) {
-  auto* s = world.script().getVm().find_symbol_by_name("AIV_PARTYMEMBER");
-  if(s==nullptr || s->type()!=daedalus::DaedalusDataType::INT)
-    return false;
-  const int32_t aiv = s->get_int(0);
-  return aiv>=0 && uint32_t(aiv)<daedalus::INpc::aivar_count && npc.handlePtr()->aivar[size_t(aiv)]!=0;
-  }
-
 bool distantMonster(World& world, const Npc& self, const Npc& other) {
   const auto* pl = world.player();
-  return !other.isDown() && other.isMonster() && partyMember(world,self) &&
+  return !other.isDown() && other.isMonster() && world.script().isPartyMember(self) &&
          (world.script().personAttitude(other,self)==ATT_HOSTILE ||
           (pl!=nullptr && world.script().personAttitude(other,*pl)==ATT_HOSTILE));
   }
@@ -355,7 +343,7 @@ void writeView(Writer& w, World& world, Npc& npc) {
   struct Seen { Npc* npc; float dist; bool noticed; };
   std::vector<Seen> seen;
   const float range = std::min(float(npc.handle().senses_range),SightMax);
-  const bool companion = partyMember(world,npc);
+  const bool companion = world.script().isPartyMember(npc);
   world.detectNpc(npc.position(),companion ? std::max(range,MonsterSight) : range,[&](Npc& other) {
     if(&other==&npc || other.isPlayer())
       return;

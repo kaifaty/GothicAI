@@ -1397,7 +1397,9 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
   {
     Serialize out(writer);
     out.setEntry("game/daedalus");
-    out.write(uint32_t(2));
+    out.write(uint32_t(3));
+    out.write(uint32_t(daedalus::DaedalusDataType::INSTANCE),uint8_t(3),
+              std::string_view("UNAVAILABLE_TEST_INVENTORY_SYMBOL"),uint32_t(0),uint32_t(4242));
     out.write(uint32_t(daedalus::DaedalusDataType::INT),std::string("CURRENTLEVEL"),uint32_t(1),khorinis);
     out.write(uint32_t(daedalus::DaedalusDataType::INT),std::string("ENTERADW_KAPITEL2"),uint32_t(1),int32_t(7));
   }
@@ -1408,7 +1410,7 @@ void prepareRoutineWitnessWorld(World& world, bool events) {
   require(NpcDefinitionContract::currentStoryWorld(script)==khorinis &&
           std::ranges::count(NpcDefinitionContract::worldEntryLatches(script),7)==1 &&
           script.intSymbol("ENTERADW_KAPITEL2",0)==7,
-          "world entry: the legacy variables restore the current world and the engine latch");
+          "world entry: the legacy variables after an unknown inventory reference restore the current world and engine latch");
   level->set_int(before.at("CURRENTLEVEL"));
   script.findSymbol("ENTERADW_KAPITEL2")->set_int(before.at("ENTERADW_KAPITEL2"));
   std::puts("Addon World entry: Init order, live chapter, room assignments, NPC aliases and eight chapter latches match stock");

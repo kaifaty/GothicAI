@@ -1,5 +1,7 @@
 #include "gamescript.h"
 
+#include "gamescript_inventorytransfer.h"
+
 #include "game/npcactivityhost.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -1472,35 +1474,26 @@ int32_t GameScript::giveInventoryItems(const std::shared_ptr<daedalus::INpc>& gi
   findSymbol("B_GIVEINVITEMS.ITEMINSTANCE")->set_int(item);
   findSymbol("B_GIVEINVITEMS.TAKER")->set_instance(taker);
   findSymbol("B_GIVEINVITEMS.GIVER")->set_instance(giver);
-  const bool giving = npc_isplayer(giver);
-  if(giving && amount>npc_hasitems(giver,item))
-    return 0;
-  if(amount==0)
-    return 1;
-
-  // Stock scripts may grant the full amount even if an NPC giver has fewer items.
-  npc_removeinvitems(giver,item,amount);
-  createinvitems(taker,item,amount);
+  const auto string = [this](const char* symbol) -> const std::string& { return findSymbol(symbol)->get_string(); };
+  const auto integer = [this](const char* symbol) { return findSymbol(symbol)->get_int(); };
+  const InventoryTransfer::Text text {
+    uint32_t(findSymbolIndex("ITMI_GOLD")),
+    string("PRINT_GOLDGEGEBEN"), string("PRINT_GOLDERHALTEN"),
+    string("PRINT_ADDON_GEGEBEN"), string("PRINT_ADDON_ERHALTEN"),
+    string("PRINT_ITEMSGEGEBEN"), string("PRINT_ITEMSERHALTEN"),
+    integer("YPOS_GOLDGIVEN"), integer("YPOS_GOLDTAKEN"), integer("YPOS_ITEMGIVEN"), integer("YPOS_ITEMTAKEN")};
   const auto held = std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance());
-  const auto name = held ? held->name : std::string{};
-  findSymbol("B_GIVEINVITEMS.ITEMNAME")->set_string(name);
-
-  if(giving || npc_isplayer(taker)) {
-    const auto string = [this](const char* symbol) -> const std::string& { return findSymbol(symbol)->get_string(); };
-    const bool gold = uint32_t(item)==findSymbolIndex("ITMI_GOLD");
-    std::string message;
-    if(gold)
-      message = std::to_string(amount)+string(giving ? "PRINT_GOLDGEGEBEN" : "PRINT_GOLDERHALTEN");
-    else if(amount==1)
-      message = name+string(giving ? "PRINT_ADDON_GEGEBEN" : "PRINT_ADDON_ERHALTEN");
-    else
-      message = std::to_string(amount)+string(giving ? "PRINT_ITEMSGEGEBEN" : "PRINT_ITEMSERHALTEN")+" ("+name+")";
-    const auto position = gold ? (giving ? "YPOS_GOLDGIVEN" : "YPOS_GOLDTAKEN")
-                               : (giving ? "YPOS_ITEMGIVEN" : "YPOS_ITEMTAKEN");
-    findSymbol("B_GIVEINVITEMS.CONCATTEXT")->set_string(message);
-    ai_printscreen(message,-1,findSymbol(position)->get_int(),string("FONT_SCREENSMALL"),2);
+  const auto transfer = InventoryTransfer::run(findNpc(giver),findNpc(taker),uint32_t(item),amount,
+                                              held ? std::string_view(held->name) : std::string_view{},text);
+  if(transfer.itemChanged)
+    storeItem(transfer.item);
+  if(transfer.itemName)
+    findSymbol("B_GIVEINVITEMS.ITEMNAME")->set_string(*transfer.itemName);
+  if(transfer.notice) {
+    findSymbol("B_GIVEINVITEMS.CONCATTEXT")->set_string(transfer.notice->text);
+    ai_printscreen(transfer.notice->text,-1,transfer.notice->y,string("FONT_SCREENSMALL"),2);
     }
-  return 1;
+  return transfer.value;
   }
 
 bool GameScript::runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {

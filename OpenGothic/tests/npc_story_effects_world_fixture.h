@@ -317,9 +317,6 @@ auto storyBeforeSave(World& world) {
   const auto savedItem=vm.global_item()->get_instance();
   StoryRuntime story(nullptr);
   StoryRuntime::Bind dialogContext(vm,giver,player);
-  story.ensureLifter();
-  const auto program=storygraph::liftProgram(vm,story.bytecode(),dialog->index());
-  require(program.error.empty(),program.error.c_str());
 
   storygraph::Program handIn;
   handIn.returns=true;
@@ -332,7 +329,15 @@ auto storyBeforeSave(World& world) {
     require(result.ok,result.error.c_str());
     return result.returned.i;
     };
+  auto* amount=vm.find_symbol_by_name("B_GIVEINVITEMS.AMOUNT");
+  auto* instance=vm.find_symbol_by_name("B_GIVEINVITEMS.ITEMINSTANCE");
+  auto* from=vm.find_symbol_by_name("B_GIVEINVITEMS.GIVER");
+  auto* to=vm.find_symbol_by_name("B_GIVEINVITEMS.TAKER");
+  auto* name=vm.find_symbol_by_name("B_GIVEINVITEMS.ITEMNAME");
+  auto* notice=vm.find_symbol_by_name("B_GIVEINVITEMS.CONCATTEXT");
+  require(amount && instance && from && to && name && notice,"the transfer fixture needs all transfer variables");
   std::vector<std::string> original;
+  std::string originalItemName,originalNotice;
   for(bool native:{false,true}) {
     if(native && (!savedEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off))
       continue;
@@ -341,24 +346,59 @@ auto storyBeforeSave(World& world) {
     giver->delItem(item,uint32_t(giver->itemCount(item)));
     player->delItem(item,uint32_t(player->itemCount(item)));
     vm.global_item()->set_instance(savedItem);
-    size_t bytecode=0;
-    vm.observe_instructions([&](const auto&) { bytecode+=vm.pc()==transfer->address(); });
+    size_t bytecode=0,opcodes=0;
+    bool countDialog=false;
+    struct Observer {
+      daedalus::DaedalusVm& vm;
+      uint64_t id;
+      ~Observer() { vm.remove_instruction_observer(id); }
+      } observer{vm,vm.add_instruction_observer([&](const auto& machine,const auto&) {
+        bytecode+=machine.pc()==transfer->address();
+        opcodes+=countDialog;
+        })};
     require(give(0)==1 && give(1)==0 && vm.global_item()->get_instance()==savedItem &&
             giver->itemCount(item)==0 && player->itemCount(item)==0 && giver->aiQueueFront()==nullptr,
             "zero and refused player hand-ins must leave both inventories, ITEM and the queue alone");
-    const auto result=interpreter.run(program);
-    require(result.ok,result.error.c_str());
-    require(giver->itemCount(item)==0 && player->itemCount(item)==1 &&
-            vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(player->getItem(item)->handlePtr()),
-            "Lares's lifted dialog must grant the requested ornament and set ITEM, even from an empty giver");
+    player->addItem(item,1);
     require(give(1)==1 && giver->itemCount(item)==1 && player->itemCount(item)==0 &&
             vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(giver->getItem(item)->handlePtr()),
             "the hand-in must remove the ornament from the player and set ITEM to Lares's copy");
-    vm.observe_instructions({});
-    require(bytecode==(native ? 0u : 4u),"the same lifted dialog and hand-in must use the selected transfer executor");
+
+    // Leave the awarded item and the dialog's own variable writes in the saved world.
+    giver->delItem(item,1);
+    vm.global_item()->set_instance(savedItem);
+    name->set_string("");
+    notice->set_string("");
+    if(native) {
+      countDialog=true;
+      int32_t result=0;
+      bool failed=true;
+      const bool handled=script.invokeStockProgram(*dialog,result,&failed);
+      countDialog=false;
+      require(handled && !failed && NpcDefinitionContract::hasPreparedStockProgram(script,*dialog) && opcodes==0,
+              "the exact stock Lares dialog must execute from the prepared catalog without VM instructions");
+      } else {
+      vm.call_function<void>(dialog);
+      }
+    require(giver->itemCount(item)==0 && player->itemCount(item)==1 &&
+            vm.global_item()->get_instance()==std::static_pointer_cast<daedalus::IItem>(player->getItem(item)->handlePtr()),
+            "Lares's dialog must grant the requested ornament and set ITEM, even from an empty giver");
+    require(amount->get_int()==1 && instance->get_int()==int32_t(item) &&
+            from->get_instance()==std::static_pointer_cast<daedalus::INpc>(giver->handlePtr()) &&
+            to->get_instance()==std::static_pointer_cast<daedalus::INpc>(player->handlePtr()) &&
+            !name->get_string().empty() && !notice->get_string().empty(),
+            "Lares's dialog must write the transfer arguments, item name and notification text");
+    if(native) {
+      require(name->get_string()==originalItemName && notice->get_string()==originalNotice,
+              "the prepared dialog must preserve the localized transfer variables");
+      } else {
+      originalItemName=name->get_string();
+      originalNotice=notice->get_string();
+      }
+    require(bytecode==(native ? 0u : 4u),"the dialog and hand-in must use the selected transfer executor");
     auto queue=NpcDefinitionContract::queue(*giver);
     require(queue.size()==2,"each successful hero transfer must enqueue one notification on SELF");
-    for(auto y:{"YPOS_ITEMTAKEN","YPOS_ITEMGIVEN"}) {
+    for(auto y:{"YPOS_ITEMGIVEN","YPOS_ITEMTAKEN"}) {
       const auto line=queue.pop();
       require(line.act==AI_PrintScreen && line.i0==-1 && line.i1==vm.find_symbol_by_name(y)->get_int() &&
               line.i2==2 && line.s1==vm.find_symbol_by_name("FONT_SCREENSMALL")->get_string(),
@@ -369,7 +409,7 @@ auto storyBeforeSave(World& world) {
     else
       original=activityQueue(*giver);
     }
-  const auto itemText=vm.find_symbol_by_name("B_GIVEINVITEMS.ITEMNAME")->get_string();
+  const auto itemText=name->get_string();
   vm.global_item()->set_instance(savedItem);
   NpcDefinitionContract::queue(*giver)=savedQueue;
   events=savedEvents;
@@ -379,11 +419,11 @@ auto storyBeforeSave(World& world) {
     requireJournal(script.questLog());
     const auto* lares=activityNpc(restored,"VLK_449_LARES");
     const auto* hero=restored.player();
-    require(lares && hero && lares->itemCount(item)==1 && hero->itemCount(item)==0 &&
+    require(lares && hero && lares->itemCount(item)==0 && hero->itemCount(item)==1 &&
             vm.find_symbol_by_name("B_GIVEINVITEMS.ITEMNAME")->get_string()==itemText &&
             vm.find_symbol_by_name("B_GIVEINVITEMS.AMOUNT")->get_int()==1 &&
             vm.find_symbol_by_name("B_GIVEINVITEMS.TAKER")->get_instance().get()==
-              static_cast<const daedalus::INpc*>(lares->handlePtr().get()),
+              static_cast<const daedalus::INpc*>(hero->handlePtr().get()),
             "the transferred ornament and the script transfer locals must survive saving and loading");
     };
   }

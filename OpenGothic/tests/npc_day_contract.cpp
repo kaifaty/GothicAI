@@ -138,6 +138,9 @@ void checkOverrides() {
   vm.unsafe_call_bl(vm.find_symbol_by_name("HELPER"));
   check(overrides==3 && notifications==2,"unsafe_call_bl reports an overridden call once");
 
+  unsigned independentInstructions=0, offlineInstructions=0;
+  const auto observer=vm.add_instruction_observer([&](const auto&,const auto&) { ++independentInstructions; });
+  vm.observe_instructions([&](const auto&) { ++offlineInstructions; });
   stats=DayScriptStats::attach(vm,{});
   vm.call_function<void>("OUTSIDE");
   rapidjson::Document counters;
@@ -145,7 +148,18 @@ void checkOverrides() {
   check(counters["symbols"]["HELPER"]==1 && !counters["instructions_by_symbol"].HasMember("HELPER") &&
         counters["instructions_by_symbol"]["OUTSIDE"]==2 && counters["unattributed_instructions"]==0,
         "overridden engine calls leave no executed bytecode for the helper");
+  check(independentInstructions==2 && offlineInstructions==2,"day probing coexists with other instruction observers");
   stats->stop(vm);
+  vm.call_function<void>("OUTSIDE");
+  check(independentInstructions==4 && offlineInstructions==4,"stopping the day probe preserves other instruction observers");
+  vm.remove_instruction_observer(observer);
+  vm.observe_instructions({});
+  vm.call_function<void>("OUTSIDE");
+  check(independentInstructions==4 && offlineInstructions==4,"instruction observers stop independently");
+
+  vm.require_native_execution("synthetic");
+  vm.unsafe_call_bl(vm.find_symbol_by_name("HELPER"));
+  check(overrides==7,"strict instruction audit permits native overrides");
   }
 
 void checkNestedStoryPrograms() {

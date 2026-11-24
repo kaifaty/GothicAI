@@ -2,6 +2,7 @@
 
 #include "storygraph/eval.h"
 #include "game/gamescript.h"
+#include "game/gamescript_programs.h"
 #include "game/serialize.h"
 #include "graphics/mesh/skeleton.h"
 #include "world/objects/interactive.h"
@@ -39,6 +40,13 @@ struct NpcDefinitionContract {
   static bool& activityEventsOn(GameScript& script) { return script.activityEvents; }
   static const auto& dialogInfos(const GameScript& script) { return script.dialogsInfo; }
   static int32_t dialogCondition(GameScript& script,daedalus::DaedalusSymbol* fn) { return script.dialogFunction(fn,true); }
+  static bool hasPreparedStockProgram(const GameScript& script, const daedalus::DaedalusSymbol& fn) {
+    if(!script.stockPrograms || !script.stockPrograms->prepared)
+      return false;
+    const auto& programs=script.stockPrograms->prepared->programs;
+    const auto entry=programs.find(fn.index());
+    return entry!=programs.end() && entry->second.name==fn.name();
+    }
   static auto& previousState(Npc& npc) { return npc.aiPrevState; }
   static void lastHitSpell(Npc& npc, int32_t spell) { npc.lastHitSpell=spell; }
   static ScriptFn perceptionCallback(const Npc& npc, PercType type) { return npc.perception[type].func; }

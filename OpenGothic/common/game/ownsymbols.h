@@ -1,6 +1,7 @@
 #pragma once
 
 #include "daedalus/vm.h"
+#include "game/definitions/scriptvars.h"
 
 #include <cstdint>
 #include <string>
@@ -18,19 +19,10 @@ class Serialize;
 // order before its world loads: every one gets the index it had, and the npc's of the save find theirs.
 class OwnSymbols final {
   public:
-    enum class Kind : uint8_t {
-      Int = 0,  // a global integer
-      Npc = 1,  // an npc instance made like a script's one
-      };
+    using Kind  = ScriptVars::SymbolKind;
+    using Entry = ScriptVars::SymbolDefinition;
 
-    struct Entry final {
-      Kind        kind  = Kind::Int;
-      std::string name;
-      std::string like;       // Npc: the script's instance it is made like
-      uint32_t    index = 0;  // its symbol
-      };
-
-    static constexpr std::string_view SaveEntry = "game/symbols";
+    static constexpr std::string_view SaveEntry = ScriptVars::SymbolEntry;
     static constexpr std::string_view Prefix    = "DIR_";  // every name of ours
 
     explicit OwnSymbols(daedalus::DaedalusVm& vm);

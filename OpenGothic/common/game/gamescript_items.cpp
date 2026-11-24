@@ -37,6 +37,7 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
     }
   const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
   daedalus::DaedalusVm vm(std::move(script),flags);
+  Gothic::enableScriptAudit(vm,gothic.defaultGameDatFile());
   NpcDefinitionRuntime::observeCalls(vm,npcs,baseProgramIndex().dir.parent_path(),sha256);
   PlacementDefinitionRuntime::observeCalls(vm,baseProgramIndex().dir.parent_path(),sha256);
   return vm;
@@ -46,6 +47,23 @@ auto GameScript::createItemForQuery(size_t instance) -> std::shared_ptr<ItemReco
   auto item=std::make_shared<daedalus::IItem>();
   ItemDefinitionRuntime::initialize(vm,item,vm.find_symbol_by_index(uint32_t(instance)),itemDefinitions);
   return item;
+  }
+
+std::optional<std::string> GameScript::itemNameForQuery(size_t instance) {
+  auto* symbol = findSymbol(instance);
+  if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)
+    return std::nullopt;
+
+  // A query may use a legacy initializer. Preserve the gameplay instance the symbol refers to.
+  const auto previous = symbol->get_instance();
+  std::optional<std::string> result;
+  try {
+    result = createItemForQuery(instance)->name;
+    }
+  catch(const std::exception&) {
+    }
+  symbol->set_instance(previous);
+  return result;
   }
 
 void GameScript::initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance) {

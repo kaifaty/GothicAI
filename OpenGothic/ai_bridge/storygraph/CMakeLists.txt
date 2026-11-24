@@ -37,18 +37,21 @@ endif()
 set(STORYGRAPH_SOURCES
   bytecode.cpp bytecode.h
   eval.cpp     eval.h
-  exec.cpp     exec.h
+  exec.cpp     exec.h execcore.h
   expr.cpp     expr.h
   exprjson.cpp exprjson.h
   lifter.cpp   lifter.h
   model.cpp    model.h
+  nativeexec.cpp nativeexec.h
   predicates.cpp predicates.h
   program.cpp  program.h
   vocab.h
-  ../textcodec.cpp ../textcodec.h)
+  ../textcodec.cpp ../textcodec.h
+  ../../common/game/definitions/stockstoryprograms.cpp ../../common/game/definitions/stockstoryprograms.h)
 add_library(StoryGraph STATIC ${STORYGRAPH_SOURCES})
 target_link_libraries(StoryGraph PUBLIC gothic-daedalus)
 target_include_directories(StoryGraph PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(StoryGraph PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
 # rapidjson 1.1 trips modern clang warnings; treat it as a system header
 target_include_directories(StoryGraph SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rapidjson/include)
 

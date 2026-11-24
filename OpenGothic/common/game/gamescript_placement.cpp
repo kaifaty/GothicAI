@@ -198,39 +198,19 @@ bool runIslandSpawnTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymb
   return true;
   }
 
-void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
+void loadKhorinisLateChapters(daedalus::DaedalusVm& vm,const PlacementDefinitions::KhorinisLateChapters& chapters) {
   static constexpr auto chapter4 = "B_ENTER_NEWWORLD_KAPITEL_4";
   static constexpr auto chapter5 = "B_ENTER_NEWWORLD_KAPITEL_5";
-  struct Group {
-    uint32_t offset, count;
-    };
-  // Offsets and lengths in the verified stock program. Only the immutable
-  // insert calls are read here, while the conditions are evaluated at entry.
-  static constexpr std::array groups4 = {Group{82,15}, Group{328,61}, Group{1281,6},
-                                          Group{1552,90}, Group{2923,23}, Group{3330,1}};
-  static constexpr std::array groups5 = {Group{160,1}, Group{191,1}, Group{206,17},
-                                          Group{482,2}, Group{554,26}, Group{1000,9}, Group{1772,1}};
-  const auto read = [&]<size_t count>(const char* name,const std::array<Group,count>& groups) {
-    const auto start = vm.find_symbol_by_name(name)->address();
-    std::array<std::vector<LiteralPlacement>,count> rows;
-    for(size_t i=0;i<groups.size();++i) {
-      auto pc = start+groups[i].offset;
-      rows[i].reserve(groups[i].count);
-      for(uint32_t j=0;j<groups[i].count;++j)
-        rows[i].push_back(readLiteralPlacement(vm,pc,name));
-      }
-    return rows;
-    };
   const auto symbol = [&vm](std::string_view name) { return vm.find_symbol_by_name(name); };
   const auto number = [symbol](std::string_view name) { return symbol(name)->get_int(); };
   const auto set = [&vm,symbol,number](std::string_view target,std::string_view value) {
     vm.set_int(nullptr,symbol(target),0,number(value));
     };
-  const auto insert = [&vm](const std::vector<LiteralPlacement>& rows) {
+  const auto insert = [&vm](const std::vector<PlacementDefinitions::LiteralInsert>& rows) {
     for(const auto& row:rows) {
-      vm.push_int(int32_t(row.instance->index()));
-      vm.push_reference(row.point);
-      vm.unsafe_call_external(row.external);
+      vm.push_int(int32_t(row.instance));
+      vm.push_reference(vm.find_symbol_by_index(row.point));
+      vm.unsafe_call_external(vm.find_symbol_by_index(row.external));
       }
     };
   const auto guildIs = [&vm,symbol,number](std::string_view guild) {
@@ -260,7 +240,7 @@ void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
     };
 
   vm.override_function(chapter4,std::function<void()>{[&vm,symbol,number,set,insert,guildIs,call,routine,
-                                                       salandrilAtAltar,giveObsessionBook,rows=read(chapter4,groups4)] {
+                                                       salandrilAtAltar,giveObsessionBook,rows=chapters.chapter4] {
     if(number("ENTERNW_KAPITEL4")==number("FALSE")) {
       if(salandrilAtAltar("$28240"))
         routine("SALANDRIL","$28241"); // Start
@@ -303,7 +283,7 @@ void loadKhorinisLateChapters(daedalus::DaedalusVm& vm) {
     }},PlacementDefinitionRuntime::enabled);
 
   vm.override_function(chapter5,std::function<void()>{[&vm,symbol,number,set,insert,guildIs,call,routine,
-                                                       salandrilAtAltar,giveObsessionBook,rows=read(chapter5,groups5)] {
+                                                       salandrilAtAltar,giveObsessionBook,rows=chapters.chapter5] {
     const auto sekobAlive = [&] {
       vm.push_reference(symbol("SEKOB"));
       vm.unsafe_call_external(symbol("NPC_ISDEAD"));
@@ -1500,7 +1480,8 @@ void GameScript::loadNativeWorldEntry() {
     vm.unsafe_call_bl(findSymbol("B_ENTER_OLDWORLD"));
     }},PlacementDefinitionRuntime::enabled);
 
-  loadKhorinisLateChapters(vm);
+  if(placementDefinitions.khorinisLateChapters)
+    loadKhorinisLateChapters(vm,*placementDefinitions.khorinisLateChapters);
   vm.override_function("B_KAPITELWECHSEL",std::function<void(int32_t,int32_t)>{
     [this](int32_t chapter,int32_t level) { changeChapter(chapter,level); }},PlacementDefinitionRuntime::enabled);
   loadOldWorldChapterEntries();
