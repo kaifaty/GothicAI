@@ -26,7 +26,7 @@ if(MSVC)
 endif()
 endif()
 add_executable(content-convert convert.cpp stressbase.cpp stressmeshes.cpp worldcook.cpp clusterlodcensus.cpp ../../OpenGothic/common/basestore.cpp
-  ../../OpenGothic/common/import/runtimebindingroots.cpp
+  runtimebindingroots.cpp
   ../../OpenGothic/common/gltfmeshcolor.cpp
   ../../OpenGothic/common/world/voblayer.cpp ../../OpenGothic/common/world/movablevobs.cpp
   ../../OpenGothic/common/game/definitions/particlecontent.cpp
