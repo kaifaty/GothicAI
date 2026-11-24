@@ -19,7 +19,7 @@ CameraDefinitions::CameraDefinitions() {
   if(source==nullptr || source->recordSha256!=CameraDefinitionData::stockProgram)
     throw BaseStore::Error("camera presets require the supported prepared catalog");
 
-  const auto base = index.dir.parent_path();
+  const auto base = Resources::baseDir();
   const auto section = CameraDefinitionData::section(base,source->recordSha256);
   try {
     cameras = CameraDefinitionData::read(base,source->recordSha256);

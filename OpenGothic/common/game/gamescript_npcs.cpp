@@ -5,9 +5,8 @@
 #include <utility>
 #include <vector>
 
-#include "game/definitions/basescripts.h"
 #include "game/definitions/npcworlddata.h"
-#include "programdata.h"
+#include "resources.h"
 #include "world/objects/npc.h"
 
 void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc,
@@ -363,7 +362,7 @@ void GameScript::loadNativeNpcGlobals() {
     return;
 
   findSymbol("KAPITEL")->bind_global_int(storyChapter);
-  auto globals = NpcWorldData::loadGlobals(baseProgramIndex().dir.parent_path());
+  auto globals = NpcWorldData::loadGlobals(Resources::baseDir());
   if(!globals)
     return;
 
@@ -383,7 +382,7 @@ void GameScript::loadNativeMonsterAttitudes() {
   if(!nativeRoutineProgram)
     return;
 
-  auto rules = NpcWorldData::loadAttitudes(baseProgramIndex().dir.parent_path());
+  auto rules = NpcWorldData::loadAttitudes(Resources::baseDir());
   if(!rules)
     return;
 

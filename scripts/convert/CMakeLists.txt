@@ -58,6 +58,7 @@ if(NOT MSVC)
   target_compile_options(content-convert PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wconversion>)
 endif()
 # Offline particle checks (check-particles) use the game's particlecontent loader and VM without writing base data.
+target_compile_definitions(content-convert PRIVATE CONTENT_CONVERT_PARTICLE_PROGRAMS=1)
 # Definitions import executes item constructors through the shared snapshot library.
 target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
 

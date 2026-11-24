@@ -11,6 +11,8 @@ namespace ProgramData { struct Index; }
 namespace OutputUnits { struct Index; }
 namespace asset { struct CutsceneBlock; }
 
+// Selected identifier of the prepared fight tactics on the loaded base.
+std::string_view baseFightCatalog();
 const ProgramData::Index& baseProgramIndex();
 const OutputUnits::Index& baseOutputUnitsIndex();
 bool loadBaseOutputUnits(std::string_view request, int language,

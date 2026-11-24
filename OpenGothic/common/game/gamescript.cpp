@@ -26,10 +26,10 @@
 #include "utils/fileutil.h"
 #include "commandline.h"
 #include "gothic.h"
+#include "resources.h"
 #include "settings.h"
 #include "loadprobe.h"
 #include "outputunits.h"
-#include "programdata.h"
 #include "navdemos.h"
 
 using namespace Tempest;
@@ -449,7 +449,7 @@ void GameScript::initCommon() {
   // vm.validateExternals();
 
   const auto gameplay = nativeRoutineProgram && NpcDefinitionRuntime::enabled() ?
-                        GameplayDefinitions::load(baseProgramIndex().dir.parent_path()) : nullptr;
+                        GameplayDefinitions::load(Resources::baseDir()) : nullptr;
   spells = gameplay ? std::make_unique<SpellDefinitions>(*gameplay) : std::make_unique<SpellDefinitions>(vm);
   svm    = gameplay ? std::make_unique<SvmDefinitions>(gameplay)    : std::make_unique<SvmDefinitions>(vm);
 

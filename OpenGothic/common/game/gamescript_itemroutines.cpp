@@ -2,11 +2,10 @@
 
 #include "gamescript_inventorytransfer.h"
 
-#include "game/definitions/basescripts.h"
 #include "game/definitions/tradeinventorydata.h"
 #include "game/definitions/deathtrophydefinitions.h"
 #include "game/npcactivityhost.h"
-#include "programdata.h"
+#include "resources.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
@@ -410,7 +409,7 @@ void GameScript::loadNativeTradeInventory() {
       }},[enabled] { return enabled() && NpcHelperRuntime::enabled(); });
     }
 
-  auto record = TradeInventoryData::load(baseProgramIndex().dir.parent_path());
+  auto record = TradeInventoryData::load(Resources::baseDir());
   if(!record)
     return;
 
@@ -593,7 +592,7 @@ void GameScript::loadNativeDeathTrophies() {
   using Symbol = daedalus::DaedalusSymbol;
   using NpcRef = std::shared_ptr<daedalus::INpc>;
 
-  auto catalog = load(baseProgramIndex().dir.parent_path());
+  auto catalog = load(Resources::baseDir());
   if(!catalog)
     return;
 

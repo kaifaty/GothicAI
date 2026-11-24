@@ -15,7 +15,7 @@ using namespace Tempest;
 ParticlesDefinitions::ParticlesDefinitions() {
   const auto& index=baseProgramIndex();
   catalog=ParticleContent::openStockCatalog(index);
-  const auto base=index.dir.parent_path();
+  const auto base=Resources::baseDir();
   const auto section=EffectDefinitionData::particleSection(base,EffectDefinitionData::stockParticleProgram);
   if(!catalog)
     throw BaseStore::Error(section.string()+": particles require the supported prepared catalog");

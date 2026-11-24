@@ -120,6 +120,11 @@ ScriptVars::Slot* ScriptVars::State::find(uint32_t id) {
   return it==values.end() ? nullptr : &it->second;
   }
 
+const ScriptVars::Slot* ScriptVars::State::find(uint32_t id) const {
+  const auto it = values.find(id);
+  return it==values.end() ? nullptr : &it->second;
+  }
+
 ScriptVars::SymbolHeader ScriptVars::readSymbolHeader(SaveArchive& in) {
   SymbolHeader header;
   in.read(header.format,header.count);

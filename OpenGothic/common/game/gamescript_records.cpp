@@ -9,11 +9,10 @@
 
 #include <Tempest/Log>
 
-#include "game/definitions/basescripts.h"
 #include "basestore.h"
 #include "game/definitions/dialoginfodata.h"
 #include "game/serialize.h"
-#include "programdata.h"
+#include "resources.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 
@@ -364,7 +363,7 @@ void GameScript::loadNativeAmbientInfos() {
     Symbol* savedActor = nullptr;
     std::vector<Symbol*> topics;
     };
-  const auto ambientData = DialogInfoData::loadAmbient(baseProgramIndex().dir.parent_path());
+  const auto ambientData = DialogInfoData::loadAmbient(Resources::baseDir());
   if(!ambientData)
     return;
   std::array<Binding,std::size(selectors)> bindings;
@@ -555,7 +554,7 @@ auto GameScript::buildLearnString(std::string_view title) -> daedalus::DaedalusS
   }
 
 bool GameScript::readDialogInfos() {
-  const auto rows = DialogInfoData::load(baseProgramIndex().dir.parent_path());
+  const auto rows = DialogInfoData::load(Resources::baseDir());
   if(!rows)
     return false;
 

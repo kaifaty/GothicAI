@@ -1,9 +1,8 @@
 #include "gamescript.h"
 
 #include "basestore.h"
-#include "game/definitions/basescripts.h"
 #include "game/definitions/questclosuredata.h"
-#include "programdata.h"
+#include "resources.h"
 
 #include <algorithm>
 #include <bit>
@@ -124,7 +123,7 @@ void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
       closeQuestTopic(topic,mission,common,chapter);
       }},enabled);
 
-  const auto base = baseProgramIndex().dir.parent_path();
+  const auto base = Resources::baseDir();
   if(!std::filesystem::exists(QuestClosureData::section(base)))
     return;
   auto groups = QuestClosureData::read(base);

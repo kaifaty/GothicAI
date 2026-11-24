@@ -4,9 +4,7 @@
 
 #include "basestore.h"
 #include "contentcensus.h"
-#include "game/definitions/basescripts.h"
 #include "gothic.h"
-#include "programdata.h"
 #include "resources.h"
 #include "world/objects/npc.h"
 
@@ -17,7 +15,7 @@ GameScript::StockPrograms::StockPrograms(GameScript& script)
   : script(script), vm(script.getVm()) {
   try {
     if(script.nativeRoutineProgram) {
-      const auto base = baseProgramIndex().dir.parent_path();
+      const auto base = Resources::baseDir();
       const auto section = StockStoryPrograms::section(base);
       if(std::filesystem::exists(section)) {
         prepared = StockStoryPrograms::read(base);

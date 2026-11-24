@@ -89,6 +89,8 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
         return std::nullopt;
         }
       try {
+        if(const auto* state = owner.script.runtimeState.find(symbol->index()))
+          return readState(*state,slot.index);
         switch(symbol->type()) {
           case INT:
           case FUNCTION: return NativeValue::integer(symbol->get_int(slot.index,context.get()));
@@ -118,6 +120,12 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       auto* symbol = resolve(slot,context.get());
       if(!effects || symbol==nullptr || (symbol->is_const() && slot.kind!=NativeSlot::Instance)) {
         error = "Cannot write story slot "+std::string(slot.name);
+        return false;
+        }
+      if(auto* state = owner.script.runtimeState.find(symbol->index())) {
+        if(writeState(*state,slot,value))
+          return true;
+        error = "Invalid value for runtime field "+std::string(slot.name);
         return false;
         }
       const auto type = symbol->type();
@@ -265,6 +273,48 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       if(slot.name=="AIVAR" && slot.index<std::size(npc->aivar))
         return &npc->aivar[slot.index];
       return nullptr;
+      }
+
+    NativeValue readState(const ScriptVars::Slot& state, uint16_t index) {
+      return std::visit([&](const auto& field) -> NativeValue {
+        using T = std::remove_cvref_t<decltype(field)>;
+        if constexpr(std::is_same_v<T,ScriptVars::Object>) {
+          return NativeValue::instance(bind(field));
+          } else {
+          if(index>=field.values.size())
+            throw std::runtime_error("Runtime field index out of range");
+          using Value = typename decltype(field.values)::value_type;
+          if constexpr(std::is_same_v<Value,int32_t>)
+            return NativeValue::integer(field.values[index]);
+          else if constexpr(std::is_same_v<Value,float>)
+            return NativeValue::real(field.values[index]);
+          else
+            return NativeValue::str(field.values[index]);
+          }
+        },state);
+      }
+
+    bool writeState(ScriptVars::Slot& state, const NativeSlot& slot, const NativeValue& value) {
+      if(auto* object = std::get_if<ScriptVars::Object>(&state)) {
+        if(slot.kind!=NativeSlot::Instance || value.type!=NativeValue::Inst)
+          return false;
+        *object = resolveInstance(value.inst);
+        return true;
+        }
+      const auto store = [&]<class T>(const T& update) {
+        if(auto* array = std::get_if<ScriptVars::Array<T>>(&state); array!=nullptr && slot.index<array->values.size()) {
+          array->values[slot.index] = update;
+          return true;
+          }
+        return false;
+        };
+      switch(value.type) {
+        case NativeValue::Int:   return store(value.i) || store(std::bit_cast<float>(value.i));
+        case NativeValue::Float: return store(value.f);
+        case NativeValue::Str:   return store(value.s);
+        case NativeValue::Inst:  break;
+        }
+      return false;
       }
 
     std::shared_ptr<DaedalusInstance> resolveInstance(NativeInstance index) const {

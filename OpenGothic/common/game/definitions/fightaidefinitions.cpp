@@ -3,18 +3,17 @@
 #include "basescripts.h"
 #include "basestore.h"
 #include "fightdefinitiondata.h"
-#include "programdata.h"
+#include "resources.h"
 
 FightAi::FightAi() {
-  const auto& index = baseProgramIndex();
-  const auto* source = ProgramData::fightProgram(index);
-  if(source==nullptr)
+  const auto catalog = baseFightCatalog();
+  if(catalog.empty())
     throw BaseStore::Error("fight tactics require a prepared catalog");
 
-  const auto base = index.dir.parent_path();
-  const auto section = FightDefinitions::section(base,source->recordSha256);
+  const auto base = Resources::baseDir();
+  const auto section = FightDefinitions::section(base,catalog);
   try {
-    fAi = FightDefinitions::read(base,source->recordSha256);
+    fAi = FightDefinitions::read(base,catalog);
     }
   catch(const std::runtime_error& error) {
     throw BaseStore::Error(section.string()+": "+error.what());

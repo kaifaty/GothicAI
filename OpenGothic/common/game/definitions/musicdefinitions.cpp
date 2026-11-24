@@ -15,7 +15,7 @@ MusicDefinitions::MusicDefinitions() {
   if(source==nullptr || source->recordSha256!=MusicDefinitionData::stockProgram)
     throw BaseStore::Error("music requires the supported prepared catalog");
 
-  const auto base = index.dir.parent_path();
+  const auto base = Resources::baseDir();
   const auto section = MusicDefinitionData::section(base,source->recordSha256);
   try {
     themes = MusicDefinitionData::read(base,source->recordSha256);

@@ -1,5 +1,8 @@
 #include "particlecontent.h"
+
+#if defined(CONTENT_CONVERT_PARTICLE_PROGRAMS)
 #include "definitiontypes.h"
+#endif
 
 #include "basestore.h"
 #include "gothicglb.h"
@@ -179,6 +182,8 @@ std::string canonicalName(std::string_view name) {
   return result;
   }
 
+#if defined(CONTENT_CONVERT_PARTICLE_PROGRAMS)
+namespace {
 bool hasBase(const daedalus::DaedalusScript& script, std::string_view name) {
   const auto* symbol=script.find_symbol_by_name(canonicalName(name));
   const auto* cls=script.find_symbol_by_name("C_PARTICLEFX");
@@ -196,32 +201,33 @@ std::shared_ptr<Def::ParticleEffect> base(daedalus::DaedalusVm& vm, std::string_
   vm.init_instance(result,canonicalName(name));
   return std::make_shared<Def::ParticleEffect>(result->copy());
   }
+}
+
+Catalog::Catalog(std::unique_ptr<daedalus::DaedalusVm> vm) : program(std::move(vm)) {
+  }
+#endif
 
 Catalog::Catalog(EffectDefinitionData::Particles rows) {
   for(auto& row:rows)
     records.emplace(std::move(row.name),std::move(row.value));
   }
 
-Catalog::Catalog(std::unique_ptr<daedalus::DaedalusVm> vm)
-  :ownedProgram(std::move(vm)),program(ownedProgram.get()) {
-  }
-
-Catalog::Catalog(daedalus::DaedalusVm& vm)
-  :program(&vm) {
-  }
-
 bool Catalog::contains(std::string_view name) const {
+#if defined(CONTENT_CONVERT_PARTICLE_PROGRAMS)
   if(program!=nullptr)
     return hasBase(*program,name);
+#endif
   return records.contains(canonicalName(name));
   }
 
 bool Catalog::hasField(std::string_view name) const {
+#if defined(CONTENT_CONVERT_PARTICLE_PROGRAMS)
   if(program!=nullptr) {
     const auto* cls=program->find_symbol_by_name("C_PARTICLEFX");
     const auto* symbol=program->find_symbol_by_name("C_PARTICLEFX."+std::string(name));
     return symbol!=nullptr && symbol->is_member() && cls!=nullptr && symbol->parent()==cls->index();
     }
+#endif
 #define PARTICLE_FIELD_NAME(type, field, extent, symbol) symbol,
   static constexpr std::string_view fields[]={DEF_PARTICLE_EFFECT_FIELDS(PARTICLE_FIELD_NAME)};
 #undef PARTICLE_FIELD_NAME
@@ -229,8 +235,10 @@ bool Catalog::hasField(std::string_view name) const {
   }
 
 std::shared_ptr<Def::ParticleEffect> Catalog::materialize(std::string_view name) const {
+#if defined(CONTENT_CONVERT_PARTICLE_PROGRAMS)
   if(program!=nullptr)
     return base(*program,name);
+#endif
   const auto it=records.find(canonicalName(name));
   if(it==records.end())
     return nullptr;
@@ -255,11 +263,11 @@ std::optional<Catalog> openStockCatalog(const ProgramData::Index& index) {
   }
 
 namespace {
-std::unique_ptr<daedalus::DaedalusVm> openLegacyProgram(const ProgramData::Index& index) {
-#if defined(OPENGOTHIC_NATIVE_GAME)
-  (void)index;
-  throw BaseStore::Error("native game requires a prepared ParticleFx.dat catalog");
-#else
+Catalog openCatalog(const fs::path& baseRoot) {
+  const auto index=ProgramData::readIndex(baseRoot/"programs");
+  if(auto stock=openStockCatalog(index))
+    return std::move(*stock);
+#if defined(CONTENT_CONVERT_PARTICLE_PROGRAMS)
   const auto* source=index.findVfs("ParticleFx.dat");
   if(source==nullptr) source=index.findHost("_work/Data/Scripts/_compiled/ParticleFx.dat");
   require(source!=nullptr,"ParticleFx.dat missing from program base index");
@@ -268,22 +276,13 @@ std::unique_ptr<daedalus::DaedalusVm> openLegacyProgram(const ProgramData::Index
   require(sha256==source->recordSha256,"particle program identity differs from base index");
   auto script=daedalus::DaedalusScript::from_program(std::move(program));
   VmDef::ParticleEffect::register_(script);
-  return std::make_unique<daedalus::DaedalusVm>(std::move(script),
-      daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  return Catalog(std::make_unique<daedalus::DaedalusVm>(std::move(script),
+      daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS));
+#else
+  throw BaseStore::Error("native game requires a prepared particle catalog");
 #endif
   }
-
-Catalog openCatalog(const fs::path& baseRoot) {
-  const auto index=ProgramData::readIndex(baseRoot/"programs");
-  if(auto stock=openStockCatalog(index))
-    return std::move(*stock);
-  return Catalog(openLegacyProgram(index));
-  }
 }
-
-std::unique_ptr<daedalus::DaedalusVm> openProgram(const fs::path& baseRoot) {
-  return openLegacyProgram(ProgramData::readIndex(baseRoot/"programs"));
-  }
 
 Result load(const Catalog& catalog, const fs::path& contentRoot) {
   Result result;
@@ -444,13 +443,11 @@ Result load(const Catalog& catalog, const fs::path& contentRoot) {
   return result;
   }
 
-Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
-  return load(Catalog(vm),contentRoot);
-  }
-
+#if defined(CONTENT_CONVERT_PARTICLE_PROGRAMS)
 Result check(const fs::path& baseRoot, const fs::path& contentRoot) {
   return load(openCatalog(baseRoot),contentRoot);
   }
+#endif
 
 GameHost::ParticleNameCheck nameChecker() {
   struct State {

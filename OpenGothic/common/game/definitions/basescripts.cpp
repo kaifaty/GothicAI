@@ -64,6 +64,11 @@ class BaseScripts final : public GameBaseContent {
 BaseScripts scripts;
 }
 
+std::string_view baseFightCatalog() {
+  const auto* source = ProgramData::fightProgram(scripts.basePrograms);
+  return source!=nullptr ? std::string_view(source->recordSha256) : std::string_view();
+  }
+
 const ProgramData::Index& baseProgramIndex() {
   return scripts.basePrograms;
   }
