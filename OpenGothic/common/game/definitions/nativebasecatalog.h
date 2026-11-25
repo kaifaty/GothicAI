@@ -12,7 +12,7 @@
 
 namespace NativeBaseCatalog {
 
-inline constexpr int catalogVersion = 7;
+inline constexpr int catalogVersion = 8;
 inline constexpr uint32_t directorCapacity = 1024;
 
 struct State {
@@ -85,6 +85,7 @@ struct Selection {
   Constants constants;
   std::vector<Identity> routines;
   std::vector<Identity> itemCallbacks;
+  std::vector<Identity> npcCallbacks;
   NpcConstructorBindings npcConstructor;
   };
 

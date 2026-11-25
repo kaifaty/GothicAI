@@ -242,6 +242,36 @@ std::vector<NativeBaseCatalog::Identity> NativeBaseCatalog::prepareItemCallbacks
   return result;
   }
 
+std::vector<NativeBaseCatalog::Identity> NativeBaseCatalog::prepareNpcCallbacks(const daedalus::DaedalusScript& program) {
+  // These names are assigned to perception slots or started as native NPC phases.
+  static constexpr std::string_view names[] = {
+    "B_ASSESSDAMAGE", "B_ASSESSDEFEAT", "B_ASSESSDRAWWEAPON", "B_ASSESSENEMY",
+    "B_ASSESSENTERROOM", "B_ASSESSFIGHTSOUND", "B_ASSESSFOLLOWFIGHTSOUND", "B_ASSESSFOLLOWPLAYER",
+    "B_ASSESSGUIDEFIGHTSOUND", "B_ASSESSGUIDEPLAYER", "B_ASSESSMAGIC", "B_ASSESSMAGICSLEEPTALK",
+    "B_ASSESSMURDER", "B_ASSESSPLAYER", "B_ASSESSPORTALCOLLISION", "B_ASSESSQUIETSOUND",
+    "B_ASSESSSLEEPTALK", "B_ASSESSSURPRISE", "B_ASSESSTALK", "B_ASSESSTHEFT", "B_ASSESSTHREAT",
+    "B_ASSESSUSEMOB", "B_ASSESSWARN", "B_CHEERFIGHT", "B_CLEARROOMTALK", "B_EVENT_PORTAL_EARTHQUAKE",
+    "B_EXITIFROOMLEFT", "B_GOLEMRISE", "B_MM_ASSESSBODY", "B_MM_ASSESSDAMAGE", "B_MM_ASSESSENEMY",
+    "B_MM_ASSESSOTHERSDAMAGE", "B_MM_ASSESSPLAYER", "B_MM_ASSESSQUIETSOUND_SLEEP", "B_MM_ASSESSSURPRISE",
+    "B_MM_ASSESSWARN", "B_MOVEMOB", "B_PAL_ZOMBIE_RISE", "B_RESTARTBURN", "B_RESTARTBURNSHORT",
+    "B_RESTARTFREEZE", "B_RESTARTGREENTENTACLE", "B_RESTARTINFLATE", "B_RESTARTSUCKENERGY",
+    "B_RESTARTSWARM", "B_RESTARTWHIRLWIND", "B_STOPMAGICBURN", "B_STOPMAGICBURNSHORT",
+    "B_STOPMAGICFLEE", "B_STOPMAGICSLEEP", "B_STOPPYRO", "B_STOPSHORTZAPPED", "B_STOPZAPPED",
+    "B_SUMMONEDASSESSTALK",
+    };
+  std::vector<Identity> result;
+  result.reserve(std::size(names));
+  for(const auto name : names) {
+    const auto* function=program.find_symbol_by_name(name);
+    DefinitionJson::require(function && function->type()==daedalus::DaedalusDataType::FUNCTION &&
+                             function->is_const() && !function->is_external() && function->count()==0,
+                             "invalid native NPC callback "+std::string(name));
+    result.push_back({function->index(),std::string(name)});
+    }
+  std::ranges::sort(result,{},&Identity::id);
+  return result;
+  }
+
 NativeBaseCatalog::NpcConstructorBindings NativeBaseCatalog::prepareNpcConstructor(const daedalus::DaedalusScript& program,
                                                                                     const std::filesystem::path& base) {
   using DefinitionJson::require;

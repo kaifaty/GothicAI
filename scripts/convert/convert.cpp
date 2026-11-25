@@ -284,6 +284,7 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     catalogs->identities=NativeBaseCatalog::prepareIdentities(script,base);
     catalogs->routines=NativeBaseCatalog::prepareRoutines(script,base);
     catalogs->itemCallbacks=NativeBaseCatalog::prepareItemCallbacks(script,base);
+    catalogs->npcCallbacks=NativeBaseCatalog::prepareNpcCallbacks(script);
     catalogs->npcConstructor=NativeBaseCatalog::prepareNpcConstructor(script,base);
     }
 
