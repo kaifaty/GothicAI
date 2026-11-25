@@ -180,7 +180,8 @@ def find_layout(config: Config) -> Layout:
     else:
         converter = content_converter(game_bin)
         ryzen_helper = repo / "scripts/ryzen_game.py"
-        if sys.platform == "linux" and game_dir == Path.home() / "gothic-ai/game-settings" and ryzen_helper.is_file():
+        ryzen_settings = sys.platform == "linux" and game_dir == Path.home() / "gothic-ai/game-settings"
+        if ryzen_settings and ryzen_helper.is_file():
             argv = [sys.executable, str(ryzen_helper), "--json", f"--assets={game_dir}"]
             if converter.is_file() and os.access(converter, os.X_OK):
                 argv.extend(["--converter", str(converter)])
@@ -194,10 +195,11 @@ def find_layout(config: Config) -> Layout:
                 raise LaunchError(error.stderr.strip()) from error
         can_prepare = converter.is_file() and os.access(converter, os.X_OK)
         explicit = game_env.get("OPENGOTHIC_BASE") or os.environ.get("OPENGOTHIC_BASE")
+        pinned = not ryzen_settings and os.environ.get("OPENGOTHIC_BASE_FINGERPRINT")
         try:
             game_env.update(prepared_game_environment(game_bin, game_dir, game_env))
         except RuntimeError as error:
-            if explicit or not can_prepare:
+            if explicit or pinned or not can_prepare:
                 problems.append(str(error))
             elif not _has_child(game_dir, "data") and not game_env.get("OPENGOTHIC_BASE_FINGERPRINT"):
                 problems.append(f"select an installed Gothic II folder once: {error}")

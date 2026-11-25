@@ -314,6 +314,10 @@ def test_find_layout_lists_everything_missing(config, tmp_path, monkeypatch):
         find_layout(config)
     converter = binary.with_name("content-convert")
     converter.touch(mode=0o755)
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "0" * 64)
+    with pytest.raises(LaunchError, match="no ready base"):
+        find_layout(config)
+    monkeypatch.delenv("OPENGOTHIC_BASE_FINGERPRINT")
     layout = find_layout(config)
     assert layout.game_bin == binary and layout.game_dir == game_dir and layout.uv == Path("/bin/sh")
     assert layout.play_content == content
