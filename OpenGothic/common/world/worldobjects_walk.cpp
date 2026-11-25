@@ -35,7 +35,8 @@ void WorldObjects::updateNpcCell(Npc& npc) {
   const auto override = npc.simTierOverride();
   const auto policy = npc.processPolicy();
   const bool combat = npc.target()!=nullptr;
-  const bool campfire = npc.hasCampfireActivity() || npc.campfireBodySuspended();
+  const bool bodyCandidate = npc.hasCampfireActivity() || npc.bodySuspended() ||
+      (AnimationLod::config().enabled && NpcSimTiers::mode()==NpcSimTiers::Mode::Auto && npc.hasRestingBodyActivity());
   if(!previous || previous->key!=key || previous->tierOverride!=override)
     npcTierChanges.insert(&npc);
   if(!previous || previous->position!=position || previous->policy!=policy)
@@ -46,11 +47,11 @@ void WorldObjects::updateNpcCell(Npc& npc) {
     else
       npcCombat.erase(&npc);
     }
-  if(!previous || previous->campfire!=campfire) {
-    if(campfire)
-      npcCampfires.insert(&npc);
+  if(!previous || previous->bodyCandidate!=bodyCandidate) {
+    if(bodyCandidate)
+      npcBodyCandidates.insert(&npc);
     else
-      npcCampfires.erase(&npc);
+      npcBodyCandidates.erase(&npc);
     }
   const bool deferred = npc.hasDeferredAnimation();
   Tempest::Vec3 lo = position, hi = position;
@@ -64,7 +65,7 @@ void WorldObjects::updateNpcCell(Npc& npc) {
   else
     societyPoseDebts.erase(&npc);
 
-  const NpcCellMember next{key,position,lo,hi,override,policy,deferred,combat,campfire};
+  const NpcCellMember next{key,position,lo,hi,override,policy,deferred,combat,bodyCandidate};
   if(previous) {
     auto& member = existing->second;
     auto& cell   = npcCells.at(member.key);
@@ -101,7 +102,7 @@ void WorldObjects::refreshNpcCells() {
     npcTierChanges.clear();
     npcPolicyChanges.clear();
     npcCombat.clear();
-    npcCampfires.clear();
+    npcBodyCandidates.clear();
     npcTiersRebuild = true;
     npcPoliciesRebuild = true;
     for(auto& npc:npcArr)
@@ -224,7 +225,7 @@ void WorldObjects::updateSimTiers(bool beforeTick) {
     } else {
     if(beforeTick)
       npcTierChanges.insert(npcCombat.begin(),npcCombat.end());
-    npcTierChanges.insert(npcCampfires.begin(),npcCampfires.end());
+    npcTierChanges.insert(npcBodyCandidates.begin(),npcBodyCandidates.end());
     orderNpcCandidates(npcTierChanges);
     }
   npcTierChanges.clear();
@@ -232,9 +233,9 @@ void WorldObjects::updateSimTiers(bool beforeTick) {
 
   size_t full = recount ? 0 : simTiers.full;
   uint64_t toFull = 0, toSimplified = 0;
-  campfireBodiesSuspended = false;
-  std::optional<AnimationLod::View> campfireView;
-  bool hasCampfireView = false;
+  npcBodiesSuspended = false;
+  std::optional<AnimationLod::View> bodyView;
+  bool hasBodyView = false;
   for(auto* ptr:npcSpatialOrder) {
     auto& npc = *ptr;
     const auto key = npcCellMembers.at(&npc).key;
@@ -258,20 +259,28 @@ void WorldObjects::updateSimTiers(bool beforeTick) {
     full += size_t(next==NpcSimTier::Full);
     if(beforeTick && npc.target()!=nullptr)
       npc.refreshMeleeFighter();
-    if(!npcCampfires.contains(&npc))
+    if(!npcBodyCandidates.contains(&npc))
       continue;
     bool suspend = false;
-    if(mode==NpcSimTiers::Mode::Auto && residency && next==NpcSimTier::Simplified && npc.canSuspendCampfireBody()) {
-      if(!campfireView) {
-        campfireView.emplace();
-        hasCampfireView = makeAnimationLodView(*campfireView);
+    bool resting = false;
+    const bool campfire = npc.hasCampfireActivity();
+    const bool restActivity = AnimationLod::config().enabled && npc.hasRestingBodyActivity();
+    if(!campfire && !restActivity)
+      noteNpcCellChange(npc); // A timed wait can expire without another change to the cell.
+    if(mode==NpcSimTiers::Mode::Auto && residency && next==NpcSimTier::Simplified) {
+      resting = !campfire && restActivity && npc.canSuspendRestingBody() && npc.canPauseDistantPose(0);
+      if(resting || (campfire && npc.canSuspendCampfireBody())) {
+        if(!bodyView) {
+          bodyView.emplace();
+          hasBodyView = makeAnimationLodView(*bodyView);
+          }
+        suspend = hasBodyView && !bodyNeedsSimulation(npc,*bodyView,resting);
         }
-      suspend = hasCampfireView && !mustUpdateAnimation(npc,*campfireView) && !campfireView->visible(npc);
       }
     if(suspend)
-      campfireBodiesSuspended |= npc.suspendCampfireBody();
-    else if(npc.campfireBodySuspended())
-      npc.resumeCampfireBody();
+      npcBodiesSuspended |= npc.suspendDistantBody(resting);
+    else if(npc.bodySuspended())
+      npc.resumeBody();
     }
 #ifndef NDEBUG
   for(const auto& ptr:npcArr) {
@@ -334,7 +343,7 @@ void WorldObjects::updateNpcPolicies(const Npc* player, const Tempest::Vec3& pos
 
   for(auto* npc:npcSpatialOrder) {
     const float dist = (npc->position()-position).quadLength();
-    if(dist<3000.f*3000.f || (fixture && keepsNearPolicy(*npc))) {
+    if(dist<NpcNearPolicyRadius*NpcNearPolicyRadius || (fixture && keepsNearPolicy(*npc))) {
       nearChanged |= npcNearMembers.insert(npc).second;
       if(npc!=player)
         npc->setProcessPolicy(NpcProcessPolicy::AiNormal);
@@ -352,7 +361,7 @@ void WorldObjects::updateNpcPolicies(const Npc* player, const Tempest::Vec3& pos
   size_t near = 0;
   for(const auto& ptr:npcArr) {
     const auto dist = (ptr->position()-position).quadLength();
-    if(dist<3000.f*3000.f || keepsNearPolicy(*ptr)) {
+    if(dist<NpcNearPolicyRadius*NpcNearPolicyRadius || keepsNearPolicy(*ptr)) {
       assert(near<npcNear.size() && npcNear[near++]==ptr.get());
       assert(ptr.get()==player || ptr->processPolicy()==NpcProcessPolicy::AiNormal);
       } else {

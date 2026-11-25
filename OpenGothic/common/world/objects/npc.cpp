@@ -370,6 +370,8 @@ uint64_t Npc::pendingSimTick() const {
 
 void Npc::wakeSociety() {
   monsterRestSleeping = false;
+  if(restingBody)
+    resumeBody();
   if(simTickState.idleParked)
     owner.noteIdleNpcChange(*this);
   if(societySleeping)
@@ -1203,7 +1205,8 @@ void Npc::tick(uint64_t dt) {
       if(!magnetHeading)
         implTurnToFai(*currentTarget,dt);
       }
-    mvAlgo.tick(dt,MoveAlgo::WaitMove);
+    if(!restingBodySuspended())
+      mvAlgo.tick(dt,MoveAlgo::WaitMove);
     return;
     }
 
@@ -1232,7 +1235,7 @@ void Npc::tick(uint64_t dt) {
       }
     }
 
-  if(!campfireBodySuspended())
+  if(!bodySuspended())
     mvAlgo.tick(dt);
   implAiTick(dt);
   }
@@ -1290,8 +1293,8 @@ void Npc::setTarget(Npc *t) {
   wakeSociety();
   if(t!=nullptr) {
     t->wakeSociety();
-    resumeCampfireBody();
-    t->resumeCampfireBody();
+    resumeBody();
+    t->resumeBody();
     }
   currentTarget = t;
   owner.noteNpcCellChange(*this);

@@ -82,6 +82,8 @@ bool Npc::startState(ScriptFn id, std::string_view wp, gtime endTime, bool noFin
   aiState.eTime        = endTime;
   aiState.loopNextTime = owner.tickCount();
   aiState.hint         = st.name();
+  if(hasRestingBodyActivity())
+    owner.noteNpcCellChange(*this);
   if(bodyTraceRecord.id!=0 && !bodyTraceEntered && isDead())
     bodyTraceEntered = true; // a deferred ZS_Dead has started: a later death is a new one
   return true;
@@ -99,7 +101,7 @@ void Npc::clearState(bool noFinalize) {
 void Npc::finishState(bool noFinalize, uint16_t reason) {
   if(BodyController::deferNative(*this,[this,noFinalize,reason] { finishState(noFinalize,reason); })) return;
   monsterRestSleeping = false;
-  resumeCampfireBody();
+  resumeBody();
   stopActivityEvents(reason);
   if(aiState.funcIni.isValid() && aiState.started) {
     if(!noFinalize)
@@ -108,7 +110,10 @@ void Npc::finishState(bool noFinalize, uint16_t reason) {
     invent.putState(*this,0,0);
     visual.stopItemStateAnim(*this);
     }
+  const bool mightStopResting = hasRestingBodyActivity();
   aiState = AiState();
+  if(mightStopResting)
+    owner.noteNpcCellChange(*this);
   }
 
 bool Npc::isPlayerEnabledState(const ::AiState& st) const {
@@ -192,7 +197,7 @@ std::string_view Npc::societyRoutineBlocker(std::string_view state, bool groupPi
   if(activityEvents.stage!=Stage::Hold && !waiting)
     return "native_activity_stage";
   const bool furniture = wide && owner.persistentSocietyEnabled() && societyFurnitureHold();
-  if(wide && (record==nullptr || !supportsSocietyActivity(*record) || campfireBodySuspended()))
+  if(wide && (record==nullptr || !supportsSocietyActivity(*record) || (bodySuspended() && !restingBodySuspended())))
     return "native_activity_type";
   if(wide && !furniture && (waiting ? record->mob!=nullptr && record->mob->timer : point==nullptr || !point->timed()))
     return "native_activity_type";

@@ -13,7 +13,7 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
   if(physicsNoiseCallback && (a.act==AI_TurnToNpc || a.act==AI_LookAtNpc))
     return;
   wakeSociety();
-  resumeCampfireBody();
+  resumeBody();
   a.physicsNoiseState = physicsNoiseCallback && a.act==AI_StartState;
   a.activity = a.activity || activityCommands;
   if(!a.activity && activityEvents.activity && activityEvents.activity->point) {
@@ -41,7 +41,7 @@ bool Npc::setInteraction(Interactive *id, bool quick) {
   if(id==nullptr)
     return (currentInteract==nullptr);
 
-  resumeCampfireBody();
+  resumeBody();
   if(id->attach(*this)) {
     currentInteract = id;
     owner.mobReservations().attached(*this,*id);
@@ -67,6 +67,8 @@ bool Npc::setInteraction(Interactive *id, bool quick) {
 void Npc::quitInteraction() {
   if(currentInteract==nullptr)
     return;
+  if(restingBody)
+    resumeBody();
   if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual)) {
     mvAlgo.resetCharacterVirtual(true);
     resetCharacterVisualHeight();

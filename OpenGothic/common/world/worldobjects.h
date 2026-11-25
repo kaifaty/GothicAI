@@ -222,7 +222,9 @@ class WorldObjects final {
     void refreshNpcCells();
     void updateNpcCell(Npc& npc);
     void collectLatePoses(const AnimationLod::View& view, bool persistent);
+    bool bodyNeedsSimulation(const Npc& npc, const AnimationLod::View& view, bool resting) const;
 
+    static constexpr float NpcNearPolicyRadius = 3000.f;
     using NpcCellKey = std::pair<int32_t,int32_t>;
     struct NpcCellMember {
       NpcCellKey    key{};
@@ -231,7 +233,7 @@ class WorldObjects final {
       NpcProcessPolicy policy = NpcProcessPolicy::AiFar2;
       bool          deferred = false;
       bool          combat = false;
-      bool          campfire = false;
+      bool          bodyCandidate = false;
       };
     struct NpcCell {
       std::vector<Npc*> actors;
@@ -257,7 +259,7 @@ class WorldObjects final {
     const Npc* npcPolicyHero = nullptr;
     std::optional<std::pair<ChunkId,ChunkId>> npcTierFocus;
     std::optional<Tempest::Vec3> npcPolicyPosition;
-    std::unordered_set<Npc*> npcTierChanges, npcPolicyChanges, npcNearMembers, npcCombat, npcCampfires;
+    std::unordered_set<Npc*> npcTierChanges, npcPolicyChanges, npcNearMembers, npcCombat, npcBodyCandidates;
     std::vector<Npc*> npcSpatialOrder;
     static bool npcSimulationFixtureActive();
     void orderNpcCandidates(const std::unordered_set<Npc*>& candidates);
@@ -354,7 +356,7 @@ class WorldObjects final {
     std::vector<std::unique_ptr<Npc>>  npcRemoved; // removed, but may have a dangling references in game
     std::vector<Npc*>                  npcNear;
     NpcSimTiers::Stats                 simTiers;
-    bool                               campfireBodiesSuspended = false;
+    bool                               npcBodiesSuspended = false;
     static bool                       keepsFullSimulation(const Npc& npc);
     static bool                       keepsNearPolicy(const Npc& npc);
     void                              updateSimTiers(bool beforeTick);

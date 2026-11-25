@@ -189,8 +189,12 @@ bool Npc::implAiTick(uint64_t dt) {
 
 void Npc::implAiWait(uint64_t dt) {
   auto w = owner.tickCount()+dt;
-  if(w>waitTime)
+  if(w>waitTime) {
+    const bool newWait = waitTime<=owner.tickCount();
     waitTime = w;
+    if(newWait)
+      owner.noteNpcCellChange(*this);
+    }
   }
 
 void Npc::implAniWait(uint64_t dt) {
