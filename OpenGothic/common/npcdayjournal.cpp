@@ -81,6 +81,9 @@ std::string clean(std::string_view s) {
 std::string symbolName(const World& w, size_t symbol) {
   if(symbol==size_t(-1))
     return "-";
+  // Keep the archived caption for the unset function on an AI queue action.
+  if(symbol==0)
+    return "$INSTANCE_HELP";
   const auto name = w.rules().symbolName(symbol);
   return name.empty() ? std::to_string(symbol) : clean(name);
   }
