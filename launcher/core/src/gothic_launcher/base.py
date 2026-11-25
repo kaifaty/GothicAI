@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import re
+import sys
+from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 
 try:
@@ -72,6 +74,7 @@ class Base:
             ):
                 raise ValueError("invalid base.json")
             self.fingerprint = metadata["fingerprint"]
+            self.native_profile = metadata.get("native_script_base")
             if expected is not None and self.fingerprint != expected:
                 raise ValueError("pointer base fingerprint differs")
             binding = metadata["manifest"]
@@ -139,20 +142,34 @@ class Base:
         self.close()
 
 
-def resolve(game_dir: Path) -> Base:
-    """Select an explicit base or this canonical game directory's P18a pointer."""
+def resolve(
+    game_dir: Path, *, native: bool = False, environ: Mapping[str, str] | None = None
+) -> Base:
+    """Select an explicit base or this canonical game directory's current pointer."""
+    env = os.environ if environ is None else environ
     game = Path(game_dir).expanduser().resolve()
     try:
-        cache_name = os.environ.get("OPENGOTHIC_BASE_CACHE", str(Path.home() / ".cache/gothic-ai/base"))
+        cache_name = env.get("OPENGOTHIC_BASE_CACHE", str(Path.home() / ".cache/gothic-ai/base"))
         if not cache_name:
             raise ValueError("base cache path is empty")
         cache = Path(cache_name).expanduser().resolve()
-        explicit = os.environ.get("OPENGOTHIC_BASE")
+        explicit = env.get("OPENGOTHIC_BASE")
         if explicit:
             return Base(Path(explicit).expanduser(), cache)
+        fingerprint = env.get("OPENGOTHIC_BASE_FINGERPRINT")
+        if native and fingerprint:
+            if not _digest(fingerprint):
+                raise ValueError("invalid OPENGOTHIC_BASE_FINGERPRINT")
+            path = cache / fingerprint
+            if not path.is_dir():
+                shared = "/Volumes/shared/gothic-ai" if sys.platform == "darwin" else "/mnt/shared/gothic-ai"
+                store = env.get("OPENGOTHIC_BASE_STORE", shared)
+                if store:
+                    path = Path(store) / "base" / fingerprint
+            return Base(path, cache, fingerprint)
         pointer = cache / "current" / f"{hashlib.sha256(str(game).encode()).hexdigest()}.json"
         current = json.loads(pointer.read_bytes())
-        part = current["base"]
+        part = current.get("native_base") if native else current.get("base", current.get("native_base"))
         if (
             current.get("version") != 1
             or current.get("gothic") != str(game)
@@ -165,6 +182,6 @@ def resolve(game_dir: Path) -> Base:
         return Base(Path(part["path"]), cache, part["fingerprint"])
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         raise RuntimeError(
-            f"no ready base for {game}; run the game once with the installation "
+            f"no ready base for {game}; prepare it with content-convert resolve "
             f"or set OPENGOTHIC_BASE: {error}"
         ) from error

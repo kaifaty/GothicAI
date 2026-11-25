@@ -528,6 +528,48 @@ bool BaseStore::isNativeProjection(const fs::path& base) {
   return true;
   }
 
+BaseStore::Selection BaseStore::openPreparedBase(const fs::path& base, BaseImport::Identity& identity) {
+  Selection selected{fs::canonical(base),{},{}};
+  identity=BaseImport::readIdentity(selected.path);
+  const auto cache=cacheRoot();
+  if(selected.path.parent_path()==cache)
+    selected.lease=std::make_shared<Lock>(cache/(identity.fingerprint+".use"),Lock::Shared);
+
+  rapidjson::Document doc;
+  doc.Parse(identity.json.data(),identity.json.size());
+  if(doc.HasMember("no_programs_fixture"))
+    throw std::runtime_error("expected a prepared base, found a metadata test fixture");
+  if(const auto marker=doc.FindMember("native_script_base"); marker!=doc.MemberEnd()) {
+    const auto& binding=marker->value;
+    if(!binding.IsObject() || !binding.HasMember("version") || !binding["version"].IsInt())
+      throw std::runtime_error("invalid projected base identity version");
+    const auto version=binding["version"].GetInt();
+    std::string salt;
+    if(version==2) {
+      if(!binding.HasMember("runtime_recipe") || !binding["runtime_recipe"].IsString())
+        throw std::runtime_error("invalid projected base runtime bindings recipe");
+      const std::string_view recipe(binding["runtime_recipe"].GetString(),binding["runtime_recipe"].GetStringLength());
+      if(!fingerprintName(recipe))
+        throw std::runtime_error("invalid projected base runtime bindings recipe");
+      salt="native-script-base-v2\n"+std::string(recipe);
+      }
+    else if(version==3) {
+      if(!binding.HasMember("catalog_version") || !binding["catalog_version"].IsUint() ||
+         binding["catalog_version"].GetUint()==0)
+        throw std::runtime_error("invalid projected base catalog version");
+      salt="native-script-base-v3\ncatalog-v"+std::to_string(binding["catalog_version"].GetUint());
+      }
+    else {
+      throw std::runtime_error("invalid projected base identity version");
+      }
+    projectionSource(identity,binding,version,salt);
+    }
+  std::string reason;
+  if(!BaseImport::matches(selected.path,identity,false,&reason))
+    throw std::runtime_error("invalid prepared base: "+reason);
+  return selected;
+  }
+
 bool BaseStore::isFullSymbolFile(const fs::path& relative) {
   const auto part=relative.begin();
   if(part==relative.end() || *part!="definitions")
@@ -580,13 +622,15 @@ fs::path BaseStore::cacheRoot() {
   }
 
 BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport::Files& mounted, const BaseImport::Progress& log,
-                                       const Import& import, Profile profile, const BaseImport::Identity* projected) {
+                                       const Import& import, Profile profile, const BaseImport::Identity* projected,
+                                       const fs::path& explicitSelection) {
 #ifdef _WIN32
   const auto* explicitName=_wgetenv(L"OPENGOTHIC_BASE");
 #else
   const auto* explicitName=std::getenv("OPENGOTHIC_BASE");
 #endif
-  const auto explicitBase=explicitName!=nullptr ? fs::path(explicitName) : fs::path();
+  const auto explicitBase=!explicitSelection.empty() ? explicitSelection :
+                          explicitName!=nullptr ? fs::path(explicitName) : fs::path();
   if(!profile.projectedOnly && metadataAuditEnabled())
     return metadataAuditBase(explicitBase,log,profile);
   if(projected && !requireRunnableBase(*projected,profile))

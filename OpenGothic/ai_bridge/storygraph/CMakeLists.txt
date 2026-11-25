@@ -68,7 +68,7 @@ endif()
 
 # The game build exposes the tool as an explicit target, without building it by default.
 option(STORYGRAPH_TOOL "build the storygraph command line tool" ${PROJECT_IS_TOP_LEVEL})
-add_executable(storygraph main.cpp scan.cpp check.cpp check.h fuzz.cpp saveworld.cpp saveworld.h
+add_executable(storygraph main.cpp oumessages.cpp scan.cpp check.cpp check.h fuzz.cpp saveworld.cpp saveworld.h
                             effects.cpp effects.h execcheck.cpp execcheck.h snapshot.h
                             ../../common/basestore.cpp)
 target_link_libraries(storygraph PRIVATE StoryGraph gothic-base-import gothic-video-import gothic-daedalus)
@@ -77,4 +77,12 @@ if(NOT STORYGRAPH_TOOL)
 endif()
 if(NOT MSVC)
   target_compile_options(storygraph PRIVATE -Wall -Wconversion -Werror)
+endif()
+
+# The server's reader only needs the prepared output-unit catalogue.
+add_executable(storygraph-ou EXCLUDE_FROM_ALL oumain.cpp oumessages.cpp ../../common/basestore.cpp)
+target_include_directories(storygraph-ou SYSTEM PRIVATE ../../lib/rapidjson/include)
+target_link_libraries(storygraph-ou PRIVATE gothic-base-runtime gothic-video-runtime)
+if(NOT MSVC)
+  target_compile_options(storygraph-ou PRIVATE -Wall -Wconversion -Werror)
 endif()

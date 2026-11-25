@@ -2,7 +2,8 @@
 # Builds the game of the Linux x64 release archive (.github/workflows/release.yml, docs/development.md):
 #   OpenGothic/build/opengothic/Gothic2Notr               the game with the AI bridge
 #   OpenGothic/build/opengothic/content-convert           the base and video converter (a dependency of the game)
-#   OpenGothic/ai_bridge/storygraph/build/storygraph      the story graph converter (STORYGRAPH_TOOL)
+#   OpenGothic/ai_bridge/storygraph/build/storygraph      the offline story graph converter
+#   OpenGothic/ai_bridge/storygraph/build/storygraph-ou   the packaged server's native OU reader
 #
 # For the players' archive, not for development: scripts/build-engine.sh stays the everyday build. The
 # differences are only flags given here, so the engine's CMakeLists.txt is the same for every system:
@@ -47,10 +48,10 @@ graph="$engine/ai_bridge/storygraph"
 cmake -S "$engine" -B "$engine/build" "${flags[@]}"
 cmake --build "$engine/build" --target Gothic2Notr ${parallel[@]+"${parallel[@]}"} -- -k 0
 cmake -S "$graph" -B "$graph/build" "${flags[@]}"
-cmake --build "$graph/build" --target storygraph ${parallel[@]+"${parallel[@]}"} -- -k 0
+cmake --build "$graph/build" --target storygraph storygraph-ou ${parallel[@]+"${parallel[@]}"} -- -k 0
 
 out="$engine/build/opengothic"
-built=("$out/Gothic2Notr" "$out/content-convert" "$graph/build/storygraph")
+built=("$out/Gothic2Notr" "$out/content-convert" "$graph/build/storygraph" "$graph/build/storygraph-ou")
 for file in "${built[@]}"; do
   [[ -x "$file" ]] || { echo "the build finished without $file" >&2; exit 1; }
 done

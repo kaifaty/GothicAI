@@ -46,6 +46,7 @@ from .commands import (
     load_config,
     new_log_dir,
     preparation,
+    prepared_game_environment,
     repo_dir,
     services,
     storygraph_tool,
@@ -340,10 +341,14 @@ def _preflight(config: Config) -> int:
         missing.append(f"Не найден uv или папка проекта. Запустите {hint}.")
     else:
         game_bin = s.paths.game_bin or default_game_bin(repo)
-        # `up` prepares the base with the converter beside the game, unless a base is given explicitly
-        prepares = not os.environ.get("OPENGOTHIC_BASE")
-        if not game_bin.is_file() or (prepares and not content_converter(game_bin).is_file()):
+        if not game_bin.is_file():
             missing.append(f"Игра ещё не собрана. Запустите {hint}.")
+        elif s.game.dir is not None and not content_converter(game_bin).is_file():
+            try:
+                prepared_game_environment(s.game.dir)
+            except RuntimeError:
+                missing.append("Подготовьте игровую базу отдельным content-convert resolve "
+                               "и задайте OPENGOTHIC_BASE.")
         if "STORYGRAPH_TOOL" not in os.environ and not storygraph_tool(repo).is_file():
             missing.append(f"Не собран граф сюжета, без него NPC не знают сюжета. Запустите {hint}.")
     providers = _providers_in_use(config)

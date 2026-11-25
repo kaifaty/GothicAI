@@ -44,6 +44,8 @@ struct Profile {
   };
 inline constexpr int nativeProjectionVersion=2;
 bool isNativeProjection(const std::filesystem::path& base);
+// Lease and verify an explicit prepared base for asset readers, without selecting a game profile.
+Selection openPreparedBase(const std::filesystem::path& base, BaseImport::Identity& identity);
 // Legacy definition artifacts are kept only in offline bases.
 bool isFullSymbolFile(const std::filesystem::path& relative);
 // Derive the production projection identity from an already verified combined base.
@@ -52,7 +54,7 @@ BaseImport::Identity nativeProjectionIdentity(const BaseImport::Identity& combin
 // A projector uses the existing import/cache path with its derived identity.
 Selection resolve(const std::filesystem::path& gothic, const BaseImport::Files& mounted,
                   const BaseImport::Progress& log, const Import& import={}, Profile profile={},
-                  const BaseImport::Identity* projected=nullptr);
+                  const BaseImport::Identity* projected=nullptr, const std::filesystem::path& explicitSelection={});
 // P17: the independently fingerprinted video part. OPENGOTHIC_BASE does not
 // select this part; OPENGOTHIC_VIDEOS_FINGERPRINT selects a ready part without an installation.
 // An explicitly empty video fingerprint disables selection; unset retains automatic selection.

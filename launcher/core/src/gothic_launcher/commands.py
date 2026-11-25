@@ -177,9 +177,10 @@ def find_layout(config: Config) -> Layout:
         problems.append("game folder is not set: gothic-launcher config set game.dir '/path/to/Gothic II'")
         game_dir = Path()
     else:
-        if sys.platform == "linux" and game_dir == Path.home() / "gothic-ai/game-settings":
-            argv = [sys.executable, str(repo / "scripts/ryzen_game.py"), "--json", f"--assets={game_dir}"]
-            converter = content_converter(game_bin)
+        converter = content_converter(game_bin)
+        ryzen_helper = repo / "scripts/ryzen_game.py"
+        if sys.platform == "linux" and game_dir == Path.home() / "gothic-ai/game-settings" and ryzen_helper.is_file():
+            argv = [sys.executable, str(ryzen_helper), "--json", f"--assets={game_dir}"]
             if converter.is_file() and os.access(converter, os.X_OK):
                 argv.extend(["--converter", str(converter)])
             try:
@@ -191,8 +192,11 @@ def find_layout(config: Config) -> Layout:
             except subprocess.CalledProcessError as error:
                 raise LaunchError(error.stderr.strip()) from error
         try:
-            with base.resolve(game_dir):
-                pass
+            if converter.is_file() and os.access(converter, os.X_OK):
+                with base.resolve(game_dir):
+                    pass
+            else:
+                game_env.update(prepared_game_environment(game_dir, game_env))
         except RuntimeError as error:
             if not _has_child(game_dir, "data") and not game_env.get("OPENGOTHIC_BASE_FINGERPRINT"):
                 problems.append(f"select an installed Gothic II folder once: {error}")
@@ -291,6 +295,21 @@ def default_game_bin(repo: Path) -> Path:
 def content_converter(game_bin: Path) -> Path:
     """The base and video converter (scripts/convert) the engine build puts beside the game."""
     return game_bin.parent / ("content-convert.exe" if sys.platform == "win32" else "content-convert")
+
+
+def prepared_game_environment(game_dir: Path, env: dict[str, str] | None = None) -> dict[str, str]:
+    """Keep the game and its services on the same prepared native base."""
+    with base.resolve(game_dir, native=True, environ=child_env({**base_cache_env(), **(env or {})})) as selected:
+        marker = selected.native_profile
+        graph = "storygraph/story.json"
+        if (
+            not isinstance(marker, dict)
+            or marker.get("version") != 2
+            or not selected.has_file(graph)
+            or not (selected.path / graph).is_file()
+        ):
+            raise RuntimeError(f"base {selected.path} needs a prepared native profile with a StoryGraph")
+        return {"OPENGOTHIC_BASE": str(selected.path)}
 
 
 def storygraph_tool(repo: Path) -> Path:
@@ -403,7 +422,7 @@ def game(config: Config, layout: Layout, ports: Ports, save: str | None = None, 
 def preparation(
     game_bin: Path, game_dir: Path, cwd: Path, env: dict[str, str] | None = None
 ) -> Proc | None:
-    """Prepare content with the converter shipped beside the selected game executable."""
+    """Prepare content with the adjacent converter when the game has one."""
     inherited = child_env(env or {})
     if inherited.get("OPENGOTHIC_BASE"):
         return None
@@ -414,10 +433,15 @@ def preparation(
         return None
     converter = content_converter(game_bin)
     if not converter.is_file() or not os.access(converter, os.X_OK):
-        build = "scripts/build-engine.ps1" if sys.platform == "win32" else "scripts/build-engine.sh"
-        raise LaunchError(
-            f"content-convert is missing or not executable: {converter}; rebuild the engine with {build}"
-        )
+        try:
+            prepared_game_environment(game_dir, env)
+        except RuntimeError as error:
+            build = "scripts/build-engine.ps1" if sys.platform == "win32" else "scripts/build-engine.sh"
+            raise LaunchError(
+                f"{error}. Prepare the native base with the offline content-convert resolve tool "
+                f"and set OPENGOTHIC_BASE. For source builds, {build} installs the converter at {converter}"
+            ) from error
+        return None
     return Proc("prepare", [str(converter), "resolve", str(game_dir)], cwd, env or {}, restart=False)
 
 
@@ -466,6 +490,8 @@ def _service(
     cwd: Path,
 ) -> Proc:
     argv = [str(layout.uv), "run", "--project", str(layout.repo / project), script, "serve", *args]
+    if name in ("server", "tts") and (selected := layout.game_env.get("OPENGOTHIC_BASE")):
+        env = {**env, "OPENGOTHIC_BASE": selected}
     return Proc(name, argv, cwd, env, health=f"http://127.0.0.1:{port}/health")
 
 
