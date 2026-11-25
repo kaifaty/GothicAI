@@ -26,11 +26,14 @@ if(MSVC)
 endif()
 endif()
 add_executable(content-convert convert.cpp stressbase.cpp stressmeshes.cpp worldcook.cpp clusterlodcensus.cpp ../../OpenGothic/common/basestore.cpp
+  treenanitecook.cpp ../../OpenGothic/tools/treenaniteasset.cpp
   ../../OpenGothic/tools/runtimebindingroots.cpp ../../OpenGothic/tools/nativebasecatalogimport.cpp ../../OpenGothic/tools/nativeworldplacementimport.cpp
   ../../OpenGothic/common/game/definitions/nativebasecatalog.cpp
   ../../OpenGothic/common/gltfmeshcolor.cpp
   ../../OpenGothic/common/world/voblayer.cpp ../../OpenGothic/common/world/movablevobs.cpp
   ../../OpenGothic/common/game/definitions/particlecontent.cpp)
+set_property(SOURCE treenanitecook.cpp APPEND PROPERTY COMPILE_OPTIONS
+  "$<IF:$<CXX_COMPILER_ID:MSVC>,/fp:precise,-ffp-contract=off>")
 get_filename_component(VOB_LAYER_MOVABLE_CSV "${CMAKE_CURRENT_SOURCE_DIR}/../../OpenGothic/data/movable-vobs.csv" ABSOLUTE)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VOB_LAYER_MOVABLE_CSV}")
@@ -61,6 +64,7 @@ endif()
 target_compile_definitions(content-convert PRIVATE CONTENT_CONVERT_PARTICLE_PROGRAMS=1)
 # Definitions import executes item constructors through the shared snapshot library.
 target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus gothic-offline-bindings)
+target_link_libraries(content-convert PRIVATE gothic-cluster-lod meshoptimizer)
 
 target_link_libraries(content-convert PRIVATE gothic-npc-snapshot StoryGraph)
 set(native_definition_readers

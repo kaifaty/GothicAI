@@ -442,7 +442,7 @@ void runClusterLodCensus(const std::filesystem::path& world, const std::filesyst
   writeErrors(out,errors,total.levels.size());
   out << "\nstop_reason\tgroups\ttop_triangles\n";
   constexpr std::array reasonNames = {"reduction","material","boundary","locked"};
-  static_assert(reasonNames.size()==size_t(ClusterLod::StopReason::Count));
+  static_assert(reasonNames.size()==size_t(ClusterLod::StopReason::Area));
   for(size_t i=0; i<reasonNames.size(); ++i)
     out << reasonNames[i] << '\t' << stats.stoppedGroups[i] << '\t' << stats.stoppedTriangles[i] << '\n';
   topology.writeSharedInterior(out,table);

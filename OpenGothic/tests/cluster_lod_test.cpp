@@ -919,6 +919,65 @@ float attributeErrorWithDetachedFace(float x) {
   return error;
   }
 
+void checkFoliageDilation() {
+  constexpr uint32_t Segments = 320, WindWeights = 0x10203040u;
+  std::vector<Vertex> vertices = {{{0,0,0},{0,0,1},{0.5f,0.5f},WindWeights}};
+  std::vector<Triangle> triangles;
+  for(uint32_t i=0; i<Segments; ++i) {
+    const float angle = 2.f*std::numbers::pi_v<float>*float(i)/float(Segments);
+    const float x = std::cos(angle), y = std::sin(angle);
+    vertices.push_back({{1000.f*x,1000.f*y,0},{0,0,1},{0.5f+0.5f*x,0.5f+0.5f*y},WindWeights});
+    triangles.push_back({{0,i+1,(i+1)%Segments+1},0});
+    }
+  // A bark triangle pins the first spoke of the foliage in both the fine and coarse cuts.
+  vertices.push_back({{1000,0,100},{0,1,0},{0,1},WindWeights});
+  triangles.push_back({{0,1,Segments+1},1,true});
+  std::vector<uint8_t> locks(vertices.size());
+  BuildStats stats;
+  const auto graph = buildFoliage(vertices,triangles,locks,stats);
+  require(stats.dilationCm.size()==graph.groups.size() &&
+          std::ranges::any_of(stats.dilationCm,[](float amount) { return amount>0; }),
+          "free foliage borders did not expand");
+  require(graph.vertices.size()>vertices.size(),"foliage dilation did not use separate vertices");
+  for(size_t i=0; i<vertices.size(); ++i)
+    require(graph.vertices[i].position==vertices[i].position && graph.vertices[i].color==vertices[i].color,
+            "foliage dilation changed the input geometry");
+
+  for(const auto& cluster : graph.clusters) {
+    require(cluster.triangleCount<=MaxFoliageTriangles && cluster.vertexCount<=MaxFoliageVertices,
+            "foliage exceeds logical cluster limits");
+    const auto check = [&](uint32_t transition) {
+      const auto& group = graph.groups.at(transition);
+      require(group.errorCm>=stats.dilationCm.at(transition),"transition error omits dilation");
+      const double distance = std::hypot(double(group.bounds.center[0])-cluster.bounds.center[0],
+                                         double(group.bounds.center[1])-cluster.bounds.center[1],
+                                         double(group.bounds.center[2])-cluster.bounds.center[2]);
+      require(distance+cluster.bounds.radius<=group.bounds.radius,"transition sphere misses a cluster");
+      };
+    check(cluster.parentGroup);
+    if(cluster.refinedGroup != NoGroup) {
+      check(cluster.refinedGroup);
+      require(graph.groups[cluster.parentGroup].errorCm>=graph.groups[cluster.refinedGroup].errorCm,
+              "foliage errors are not monotone");
+      }
+    }
+  const auto coarse = selectCut(graph,{{},1080,1.6f},Infinity);
+  size_t coarseTriangles = 0;
+  std::set<uint32_t> contact;
+  for(const auto id : coarse) {
+    const auto& cluster = graph.clusters[id];
+    if(cluster.material==1) {
+      require(cluster.level==0 && cluster.triangleCount==1,"bark was simplified");
+      continue;
+      }
+    coarseTriangles += cluster.triangleCount;
+    for(const auto vertex : std::span(graph.vertexIndices).subspan(cluster.vertexOffset,cluster.vertexCount))
+      contact.insert(vertex);
+    }
+  require(coarseTriangles<Segments && contact.contains(0) && contact.contains(1),
+          "foliage cut lost the trunk attachment");
+  }
+
 }
 
 int main() {
@@ -940,6 +999,7 @@ int main() {
     checkMixedMaterialWedge();
     checkDisappearingMaterial();
     checkAccumulatedContourDrift();
+    checkFoliageDilation();
     const float nearError = attributeErrorWithDetachedFace(1024.f);
     const float farError = attributeErrorWithDetachedFace(8192.f);
     require(std::abs(nearError-farError)<=nearError*0.01f,"attribute error changed with the group's extent");

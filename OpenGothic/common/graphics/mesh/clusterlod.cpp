@@ -20,10 +20,13 @@ constexpr size_t GroupSize = 16;
 constexpr float Infinity = std::numeric_limits<float>::infinity();
 constexpr std::array<float, 9> AttributeWeightsCm = {50.f, 50.f, 50.f, 25.f, 25.f, 20.f, 20.f, 20.f, 20.f};
 
+enum class Profile { World, Foliage64, Foliage128 };
+
 using Indices = std::vector<uint32_t>;
 using Edge = std::array<uint32_t, 2>;
 using Boundary = std::map<Edge, int>;
 using MaterialContours = std::map<uint32_t, Boundary>;
+using BorderMoves = std::map<uint32_t, Point>;
 
 struct Wedge {
   Point                position;
@@ -43,6 +46,21 @@ double distance(const Point& a, const Point& b) {
   const double y = double(a[1]) - b[1];
   const double z = double(a[2]) - b[2];
   return std::sqrt(x*x + y*y + z*z);
+  }
+
+using Vector = std::array<double, 3>;
+
+Vector delta(const Point& a, const Point& b) {
+  return {double(a[0]) - b[0], double(a[1]) - b[1], double(a[2]) - b[2]};
+  }
+
+double dot(const Vector& a, const Vector& b) {
+  return std::inner_product(a.begin(), a.end(), b.begin(), 0.);
+  }
+
+Vector normal(const Point& a, const Point& b, const Point& c) {
+  const auto u = delta(b, a), v = delta(c, a);
+  return {u[1]*v[2] - u[2]*v[1], u[2]*v[0] - u[0]*v[2], u[0]*v[1] - u[1]*v[0]};
   }
 
 float enclosingRadius(double radius) {
@@ -91,7 +109,8 @@ Sphere mergeSpheres(std::span<const Sphere> spheres) {
 class Builder {
   public:
     Builder(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
-            std::span<const uint8_t> boundary, BuildStats* stats, CensusVariant variant);
+            std::span<const uint8_t> boundary, BuildStats* stats, CensusVariant variant,
+            Profile profile = Profile::World);
     Graph finish();
 
   private:
@@ -105,6 +124,7 @@ class Builder {
     std::vector<float> coverageErrors;
     BuildStats* stats;
     CensusVariant variant;
+    Profile profile;
 
     void clusterize(const Indices& indices, uint32_t level, uint32_t refinedGroup, Indices& output);
     void appendIndices(Indices& target, const Cluster& cluster, bool remapPositions) const;
@@ -118,11 +138,18 @@ class Builder {
     MaterialContours materialContours(const Indices& indices, const Boundary& open) const;
     float materialError(const MaterialContours& original, const Indices& simplified, const Boundary& open) const;
     float foldError(const Indices& original, const Indices& simplified) const;
+    bool retainsFoliageBoundary(const Indices& original, const Indices& simplified,
+                                const Boundary& open, const Boundary& replacement,
+                                const std::vector<uint8_t>& locks) const;
+    bool dilateBorders(const Indices& original, const Indices& simplified, const Boundary& open,
+                       const Boundary& replacement, const std::vector<uint8_t>& locks,
+                       float budget, BorderMoves& moves, float& dilation) const;
+    void applyBorderMoves(Indices& simplified, const BorderMoves& moves, std::vector<uint8_t>& nextFixed);
   };
 
 Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
-                 std::span<const uint8_t> boundary, BuildStats* stats, CensusVariant variant)
-  : stats(stats), variant(variant) {
+                 std::span<const uint8_t> boundary, BuildStats* stats, CensusVariant variant, Profile profile)
+  : stats(stats), variant(variant), profile(profile) {
   if(boundary.size() != vertices.size())
     throw std::invalid_argument("Cluster LOD requires one boundary flag per vertex");
   offset(vertices.size());
@@ -131,10 +158,16 @@ Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> tri
     return;
 
   Indices indices, locked;
+  uint32_t foliageMaterial = NoGroup;
   indices.reserve(triangles.size() * 3);
   std::map<std::array<uint32_t, 10>, uint32_t> unique;
   for(const auto& triangle : triangles) {
     const uint32_t material = variant == CensusVariant::NoMaterials && !triangle.locked ? 0 : triangle.material;
+    if(profile != Profile::World && !triangle.locked) {
+      if(foliageMaterial != NoGroup && material != foliageMaterial)
+        throw std::invalid_argument("Tree DAG expects one foliage material");
+      foliageMaterial = material;
+      }
     for(const auto id : triangle.vertices) {
       if(id >= vertices.size())
         throw std::out_of_range("Cluster LOD vertex index");
@@ -185,6 +218,8 @@ Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> tri
     coverageErrors.push_back(0);
     if(stats) {
       stats->positionErrorCm.push_back(Infinity);
+      if(profile != Profile::World)
+        stats->dilationCm.push_back(0);
       ++stats->stoppedGroups[size_t(StopReason::Locked)];
       stats->stoppedTriangles[size_t(StopReason::Locked)] += locked.size()/3;
       }
@@ -199,18 +234,20 @@ void Builder::clusterize(const Indices& indices, uint32_t level, uint32_t refine
     }
 
   for(const auto& [material, materialIndices] : byMaterial) {
-    constexpr size_t MinTriangles = MaxTriangles / 3;
-    const size_t capacity = meshopt_buildMeshletsBound(materialIndices.size(), MaxVertices, MinTriangles);
+    const size_t maxVertices = profile == Profile::Foliage128 ? MaxFoliageVertices : MaxVertices;
+    const size_t maxTriangles = profile == Profile::Foliage128 ? MaxFoliageTriangles : MaxTriangles;
+    const size_t minTriangles = maxTriangles / 3;
+    const size_t capacity = meshopt_buildMeshletsBound(materialIndices.size(), maxVertices, minTriangles);
     std::vector<meshopt_Meshlet> meshlets(capacity);
     Indices vertexIndices(materialIndices.size());
     std::vector<uint8_t> localIndices(materialIndices.size());
     const auto count = meshopt_buildMeshletsFlex(meshlets.data(), vertexIndices.data(), localIndices.data(),
                                                materialIndices.data(), materialIndices.size(), wedges.front().position.data(),
-                                               wedges.size(), sizeof(Wedge), MaxVertices, MinTriangles, MaxTriangles, 0.f, 2.f);
+                                               wedges.size(), sizeof(Wedge), maxVertices, minTriangles, maxTriangles, 0.f, 2.f);
     for(size_t i = 0; i < count; ++i) {
       const auto& m = meshlets[i];
       const auto ids = std::span(vertexIndices).subspan(m.vertex_offset, m.vertex_count);
-      std::array<Point, MaxVertices> points;
+      std::array<Point, MaxFoliageVertices> points;
       for(size_t j = 0; j < ids.size(); ++j)
         points[j] = wedges[ids[j]].position;
       const auto b = meshopt_computeSphereBounds(points.front().data(), ids.size(), sizeof(Point), nullptr, 0);
@@ -524,18 +561,155 @@ float Builder::foldError(const Indices& original, const Indices& simplified) con
   return enclosingRadius(error);
   }
 
+bool Builder::retainsFoliageBoundary(const Indices& original, const Indices& simplified,
+                                     const Boundary& open, const Boundary& replacement,
+                                     const std::vector<uint8_t>& locks) const {
+  const auto locked = [&](uint32_t id) { return (locks[id] & meshopt_SimplifyVertex_Lock) != 0; };
+  std::set<uint32_t> required;
+  for(uint32_t wedge : original)
+    if(locked(wedge))
+      required.insert(wedge);
+  for(uint32_t wedge : simplified)
+    required.erase(wedge);
+  if(!required.empty())
+    return false;
+  for(const auto& [edge, winding] : open) {
+    if(!locked(edge[0]) || !locked(edge[1]))
+      continue;
+    const auto found = replacement.find(edge);
+    if(found == replacement.end() || found->second != winding)
+      return false;
+    }
+  return true;
+  }
+
+// PreserveArea's free-border expansion follows meshoptimizer v1.3 dilateBorders.
+// The replacement gets its own positions, and a group with unsafe expansion stays fine.
+bool Builder::dilateBorders(const Indices& original, const Indices& simplified, const Boundary& open,
+                            const Boundary& replacement, const std::vector<uint8_t>& locks,
+                            float budget, BorderMoves& moves, float& dilation) const {
+  struct Offset { Vector direction{}; double length = 0; };
+  std::map<uint32_t, Offset> offsets;
+  double perimeter = 0;
+  const auto locked = [&](uint32_t id) { return (locks[id] & meshopt_SimplifyVertex_Lock) != 0; };
+  const auto measure = [&](const Indices& indices, const Boundary& border, bool accumulate) {
+    double area = 0;
+    for(size_t i = 0; i < indices.size(); i += 3) {
+      bool touchesBorder = false;
+      for(size_t corner = 0; corner < 3; ++corner) {
+        const uint32_t a = positions[indices[i + corner]];
+        const uint32_t b = positions[indices[i + (corner + 1) % 3]];
+        const uint32_t c = positions[indices[i + (corner + 2) % 3]];
+        const auto edge = border.find({std::min(a,b), std::max(a,b)});
+        if(edge == border.end() || edge->second != (a < b ? 1 : -1) || (locked(a) && locked(b)))
+          continue;
+        touchesBorder = true;
+        if(!accumulate)
+          continue;
+        const auto ab = delta(wedges[b].position, wedges[a].position);
+        auto ca = delta(wedges[a].position, wedges[c].position);
+        const double edgeSquared = dot(ab, ab);
+        if(edgeSquared == 0)
+          continue;
+        const double projection = dot(ca, ab) / edgeSquared;
+        for(size_t axis = 0; axis < 3; ++axis)
+          ca[axis] -= ab[axis] * projection;
+        const double outwardLength = std::sqrt(dot(ca, ca));
+        if(outwardLength == 0)
+          continue;
+        const double length = std::sqrt(edgeSquared);
+        perimeter += length;
+        for(uint32_t point : {a, b}) {
+          if(locked(point))
+            continue;
+          auto& offset = offsets[point];
+          offset.length += length;
+          for(size_t axis = 0; axis < 3; ++axis)
+            offset.direction[axis] += ca[axis] * (length / outwardLength);
+          }
+        }
+      if(touchesBorder) {
+        const auto n = normal(wedges[indices[i]].position, wedges[indices[i+1]].position, wedges[indices[i+2]].position);
+        area += 0.5 * std::sqrt(dot(n,n));
+        }
+      }
+    return area;
+    };
+  const double oldArea = measure(original, open, false);
+  const double newArea = measure(simplified, replacement, true);
+  if(newArea >= oldArea)
+    return true;
+  if(newArea < oldArea * 0.25 || perimeter == 0)
+    return false;
+
+  const double expansion = (oldArea - newArea) / perimeter;
+  for(auto& [id, offset] : offsets) {
+    auto& n = offset.direction;
+    for(double& axis : n)
+      axis /= offset.length;
+    const double miter = expansion / std::max(0.15, dot(n,n));
+    const auto& before = wedges[id].position;
+    Point after;
+    for(size_t axis = 0; axis < 3; ++axis)
+      after[axis] = float(double(before[axis]) + n[axis] * miter);
+    const double shift = distance(before, after);
+    if(shift > budget)
+      return false;
+    if(shift > 0)
+      moves.emplace(id, after);
+    dilation = std::max(dilation, enclosingRadius(shift));
+    }
+  const auto after = [&](uint32_t wedge) -> const Point& {
+    const auto moved = moves.find(positions[wedge]);
+    return moved == moves.end() ? wedges[wedge].position : moved->second;
+    };
+  for(size_t i = 0; i < simplified.size(); i += 3) {
+    const auto a = simplified[i], b = simplified[i+1], c = simplified[i+2];
+    const auto before = normal(wedges[a].position, wedges[b].position, wedges[c].position);
+    if(dot(before,before) > 0 && dot(before, normal(after(a), after(b), after(c))) <= 0)
+      return false;
+    }
+  return true;
+  }
+
+void Builder::applyBorderMoves(Indices& simplified, const BorderMoves& moves, std::vector<uint8_t>& nextFixed) {
+  std::map<uint32_t,uint32_t> newWedge, newPosition;
+  for(uint32_t& id : simplified) {
+    const uint32_t p = positions[id];
+    const auto moved = moves.find(p);
+    if(moved == moves.end())
+      continue;
+    const uint32_t next = offset(wedges.size());
+    const auto [it, inserted] = newWedge.try_emplace(id, next);
+    if(inserted) {
+      auto wedge = wedges[id];
+      auto vertex = result.vertices[wedge.vertex];
+      vertex.position = wedge.position = moved->second;
+      wedge.vertex = offset(result.vertices.size());
+      result.vertices.push_back(vertex);
+      wedges.push_back(wedge);
+      materials.push_back(wedge.material);
+      positions.push_back(newPosition.try_emplace(p, next).first->second);
+      nextFixed.push_back(0);
+      }
+    id = it->second;
+    }
+  }
+
 void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& locks,
                           Indices& pending, std::vector<uint8_t>& nextFixed) {
   Indices original;
   for(uint32_t id : clusters)
     appendIndices(original, result.clusters[id], false);
 
-  const bool keepOpen = variant != CensusVariant::NoOpenBorder && variant != CensusVariant::NoBoundaries;
+  const bool foliage = profile != Profile::World;
+  const bool keepOpen = !foliage && variant != CensusVariant::NoOpenBorder && variant != CensusVariant::NoBoundaries;
   const auto open = openBoundary(original);
   const auto material = wedges[original.front()].material;
   const bool mixed = std::ranges::any_of(original, [&](uint32_t id) { return wedges[id].material != material; });
   const auto contours = mixed ? materialContours(original, open) : MaterialContours{};
   auto groupLocks = locks;
+  groupLocks.resize(wedges.size());
   auto positionLocks = std::vector<uint8_t>(wedges.size());
   if(keepOpen)
     for(const auto& [edge, count] : open)
@@ -547,6 +721,10 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
     for(const auto& [position, links] : contourPoints(edges))
       if(links.incoming != 1 || links.outgoing != 1)
         positionLocks[position] = meshopt_SimplifyVertex_Lock;
+  if(foliage)
+    for(const auto& [position, links] : contourPoints(open))
+      if(links.incoming != 1 || links.outgoing != 1)
+        positionLocks[position] = meshopt_SimplifyVertex_Lock;
 
   // Preserve attribute splits within each material. Across materials, the
   // tag check pairs wedges without requiring the two charts to share attributes.
@@ -555,11 +733,14 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
     for(uint32_t wedge : original) {
       const auto [it, inserted] = charts.try_emplace({positions[wedge], materials[wedge]}, wedge);
       if(!inserted && wedges[wedge].attributes != wedges[it->second].attributes)
-        positionLocks[positions[wedge]] |= meshopt_SimplifyVertex_Protect;
+        positionLocks[positions[wedge]] |= foliage ? meshopt_SimplifyVertex_Lock : meshopt_SimplifyVertex_Protect;
       }
     }
   for(uint32_t wedge : original)
     groupLocks[wedge] |= positionLocks[positions[wedge]];
+  if(foliage)
+    for(uint32_t wedge : original)
+      groupLocks[positions[wedge]] |= groupLocks[wedge];
 
   Indices simplified(original.size());
   float error = 0, positionError = 0;
@@ -574,19 +755,27 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
                       options, &error, &positionError));
 
   StopReason stop = StopReason::Count;
-  float seamError = 0;
+  float seamError = 0, dilation = 0;
+  BorderMoves moves;
   if(simplified.empty() || simplified.size() >= original.size() ||
      (variant != CensusVariant::AnyReduction && simplified.size() * 100 > original.size() * 85)) {
     stop = StopReason::Reduction;
     }
   else {
     const auto replacementOpen = openBoundary(simplified);
-    if(mixed)
+    if(foliage)
+      seamError = materialError({{material, open}}, simplified, {});
+    else if(mixed)
       seamError = materialError(contours, simplified, replacementOpen);
     if(!std::isfinite(seamError))
       stop = StopReason::Material;
     else if((keepOpen && open != replacementOpen) || !retainsLocks(original, simplified, locks))
       stop = StopReason::Boundary;
+    else if(foliage && !retainsFoliageBoundary(original, simplified, open, replacementOpen, groupLocks))
+      stop = StopReason::Boundary;
+    else if(foliage && !dilateBorders(original, simplified, open, replacementOpen, groupLocks,
+                                     std::max({error, positionError, seamError}), moves, dilation))
+      stop = StopReason::Area;
     }
 
   auto group = groupBounds(clusters);
@@ -603,11 +792,25 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
     }
 
   if(stop == StopReason::Count) {
-    coverageError = enclosingRadius(double(childCoverageError) + std::max(seamError, foldError(original, simplified)));
-    // Cover float projection roundoff when the errors of two transitions tie.
-    group.errorCm = std::max({group.errorCm, error, positionError, coverageError}) *
-                    (1.f + 8 * std::numeric_limits<float>::epsilon());
+    const float shapeError = std::max(seamError, foldError(original, simplified));
+    constexpr float RoundingGuard = 1.f + 8 * std::numeric_limits<float>::epsilon();
+    if(foliage) {
+      group.errorCm = enclosingRadius((double(group.errorCm) + std::max({error, positionError, shapeError}) +
+                                      dilation) * RoundingGuard);
+      applyBorderMoves(simplified, moves, nextFixed);
+      }
+    else {
+      coverageError = enclosingRadius(double(childCoverageError) + shapeError);
+      group.errorCm = std::max({group.errorCm, error, positionError, coverageError}) * RoundingGuard;
+      }
+    const size_t first = pending.size();
     clusterize(simplified, result.clusters[clusters.front()].level + 1, groupId, pending);
+    if(foliage) {
+      std::vector<Sphere> bothSides = {group.bounds};
+      for(size_t i = first; i < pending.size(); ++i)
+        bothSides.push_back(result.clusters[pending[i]].bounds);
+      group.bounds = mergeSpheres(bothSides);
+      }
     }
   else {
     group.errorCm = Infinity;
@@ -622,8 +825,11 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
     }
   result.groups.push_back(group);
   coverageErrors.push_back(coverageError);
-  if(stats)
+  if(stats) {
     stats->positionErrorCm.push_back(positionError);
+    if(foliage)
+      stats->dilationCm.push_back(stop == StopReason::Count ? dilation : 0.f);
+    }
   }
 
 Graph Builder::finish() {
@@ -658,6 +864,13 @@ Graph buildWithStats(std::span<const Vertex> vertices, std::span<const Triangle>
                      std::span<const uint8_t> boundary, BuildStats& stats, CensusVariant variant) {
   stats = {};
   return Builder(vertices, triangles, boundary, &stats, variant).finish();
+  }
+
+Graph buildFoliage(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
+                   std::span<const uint8_t> boundary, BuildStats& stats, bool logical128) {
+  stats = {};
+  const auto profile = logical128 ? Profile::Foliage128 : Profile::Foliage64;
+  return Builder(vertices, triangles, boundary, &stats, CensusVariant::Normal, profile).finish();
   }
 
 float projectError(const Group& group, const View& view) {
