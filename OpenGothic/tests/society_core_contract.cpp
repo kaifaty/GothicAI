@@ -2254,6 +2254,38 @@ void checkCombatCheckpoint() {
   need(committed==3 && sealed.actors()[0].hp==18 && sealed.actors()[1].ammunition==1 && sealed.winner()==0,
        "combat handoff changed a committed hit or charged an unreleased shot");
 
+  for(const auto kind:{AttackKind::Ranged,AttackKind::Magic}) {
+    for(const Millis flight:{199,200,201}) {
+      AttackProfile profile;
+      profile.kind = kind;
+      profile.rangeCm = 150;
+      profile.windup = 50;
+      profile.recovery = 500;
+      profile.flight = flight;
+      profile.hitPermille = 1000;
+      profile.resourceCost = 1;
+      profile.damageMask = 1;
+      profile.damage[0] = 4;
+      Combatant attacker, target;
+      attacker.id = 0;
+      attacker.hp = target.hp = 20;
+      attacker.ammunition = attacker.mana = 1;
+      target.id = target.side = 1;
+      target.readyAt = 250;
+      const std::array pair{attacker,target};
+      auto boundary = start(0,250,true,1,pair,std::span(&profile,1));
+      size_t impacts = 0;
+      while(nextEventAt(boundary))
+        impacts += step(boundary).kind==EventKind::Impact;
+      const bool lands = flight==199;
+      const auto& after = boundary.actors()[0];
+      need(impacts==size_t(lands) && boundary.actors()[1].hp==(lands ? 16 : 20) &&
+           after.ammunition==1-int(lands && kind==AttackKind::Ranged) &&
+           after.mana==1-int(lands && kind==AttackKind::Magic),
+           "an attack must land before the deadline to spend ammunition or mana");
+      }
+    }
+
   const auto rejects = [](std::span<const uint8_t> data, bool gameplay) {
     try { restore(data,gameplay); } catch(const std::invalid_argument&) { return true; }
     return false;

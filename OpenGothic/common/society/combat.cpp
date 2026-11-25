@@ -359,7 +359,8 @@ struct Access {
       ready(enc,actor,enc.now_);
       return;
       }
-    if(!hasResources(actor,profile))
+    // The queue accepts impacts strictly before the encounter deadline.
+    if(!hasResources(actor,profile) || profile.flight>=enc.deadline_-enc.now_)
       return;
     // The attack is committed at release. A projectile may land after its attacker falls.
     if(profile.kind==AttackKind::Ranged) {

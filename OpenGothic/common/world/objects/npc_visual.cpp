@@ -787,8 +787,9 @@ void Npc::syncDeferredAnimation() const {
   if(animLodPendingDt==0)
     return;
   AnimationLod::noteSync();
-  // An Npc is never created const: the solved pose is a cache of the world clock.
-  const_cast<Npc*>(this)->updateAnimation(0);
+  // A physical read may follow another pose update and a relocation at the
+  // same timestamp. Rebuild the world-space bones even on that step.
+  const_cast<Npc*>(this)->updateAnimation(0,true);
   }
 
 bool Npc::canPauseDistantPose(uint64_t gestureLead) const {

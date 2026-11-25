@@ -17,6 +17,7 @@
 #include "gothic.h"
 #include "physics/dynamicworld.h"
 #include "physics/physicsnoise.h"
+#include "physics/ragdoll.h"
 #include "resources.h"
 #include "world/fplock.h"
 #include "world/objects/interactive.h"
@@ -78,6 +79,21 @@ struct NpcDefinitionContract {
     script.wld_spawnnpcrange(std::static_pointer_cast<NpcInstance>(caster.handlePtr()),creature,count,lifetime);
     }
   static auto& passivePerceptions(World& world) { return world.wobj.sndPerc; }
+  static bool refreshNearbyNpc(Npc& npc) {
+    auto& world = npc.world();
+    world.wobj.updateNpcPolicies(world.player(),world.player()->position());
+    const auto& near = world.wobj.npcNear;
+    return std::find(near.begin(),near.end(),&npc)!=near.end();
+    }
+  static bool movePhysicalNpc(Npc& npc, const Tempest::Vec3& position) {
+    if(!npc.createRagdoll())
+      return false;
+    auto state = npc.ragdoll->state();
+    if(!Ragdoll::relocateState(*npc.visual.visualSkeleton(),state,position) || !npc.ragdoll->restore(state))
+      return false;
+    npc.syncRagdoll();
+    return true;
+    }
   static int& outputOrder(GameScript& script) { return script.aiOutOrderId; }
   static AiQueue& queue(Npc& npc) { return npc.aiQueue; }
   static const auto& transferVariables(const GameScript& script) { return script.inventoryTransferVariables; }
@@ -918,6 +934,29 @@ void farIdleMonster(Gothic& gothic) {
           "the approaching hero wakes armed rest with the same standing body and point");
   std::puts("Armed monster rest: native deadline, point reservation, approaching hero and collision");
   world.removeNpc(*skeleton);
+
+  auto* body = world.addNpc(preyType,spawn);
+  require(body!=nullptr,"pose and ragdoll fixture needs a human skeleton");
+  body->setSimTier(NpcSimTier::Full);
+  body->updateTransform();
+  Tempest::Vec3 head;
+  require(body->hitZoneCenter(HitZones::Head,head),"the actor needs a native head hit zone");
+  const Tempest::Vec3 offset(4000,0,0), ray(0,0,150);
+  float hitAt = 0;
+  require(body->rayHitZone(head-ray,head+ray,hitAt)!=HitZones::None,"the reference ray hits the original actor");
+  body->setPosition(body->position()+offset);
+  body->deferAnimation(8);
+  const auto hit = body->rayHitZone(head+offset-ray,head+offset+ray,hitAt);
+  require(!body->hasDeferredAnimation(),"a stray arrow catches up the actor's ordinary pose debt");
+  require(hit!=HitZones::None,"a stray arrow reads the actor's pose after a same-tick relocation");
+
+  require(!NpcDefinitionContract::refreshNearbyNpc(*body),"the actor starts outside the hero's near list");
+  const auto close = world.player()->position()+Tempest::Vec3(500,0,0);
+  require(NpcDefinitionContract::movePhysicalNpc(*body,close) &&
+          NpcDefinitionContract::refreshNearbyNpc(*body) && body->processPolicy()==NpcProcessPolicy::AiNormal,
+          "a ragdoll crossing the near boundary updates the index while the hero stands still");
+  std::puts("NPC spatial updates: arrows read the recovered pose and ragdolls enter the near list");
+  world.removeNpc(*body);
   NpcSimTick::setConfig(restore);
   }
 
