@@ -593,22 +593,20 @@ def test_check_requires_base_and_reports_git_failure(ratchet_repository, capsys)
 
 
 def test_ratchet_workflow_checks_every_pr_against_base_sha():
-    workflow = (ROOT / ".github/workflows/debt-ratchet.yml").read_text(encoding="utf-8")
-    assert "name: Technical debt ratchet\n" in workflow
-    assert "on: pull_request\n" in workflow and not re.search(r"\bpaths(?:-ignore)?:", workflow)
-    assert 'git show "$BASE_SHA:scripts/debt.py"' in workflow
-    assert 'python3 "$tool/debt.py" check --base "$BASE_SHA"' in workflow
-    assert "BASE_SHA: ${{ github.event.pull_request.base.sha }}" in workflow
-    assert "ref: ${{ github.event.pull_request.head.sha }}" in workflow
-    assert "persist-credentials: false" in workflow and "fetch-depth: 0" in workflow
-    assert 'python-version: "3.12"' in workflow
+    workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+    checks = workflow.split("\n  pr-checks:\n", 1)[1].split("\n  select:\n", 1)[0]
+    assert "\n  pull_request:\n" in workflow and not re.search(r"\bpaths(?:-ignore)?:", workflow)
+    assert "if: github.event_name == 'pull_request'" in checks
+    assert 'git show "$BASE_SHA:scripts/debt.py"' in checks
+    assert 'python3 "$tool/debt.py" check --base "$BASE_SHA"' in checks
+    assert "BASE_SHA: ${{ github.event.pull_request.base.sha }}" in checks
+    assert "ref: ${{ github.event.pull_request.head.sha }}" in checks
+    assert "persist-credentials: false" in checks and "fetch-depth: 0" in checks
+    assert 'python-version: "3.12"' in checks
     assert "contents: read" in workflow and "timeout-minutes: 5" in workflow
-    assert "group: debt-ratchet-${{ github.event.pull_request.number }}" in workflow
     assert "cancel-in-progress: true" in workflow
-    tests = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
     for action in ("checkout", "setup-python"):
-        pinned = re.search(rf"actions/{action}@[a-f0-9]{{40}}", tests)[0]
-        assert pinned in workflow
+        assert re.search(rf"actions/{action}@[a-f0-9]{{40}}", checks)
 
 
 OLD_DEBT = (
@@ -638,7 +636,7 @@ close_score = 100
 
 
 def run_ratchet_step(repository, base):
-    workflow = (ROOT / ".github/workflows/debt-ratchet.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
     step = re.search(r"^ +- name: Check debt growth\n(?: +.*\n)*? +run: \|\n((?:(?: {10}.*)?\n)+)",
                      workflow, re.MULTILINE)
     env = {**os.environ, "BASE_SHA": base}
@@ -678,8 +676,8 @@ def test_ratchet_step_measures_old_branch_with_base_tool(repository, base_tool):
             "Строк в горячем файле: 20 → 22 (+2). Новый код — в новые файлы; рост, уже влитый в main, "
             "не считается. Пока это предупреждение; с 2099-01-01 такой рост не пройдёт проверку.\n")
     else:
-        assert result.stdout == ("::warning title=Храповик техдолга::На базе PR в scripts/debt.py "
-                                 "нет команды check; храповик пропущен.\n")
+        assert result.stdout == ("::warning title=Technical debt ratchet::"
+                                 "The PR base has no debt check. Skipping it.\n")
 
 
 def audit_finding(*, symbol="handle_request", severity="high", **fields):

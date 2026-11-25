@@ -1,4 +1,4 @@
-name: Python tests
+name: CI
 
 on:
   pull_request:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: python-tests-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -16,6 +16,62 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
+  pr-checks:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        id: python
+        with:
+          python-version: "3.12"
+      - name: Check commit addresses
+        run: |
+          # Use the base's checker so a PR cannot loosen its own check; before it lands, use the PR's.
+          tool=$(mktemp -d)
+          git show "$BASE_SHA:scripts/commit_identity.py" > "$tool/commit_identity.py" 2> /dev/null \
+            || cp scripts/commit_identity.py "$tool/commit_identity.py"
+          python3 "$tool/commit_identity.py" check --base "$BASE_SHA" --head "$HEAD_SHA"
+      - name: Check the files the branch adds
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        run: |
+          # Use the base's checker so a PR cannot loosen its own check; before it lands, use the PR's.
+          tool=$(mktemp -d)
+          git show "$BASE_SHA:scripts/large_files.py" > "$tool/large_files.py" 2> /dev/null \
+            || cp scripts/large_files.py "$tool/large_files.py"
+          python3 "$tool/large_files.py" check --base "$BASE_SHA" --head "$HEAD_SHA"
+      - name: Check debt growth
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        run: |
+          # Measure the PR tree with the base's ratchet: a branch older than the ratchet has no `check`.
+          tool=$(mktemp -d)
+          if git show "$BASE_SHA:scripts/debt.py" > "$tool/debt.py" 2> /dev/null \
+              && git show "$BASE_SHA:scripts/debt.toml" > "$tool/debt.toml" 2> /dev/null \
+              && python3 "$tool/debt.py" check --help > /dev/null 2>&1; then
+            python3 "$tool/debt.py" check --base "$BASE_SHA"
+          else
+            echo "::warning title=Technical debt ratchet::The PR base has no debt check. Skipping it."
+          fi
+      - name: Check engine layers
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        run: |
+          # Only warns: forbidden includes the PR adds across the engine layers.
+          tool=$(mktemp -d)
+          if git show "$BASE_SHA:scripts/engine_layers.py" > "$tool/engine_layers.py" 2> /dev/null; then
+            python3 "$tool/engine_layers.py" check --base "$BASE_SHA" \
+              || echo "::warning title=Engine layers::Layer check failed. See the step log."
+          else
+            echo "The PR base has no engine layer checker. Skipping it."
+          fi
+
   select:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -76,16 +132,22 @@ jobs:
 
   tests:
     if: ${{ always() }}
-    needs: [select, test]
+    needs: [pr-checks, select, test]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every selected group to pass
+      - name: Require PR checks and selected tests to pass
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_CHECK_RESULT: ${{ needs.pr-checks.result }}
           SELECT_RESULT: ${{ needs.select.result }}
           TEST_RESULT: ${{ needs.test.result }}
           SELECTED_GROUPS: ${{ needs.select.outputs.groups }}
         run: |
+          if [[ "$EVENT_NAME" == pull_request && "$PR_CHECK_RESULT" != success ]]; then
+            echo "PR checks did not pass: $PR_CHECK_RESULT"
+            exit 1
+          fi
           if [[ "$SELECT_RESULT" != success ]]; then
             echo "Test selection failed: $SELECT_RESULT"
             exit 1
