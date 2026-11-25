@@ -58,6 +58,10 @@ std::string_view GameScript::symbolName(size_t id) {
   }
 
 ScriptFn GameScript::findFunction(std::string_view name) {
+  if(baseNativeCatalog()!=nullptr) {
+    const auto id = storyScriptFunctionId(name);
+    return id ? ScriptFn(*id) : ScriptFn{};
+    }
   auto* symbol = findSymbol(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::FUNCTION)
     return {};
@@ -74,8 +78,7 @@ bool GameScript::nativeRoomReactionsEnabled() const {
          ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
   }
 
-bool GameScript::invokeNativeRoomPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase) {
-  const std::string_view name = symbol.name();
+bool GameScript::invokeNativeRoomPerception(std::string_view name, NpcActivityProbe::Phase& phase) {
   if((name!="B_EXITIFROOMLEFT" && name!="B_ASSESSPORTALCOLLISION" && name!="B_CLEARROOMTALK") ||
      !nativeRoomReactionsEnabled())
     return false;
@@ -103,11 +106,15 @@ void GameScript::loadNativeRoomReaction() {
   }
 
 void GameScript::setPerceptionPreset(bool normal) {
-  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto& self = baseNativeCatalog()!=nullptr ? storyActorSlot("SELF") : vm.global_self()->get_instance();
+  setPerceptionPreset(normal,std::dynamic_pointer_cast<daedalus::INpc>(self));
+  }
+
+void GameScript::setPerceptionPreset(bool normal,const std::shared_ptr<daedalus::INpc>& self) {
   if(self==nullptr)
     return;
   self->senses = int32_t(SensesBit::SENSE_SEE | SensesBit::SENSE_HEAR);
-  self->senses_range = findSymbol("PERC_DIST_ACTIVE_MAX")->get_int();
+  self->senses_range = intConstant("PERC_DIST_ACTIVE_MAX").value();
   if(normal) {
     const bool gateGuard = isGateGuard(self);
     const bool knowsInfo = npc_knowsinfo(self,1);
@@ -142,7 +149,10 @@ void GameScript::setPerceptionPreset(bool normal) {
   }
 
 void GameScript::clearPerceptions(const std::shared_ptr<daedalus::INpc>& self) {
-  findSymbol("B_CLEARPERCEPTIONS.SLF")->set_instance(self);
+  if(baseNativeCatalog()!=nullptr)
+    storyActorSlot("B_CLEARPERCEPTIONS.SLF") = self;
+  else
+    findSymbol("B_CLEARPERCEPTIONS.SLF")->set_instance(self);
   static constexpr PercType clear[] = {
     PERC_ASSESSPLAYER, PERC_ASSESSENEMY, PERC_ASSESSBODY, PERC_ASSESSMAGIC, PERC_ASSESSDAMAGE, PERC_ASSESSMURDER,
     PERC_ASSESSTHEFT, PERC_ASSESSUSEMOB, PERC_ASSESSENTERROOM, PERC_ASSESSTHREAT, PERC_DRAWWEAPON,
@@ -154,7 +164,10 @@ void GameScript::clearPerceptions(const std::shared_ptr<daedalus::INpc>& self) {
   }
 
 bool GameScript::isGateGuard(const std::shared_ptr<daedalus::INpc>& self) {
-  findSymbol("C_NPCISGATEGUARD.SLF")->set_instance(self);
+  if(baseNativeCatalog()!=nullptr)
+    storyActorSlot("C_NPCISGATEGUARD.SLF") = self;
+  else
+    findSymbol("C_NPCISGATEGUARD.SLF")->set_instance(self);
   return npc_isinstate(self,int(findFunction("ZS_GUARD_PASSAGE").ptr));
   }
 
@@ -1349,14 +1362,25 @@ bool GameScript::wantsToReactToSneaker(const std::shared_ptr<daedalus::INpc>& se
   }
 
 void GameScript::assignDementorTalk(const std::shared_ptr<daedalus::INpc>& npc) {
-  findSymbol("B_ASSIGNDEMENTORTALK.SLF")->set_instance(npc);
+  const auto* catalog = baseNativeCatalog();
+  if(catalog!=nullptr)
+    storyActorSlot("B_ASSIGNDEMENTORTALK.SLF") = npc;
+  else
+    findSymbol("B_ASSIGNDEMENTORTALK.SLF")->set_instance(npc);
   if(npc==nullptr || npc->type!=NpcType::G2_AMBIENT || npc->guild!=GIL_DMT)
     return;
   const auto id = hlp_getinstanceid(npc);
-  auto* member = findSymbol("C_INFO.NPC");
   for(const auto name : {"DIA_AMBIENTDEMENTOR_EXIT", "DIA_AMBIENTDEMENTOR"}) {
-    if(const auto info = findSymbol(name)->get_instance())
-      vm.set_int(info,member,0,id);
+    if(catalog!=nullptr) {
+      const auto* identity = NativeBaseCatalog::findIdentity(catalog->identities.dialogs,name);
+      if(identity==nullptr)
+        throw std::runtime_error("missing ambient dialog: "+std::string(name));
+      if(auto* info = findInfo(identity->id))
+        info->npc = id;
+      }
+    else if(const auto info = findSymbol(name)->get_instance()) {
+      vm.set_int(info,findSymbol("C_INFO.NPC"),0,id);
+      }
     }
   }
 
@@ -1513,9 +1537,8 @@ void GameScript::stopControlSpell(const std::shared_ptr<daedalus::INpc>& self, b
     ai_continueroutine(self);
   }
 
-bool GameScript::runControlSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runControlSpell(Npc& npc, std::string_view name, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
-  const std::string_view name = symbol.name();
   result = 0;
   if(name=="ZS_GREENTENTACLE") {
     npc_percenable(self,PERC_ASSESSMAGIC,int(restartTentacleCallback.ptr));
@@ -1583,11 +1606,10 @@ void GameScript::validateCombatTarget(const std::shared_ptr<daedalus::INpc>& sel
     }
   }
 
-bool GameScript::runHumanFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runHumanFlee(Npc& npc, std::string_view name, int& result) {
   constexpr size_t loadedGame = 65; // AIV_LOADGAME
   constexpr std::string_view fleeOverlay = "HUMANS_FLEE.MDS";
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
-  const std::string_view name = symbol.name();
   if(name=="ZS_FLEE") {
     npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction("B_ASSESSMAGIC").ptr));
     validateCombatTarget(self);
@@ -1622,7 +1644,7 @@ bool GameScript::runHumanFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
   return false;
   }
 
-bool GameScript::runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runWatchFight(Npc& npc, std::string_view name, int& result) {
   constexpr size_t inPosition = 19; // AIV_TAPOSITION
   constexpr size_t lastTurn = 68; // AIV_STATETIME
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
@@ -1634,7 +1656,6 @@ bool GameScript::runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol,
     turnToNpc(self,actor);
     };
   auto& aivar = self->aivar;
-  const std::string_view name = symbol.name();
   if(name=="ZS_WATCHFIGHT") {
     npc_percenable(self,PERC_ASSESSDEFEAT,int(findFunction("B_ASSESSDEFEAT").ptr));
     npc_percenable(self,PERC_ASSESSOTHERSDAMAGE,int(findFunction("B_CHEERFIGHT").ptr));
@@ -1704,8 +1725,8 @@ bool GameScript::runWatchFight(Npc& npc, const daedalus::DaedalusSymbol& symbol,
   return false;
   }
 
-bool GameScript::runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  if(symbol.name()!="ZS_COMMENTFAKEGUILD")
+bool GameScript::runFakeGuildComment(Npc& npc, std::string_view functionName, int& result) {
+  if(functionName!="ZS_COMMENTFAKEGUILD")
     return false;
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
@@ -1740,7 +1761,7 @@ bool GameScript::runFakeGuildComment(Npc& npc, const daedalus::DaedalusSymbol& s
   return true;
   }
 
-bool GameScript::runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runHumanPlunder(Npc& npc, std::string_view name, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
   const auto transfer = [&](int item, int amount) {
@@ -1751,7 +1772,6 @@ bool GameScript::runHumanPlunder(Npc& npc, const daedalus::DaedalusSymbol& symbo
     if(self->attribute[NpcAttribute::HITPOINTS]<self->attribute[NpcAttribute::HITPOINTS_MAX]/2)
       ai_startstate(self,int(findFunction("ZS_HEALSELF").ptr),0,"");
     };
-  const std::string_view name = symbol.name();
   if(name=="ZS_GETMEAT") {
     setPerceptionPreset(false);
     ai_standup(self);
@@ -1997,7 +2017,7 @@ void GameScript::queueFinishingMove(const std::shared_ptr<daedalus::INpc>& self,
   ai_finishingmove(self,other);
   }
 
-bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runHumanAttack(Npc& npc, std::string_view name, int& result) {
   constexpr size_t lastFightAgainstPlayer = 0; // AIV_LASTFIGHTAGAINSTPLAYER
   constexpr size_t invincible = 4; // AIV_INVINCIBLE
   constexpr size_t lastTarget = 7; // AIV_LASTTARGET
@@ -2040,7 +2060,6 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
   const auto targetValue = [&](size_t slot) { const auto target = other(); return target ? target->aivar[slot] : 0; };
   const auto guild = [](const std::shared_ptr<daedalus::INpc>& actor) { return actor ? int32_t(actor->guild) : 0; };
   auto& aivar = self->aivar;
-  const std::string_view name = symbol.name();
   if(name=="ZS_ATTACK") {
     result = 0;
     setPerceptionPreset(false);
@@ -2229,7 +2248,7 @@ bool GameScript::runHumanAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol
   return true;
   }
 
-bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runHumanReaction(Npc& npc, std::string_view name, int& result) {
   constexpr size_t lastFightAgainstPlayer = 0; // AIV_LASTFIGHTAGAINSTPLAYER
   constexpr size_t repeatedWarning = 19; // AIV_TAPOSITION
   constexpr size_t lastPlayerAttackReason = 47; // AIV_LASTPLAYERAR
@@ -2250,7 +2269,6 @@ bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symb
     return npc_isinfightmode(otherNpc(),int(mode));
     };
 
-  const std::string_view name = symbol.name();
   const bool weapon = name.starts_with("ZS_REACTTOWEAPON");
   auto& aivar = self->aivar;
   if(name=="ZS_REACTTODAMAGE" || name=="ZS_REACTTOWEAPON") {
@@ -2334,7 +2352,7 @@ bool GameScript::runHumanReaction(Npc& npc, const daedalus::DaedalusSymbol& symb
   return false;
   }
 
-bool GameScript::runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runObservePlayer(Npc& npc, std::string_view name, int& result) {
   constexpr size_t seenLeftRoom = 21; // AIV_SEENLEFTROOM in the verified program
   constexpr size_t turnInterval = 68; // AIV_STATETIME in the verified program
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
@@ -2350,7 +2368,6 @@ bool GameScript::runObservePlayer(Npc& npc, const daedalus::DaedalusSymbol& symb
     turnToNpc(self,otherNpc());
     };
 
-  const std::string_view name = symbol.name();
   if(name=="ZS_OBSERVEPLAYER") {
     setPerceptionPreset(true);
     const bool seated = hasBodyState(self,BS_SIT);
@@ -2429,7 +2446,7 @@ int32_t GameScript::runExitIfRoomLeft() {
   return 1;
   }
 
-bool GameScript::runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runClearRoom(Npc& npc, std::string_view name, int& result) {
   if(!nativeRoomReactionsEnabled())
     return false;
   constexpr size_t routinePosition = 19; // AIV_TAPOSITION in the verified program
@@ -2443,7 +2460,6 @@ bool GameScript::runClearRoom(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
   const auto say = [&](std::string_view line) { sayToNpc(self,otherNpc(),line); };
   const auto wantsAttack = [&] { return wantsToAttackRoomIntruder(self); };
 
-  const std::string_view name = symbol.name();
   if(name=="ZS_CLEARROOM") {
     setPerceptionPreset(false);
     npc_percenable(self,PERC_ASSESSENTERROOM,int(findFunction("B_EXITIFROOMLEFT").ptr));
@@ -3119,7 +3135,7 @@ void GameScript::showRemainingCanyonRazors() {
                  findSymbol("FONT_SCREENSMALL")->get_string(),2);
   }
 
-bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runDeadState(Npc& npc, std::string_view functionName, int& result) {
   // These AIVAR slots belong to the verified NotR program.
   constexpr size_t sawCrime = 1;
   constexpr size_t ransacked = 10;
@@ -3130,7 +3146,7 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
   constexpr size_t killedByPlayer = 67;
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
 
-  if(symbol.name()=="ZS_DEAD_LOOP") {
+  if(functionName=="ZS_DEAD_LOOP") {
     if(self->aivar[deathHandled]==0) {
       vm.push_reference(vm.global_self());
       vm.unsafe_call_bl(findSymbol("B_DRAGONKILLCOUNTER"));
@@ -3140,7 +3156,7 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
     result = LOOP_CONTINUE;
     return true;
     }
-  if(symbol.name()!="ZS_DEAD")
+  if(functionName!="ZS_DEAD")
     return false;
 
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
@@ -3225,7 +3241,7 @@ bool GameScript::runDeadState(Npc& npc, const daedalus::DaedalusSymbol& symbol, 
   return true;
   }
 
-bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runUnconsciousState(Npc& npc, std::string_view functionName, int& result) {
   // These AIVAR slots belong to the verified NotR program.
   constexpr size_t fightResult = 0;
   constexpr size_t ransacked = 10;
@@ -3245,12 +3261,12 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
   const auto startState = [&](std::string_view name) { ai_startstate(self,int(findFunction(name).ptr),0,""); };
 
   result = 0;
-  if(symbol.name()=="ZS_UNCONSCIOUS_LOOP") {
+  if(functionName=="ZS_UNCONSCIOUS_LOOP") {
     result = npc_getstatetime(self)<number("HAI_TIME_UNCONSCIOUS") ? LOOP_CONTINUE : LOOP_END;
     return true;
     }
 
-  if(symbol.name()=="ZS_UNCONSCIOUS") {
+  if(functionName=="ZS_UNCONSCIOUS") {
     npc_percenable(self,PERC_ASSESSMAGIC,int(findFunction("B_ASSESSMAGIC").ptr));
     const auto body = npc_getbodystate(self);
     const bool diving = ActivityDefinitions::bodyStateContains(body,BS_DIVE);
@@ -3302,7 +3318,7 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
     return true;
     }
 
-  if(symbol.name()!="ZS_UNCONSCIOUS_END")
+  if(functionName!="ZS_UNCONSCIOUS_END")
     return false;
   self->aivar[ransacked] = 0;
   ai_standup(self);
@@ -3338,9 +3354,9 @@ bool GameScript::runUnconsciousState(Npc& npc, const daedalus::DaedalusSymbol& s
   return true;
   }
 
-bool GameScript::runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runHealSelf(Npc& npc, std::string_view functionName, int& result) {
   result = 0;
-  if(symbol.name()=="ZS_HEALSELF") {
+  if(functionName=="ZS_HEALSELF") {
     // The stock minimal perception setup only enables these entries.
     npc.handle().senses = int32_t(SensesBit::SENSE_SEE|SensesBit::SENSE_HEAR);
     npc.handle().senses_range = findSymbol("PERC_DIST_ACTIVE_MAX")->get_int();
@@ -3352,9 +3368,9 @@ bool GameScript::runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, i
     npc.setPerceptionEnable(PERC_ASSESSENTERROOM,findFunction("B_ASSESSPORTALCOLLISION").ptr);
     return true;
     }
-  if(symbol.name()=="ZS_HEALSELF_END")
+  if(functionName=="ZS_HEALSELF_END")
     return true;
-  if(symbol.name()!="ZS_HEALSELF_LOOP")
+  if(functionName!="ZS_HEALSELF_LOOP")
     return false;
 
   if(npc.attribute(ATR_HITPOINTS)!=npc.attribute(ATR_HITPOINTSMAX)) {
@@ -3373,7 +3389,7 @@ bool GameScript::runHealSelf(Npc& npc, const daedalus::DaedalusSymbol& symbol, i
   return true;
   }
 
-bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runSpellVictimState(Npc& npc, std::string_view name, int& result) {
   enum class Kind { Inflate, Drain, Swarm };
   struct TimedSpell {
     Kind kind;
@@ -3388,7 +3404,6 @@ bool GameScript::runSpellVictimState(Npc& npc, const daedalus::DaedalusSymbol& s
     {Kind::Swarm,"ZS_SWARM","B_RESTARTSWARM","SPL_SWARM","SPL_TIME_SWARM","SPL_SWARM_DAMAGE",
      "S_SWARM_VICTIM","T_STAND_2_SWARM_VICTIM",78},
     };
-  const std::string_view name = symbol.name();
   const auto* spell = std::find_if(std::begin(spells),std::end(spells),[&](const auto& s) {
     return name.starts_with(s.state) || name==s.restart;
     });

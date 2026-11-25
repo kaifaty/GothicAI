@@ -57,8 +57,7 @@ constexpr int32_t shrinkScrollCost = 5;
 constexpr int32_t shrinkRuneCost = 300;
 }
 
-bool GameScript::runMonsterRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const std::string_view name = symbol.name();
+bool GameScript::runMonsterRoutine(Npc& npc, std::string_view name, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& position = npc.handle().aivar[routinePosition];
 
@@ -170,7 +169,7 @@ bool GameScript::isMonsterMage(const std::shared_ptr<daedalus::INpc>& npc) {
                  npc->guild==GIL_FIREGOLEM || npc->guild==GIL_SKELETON_MAGE);
   }
 
-bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runMonsterAttack(Npc& npc, std::string_view functionName, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& ai = self->aivar;
   auto& otherSymbol = *vm.global_other();
@@ -181,7 +180,7 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
     return guild>orcGuildSeparator || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON || mage;
     };
 
-  const std::string_view phase = symbol.name();
+  const std::string_view phase = functionName;
   if(phase=="ZS_MM_ATTACK") {
     auto enable = [&](PercType perception, std::string_view callback) {
       npc.setPerceptionEnable(perception,findFunction(callback).ptr);
@@ -351,8 +350,8 @@ bool GameScript::runMonsterAttack(Npc& npc, const daedalus::DaedalusSymbol& symb
   return true;
   }
 
-bool GameScript::runMonsterThreat(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const auto phase = symbol.name();
+bool GameScript::runMonsterThreat(Npc& npc, std::string_view functionName, int& result) {
+  const auto phase = functionName;
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
   if(phase=="ZS_MM_THREATENENEMY") {
@@ -397,8 +396,8 @@ bool GameScript::runMonsterThreat(Npc& npc, const daedalus::DaedalusSymbol& symb
   return true;
   }
 
-bool GameScript::runMonsterFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const auto phase = symbol.name();
+bool GameScript::runMonsterFlee(Npc& npc, std::string_view functionName, int& result) {
+  const auto phase = functionName;
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
   if(phase=="ZS_MM_FLEE") {
@@ -433,8 +432,8 @@ bool GameScript::runMonsterFlee(Npc& npc, const daedalus::DaedalusSymbol& symbol
   return true;
   }
 
-bool GameScript::runMonsterHunt(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const auto phase = symbol.name();
+bool GameScript::runMonsterHunt(Npc& npc, std::string_view functionName, int& result) {
+  const auto phase = functionName;
   if(phase=="ZS_MM_HUNT") {
     const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
     const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
@@ -456,8 +455,8 @@ bool GameScript::runMonsterHunt(Npc& npc, const daedalus::DaedalusSymbol& symbol
   return true;
   }
 
-bool GameScript::runMonsterEatBody(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const auto phase = symbol.name();
+bool GameScript::runMonsterEatBody(Npc& npc, std::string_view functionName, int& result) {
+  const auto phase = functionName;
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
   auto& ai = self->aivar;
@@ -497,8 +496,8 @@ bool GameScript::runMonsterEatBody(Npc& npc, const daedalus::DaedalusSymbol& sym
   return true;
   }
 
-bool GameScript::runMonsterDragonRest(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const auto phase = symbol.name();
+bool GameScript::runMonsterDragonRest(Npc& npc, std::string_view functionName, int& result) {
+  const auto phase = functionName;
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   if(phase=="ZS_MM_RTN_DRAGONREST") {
     npc.setPerceptionTime(1000);
@@ -539,8 +538,8 @@ bool GameScript::runMonsterDragonRest(Npc& npc, const daedalus::DaedalusSymbol& 
   return true;
   }
 
-bool GameScript::runMonsterSheepFollow(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const auto phase = symbol.name();
+bool GameScript::runMonsterSheepFollow(Npc& npc, std::string_view functionName, int& result) {
+  const auto phase = functionName;
   if(phase=="ZS_MM_RTN_FOLLOW_SHEEP" || phase=="ZS_MM_RTN_FOLLOW_SHEEP_BALTHASAR") {
     npc.setPerceptionTime(1000);
     npc.setPerceptionEnable(PERC_ASSESSPLAYER,findFunction("B_MM_ASSESSPLAYER").ptr);
@@ -593,8 +592,8 @@ bool GameScript::runMonsterSheepFollow(Npc& npc, const daedalus::DaedalusSymbol&
   return true;
   }
 
-bool GameScript::runMonsterSummoned(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const auto phase = symbol.name();
+bool GameScript::runMonsterSummoned(Npc& npc, std::string_view functionName, int& result) {
+  const auto phase = functionName;
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   if(phase=="ZS_MM_RTN_SUMMONED") {
     const bool wisp = hlp_getinstanceid(self)==hlp_getinstanceid(findSymbol("WISP_DETECTOR")->get_instance());
@@ -727,7 +726,7 @@ bool GameScript::nativeMonsterPerceptionsEnabled() {
          vm.global_self()->is_instance_of<daedalus::INpc>() && vm.global_other()->is_instance_of<daedalus::INpc>();
   }
 
-bool GameScript::invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {
+bool GameScript::invokeNativeMonsterPerception(std::string_view functionName, NpcActivityProbe::Phase& probe) {
   static constexpr std::pair<std::string_view,void (GameScript::*)()> callbacks[] = {
     {"B_MM_ASSESSENEMY",        &GameScript::runMonsterAssessEnemy},
     {"B_MM_ASSESSBODY",         &GameScript::runMonsterAssessBody},
@@ -740,7 +739,7 @@ bool GameScript::invokeNativeMonsterPerception(const daedalus::DaedalusSymbol& s
     {"B_SUMMONEDASSESSTALK",        &GameScript::runMonsterSummonedAssessTalk},
     };
   for(const auto& [name,callback] : callbacks) {
-    if(symbol.name()!=name)
+    if(functionName!=name)
       continue;
     if(!nativeMonsterPerceptionsEnabled())
       return false;
@@ -1146,8 +1145,7 @@ void GameScript::runMonsterAssessEnemy() {
   start("ZS_MM_THREATENENEMY",false);
   }
 
-bool GameScript::runDormantGolem(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const std::string_view name = symbol.name();
+bool GameScript::runDormantGolem(Npc& npc, std::string_view name, int& result) {
   auto& body = npc.handle();
   auto& position = body.aivar[routinePosition];
   result = LOOP_CONTINUE;
@@ -1166,8 +1164,7 @@ bool GameScript::runDormantGolem(Npc& npc, const daedalus::DaedalusSymbol& symbo
   return true;
   }
 
-bool GameScript::runShrinkState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const std::string_view name=symbol.name();
+bool GameScript::runShrinkState(Npc& npc, std::string_view name, int& result) {
   const auto self=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   result=LOOP_CONTINUE;
 
@@ -1284,7 +1281,7 @@ void GameScript::castShrink(Npc& caster, Npc* target) {
   ++self->aivar[20]; // AIV_SELECTSPELL
   }
 
-bool GameScript::runMagicHurtState(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runMagicHurtState(Npc& npc, std::string_view name, int& result) {
   static constexpr struct State {
     std::string_view name, stop, restart;
     int32_t damage;
@@ -1294,7 +1291,6 @@ bool GameScript::runMagicHurtState(Npc& npc, const daedalus::DaedalusSymbol& sym
     {"ZS_PYRO","B_STOPPYRO","",20},
     {"ZS_ZAPPED","B_STOPZAPPED","",2}
     };
-  const std::string_view name=symbol.name();
   const bool loop=name.ends_with("_LOOP"), end=name.ends_with("_END");
   const auto stateName=name.substr(0,name.size()-(loop ? 5 : end ? 4 : 0));
   const auto state=std::ranges::find(states,stateName,&State::name);

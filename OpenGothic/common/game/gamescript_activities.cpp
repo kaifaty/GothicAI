@@ -173,7 +173,7 @@ void GameScript::loadNativeRoutines() {
   loadNativeQuestLog([this,enabled] { return !vm.has_legacy_dispatcher() || enabled(); });
   }
 
-bool GameScript::runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol&, int& result) {
+bool GameScript::runMonsterScheduler(Npc& npc, std::string_view, int& result) {
   auto& aivar = npc.handle().aivar;
   aivar[size_t(findSymbol("AIV_MM_PRIORITY")->get_int())] = findSymbol("PRIO_EAT")->get_int();
   removeRavensStoneGuardians(npc);
@@ -234,11 +234,11 @@ void GameScript::removeRavensStoneGuardians(Npc& npc) {
     invokeKillNpc(int32_t(vm.global_self()->index()));
   }
 
-bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {
+bool GameScript::invokeNativeRoutine(Npc& npc, uint32_t function, std::string_view name, NpcActivityProbe::Phase& probe) {
   if(!activityEvents || floorDefer.active())
     return false;
-  const auto it = nativeRoutinePhases.find(symbol.index());
-  if(it==nativeRoutinePhases.end() || !(this->*it->second.callback)(npc,symbol,probe.result))
+  const auto it = nativeRoutinePhases.find(function);
+  if(it==nativeRoutinePhases.end() || !(this->*it->second.callback)(npc,name,probe.result))
     return false;
   const auto& phase = it->second;
   probe.fromRecord();
@@ -246,9 +246,8 @@ bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& s
   return true;
   }
 
-bool GameScript::invokeNativeRoutineReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol,
+bool GameScript::invokeNativeRoutineReaction(Npc& npc, std::string_view name,
                                                NpcActivityProbe::Phase& phase) {
-  const std::string_view name = symbol.name();
   if((name!="B_GOLEMRISE" && name!="B_ASSESSSLEEPTALK" && name!="B_EVENT_PORTAL_EARTHQUAKE") ||
      !nativeRoomReactionsEnabled())
     return false;
@@ -262,9 +261,8 @@ bool GameScript::invokeNativeRoutineReaction(Npc& npc, const daedalus::DaedalusS
   return true;
   }
 
-bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol,
+bool GameScript::invokeNativeStatusPerception(Npc& npc, std::string_view name,
                                               NpcActivityProbe::Phase& phase) {
-  const std::string_view name = symbol.name();
   const bool stopDamage = name=="B_STOPMAGICBURN" || name=="B_STOPMAGICBURNSHORT" || name=="B_STOPPYRO" || name=="B_STOPZAPPED";
   const bool restartBurn = name=="B_RESTARTBURN" || name=="B_RESTARTBURNSHORT";
   if((name!="B_ASSESSMAGIC" && name!="B_STOPMAGICFLEE" && name!="B_STOPMAGICSLEEP" && name!="B_ASSESSMAGICSLEEPTALK" &&
@@ -339,9 +337,14 @@ bool GameScript::routineTimerDue(const Npc& npc, ScriptFn loop) const {
 
 void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& activity) {
   const auto storeLoopRoll = [&](std::string_view variable, int32_t roll) {
-    const auto& loop = findSymbol(npc.aiState.funcLoop.ptr)->name();
-    if(auto* local = findSymbol(std::string(loop).append(variable)))
-      local->set_int(roll);
+    if(baseNativeCatalog()!=nullptr) {
+      const auto loop = storyProgramName(uint32_t(npc.aiState.funcLoop.ptr));
+      setGlobalIntSymbol(std::string(loop).append(variable),roll);
+      }
+    else if(const auto* loop = findSymbol(npc.aiState.funcLoop.ptr)) {
+      if(auto* local = findSymbol(std::string(loop->name()).append(variable)))
+        local->set_int(roll);
+      }
     };
   if(const auto* mob=activity.mob) {
     const auto& timer=*mob->timer;
@@ -389,17 +392,20 @@ void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& acti
   }
 
 bool GameScript::invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe) {
-  // The startup floor fix wraps the script externals; inside its window the phase keeps the VM path.
-  if(floorDefer.active())
+  // With the legacy dispatcher, the startup floor fix wraps the original script calls.
+  if(baseNativeCatalog()==nullptr && floorDefer.active())
     return false;
   const auto* phase = ActivityDefinitionRuntime::find(activityDefinitions,function);
   if(phase==nullptr || (!activityEvents && (phase->record.point || phase->record.mob->timer ||
                                              phase->record.mob->skipApproachWhenBusy)))
     return false;
   probe.fromRecord();
-  probe.result = ActivityDefinitionRuntime::run(vm,world(),npc,*phase,[this,&npc](int32_t item) {
-    storeItem(npc.addItem(uint32_t(item),1));
-    });
+  probe.result = ActivityDefinitionRuntime::run(world(),npc,*phase,[this,&npc,phase](std::string_view) {
+    if(phase->legacyHelper)
+      vm.unsafe_call_bl(vm.find_symbol_by_index(*phase->legacyHelper));
+    else
+      setPerceptionPreset(true,std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+    },[this,&npc](int32_t item) { storeItem(npc.addItem(uint32_t(item),1)); });
   return true;
   }
 
@@ -412,7 +418,7 @@ const ActivityEvents::Record* GameScript::eventActivity(ScriptFn init) {
   if(phase==nullptr || phase->phase!=ActivityDefinitions::Phase::Init)
     return nullptr;
   if(phase->record.mob && (phase->record.mob->loopResult!=LOOP_CONTINUE ||
-     !ActivityDefinitionRuntime::accepted(vm.find_symbol_by_index(uint32_t(init.ptr))->name())))
+     !ActivityDefinitionRuntime::accepted(phase->name)))
     return nullptr;
   return &phase->record;
   }
@@ -421,7 +427,7 @@ std::vector<std::string_view> GameScript::eventActivityNames() {
   std::vector<std::string_view> names;
   for(const auto& [id,phase]:activityDefinitions.phases)
     if(phase.phase==ActivityDefinitions::Phase::Init && eventActivity(ScriptFn(id)))
-      names.push_back(symbolName(id));
+      names.push_back(phase.name);
   std::sort(names.begin(),names.end());
   return names;
   }

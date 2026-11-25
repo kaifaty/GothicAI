@@ -1128,10 +1128,9 @@ int32_t GameScript::giveInventoryItems(const std::shared_ptr<daedalus::INpc>& gi
   return transfer.value;
   }
 
-bool GameScript::runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runItemRoutine(Npc& npc, std::string_view name, int& result) {
   using Phase=ActivityDefinitions::Phase;
   auto phase=Phase::Init;
-  std::string_view name=symbol.name();
   if(name.ends_with("_LOOP")) {
     phase=Phase::Loop;
     name.remove_suffix(5);
@@ -1158,7 +1157,7 @@ bool GameScript::runItemRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol
     };
   const auto roll=[&](uint32_t bound) {
     const auto value=rollRandom(bound,&npc,true);
-    if(auto* local=findSymbol(symbol.name()+".RANDOM"))
+    if(auto* local=findSymbol(std::string(name)+".RANDOM"))
       local->set_int(int32_t(value));
     return value;
     };

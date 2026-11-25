@@ -5,12 +5,11 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 
-bool GameScript::runRoamingRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runRoamingRoutine(Npc& npc, std::string_view name, int& result) {
   constexpr std::string_view freePoint = "FP_ROAM";
   constexpr size_t positionStage = 19;
   constexpr int32_t inPosition = 0, outOfPosition = 1;
 
-  const std::string_view name = symbol.name();
   auto& stage = npc.handle().aivar[positionStage];
   const auto goToFreePoint = [&] {
     if(const auto* point = world().findFreePoint(npc,freePoint))

@@ -41,8 +41,7 @@ void GameScript::removeFinishedGhosts() {
     }
   }
 
-bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const auto name = std::string_view(symbol.name());
+bool GameScript::runSocialRoutine(Npc& npc, std::string_view name, int& result) {
   const bool loop = name.ends_with("_LOOP");
   const bool end  = name.ends_with("_END");
   const bool init = !loop && !end;
@@ -444,7 +443,7 @@ bool GameScript::runSocialRoutine(Npc& npc, const daedalus::DaedalusSymbol& symb
   return true;
   }
 
-bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
+bool GameScript::runTalk(Npc& npc, std::string_view name, int& result) {
   if(ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return false;
   constexpr size_t startedTalk = 3; // AIV_NPCSTARTEDTALK in the verified program
@@ -460,7 +459,6 @@ bool GameScript::runTalk(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& 
     };
   auto& talkFix = *findSymbol("ZSTALKBUGFIX");
 
-  const std::string_view name = symbol.name();
   if(name=="ZS_TALK") {
     const auto player = other();
     result = 0;
@@ -673,11 +671,14 @@ bool GameScript::canRunNativeTalkReaction() {
   return !isDebugAlias("PC_LEVELINSPEKTOR") && !isDebugAlias("PC_ROCKEFELLER");
   }
 
-bool GameScript::invokeNativeTalkPerception(const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& phase) {
-  if(symbol.name()!="B_ASSESSTALK" || !canRunNativeTalkReaction())
+bool GameScript::invokeNativeTalkPerception(std::string_view functionName, NpcActivityProbe::Phase& phase) {
+  if(functionName!="B_ASSESSTALK" || !canRunNativeTalkReaction())
     return false;
   phase.fromRecord();
-  vm.unsafe_call_bl(&symbol);
+  if(baseNativeCatalog()!=nullptr)
+    runAssessTalk();
+  else
+    vm.unsafe_call_bl(findSymbol(functionName));
   return true;
   }
 

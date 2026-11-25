@@ -66,8 +66,7 @@ bool GameScript::runStockTeleportCast(const std::shared_ptr<daedalus::INpc>& act
   return true;
   }
 
-bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const std::string_view name = symbol.name();
+bool GameScript::runMovementRoutine(Npc& npc, std::string_view name, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& properties = npc.handle();
 
@@ -154,7 +153,7 @@ bool GameScript::runMovementRoutine(Npc& npc, const daedalus::DaedalusSymbol& sy
   if(name=="ZS_FLEETOWP_LOOP" || name=="ZS_RUNTOWP_LOOP") {
     if(npc.stateTime()/1000>5) {
       const auto roll = int32_t(rollRandom(2,&npc,true));
-      findSymbol(symbol.name()+".RANDOM")->set_int(roll);
+      findSymbol(std::string(name)+".RANDOM")->set_int(roll);
       if(roll==0)
         npc.aiPush(AiQueue::aiPlayAnim("T_HGUARD_LOOKAROUND"));
       npc.setStateTime(0);
@@ -249,8 +248,7 @@ void GameScript::assessSleepTalk(Npc& npc) {
   ai_startstate(self,int(findFunction("ZS_OBSERVEPLAYER").ptr),0,"");
   }
 
-bool GameScript::runFearOrSleepSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const std::string_view name = symbol.name();
+bool GameScript::runFearOrSleepSpell(Npc& npc, std::string_view name, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   result = LOOP_CONTINUE;
   if(name=="ZS_MAGICFLEE" || name=="ZS_MAGICSLEEP") {
@@ -319,8 +317,7 @@ void GameScript::sayMagicReaction(Npc& npc, std::string_view line, bool overlay)
   sayToNpc(self,other,line,overlay);
   }
 
-bool GameScript::runFreezeOrWhirlwindSpell(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const std::string_view name = symbol.name();
+bool GameScript::runFreezeOrWhirlwindSpell(Npc& npc, std::string_view name, int& result) {
   const bool freeze = name.starts_with("ZS_MAGICFREEZE");
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   constexpr size_t freezeSecond=53, whirlwindSecond=76; // AIV_FREEZESTATETIME and AIV_WHIRLWINDSTATETIME

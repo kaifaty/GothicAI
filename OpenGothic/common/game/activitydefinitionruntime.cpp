@@ -3,6 +3,7 @@
 #include "game/npcactivityhost.h"
 #include "world/objects/npc.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -60,23 +61,31 @@ bool ActivityDefinitionRuntime::accepted(std::string_view state) {
   return false;
   }
 
-ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
-    const ActivityDefinitions::Library& library, const daedalus::DaedalusScript& script, Mode mode) {
+namespace {
+struct PhaseBindings {
+  std::array<uint32_t,3> ids;
+  std::optional<uint32_t> legacyHelper;
+  };
+
+ActivityDefinitionRuntime::Definitions resolveRecords(const ActivityDefinitions::Library& library,
+    ActivityDefinitionRuntime::Mode mode,
+    const std::function<PhaseBindings(const std::string&,const std::string&)>& bindings) {
+  using namespace ActivityDefinitionRuntime;
   Definitions definitions;
   if(mode==Mode::Off)
     return definitions;
-  auto addPhases = [&](const std::string& name, ActivityEvents::Record record, const std::string& perceptions) {
+
+  const auto addPhases = [&](const std::string& name, ActivityEvents::Record record, const std::string& perceptions) {
     try {
-      const auto* helper = function(script,perceptions,false);
-      const std::array phases = {
-        std::pair{function(script,name,false),ActivityDefinitions::Phase::Init},
-        std::pair{function(script,name+"_LOOP",true),ActivityDefinitions::Phase::Loop},
-        std::pair{function(script,name+"_END",false),ActivityDefinitions::Phase::End},
-        };
-      for(const auto& [symbol,phase]:phases) {
+      const auto bound = bindings(name,perceptions);
+      constexpr std::array phases = {ActivityDefinitions::Phase::Init, ActivityDefinitions::Phase::Loop,
+                                     ActivityDefinitions::Phase::End};
+      for(size_t i=0; i<phases.size(); ++i) {
+        const auto phase = phases[i];
         if(phase==ActivityDefinitions::Phase::Loop && (record.point || record.mob->timer))
-          continue; // explicit calls and the events-off fallback still use the script Loop
-        definitions.phases.emplace(symbol->index(),Phase{record,phase,helper->index()});
+          continue; // Events handle the timed and point Loops.
+        if(!definitions.phases.emplace(bound.ids[i],Phase{record,phase,name,bound.legacyHelper}).second)
+          throw std::runtime_error("duplicate phase ID");
         }
       }
     catch(const std::exception& e) { throw std::runtime_error("activity definitions: "+name+": "+e.what()); }
@@ -87,8 +96,8 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
       continue; // old records that lack a verified timer or body check stay on the VM
     if(mode==Mode::Accepted && !accepted(name))
       continue;
-    const auto& stored = definitions.activities.emplace(name,activity).first->second;
-    addPhases(name,{&stored,nullptr},stored.perceptions);
+    const auto& [storedName,stored] = *definitions.activities.emplace(name,activity).first;
+    addPhases(storedName,{&stored,nullptr},stored.perceptions);
     }
   using Form = ActivityDefinitions::PointActivity::Form;
   constexpr std::array pointStates = {
@@ -100,10 +109,34 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
     const auto it = library.points.find(name);
     if(it==library.points.end() || it->second.form!=form || it->second.loopResult!=LOOP_CONTINUE)
       continue;
-    const auto& stored = definitions.points.emplace(*it).first->second;
-    addPhases(it->first,{nullptr,&stored},stored.perceptions);
+    const auto& [storedName,stored] = *definitions.points.emplace(*it).first;
+    addPhases(storedName,{nullptr,&stored},stored.perceptions);
     }
   return definitions;
+  }
+
+}
+
+ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
+    const ActivityDefinitions::Library& library, const daedalus::DaedalusScript& script, Mode mode) {
+  return resolveRecords(library,mode,[&](const std::string& name,const std::string& perceptions) {
+    const auto* helper = function(script,perceptions,false);
+    return PhaseBindings{{function(script,name,false)->index(),
+                          function(script,name+"_LOOP",true)->index(),
+                          function(script,name+"_END",false)->index()},helper->index()};
+    });
+  }
+
+ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
+    const ActivityDefinitions::Library& library, const NativeBaseCatalog::Selection& catalog) {
+  return resolveRecords(library,Mode::Accepted,[&](const std::string& name,const std::string& perceptions) {
+    if(perceptions!="PERCEPTION_SET_NORMAL")
+      throw std::runtime_error("unbound perception preset "+perceptions);
+    const auto state = std::ranges::find(catalog.states,name,&NativeBaseCatalog::State::name);
+    if(state==catalog.states.end() || !state->loop || !state->end)
+      throw std::runtime_error("missing activity state phase");
+    return PhaseBindings{{state->id,*state->loop,*state->end},std::nullopt};
+    });
   }
 
 ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::load(
@@ -114,16 +147,20 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::load(
   return resolve(ActivityDefinitions::read(base,sha256),program,current);
   }
 
+ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::load(
+    const std::filesystem::path& base, const NativeBaseCatalog::Selection& catalog, std::string_view sha256) {
+  return resolve(ActivityDefinitions::read(base,sha256),catalog);
+  }
+
 const ActivityDefinitionRuntime::Phase* ActivityDefinitionRuntime::find(const Definitions& definitions, uint32_t function) {
   const auto found = definitions.phases.find(function);
   return found==definitions.phases.end() ? nullptr : &found->second;
   }
 
-int ActivityDefinitionRuntime::run(daedalus::DaedalusVm& vm, World& world, Npc& npc, const Phase& entry,
+int ActivityDefinitionRuntime::run(World& world, Npc& npc, const Phase& entry,
+                                   const std::function<void(std::string_view)>& helper,
                                    const std::function<void(int32_t)>& createItem) {
-  NpcActivityHost host(world,npc,[&vm,&entry](std::string_view) {
-    vm.unsafe_call_bl(vm.find_symbol_by_index(entry.helper));
-    },createItem);
+  NpcActivityHost host(world,npc,helper,createItem);
   if(const auto* point=entry.record.point) {
     using Form = ActivityDefinitions::PointActivity::Form;
     if(entry.phase==ActivityDefinitions::Phase::End) {

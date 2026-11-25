@@ -580,19 +580,34 @@ void GameScript::loadNativeNpcGlobals() {
 
   bindRuntimeVariable("KAPITEL",storyChapter);
   auto globals = NpcWorldData::loadGlobals(Resources::baseDir());
-  if(!globals)
+  const bool prepared = baseNativeCatalog()!=nullptr;
+  if(!globals) {
+    if(prepared)
+      throw std::runtime_error("missing native NPC global bindings");
     return;
+    }
 
-  const auto lookup = findSymbol("HLP_GETNPC")->index();
-  vm.override_function("B_INITNPCGLOBALS",std::function<void()>{[this,lookup,record=std::move(*globals)] {
+  const auto initialize = std::function<void()>{[this,prepared,record=std::move(*globals)] {
     if(storyChapter==record.unsetChapter)
       storyChapter=record.defaultChapter;
     for(const auto& [source,target]:record.bindings) {
-      vm.push_int(source);
-      vm.unsafe_call_external(findSymbol(lookup));
-      findSymbol(target)->set_instance(vm.pop_instance());
+      if(prepared) {
+        auto* alias = std::get_if<ScriptVars::Object>(runtimeState.find(target));
+        if(alias==nullptr)
+          throw std::runtime_error("missing native NPC alias: "+std::to_string(target));
+        *alias = hlp_getnpc(source);
+        }
+      else {
+        vm.push_int(source);
+        vm.unsafe_call_external(findSymbol("HLP_GETNPC"));
+        findSymbol(target)->set_instance(vm.pop_instance());
+        }
       }
-    }},NpcDefinitionRuntime::enabled);
+    }};
+  if(prepared)
+    nativeExternals.insert_or_assign("B_INITNPCGLOBALS",storygraph::makeNativeInternal(initialize));
+  else
+    vm.override_function("B_INITNPCGLOBALS",initialize,NpcDefinitionRuntime::enabled);
   }
 
 void GameScript::loadNativeMonsterAttitudes() {
@@ -600,21 +615,31 @@ void GameScript::loadNativeMonsterAttitudes() {
     return;
 
   auto rules = NpcWorldData::loadAttitudes(Resources::baseDir());
-  if(!rules)
+  const bool prepared = baseNativeCatalog()!=nullptr;
+  if(!rules) {
+    if(prepared)
+      throw std::runtime_error("missing native monster attitudes");
     return;
+    }
 
-  vm.override_function("B_INITMONSTERATTITUDES",std::function<void()>{[this,rules=std::move(*rules)] {
+  const auto initialize = std::function<void()>{[this,prepared,rules=std::move(*rules)] {
     static constexpr int32_t humanGuilds[] = {
       GIL_NONE,GIL_PAL,GIL_MIL,GIL_VLK,GIL_KDF,GIL_NOV,GIL_DJG,GIL_SLD,GIL_BAU,GIL_BDT,GIL_STRF,GIL_OUT,GIL_PIR,GIL_KDW,
       };
     constexpr int32_t humanSeparator = int32_t(GIL_SEPERATOR_HUM);
-    auto* fromGuild = findSymbol("B_SETMONSTERATTITUDE.FROMGUILD");
-    auto* attitude = findSymbol("B_SETMONSTERATTITUDE.ATTITUDE");
-    auto* toGuild = findSymbol("B_SETMONSTERATTITUDE.TOGUILD");
+    const auto write = [this,prepared](std::string_view name,int32_t value) {
+      if(prepared) {
+        if(!setGlobalIntSymbol(name,value))
+          throw std::runtime_error("missing native monster attitude variable: "+std::string(name));
+        }
+      else {
+        findSymbol(name)->set_int(value);
+        }
+      };
     for(const auto& rule : rules) {
-      toGuild->set_int(rule.to);
-      attitude->set_int(rule.attitude);
-      fromGuild->set_int(rule.from);
+      write("B_SETMONSTERATTITUDE.TOGUILD",rule.to);
+      write("B_SETMONSTERATTITUDE.ATTITUDE",rule.attitude);
+      write("B_SETMONSTERATTITUDE.FROMGUILD",rule.from);
       if(rule.to==humanSeparator) {
         for(const auto guild : humanGuilds)
           wld_setguildattitude(rule.from,rule.attitude,guild);
@@ -627,5 +652,9 @@ void GameScript::loadNativeMonsterAttitudes() {
         wld_setguildattitude(rule.from,rule.attitude,rule.to);
         }
       }
-    }},NpcDefinitionRuntime::enabled);
+    }};
+  if(prepared)
+    nativeExternals.insert_or_assign("B_INITMONSTERATTITUDES",storygraph::makeNativeInternal(initialize));
+  else
+    vm.override_function("B_INITMONSTERATTITUDES",initialize,NpcDefinitionRuntime::enabled);
   }

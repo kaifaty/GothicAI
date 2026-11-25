@@ -28,8 +28,7 @@ constexpr int32_t InPose = 0, NeedsPose = 1, WalkingToPost = 2;
 constexpr int32_t ApproachDistance = 500;
 }
 
-bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  std::string_view name = symbol.name();
+bool GameScript::runPointRoutine(Npc& npc, std::string_view name, int& result) {
   Phase phase = Phase::Init;
   if(name.ends_with("_LOOP")) {
     name.remove_suffix(5);
@@ -265,8 +264,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
   return true;
   }
 
-bool GameScript::runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const std::string_view name = symbol.name();
+bool GameScript::runBanditCamp(Npc& npc, std::string_view name, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& stage = npc.handle().aivar[PositionStage];
   result = LOOP_CONTINUE;
