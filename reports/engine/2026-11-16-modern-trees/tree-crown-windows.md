@@ -42,4 +42,4 @@
 - Листы и таблицы: `~/.local/share/gothic-ai/tree-crown-windows/offline/sheets/` (`az000-950.jpg`, `az000-950-coverage.jpg`, `zoom-az000-950-levers.jpg`, `contact-950.jpg`), данные `metrics.json`, `metrics-coverage.json`, драйверы `driver.py`, `coverage.py`, `analyze.py`, `sensitivity.py`.
 - Кадр-источник: `~/.local/share/gothic-ai/tree-crown-windows/a1-t12.png`, кроп `t12-left-tree.png`.
 - В git: листы `shots/tree-crown-windows-az0.jpg` и `shots/tree-crown-windows-levers.jpg`.
-- Продолжение: отчёт исполнителя в ветке `codex/tree-crown-windows` (правка генератора и приёмка), план 8 мс — `tree-8ms.md`.
+- Продолжение описывает правку генератора и приёмку. [PR #1811](https://github.com/kaifaty/GothicAI/pull/1811) · [План 8 мс](tree-8ms.md).
