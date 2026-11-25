@@ -216,7 +216,20 @@ std::pair<uint64_t,uint64_t> ParticleFx::keySpan(bool looped, uint64_t born, uin
   // born within the step: its keys start at 0, the step is shorter
   const uint64_t to   = now>born ? now-born : 0;
   const uint64_t from = to>dt ? to-dt : 0;
-  const uint64_t base = from/prefferedTime*prefferedTime;
+  // the keys' period is keys*1000 ticks at ppsFPS; prefferedTime is its ceil in ms, so a fractional
+  // period drifts a fraction of a ms each cycle and the pulse loses the beat over an hour (issue #1701).
+  // Count the phase in exact key ticks, as fetchScaleKey does, modulo the keys' period.
+  const uint64_t period = uint64_t(ppsScaleKeys.size())*1000;
+  uint64_t base;
+  if(float(prefferedTime)==float(ppsScaleKeys.size())*1000.f/ppsFPS) {
+    // whole period in ms: the integer path is exact and keeps such an emitter's beat bit for bit
+    base = from/prefferedTime*prefferedTime;
+    }
+  else {
+    const uint64_t ticks     = uint64_t(ppsFPS*float(from));
+    const uint64_t baseTicks = ticks/period*period;
+    base = std::min(from, uint64_t(double(baseTicks)/ppsFPS));
+    }
   return {from-base, to-base};
   }
 

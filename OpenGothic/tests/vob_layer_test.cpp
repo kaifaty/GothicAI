@@ -769,6 +769,33 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   particleSettings(*custom,expected);
   require(custom->visTexColorStart==Tempest::Vec3(80,80,80) && custom->visAlphaStart==200.f/255.f &&
           custom->lspPartAvg==12000 && custom->ppsIsSmooth,"custom settings reach the derived native effect");
+  {
+  // a looped emitter with a fractional key period (3 keys at 7/s = 3000/7 ms) keeps the beat of its
+  // light and its object's animation: keySpan counts the phase in exact key ticks, not in the ceil of
+  // the period in ms, which drifts each cycle and loses the beat over an hour (issue #1701)
+  auto frac=*definitions.effects.at("OWN_TEST_SMOKE");
+  frac.pps_scale_keys_s="0.25 0.5 1"; frac.pps_fps=7.f; frac.pps_is_looping=1; frac.pps_is_smooth=0;
+  const ParticleFx pulse(frac,"fractional pulse");
+  require(pulse.ppsScaleKeys.size()==3 && pulse.ppsFPS==7.f && pulse.ppsIsLooping && pulse.prefferedTime==429,
+          "a fractional period is 3 keys at 7/s, its ceil in ms 429");
+  const auto key=[](uint64_t t) { return size_t(uint64_t(7.f*float(t))/1000)%3; };
+  const auto beats=[&](uint64_t now,uint64_t dt) {
+    const auto span=pulse.keySpan(true,0,now,dt,0);
+    const uint64_t to=now, from=now>dt ? now-dt : 0;
+    return key(span.first)==key(from) && key(span.second)==key(to);
+    };
+  // an hour of the world's clock: 3'600'000 ms is 8400 whole cycles of 3 keys, the phase is 0 again
+  const uint64_t hour=3'600'000;
+  const auto beat=pulse.keySpan(true,0,hour,16,0);
+  require(beats(hour,16) && key(beat.second)==key(hour) && key(hour)==0,
+          "after an hour a fractional pulse is on the same key as ppsScale at the exact time, not drifted");
+  require(beats(100'050,16) && beats(12'345,16) && beats(999'999,16),
+          "a fractional pulse keeps the key of its absolute time within a cycle too");
+  require(pulse.keySpan(true,0,10,16,0)==std::pair<uint64_t,uint64_t>(0,10),
+          "born within the step: a fractional pulse counts its keys from 0");
+  require(pulse.keySpan(false,0,hour,16,40)==std::pair<uint64_t,uint64_t>(40,56),
+          "a burst counts its keys from its block, not from its birth");
+  }
   const auto* chain=gothic.loadParticleFx("OWN_TEST_NEXT");
   require(chain && chain->velAvg==0.23f && chain->lspPartAvg==12000 &&
           chain->visTexColorStart==custom->visTexColorStart,"runtime resolves chains across particle files");
