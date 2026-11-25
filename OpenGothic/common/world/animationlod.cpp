@@ -32,6 +32,10 @@ const AnimationLod::Config& AnimationLod::config() {
       const long n = std::strtol(v,nullptr,10);
       c.rate = uint32_t(std::clamp<long>(n,1,16));
       }
+    if(const char* v=std::getenv("OPENGOTHIC_ANIM_LOD_VISIBLE"); v!=nullptr && v[0]=='1')
+      c.visible = true;
+    if(const char* v=std::getenv("OPENGOTHIC_ANIM_LOD_VISIBLE_CM"); v!=nullptr && v[0]!='\0')
+      c.visibleDist = std::max(0.f,float(std::atof(v)));
     if(c.rate<=1)
       c.enabled = false;
     return c;
@@ -114,6 +118,10 @@ bool AnimationLod::View::sameView(const View& other) const {
 
 bool AnimationLod::View::nearCamera(const Npc& npc) const {
   return (npc.position()-camera).quadLength()<CameraRadius*CameraRadius;
+  }
+
+bool AnimationLod::View::farFromCamera(const Npc& npc, float dist) const {
+  return (npc.position()-camera).quadLength()>dist*dist;
   }
 
 bool AnimationLod::View::probeVisible(const Npc& npc) const {

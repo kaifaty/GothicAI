@@ -254,6 +254,10 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool       animationLodPinned(bool allowSettledFurniture=false) const;
     void       setAnimationLodTargeted(bool t) { animLodTargeted = t; }
     uint32_t   animationLodSeed() const { return animLodSeed; }
+    // N4: deferred as a visible distant NPC (temporal pose LOD). Catch-up skips the mere
+    // visibility trigger for it; its cadence slot refreshes the pose. Runtime only, not saved.
+    bool       animLodFarVisible() const { return animLodFarVisibleFlag; }
+    void       setAnimLodFarVisible(bool v) { animLodFarVisibleFlag = v; }
     // Far NPC tick (world/npcsimtick.h): world time not yet handed to tick(), its rhythm. Runtime only, not saved.
     auto       simTick() -> NpcSimTick::State& { return simTickState; }
     auto       simTick() const -> const NpcSimTick::State& { return simTickState; }
@@ -1173,6 +1177,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     // Transient placement of an animated lying mesh; never changes the walking root.
     float                          lieVisualYOffset = 0;
     uint64_t                       animLodPendingDt = 0;
+    bool                           animLodFarVisibleFlag = false;
     bool                           societyAnimationDebt = false;
     bool                           societySleeping = false;
     bool                           societyPoseSuspended = false;
