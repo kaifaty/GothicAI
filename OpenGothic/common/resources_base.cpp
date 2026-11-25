@@ -93,7 +93,7 @@ void Resources::loadBase(BaseStore::Profile profile) {
     BaseImport::Files archives;
     const auto* explicitBase=std::getenv("OPENGOTHIC_BASE");
     const auto* fingerprint=std::getenv("OPENGOTHIC_BASE_FINGERPRINT");
-    if((explicitBase && *explicitBase) || !fingerprint || !*fingerprint)
+    if(profile.catalogVersion==0 && ((explicitBase && *explicitBase) || !fingerprint || !*fingerprint))
       for(const auto& archive:BaseImport::runtimeArchives(gothic))
         if(!archive.mod) archives.emplace_back(archive.name,archive.size);
     inst->automaticBase=BaseStore::resolve(gothic,archives,

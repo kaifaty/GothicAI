@@ -38,9 +38,11 @@ using IdentifyVideos = std::function<VideoData::Identity()>;
 struct Profile {
   // An empty value keeps the compatibility selection rules.
   std::string_view stockProgram;
-  // The launcher's automatic path looks for its production projection before preparing one.
+  // A runtime profile never substitutes a combined source base.
   bool             projectedOnly=false;
   void           (*validateProgramMetadata)(const std::filesystem::path&, std::string_view)=nullptr;
+  // A production catalog profile selects ready data only. Converter callers can supply a projection recipe.
+  int              catalogVersion=0;
   };
 inline constexpr int nativeProjectionVersion=2;
 bool isNativeProjection(const std::filesystem::path& base);
@@ -48,9 +50,13 @@ bool isNativeProjection(const std::filesystem::path& base);
 Selection openPreparedBase(const std::filesystem::path& base, BaseImport::Identity& identity);
 // Legacy definition artifacts are kept only in offline bases.
 bool isFullSymbolFile(const std::filesystem::path& relative);
-// Derive the production projection identity from an already verified combined base.
+bool isLegacyScriptFile(const std::filesystem::path& relative);
+// Derive offline v2 or runtime v3 identities from an already verified combined base.
 BaseImport::Identity nativeProjectionIdentity(const std::filesystem::path& combined);
 BaseImport::Identity nativeProjectionIdentity(const BaseImport::Identity& combined, std::string_view manifestSha256);
+BaseImport::Identity nativeCatalogIdentity(const std::filesystem::path& combined, int catalogVersion);
+BaseImport::Identity nativeCatalogIdentity(const BaseImport::Identity& combined, std::string_view manifestSha256,
+                                          int catalogVersion);
 // A projector uses the existing import/cache path with its derived identity.
 Selection resolve(const std::filesystem::path& gothic, const BaseImport::Files& mounted,
                   const BaseImport::Progress& log, const Import& import={}, Profile profile={},

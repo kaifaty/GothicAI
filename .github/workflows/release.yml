@@ -2,11 +2,10 @@
 # base and video converter and the story graph converter, the AI services' sources and locks, the pinned
 # uv and the entry points. Run by hand only, before a release (the user's decision of 2026-10-31: pull
 # requests do not build these). One job per platform on standard GitHub-hosted runners, no caches. The
-# `windows` and `linux` inputs choose the platforms. With `release: none` (the default) the run only
-# validates: build, converter and launcher checks and the package checks, and the archives stay on the
-# runners. With `draft` or `prerelease` each platform job hands its game and tools archives, manifests and SHA256SUMS to
-# the `release` job as a one-day workflow artifact, and that job, the only one that may write, makes one
-# GitHub release with every built archive and one SHA256SUMS over all of them, after everything passed.
+# The `windows` and `linux` inputs choose the platforms. Each job keeps its checked game and tools
+# archives, manifests and SHA256SUMS as a one-day workflow artifact. With `release: none` (the
+# default) the run ends there. With `draft` or `prerelease` the `release` job, the only one that may
+# write, uses these artifacts to make one GitHub release after everything passed.
 # `draft` is a draft prerelease the maintainer publishes after checking the assets; `prerelease` is
 # published at once. Documented in docs/development.md (Windows, Linux) and docs/threat-model.md.
 name: Release
@@ -23,7 +22,7 @@ on:
         type: boolean
         default: true
       release:
-        description: "none: only build and check; draft: a draft prerelease; prerelease: a published prerelease"
+        description: "none: build, check, and keep artifacts for one day; draft: a draft prerelease; prerelease: a published prerelease"
         type: choice
         options: [none, draft, prerelease]
         default: none
@@ -199,8 +198,7 @@ jobs:
           Add-Content $env:GITHUB_ENV "PACKAGE_NAME=$name"
           Add-Content $env:GITHUB_ENV "PACKAGE_DIR=$dist"
 
-      - name: Hand the archives to the release job
-        if: ${{ inputs.release != 'none' }}
+      - name: Upload the checked archives
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows
@@ -399,8 +397,7 @@ jobs:
             echo "PACKAGE_DIR=$dist"
           } >> "$GITHUB_ENV"
 
-      - name: Hand the archives to the release job
-        if: ${{ inputs.release != 'none' }}
+      - name: Upload the checked archives
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux

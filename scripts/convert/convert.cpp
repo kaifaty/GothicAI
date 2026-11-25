@@ -216,8 +216,7 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
       programs.insert(path);
       continue;
       }
-    if((native && BaseStore::isFullSymbolFile(path)) ||
-       (v3 && fs::path(path).filename()=="game-bindings.json"))
+    if((native && BaseStore::isFullSymbolFile(path)) || (v3 && BaseStore::isLegacyScriptFile(path)))
       continue;
     kept.emplace(path,record["sha256"].GetString());
     }
@@ -296,26 +295,20 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     bound(sourcePayload);
     }
 
-  if(native && !v3) {
+  if(v3) {
+    identity=BaseStore::nativeCatalogIdentity(identity,sourceManifest,NativeBaseCatalog::catalogVersion);
+    }
+  else if(native) {
     identity=BaseStore::nativeProjectionIdentity(identity,sourceManifest);
     }
   else {
     auto& allocator=metadata.GetAllocator();
     rapidjson::Value binding(rapidjson::kObjectType);
-    binding.AddMember("version",v3 ? NativeBaseCatalog::projectionVersion : 2,allocator);
+    binding.AddMember("version",2,allocator);
     binding.AddMember("source_fingerprint",rapidjson::Value(identity.fingerprint.c_str(),allocator),allocator);
     binding.AddMember("source_manifest_sha256",rapidjson::Value(sourceManifest.c_str(),allocator),allocator);
-    if(v3) {
-      binding.AddMember("catalog_version",NativeBaseCatalog::catalogVersion,allocator);
-      metadata.AddMember("native_script_base",binding,allocator);
-      }
-    else {
-      metadata.AddMember("no_programs_fixture",binding,allocator);
-      }
-    const auto salt=v3 ? "native-script-base-v"+std::to_string(NativeBaseCatalog::projectionVersion)+
-                         "\ncatalog-v"+std::to_string(NativeBaseCatalog::catalogVersion)
-                       : "no-programs-fixture-v2";
-    identity.fingerprint=BaseImport::sha256(salt+"\n"+identity.fingerprint+"\n"+sourceManifest);
+    metadata.AddMember("no_programs_fixture",binding,allocator);
+    identity.fingerprint=BaseImport::sha256("no-programs-fixture-v2\n"+identity.fingerprint+"\n"+sourceManifest);
     metadata["fingerprint"].SetString(identity.fingerprint.c_str(),allocator);
     rapidjson::StringBuffer json;
     rapidjson::Writer<rapidjson::StringBuffer> writer(json);
@@ -376,16 +369,14 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     throw;
     }
   if(!temporary)
-    std::cout << (v3 ? "Offline native base v3: " : native ? "Native script base: " : "No-programs fixture: ")
+    std::cout << (v3 ? "Native game base v3: " : native ? "Native script base v2: " : "No-programs fixture: ")
               << out.string()
               << " (" << identity.fingerprint << ", " << programs.size() << " program files omitted).\n";
   }
 
 BaseStore::Selection resolveNativeBase(const fs::path& gothic, const BaseImport::Files& archives,
                                       const BaseImport::Progress& progress, bool explicitBase) {
-  BaseStore::Profile profile{.stockProgram=StockStoryPrograms::stockProgram,
-                             .projectedOnly=true,
-                             .validateProgramMetadata=RuntimeBindings::validate};
+  const BaseStore::Profile profile{.projectedOnly=true,.catalogVersion=NativeBaseCatalog::catalogVersion};
   if(explicitBase)
     return BaseStore::resolve(gothic,archives,progress,{},profile);
 
@@ -400,9 +391,9 @@ BaseStore::Selection resolveNativeBase(const fs::path& gothic, const BaseImport:
   auto combined=BaseStore::ensure(gothic,archives,progress);
   if(combined.publication.valid())
     combined.publication.get();
-  const auto identity=BaseStore::nativeProjectionIdentity(combined.path);
+  const auto identity=BaseStore::nativeCatalogIdentity(combined.path,NativeBaseCatalog::catalogVersion);
   return BaseStore::resolve(gothic,archives,progress,[&](const auto& temporary) {
-    prepareProgramProjection(combined.path,temporary,ProgramProjection::Native,true);
+    prepareProgramProjection(combined.path,temporary,ProgramProjection::NativeCatalogs,true);
     },profile,&identity);
   }
 
@@ -1233,7 +1224,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> args(argv+1,argv+argc);
     if(args.size()==1 && args[0]=="formats") {
       std::cout << "{\"base\":\"" << BaseFormatSha256 << "\",\"videos\":\"" << VideoData::formatSha256()
-                << "\",\"script_base\":\"native\",\"runtime_recipe\":\"" << RuntimeBindings::recipe() << "\"}\n";
+                << "\",\"script_base\":\"native\",\"catalog_version\":" << NativeBaseCatalog::catalogVersion << "}\n";
       return 0;
       }
     if(args.size()==1 && args[0]=="--self-test")
@@ -1414,7 +1405,7 @@ int main(int argc, char** argv) {
                  "       content-convert base <gothic dir> <dir>\n"
                  "       content-convert no-programs-fixture <ready stock base> <new dir>\n"
                  "       content-convert native-base <ready stock base> <new dir>\n"
-                 "       content-convert native-base-v3 <ready stock base> <new dir> (offline verification)\n"
+                 "       content-convert native-base-v3 <ready stock base> <new dir>\n"
                  "       content-convert formats\n" << StressBase::usage << WorldCook::usage <<
                  "       " << clusterLodCensusUsage <<
                  "       content-convert --self-test\n";

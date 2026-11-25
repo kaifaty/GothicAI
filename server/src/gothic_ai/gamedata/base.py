@@ -169,7 +169,7 @@ def resolve(
             return Base(path, cache, fingerprint)
         pointer = cache / "current" / f"{hashlib.sha256(str(game).encode()).hexdigest()}.json"
         current = json.loads(pointer.read_bytes())
-        part = current.get("native_base") if native else current.get("base", current.get("native_base"))
+        part = current.get("native_base") if native else current.get("native_base", current.get("base"))
         if (
             current.get("version") != 1
             or current.get("gothic") != str(game)

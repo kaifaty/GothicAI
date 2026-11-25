@@ -9,6 +9,7 @@ argv, so they stay out of logs and `ps`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -191,14 +192,14 @@ def find_layout(config: Config) -> Layout:
                 game_env = json.loads(result.stdout)
             except subprocess.CalledProcessError as error:
                 raise LaunchError(error.stderr.strip()) from error
+        can_prepare = converter.is_file() and os.access(converter, os.X_OK)
+        explicit = game_env.get("OPENGOTHIC_BASE") or os.environ.get("OPENGOTHIC_BASE")
         try:
-            if converter.is_file() and os.access(converter, os.X_OK):
-                with base.resolve(game_dir):
-                    pass
-            else:
-                game_env.update(prepared_game_environment(game_dir, game_env))
+            game_env.update(prepared_game_environment(game_dir, game_env))
         except RuntimeError as error:
-            if not _has_child(game_dir, "data") and not game_env.get("OPENGOTHIC_BASE_FINGERPRINT"):
+            if explicit or not can_prepare:
+                problems.append(str(error))
+            elif not _has_child(game_dir, "data") and not game_env.get("OPENGOTHIC_BASE_FINGERPRINT"):
                 problems.append(f"select an installed Gothic II folder once: {error}")
     if problems:
         raise LaunchError("\n".join(problems))
@@ -301,14 +302,25 @@ def prepared_game_environment(game_dir: Path, env: dict[str, str] | None = None)
     """Keep the game and its services on the same prepared native base."""
     with base.resolve(game_dir, native=True, environ=child_env({**base_cache_env(), **(env or {})})) as selected:
         marker = selected.native_profile
-        graph = "storygraph/story.json"
+        required = ("definitions/native-catalog.json", "storygraph/story.json", "outputunits/outputunits.json")
         if (
             not isinstance(marker, dict)
-            or marker.get("version") != 2
-            or not selected.has_file(graph)
-            or not (selected.path / graph).is_file()
+            or marker.get("version") != 3
+            or type(marker.get("catalog_version")) is not int
+            or marker["catalog_version"] <= 0
+            or not all(re.fullmatch(r"[0-9a-f]{64}", str(marker.get(key)))
+                       for key in ("source_fingerprint", "source_manifest_sha256"))
+            or not all(selected.has_file(name) and (selected.path / name).is_file() for name in required)
         ):
-            raise RuntimeError(f"base {selected.path} needs a prepared native profile with a StoryGraph")
+            raise RuntimeError(f"base {selected.path} needs a prepared native v3 profile")
+        version = marker["catalog_version"]
+        source = f"native-script-base-v3\ncatalog-v{version}\n{marker['source_fingerprint']}\n{marker['source_manifest_sha256']}"
+        if hashlib.sha256(source.encode()).hexdigest() != selected.fingerprint:
+            raise RuntimeError(f"base {selected.path}: native profile fingerprint differs")
+        catalog = selected.json(required[0])
+        if (not isinstance(catalog, dict) or catalog.get("format") != "gothic-native-base-catalog"
+                or catalog.get("version") != version):
+            raise RuntimeError(f"base {selected.path}: native catalog version differs")
         return {"OPENGOTHIC_BASE": str(selected.path)}
 
 
@@ -364,7 +376,7 @@ def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Pr
         server_args.append("--no-voice")
 
     if s.tts.enabled:
-        env = {**openai_key, **storygraph_env(layout)}  # the original voices read OU.BIN through it
+        env = {**openai_key, **storygraph_env(layout)}  # the original voices read prepared output units through it
         if s.tts.voxcpm_url:
             env["GOTHIC_VOXCPM_URL"] = s.tts.voxcpm_url
         if keys.inworld_api_key:

@@ -36,8 +36,15 @@ def _ready_base(tmp_path, monkeypatch, text="Привет, герой!", explici
         }).encode(),
         "unread-payload.bin": b"payload",
     }
+    fingerprint = "a" * 64
+    metadata = {"format": "gothic-base", "version": 2}
     if native:
         files["storygraph/story.json"] = b"{}"
+        files["definitions/native-catalog.json"] = b'{"format":"gothic-native-base-catalog","version":7}'
+        metadata["native_script_base"] = {
+            "version": 3, "catalog_version": 7, "source_fingerprint": "a" * 64, "source_manifest_sha256": "b" * 64,
+        }
+        fingerprint = hashlib.sha256(f"native-script-base-v3\ncatalog-v7\n{'a' * 64}\n{'b' * 64}".encode()).hexdigest()
     for name, raw in files.items():
         path = directory / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,8 +56,7 @@ def _ready_base(tmp_path, monkeypatch, text="Привет, герой!", explici
     }).encode()
     (directory / "base-files.json").write_bytes(manifest)
     (directory / "base.json").write_text(json.dumps({
-        "format": "gothic-base", "version": 2, "fingerprint": "a" * 64,
-        **({"native_script_base": {"version": 2}} if native else {}),
+        **metadata, "fingerprint": fingerprint,
         "manifest": {"path": "base-files.json", "size": len(manifest),
                      "sha256": hashlib.sha256(manifest).hexdigest()},
     }))
@@ -59,7 +65,7 @@ def _ready_base(tmp_path, monkeypatch, text="Привет, герой!", explici
     pointer.parent.mkdir(parents=True)
     pointer.write_text(json.dumps({
         "version": 1, "gothic": str(game.resolve()),
-        "native_base" if native else "base": {"path": str(directory.resolve()), "fingerprint": "a" * 64},
+        "native_base" if native else "base": {"path": str(directory.resolve()), "fingerprint": fingerprint},
     }))
     monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(cache))
     monkeypatch.setenv("OPENGOTHIC_BASE", str(directory) if explicit else "")

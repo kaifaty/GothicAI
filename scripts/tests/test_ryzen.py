@@ -661,6 +661,9 @@ class CacheTests(unittest.TestCase):
         shutil.copyfile(SCRIPT.with_name('ryzen-build.sh'), self.source / 'scripts/ryzen-build.sh')
         shutil.copyfile(SCRIPT.with_name('e2e-services.sh'), self.source / 'scripts/e2e-services.sh')
         (self.source / 'OpenGothic/ai_bridge/storygraph').mkdir(parents=True)
+        catalog = self.source / 'OpenGothic/common/game/definitions/nativebasecatalog.h'
+        catalog.parent.mkdir(parents=True)
+        catalog.write_text('inline constexpr int catalogVersion = 7;\n')
         settings = self.home / 'gothic-ai/game-settings/system'
         settings.mkdir(parents=True)
         for name in ('Gothic.ini', 'SystemPack.ini'):
@@ -895,7 +898,7 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         self.assertFalse(manifest.exists())
         self.assertEqual(environment(self.home, overrides), overrides)
 
-    def format_setup(self, script_base=None, recipe=None):
+    def format_setup(self, script_base=None, catalog_version=None):
         self.base_cache = self.root / 'base-cache'
         self.base_store = self.root / 'base-store'
         for key in tuple(self.env):
@@ -906,8 +909,8 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         formats = {'base': '2' * 64, 'videos': '4' * 64}
         if script_base is not None:
             formats['script_base'] = script_base
-        if recipe is not None:
-            formats['runtime_recipe'] = recipe
+        if catalog_version is not None:
+            formats['catalog_version'] = catalog_version
         self.converter.write_text(
             f'#!{sys.executable}\nimport json, sys\nassert sys.argv[1:] == ["formats"]\n'
             f'print(json.dumps({formats!r}))\n')
@@ -959,20 +962,20 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
     def test_game_settings_selects_automatic_base_by_script_profile(self):
         pointer = self.home / 'gothic-ai/game-base.json'
         old, fixture, projected, combined = (digit * 64 for digit in 'cabd')
-        recipe = 'f' * 64
+        catalog_version = 7
         for profile in (None, 'compatibility', 'native'):
             with self.subTest(profile=profile):
-                self.format_setup(profile, recipe if profile == 'native' else None)
+                self.format_setup(profile, catalog_version if profile == 'native' else None)
                 self.base_part(fixture, '2' * 64, no_programs_fixture={'version': 2})
                 native_path = self.base_part(projected, '2' * 64, native_script_base={
-                    'version': 2, 'runtime_recipe': recipe})
-                previous_projection, stale_recipe = (digit * 64 for digit in '01')
-                self.base_part(previous_projection, '2' * 64, native_script_base={'version': 1})
-                self.base_part(stale_recipe, '2' * 64, native_script_base={
-                    'version': 2, 'runtime_recipe': 'e' * 64})
+                    'version': 3, 'catalog_version': catalog_version})
+                previous_projection, stale_catalog_version = (digit * 64 for digit in '01')
+                self.base_part(previous_projection, '2' * 64, native_script_base={'version': 2})
+                self.base_part(stale_catalog_version, '2' * 64, native_script_base={
+                    'version': 3, 'catalog_version': 6})
                 self.base_part(combined, '2' * 64)
                 expected = projected if profile == 'native' else combined
-                for fingerprint in (old, previous_projection, stale_recipe, projected, combined):
+                for fingerprint in (old, previous_projection, stale_catalog_version, projected, combined):
                     pointer.write_text(json.dumps({'base': fingerprint, 'videos': ''}))
                     result = self.game_result()
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -986,7 +989,7 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
                 self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE'], str(native_path))
 
     def test_mac_and_ryzen_select_the_same_installation_across_formats(self):
-        self.format_setup('native', '2' * 64)
+        self.format_setup('native', 7)
         shared_cache = self.home / '.cache/gothic-ai/base'
         shared_cache.parent.mkdir(parents=True)
         shutil.move(self.base_cache, shared_cache)
@@ -1015,10 +1018,10 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         ):
             with self.subTest(kind=kind, field=field):
                 base = self.base_part('c' * 64, ('1' if kind == 'base' else '2') * 64,
-                                      sources=binding, native_script_base={'version': 2, 'runtime_recipe': '2' * 64})
+                                      sources=binding, native_script_base={'version': 3, 'catalog_version': 7})
                 if kind == 'base':
                     pointed, candidate = base, self.base_part(
-                        'd' * 64, '2' * 64, sources=binding, native_script_base={'version': 2, 'runtime_recipe': '2' * 64})
+                        'd' * 64, '2' * 64, sources=binding, native_script_base={'version': 3, 'catalog_version': 7})
                     metadata = json.loads((candidate / 'base.json').read_text())
                     metadata[field] = value
                     (candidate / 'base.json').write_text(json.dumps(metadata))
@@ -1189,7 +1192,7 @@ remote_run pytest "$TEST_ROOT/worktree" run -rs tests/test_storygraph.py
         part = self.root / 'mac-base'
         part.mkdir()
         (part / 'base.json').write_text(json.dumps({
-            'format_sha256': 'a' * 64, 'native_script_base': {'version': 2, 'runtime_recipe': 'a' * 64},
+            'format_sha256': 'a' * 64, 'native_script_base': {'version': 3, 'catalog_version': 7},
         }))
         pointers = self.home / '.cache/gothic-ai/base/current'
         pointers.mkdir(parents=True)
@@ -1228,7 +1231,7 @@ rsync() {
                 self.assertTrue((foreign / 'keep').exists())
 
     def setup_part(self, kind, fingerprint, format_digest, *, path=None, source='installation',
-                   native_recipe='e' * 64):
+                   native_catalog_version=7):
         cache = self.home / '.cache/gothic-ai/base'
         part = path or cache / ('' if kind == 'base' else 'videos') / fingerprint
         part.mkdir(parents=True)
@@ -1236,8 +1239,8 @@ rsync() {
         if kind == 'base':
             identity.update(archives=[{'name': source}], loose_files=[{'path': source}], sources=[{'name': source}])
             metadata = dict(identity, fingerprint=fingerprint)
-            if native_recipe is not None:
-                metadata['native_script_base'] = {'version': 2, 'runtime_recipe': native_recipe}
+            if native_catalog_version is not None:
+                metadata['native_script_base'] = {'version': 3, 'catalog_version': native_catalog_version}
         else:
             identity['sources'] = [{'name': source}]
             metadata = {'fingerprint': fingerprint, 'identity': json.dumps(identity)}
@@ -1329,7 +1332,6 @@ cmake() {
   case "$1 $2 $3" in
     "-DBASE_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/BaseFormat.cmake") printf '%064d\n' 0 | tr 0 a ;;
     "-DVIDEO_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/VideoFormat.cmake") printf '%064d\n' 0 | tr 0 b ;;
-    "-DBASE_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/RuntimeBindingRecipe.cmake") printf '%064d\n' 0 | tr 0 e ;;
     *) return 99 ;;
   esac
 }
@@ -1409,9 +1411,9 @@ preparation_needed() { return 1; }
             self.assertIn(f"Ryzen: Mac pointer has importer format {'f' * 64}, using Mac cache part "
                           f"{expected[kind]['fingerprint']} of format {digest * 64}", result.stderr)
 
-    def test_autosync_prefers_current_recipe_and_falls_back_to_combined_base(self):
-        stale = self.setup_part('base', 'c' * 64, 'a' * 64, native_recipe='b' * 64)
-        combined = self.setup_part('base', 'd' * 64, 'a' * 64, native_recipe=None)
+    def test_autosync_prefers_current_catalog_version_and_falls_back_to_combined_base(self):
+        stale = self.setup_part('base', 'c' * 64, 'a' * 64, native_catalog_version=6)
+        combined = self.setup_part('base', 'd' * 64, 'a' * 64, native_catalog_version=None)
         native = self.setup_part('base', 'f' * 64, 'a' * 64)
         cache = self.root / 'remote/.cache/gothic-ai/base'
         self.remote_game_setup(base=stale['fingerprint'])

@@ -12,7 +12,6 @@
 
 namespace NativeBaseCatalog {
 
-inline constexpr int projectionVersion = 3;
 inline constexpr int catalogVersion = 7;
 inline constexpr uint32_t directorCapacity = 1024;
 

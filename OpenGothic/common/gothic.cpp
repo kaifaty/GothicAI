@@ -19,8 +19,7 @@
 #include "basestore.h"
 
 #include "game/definitions/definitiontypes.h"
-#include "game/definitions/gameplaydefinitions.h"
-#include "game/definitions/runtimebindings.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/bodyenginepolicy.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
@@ -106,9 +105,7 @@ Gothic::Gothic() {
     ouDef = "OU";
     }
 
-  Resources::loadBase({.stockProgram=GameplayDefinitions::stockProgram,
-                       .projectedOnly=true,
-                       .validateProgramMetadata=RuntimeBindings::validate});
+  Resources::loadBase({.projectedOnly=true,.catalogVersion=NativeBaseCatalog::catalogVersion});
 
   Settings::inst().onSettingsChanged.bind(this,&Gothic::setupSettings);
   setupSettings();

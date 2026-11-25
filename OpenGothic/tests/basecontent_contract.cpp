@@ -8,6 +8,7 @@
 #include "game/definitions/particlesdefinitions.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/fightdefinitiondata.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/definitions/musicdefinitiondata.h"
 #include "game/definitions/musicdefinitions.h"
 #include "game/definitions/sfxdefinitiondata.h"
@@ -3829,12 +3830,12 @@ int main() {
     BaseContentContract::require(gothic && *gothic,"GOTHIC_DIR must point to a Gothic II installation");
     BaseContentContract::require(dir && *dir,"OPENGOTHIC_BASE must point to a full source base for the offline oracle");
     const auto base=fs::absolute(dir);
-    const auto fingerprint=BaseStore::nativeProjectionIdentity(base).fingerprint;
+    const auto fingerprint=BaseStore::nativeCatalogIdentity(base,NativeBaseCatalog::catalogVersion).fingerprint;
     const auto* runtimeDir=std::getenv("OPENGOTHIC_CONTRACT_NATIVE_BASE");
     const auto runtime=runtimeDir && *runtimeDir ? fs::absolute(runtimeDir) : BaseStore::cacheRoot()/fingerprint;
     BaseContentContract::require(fs::is_regular_file(runtime/"base.json"),
         "Prepare the matching stock runtime base with content-convert resolve and set OPENGOTHIC_CONTRACT_NATIVE_BASE");
-    BaseContentContract::require(BaseStore::isNativeProjection(runtime) && BaseImport::readIdentity(runtime).fingerprint==fingerprint,
+    BaseContentContract::require(fs::is_regular_file(runtime/"definitions/native-catalog.json") && BaseImport::readIdentity(runtime).fingerprint==fingerprint,
         "The runtime base must be the prepared projection of the offline oracle base");
     fs::create_directories(temporary);
     // Fixtures point OPENGOTHIC_BASE at bases inside `temporary`, and an explicit base is saved as the
