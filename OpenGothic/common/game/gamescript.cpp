@@ -38,17 +38,24 @@ using namespace Tempest;
 
 template <typename T>
 struct ScopeVar final {
-  ScopeVar(daedalus::DaedalusSymbol& sym, const std::shared_ptr<T>& h) : prev(sym.get_instance()), sym(sym) {
+  ScopeVar(daedalus::DaedalusSymbol& sym, const std::shared_ptr<T>& h) : prev(sym.get_instance()), sym(&sym) {
     sym.set_instance(std::static_pointer_cast<daedalus::INpc>(h));
+    }
+  ScopeVar(ScriptVars::Object& slot, const std::shared_ptr<T>& h)
+    : prev(std::exchange(slot,std::static_pointer_cast<daedalus::INpc>(h))), slot(&slot) {
     }
 
   ScopeVar(const ScopeVar&)=delete;
   ~ScopeVar(){
-    sym.set_instance(prev);
+    if(slot!=nullptr)
+      *slot = std::move(prev);
+    else
+      sym->set_instance(prev);
     }
 
   std::shared_ptr<daedalus::DaedalusInstance> prev;
-  daedalus::DaedalusSymbol&                   sym;
+  daedalus::DaedalusSymbol*                   sym = nullptr;
+  ScriptVars::Object*                        slot = nullptr;
   };
 
 struct ScopeCtx final {
@@ -953,8 +960,8 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
                                                              std::shared_ptr<NpcRecord> hnpc,
                                                              const std::vector<uint32_t>& except,
                                                              bool includeImp) {
-  ScopeVar self (*vm.global_self(),  hnpc);
-  ScopeVar other(*vm.global_other(), player);
+  ScopeVar self (storyActorSlot("SELF"),hnpc);
+  ScopeVar other(storyActorSlot("OTHER"),player);
   std::vector<daedalus::IInfo*> hDialog;
   for(auto& info : dialogsInfo) {
     if(info->npc==static_cast<int>(static_cast<const daedalus::INpc&>(*hnpc).symbol_index())) {
@@ -994,7 +1001,7 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
       if(bennet) {
         auto& overlay = Gothic::inst().dialogScriptFn;
         int32_t result = 0;
-        if(overlay && overlay(bennet->conditionSymbol->index(),result)) {
+        if(overlay && overlay(bennet->conditionId,result)) {
           valid = result!=0;
           } else {
           BennetLookupAudit audit(bennetLookupScope);
@@ -1040,8 +1047,8 @@ std::vector<GameScript::DlgChoice> GameScript::updateDialog(const GameScript::Dl
     }
   const daedalus::IInfo&               info = *dlg.handle;
 
-  ScopeVar self (*vm.global_self(), npc.handlePtr());
-  ScopeVar other(*vm.global_other(), player.handlePtr());
+  ScopeVar self (storyActorSlot("SELF"),npc.handlePtr());
+  ScopeVar other(storyActorSlot("OTHER"),player.handlePtr());
 
   for(size_t i=0;i<info.choices.size();++i){
     auto& sub = info.choices[i];
@@ -1061,8 +1068,8 @@ std::vector<GameScript::DlgChoice> GameScript::updateDialog(const GameScript::Dl
   }
 
 void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
-  ScopeVar self (*vm.global_self(), npc.handlePtr());
-  ScopeVar other(*vm.global_other(), player.handlePtr());
+  ScopeVar self (storyActorSlot("SELF"),npc.handlePtr());
+  ScopeVar other(storyActorSlot("OTHER"),player.handlePtr());
 
   if(dlg.handle==nullptr) {
     if(&player!=&npc)
@@ -1089,7 +1096,7 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
       }
     auto& overlay = Gothic::inst().dialogScriptFn;
     int32_t result = 0;
-    if(!overlay || !overlay(bennet->answerSymbol->index(),result)) {
+    if(!overlay || !overlay(bennet->answerId,result)) {
       BennetLookupAudit audit(bennetLookupScope);
       if(!bennetExecute(*bennet,player,npc)) {
         if(newlyKnown)

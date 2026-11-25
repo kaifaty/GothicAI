@@ -310,6 +310,8 @@ std::optional<int32_t> GameScript::storySymbolIndex(std::string_view name) {
 
 std::optional<GameScript::SymbolKind> GameScript::storySymbolKind(std::string_view name) {
   if(const auto* catalog = baseNativeCatalog()) {
+    if(BennetOre::progressField(*this,name)!=nullptr)
+      return SymbolKind::Variable;
     if(const auto [entry,kind] = nativeStoryIdentity(*catalog,name); entry!=nullptr)
       return kind;
     if(const auto* entry = own.find(name))
@@ -330,6 +332,24 @@ std::optional<GameScript::SymbolKind> GameScript::storySymbolKind(std::string_vi
   if(const auto [slot,kind] = storyPrograms().binding(name); slot!=nullptr)
     return kind;
   return std::nullopt;
+  }
+
+std::vector<std::string_view> GameScript::storyRoutineVariants(int32_t npcId) const {
+  const auto suffix = "_"+std::to_string(npcId);
+  constexpr std::string_view prefix = "RTN_";
+  std::vector<std::string_view> result;
+  const auto append = [&](std::string_view name) {
+    if(name.size()>prefix.size()+suffix.size() && name.starts_with(prefix) && name.ends_with(suffix))
+      result.push_back(name.substr(prefix.size(),name.size()-prefix.size()-suffix.size()));
+    };
+  if(const auto* catalog = baseNativeCatalog()) {
+    for(const auto& routine : catalog->routines)
+      append(routine.name);
+    } else {
+    for(const auto& symbol : vm.symbols())
+      append(symbol.name());
+    }
+  return result;
   }
 
 daedalus::DaedalusSymbol* GameScript::storySlot(std::string_view name, SymbolKind* kind) const {
@@ -361,7 +381,7 @@ std::optional<uint32_t> GameScript::storyScriptFunctionId(std::string_view name)
 
 bool GameScript::storySlotWritable(std::string_view name) {
   if(baseNativeCatalog()!=nullptr)
-    return runtimeState.find(name)!=nullptr;
+    return runtimeState.find(name)!=nullptr || BennetOre::progressField(*this,name)!=nullptr;
   using enum daedalus::DaedalusDataType;
   const auto [slot,kind] = storyPrograms().binding(name);
   if(slot==nullptr || slot->is_const() || slot->is_external() || slot->is_member())
@@ -372,12 +392,8 @@ bool GameScript::storySlotWritable(std::string_view name) {
 
 Npc* GameScript::directorNpc(std::string_view name) {
   if(baseNativeCatalog()!=nullptr) {
-    if(const auto* entry = own.find(name))
-      return entry->kind==OwnSymbols::Kind::Npc ? findNpcById(entry->index) : nullptr;
-    if(const auto* alias = std::get_if<ScriptVars::Object>(runtimeState.find(name)))
+    if(const auto* alias = storyOwnedInstance(name))
       return findNpc(dynamic_cast<daedalus::INpc*>(alias->get()));
-    if(const auto id = storyNpcId(name))
-      return world().findNpcByInstance(*id);
     return nullptr;
     }
   const auto [slot,kind] = storyPrograms().binding(name);

@@ -37,13 +37,22 @@ class GameScript::StockPrograms final {
 
 struct GameScript::BennetOreDialog final {
   uint32_t                                 infoId = 0;
+  uint32_t                                 conditionId = 0;
+  uint32_t                                 answerId = 0;
   const storygraph::Program*               condition = nullptr;
   const storygraph::Program*               answer = nullptr;
-  daedalus::DaedalusSymbol*                 conditionSymbol = nullptr;
-  daedalus::DaedalusSymbol*                 answerSymbol = nullptr;
   };
 
 struct GameScript::BennetOre final {
+  template<class Script>
+  static auto progressField(Script& script, std::string_view name) -> decltype(&script.bennetOreMission) {
+    if(name=="MIS_BENNET_BRINGORE")
+      return &script.bennetOreMission;
+    if(name=="BENNET_TEACHSMITH")
+      return &script.bennetOreTeaching;
+    return nullptr;
+    }
+
   std::array<BennetOreDialog,3>             dialogs;
   std::shared_ptr<const daedalus::IItem>    ore;
   InventoryTransfer::Text                  notices;

@@ -1,6 +1,7 @@
 #include "gamescript.h"
 
 #include "basestore.h"
+#include "game/definitions/basescripts.h"
 #include "game/definitions/questclosuredata.h"
 #include "resources.h"
 
@@ -21,6 +22,13 @@ void printQuestNotice(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& print,
 }
 
 void GameScript::givePlayerXp(int32_t amount) {
+  if(baseNativeCatalog()!=nullptr) {
+    const auto [self,other] = storyActors();
+    const auto result = callStoryFunction("B_GIVEPLAYERXP",self,other,{amount});
+    if(!result.ok)
+      throw std::runtime_error("B_GIVEPLAYERXP: "+result.error);
+    return;
+    }
   struct RestoreContext {
     daedalus::DaedalusVm& vm;
     std::shared_ptr<daedalus::DaedalusInstance> caller;
@@ -100,6 +108,8 @@ void GameScript::closeQuestTopic(std::string_view topic, int32_t mission, int32_
   }
 
 void GameScript::loadNativeQuestLog(const std::function<bool()>& enabled) {
+  if(baseNativeCatalog()!=nullptr)
+    return;
   levelUpSound = findSymbol("$12941");
   auto* logEntrySound = findSymbol("$12894");
   vm.override_function("B_LOGENTRY",std::function<void(std::string_view,std::string_view)>{

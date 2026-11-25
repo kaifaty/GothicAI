@@ -153,6 +153,7 @@ class GameScript final : public GameRules {
     std::optional<uint32_t> storyNpcId(std::string_view name);
     std::string_view storyNpcName(uint32_t id);
     std::string_view storyItemName(uint32_t id);
+    std::vector<std::string_view> storyRoutineVariants(int32_t npcId) const;
     std::optional<storygraph::NativeFunction> storyFunction(std::string_view name);
     std::unique_ptr<storygraph::NativeExecutionHost> makeStoryHost(Npc* self, Npc* other, bool effects = false);
     std::string checkStoryProgram(const storygraph::Program& program, size_t arguments = 0, bool choices = false,

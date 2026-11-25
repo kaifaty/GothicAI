@@ -376,13 +376,70 @@ void GameScript::loadNativeAmbientInfos() {
     {GIL_BDT, valley, 13, "ADDON_TAL_BDT_13"},
     {GIL_DMT, ambient|oldCamp, 19, {}},
     };
+  const auto assign = [](const Actor& actor, const auto& apply) {
+    if(actor==nullptr || uint32_t(actor->type)>=32u)
+      return;
+    const auto typeBit = 1u<<uint32_t(actor->type);
+    for(size_t i=0; i<std::size(selectors); ++i) {
+      const auto& selector = selectors[i];
+      if(actor->guild==selector.guild && (selector.types&typeBit)!=0 &&
+         (selector.voice==anyVoice || actor->voice==selector.voice))
+        apply(i);
+      }
+    };
+  const auto ambientData = DialogInfoData::loadAmbient(Resources::baseDir());
+  if(const auto* catalog = baseNativeCatalog()) {
+    if(!ambientData)
+      throw BaseStore::Error("native base is missing stock ambient dialog bindings");
+    struct Binding {
+      ScriptVars::Object* savedActor = nullptr;
+      std::vector<uint32_t> topics;
+      };
+    std::array<Binding,std::size(selectors)> bindings;
+    for(size_t i=0; i<std::size(selectors); ++i) {
+      if(selectors[i].suffix.empty())
+        continue;
+      const auto name = std::string("B_ASSIGNAMBIENTINFOS_").append(selectors[i].suffix);
+      const auto found = ambientData->find(name);
+      if(found==ambientData->end())
+        throw BaseStore::Error("missing stock ambient dialog binding: "+name);
+      const auto alias = runtimeState.id(name+".SLF");
+      auto& binding = bindings[i];
+      binding.savedActor = alias==found->second.actor ? storyOwnedInstance(name+".SLF") : nullptr;
+      if(binding.savedActor==nullptr || std::ranges::any_of(found->second.topics,[&](uint32_t id) {
+            return NativeBaseCatalog::findIdentity(catalog->identities.dialogs,id)==nullptr;
+            }))
+        throw BaseStore::Error("invalid stock ambient dialog binding: "+name);
+      binding.topics = found->second.topics;
+      }
+    auto* savedActor = &storyActorSlot("B_ASSIGNAMBIENTINFOS.SLF");
+    nativeExternals.insert_or_assign("B_ASSIGNAMBIENTINFOS",storygraph::makeNativeInternal(std::function<void(Actor)>{
+      [this,savedActor,assign,bindings=std::move(bindings)](const Actor& actor) {
+        *savedActor = actor;
+        assign(actor,[&](size_t i) {
+          const auto& binding = bindings[i];
+          if(binding.savedActor==nullptr) {
+            assignDementorTalk(actor);
+            return;
+            }
+          *binding.savedActor = actor;
+          const auto owner = hlp_getinstanceid(actor);
+          for(auto id : binding.topics) {
+            auto* info = findInfo(id);
+            if(info==nullptr)
+              throw std::runtime_error("missing loaded stock ambient dialog "+std::to_string(id));
+            info->npc = owner;
+            }
+          });
+        }}));
+    return;
+    }
+  if(!ambientData)
+    return;
   struct Binding {
     Symbol* savedActor = nullptr;
     std::vector<Symbol*> topics;
     };
-  const auto ambientData = DialogInfoData::loadAmbient(Resources::baseDir());
-  if(!ambientData)
-    return;
   std::array<Binding,std::size(selectors)> bindings;
   auto* infoClass = findSymbol("C_INFO");
   auto* npcMember = findSymbol("C_INFO.NPC");
@@ -422,18 +479,9 @@ void GameScript::loadNativeAmbientInfos() {
   auto* savedActor = findSymbol("B_ASSIGNAMBIENTINFOS.SLF");
   auto* dementor = findSymbol("B_ASSIGNDEMENTORTALK");
   vm.override_function("B_ASSIGNAMBIENTINFOS",std::function<void(Actor)>{
-    [this,savedActor,dementor,npcMember,instanceId,bindings=std::move(bindings)](const Actor& actor) {
+    [this,savedActor,dementor,npcMember,instanceId,assign,bindings=std::move(bindings)](const Actor& actor) {
       savedActor->set_instance(actor);
-      const auto type = uint32_t(actor->type);
-      if(type>=32u)
-        return;
-      const auto typeBit = 1u<<type;
-      for(size_t i=0; i<std::size(selectors); ++i) {
-        const auto& selector = selectors[i];
-        if(actor->guild!=selector.guild || (selector.types&typeBit)==0 ||
-           (selector.voice!=anyVoice && actor->voice!=selector.voice))
-          continue;
-
+      assign(actor,[&](size_t i) {
         vm.unsafe_set_gi(actor);
         const auto& binding = bindings[i];
         if(binding.savedActor==nullptr) {
@@ -450,12 +498,12 @@ void GameScript::loadNativeAmbientInfos() {
             vm.set_int(context,npcMember,0,owner);
             }
           }
-        }
+        });
       }},enabled);
   }
 
 void GameScript::loadNativeTrainingHelpers() {
-  if(!nativeRoutineProgram)
+  if(!nativeRoutineProgram || baseNativeCatalog()!=nullptr)
     return;
   const auto enabled = [this] {
     return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
@@ -628,41 +676,44 @@ bool GameScript::readDialogInfos() {
     };
 
   dialogsInfo.reserve(rows->size());
-  const auto read = [&](daedalus::DaedalusSymbol& symbol) {
-    const auto fields = rows->find(symbol.index());
+  const auto read = [&](uint32_t id, const std::string& name, const std::shared_ptr<Info>& info) {
+    const auto fields = rows->find(id);
     if(fields==rows->end())
-      throw BaseStore::Error("dialog infos: missing instance "+symbol.name());
-    // Keep legacy aliases of this live record usable during the catalog cutover.
-    auto info = vm.allocate_instance<Info>(&symbol);
+      throw BaseStore::Error("dialog infos: missing instance "+name);
     for(const auto& field : fields->second) {
       const auto member = field.member-firstMember;
       if(member>=members.size())
-        throw BaseStore::Error("dialog infos: invalid member for "+symbol.name());
+        throw BaseStore::Error("dialog infos: invalid member for "+name);
       if(const auto number = members[member]) {
         const auto* value = std::get_if<int32_t>(&field.value);
         if(value==nullptr)
-          throw BaseStore::Error("dialog infos: invalid numeric field for "+symbol.name());
+          throw BaseStore::Error("dialog infos: invalid numeric field for "+name);
         (*info).*number = *value;
         } else if(const auto* title = std::get_if<std::string>(&field.value)) {
         info->description = *title;
         } else if(const auto* lesson = std::get_if<DialogInfoData::Lesson>(&field.value)) {
         info->description = lessonCaption(*lesson);
         } else {
-        throw BaseStore::Error("dialog infos: invalid description for "+symbol.name());
+        throw BaseStore::Error("dialog infos: invalid description for "+name);
         }
       }
-    rememberStoryDialog(symbol.name(),*info);
-    dialogsInfo.push_back(std::move(info));
+    rememberStoryDialog(name,*info);
+    dialogsInfo.push_back(info);
     };
   if(catalog!=nullptr) {
     for(const auto& dialog : catalog->identities.dialogs) {
-      auto* symbol = vm.find_symbol_by_index(dialog.id);
-      if(symbol==nullptr || symbol->name()!=dialog.name)
+      auto* alias = ownedInstance(dialog.id);
+      if(alias==nullptr)
         throw BaseStore::Error("dialog infos: invalid native identity "+dialog.name);
-      read(*symbol);
+      auto info = std::make_shared<Info>();
+      info->setRecordIdentity(dialog.id);
+      read(dialog.id,dialog.name,info);
+      *alias = std::move(info);
       }
     } else {
-    vm.enumerate_instances_by_class_name("C_INFO",read);
+    vm.enumerate_instances_by_class_name("C_INFO",[&](auto& symbol) {
+      read(symbol.index(),symbol.name(),vm.allocate_instance<Info>(&symbol));
+      });
     }
   if(dialogsInfo.size()!=rows->size())
     throw BaseStore::Error("dialog infos: unexpected instance in stock records");

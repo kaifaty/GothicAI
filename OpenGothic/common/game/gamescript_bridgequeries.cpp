@@ -1,4 +1,4 @@
-#include "gamescript.h"
+#include "gamescript_programs.h"
 
 #include "game/definitions/basescripts.h"
 #include "game/definitions/nativebasecatalog.h"
@@ -11,6 +11,8 @@ std::optional<int32_t> GameScript::globalIntSymbol(std::string_view name) const 
   if(const auto value = own.intValue(name))
     return value;
   if(baseNativeCatalog()!=nullptr) {
+    if(const auto* field = BennetOre::progressField(*this,name))
+      return *field;
     if(const auto* field = std::get_if<ScriptVars::Array<int32_t>>(runtimeState.find(name)))
       return field->values.front();
     return intConstant(name);
@@ -187,6 +189,10 @@ bool GameScript::setGlobalIntSymbol(std::string_view name, int32_t value) {
   if(own.setInt(name,value))
     return true;
   if(baseNativeCatalog()!=nullptr) {
+    if(auto* field = BennetOre::progressField(*this,name)) {
+      *field = value;
+      return true;
+      }
     auto* field = std::get_if<ScriptVars::Array<int32_t>>(runtimeState.find(name));
     if(field==nullptr)
       return false;

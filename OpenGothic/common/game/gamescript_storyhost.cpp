@@ -189,10 +189,12 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
 
     bool hasVariable(std::string_view name, bool instanceOnly) const override {
       if(const auto* catalog = baseNativeCatalog()) {
+        if(name=="$INSTANCE_HELP" || owner.script.storyOwnedInstance(name)!=nullptr)
+          return true;
         if(const auto* state = owner.script.runtimeState.find(name))
           return !instanceOnly || std::holds_alternative<ScriptVars::Object>(*state);
-        if(NativeBaseCatalog::findConstant(*catalog,name)!=nullptr)
-          return !instanceOnly;
+        return !instanceOnly && (BennetOre::progressField(owner.script,name)!=nullptr ||
+                                 NativeBaseCatalog::findConstant(*catalog,name)!=nullptr);
         }
       const auto* symbol = owner.binding(name).first;
       if(symbol==nullptr || symbol->is_member() || symbol->is_external())
@@ -211,7 +213,9 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
     bool acceptsCall(std::string_view name, bool external) const override {
       if(baseNativeCatalog()!=nullptr) {
         const auto key = nativeOperationName(name);
-        return external ? owner.script.nativeExternals.contains(key) : owner.program(key)!=nullptr;
+        if(const auto found = owner.script.nativeExternals.find(key); found!=owner.script.nativeExternals.end())
+          return found->second.external==external;
+        return !external && owner.program(key)!=nullptr;
         }
       const auto* symbol = owner.binding(name).first;
       return symbol!=nullptr && symbol->is_external()==external;
@@ -245,6 +249,15 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
         }
       try {
         if(const auto* catalog = baseNativeCatalog()) {
+          if(slot.index==0) {
+            if(slot.name=="$INSTANCE_HELP")
+              return NativeValue::instance(0);
+            if(const auto* actor = owner.script.storyOwnedInstance(slot.name))
+              return NativeValue::instance(bind(*actor));
+            if(slot.kind!=NativeSlot::Instance)
+              if(const auto* field = BennetOre::progressField(owner.script,slot.name))
+                return NativeValue::integer(*field);
+            }
           if(const auto* state = owner.script.runtimeState.find(slot.name)) {
             if(slot.kind==NativeSlot::Instance && !std::holds_alternative<ScriptVars::Object>(*state))
               throw std::runtime_error("Expected a runtime actor or item reference");
@@ -261,6 +274,8 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
                 return readValues(std::span(field),slot.index);
               },constant->values);
             }
+          error = "Unknown native story slot "+std::string(slot.name);
+          return std::nullopt;
           }
         auto* symbol = resolveValue(slot.name);
         if(symbol==nullptr || symbol->is_member() || (slot.kind==NativeSlot::Instance && symbol->type()!=INSTANCE)) {
@@ -300,6 +315,20 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
         return written;
         }
       if(const auto* catalog = baseNativeCatalog()) {
+        if(slot.kind==NativeSlot::Instance && slot.index==0 && value.type==NativeValue::Inst) {
+          if(auto* actor = owner.script.storyOwnedInstance(slot.name)) {
+            auto record = resolveInstance(value.inst);
+            if(value.inst==0 || record!=nullptr) {
+              *actor = std::move(record);
+              return true;
+              }
+            }
+          }
+        if(slot.kind==NativeSlot::Variable && slot.index==0 && value.type==NativeValue::Int)
+          if(auto* field = BennetOre::progressField(owner.script,slot.name)) {
+            *field = value.i;
+            return true;
+            }
         if(auto* state = owner.script.runtimeState.find(slot.name)) {
           if(writeState(*state,slot,value))
             return true;
@@ -310,6 +339,8 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
           error = "Cannot write story constant "+std::string(slot.name);
           return false;
           }
+        error = "Cannot write native story slot "+std::string(slot.name);
+        return false;
         }
       auto* symbol = resolveValue(slot.name);
       if(symbol==nullptr || symbol->is_member() || (symbol->is_const() && slot.kind!=NativeSlot::Instance)) {
@@ -556,8 +587,7 @@ bool GameScript::StockPrograms::run(uint32_t id, int32_t& result, bool* failed, 
     }
 
   Host execution(*this,true);
-  const auto run = nativeCatalog || preparedOnly ? NativeInterpreter(execution).run(entry->program) :
-                                                   execution.run(name,{});
+  const auto run = preparedOnly ? NativeInterpreter(execution).run(entry->program) : execution.run(name,{});
   if(failed!=nullptr)
     *failed = !run.ok;
   if(!run.ok)
@@ -567,14 +597,17 @@ bool GameScript::StockPrograms::run(uint32_t id, int32_t& result, bool* failed, 
   }
 
 ScriptVars::Object& GameScript::storyActorSlot(std::string_view name) {
-  ScriptVars::Slot* state = nullptr;
-  if(baseNativeCatalog()!=nullptr)
-    state = runtimeState.find(name);
-  else
-    if(const auto* binding = storySlot(name))
-      state = runtimeState.find(binding->index());
-  if(auto* object = std::get_if<ScriptVars::Object>(state))
-    return *object;
+  if(baseNativeCatalog()!=nullptr) {
+    if(auto* object = storyOwnedInstance(name))
+      return *object;
+    } else {
+    const auto* binding = storySlot(name);
+    if(binding==nullptr)
+      binding = vm.find_symbol_by_name(name);
+    if(binding!=nullptr)
+      if(auto* object = std::get_if<ScriptVars::Object>(runtimeState.find(binding->index())))
+        return *object;
+    }
   throw std::runtime_error("Missing runtime story actor "+std::string(name));
   }
 
