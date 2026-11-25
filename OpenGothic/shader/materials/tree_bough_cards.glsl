@@ -40,7 +40,11 @@ uvec3 processPrimitive(uint firstIndex, uint bucketId, uint primitive) {
 uvec3 boughFade(uvec4 task, out vec3 mask) {
   const uint band = task.z >> 16u;
   const Instance instance = pullInstance(task.x);
+#if defined(MATERIAL_MAPS)
+  const uint joint = boughJointFade(instance.animPtr & ~CanopyVertexNormal);
+#else
   const uint joint = boughJointFade(instance.animPtr);
+#endif
   mask = vec3(0);
   if(band==0u && joint==0u)
     return uvec3(0);
