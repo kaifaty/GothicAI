@@ -20,7 +20,7 @@
 #include "game/archerai.h"
 #include "game/definitions/basescripts.h"
 #include "game/definitions/nativebasecatalog.h"
-#include "game/gamescript.h"
+#include "game/gamescript_programs.h"
 #include "graphics/mesh/flinch.h"
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
@@ -872,7 +872,12 @@ bool Marvin::addItemOrNpcBySymbolName(World* world, std::string_view name, const
   }
 
 bool Marvin::printVariable(World* world, std::string_view name) {
-  if(const auto* slot = world->script().runtimeState.find(name)) {
+  auto& script = world->script();
+  if(const auto value = script.globalIntSymbol(name)) {
+    print(string_frm(name," = ",*value));
+    return true;
+    }
+  if(const auto* slot = script.runtimeState.find(name)) {
     std::visit([&](const auto& value) {
       if constexpr(std::is_same_v<std::decay_t<decltype(value)>,ScriptVars::Object>)
         print(string_frm(name," = ",value.get()));
@@ -897,9 +902,12 @@ bool Marvin::printVariable(World* world, std::string_view name) {
   }
 
 bool Marvin::setVariable(World* world, std::string_view name, std::string_view value) {
-  auto* slot = world->script().runtimeState.find(name);
-  if(slot==nullptr)
-    return false;
+  auto& script = world->script();
+  auto* slot = script.runtimeState.find(name);
+  if(slot==nullptr) {
+    int32_t number = 0;
+    return fromString(value,number) && script.setGlobalIntSymbol(name,number) && printVariable(world,name);
+    }
   const bool applied = std::visit([&](auto& current) {
     using Type = std::decay_t<decltype(current)>;
     if constexpr(std::is_same_v<Type,ScriptVars::Object>) {
@@ -985,6 +993,8 @@ std::string_view Marvin::completeInstanceName(std::string_view inp, bool& fullwo
   for(const auto& state:catalog->states) consider(state.name);
   for(const auto& value:catalog->initialState) consider(value.name);
   for(const auto& constant:catalog->constants) consider(constant.first);
+  consider(GameScript::BennetOre::missionName);
+  consider(GameScript::BennetOre::teachingName);
   for(const auto& entry:world->script().ownSymbols().entries()) consider(entry.name);
   return match;
   }

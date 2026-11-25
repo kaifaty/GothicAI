@@ -35,11 +35,14 @@ struct GameScript::BennetOreDialog final {
   };
 
 struct GameScript::BennetOre final {
+  static constexpr std::string_view missionName = "MIS_BENNET_BRINGORE";
+  static constexpr std::string_view teachingName = "BENNET_TEACHSMITH";
+
   template<class Script>
   static auto progressField(Script& script, std::string_view name) -> decltype(&script.bennetOreMission) {
-    if(name=="MIS_BENNET_BRINGORE")
+    if(name==missionName)
       return &script.bennetOreMission;
-    if(name=="BENNET_TEACHSMITH")
+    if(name==teachingName)
       return &script.bennetOreTeaching;
     return nullptr;
     }
