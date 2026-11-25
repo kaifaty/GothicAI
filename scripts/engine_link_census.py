@@ -15,10 +15,12 @@ build are system ones; they are only counted.
     python3 scripts/engine_link_census.py OpenGothic/build             # markdown report
     python3 scripts/engine_link_census.py OpenGothic/build --json      # the same as JSON
     python3 scripts/engine_link_census.py OpenGothic/build --check-native-game --json
-    python3 scripts/engine_link_census.py OpenGothic/build --check-native-game --target gothic-body-runner
+    python3 scripts/engine_link_census.py OpenGothic/build --check-native-v3 --target gothic-body-runner
 
-The native game check requires the unstripped linked executable. Exit codes are 0 for a clean
-check, 1 for linked offline script code, and 2 for an uninspectable build.
+Both checks require the unstripped linked executable. The v2 check excludes the bytecode
+dispatcher and offline tooling. The v3 check also excludes the compatibility VM, symbol data
+and runtime bindings codec. Exit codes are 0 for a clean check, 1 for leaked code and 2
+for an uninspectable build.
 
 Step 8.2 of the engine layers plan: reports/engine/2026-11-13-empty-island/README.md.
 """
@@ -63,6 +65,13 @@ OFFLINE_SYMBOL = re.compile(
     r"|18(?:readSymbolMetadata|symbolMetadataPath)|19writeSymbolMetadata|25symbolMetadataPayloadPath|7compare)"
     r"|_ZN19ScriptSymbolCatalog(?:4load|5write))"
 )
+V3_SCRIPT_ARCHIVES = {"gothic-script-state", "gothic-script-data",
+                      "gothic-base-import", "gothic-npc-snapshot", "gothic-video-import"}
+V3_SCRIPT_SOURCE = re.compile(
+    r"/(?:common/(?:daedalus/|import/|game/definitions/runtimebindings\.cpp$)|tools/runtimebindingroots\.cpp$)"
+)
+# Itanium names include namespace components in direct symbols, RTTI and instantiated templates.
+V3_SCRIPT_SYMBOL = re.compile(r"^_Z.*(?:8daedalus|15RuntimeBindings)\d+")
 
 
 @dataclass
@@ -207,7 +216,7 @@ def executable_target(build: Path, target: str) -> str:
     raise ValueError(f"{target} is not a CMake Ninja executable target")
 
 
-def check_native_game(build: Path, target: str, nm: str, fmt: str) -> dict:
+def check_native_game(build: Path, target: str, nm: str, fmt: str, *, v3: bool = False) -> dict:
     node = executable_target(build, target)
     binary = (build / node).resolve()
     if not binary.is_relative_to(build) or not binary.is_file():
@@ -220,25 +229,29 @@ def check_native_game(build: Path, target: str, nm: str, fmt: str) -> dict:
     if not objects:
         raise ValueError(f"{target}: no object files found in the link inputs")
     sources = source_map(build)
+    symbol_names = symbols.defined.keys() | symbols.undefined
     daedalus_archives = sorted(path for path in archives if archive_name(path) == "gothic-daedalus")
     vm_objects = sorted(obj for obj, _ in objects
                         if sources.get(obj, "").endswith("/common/daedalus/vm_bytecode.cpp"))
-    dispatch_symbols = sorted(name for name in symbols.defined.keys() | symbols.undefined
-                              if DAEDALUS_DISPATCH.fullmatch(name))
+    dispatch_symbols = sorted(name for name in symbol_names if DAEDALUS_DISPATCH.fullmatch(name))
     offline_archives = sorted(path for path in archives if archive_name(path) in OFFLINE_ARCHIVES)
     offline_objects = sorted(obj for obj, _ in objects if OFFLINE_SOURCE.search(sources.get(obj, "")))
-    offline_symbols = sorted(name for name in symbols.defined.keys() | symbols.undefined if OFFLINE_SYMBOL.match(name))
-    return {
-        "binary": str(binary),
+    offline_symbols = sorted(name for name in symbol_names if OFFLINE_SYMBOL.match(name))
+    findings = {
         "daedalus_archives": daedalus_archives,
         "vm_objects": vm_objects,
         "opcode_dispatch_symbols": dispatch_symbols,
         "offline_archives": offline_archives,
         "offline_objects": offline_objects,
         "offline_symbols": offline_symbols,
-        "status": "leaked" if any((daedalus_archives, vm_objects, dispatch_symbols, offline_archives,
-                                   offline_objects, offline_symbols)) else "clean",
     }
+    if v3:
+        findings.update(
+            compatibility_archives=sorted(path for path in archives if archive_name(path) in V3_SCRIPT_ARCHIVES),
+            compatibility_objects=sorted(obj for obj, _ in objects if V3_SCRIPT_SOURCE.search(sources.get(obj, ""))),
+            compatibility_symbols=sorted(name for name in symbol_names if V3_SCRIPT_SYMBOL.match(name)),
+        )
+    return {"binary": str(binary), **findings, "status": "leaked" if any(findings.values()) else "clean"}
 
 
 def demangle(names: list[str], cxxfilt: str) -> dict[str, str]:
@@ -399,13 +412,16 @@ def main() -> int:
     ap.add_argument("--format", choices=("elf", "macho"), default="macho" if sys.platform == "darwin" else "elf")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--check-native-game", action="store_true",
-                    help="verify the unstripped executable and link inputs contain no offline script code")
+    native_check = ap.add_mutually_exclusive_group()
+    native_check.add_argument("--check-native-game", action="store_true",
+                              help="check the v2 game for bytecode dispatch and offline tooling")
+    native_check.add_argument("--check-native-v3", action="store_true",
+                              help="also reject compatibility VM, symbol data and runtime bindings")
     args = ap.parse_args()
     build = args.build.resolve()
-    if args.check_native_game:
+    if args.check_native_game or args.check_native_v3:
         try:
-            result = check_native_game(build, args.target, args.nm, args.format)
+            result = check_native_game(build, args.target, args.nm, args.format, v3=args.check_native_v3)
         except (OSError, ValueError, subprocess.CalledProcessError) as exc:
             detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
             if args.json:
@@ -417,10 +433,10 @@ def main() -> int:
             print(json.dumps(result, indent=1))
         else:
             print(f"Native game link check: {result['status']} ({result['binary']})")
-            for key in ("daedalus_archives", "vm_objects", "opcode_dispatch_symbols",
-                        "offline_archives", "offline_objects", "offline_symbols"):
-                for item in result[key]:
-                    print(f"{key}: {item}")
+            for key, items in result.items():
+                if key not in ("binary", "status"):
+                    for item in items:
+                        print(f"{key}: {item}")
         return int(result["status"] == "leaked")
     engine = args.engine.resolve() if args.engine else engine_dir(build)
     units = collect(build, args.target, engine, args.nm, args.format, args.jobs)
