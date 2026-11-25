@@ -43,6 +43,7 @@ struct NativeExternal final {
   std::function<NativeCall(std::span<const NativeValue>, const BoundNativeCall::ResolveActor&,
                            const BoundNativeCall::BindActor&)> call;
   bool observe=true;
+  bool external=true;
   };
 
 using NativeExternals=std::map<std::string,NativeExternal,std::less<>>;
@@ -113,6 +114,13 @@ NativeExternal makeNativeExternal(const std::function<R(P...)>& callback,bool ob
       }
     };
   return external;
+  }
+
+template<class R, class... P>
+NativeExternal makeNativeInternal(const std::function<R(P...)>& callback) {
+  auto operation = makeNativeExternal(callback,false);
+  operation.external = false;
+  return operation;
   }
 
 template<class R, class... P>
