@@ -41,7 +41,7 @@ std::string npcDuelArray(const T& values) {
 std::string npcDuelSnapshot(World& world, Npc& npc) {
   const auto& h=npc.handle();
   auto* weapon=npc.currentMeleeWeapon();
-  auto* symbol=weapon ? world.script().findSymbol(weapon->clsId()) : nullptr;
+  const auto weaponName=weapon ? world.script().storyItemName(uint32_t(weapon->clsId())) : std::string_view{};
   std::string skills="[", values="[";
   for(int i=0;i<TALENT_MAX_G2;++i) {
     if(i>0) {skills+=',';values+=',';}
@@ -56,7 +56,7 @@ std::string npcDuelSnapshot(World& world, Npc& npc) {
     ",\"1h\":"+std::to_string(npc.hitChance(TALENT_1H))+",\"2h\":"+std::to_string(npc.hitChance(TALENT_2H))+"}"+
     ",\"talent_skills\":"+skills+"],\"talent_values\":"+values+"]"+
     ",\"protection\":"+npcDuelArray(h.protection)+",\"damage\":"+npcDuelArray(h.damage)+
-    ",\"damagetype\":"+std::to_string(h.damage_type)+",\"weapon\":"+jsonStr(symbol ? symbol->name() : std::string_view{})+
+    ",\"damagetype\":"+std::to_string(h.damage_type)+",\"weapon\":"+jsonStr(weaponName)+
     ",\"two_handed\":"+(weapon && weapon->is2H() ? "true" : "false")+
     ",\"weapon_damage\":"+(weapon ? npcDuelArray(weapon->handle().damage) : "[0,0,0,0,0,0,0,0]")+
     ",\"weapon_damage_total\":"+std::to_string(weapon ? weapon->handle().damage_total : 0)+

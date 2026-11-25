@@ -7,12 +7,10 @@
 #include <string>
 #include <string_view>
 
-namespace daedalus { class DaedalusVm; }
 class GameplayDefinitions;
 
 class SpellDefinitions final {
   public:
-    explicit SpellDefinitions(daedalus::DaedalusVm& vm);
     explicit SpellDefinitions(const GameplayDefinitions& records);
 
     const SpellRecord& find(std::string_view instanceName) const;

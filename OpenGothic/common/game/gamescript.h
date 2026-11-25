@@ -112,7 +112,6 @@ class GameScript final : public GameRules {
     void         restoreNpc(const std::shared_ptr<NpcRecord>& dst, const std::shared_ptr<NpcRecord>& src, Npc& owner) override;
     void         detachNpc(const std::shared_ptr<NpcRecord>& npc, Npc& owner) override;
     Npc*         findNpc(NpcRecord* npc) override;
-    auto         npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<NpcRecord>;
     auto         createItem(Item& owner, size_t instance, uint32_t& kind) -> std::shared_ptr<ItemRecord> override;
     auto         createItem(size_t instance) -> std::shared_ptr<ItemRecord> override;
     auto         createItemForQuery(size_t instance) -> std::shared_ptr<ItemRecord>;
@@ -472,7 +471,7 @@ class GameScript final : public GameRules {
     void killNpc(int32_t symbol);
     void removeNpc(int32_t symbol);
     int32_t countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor);
-    void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
+    void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance);
     std::optional<uint32_t> npcTemplateId(uint32_t instance) const;
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, uint32_t templateId);
@@ -898,7 +897,6 @@ class GameScript final : public GameRules {
     bool bennetOffer(const BennetOreDialog& dialog, Npc& player, Npc& npc);
     bool bennetExecute(const BennetOreDialog& dialog, Npc& player, Npc& npc);
 
-    void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
     ScriptVars::Object* ownedInstance(uint32_t id);
     ScriptVars::Object* storyOwnedInstance(std::string_view name);
     ScriptVars::Object& storyActorSlot(std::string_view name);

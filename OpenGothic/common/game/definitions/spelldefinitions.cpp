@@ -1,7 +1,5 @@
 #include "spelldefinitions.h"
 
-#include "daedalus/classes.h"
-#include "daedalus/vm.h"
 #include "gameplaydefinitions.h"
 #include "utils/string_frm.h"
 
@@ -9,12 +7,6 @@
 #include <cctype>
 
 using namespace Tempest;
-
-SpellDefinitions::SpellDefinitions(daedalus::DaedalusVm& vm) {
-  vm.enumerate_instances_by_class_name("C_Spell",[&](daedalus::DaedalusSymbol& sym) {
-    spl.emplace(sym.name(),vm.init_instance<daedalus::ISpell>(&sym));
-    });
-  }
 
 SpellDefinitions::SpellDefinitions(const GameplayDefinitions& records) {
   for(auto& [name,spell] : records.spells())

@@ -20,12 +20,6 @@
 
 namespace {
 
-struct RestoreContext {
-  daedalus::DaedalusVm& vm;
-  std::shared_ptr<daedalus::DaedalusInstance> caller;
-  ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
-  };
-
 int32_t fixedTalentLearnCost(int32_t talent, int32_t skill) {
   // Tables indexed by the verified NotR skill IDs.
   static constexpr uint8_t smith[] = {2,4,4,6,6,8,8,10,10,4,6,8,10};
@@ -62,149 +56,6 @@ int32_t fixedTalentLearnCost(int32_t talent, int32_t skill) {
     }
   }
 
-bool hasStockNpcThreeArguments(daedalus::DaedalusVm& vm) {
-  using Type = daedalus::DaedalusDataType;
-  try {
-    // The stock BL sites pass global integer references or immediate integer values.
-    for(uint16_t depth : {uint16_t(0),uint16_t(1)}) {
-      const auto& frame = vm.stack_frame(depth);
-      if(frame.reference) {
-        const auto* symbol = std::get<daedalus::DaedalusSymbol*>(frame.value);
-        if(symbol->type()!=Type::INT || symbol->is_member() || frame.index>=symbol->count())
-          return false;
-        } else if(!std::holds_alternative<int32_t>(frame.value)) {
-        return false;
-        }
-      }
-    const auto& frame = vm.stack_frame(2);
-    if(frame.reference) {
-      auto* symbol = std::get<daedalus::DaedalusSymbol*>(frame.value);
-      return symbol->type()==Type::INSTANCE &&
-             (symbol->get_instance()==nullptr || symbol->is_instance_of<daedalus::INpc>());
-      }
-    const auto* instance = std::get_if<std::shared_ptr<daedalus::DaedalusInstance>>(&frame.value);
-    return instance && (!*instance || (*instance)->instance_type()==&typeid(daedalus::INpc));
-    } catch (const daedalus::DaedalusVmException&) {
-    // Keep the original frames for the VM's opcode-level error recovery.
-    return false;
-    }
-  }
-
-static constexpr struct AttributeRaise {
-  int32_t attribute;
-  const char* caption;
-  std::optional<uint8_t> trainingSlot;
-  } attributeRaises[] = {
-  {ATR_STRENGTH,     "PRINT_LEARNSTR",           81},
-  {ATR_DEXTERITY,    "PRINT_LEARNDEX",           82},
-  {ATR_MANAMAX,      "PRINT_LEARNMANA_MAX",      83},
-  {ATR_HITPOINTSMAX, "PRINT_LEARNHITPOINTS_MAX", {}},
-  };
-
-std::span<daedalus::DaedalusSymbol> bindNpcThreeArguments(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
-  auto args = vm.find_parameters_for_function(&helper);
-  const auto caller = vm.unsafe_get_gi();
-  vm.set_int(caller,&args[2],0,vm.pop_int());
-  vm.set_int(caller,&args[1],0,vm.pop_int());
-  args[0].set_instance(vm.pop_instance());
-  return args;
-  }
-
-void increaseNpcField(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& learner,
-                       daedalus::DaedalusSymbol& points, const char* field, uint16_t index) {
-  const auto npc = learner.get_instance();
-  vm.unsafe_set_gi(npc);
-  auto* member = vm.find_symbol_by_name(field);
-  const auto value = vm.get_int(npc,member,index);
-  const auto delta = vm.get_int(npc,&points,0);
-  vm.set_int(npc,member,index,std::bit_cast<int32_t>(uint32_t(value)+uint32_t(delta)));
-  }
-
-void raiseRealAttributeLearnCounter(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
-  const auto args = bindNpcThreeArguments(vm,helper);
-  const auto row = std::ranges::find(attributeRaises,args[1].get_int(),&AttributeRaise::attribute);
-  if(row!=std::end(attributeRaises) && row->trainingSlot) {
-    RestoreContext restore{vm,vm.unsafe_get_gi()};
-    increaseNpcField(vm,args[0],args[2],"C_NPC.AIVAR",*row->trainingSlot);
-    }
-  }
-
-void raiseAttribute(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper,
-                    const daedalus::DaedalusSymbol& counter) {
-  const auto args = bindNpcThreeArguments(vm,helper);
-  const auto id = args[1].get_int();
-  const auto row = std::ranges::find(attributeRaises,id,&AttributeRaise::attribute);
-  RestoreContext restore{vm,vm.unsafe_get_gi()};
-  int32_t printResults = 0;
-  if(row!=std::end(attributeRaises)) {
-    const auto symbol = [&](std::string_view name) { return vm.find_symbol_by_name(name); };
-    auto& learner = args[0];
-    increaseNpcField(vm,learner,args[2],"C_NPC.ATTRIBUTE",uint16_t(id));
-    const auto print = [&](daedalus::DaedalusSymbol* text,int32_t y) {
-      vm.push_reference(text);
-      vm.push_int(-1);
-      vm.push_int(y);
-      vm.push_reference(symbol("FONT_SCREEN"));
-      vm.push_int(2);
-      printResults += vm.unsafe_call_external(symbol("PRINTSCREEN"));
-      };
-    if(id==ATR_DEXTERITY) {
-      auto* acrobat = symbol("NPC_TALENT_ACROBAT");
-      vm.push_reference(&learner);
-      vm.push_reference(acrobat);
-      vm.unsafe_call_external(symbol("NPC_GETTALENTSKILL"));
-      const auto skill = vm.pop_int();
-      const auto npc = learner.get_instance();
-      vm.unsafe_set_gi(npc);
-      const auto dexterity = vm.get_int(npc,symbol("C_NPC.ATTRIBUTE"),uint16_t(id));
-      if(skill==0 && dexterity>=90) {
-        vm.push_reference(&learner);
-        vm.push_reference(acrobat);
-        vm.push_int(1);
-        vm.unsafe_call_external(symbol("NPC_SETTALENTSKILL"));
-        print(symbol("PRINT_ADDON_ACROBATBONUS"),55);
-        }
-      }
-
-    // Formatting updates the same temporary strings even if the message is hidden.
-    vm.push_reference(symbol(row->caption));
-    vm.push_reference(&args[2]);
-    vm.unsafe_call_external(symbol("INTTOSTRING"));
-    vm.unsafe_call_external(symbol("CONCATSTRINGS"));
-    auto* text = symbol("B_RAISEATTRIBUTE.CONCATTEXT");
-    vm.set_string(vm.unsafe_get_gi(),text,0,vm.pop_string());
-    print(text,-1);
-    }
-
-  // The original calls the counter for every id and leaves its three arguments in saved slots.
-  for(auto& arg:args)
-    vm.push_reference(&arg);
-  vm.unsafe_call_bl(&counter);
-  // The stock void frame discards the screen calls' integer results on return.
-  for(int32_t i=0; i<printResults; ++i)
-    (void)vm.pop_int();
-  }
-
-static constexpr uint8_t fightTrainingSlots[] = {84,85,86,87};
-
-void raiseRealFightTalent(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
-  const auto args=bindNpcThreeArguments(vm,helper);
-  const auto talent=args[1].get_int();
-  if(TALENT_1H<=talent && talent<=TALENT_CROSSBOW) {
-    RestoreContext restore{vm,vm.unsafe_get_gi()};
-    increaseNpcField(vm,args[0],args[2],"C_NPC.AIVAR",fightTrainingSlots[size_t(talent-TALENT_1H)]);
-    }
-  }
-
-void raiseFightTalent(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& helper) {
-  const auto args=bindNpcThreeArguments(vm,helper);
-  for(const auto* child:{ "B_RAISEREALFIGHTTALENTPERCENT", "B_ADDFIGHTSKILL" }) {
-    for(auto& arg:args)
-      vm.push_reference(&arg);
-    vm.unsafe_call_bl(vm.find_symbol_by_name(child));
-    }
-  }
-
 } // namespace
 
 auto GameScript::createNpc(Npc& owner, size_t instance, std::string_view waypoint, uint32_t& kind) -> std::shared_ptr<NpcRecord> {
@@ -221,22 +72,8 @@ auto GameScript::createNpc(Npc& owner, size_t instance, std::string_view waypoin
   }
 
 uint32_t GameScript::initializeInstanceNpc(const std::shared_ptr<NpcRecord>& record, size_t instance) {
-  auto npc = std::static_pointer_cast<daedalus::INpc>(record);
-  if(baseNativeCatalog()!=nullptr) {
-    initializeInstanceNpc(npc,instance);
-    return npc->symbol_index();
-    }
-  // These stock spell forms and the necromancy skeleton can overlay a live
-  // record. Their constructors and helpers do not read the existing fields.
-  static constexpr std::array<std::string_view,13> forms={
-    "SHEEP", "SCAVENGER", "GIANT_RAT", "GIANT_BUG", "WOLF", "WARAN", "SNAPPER",
-    "WARG", "FIREWARAN", "LURKER", "SHADOWBEAST", "DRAGONSNAPPER", "SKELETON"
-    };
-  bool useRecords=false;
-  if(nativeRoutineProgram && NpcDefinitionRuntime::enabled())
-    if(const auto* symbol=vm.find_symbol_by_index(uint32_t(instance)))
-      useRecords=std::ranges::find(forms,symbol->name())!=forms.end();
-  initializeInstanceNpc(npc,instance,useRecords);
+  auto npc = std::static_pointer_cast<NpcInstance>(record);
+  initializeInstanceNpc(npc,instance);
   return npc->symbol_index();
   }
 
@@ -247,31 +84,20 @@ auto GameScript::loadNpc(Serialize& fin, Npc* owner, uint32_t& kind) -> std::sha
   npc->user_ptr = owner;
   uint32_t symbol = 0;
   fin.read(symbol);
-  if(baseNativeCatalog()!=nullptr) {
-    if(!npcTemplateId(symbol))
-      throw std::runtime_error("Unknown NPC identity in save: "+std::to_string(symbol));
-    npc->setRecordIdentity(symbol);
-    *ownedInstance(symbol) = npc;
-    }
-  else if(auto* sym = vm.find_symbol_by_index(symbol)) {
-    vm.allocate_instance(npc,sym);
-    } else {
-    Tempest::Log::e("Cannot load serialized NPC ",symbol,": Symbol not found.");
-    }
+  auto* alias = ownedInstance(symbol);
+  if(alias==nullptr || !npcTemplateId(symbol))
+    throw BaseStore::Error("Unknown NPC identity in save: "+std::to_string(symbol));
+  npc->setRecordIdentity(symbol);
+  *alias = npc;
   kind = npc->symbol_index();
   fin.readNpc(*npc);
   return npc;
   }
 
 void GameScript::bindNpc(const std::shared_ptr<NpcRecord>& record) {
-  auto npc = std::static_pointer_cast<daedalus::INpc>(record);
-  if(baseNativeCatalog()!=nullptr) {
-    if(auto* alias = ownedInstance(npc->symbol_index()))
-      *alias = npc;
-    return;
-    }
-  if(auto* sym = vm.find_symbol_by_index(npc->symbol_index()))
-    sym->set_instance(npc);
+  auto npc = std::static_pointer_cast<NpcInstance>(record);
+  if(auto* alias = ownedInstance(npc->symbol_index()))
+    *alias = npc;
   }
 
 auto GameScript::copyNpc(const std::shared_ptr<NpcRecord>& record) -> std::shared_ptr<NpcRecord> {
@@ -292,12 +118,6 @@ void GameScript::detachNpc(const std::shared_ptr<NpcRecord>& record, Npc& owner)
 
 Npc* GameScript::findNpc(NpcRecord* record) {
   return record==nullptr ? nullptr : static_cast<Npc*>(static_cast<daedalus::INpc*>(record)->user_ptr);
-  }
-
-auto GameScript::npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<NpcRecord> {
-  if(symbol->is_instance_of<daedalus::INpc>())
-    return std::static_pointer_cast<daedalus::INpc>(symbol->get_instance());
-  return nullptr;
   }
 
 void GameScript::loadNativeAmbientInfos() {
@@ -555,12 +375,7 @@ auto GameScript::loadItem(Serialize& fin, Item& owner, uint32_t& kind) -> std::s
   item->user_ptr = &owner;
   uint32_t symbol = 0;
   fin.read(symbol);
-  if(!bindPreparedItem(item,symbol)) {
-    if(auto* sym = vm.find_symbol_by_index(symbol))
-      vm.allocate_instance(item,sym);
-    else
-      Tempest::Log::e("Loading unknown item from save: ",symbol);
-    }
+  bindPreparedItem(item,symbol);
   kind = item->symbol_index();
   fin.readItem(*item);
   return item;

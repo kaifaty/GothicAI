@@ -515,7 +515,7 @@ std::optional<uint32_t> GameScript::npcTemplateId(uint32_t instance) const {
   return std::nullopt;
   }
 
-void GameScript::initializeInstanceNpc(const std::shared_ptr<NpcInstance>& npc, size_t instance, bool) {
+void GameScript::initializeInstanceNpc(const std::shared_ptr<NpcInstance>& npc, size_t instance) {
   LoadProbe::Startup::Detail::Scope detail("npc_init",[&] { return std::string(storyNpcName(uint32_t(instance))); });
   LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Script);
   if(instance>UINT32_MAX)
@@ -580,11 +580,8 @@ void GameScript::loadVar(Serialize &fin) {
   for(uint32_t i=0; i<count; ++i) {
     const auto row = ScriptVars::readRow(fin);
     auto* slot = runtimeState.find(row.id);
-    if(slot==nullptr) {
-      if(baseNativeCatalog()!=nullptr)
-        throw std::runtime_error("Unknown runtime field ID in save: "+std::to_string(row.id));
-      continue;
-      }
+    if(slot==nullptr)
+      throw BaseStore::Error("Unknown runtime field ID in save: "+std::to_string(row.id));
     std::visit([&](auto& value) {
       using T = std::decay_t<decltype(value)>;
       if constexpr(std::is_same_v<T,ScriptVars::Object>) {
@@ -652,13 +649,6 @@ void GameScript::resetVarPointers() {
 
 const QuestLog& GameScript::questLog() const {
   return quests;
-  }
-
-void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& symbol) {
-  const auto* slot = runtimeState.find(symbol.index());
-  if(slot==nullptr)
-    throw std::runtime_error("Cannot save an unregistered runtime field");
-  ScriptVars::writeRow(fout,{symbol.index(),stateValue(*slot)});
   }
 
 ScriptVars::Value GameScript::stateValue(const ScriptVars::Slot& slot) {

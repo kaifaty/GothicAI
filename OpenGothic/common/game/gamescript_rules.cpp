@@ -3998,15 +3998,12 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
   }
 
 bool GameScript::isNpcInstance(size_t id) {
-  auto* symbol = findSymbol(id);
-  for(size_t i=0; i<16 && symbol!=nullptr && symbol->type()!=daedalus::DaedalusDataType::CLASS; ++i)
-    symbol = findSymbol(size_t(symbol->parent()));
-  return symbol!=nullptr && symbol->name()=="C_NPC";
+  return id<=UINT32_MAX && npcTemplateId(uint32_t(id)).has_value();
   }
 
 auto GameScript::npcRecord(size_t id) -> std::shared_ptr<NpcRecord> {
-  if(auto* symbol = findSymbol(id))
-    return npcRecord(symbol);
+  if(auto* npc = findNpcById(id))
+    return npc->handlePtr();
   return nullptr;
   }
 

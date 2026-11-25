@@ -234,7 +234,7 @@ std::string ownMeshChestInventory(World& world,const Npc& player) {
   std::string rows="[";
   for(const auto& [id,count]:fixture.contents) {
     if(rows.size()>1)rows+=',';
-    rows+="{\"class\":"+jsonStr(world.script().findSymbol(id)->name())+
+    rows+="{\"class\":"+jsonStr(world.script().storyItemName(uint32_t(id)))+
       ",\"chest_before\":"+std::to_string(count)+",\"chest_now\":"+
       std::to_string(fixture.chest->inventory().itemCount(id))+
       ",\"hero_before\":"+std::to_string(fixture.heroBefore.at(id))+
