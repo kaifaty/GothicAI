@@ -40,6 +40,9 @@ class View final {
     // Conservative body sphere at the NPC's current position (not the visual's,
     // which a deferred NPC has not moved yet), swept along its shadow.
     bool visible(const Npc& npc) const;
+    bool couldSee(const Tempest::Vec3& lo, const Tempest::Vec3& hi) const;
+    bool sameView(const View& other) const;
+    static void bodyBounds(const Npc& npc, Tempest::Vec3& lo, Tempest::Vec3& hi);
     bool nearCamera(const Npc& npc) const;
     // The old probe's sphere test against the frustum only, for the
     // tier/policy/frustum split of the frame profile.

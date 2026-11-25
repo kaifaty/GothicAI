@@ -97,9 +97,9 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/game/bodytrajectory", "tools"),
     ("game/bodyrunner", "tools"),
     ("game/society*", "tools"),
-    # The AI bridge and the society core it feeds.
+    # The AI bridge and the independent society simulation used by the RPG world.
     ("ai_bridge/*", "bridge"),
-    ("common/society/*", "bridge"),
+    ("common/society/*", "rpg"),
     # Gothic itself: the script VM and its bindings, G2 rules, Gothic's app shell and menus,
     # Gothic's media formats at runtime.
     ("common/daedalus/*", "gothic"),

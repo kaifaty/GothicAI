@@ -364,9 +364,21 @@ bool Npc::performOutput(const AiQueue::AiAction &act) {
   return false;
   }
 
+void Npc::wakeSociety() {
+  if(societySleeping)
+    owner.wakeSocietyNpc(*this);
+  }
+
+void Npc::setExternalControl(bool e) {
+  if(externalCtrl!=e)
+    wakeSociety();
+  externalCtrl = e;
+  }
+
 void Npc::setProcessPolicy(NpcProcessPolicy t) {
   if(aiPolicy==t)
     return;
+  wakeSociety();
   if(aiPolicy==NpcProcessPolicy::Player)
     runAng = 0;
   aiPolicy=t;
@@ -374,6 +386,8 @@ void Npc::setProcessPolicy(NpcProcessPolicy t) {
   }
 
 void Npc::setSimTier(NpcSimTier t) {
+  if(simTierValue!=t)
+    wakeSociety();
   simTierValue = t;
   simTierAssigned = true;
   if(!loadedFpReferences)
@@ -996,7 +1010,15 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
-  Bench::beforeNpcTick(*this);
+  const auto benchTick = Bench::beforeNpcTick(*this);
+  if(benchTick==BenchNpcTick::MeleeDrain) {
+    tickAnimationTags();
+    if(isAttackAnim())
+      mvAlgo.tick(dt,MoveAlgo::WaitMove);
+    return;
+    }
+  if(benchTick==BenchNpcTick::Paused)
+    return;
   updateQuiver();
   updateSimpleMovement();
   NpcLogicalState::Tick logicalTick(*this,dt);
@@ -1241,7 +1263,9 @@ void Npc::setTarget(Npc *t) {
   if(currentTarget==t)
     return;
 
+  wakeSociety();
   if(t!=nullptr) {
+    t->wakeSociety();
     resumeCampfireBody();
     t->resumeCampfireBody();
     }

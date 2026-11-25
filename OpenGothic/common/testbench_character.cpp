@@ -1438,6 +1438,71 @@ bool characterCommand(Character& state,const CharacterContext& context,const std
     Settings::setI("GAME","npc_character_virtual",a[1]=="on");
     event("npc_character_toggle","\"enabled\":"+std::string(a[1]=="on"?"true":"false"));
     }
+  else if(c=="npccharacter" && a.size()==4 && a[1]=="probe") {
+    const auto* npc = findNpc(w,pl,a[2]);
+    const auto* skeleton = npc ? npc->visualSkeleton() : nullptr;
+    if(skeleton==nullptr) {
+      arenaAbort("NPC character probe needs an existing character with a skeleton");
+      return true;
+      }
+    std::string pose = "[";
+    for(const auto* name : {"BIP01 HEAD","BIP01 PELVIS","BIP01 L HAND","BIP01 R HAND","BIP01 L FOOT","BIP01 R FOOT"}) {
+      const auto bone = skeleton->findNode(name);
+      if(bone==size_t(-1)) {
+        arenaAbort("NPC character probe is missing a sampled bone");
+        return true;
+        }
+      if(pose.size()>1)
+        pose += ',';
+      const auto& matrix = npc->renderedBone(bone);
+      pose += ragdollVector({matrix.at(3,0),matrix.at(3,1),matrix.at(3,2)});
+      }
+    const auto center = npc->centerPosition();
+    const std::array offsets{Vec3(80,0,0),Vec3(-80,0,0),Vec3(0,0,80),Vec3(0,0,-80)};
+    const auto hits = std::ranges::count_if(offsets,[&](Vec3 offset) {
+      return w.physic()->rayNpc(center+offset,center,&pl).npcHit==npc;
+      });
+    event("npc_character_probe","\"label\":"+jsonStr(a[3])+
+      ",\"ray_hits\":"+std::to_string(hits)+",\"rendered_bones_cm\":"+pose+"],"+
+      npcCharacterSample(w,*npc,0,0,0,0));
+    }
+  else if(c=="npccharacter" && a.size()==6 && a[1]=="placeprobe") {
+    const auto* owner = findNpc(w,pl,a[2]);
+    const auto* rival = findNpc(w,pl,a[3]);
+    const auto* point = w.findPoint(a[4],false);
+    if(owner==nullptr || rival==nullptr || owner==rival || point==nullptr || !point->isFreePoint()) {
+      arenaAbort("NPC place probe needs two distinct actors and an exact freepoint");
+      return true;
+      }
+
+    const auto pointName=[](const WayPoint* p) -> std::string_view {
+      return p!=nullptr ? p->name : std::string_view{};
+      };
+    const auto actor=[&](const Npc& npc) {
+      const auto goal = npc.navigationGoal();
+      const auto* head = npc.aiQueueFront();
+      const auto* queued = head!=nullptr && head->act==AI_GoToPoint ? head->point : nullptr;
+      return "{\"npc\":"+jsonStr(symName(w,&npc))+
+             ",\"position_cm\":"+ragdollVector(npc.position())+
+             ",\"distance_cm\":"+ragdollNumber((npc.position()-point->position()).length())+
+             ",\"state\":"+jsonStr(stateName(w,npc))+
+             ",\"activity_stage\":"+std::to_string(unsigned(npc.activityStage()))+
+             ",\"locked\":"+(npc.lockedWayPoint()==point?"true":"false")+
+             ",\"locked_waypoint\":"+jsonStr(pointName(npc.lockedWayPoint()))+
+             ",\"current_waypoint\":"+jsonStr(pointName(npc.currentWayPoint()))+
+             ",\"move_hint\":"+std::to_string(unsigned(npc.moveHint()))+
+             ",\"go_to_waypoint\":"+jsonStr(pointName(npc.currentGoToPoint()))+
+             ",\"nav_active\":"+(goal.active?"true":"false")+
+             ",\"nav_goal\":"+jsonStr(goal.name)+
+             ",\"queue_size\":"+std::to_string(npc.aiQueueSize())+
+             ",\"queued_go_to\":"+jsonStr(pointName(queued))+"}";
+      };
+    event("npc_character_place_probe","\"label\":"+jsonStr(a[5])+
+      ",\"point\":"+jsonStr(point->name)+",\"point_cm\":"+ragdollVector(point->position())+
+      ",\"use_count\":"+std::to_string(point->useCounter())+
+      ",\"guarded\":"+(point->isGuarded()?"true":"false")+
+      ",\"owner\":"+actor(*owner)+",\"rival\":"+actor(*rival));
+    }
   else if(c=="npccharacter" && a.size()>=3 && a[1]=="trace") {
     if(a.size()==3 && a[2]=="off") {
       const auto count=state.npcCharacterTraceActors.size();npcCharacterStopMotionTrace(state,&w);

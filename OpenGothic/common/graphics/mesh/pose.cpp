@@ -536,6 +536,8 @@ bool Pose::update(uint64_t tickCount, bool force) {
     if(make)
       mkSkeleton(pos);
     needToUpdate = false;
+    pendingLayerPose = false;
+    blendingLayerPose = false;
     lastUpdate   = tickCount;
     return ret;
     }
@@ -560,13 +562,16 @@ bool Pose::update(uint64_t tickCount, bool force) {
     needMkSkeleton |= settleRootShift(tickCount);
     // The physical return already owns the transition from the shown pose. A second ordinary
     // offset underneath it would change its target, and is not part of the legacy pose save.
+    blendingLayerPose = false;
     if(physicalReturning)
       std::copy_n(raw,numBones,base);
     else
-      needMkSkeleton |= blend.apply(raw,base,numBones,tickCount);
+      blendingLayerPose = blend.apply(raw,base,numBones,tickCount);
+    needMkSkeleton |= blendingLayerPose;
     needMkSkeleton |= applyHalt(tickCount);
     lastUpdate   = tickCount;
     needToUpdate = needMkSkeleton;
+    pendingLayerPose = false;
     }
 
   if(needMkSkeleton || force || !physical.empty() || physicalReturning) {
@@ -1036,6 +1041,7 @@ void Pose::onAddLayer(Pose::Layer& l, LogicalInput::Cause cause, uint64_t at) {
   if(l.seq->animCls==Animation::Transition)
     hasTransitions++;
   needToUpdate = true;
+  pendingLayerPose = true;
   recordLogicalInput(LogicalInput::Kind::LayerSet,&l,at==uint64_t(-1) ? l.sOrigin : at,cause);
   }
 
@@ -1051,6 +1057,7 @@ void Pose::onRemoveLayer(const Pose::Layer &l, LogicalInput::Cause cause, uint64
     isFlyCombined--;
   // the layers under it take the bones back (AnimBlend sees the switch): even a still one
   needToUpdate = true;
+  pendingLayerPose = true;
   }
 
 void Pose::recordLogicalInput(LogicalInput::Kind kind, const Layer* layer, uint64_t at,
@@ -1089,9 +1096,10 @@ bool Pose::hasLayerEvents(const Pose::Layer& l) {
       l.seq->data->gfx.size()>0;
   }
 
-void Pose::processSfx(AnimationGroundSound &npc, uint64_t tickCount) {
+void Pose::processSfx(AnimationGroundSound &npc, uint64_t tickCount, uint64_t notBefore) {
+  const auto from = std::max(lastUpdate,std::min(notBefore,tickCount));
   for(auto& i:lay)
-    i.seq->processSfx(layerTime(i,lastUpdate),i.sAnim,layerTime(i,tickCount),&npc,nullptr);
+    i.seq->processSfx(layerTime(i,from),i.sAnim,layerTime(i,tickCount),&npc,nullptr);
   }
 
 void Pose::processSfx(AnimationSound& mob, uint64_t tickCount) {

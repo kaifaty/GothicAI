@@ -142,6 +142,7 @@ Tempest::Vec3 Npc::animMoveSpeed(uint64_t dt) const {
   }
 
 void Npc::setVisual(const Skeleton* v) {
+  wakeSociety();
   if(visual.visualSkeleton()!=v) {
     living.reset();
     arrowImpacts.clear();
@@ -320,6 +321,7 @@ void Npc::setFatness(float f) {
 
 void Npc::setScale(float x, float y, float z) {
   if(sz[0]!=x || sz[1]!=y || sz[2]!=z) {
+    wakeSociety();
     living.reset();
     arrowImpacts.clear();
     releaseRagdoll(false);
@@ -743,15 +745,25 @@ Matrix4x4 Npc::mkPositionMatrix() const {
   }
 
 void Npc::updateTransform() {
+  wakeSociety();
   updateAnimation(0, true);
   }
 
 void Npc::syncDeferredAnimation() const {
-  if(animLodPendingDt==0 || !AnimationLod::canSyncOnRead())
+  if((animLodPendingDt==0 && !societyPoseSuspended) || !AnimationLod::canSyncOnRead())
+    return;
+  if(societyPoseSuspended)
+    const_cast<Npc*>(this)->wakeSociety();
+  if(animLodPendingDt==0)
     return;
   AnimationLod::noteSync();
   // An Npc is never created const: the solved pose is a cache of the world clock.
   const_cast<Npc*>(this)->updateAnimation(0);
+  }
+
+bool Npc::canPauseDistantPose(uint64_t gestureLead) const {
+  return mvAlgo.state()==MoveAlgo::Run && !needsLayerPoseUpdate() &&
+         !societyGestureNeedsPose(gestureLead) && !owner.isInSfxRange(position()) && visual.canPauseAnimation();
   }
 
 bool Npc::animationLodPinned() const {
@@ -887,6 +899,10 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   // smoothing filters and effects get the whole interval at once.
   dt += animLodPendingDt;
   animLodPendingDt = 0;
+  if(societyAnimationDebt) {
+    societyAnimationDebt = false;
+    FrameProfile::add(FrameProfile::Amount::SocietyAnimCatchUp,1);
+    }
   if(lieVisualYOffset!=0) {
     auto matrix=visual.transform();
     matrix.set(3,1,matrix.at(3,1)-lieVisualYOffset);

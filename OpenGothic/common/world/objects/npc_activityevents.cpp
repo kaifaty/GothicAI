@@ -66,13 +66,16 @@ bool Npc::suspendCampfireBody() {
   }
 
 void Npc::wakeActivity(uint16_t wakes) {
-  if(activityEvents.activity!=nullptr)
+  if(activityEvents.activity!=nullptr && wakes!=0) {
+    wakeSociety();
     activityEvents.pending |= wakes;
+    }
   }
 
 void Npc::stopActivityEvents(uint16_t why) {
   if(activityEvents.init==size_t(-1))
     return; // nothing set up: no reservation, no wait
+  wakeSociety();
   const auto* record=activityEvents.activity;
   const bool atPoint=record && record->point;
   const auto before=activityEvents.stage;
@@ -421,15 +424,30 @@ void Npc::seekActivityPoint(uint16_t wakes) {
     }
   }
 
-void Npc::tickPointGesture() {
+bool Npc::pointGestureDue(uint64_t leadMs) const {
   using namespace ActivityEvents;
   const auto& s = activityEvents;
   if(s.stage!=Stage::Hold && s.stage!=Stage::Wait)
-    return;
+    return false;
   const auto& a = *s.activity->point;
-  if(int32_t(stateTime()/1000)<=a.timerSeconds || hnpc->aivar[19]!=a.poseStage)
-    return;
-  playActivityGesture();
+  return int32_t((stateTime()+leadMs)/1000)>a.timerSeconds && hnpc->aivar[19]==a.poseStage;
+  }
+
+bool Npc::societyGestureNeedsPose(uint64_t leadMs) const {
+  using Form = ActivityDefinitions::PointActivity::Form;
+  const auto* activity = activityEvents.activity;
+  const auto* point = activity!=nullptr ? activity->point : nullptr;
+  if(point==nullptr || !point->timed())
+    return false;
+  // A gesture blend needs recent samples of its outgoing stance and velocity.
+  if(point->form!=Form::Guard && aiState.loopNextTime>owner.tickCount()+leadMs)
+    return false;
+  return pointGestureDue(leadMs);
+  }
+
+void Npc::tickPointGesture() {
+  if(pointGestureDue())
+    playActivityGesture();
   }
 
 void Npc::tickMobTimer() {

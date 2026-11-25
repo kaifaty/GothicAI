@@ -65,12 +65,14 @@ class Pose final {
 
     void               setObjectMatrix(const Tempest::Matrix4x4& obj, bool sync);
     bool               update(uint64_t tickCount, bool force);
+    bool               needsLayerPoseUpdate() const { return pendingLayerPose || blendingLayerPose; }
+    bool               hasLayerTickWork() const { return hasEvents!=0 || hasTransitions!=0; }
 
     void               processLayers(AnimationSolver &solver, uint64_t tickCount);
     bool               processEvents(uint64_t& barrier, uint64_t now, Animation::EvCount &ev, const LogicEventObserver* logic=nullptr) const;
 
     Tempest::Vec3      animMoveSpeed(uint64_t tickCount, uint64_t dt) const;
-    void               processSfx(AnimationGroundSound &npc, uint64_t tickCount);
+    void               processSfx(AnimationGroundSound &npc, uint64_t tickCount, uint64_t notBefore=0);
     void               processSfx(AnimationSound& mob, uint64_t tickCount);
     void               processPfx(AnimationPfx& world, uint64_t tickCount);
     bool               isDefParWindow(uint64_t tickCount) const;
@@ -315,6 +317,8 @@ class Pose final {
     uint64_t                        stopUntil=0; // hitStop
     ComboState                      combo;
     bool                            needToUpdate = true;
+    bool                            pendingLayerPose = false;
+    bool                            blendingLayerPose = false;
     uint8_t                         hasEvents = 0;
     uint8_t                         isFlyCombined = 0;
     uint8_t                         hasTransitions = 0;

@@ -1,0 +1,11 @@
+# @headless
+# Save a fresh world shortly before PAL_238_RITTER leaves for his night post.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 24546 1200 -10265
+ztimer multiplyer 60
+wait 62000
+ztimer realtime
+character save route-start

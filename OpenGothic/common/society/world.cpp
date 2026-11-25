@@ -78,13 +78,15 @@ std::array<float,3> position(const Value& v, const char* key) {
   return {float(m[0].GetDouble()),float(m[1].GetDouble()),float(m[2].GetDouble())};
   }
 
-uint64_t fnv1a64(std::string_view bytes) {
-  uint64_t h = 14695981039346656037ull;
-  for(char c:bytes) {
-    h ^= uint8_t(c);
-    h *= 1099511628211ull;
-    }
-  return h;
+using detail::fnv1a64;
+
+void includeConfigFile(Config& c, std::string_view kind, std::string_view bytes) {
+  c.resolvedHash = fnv1a64(kind,c.resolvedHash);
+  const auto hash = fnv1a64(bytes);
+  std::array<char,8> digest;
+  for(size_t i=0; i<digest.size(); ++i)
+    digest[i] = char(uint8_t(hash>>(8*i)));
+  c.resolvedHash = fnv1a64(std::string_view(digest.data(),digest.size()),c.resolvedHash);
   }
 
 void readHeader(World& w, const Value& doc) {
@@ -528,6 +530,7 @@ std::unordered_map<std::string,std::vector<uint8_t>> readCards(Config& c, const 
   text << in.rdbuf();
   rapidjson::Document doc;
   const auto json = text.str();
+  includeConfigFile(c,"cards",json);
   doc.Parse(json.data(),json.size());
   need(!doc.HasParseError() && doc.IsObject(),"the cards "+path.string()+" are not a JSON object");
   const auto& cards = member(doc,"cards");
@@ -652,7 +655,7 @@ void readDecisions(Config& c, const Value& doc, const std::filesystem::path& dir
   }
 
 // The protected list (data/society/protected.json): [{"id": instance, "reasons": [...]}].
-std::vector<std::string> readProtected(const std::string& path) {
+std::vector<std::string> readProtected(Config& c, const std::string& path) {
   std::vector<std::string> ret;
   if(path.empty())
     return ret;
@@ -662,6 +665,7 @@ std::vector<std::string> readProtected(const std::string& path) {
   text << in.rdbuf();
   rapidjson::Document doc;
   const auto json = text.str();
+  includeConfigFile(c,"protected",json);
   doc.Parse(json.data(),json.size());
   need(!doc.HasParseError() && doc.IsArray(),"the protected list "+path+" is not a JSON array");
   for(const auto& e:doc.GetArray())
@@ -834,7 +838,7 @@ void applyConfig(World& w, const std::unordered_map<std::string,std::vector<uint
   }
 
 // places.json of the server (places[] with ids, points: name -> place index): the place id of each point name.
-std::unordered_map<std::string,std::string> readPlaces(const std::string& path) {
+std::unordered_map<std::string,std::string> readPlaces(Config& c, const std::string& path) {
   std::unordered_map<std::string,std::string> ret;
   if(path.empty())
     return ret;
@@ -844,6 +848,7 @@ std::unordered_map<std::string,std::string> readPlaces(const std::string& path) 
   text << in.rdbuf();
   rapidjson::Document doc;
   const auto json = text.str();
+  includeConfigFile(c,"places",json);
   doc.Parse(json.data(),json.size());
   need(!doc.HasParseError() && doc.IsObject(),"the places "+path+" are not a JSON object");
   const auto& places = array(doc,"places");
@@ -866,6 +871,7 @@ void readConfig(World& w, std::string_view json, const std::filesystem::path& di
   auto& c = w.config;
   c.loaded = true;
   c.hash   = fnv1a64(json);
+  c.resolvedHash = c.hash;
   c.bytes  = json.size();
   onlyKeys(doc,{"format","version","note","needs","states","object_kinds","traits","decisions"},"the config");
   need(str(doc,"format")=="society-config","format must be society-config");
@@ -882,14 +888,14 @@ void readConfig(World& w, std::string_view json, const std::filesystem::path& di
     readTraits(c,doc,dir,cards);
     readDecisions(c,doc,dir);
     if(c.decisions.loaded) {
-      protectedIds = readProtected(c.decisions.protectedPath);
+      protectedIds = readProtected(c,c.decisions.protectedPath);
       appendKindStates(w);
       }
     }
   applyConfig(w,cards);
   if(c.decisions.loaded) {
     applyDecisions(w,protectedIds);
-    detail::applyReach(w,readPlaces(c.decisions.placesPath));
+    detail::applyReach(w,readPlaces(c,c.decisions.placesPath));
     }
   }
 

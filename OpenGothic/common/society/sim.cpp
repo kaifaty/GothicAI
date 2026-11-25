@@ -247,10 +247,6 @@ namespace detail {
 
 namespace {
 
-bool later(const Pending& x, const Pending& y) {
-  return x.time!=y.time ? x.time>y.time : x.seq>y.seq;
-  }
-
 void record(State& s, EventKind kind, uint32_t npc, uint8_t reason, uint32_t a, uint32_t b, Time c = 0) {
   s.events.push_back({s.now,npc,kind,reason,s.entry[npc],a,b,c});
   ++s.emitted;
@@ -646,6 +642,7 @@ void reset(Sim& sim, uint64_t seed) {
 
 size_t advance(Sim& sim, DecisionBatch& out, Time horizon) {
   out.clear();
+  out.stride = sim.world->config.decisions.menu;
   if(!sim.s.batch.npc.empty())
     throw std::logic_error("society core: advance before act answered the last batch");
   compact(sim);
@@ -661,8 +658,10 @@ size_t advance(Sim& sim, DecisionBatch& out, Time horizon) {
       builtAt = s.now;
       if(builds>1000)
         throw std::logic_error("society core: decisions keep asking for more at one second");
-      if(buildBatch(sim,out)>0)
+      if(buildBatch(sim,out)>0) {
+        encode(sim,out);
         return out.size();
+        }
       continue;
       }
     if(!more)
@@ -716,7 +715,8 @@ void act(Sim& sim, std::span<const Choice> choices) {
   }
 
 Snapshot save(const Sim& sim) {
-  Snapshot ret{sim.s};
+  Snapshot ret{sim.s,1,sim.world->exportHash,sim.world->config.resolvedHash,sim.seed,
+               sim.world->exportHash==0 ? sim.world : nullptr};
   auto& ev = ret.state.events;
   ev.erase(ev.begin(),ev.begin()+std::ptrdiff_t(sim.drained));
   return ret;
@@ -724,11 +724,14 @@ Snapshot save(const Sim& sim) {
 
 void restore(Sim& sim, const Snapshot& snapshot) {
   const size_t n = sim.world->npcs.size();
-  if(snapshot.state.place.size()!=n)
+  if(snapshot.version!=1 || snapshot.worldHash!=sim.world->exportHash ||
+     (snapshot.worldHash==0 && snapshot.syntheticWorld!=sim.world) || snapshot.state.place.size()!=n)
     throw std::invalid_argument("society core: the snapshot is of another world");
-  if(snapshot.state.needSince.size()!=sim.s.needSince.size() || snapshot.state.mode.size()!=sim.s.mode.size())
+  if(snapshot.configHash!=sim.world->config.resolvedHash || snapshot.state.needSince.size()!=sim.s.needSince.size() ||
+     snapshot.state.mode.size()!=sim.s.mode.size())
     throw std::invalid_argument("society core: the snapshot is of a run with other needs or decisions");
   sim.s       = snapshot.state;
+  sim.seed    = snapshot.seed;
   sim.drained = 0;
   sim.s.queue.reserve(queueCapacity(sim));
   }

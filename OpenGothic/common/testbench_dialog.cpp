@@ -360,7 +360,7 @@ bool dialogCommand(const DialogContext& ctx,const std::string& line,const std::v
     }
   else if(c=="mark") {
     const auto text=rest(line);
-    event("mark","\"text\":" + jsonStr(text));
+    event("mark","\"text\":" + jsonStr(text) + ",\"t_game_ms\":"+std::to_string(w.tickCount()));
     if(LoadProbe::enabled() && ((text=="stream_warm" && w.chunkResidency()!=nullptr) || text=="stream_warm_5s")) {
       std::string pages;
       if(auto* chunks=w.chunkResidency()) {

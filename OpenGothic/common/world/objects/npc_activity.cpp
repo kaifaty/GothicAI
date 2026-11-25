@@ -12,6 +12,7 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
   // collision, and OTHER may be null or a distant culprit, so native turning owns it.
   if(physicsNoiseCallback && (a.act==AI_TurnToNpc || a.act==AI_LookAtNpc))
     return;
+  wakeSociety();
   resumeCampfireBody();
   a.physicsNoiseState = physicsNoiseCallback && a.act==AI_StartState;
   a.activity = a.activity || activityCommands;
@@ -31,6 +32,7 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
 bool Npc::setInteraction(Interactive *id, bool quick) {
   if(currentInteract==id)
     return true;
+  wakeSociety();
 
   if(currentInteract!=nullptr) {
     return currentInteract->detach(*this,quick);

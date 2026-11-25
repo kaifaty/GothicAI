@@ -39,8 +39,11 @@ bool SimulationStep::finishStep(uint64_t dt, PlayerControl& player,
     BodyReplay::postStep();
   // Animation LOD: the game and bench cameras have moved for this frame; NPCs they
   // now see get their pose before anything is drawn or captured.
-  if(auto* world = GameServices::inst().world())
+  if(auto* world = GameServices::inst().world()) {
     world->catchUpAnimation();
+    if(dt>0)
+      Bench::sampleSocietyPose(*world);
+    }
   return capture;
   }
 

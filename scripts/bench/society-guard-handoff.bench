@@ -1,0 +1,44 @@
+# @headless
+# Keep the guarded freepoint reserved through both crossings, then observe the shift change.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 24546 1200 -10265
+wait 12000
+mark far_held
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 far_held
+npcgo MIL_319_PABLO FP_STAND_CITY_17 walk
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 far_rival_queued
+wait 1500
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 far_rival_after
+
+mark near_held
+near MIL_322_MILIZ 1200 90
+cam game
+wait 750
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 near_held
+npcgo MIL_319_PABLO FP_STAND_CITY_17 walk
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 near_rival_queued
+wait 1500
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 near_rival_after
+
+mark far_return_held
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 24546 1200 -10265
+wait 750
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 far_return_held
+npcgo MIL_319_PABLO FP_STAND_CITY_17 walk
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 far_return_rival_queued
+wait 1500
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 far_return_rival_after
+
+mark natural_shift
+ztimer multiplyer 60
+wait 3750
+ztimer realtime
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 before_shift
+wait 9500
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 released
+wait 60000
+npccharacter placeprobe MIL_322_MILIZ MIL_319_PABLO FP_STAND_CITY_17 rival_held

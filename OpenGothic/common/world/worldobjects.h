@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <vector>
 #include <memory>
 
@@ -171,6 +172,7 @@ class WorldObjects final {
     void           onItemRemoved(const Item& itm);
 
     Bullet&        shootBullet(const Item &itmId, const Tempest::Vec3& pos, const Tempest::Vec3& dir, float tgRange, float speed);
+    bool           hasActiveProjectileFrom(const Npc& npc) const;
 
     void           addInteractive(Interactive*         obj);
     void           addStatic     (StaticObj*           obj);
@@ -206,6 +208,13 @@ class WorldObjects final {
 
   private:
     friend class World;
+    friend class SocietyProjection;
+    void refreshSocietyDispatch();
+    void updateSocietyDispatch(const Npc& npc);
+    void refreshSocietyPoseDispatch();
+    size_t nextNativeNpc(size_t first) const;
+    void noteNpcCadence(uint64_t dt);
+    uint64_t societyDueStep(const Npc& npc, uint64_t entered) const;
     bool           makeAnimationLodView(AnimationLod::View& view) const;
     void           pinAnimationLodTargets();
     bool           mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const;
@@ -215,6 +224,18 @@ class WorldObjects final {
     uint32_t       animationLodFrame = 0;
     uint64_t       animationLodDeferred = 0;
     std::vector<uint8_t> tailPlan; // per npcArr slot, AnimationTail::Step bits
+    std::vector<uint64_t> nativeNpcMask;
+    std::vector<size_t> nativePoseIndices;
+    bool npcDispatchDirty = true;
+    bool poseDispatchDirty = true;
+    bool societyPoseWakePending = false;
+    uint64_t npcAnimationClock = 0;
+    struct NpcCadenceStep {
+      uint64_t clock = 0, dt = 0;
+      };
+    // A native cadence node is never further away than its period (at most 66 ms).
+    std::array<NpcCadenceStep, 68> npcCadence;
+    size_t npcCadenceEnd = 0, npcCadenceCount = 0;
     std::vector<Tempest::Vec3> fighters;
     friend struct WorldDataContract;
     friend struct NpcDefinitionContract;

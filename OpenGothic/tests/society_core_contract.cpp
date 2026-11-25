@@ -32,8 +32,10 @@
 //   search, and with it in the window going back wins where a short activity nearby wins without it.
 #include "society/journal.h"
 #include "society/society.h"
+#include "society/encounters.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cinttypes>
 #include <cmath>
@@ -594,6 +596,14 @@ void checkSnapshot(const Society::World& w, const Day& day) {
   Society::Journal::append(tail2,Society::drainEvents(sim));
   sameBytes("the tail after a restore differs from the tail before it",tail1,tail2);
   sameBytes("the journal cut by a snapshot differs from the whole day's",day.journal,head+tail1);
+  Society::restore(sim,snap);
+  const auto persisted = Society::serialize(sim);
+  Society::reset(sim,Seed+1);
+  Society::deserialize(sim,persisted);
+  std::string diskTail;
+  Society::advance(sim,batch,end);
+  Society::Journal::append(diskTail,Society::drainEvents(sim));
+  sameBytes("the tail after a durable restore differs from the original",tail1,diskTail);
   if(tail1==tail2 && day.journal==head+tail1)
     std::printf("snapshot at %s (%zu NPCs on the way, %zu queued): the tail after a restore is the same %zu bytes "
                 "(%zu events), head and tail give the whole day's journal\n",clock(w,at).c_str(),moving,
@@ -1308,6 +1318,123 @@ constexpr const char* BackConfig = R"({"format":"society-config","version":1,
 "decisions":{"menu":32,"travel_limit_min":60,"min_dwell_min":10,"posts_release_for_needs":false,"post_states":[],
  "no_needs_guilds":[59],"protected":null,"guild_names":{},
  "teacher":{"n":4,"m":2,"weights":{},"horizon_min":60,"travel_cost_per_min":0.005,"inertia":0.05,"temperature":0,"top":1}}})";
+
+void checkCheckpoint(const fs::path& root) {
+  std::string config = BackConfig;
+  config.replace(config.find("\"protected\":null"),sizeof("\"protected\":null")-1,
+                 "\"protected\":\"checkpoint-protected.json\"");
+  const auto auxiliary = root/"checkpoint-protected.json";
+  std::ofstream(auxiliary) << "[]";
+  const auto w = Society::parseWorld(BackWorld,config,root);
+  // Resolve the same top-level bytes against a changed auxiliary file while keeping the fixture's behavior.
+  std::ofstream(auxiliary) << "[]\n";
+  const auto changed = Society::parseWorld(BackWorld,config,root);
+  need(w.config.hash==changed.config.hash && w.config.resolvedHash!=changed.config.resolvedHash,
+       "checkpoint: auxiliary config bytes must contribute to its resolved identity");
+
+  auto sim = Society::makeSim(w,{Seed,true});
+  auto restored = Society::makeSim(w,{Seed+1,true});
+  auto other = Society::makeSim(changed,{Seed+1,true});
+  Society::DecisionBatch batch;
+  std::vector<Society::Choice> choices;
+  const Time at = w.startTime()+123, end = w.startTime()+8*3600;
+  need(Society::advance(sim,batch,at)==1 && batch.mask[1] && batch.menu[1].object==0,
+       "checkpoint: chair must be available before the walk");
+  Society::randomPolicy(sim,batch,choices); // draw from this world's generator before the checkpoint
+  choices[0].option = 1;
+  Society::act(sim,choices);
+  need(Society::advance(sim,batch,at)==0 && sim.s.objectUse[0]==1 && (sim.s.flags[0] & Society::Moving),
+       "checkpoint: snapshot must cut a walk with an active reservation");
+  Society::drainEvents(sim);
+  const auto bytes = Society::serialize(sim);
+
+  auto corrupt = bytes;
+  corrupt[corrupt.size()/2] ^= 1;
+  const auto rejects = [](Society::Sim& target, std::string_view data) {
+    try {
+      Society::deserialize(target,data);
+      return false;
+      }
+    catch(const std::invalid_argument&) {
+      return true;
+      }
+    };
+  need(rejects(restored,corrupt) && restored.s.now==w.startTime() && restored.seed==Seed+1,
+       "checkpoint: rejected content must leave the target simulation untouched");
+  need(rejects(other,bytes),"checkpoint: a different resolved config must be rejected");
+  Society::deserialize(restored,bytes);
+  need(Society::serialize(restored)==bytes,"checkpoint: encoded state must survive the round trip byte for byte");
+  const auto continueRun = [&](Society::Sim& state) {
+    while(Society::advance(state,batch,end)!=0) {
+      Society::randomPolicy(state,batch,choices);
+      Society::act(state,choices);
+      }
+    std::string tail;
+    Society::Journal::append(tail,Society::drainEvents(state));
+    return tail;
+    };
+  const auto expected = continueRun(sim);
+  sameBytes("checkpoint: a resumed world divergent from the uninterrupted run",expected,continueRun(restored));
+  }
+
+void checkFeatureEncoding() {
+  const auto w = Society::parseWorld(BackWorld,BackConfig);
+  auto sim = Society::makeSim(w,{Seed,true});
+  auto routine = Society::makeSim(w,{Seed,false});
+  const auto layout = Society::featureLayout(w);
+  const size_t F = layout.own.size(), C = layout.options.size();
+  const Time end = w.startTime()+4*3600;
+  Society::DecisionBatch first;
+  first.stride = 0;
+  need(Society::advance(routine,first,end)==0 && first.stride==layout.stride && first.own.empty() &&
+       first.options.empty(),"features: routine-only advance must have an empty batch with the configured stride");
+  need(Society::advance(sim,first,end)==1 && first.stride==layout.stride && first.own.size()==F &&
+       first.options.size()==first.stride*C,"features: the first decision's shape must match its layout");
+  const auto index = [](const std::vector<std::string>& names, const char* name) {
+    const auto at = std::find(names.begin(),names.end(),name);
+    need(at!=names.end(),std::string("features: missing column ")+name);
+    return size_t(at-names.begin());
+    };
+  const auto own = [&](const char* name) { return first.own[index(layout.own,name)]; };
+  const auto option = [&](size_t slot, const char* name) {
+    return first.options[slot*C+index(layout.options,name)];
+    };
+  need(first.count[0]>=2 && first.mask[1] && first.menu[1].object==0,
+       "features: the chair must be the first non-routine option");
+  if(std::abs(own("time.sin")-std::sqrt(0.75f))>1e-6f || std::abs(own("time.cos")+0.5f)>1e-6f ||
+     own("need.food.level")!=0 || own("need.food.active")!=1 || own("need.food.decay_per_hour")!=0.0625f ||
+     own("routine.anchor")!=0 || own("routine.remaining_minutes")!=720 ||
+     option(0,"type.routine")!=1 || option(0,"fill.food.per_hour")!=1 || option(0,"current")!=1 ||
+     option(1,"type.object")!=1 || option(1,"kind.chair")!=1 || option(1,"travel_minutes")!=40 ||
+     option(1,"duration_minutes")!=60 || option(1,"access.public")!=1 ||
+     option(1,"capacity")!=1 || option(1,"holders")!=0 || option(1,"free_slots")!=1)
+    fail("features: the own and option columns must describe the current state and the chair");
+  if(!std::all_of(first.options.begin()+std::ptrdiff_t(first.count[0]*C),first.options.end(),
+                  [](float v) { return v==0; }))
+    fail("features: unused option slots must be zero");
+
+  const auto pending = Society::save(sim);
+  const std::array choices{Society::Choice{first.npc[0],1,Society::Chooser::External}};
+  Society::DecisionBatch next, replayed;
+  Society::act(sim,choices);
+  need(Society::advance(sim,next,end)==1,"features: the next decision must occur after choosing the chair");
+  Society::restore(sim,pending);
+  auto restored = sim.s.batch;
+  Society::encode(sim,restored);
+  const auto bytesEqual = [](const std::vector<float>& a, const std::vector<float>& b) {
+    return a.size()==b.size() && (a.empty() || std::memcmp(a.data(),b.data(),a.size()*sizeof(float))==0);
+    };
+  if(!bytesEqual(restored.own,first.own) || !bytesEqual(restored.options,first.options) ||
+     restored.mask!=first.mask || sim.s.rng.s!=pending.state.rng.s)
+    fail("features: encoding a restored pending batch must reproduce its bytes without drawing RNG");
+  Society::act(sim,choices);
+  need(Society::advance(sim,replayed,end)==1,"features: the next decision must occur again after restoring");
+  if(!bytesEqual(replayed.own,next.own) || !bytesEqual(replayed.options,next.options) ||
+     replayed.npc!=next.npc || replayed.mask!=next.mask)
+    fail("features: the next decision after restoring a pending batch must reproduce its bytes");
+  if(bytesEqual(first.own,next.own))
+    fail("features: advancing the chosen activity must change the own columns");
+  }
 
 void checkWayBack() {
   const auto w = Society::parseWorld(BackWorld,BackConfig);
@@ -2063,6 +2190,157 @@ void checkTool(const Society::World& w, const fs::path& exportPath, const fs::pa
 
 }
 
+void checkCombatCheckpoint() {
+  using namespace Society::Combat;
+  std::array<AttackProfile,4> profiles;
+  for(auto& profile:profiles) {
+    profile.rangeCm = 150;
+    profile.recovery = 500;
+    profile.hitPermille = 1000;
+    profile.damageMask = 1;
+    profile.damage[0] = 4;
+    }
+  profiles[0].damage[0] = 12;
+  profiles[1].kind = AttackKind::Ranged;
+  profiles[1].damage[0] = 12;
+  profiles[1].flight = 200;
+  profiles[1].recovery = 50;
+  profiles[1].resourceCost = 1;
+  profiles[2].kind = AttackKind::BeastMelee;
+  profiles[3].kind = AttackKind::Magic;
+  profiles[3].resourceCost = 2;
+  profiles[3].stunDuration = 250;
+  profiles[3].tickDamage = 2;
+  profiles[3].tickPeriod = 80;
+  profiles[3].effectDuration = 160;
+
+  std::array<Combatant,4> actors;
+  for(uint32_t i=0;i<actors.size();++i) {
+    actors[i].id = actors[i].profile = i;
+    actors[i].side = i/2;
+    actors[i].hp = 12;
+    }
+  actors[0].hp = 30;
+  actors[1].ammunition = 2;
+  actors[1].target = 3;
+  actors[3].mana = 2;
+  auto fight = start(1000,3500,true,1,actors,profiles);
+  while(nextEventAt(fight)==1000)
+    step(fight);
+  const auto checkpoint = save(fight);
+  auto resumed = restore(checkpoint);
+  need(checkpoint==save(resumed) && resumed.actors()[0].stunnedUntil==1250,"combat checkpoint lost active state");
+
+  size_t arrows = 0, ticks = 0;
+  while(nextEventAt(fight)) {
+    const auto& event = step(fight);
+    need(nextEventAt(resumed) && event==step(resumed),"resumed combat events diverged");
+    arrows += event.kind==EventKind::Impact && event.actor==1;
+    ticks += event.kind==EventKind::EffectTick;
+    }
+  need(!nextEventAt(resumed) && arrows==1 && ticks==2 && fight.winner()==0 && resumed.actors()[0].hp==18 &&
+       resumed.actors()[1].ammunition==0 && resumed.actors()[3].mana==0,"combat checkpoint replay duplicated a strike or resource cost");
+
+  auto sealed = restore(checkpoint);
+  sealAttacks(sealed);
+  sealed = restore(save(sealed));
+  need(hasCommitted(sealed) && nextEventAt(sealed)==1080,"combat handoff lost effects or retained an unreleased attack");
+  size_t committed = 0;
+  while(hasCommitted(sealed)) {
+    const auto& event = step(sealed);
+    need(event.kind==EventKind::Impact || event.kind==EventKind::EffectTick,"combat handoff started another attack");
+    ++committed;
+    }
+  need(committed==3 && sealed.actors()[0].hp==18 && sealed.actors()[1].ammunition==1 && sealed.winner()==0,
+       "combat handoff changed a committed hit or charged an unreleased shot");
+
+  const auto rejects = [](std::span<const uint8_t> data, bool gameplay) {
+    try { restore(data,gameplay); } catch(const std::invalid_argument&) { return true; }
+    return false;
+    };
+  need(rejects(std::span(checkpoint).first(checkpoint.size()-1),false) && rejects(checkpoint,true),
+       "combat checkpoint accepted a truncated or uncalibrated runtime state");
+  }
+
+void checkEncounterSchedule() {
+  using namespace Society::Combat;
+  AttackProfile profile;
+  profile.rangeCm = 150;
+  profile.windup = 50;
+  profile.recovery = 300;
+  profile.hitPermille = 750;
+  profile.damageMask = 1;
+  profile.damage[0] = 10;
+  constexpr Millis horizon = 20000;
+
+  for(const uint32_t count : {0u,100u,1000u}) {
+    Encounters encounters(0);
+    const auto from = Clock::now();
+    for(uint32_t i=0;i<count;++i) {
+      Combatant a, b;
+      a.id = 2*i;
+      b.id = 2*i+1;
+      a.hp = b.hp = 30;
+      b.side = 1;
+      b.position.x = 75;
+      const std::array actors{a,b};
+      auto encounter = start(0,horizon,false,i,actors,std::span(&profile,1));
+      if(i==0) {
+        encounters.insert(i,encounter);
+        bool rejected = false;
+        try {
+          encounters.insert(count,encounter);
+          }
+        catch(const std::invalid_argument&) {
+          rejected = true;
+          }
+        need(rejected && encounters.owner(0)==i,"combatant has overlapping encounters");
+        }
+      else {
+        encounters.insert(i,std::move(encounter));
+        }
+      }
+
+    const auto dispatchUntil = [](Encounters& scheduler, Millis end) {
+      size_t steps = 0;
+      while(scheduler.runNext(end))
+        ++steps;
+      return steps;
+      };
+    const auto prefix = dispatchUntil(encounters,450);
+    auto snapshot = encounters;
+    if(count!=0) {
+      auto transferred = encounters.take(0);
+      need(!encounters.owner(0) && !encounters.owner(1),"combatant ownership retained after transfer");
+      need(transferred.outcome()==Outcome::Active && nextEventAt(transferred).has_value(),
+           "active combat transfer lost progress");
+      }
+    else {
+      need(!encounters.nextAt(),"empty schedule has a due event");
+      }
+    encounters = snapshot;
+
+    size_t events = prefix;
+    for(auto left = encounters.runNext(horizon), right = snapshot.runNext(horizon); left;
+        left = encounters.runNext(horizon), right = snapshot.runNext(horizon)) {
+      need(right && left->first==right->first && *left->second==*right->second,"combat replay diverged");
+      ++events;
+      }
+    need(!snapshot.nextAt() && !encounters.nextAt(),"combat did not settle before the horizon");
+    for(uint32_t i=0;i<count;++i) {
+      const auto& encounter = encounters.at(i);
+      const auto outcome = encounter.outcome();
+      need((outcome==Outcome::Won || outcome==Outcome::Draw) && encounters.owner(2*i)==i,
+           "combat outcome or ownership lost");
+      const auto fighters = encounter.actors();
+      need(std::ranges::count_if(fighters,[](const Combatant& actor) {
+        return actor.state==ActorState::KnockedOut && actor.hp==1;
+        })==(outcome==Outcome::Won ? 1 : 2),"nonlethal combat did not leave the knocked-out actors alive");
+      }
+    std::printf("combat schedule: %u encounters, %zu events, %.2f ms including replay\n",count,events,since(from)*1000);
+    }
+  }
+
 int main() {
   try {
     const auto* gothic = std::getenv("GOTHIC_DIR");
@@ -2076,7 +2354,11 @@ int main() {
     checkNeedRules(root);
     checkPlaces();
     checkRecheck();
+    checkCheckpoint(root);
+    checkFeatureEncoding();
     checkWayBack();
+    checkCombatCheckpoint();
+    checkEncounterSchedule();
     const auto exportPath = root/"world.json";
     const auto counts = exportWorld(gothic,exportPath,root/"export.log");
     const auto from = Clock::now();

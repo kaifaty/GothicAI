@@ -64,6 +64,7 @@ void WorldObjects::updateSimTiers(bool beforeTick) {
     }
   if(beforeTick && needSort) {
     FrameProfile::Scope sorting(FrameProfile::Zone::NpcSort);
+    npcDispatchDirty = true;
     std::sort(npcArr.begin(),npcArr.end(),[](const auto& a,const auto& b) {
       return a->handle().id<b->handle().id;
       });

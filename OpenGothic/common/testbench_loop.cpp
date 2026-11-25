@@ -413,7 +413,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
             ",\"reached\":"+(ready ? "true" : "false"));
       bench.ragdoll.waitRagdollNpc=nullptr;
       }
-    if(tickNpcDuel(bench.npcDuel,w))return;
+    if(tickNpcDuel(bench.npcDuel,w) || npcCombatHandoffWaiting(w.tickCount()))return;
     if(bench.duelWaiting) {
       Npc& first = *bench.duelA;
       Npc& second = *bench.duelB;

@@ -396,7 +396,38 @@ bool Npc::implGoTo(uint64_t dt) {
     }
   if(go2.flag==GT_Point && go2.pointDistance>0.f)
     dist = go2.pointDistance;
+  static const bool routePilot = [] {
+    const auto* value = std::getenv("OPENGOTHIC_SOCIETY_PILOT_ROUTE");
+    return value!=nullptr && std::string_view(value)=="1";
+    }();
+  if(routePilot) {
+    if(const auto society=owner.stepSocietyRoute(*this,societyRouteDestination(),dt,dist))
+      return *society;
+    }
   return implGoTo(dt,dist);
+  }
+
+const WayPoint* Npc::societyRouteDestination() const {
+  if(go2.flag!=GT_Way || !go2.activity || go2.wp==nullptr || currentFp!=go2.wp || currentFpLock.point()!=go2.wp ||
+     !aiState.started || std::string_view(aiState.hint)!="ZS_STAND_WP" || aiState.eTime<=owner.time() ||
+     activityEvents.stage!=ActivityEvents::Stage::Approach || activityEvents.restart || activityEvents.retry ||
+     isExternalControl() || isInAir() || !usesSimplifiedMovement() || nativeBodyAction() || pendingSimpleGoTo()!=nullptr)
+    return nullptr;
+
+  const auto ordinary = [](const WayPoint* point) {
+    return point!=nullptr && point->isConnected() && !point->isFreePoint() && !point->isGuarded() && point->ladder==nullptr;
+    };
+  const auto* next = wayPath.first();
+  const auto* destination = next!=nullptr ? wayPath.last() : go2.wp;
+  if(!ordinary(go2.wp) || (next!=nullptr && !ordinary(next)) || !ordinary(destination) || destination!=currentTaPoint())
+    return nullptr;
+  return destination;
+  }
+
+bool Npc::stepSocietyWaypoint(uint64_t dt, float destDist) {
+  // Society owns the decision to advance this route. Native movement still owns
+  // the path, position, animation, support, waypoint locks and arrival.
+  return implSimpleGoTo(dt,destDist);
   }
 
 bool Npc::implGoTo(uint64_t dt, float destDist) {
@@ -756,6 +787,8 @@ void Npc::attachToPoint(const WayPoint *p) {
      (pending->act==AI_GoToNextFp || pending->act==AI_GoToPoint) &&
      currentFp==pending->point && go2.flag==GT_Way && p==go2.wp && p!=pending->point)
     return;
+  if(currentFp!=p)
+    wakeSociety();
   if(currentFp!=p && campfireBodySuspended())
     resumeCampfireBody();
   if(currentFp!=p && activityEvents.activity && activityEvents.activity->point &&

@@ -170,6 +170,7 @@ void NpcKeys::enable(Npc& npc, bool enabled) {
   if(enabled) {
     auto [it,inserted] = held.try_emplace(&npc);
     if(inserted) {
+      npc.wakeSociety();
       it->second.originalWalk = npc.wlkMode;
       it->second.originalHead = npc.visual.headRotation();
       }

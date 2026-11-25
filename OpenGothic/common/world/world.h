@@ -6,6 +6,7 @@
 #include <string>
 #include <functional>
 #include <array>
+#include <optional>
 
 #include "worlddata.h"
 #include "graphics/mesh/animation.h"
@@ -40,6 +41,7 @@ class Interactive;
 class GlobalFx;
 class ClothVisual;
 class MdlVisual;
+class SocietyProjection;
 struct PhysicsNoise;
 struct HeroDeed;
 struct ItemRecord;
@@ -84,6 +86,25 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     void                 insertPlayer(std::unique_ptr<Npc>&& npc, std::string_view waypoint);
     void                 setPlayer(Npc* npc);
     void                 postInit();
+    void                 startSocietyProjection(double clockRate);
+    void                 restoreSocietyProjection(double clockRate, Serialize& archive);
+    void                 saveSocietyProjection(Serialize& archive);
+    bool                 societyHoldsRoutine(const Npc& npc, std::string_view blocker);
+    void                 retainDeferredSocietyRoutine(const Npc& npc);
+    bool                 societyHoldsRoutineAfterTick(const Npc& npc) const;
+    bool                 societyEarlyTickEnabled() const;
+    bool                 societyAnimationEnabled() const;
+    bool                 societyHoldsAnimation(const Npc& npc, uint64_t leadMs=0) const;
+    std::string_view     societyVisibilityBlocker(const Npc& npc) const;
+    std::string_view     societyVisibilityBlocker(const Npc& npc, const AnimationLod::View& view) const;
+    void                 recordSocietyRoutineExecution(bool skipped);
+    void                 recordSocietyEarlyTick(const Npc& npc);
+    void                 sleepSocietyNpc(Npc& npc);
+    void                 wakeSocietyNpc(Npc& npc);
+    bool                 persistentSocietyEnabled() const;
+    void                 prepareSocietyTick(uint64_t dt);
+    void                 updateSocietyInterest();
+    std::optional<bool>  stepSocietyRoute(Npc& npc, const WayPoint* destination, uint64_t dt, float destDist);
     std::string_view     name() const override { return wname; }
     double               loadMilliseconds() const { return worldLoadMs; }
     const std::vector<WorldObjects::PlacedItem>& placedItemCensus() const { return wobj.placedItemCensus(); }
@@ -288,6 +309,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     // the velocity an arrow, a bolt leaves with to fall onto the target
     static Tempest::Vec3 bulletVelocity(const Tempest::Vec3& from, const Tempest::Vec3& to);
     Bullet&              shootSpell(const Item &itm, const Npc &npc, const Npc *target);
+    bool                 hasActiveProjectileFrom(const Npc& npc) const;
     void                 applySpellImpact(int32_t spellId, const Tempest::Vec3& point, Npc* caster, Npc* target);
     void                 startSpellField(int32_t spellId, const Tempest::Vec3& point, Npc* caster, Npc* target);
     size_t               spellFieldCount() const { return spellFields.size(); }
@@ -324,6 +346,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     std::vector<Vob::AttachmentSnapshot> vobAttachmentSnapshot(uint32_t zenId) const { return wobj.vobAttachmentSnapshot(zenId); }
 
   private:
+    friend class SocietyProjection;
     friend struct WorldDataContract;
     friend struct NpcDefinitionContract;
     friend struct WayHeightsContract;
@@ -363,6 +386,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     std::unique_ptr<GlobalEffects>        globFx;
     WorldSound                            wsound;
     WorldObjects                          wobj;
+    std::unique_ptr<SocietyProjection>    societyProjection;
     struct StuckArrow {
       ItemView mesh; // with the arrow's effect while it fades (graphics/itemview)
       std::string visual;

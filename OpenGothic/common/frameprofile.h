@@ -40,6 +40,7 @@ enum class Zone : size_t {
   RtScene,
   // WorldLogic outside Npc::tick; scopes enclose whole loops, never an individual NPC.
   NpcPreTick, NpcSort, NpcPolicy, CollisionZones, InteractiveTick, TriggersTick, NpcTickNear, NpcPerception,
+  NpcAnimationCatchUp,
   Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
@@ -72,8 +73,10 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   TreeLevelBands, TreeShadowBands,
   // WorldObjects::tickNpcs (world/npcsimtick.h): Simplified NPCs that ticked, that waited for their turn, and
   // that execute native movement (Npc::usesSimplifiedMovement false)
-  NpcSimplifiedTicked, NpcSimplifiedDeferred, NpcSimplifiedNative, Count };
-enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
+  NpcSimplifiedTicked, NpcSimplifiedDeferred, NpcSimplifiedNative,
+  // Explicit Society worker deferrals and the pose updates that consume them.
+  SocietyAnimDeferred, SocietyAnimCatchUp, SocietyNpcTickSkipped, Count };
+enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error, Simulation };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };
 enum class TextureActivity : uint8_t { Read, Upload, Complete, Ready, Publish };
