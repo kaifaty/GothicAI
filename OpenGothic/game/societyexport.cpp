@@ -1,9 +1,13 @@
 #include "societyexport.h"
 
 #include "enginecommit.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/gameplaydefinitions.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "resources.h"
 #include "game/gamescript.h"
 #include "game/gamesession.h"
+#include "npcdefinitions.h"
 #include "physics/dynamicworld.h"
 #include "world/objects/interactive.h"
 #include "world/objects/npc.h"
@@ -79,25 +83,25 @@ void optionalText(Writer& w, std::string_view s) {
 std::string symbolName(World& world, size_t symbol) {
   if(symbol==size_t(-1))
     return "-";
-  auto* sym = world.script().findSymbol(symbol);
-  return sym!=nullptr ? std::string(sym->name()) : std::to_string(symbol);
-  }
-
-bool npcSymbol(World& world, daedalus::DaedalusSymbol* s) {
-  if(s==nullptr)
-    return false;
-  auto* cls = s;
-  for(size_t i=0; i<16 && cls!=nullptr && cls->type()!=daedalus::DaedalusDataType::CLASS; ++i)
-    cls = world.script().findSymbol(size_t(cls->parent()));
-  return cls!=nullptr && cls->name()=="C_NPC";
+  const auto name = world.rules().symbolName(symbol);
+  return name.empty() ? std::to_string(symbol) : std::string(name);
   }
 
 std::vector<std::string> npcInstances(World& world) {
   std::vector<std::string> ret;
-  for(const auto& s:world.script().getVm().symbols())
-    if(s.type()==daedalus::DaedalusDataType::INSTANCE && s.is_const() &&
-       npcSymbol(world,world.script().findSymbol(s.index())))
-      ret.push_back(s.name());
+  if(const auto* catalog=baseNativeCatalog()) {
+    for(const auto& npc:catalog->identities.npcs)
+      ret.push_back(npc.name);
+    } else {
+    const auto definitions=NpcDefinitions::read(Resources::baseDir(),GameplayDefinitions::stockProgram);
+    for(const auto& npc:definitions.npcs)
+      ret.push_back(npc.first);
+    for(const auto& npc:definitions.uncaptured)
+      ret.push_back(npc.first);
+    }
+  for(const auto& entry:world.script().ownSymbols().entries())
+    if(entry.kind==OwnSymbols::Kind::Npc)
+      ret.push_back(entry.name);
   std::sort(ret.begin(),ret.end());
   return ret;
   }
@@ -107,8 +111,17 @@ struct RoomOwner {
   };
 
 RoomOwner resolveOwner(World& world, std::string_view name, const std::vector<std::string>& instances) {
-  auto* s = world.script().findSymbol(name);
-  if(s!=nullptr && s->type()==daedalus::DaedalusDataType::INSTANCE && npcSymbol(world,s)) {
+  auto& script=world.script();
+  if(baseNativeCatalog()!=nullptr) {
+    if(const auto* npc=script.directorNpc(name)) {
+      const auto id=symbolName(world,npc->instanceSymbol());
+      if(std::binary_search(instances.begin(),instances.end(),id))
+        return {id,std::string(name),{}};
+      }
+    if(const auto id=script.storyNpcId(name))
+      return {std::string(script.storyNpcName(*id)),std::string(name),{}};
+    } else if(auto* s=script.findSymbol(name); s!=nullptr && s->type()==daedalus::DaedalusDataType::INSTANCE &&
+                                            world.rules().isNpcInstance(s->index())) {
     // The alias's handle carries the actual C_NPC instance, rather than the variable's symbol index.
     if(s->is_instance_of<daedalus::INpc>()) {
       const auto id = symbolName(world,s->get_instance()->symbol_index());

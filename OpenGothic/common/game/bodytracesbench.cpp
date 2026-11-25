@@ -170,11 +170,6 @@ Npc* spawn(World& world, const char* instance, Vec3 at) {
   return npc;
   }
 
-int32_t scriptInt(World& world, const char* name, int32_t fallback) {
-  auto* s = world.script().getVm().find_symbol_by_name(name);
-  return s!=nullptr && s->type()==daedalus::DaedalusDataType::INT ? s->get_int(0) : fallback;
-  }
-
 void giveMissionItem(World& world, Npc& npc) {
   for(const char* name:MissionItems) {
     const auto id = world.script().findSymbolIndex(name);
@@ -247,8 +242,8 @@ void setup(World& world, Npc& hero, bool sleepBatch) {
   const auto fwd   = forwardOf(hero);
   const auto right = Vec3(-fwd.z,0,fwd.x);
   const auto anchor = hero.position()+fwd*700.f;
-  const int32_t ambient = scriptInt(world,"NPCTYPE_AMBIENT",0);
-  const int32_t main    = scriptInt(world,"NPCTYPE_MAIN",BodyTraces::StoryTypes[0]);
+  const int32_t ambient = world.rules().intSymbol("NPCTYPE_AMBIENT",0);
+  const int32_t main    = world.rules().intSymbol("NPCTYPE_MAIN",BodyTraces::StoryTypes[0]);
   struct Place { const char* role; float side; float ahead; };
   const Place main_[]  = {{"victim",-100,0},{"wolf",100,0},{"mission",-350,150},{"immortal",-550,150},{"story",350,150}};
   const Place sleep_[] = {{"sleeper",-100,0},{"sleeper_mission",150,0}};

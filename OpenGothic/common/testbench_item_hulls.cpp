@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <stdexcept>
 
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -12,6 +13,10 @@
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 
 #include "game/gamescript.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/gameplaydefinitions.h"
+#include "game/definitions/nativebasecatalog.h"
+#include "itemdefinitions.h"
 #include "settings.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -64,8 +69,8 @@ void itemHullCensus(World& world) {
   std::map<std::string,size_t> reasons;
   std::vector<float> ratios,pointsBefore,pointsAfter;
   std::string outliers="[",extraPadding="[";
-  world.script().getVm().enumerate_instances_by_class_name("C_ITEM",[&](daedalus::DaedalusSymbol& symbol) {
-    Item item(world,symbol.index(),Item::T_Inventory);++instances;
+  const auto inspect=[&](uint32_t id,std::string_view name) {
+    Item item(world,id,Item::T_Inventory);++instances;
     std::string visual=item.handle().visual;
     for(auto& c:visual)c=char(std::toupper(static_cast<unsigned char>(c)));
     if(visual.empty())return;
@@ -105,11 +110,33 @@ void itemHullCensus(World& world) {
     const auto before=oldBody.mass(),after=newBody.mass();
     if(before>0 && after>0 && (after/before>10.f || before/after>10.f)) {
       if(outliers.size()>1)outliers+=',';
-      outliers+="{\"symbol\":"+jsonStr(symbol.name())+",\"visual\":"+jsonStr(visual)+
+      outliers+="{\"symbol\":"+jsonStr(name)+",\"visual\":"+jsonStr(visual)+
         ",\"off_mass_kg\":"+ragdollNumber(before)+",\"on_mass_kg\":"+ragdollNumber(after)+
         ",\"on_over_off\":"+ragdollNumber(after/before)+"}";
       }
-    });
+    };
+  if(const auto* catalog=baseNativeCatalog()) {
+    for(const auto& [id,name]:catalog->identities.items)
+      inspect(id,name);
+    } else {
+    const auto definitions=ItemDefinitions::read(Resources::baseDir(),GameplayDefinitions::stockProgram);
+    std::vector<NativeBaseCatalog::Identity> items;
+    items.reserve(definitions.items.size()+definitions.uncaptured.size());
+    const auto append=[&](const auto& records) {
+      for(const auto& entry:records) {
+        const auto& name=entry.first;
+        const auto id=world.script().findItemInstance(name);
+        if(!id)
+          throw std::runtime_error("item hull census: unknown item "+name);
+        items.push_back({*id,name});
+        }
+      };
+    append(definitions.items);
+    append(definitions.uncaptured);
+    std::ranges::sort(items,{},&NativeBaseCatalog::Identity::id);
+    for(const auto& [id,name]:items)
+      inspect(id,name);
+    }
   std::sort(ratios.begin(),ratios.end());
   std::sort(pointsBefore.begin(),pointsBefore.end());std::sort(pointsAfter.begin(),pointsAfter.end());
   const auto percentile=[](const std::vector<float>& values,float fraction) {
