@@ -72,8 +72,12 @@ bool NpcSimTick::qualifies(const Npc& npc, Scope scope) {
   // Body policies, the stand's keys and the observations act or sample on each step of the NPC.
   if((BodyController::hasOwners() && BodyController::owns(npc)) || NpcKeys::enabled(npc) || BodyObservations::watched(npc))
     return false;
-  if(scope==Scope::Graph)
-    return npc.usesSimplifiedMovement();
+  if(scope==Scope::Graph) {
+    if(npc.usesSimplifiedMovement())
+      return true;
+    if(!npc.canDeferIdleMonsterTick())
+      return false;
+    }
   // Fighters are paired and their blades swept every frame; spell fields push airborne bodies every frame.
   return !npc.isMeleeFighter() && !npc.spellFrozen() && !npc.spellWhirling() && !npc.isInAir();
   }

@@ -43,8 +43,8 @@ const char*   name(Scope scope);
 // Whether the NPC may skip frames now, from its own state, read again every frame. Never the hero, a Full NPC
 // (the arena and training actors always are), a body the physics step moves or reads every frame (ragdoll,
 // living body) or an actor driven or sampled step by step (body policy, stand keys, observations).
-// Graph: besides, it executes graph movement (Npc::usesSimplifiedMovement). Tier: any other Simplified NPC
-// but melee fighters and bodies under spell physics (frozen, whirled or in the air).
+// Graph: actors on graph movement or distant idle monsters in their native Fist stance.
+// Native actors also have to be clear of melee pairing and spell physics. Tier admits all such native actors.
 bool qualifies(const Npc& npc, Scope scope);
 
 // The NPC's node in the period, from its creation number: 0..periodMs-1.

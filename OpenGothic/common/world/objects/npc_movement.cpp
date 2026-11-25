@@ -52,7 +52,11 @@ bool Npc::nativeMobsiTransition() const {
 bool Npc::nativeCombatMovement() const {
   // Routine locomotion is 6c; combat, pursuit and escape keep their native
   // body and physics executor until 6e. Keep every admission rule here.
-  if(weaponState()!=WeaponState::NoWeapon || currentTarget!=nullptr || go2.nativeCombatTarget!=nullptr ||
+  return weaponState()!=WeaponState::NoWeapon || hasNativeCombatActivity();
+  }
+
+bool Npc::hasNativeCombatActivity() const {
+  if(currentTarget!=nullptr || go2.nativeCombatTarget!=nullptr ||
      fghAlgo.hasInstructions() || go2.flag==GT_Flee || go2.flag==GT_Enemy || go2.flag==GT_EnemyG ||
      meleeKnockdown || isMeleeStunned() || visual.pose().isAttackAnim())
     return true;
@@ -60,6 +64,18 @@ bool Npc::nativeCombatMovement() const {
   return state=="ZS_ATTACK" || state=="ZS_MM_ATTACK" || state=="ZS_FLEE" ||
          state=="ZS_FLEETOWP" || state=="ZS_MAGICFLEE" || state=="ZS_MM_FLEE" ||
          state=="ZS_MM_THREATENENEMY" || state=="ZS_MM_EATBODY" || state=="ZS_WATCHFIGHT";
+  }
+
+bool Npc::canDeferIdleMonsterTick() const {
+  if(aiPolicy!=NpcProcessPolicy::AiFar2 || weaponState()!=WeaponState::Fist || !isMonster() ||
+     externalCtrl || isDown() || currentInteract!=nullptr || mvAlgo.state()!=MoveAlgo::Run ||
+     !go2.empty() || aiQueue.size()!=0 || aiQueueOverlay.size()!=0 || !isStanding() ||
+     hasNativeCombatActivity())
+    return false;
+  const auto now = owner.tickCount();
+  // Damage can arrive before a target or a hit reaction has been queued.
+  return physicsNoiseUntil<=now &&
+         (meleeRecentHits.empty() || now-meleeRecentHits.back().second>NpcSimTick::MaxPeriodMs);
   }
 
 auto Npc::simplifiedBodyState() const -> std::optional<BodyState> {

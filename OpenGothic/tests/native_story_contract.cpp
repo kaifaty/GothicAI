@@ -24,6 +24,7 @@
 #include "world/objects/npc.h"
 #include "world/records/focusrecord.h"
 #include "world/records/liveinstances.h"
+#include "world/npcsimtick.h"
 #include "world/waypoint.h"
 #include "world/world.h"
 
@@ -745,6 +746,108 @@ void savedHumanRoutines(Gothic& gothic, const std::filesystem::path& savePath) {
   std::puts("Native routine saves: bandit pose, named random slots and guard thresholds after v57 reload");
   }
 
+void farIdleMonster(Gothic& gothic) {
+  gothic.clearGame().reset();
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  auto& session=*gothic.gameSession();
+  auto& world=*session.world();
+  const auto restore=NpcSimTick::config();
+  NpcSimTick::setConfig({33,NpcSimTick::Scope::Graph});
+  const auto* field=world.findWayPoint("NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02");
+  require(field!=nullptr,"far monster fixture needs the field");
+  const auto groundAt=[&](const Tempest::Vec3& position) {
+    const auto ground=world.physic()->landRay(position+Tempest::Vec3(0,300,0),800);
+    require(ground.hasCol,"far monster fixture needs solid ground");
+    return ground.v;
+    };
+  const auto spawn=groundAt(field->groundPos+Tempest::Vec3(0,0,900));
+  const auto preyPoint=groundAt(spawn+Tempest::Vec3(450,0,0));
+  moveBehaviorHero(gothic,field->groundPos+Tempest::Vec3(0,0,9000));
+  session.setTimeMultiplyer(1.f);
+  const auto tick=[&] {
+    session.tick(8);
+    session.updateAnimation(8);
+    };
+  const auto rayHits=[&](Npc& npc) {
+    const auto center=npc.collosionCenter();
+    const Tempest::Vec3 delta(0,0,100);
+    return world.physic()->rayNpc(center-delta,center+delta,nullptr).npcHit==&npc;
+    };
+
+  const auto wolfType=world.script().findSymbolIndex("WOLF");
+  const auto preyType=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
+  for(const bool damage : {false,true}) {
+    auto* wolf=world.addNpc(wolfType,spawn);
+    auto* prey=world.addNpc(preyType,preyPoint);
+    require(wolf!=nullptr && prey!=nullptr,"far monster fixture spawns a wolf and prey");
+    onlyBehaviorActors(world,wolf);
+    prey->clearAiQueue();
+    prey->clearState(true);
+    prey->clearGoTo();
+    prey->handle().attribute[ATR_HITPOINTSMAX]=2000;
+    prey->handle().attribute[ATR_HITPOINTS]=2000;
+    prey->handle().attribute[ATR_REGENERATEHP]=0;
+
+    wolf->clearRoutine();
+    wolf->clearState(true);
+    wolf->clearAiQueue();
+    wolf->clearGoTo();
+    wolf->setTarget(nullptr);
+    wolf->handle().start_aistate=0;
+    wolf->setToFistMode();
+    wolf->setAnim(Npc::Anim::Idle);
+    wolf->setSimTierOverride(NpcSimTier::Simplified);
+    wolf->setDirection(prey->position()-wolf->position());
+    wolf->updateTransform();
+    wolf->setPerceptionEnable(PERC_ASSESSENEMY,world.script().findFunction("B_MM_ASSESSENEMY").ptr);
+    wolf->setPerceptionEnable(PERC_ASSESSDAMAGE,world.script().findFunction("B_MM_ASSESSDAMAGE").ptr);
+
+    for(unsigned t=0;t<8;++t)
+      tick();
+    for(unsigned t=0;t<8 && wolf->simTick().pending!=8;++t)
+      tick();
+    require(wolf->processPolicy()==NpcProcessPolicy::AiFar2 && wolf->simTier()==NpcSimTier::Simplified &&
+           wolf->weaponState()==WeaponState::Fist && !wolf->usesSimplifiedMovement() &&
+           wolf->simTick().pending==8 && rayHits(*wolf),
+           "an idle distant wolf defers its native tick and keeps its collision");
+    const auto alertedAt=world.tickCount();
+    const auto preyHp=prey->attribute(ATR_HITPOINTS);
+    const auto wolfHp=wolf->attribute(ATR_HITPOINTS);
+    const auto startDistance=wolf->qDistTo(*prey);
+    if(damage) {
+      wolf->takeDamage(*prey,nullptr,true);
+      require(wolf->attribute(ATR_HITPOINTS)<wolfHp,"native damage reaches the waiting wolf");
+      } else {
+      require(wolf->perceptionProcess(*prey,prey,wolf->qDistTo(*prey),PERC_ASSESSENEMY),
+             "the enemy perception reaches the wolf's native callback");
+      }
+    require((wolf->target()==prey || wolf->aiQueueSize()>0) && !NpcSimTick::qualifies(*wolf,NpcSimTick::Scope::Graph),
+           "the wolf leaves the deferred cadence as soon as it acquires a target or queues a warning");
+    tick();
+    require(world.tickCount()==alertedAt+8 && wolf->simTick().pending==0 &&
+            wolf->logicalBodyState().worldStep==16 && rayHits(*wolf),
+           "the first native step after the alert consumes the time owed and keeps collision");
+
+    uint64_t pursuit=0;
+    bool attack=false;
+    for(unsigned t=0;t<1500 && prey->attribute(ATR_HITPOINTS)==preyHp;++t) {
+      tick();
+      require(wolf->simTick().pending==0,"the engaged wolf ticks every frame");
+      if(pursuit==0 && wolf->qDistTo(*prey)<startDistance*0.65f)
+        pursuit=world.tickCount()-alertedAt;
+      attack|=wolf->isAttackAnim();
+      }
+    require(pursuit>0 && attack && prey->attribute(ATR_HITPOINTS)<preyHp,
+           "the awakened wolf pursues and lands a native first hit");
+    std::printf("Idle wolf %s: native tick 8 ms, pursuit %llu ms, first hit %llu ms, damage %d, collision present\n",
+                damage ? "damage" : "aggro", (unsigned long long)pursuit,
+                (unsigned long long)(world.tickCount()-alertedAt), int(preyHp-prey->attribute(ATR_HITPOINTS)));
+    world.removeNpc(*wolf);
+    world.removeNpc(*prey);
+    }
+  NpcSimTick::setConfig(restore);
+  }
+
 void nativeNpcBehaviorContract(Gothic& gothic, const std::filesystem::path& caseDir) {
   using Contract=NpcDefinitionContract;
   constexpr std::string_view hilda="BAU_951_HILDA";
@@ -1037,6 +1140,7 @@ void nativeNpcBehaviorContract(Gothic& gothic, const std::filesystem::path& case
     }
   std::puts("Native private-room reaction: exact escalation timer and v57 continuation on departure");
   savedHumanRoutines(gothic,caseDir/"routines.sav");
+  farIdleMonster(gothic);
   }
 
 void bennetOreContract(const std::filesystem::path& caseDir) {

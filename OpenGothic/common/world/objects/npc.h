@@ -189,6 +189,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void       setWalkMode(WalkBit m);
     WalkBit    walkMode() const;
     bool       usesSimplifiedMovement() const;
+    bool       canDeferIdleMonsterTick() const;
     bool       graphMovementFallback() const { return simpleMovement.nativeFallback; }
     bool       nativeCombatMovement() const;
     bool       nativeMobsiApproach() const;
@@ -1024,6 +1025,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      implSimpleGoTo(uint64_t dt, float destDist);
     auto      societyRouteDestination() const -> const WayPoint*;
     bool      nativeBodyAction() const;
+    bool      hasNativeCombatActivity() const;
     auto      pendingSimpleGoTo() const -> const AiQueue::AiAction*;
     static bool simplifiedMovementEnabled();
     void      fallbackSimpleMovement(std::string_view reason, bool ground = false);
