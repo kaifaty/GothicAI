@@ -12,6 +12,7 @@
 #include "game/npcdefinitionruntime.h"
 #include "game/placementdefinitionruntime.h"
 #include "game/itemdefinitionruntime.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "routinedefinitions.h"
 #include "game/routinedefinitionruntime.h"
 #include "world/objects/npcroutinetable.h"
@@ -270,12 +271,22 @@ void routineDefinitions(const fs::path& dir) {
 
   WayPoint known;
   known.name="TEST_WP";
-  std::vector<NpcRoutineTable::Row> actual,expected;
+  std::vector<NpcRoutineTable::Row> actual,expected,prepared;
   auto append=[&](auto& table,int sh,int sm,int eh,int em,uint32_t state,std::string_view point) {
     NpcRoutineTable::add(table,gtime(sh,sm),gtime(eh,em),state,point==known.name ? &known : nullptr,point);
     };
   auto script=DaedalusScript::from_program(p.data);
   INpc::register_(script);
+  const auto routineId=script.find_symbol_by_name("RTN_START_123")->index();
+  const auto stateId=script.find_symbol_by_name("ZS_ROUTINE")->index();
+  NativeBaseCatalog::Selection catalog;
+  catalog.routines={{routineId,"RTN_START_123"}};
+  catalog.states={{stateId,"ZS_ROUTINE",std::nullopt,std::nullopt}};
+  const auto native=RoutineDefinitionRuntime::load(base,catalog,p.sha256);
+  check(native.preparedOnly && native.names.at("RTN_START_123")==routineId,"native routine keeps its prepared ID");
+  for(const auto& row : native.routines.at(routineId).rows)
+    append(prepared,row.startHour,row.startMinute,row.endHour,row.endMinute,row.state,row.waypoint);
+
   auto definitions=RoutineDefinitionRuntime::load(base,script,p.sha256);
   DaedalusVm vm(std::move(script));
   auto self=vm.allocate_instance<INpc>(vm.global_self());
@@ -294,16 +305,21 @@ void routineDefinitions(const fs::path& dir) {
     });
   check(expected.empty(),"captured routine does not execute TA_Min in the VM");
   vm.call_function<void>(function);
-  check(actual.size()==48 && actual.size()==expected.size(),"record and VM tables have every row");
+  check(actual.size()==48 && actual.size()==expected.size() && prepared.size()==actual.size(),
+        "native, v2 and VM tables have every row");
   for(size_t index=0;index<actual.size();++index) {
     const auto& row=actual[index];
     const auto& original=expected[index];
+    const auto& nativeRow=prepared[index];
     const auto call=unsigned(index<24 ? (index/2)*4+2+index%2 : ((index-24)/2)*4+(index-24)%2);
     check(row.start==gtime(call%4<2 ? 20 : 8,5) && row.end==gtime(23,int(call)),
           "tied rows retain their original TA_Min call order");
     check(row.start==original.start && row.end==original.end && row.callback==original.callback &&
           row.point==original.point && row.fallbackName==original.fallbackName && row.wayPointName()==original.wayPointName(),
           "record and VM tables have identical times, state, point identity and fallback name");
+    check(row.start==nativeRow.start && row.end==nativeRow.end && row.callback==nativeRow.callback &&
+          row.point==nativeRow.point && row.fallbackName==nativeRow.fallbackName,
+          "native catalog IDs build the same rows without a VM");
     check(row.point==(call%3==0 ? nullptr : &known),"known points resolve to their original pointer");
     check(row.fallbackName==(call%3==0 ? std::string("UNKNOWN_WP\x80\xff",12) : ""),
           "unknown points retain every fallback byte");
@@ -327,7 +343,7 @@ void routineDefinitions(const fs::path& dir) {
   std::ifstream first(file,std::ios::binary),second(otherFile,std::ios::binary);
   check(std::string(std::istreambuf_iterator<char>(first),{})==std::string(std::istreambuf_iterator<char>(second),{}),
         "routine sections are byte-identical across repeated captures");
-  std::cout<<"Routine runtime equality: 48 rows, adjacent equal starts, 24 tied rows per start, known and unknown points; VM state preserved\n";
+  std::cout<<"Routine runtime equality: native IDs and v2 agree with the VM for 48 ordered rows and their waypoints; VM state preserved\n";
   }
 
 void routineSelection(const fs::path& dir) {
@@ -355,7 +371,7 @@ void routineSelection(const fs::path& dir) {
     };
   try {
     environment(nullptr);
-    check(RoutineDefinitionRuntime::load(base,program,selected.sha256).routines.at(symbol)[1].waypoint=="TEST_WP",
+    check(RoutineDefinitionRuntime::load(base,program,selected.sha256).routines.at(symbol).rows[1].waypoint=="TEST_WP",
           "routine records are enabled by default and use the loaded program section");
     environment("0");
     check(RoutineDefinitionRuntime::load(base/"absent",program,selected.sha256).routines.empty(),
@@ -363,7 +379,7 @@ void routineSelection(const fs::path& dir) {
     environment("1");
     check(RoutineDefinitionRuntime::load(base,program,selected.sha256).routines.contains(symbol),
           "nonzero enables routine records");
-    check(RoutineDefinitionRuntime::load(base,another,other.sha256).routines.at(symbol)[1].waypoint=="OTHER_WP",
+    check(RoutineDefinitionRuntime::load(base,another,other.sha256).routines.at(symbol).rows[1].waypoint=="OTHER_WP",
           "changing the loaded program changes the routine section");
     }
   catch(...) { environment(hadPrevious ? saved.c_str() : nullptr); throw; }

@@ -13,7 +13,7 @@
 namespace NativeBaseCatalog {
 
 inline constexpr int projectionVersion = 3;
-inline constexpr int catalogVersion = 5;
+inline constexpr int catalogVersion = 6;
 
 struct State {
   uint32_t id = 0;
@@ -60,6 +60,7 @@ struct Selection {
   std::vector<InitialRow> initialState;
   Identities identities;
   Constants constants;
+  std::vector<Identity> routines;
   };
 
 const Identity* findIdentity(std::span<const Identity> rows, uint32_t id);

@@ -67,10 +67,8 @@ bool GameScript::exchangeNpcRoutine(Npc& npc, std::string_view name) {
   if(found==routineDefinitions.names.end())
     return false;
 
-  const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   npc.clearRoutine();
-  for(const auto& row : routineDefinitions.routines.at(found->second))
-    ta_min(actor,row.startHour,row.startMinute,row.endHour,row.endMinute,int(row.state),row.waypoint);
+  addPreparedRoutine(&npc,routineDefinitions.routines.at(found->second));
   return true;
   }
 

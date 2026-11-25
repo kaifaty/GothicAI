@@ -14,6 +14,7 @@
 #include "npcdefinitions.h"
 #include "outputunits.h"
 #include "programdata.h"
+#include "routinedefinitions.h"
 
 #include <algorithm>
 #include <type_traits>
@@ -78,7 +79,7 @@ NativeBaseCatalog::Selection NativeBaseCatalog::prepare(const ProgramData::Index
           "native base needs the stock menu catalog for the selected language");
   const auto* fight = ProgramData::fightProgram(programs);
   require(fight!=nullptr,"native base needs a fight catalog");
-  return {fight->recordSha256,language,{}, {}, {}, {}};
+  return {fight->recordSha256,language,{}, {}, {}, {}, {}};
   }
 
 std::vector<NativeBaseCatalog::State> NativeBaseCatalog::prepareStates(const daedalus::DaedalusScript& program) {
@@ -183,13 +184,30 @@ NativeBaseCatalog::Identities NativeBaseCatalog::prepareIdentities(daedalus::Dae
   return result;
   }
 
+std::vector<NativeBaseCatalog::Identity> NativeBaseCatalog::prepareRoutines(const daedalus::DaedalusScript& program,
+                                                                         const std::filesystem::path& base) {
+  using DefinitionJson::require;
+  const auto library=RoutineDefinitions::read(base,StockStoryPrograms::stockProgram);
+  require(library.uncaptured.empty(),"native routine catalog has uncaptured routines");
+  std::vector<Identity> routines;
+  routines.reserve(library.routines.size());
+  for(const auto& [name,rows] : library.routines) {
+    const auto* function=program.find_symbol_by_name(name);
+    require(function && function->type()==daedalus::DaedalusDataType::FUNCTION && !function->is_external() &&
+            function->count()==0 && !function->has_return(),"invalid native routine function "+name);
+    routines.push_back({function->index(),name});
+    }
+  std::ranges::sort(routines,{},&Identity::id);
+  return routines;
+  }
+
 void NativeBaseCatalog::verify(const std::filesystem::path& base, const Selection& expected) {
   using DefinitionJson::require;
   require(!std::filesystem::exists(base/"programs"),"native catalog base contains the program directory");
   const auto selected = read(base);
   require(selected.fight==expected.fight && selected.language==expected.language && selected.states==expected.states &&
           selected.initialState==expected.initialState && selected.identities==expected.identities &&
-          selected.constants==expected.constants,
+          selected.constants==expected.constants && selected.routines==expected.routines,
           "native catalog selection differs from its source");
   verifyIdentities(base,selected.identities);
   require(!FightDefinitions::read(base,selected.fight).empty(),"native catalog base has no fight tactics");

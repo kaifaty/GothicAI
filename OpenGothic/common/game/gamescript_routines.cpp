@@ -2,8 +2,19 @@
 
 #include "game/definitions/basescripts.h"
 #include "game/definitions/nativebasecatalog.h"
+#include "loadprobe.h"
+#include "world/objects/npc.h"
 
 #include <stdexcept>
+
+void GameScript::addPreparedRoutine(Npc* npc, const RoutineDefinitionRuntime::Routine& routine) {
+  if(npc==nullptr)
+    return;
+  for(const auto& row : routine.rows) {
+    LoadProbe::Startup::Detail::Scope detail("ta_min",[&]{return row.waypoint;});
+    npc->addRoutine(gtime(row.startHour,row.startMinute),gtime(row.endHour,row.endMinute),row.state,row.waypoint);
+    }
+  }
 
 int GameScript::initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc,
                                    daedalus::DaedalusSymbol* function) {

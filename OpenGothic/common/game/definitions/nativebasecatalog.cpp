@@ -116,7 +116,9 @@ void validate(const NativeBaseCatalog::Selection& selection) {
     validateValues(row.value,true);
     }
 
-  for(const auto* rows : {&selection.identities.npcs,&selection.identities.items,&selection.identities.dialogs}) {
+  require(std::ranges::all_of(selection.routines,[](const auto& row) { return row.name.starts_with("RTN_"); }),
+          "invalid native routine name");
+  for(const auto* rows : {&selection.identities.npcs,&selection.identities.items,&selection.identities.dialogs,&selection.routines}) {
     require(!rows->empty(),"missing content identities");
     previous.reset();
     for(const auto& [id,name] : *rows) {
@@ -188,9 +190,9 @@ NativeBaseCatalog::Selection NativeBaseCatalog::read(const std::filesystem::path
   try {
     const auto doc = DefinitionJson::read(file);
     object(doc,{"format","version","fight_catalog","language","npc_states","initial_session_state",
-                "npc_archetypes","item_archetypes","dialog_infos","named_constants"});
+                "npc_archetypes","item_archetypes","dialog_infos","named_constants","routines"});
     require(string(doc["format"])==format && integer(doc["version"])==catalogVersion,"unsupported native base catalog");
-    Selection selection{string(doc["fight_catalog"]),integer(doc["language"]),{}, {}, {}, {}};
+    Selection selection{string(doc["fight_catalog"]),integer(doc["language"]),{}, {}, {}, {}, {}};
     const auto& states = doc["npc_states"];
     require(states.IsArray(),"invalid NPC state catalog");
     selection.states.reserve(states.Size());
@@ -218,6 +220,7 @@ NativeBaseCatalog::Selection NativeBaseCatalog::read(const std::filesystem::path
       Constant value{number(row[0]),readInitialValue(string(row[2]),row[3])};
       require(selection.constants.emplace(std::move(name),std::move(value)).second,"duplicate named constant");
       }
+    selection.routines=readIdentities(doc["routines"]);
     validate(selection);
     return selection;
     }
@@ -267,6 +270,7 @@ void NativeBaseCatalog::write(const std::filesystem::path& base, const Selection
   for(const auto& [name,constant] : selection.constants)
     constants.PushBack(writeValueRow(constant.id,name,constant.values,alloc),alloc);
   put(doc,"named_constants",std::move(constants),alloc);
+  put(doc,"routines",writeIdentities(selection.routines,alloc),alloc);
   const auto file = section(base);
   std::filesystem::create_directories(file.parent_path());
   DefinitionJson::write(file,doc);

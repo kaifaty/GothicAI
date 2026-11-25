@@ -550,6 +550,14 @@ void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& np
   initializeNpcDefinition(npc,sym,useRecords);
 
   if(npc->daily_routine!=0) {
+    const auto prepared=routineDefinitions.routines.find(uint32_t(npc->daily_routine));
+    if(prepared!=routineDefinitions.routines.end()) {
+      LoadProbe::Startup::Detail::Scope routine("daily_routine",[&]{return prepared->second.name;});
+      addPreparedRoutine(findNpc(npc),prepared->second);
+      return;
+      }
+    if(routineDefinitions.preparedOnly)
+      throw std::runtime_error("missing prepared daily routine ID "+std::to_string(npc->daily_routine));
     ScopeVar self(*vm.global_self(), npc);
     auto* daily_routine = vm.find_symbol_by_index(uint32_t(npc->daily_routine));
     if(daily_routine != nullptr) {
@@ -1162,6 +1170,11 @@ int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
       }
     }
 
+  if(const auto prepared=routineDefinitions.routines.find(uint32_t(fn.ptr)); prepared!=routineDefinitions.routines.end()) {
+    NpcActivityProbe::Phase phase(npc,prepared->second.name);
+    addPreparedRoutine(npc,prepared->second);
+    return 0;
+    }
   ScopeCtx ctx   (*this, npc!=nullptr ? npc->processPolicy() : NpcProcessPolicy::AiNormal);
   ScopeVar self  (*vm.global_self(),   npc != nullptr ? npc->handlePtr() : nullptr);
   ScopeVar other (*vm.global_other(),  oth != nullptr ? oth->handlePtr() : nullptr);

@@ -14,6 +14,7 @@ std::vector<State> prepareStates(const daedalus::DaedalusScript& program);
 std::vector<InitialRow> prepareInitialState(const daedalus::DaedalusScript& program);
 Constants prepareConstants(const daedalus::DaedalusScript& program);
 Identities prepareIdentities(daedalus::DaedalusScript& program, const std::filesystem::path& base);
+std::vector<Identity> prepareRoutines(const daedalus::DaedalusScript& program, const std::filesystem::path& base);
 void verify(const std::filesystem::path& base, const Selection& expected);
 
 }

@@ -649,6 +649,7 @@ class GameScript final : public GameRules {
                                        ActivityDefinitionRuntime::Definitions& activities, QuietSoundReaction& quietSound,
                                        bool& nativeRoutineProgram);
     int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
+    static void addPreparedRoutine(Npc* npc, const RoutineDefinitionRuntime::Routine& routine);
     bool game_initgerman     ();
     bool game_initenglish    ();
     int  hlp_random          (int bound);

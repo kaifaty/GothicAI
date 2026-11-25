@@ -270,12 +270,14 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
   std::optional<NativeBaseCatalog::Selection> catalogs;
   if(v3) {
     bound(base/"outputunits"/"outputunits.json");
+    bound(base/"definitions"/program.sha256/"routines.json");
     catalogs=NativeBaseCatalog::prepare(index,OutputUnits::readIndex(base/"outputunits"));
     auto script=daedalus::DaedalusScript::from_program(std::move(program.data));
     catalogs->states=NativeBaseCatalog::prepareStates(script);
     catalogs->initialState=NativeBaseCatalog::prepareInitialState(script);
     catalogs->constants=NativeBaseCatalog::prepareConstants(script);
     catalogs->identities=NativeBaseCatalog::prepareIdentities(script,base);
+    catalogs->routines=NativeBaseCatalog::prepareRoutines(script,base);
     }
 
   const auto sourceSymbols=ProgramData::symbolMetadataPath(base,program.sha256);
@@ -1123,14 +1125,20 @@ int selfTest() {
     {23,"ACTOR",NativeBaseCatalog::Alias::Npc},
     {24,"ITEM",NativeBaseCatalog::Alias::Item},
     };
+  expectedCatalog.constants={
+    {"CONST_INT",{25,std::vector<int32_t>{2,3}}},
+    {"CONST_TEXT",{26,std::vector<std::string>{"example"}}},
+    };
   expectedCatalog.identities={{{100,"NPC_TEST"}},{{200,"IT_TEST"}},{{300,"DIA_TEST"}}};
+  expectedCatalog.routines={{400,"RTN_START_100"}};
   const auto output=dir/"native-catalog";
   NativeBaseCatalog::write(output,expectedCatalog);
   const auto catalog=NativeBaseCatalog::read(output);
   require(catalog.fight==programs.sources[2].recordSha256 && catalog.language==3 && catalog.states==expectedCatalog.states &&
           catalog.initialState==expectedCatalog.initialState && catalog.identities==expectedCatalog.identities &&
+          catalog.constants==expectedCatalog.constants && catalog.routines==expectedCatalog.routines &&
           std::signbit(std::get<std::vector<float>>(catalog.initialState[1].value)[0]),
-          "native catalog identities, language, NPC phases and initial state round trip");
+          "native catalog identities, language, NPC phases, constants, routines and initial state round trip");
   const auto stateFile=NativeBaseCatalog::section(output);
   auto invalid=DefinitionJson::read(stateFile);
   invalid["npc_states"][0][2].SetNull();
@@ -1176,6 +1184,17 @@ int selfTest() {
     rejected=std::string_view(error.what()).find("invalid or duplicate content identity")!=std::string_view::npos;
     }
   require(rejected,"native catalog separates item archetype IDs and live item aliases");
+  invalid["item_archetypes"][0][0].SetUint(200);
+  invalid["routines"][0][0].SetUint(25);
+  DefinitionJson::write(stateFile,invalid);
+  rejected=false;
+  try {
+    (void)NativeBaseCatalog::read(output);
+    }
+  catch(const std::runtime_error& error) {
+    rejected=std::string_view(error.what()).find("invalid or duplicate constant identity")!=std::string_view::npos;
+    }
+  require(rejected,"native catalog separates routine IDs and named constants");
   }
 
   fs::remove_all(dir);
