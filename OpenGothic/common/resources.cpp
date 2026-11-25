@@ -1175,7 +1175,7 @@ DmResult Resources::readGkMusic(std::string_view name, const char* kind, std::ve
 
 std::vector<uint8_t> Resources::readDxMusic(const std::vector<std::u16string>& paths, const char16_t* name,
                                           const char* kind) {
-  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  // The index is read-only during playback and each read opens its own files.
   for(const auto& path:paths) {
     auto file=std::filesystem::path(path)/name;
     if(file.is_absolute()) file=file.lexically_relative(std::filesystem::path(CommandLine::inst().rootPath()));

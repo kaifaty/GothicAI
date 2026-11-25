@@ -95,8 +95,7 @@ std::string vec(const Vec3& v) {
 std::string symbolOf(World& world, const Npc& npc) {
   if(npc.isPlayer())
     return "PLAYER";
-  auto* s = world.script().findSymbol(npc.instanceSymbol());
-  return s!=nullptr ? s->name() : std::string();
+  return std::string(world.rules().symbolName(npc.instanceSymbol()));
   }
 
 bool inWorld(World& world, const Npc* npc) {
@@ -159,28 +158,23 @@ bool groundNear(World& world, Vec3& at) {
   }
 
 Npc* spawn(World& world, const char* instance, Vec3 at) {
-  const auto id = world.script().findSymbolIndex(instance);
-  if(id==size_t(-1))
+  const auto id = world.script().storyNpcId(instance);
+  if(!id)
     fail(std::string("no instance ")+instance);
   if(!groundNear(world,at))
     fail(std::string("no floor for ")+instance);
-  auto* npc = world.addNpc(id,at);
+  auto* npc = world.addNpc(*id,at);
   if(npc==nullptr)
     fail(std::string("cannot insert ")+instance);
   return npc;
   }
 
-int32_t scriptInt(World& world, const char* name, int32_t fallback) {
-  auto* s = world.script().getVm().find_symbol_by_name(name);
-  return s!=nullptr && s->type()==daedalus::DaedalusDataType::INT ? s->get_int(0) : fallback;
-  }
-
 void giveMissionItem(World& world, Npc& npc) {
   for(const char* name:MissionItems) {
-    const auto id = world.script().findSymbolIndex(name);
-    if(id==size_t(-1))
+    const auto id = world.script().findItemInstance(name);
+    if(!id)
       continue;
-    if(auto* it = npc.addItem(id,1); it!=nullptr && it->isMission())
+    if(auto* it = npc.addItem(*id,1); it!=nullptr && it->isMission())
       return;
     }
   fail("no ITM_MISSION key among the candidates");
@@ -247,8 +241,8 @@ void setup(World& world, Npc& hero, bool sleepBatch) {
   const auto fwd   = forwardOf(hero);
   const auto right = Vec3(-fwd.z,0,fwd.x);
   const auto anchor = hero.position()+fwd*700.f;
-  const int32_t ambient = scriptInt(world,"NPCTYPE_AMBIENT",0);
-  const int32_t main    = scriptInt(world,"NPCTYPE_MAIN",BodyTraces::StoryTypes[0]);
+  const int32_t ambient = world.rules().intSymbol("NPCTYPE_AMBIENT",0);
+  const int32_t main    = world.rules().intSymbol("NPCTYPE_MAIN",BodyTraces::StoryTypes[0]);
   struct Place { const char* role; float side; float ahead; };
   const Place main_[]  = {{"victim",-100,0},{"wolf",100,0},{"mission",-350,150},{"immortal",-550,150},{"story",350,150}};
   const Place sleep_[] = {{"sleeper",-100,0},{"sleeper_mission",150,0}};
@@ -281,12 +275,14 @@ void setup(World& world, Npc& hero, bool sleepBatch) {
   }
 
 Npc* findDead(World& world, Npc& hero, const char* instance) {
-  const auto id = world.script().findSymbolIndex(instance);
+  const auto id = world.script().storyNpcId(instance);
+  if(!id)
+    return nullptr;
   Npc*  best = nullptr;
   float dist = 0;
   for(uint32_t i=0;i<world.npcCount();++i) {
     auto* n = world.npcById(i);
-    if(n==nullptr || n->instanceSymbol()!=id || !n->isDead())
+    if(n==nullptr || n->instanceSymbol()!=*id || !n->isDead())
       continue;
     const float d = (n->position()-hero.position()).length();
     if(best==nullptr || d<dist) {
@@ -300,10 +296,11 @@ Npc* findDead(World& world, Npc& hero, const char* instance) {
 Npc* findObserver(World& world, Npc& hero, bool create) {
   if(st.observer!=nullptr && inWorld(world,st.observer) && !st.observer->isDead())
     return st.observer;
-  const auto id = world.script().findSymbolIndex(ObserverInstance);
-  for(uint32_t i=0;i<world.npcCount();++i)
-    if(auto* n = world.npcById(i); n!=nullptr && n->instanceSymbol()==id && !n->isDead())
-      st.observer = n;
+  if(const auto id = world.script().storyNpcId(ObserverInstance)) {
+    for(uint32_t i=0;i<world.npcCount();++i)
+      if(auto* n = world.npcById(i); n!=nullptr && n->instanceSymbol()==*id && !n->isDead())
+        st.observer = n;
+    }
   if(st.observer==nullptr && create)
     st.observer = spawn(world,ObserverInstance,hero.position()-forwardOf(hero)*300.f);
   if(st.observer==nullptr)

@@ -47,6 +47,8 @@ def test_parse_nm_both_formats():
         assert s.defined["_Z3foov"] is False and s.defined["_Z3inlv"] is True and s.defined["_ZZ3inlvE1x"] is True
         assert "common_var" in s.defined and s.defined["_ZN1A1sE"] is False and not any(n.startswith(("ltmp", "_ZL", "-[")) for n in s.defined)
     assert "_Z9hidden_fnv" in census.parse_nm(MACHO, "macho").defined
+    assert "_ZL8local_fnv" in census.parse_nm(ELF, "elf", include_local_text=True).defined
+    assert "ltmp0" in census.parse_nm(MACHO, "macho", include_local_text=True).defined
 
 
 def unit(source, layer, undefined=(), strong=(), weak=(), library="OpenGothic"):
@@ -145,3 +147,125 @@ def test_real_objects(tmp_path):
     r = census.report(units, "c++filt")
     assert [(h["file"], h["symbol"], h["defined_in"][0]["file"], h["defined_in"][0]["layer"]) for h in r["holes"]] == [
         ("common/plat.cpp", "up()", "common/world/up.cpp", "rpg")]
+
+
+@pytest.mark.skipif(not all(shutil.which(tool) for tool in ("c++", "cmake", "ninja", "nm")),
+                    reason="needs a C++ compiler, CMake, Ninja and nm")
+def test_native_game_check_on_linked_targets(tmp_path):
+    source = tmp_path / "source"
+    build = tmp_path / "build"
+    vm_source = source / "common/daedalus/vm_bytecode.cpp"
+    vm_source.parent.mkdir(parents=True)
+    vm_source.write_text("int unrelated() { return 0; }\n")
+    vm_source.with_name("vm.cpp").write_text("int scriptState() { return 0; }\n")
+    vm_source.with_name("script.cpp").write_text("int scriptData() { return 0; }\n")
+    bindings_source = source / "common/game/definitions/runtimebindings.cpp"
+    bindings_source.parent.mkdir(parents=True)
+    bindings_source.write_text("int compatibilityCodec() { return 0; }\n")
+    bindings_source.with_name("baseprogram.cpp").write_text("int compatibilitySelection() { return 0; }\n")
+    (source / "common/programdata.cpp").write_text("int compatibilityIndex() { return 0; }\n")
+    (source / "main.cpp").write_text("int main() { return 0; }\n")
+    (source / "dispatch.cpp").write_text(
+        "namespace daedalus { struct DaedalusVm { void exec(); }; void DaedalusVm::exec() {} }\n"
+        "int main() { daedalus::DaedalusVm vm; vm.exec(); return 0; }\n")
+    (source / "lift_copy.cpp").write_text(
+        "namespace storygraph { void liftProgram() {} }\n"
+        "namespace ProgramData { void readSymbolMetadata() {} }\n"
+        "int main() { storygraph::liftProgram(); ProgramData::readSymbolMetadata(); return 0; }\n")
+    (source / "compatibility_copy.cpp").write_text(
+        "namespace daedalus { void embedded() {} }\n"
+        "namespace ProgramData { void readIndex() {} }\n"
+        "namespace RuntimeBindings { void validate() {} }\n"
+        "int main() { daedalus::embedded(); ProgramData::readIndex(); RuntimeBindings::validate(); return 0; }\n")
+    lift_source = source / "ai_bridge/storygraph/bytecode.cpp"
+    lift_source.parent.mkdir(parents=True)
+    lift_source.write_text("int bytecodeFixture() { return 0; }\n")
+    (source / "native_story.cpp").write_text("int nativeStory() { return 0; }\n")
+    (source / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.15)\n"
+        "project(LinkCensusTest LANGUAGES CXX)\n"
+        "set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)\n"
+        "add_library(gothic-daedalus STATIC common/daedalus/vm_bytecode.cpp)\n"
+        "add_library(gothic-script-state STATIC common/daedalus/vm.cpp)\n"
+        "add_library(gothic-script-data STATIC common/daedalus/script.cpp)\n"
+        "target_link_libraries(gothic-script-state PUBLIC gothic-script-data)\n"
+        "add_library(StoryGraphRuntime STATIC native_story.cpp)\n"
+        "add_library(StoryGraphLift STATIC ai_bridge/storygraph/bytecode.cpp)\n"
+        "add_executable(Gothic2Notr main.cpp)\n"
+        "target_link_libraries(Gothic2Notr PRIVATE StoryGraphRuntime)\n"
+        "add_executable(gothic-body-runner main.cpp)\n"
+        "target_link_libraries(gothic-body-runner PRIVATE StoryGraphRuntime)\n"
+        "add_executable(dispatcher-archive main.cpp)\n"
+        "target_link_libraries(dispatcher-archive PRIVATE gothic-daedalus)\n"
+        "add_executable(compatibility-archive main.cpp)\n"
+        "target_link_libraries(compatibility-archive PRIVATE gothic-script-state)\n"
+        "add_executable(compatibility-source main.cpp common/daedalus/vm.cpp common/programdata.cpp "
+        "common/game/definitions/baseprogram.cpp common/game/definitions/runtimebindings.cpp)\n"
+        "add_executable(embedded-compatibility compatibility_copy.cpp)\n"
+        "add_executable(direct-vm main.cpp common/daedalus/vm_bytecode.cpp)\n"
+        "add_executable(embedded-dispatch dispatch.cpp)\n"
+        "add_executable(embedded-offline lift_copy.cpp)\n"
+        "add_executable(offline-archive main.cpp)\n"
+        "target_link_libraries(offline-archive PRIVATE StoryGraphLift)\n")
+    subprocess.run(["cmake", "-S", str(source), "-B", str(build), "-G", "Ninja"], capture_output=True, check=True)
+    subprocess.run(["cmake", "--build", str(build)], capture_output=True, check=True)
+
+    def run(target, *, v3=False):
+        run = subprocess.run([sys.executable, str(SPEC.origin), str(build), "--target", target,
+                              "--check-native-v3" if v3 else "--check-native-game", "--json"],
+                             capture_output=True, text=True)
+        return run.returncode, json.loads(run.stdout)
+
+    for target in ("Gothic2Notr", "gothic-body-runner"):
+        status, clean = run(target, v3=True)
+        assert status == 0 and clean["status"] == "clean"
+        assert Path(clean["binary"]) == build / "opengothic" / target
+        assert not any(items for key, items in clean.items() if key.startswith("compatibility_"))
+    status, archive = run("dispatcher-archive")
+    assert status == 1 and archive["status"] == "leaked"
+    assert archive["daedalus_archives"] == ["libgothic-daedalus.a"]
+    assert not archive["opcode_dispatch_symbols"]
+    status, direct = run("direct-vm")
+    assert status == 1 and direct["vm_objects"] == ["CMakeFiles/direct-vm.dir/common/daedalus/vm_bytecode.cpp.o"]
+    assert not direct["daedalus_archives"] and not direct["opcode_dispatch_symbols"]
+    status, embedded = run("embedded-dispatch")
+    assert status == 1 and embedded["opcode_dispatch_symbols"] == ["_ZN8daedalus10DaedalusVm4execEv"]
+    assert not embedded["daedalus_archives"] and not embedded["vm_objects"]
+    status, embedded_offline = run("embedded-offline")
+    assert status == 1 and embedded_offline["offline_symbols"] == [
+        "_ZN10storygraph11liftProgramEv", "_ZN11ProgramData18readSymbolMetadataEv"]
+    assert not embedded_offline["offline_archives"] and not embedded_offline["offline_objects"]
+    status, offline = run("offline-archive")
+    assert status == 1 and offline["offline_archives"] == ["libStoryGraphLift.a"]
+    assert offline["offline_objects"] == ["CMakeFiles/StoryGraphLift.dir/ai_bridge/storygraph/bytecode.cpp.o"]
+    assert not offline["offline_symbols"]
+    for target in ("compatibility-archive", "compatibility-source", "embedded-compatibility"):
+        status, v2 = run(target)
+        assert status == 0 and v2["status"] == "clean"
+        status, strict = run(target, v3=True)
+        assert status == 1 and strict["status"] == "leaked"
+        if target == "compatibility-archive":
+            assert strict["compatibility_archives"] == ["libgothic-script-data.a", "libgothic-script-state.a"]
+            assert strict["compatibility_objects"] == [
+                "CMakeFiles/gothic-script-data.dir/common/daedalus/script.cpp.o",
+                "CMakeFiles/gothic-script-state.dir/common/daedalus/vm.cpp.o",
+            ]
+        elif target == "compatibility-source":
+            assert not strict["compatibility_archives"]
+            assert strict["compatibility_objects"] == [
+                "CMakeFiles/compatibility-source.dir/common/daedalus/vm.cpp.o",
+                "CMakeFiles/compatibility-source.dir/common/game/definitions/baseprogram.cpp.o",
+                "CMakeFiles/compatibility-source.dir/common/game/definitions/runtimebindings.cpp.o",
+                "CMakeFiles/compatibility-source.dir/common/programdata.cpp.o",
+            ]
+        else:
+            assert not strict["compatibility_archives"] and not strict["compatibility_objects"]
+            assert strict["compatibility_symbols"] == [
+                "_ZN11ProgramData9readIndexEv", "_ZN15RuntimeBindings8validateEv", "_ZN8daedalus8embeddedEv",
+            ]
+    status, missing = run("missing", v3=True)
+    assert status == 2 and missing["status"] == "error"
+    if strip := shutil.which("strip"):
+        subprocess.run([strip, clean["binary"]], check=True)
+        status, stripped = run("gothic-body-runner", v3=True)
+        assert status == 2 and stripped["status"] == "error"

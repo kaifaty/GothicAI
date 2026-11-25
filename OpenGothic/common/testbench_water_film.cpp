@@ -8,6 +8,8 @@
 #include "camera.h"
 #include "gothic.h"
 #include "game/gamescript.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "world/objects/item.h"
@@ -351,24 +353,26 @@ void waterFilmBegin(WaterFilmContext ctx,World& world,Npc& player) {
   state.waterFilmStart=world.tickCount();
   state.waterFilmKill=state.waterFilm=="body" || state.waterFilm=="skeleton";
   if(state.waterFilm=="things") {
+    const auto* catalog=baseNativeCatalog();
+    if(!catalog) {arenaAbort("water film requires a native item catalog");return;}
     const auto side=Vec3(-ctx.water.direction.z,0,ctx.water.direction.x);
     const char* symbols[]{"ITMW_1H_SLD_SWORD","ITMI_NUGGET","ITMI_LUTE","ITRW_ARROW"};
     for(unsigned i=0;i<4;++i) {
-      auto symbol=world.script().findSymbolIndex(symbols[i]);
-      if(symbol==size_t(-1) && i==0)
-        for(size_t candidate=0;candidate<world.script().symbolsCount();++candidate) {
-          const auto* entry=world.script().findSymbol(candidate);
-          if(entry && entry->type()==daedalus::DaedalusDataType::INSTANCE && entry->name().starts_with("ITMW_") &&
-             entry->name().find("SWORD")!=std::string::npos) {symbol=candidate;break;}
-          }
-      if(symbol==size_t(-1)) {arenaAbort("water film item instance missing");return;}
+      auto symbol=world.script().findItemInstance(symbols[i]);
+      if(!symbol && i==0) {
+        const auto sword=std::ranges::find_if(catalog->identities.items,[](const NativeBaseCatalog::Identity& item) {
+          return item.name.starts_with("ITMW_") && item.name.find("SWORD")!=std::string::npos;
+          });
+        if(sword!=catalog->identities.items.end())symbol=sword->id;
+        }
+      if(!symbol) {arenaAbort("water film item instance missing");return;}
       Vec3 surface;
       if(!waterProbe(world,ctx.water.center+side*(float(i)-1.5f)*65.f,220.f,6000.f,surface)) {
         arenaAbort("water film item drop needs four adjacent deep-water slots");return;
         }
       const auto before=world.physic()->waterBodySnapshot();
       auto matrix=Matrix4x4::mkIdentity();matrix.translate(surface+Vec3(0,100,0));
-      auto* item=world.addItemDyn(symbol,matrix,world.npcId(&player));
+      auto* item=world.addItemDyn(*symbol,matrix,world.npcId(&player));
       if(!item) {arenaAbort("water film native item drop failed");return;}
       ctx.water.items.push_back(item);
       for(const auto& body:world.physic()->waterBodySnapshot())

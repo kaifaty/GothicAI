@@ -59,7 +59,7 @@ struct Fixture {
   void call(uint32_t id) { op(Op::BL,uint32_t(p.symbols[id].address)); }
   };
 // D4.1: routine states of the activity template with Gothic 2's own bytecode, names and external
-// signatures. ZS_SMITH_ANVIL and ZS_SMOKE_WATERPIPE (the distance approach) are accepted, ZS_ROAST_SCAVENGER is
+// signatures. ZS_SMITH_ANVIL and ZS_SMOKE_WATERPIPE (the distance approach) are accepted, ZS_TEST_ROAST is
 // captured but not accepted, ZS_SMITH_SWAPPED is refused.
 inline void activities(Fixture& f,uint32_t self,uint32_t perceptionHandler,uint32_t ta,uint32_t point) {
   auto constant=[&](const char* name,int value) {
@@ -148,7 +148,7 @@ inline void activities(Fixture& f,uint32_t self,uint32_t perceptionHandler,uint3
     return init;
     };
   const auto anvil=mobState("ZS_SMITH_ANVIL","BSANVIL");
-  const auto roast=mobState("ZS_ROAST_SCAVENGER","BARBQ");
+  const auto roast=mobState("ZS_TEST_ROAST","BARBQ");
   const auto swapped=mobState("ZS_SMITH_SWAPPED","BSCOOL",true);
   const auto pipe=mobState("ZS_SMOKE_WATERPIPE","SMOKE",false,500);
   const auto routine=f.fn("RTN_SMITH_7"); f.begin(routine);

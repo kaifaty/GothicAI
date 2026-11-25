@@ -1,12 +1,11 @@
 #pragma once
 
 #include "rpgvocabulary.h"
+#include "world/records/recordinstance.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
-
-namespace daedalus { struct IInfo; }
 
 class ScriptFn final {
   public:

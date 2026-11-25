@@ -17,6 +17,9 @@ using namespace Tempest;
 namespace {
 
 constexpr uint32_t BodyTraceMagic = 0x31544442; // "BDT1": /body-trace of a dead NPC
+// Init resets the inactive Loop clock. Its spare high bit records a point activity still
+// draining its commands, separately from the last ZS (also set by an interruption).
+constexpr uint64_t PointHandover = uint64_t(1)<<63;
 
 }
 
@@ -108,6 +111,7 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
+  stopActivityEvents(0);
   simpleMovement = {};
   endMeleeAiSpecial();
   meleeAiSpecialSlot = {};
@@ -186,6 +190,21 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
 
   go2.load(fin);
   fin.read(currentFp,currentFpLock);
+  // A saved command can end a point activity before the next routine tick. Bind its restored lock now,
+  // while the Loaded event still waits for the saved walk and commands.
+  const bool handover = !aiState.started && (aiState.loopNextTime & PointHandover);
+  if(handover)
+    aiState.loopNextTime &= ~PointHandover;
+  if(aiState.started || handover) {
+    const auto pointState=aiState.funcIni.isValid() ? aiState.funcIni : aiPrevState;
+    const auto* record=owner.rules().eventActivity(pointState);
+    if(record && record->point) {
+      restoreActivityEvents(record);
+      activityEvents.init=pointState.ptr; // the last row can still own its point during End's queue
+      if(isActivityPoint(currentFpLock.point()))
+        currentFpLock=FpLock(currentFpLock.point(),true);
+      }
+    }
   wayPath.load(fin);
 
   mvAlgo.load(fin);
@@ -313,7 +332,9 @@ void Npc::postValidate() {
 void Npc::saveAiState(Serialize& fout) const {
   fout.write(aniWaitTime,waitTime,faiWaitTime,outWaitTime);
   fout.write(uint8_t(aiPolicy));
-  fout.write(aiState.funcIni,aiState.funcLoop,aiState.funcEnd,aiState.sTime,aiState.eTime,aiState.started,aiState.loopNextTime);
+  const bool handover = !aiState.started && activityEvents.activity && activityEvents.activity->point;
+  const auto nextLoop = aiState.loopNextTime | (handover ? PointHandover : 0);
+  fout.write(aiState.funcIni,aiState.funcLoop,aiState.funcEnd,aiState.sTime,aiState.eTime,aiState.started,nextLoop);
   fout.write(aiPrevState);
 
   const auto* pending=pendingSimpleGoTo();
@@ -326,14 +347,14 @@ void Npc::saveAiState(Serialize& fout) const {
     auto action=saved.pop();
     action.i1=int(pendingItem)+1;
     saved.pushFront(std::move(action));
-    saved.save(fout);
+    saved.save(fout,owner);
     } else {
     // A vanished item must not fail the save: the action loads as a plain GotoItem.
     if(pending!=nullptr && pending->act==AI_GotoItem && pending->item!=nullptr)
       Log::e("npc_graph: ",displayName()," GotoItem target is no longer in the world; saved without it");
-    aiQueue.save(fout);
+    aiQueue.save(fout,owner);
     }
-  aiQueueOverlay.save(fout);
+  aiQueueOverlay.save(fout,owner);
 
   fout.write(uint32_t(routines.size()));
   for(auto& i:routines) {
@@ -349,13 +370,10 @@ void Npc::loadAiState(Serialize& fin) {
   fin.read(aiState.funcIni,aiState.funcLoop,aiState.funcEnd,aiState.sTime,aiState.eTime,aiState.started,aiState.loopNextTime);
   fin.read(aiPrevState);
 
-  aiState.hint = "";
-  if(auto s = owner.rules().symbolName(aiState.funcIni.ptr); !s.empty()) {
-    aiState.hint = s.data();
-    }
+  aiState.hint = aiState.funcIni.isValid() ? owner.rules().aiState(aiState.funcIni).name() : "";
 
-  aiQueue.load(fin);
-  aiQueueOverlay.load(fin);
+  aiQueue.load(fin,owner);
+  aiQueueOverlay.load(fin,owner);
 
   uint32_t size=0;
   fin.read(size);

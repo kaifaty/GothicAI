@@ -16,9 +16,11 @@ namespace daedalus {
 
 namespace storygraph {
 
+namespace execution { struct Core; }
+
 // Runs programs (program.h) the way the VM runs their functions: variables and members are read and written in
-// the VM's symbols, engine functions go to `ext`, script functions a program calls run in the VM. self, other
-// and hero are what the caller set, as for the VM.
+// the VM's symbols and engine functions go to `ext`. Script calls use an enabled native override, a resolved
+// graph program, or the VM. self, other and hero are what the caller set, as for the VM.
 //
 // Like the VM, a variable is read when its value is popped, after the operands pushed later are computed. A
 // script function that returns a variable returns it this way too: `f() + f()` with `return local;` reads the
@@ -34,6 +36,11 @@ class Interpreter final {
       };
     Result run(const Program& p, const std::vector<Value>& args = {});
 
+    // A supported nested script function's program, kept alive until the enclosing run ends.
+    std::function<const Program*(const daedalus::DaedalusSymbol&)> resolveProgram;
+    // Verified authored roots reject any nested script that cannot run as a program or a native override.
+    bool allowUnresolvedScriptCalls = true;
+
     // a line of its own (Step::Say with text): the speaker's symbol and the text in the game codepage -> the id
     // of a line AI_Output plays; empty if it can't be had. Original lines need nothing.
     std::function<std::string(const std::string& npc, const std::string& text)> ownLine;
@@ -42,7 +49,7 @@ class Interpreter final {
     std::function<bool(const Step& s)> choices;
 
   private:
-    enum class Flow : uint8_t { Next, Return, Fail };
+    friend struct execution::Core;
     // A value on the VM's stack: a computed value, or a variable or member it reads when the value is popped.
     struct Item final {
       Value                                      value;
@@ -51,8 +58,13 @@ class Interpreter final {
       std::shared_ptr<daedalus::DaedalusInstance>  context;  // a member's instance, taken when it was pushed
       const Expr*                                field = nullptr;  // a member of no instance: read as 0 or ""
       };
+    struct Frame final {
+      const std::vector<Value>& args;
+      std::optional<Item>      returned;
+      std::string              error;
+      };
 
-    Flow                 steps(const std::vector<Step>& s);
+    Frame                execute(const Program& p, const std::vector<Value>& args, bool readReturn);
     bool                 store(const Step& s);
     bool                 say(const Step& s);
     std::optional<Value> eval(const Expr& e);
@@ -65,9 +77,8 @@ class Interpreter final {
 
     daedalus::DaedalusVm&       vm;
     Externals&                ext;
-    const std::vector<Value>* params = nullptr;
-    Value                     returned;
-    std::string               error;
+    Frame*                    frame = nullptr;
+    unsigned                  depth = 0;
   };
 
 }

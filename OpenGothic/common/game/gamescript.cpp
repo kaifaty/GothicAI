@@ -1,4 +1,5 @@
 #include "gamescript.h"
+#include "gamescript_programs.h"
 #include "world/npcactivityprobe.h"
 
 #include <Tempest/Log>
@@ -7,12 +8,17 @@
 #include <cctype>
 #include <optional>
 #include <sstream>
+#include <type_traits>
+#include <utility>
 
+#include "basestore.h"
 #include "game/definitions/basescripts.h"
+#include "game/definitions/gameplaydefinitions.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/definitions/spelldefinitions.h"
 #include "game/serialize.h"
+#include "game/definitions/scriptvars.h"
 #include "game/herodeed.h"
-#include "game/healing.h"
 #include "utils/string_frm.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
@@ -22,27 +28,24 @@
 #include "utils/fileutil.h"
 #include "commandline.h"
 #include "gothic.h"
+#include "resources.h"
 #include "settings.h"
 #include "loadprobe.h"
 #include "outputunits.h"
 #include "navdemos.h"
-#include "world/benchhooks.h"
 
 using namespace Tempest;
 
 template <typename T>
 struct ScopeVar final {
-  ScopeVar(daedalus::DaedalusSymbol& sym, const std::shared_ptr<T>& h) : prev(sym.get_instance()), sym(sym) {
-    sym.set_instance(std::static_pointer_cast<daedalus::INpc>(h));
+  ScopeVar(ScriptVars::Object& slot, const std::shared_ptr<T>& actor)
+    : slot(slot), previous(std::exchange(slot,std::static_pointer_cast<NpcInstance>(actor))) {
     }
-
   ScopeVar(const ScopeVar&)=delete;
-  ~ScopeVar(){
-    sym.set_instance(prev);
-    }
+  ~ScopeVar() { slot = std::move(previous); }
 
-  std::shared_ptr<daedalus::DaedalusInstance> prev;
-  daedalus::DaedalusSymbol&                   sym;
+  ScriptVars::Object& slot;
+  ScriptVars::Object previous;
   };
 
 struct ScopeCtx final {
@@ -58,6 +61,31 @@ struct ScopeCtx final {
   GameScript&      script;
   NpcProcessPolicy prev = NpcProcessPolicy::AiNormal;
   };
+
+namespace {
+struct ItemActorScope final {
+  ItemActorScope(ScriptVars::Object& slot, Npc* actor) : slot(slot), previous(slot) {
+    slot=actor!=nullptr ? std::static_pointer_cast<daedalus::INpc>(actor->handlePtr()) : nullptr;
+    }
+  ItemActorScope(const ItemActorScope&)=delete;
+  ~ItemActorScope() { slot=std::move(previous); }
+
+  ScriptVars::Object& slot;
+  ScriptVars::Object previous;
+  };
+
+struct BennetLookupAudit final {
+  explicit BennetLookupAudit(const std::function<void(bool)>& scope) : scope(scope) {
+    if(scope)
+      scope(true);
+    }
+  ~BennetLookupAudit() {
+    if(scope)
+      scope(false);
+    }
+  const std::function<void(bool)>& scope;
+  };
+}
 
 
 bool GameScript::GlobalOutput::output(Npc& npc, std::string_view text) {
@@ -82,24 +110,72 @@ bool GameScript::GlobalOutput::isFinished() {
   return true;
   }
 
-GameScript::GameScript(GameSession &owner)
-    :owner(owner), vm(createVm(Gothic::inst(),itemDefinitions,routineDefinitions,npcDefinitions,placementDefinitions,activityDefinitions)) {
-  if (vm.global_self() == nullptr || vm.global_other() == nullptr || vm.global_item() == nullptr ||
-      vm.global_victim() == nullptr || vm.global_hero() == nullptr)
-    throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
-
+GameScript::GameScript(GameSession& owner) : owner(owner) {
+  const auto* catalog = baseNativeCatalog();
+  if(catalog==nullptr)
+    throw BaseStore::Error("missing native game catalog");
+  runtimeState.loadInitial(catalog->initialState);
+  runtimeState.declareArchetypes(catalog->identities.npcs);
+  runtimeState.declareArchetypes(catalog->identities.items);
+  runtimeState.declareArchetypes(catalog->identities.dialogs);
+  own.useNativeCatalog(*catalog);
+  loadNativeDefinitions(*catalog);
   vmLang = Settings::getI("GAME", "language");
-  vm.register_exception_handler(daedalus::lenient_vm_exception_handler);
-  Gothic::inst().setupCommonScriptClasses(vm);
-  Gothic::inst().setupVmCommonApi(vm);
+  Gothic::inst().bindNativeGameApi(nativeExternals);
   aiDefaultPipe.reset(new GlobalOutput(*this));
+  loadNativeAiStates();
   initCommon();
+  loadNativeNpcDeath();
+  loadNativeDeathTrophies();
+  loadNativeNpcGlobals();
+  loadNativeMonsterAttitudes();
+  loadNativeWorldEntry();
+  loadNativeRoutineExchange();
+  bindPreparedInventory();
+  loadNativeRoutines();
+  loadNativeRoomReaction();
+  loadNativeHumanPerceptions();
+  loadNativeEquipment();
+  loadNativeTalkReaction();
+  loadNativeAmbientInfos();
+  initBennetOre();
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
   }
 
 GameScript::~GameScript() {
   Settings::inst().onSettingsChanged.ubind(this,&GameScript::initSettings);
+  }
+
+bool GameScript::loadDirectorState(Serialize& fin) {
+  return own.load(fin);
+  }
+
+ScriptVars::Object* GameScript::ownedInstance(uint32_t id) {
+  return std::get_if<ScriptVars::Object>(runtimeState.find(id));
+  }
+
+ScriptVars::Object* GameScript::storyOwnedInstance(std::string_view name) {
+  return std::get_if<ScriptVars::Object>(runtimeState.find(name));
+  }
+
+void GameScript::bindRuntimeVariable(std::string_view name, int32_t& value) {
+  runtimeState.bind(name,value);
+  }
+
+void GameScript::bindRuntimeVariable(std::string_view name, std::string& value) {
+  runtimeState.bind(name,value);
+  }
+
+template<class R, class... P>
+void GameScript::bindExternal(const std::string& name, R(GameScript::*function)(P...)) {
+  const size_t floorId = floorDefer.registerExternal(name,StartupFloor::classify(name));
+  const std::function<R(P...)> callback = [this,function,floorId](P... values) {
+    if(floorDefer.active())
+      floorBarrier(floorId,values...);
+    return (this->*function)(values...);
+    };
+  nativeExternals.insert_or_assign(storygraph::nativeOperationName(name),storygraph::makeNativeExternal(callback));
   }
 
 void GameScript::initCommon() {
@@ -257,6 +333,7 @@ void GameScript::initCommon() {
   bindExternal("ai_outputsvm_overlay",           &GameScript::ai_outputsvm_overlay);
   bindExternal("ai_startstate",                  &GameScript::ai_startstate);
   bindExternal("ai_playani",                     &GameScript::ai_playani);
+  bindExternal("ai_stopfx",                      &GameScript::ai_stopfx);
   bindExternal("ai_setwalkmode",                 &GameScript::ai_setwalkmode);
   bindExternal("ai_wait",                        &GameScript::ai_wait);
   bindExternal("ai_waitms",                      &GameScript::ai_waitms);
@@ -319,15 +396,13 @@ void GameScript::initCommon() {
 
   bindExternal("exitsession",                    &GameScript::exitsession);
 
-  // vm.validateExternals();
-
-  spells               = std::make_unique<SpellDefinitions>(vm);
-  svm                  = std::make_unique<SvmDefinitions>(vm);
-
-  cFocusNorm           = findFocus("Focus_Normal");
-  cFocusMelee          = findFocus("Focus_Melee");
-  cFocusRange          = findFocus("Focus_Ranged");
-  cFocusMage           = findFocus("Focus_Magic");
+  const auto gameplay = GameplayDefinitions::load(Resources::baseDir());
+  spells = std::make_unique<SpellDefinitions>(*gameplay);
+  svm    = std::make_unique<SvmDefinitions>(gameplay);
+  cFocusNorm  = gameplay->focus("FOCUS_NORMAL");
+  cFocusMelee = gameplay->focus("FOCUS_MELEE");
+  cFocusRange = gameplay->focus("FOCUS_RANGED");
+  cFocusMage  = gameplay->focus("FOCUS_MAGIC");
 
   ZS_Dead              = aiState(findSymbolIndex("ZS_Dead")).funcIni;
   ZS_Unconscious       = aiState(findSymbolIndex("ZS_Unconscious")).funcIni;
@@ -335,45 +410,34 @@ void GameScript::initCommon() {
   ZS_Attack            = aiState(findSymbolIndex("ZS_Attack")).funcIni;
   ZS_MM_Attack         = aiState(findSymbolIndex("ZS_MM_Attack")).funcIni;
 
-  spellFxInstanceNames = vm.find_symbol_by_name("spellFxInstanceNames");
-  spellFxAniLetters    = vm.find_symbol_by_name("spellFxAniLetters");
-
-  if(spellFxInstanceNames==nullptr || spellFxAniLetters==nullptr) {
-    throw std::runtime_error("spellFxInstanceNames and/or spellFxAniLetters not found");
-    }
-
-  auto* currency = vm.find_symbol_by_name("TRADE_CURRENCY_INSTANCE");
-  itMi_Gold      = currency!=nullptr ? vm.find_symbol_by_name(currency->get_string()) : nullptr;
-  if(itMi_Gold!=nullptr){ // FIXME
-    goldTxt = createItemForQuery(itMi_Gold->index())->name;
-    }
-  auto* tradeMul = vm.find_symbol_by_name("TRADE_VALUE_MULTIPLIER");
-  tradeValMult   = tradeMul != nullptr ? tradeMul->get_float() : 1.0f;
-
-  auto* vtime     = vm.find_symbol_by_name("VIEW_TIME_PER_CHAR");
-  viewTimePerChar = vtime != nullptr ? vtime->get_float() : 550.f;
+  const auto* catalog = baseNativeCatalog();
+  const auto constant = [&]<class T>(std::string_view name) -> const std::vector<T>& {
+    const auto* entry = NativeBaseCatalog::findConstant(*catalog,name);
+    const auto* values = entry==nullptr ? nullptr : std::get_if<std::vector<T>>(&entry->values);
+    if(values==nullptr || values->empty())
+      throw BaseStore::Error("missing native gameplay constant " + std::string(name));
+    return *values;
+    };
+  spellFxInstanceNames = constant.template operator()<std::string>("SPELLFXINSTANCENAMES");
+  spellFxAniLetters = constant.template operator()<std::string>("SPELLFXANILETTERS");
+  goldInstance = findItemInstance(constant.template operator()<std::string>("TRADE_CURRENCY_INSTANCE").front()).value();
+  lockPickInstance = findItemInstance("ITKE_LOCKPICK").value();
+  goldTxt = createItemForQuery(goldInstance)->name;
+  tradeValMult = constant.template operator()<float>("TRADE_VALUE_MULTIPLIER").front();
+  viewTimePerChar = constant.template operator()<float>("VIEW_TIME_PER_CHAR").front();
   if(viewTimePerChar<=0.f)
     viewTimePerChar = 550.f;
-
-  ItKE_lockpick     = vm.find_symbol_by_name("ItKE_lockpick");
-  B_RefreshAtInsert = vm.find_symbol_by_name("B_RefreshAtInsert");
-
-  if(auto v = vm.find_symbol_by_name("RANGED_CHANCE_MINDIST"))
-    rangedChanceMin = v->get_float();
-  if(auto v = vm.find_symbol_by_name("RANGED_CHANCE_MAXDIST"))
-    rangedChanceMax = v->get_float();
-
-  auto* gilMax = vm.find_symbol_by_name("GIL_MAX");
-  gilCount = gilMax!=nullptr ? size_t(gilMax->get_int()) : 0;
-
-  auto* tblSz = vm.find_symbol_by_name("TAB_ANZAHL");
-  gilTblSize = tblSz!=nullptr ? size_t(std::sqrt(tblSz->get_int())) : 0;
+  rangedChanceMin = constant.template operator()<float>("RANGED_CHANCE_MINDIST").front();
+  rangedChanceMax = constant.template operator()<float>("RANGED_CHANCE_MAXDIST").front();
+  gilCount = size_t(constant.template operator()<int32_t>("GIL_MAX").front());
+  gilTblSize = size_t(std::sqrt(constant.template operator()<int32_t>("TAB_ANZAHL").front()));
+  if(gilTblSize>gilCount)
+    throw BaseStore::Error("guild table exceeds native guild count");
   gilAttitudes.resize(gilCount*gilCount,ATT_HOSTILE);
   wld_exchangeguildattitudes("GIL_ATTITUDES");
 
-  auto id = vm.find_symbol_by_name("Gil_Values");
-  if(id!=nullptr){
-    cGuildVal = vm.init_instance<daedalus::IGuildValues>(id);
+  cGuildVal = std::make_shared<GuildRecord>(gameplay->guild());
+  {
     for(size_t i=0;i<Guild::GIL_PUBLIC;++i){
       cGuildVal->water_depth_knee   [i]=cGuildVal->water_depth_knee   [Guild::GIL_HUMAN];
       cGuildVal->water_depth_chest  [i]=cGuildVal->water_depth_chest  [Guild::GIL_HUMAN];
@@ -409,26 +473,20 @@ void GameScript::initCommon() {
       }
     }
 
-  if(vm.find_symbol_by_name("Ikarus_Version")!=nullptr || vm.find_symbol_by_name("LeGo_Version")!=nullptr)
-    Log::e("Ikarus/LeGo scripts are not supported by this build");
   }
 
 void GameScript::initSettings() {
   auto lang = Settings::getI("GAME", "language");
   if(vmLang!=lang) {
     vmLang = lang;
-    //vm     = createVm(Gothic::inst());
     initDialogs();
     }
   }
 
 void GameScript::initDialogs() {
   loadDialogOU();
-
   dialogsInfo.clear();
-  vm.enumerate_instances_by_class_name("C_INFO", [this](daedalus::DaedalusSymbol& sym){
-    dialogsInfo.push_back(vm.init_instance<daedalus::IInfo>(&sym));
-    });
+  readDialogInfos();
   }
 
 void GameScript::loadDialogOU() {
@@ -444,35 +502,42 @@ void GameScript::loadDialogOU() {
   Log::e("none of Zen-files for OU could be loaded");
   }
 
-void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords) {
-  LoadProbe::Startup::Detail::Scope detail("npc_init",[&]{
-    const auto* symbol=vm.find_symbol_by_index(uint32_t(instance));
-    return symbol!=nullptr ? symbol->name() : std::to_string(instance);
-    });
-  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Script);
-  auto sym = vm.find_symbol_by_index(uint32_t(instance));
-
-  if(sym == nullptr) {
-    Tempest::Log::e("Cannot initialize NPC ", instance, ": Symbol not found.");
-    return;
+std::optional<uint32_t> GameScript::npcTemplateId(uint32_t instance) const {
+  const auto* catalog = baseNativeCatalog();
+  if(catalog==nullptr)
+    return std::nullopt;
+  if(const auto* director = own.find(instance); director!=nullptr && director->kind==OwnSymbols::Kind::Npc) {
+    if(const auto* model = NativeBaseCatalog::findIdentity(catalog->identities.npcs,director->like))
+      return model->id;
+    return std::nullopt;
     }
+  if(NativeBaseCatalog::findIdentity(catalog->identities.npcs,instance)!=nullptr)
+    return instance;
+  return std::nullopt;
+  }
 
-  // an npc of ours runs the code of the script's npc it is made like, and that code names its own instance
-  // (self in an instance's body is the instance's symbol): while it runs that instance is ours, as a script's
-  // instance is its own while its code runs. Else the body, clothes and things would go to the script's npc
-  std::optional<ScopeVar<daedalus::INpc>> mine;
-  if(auto* like = own.likeOf(sym->index()))
-    mine.emplace(*like,npc);
+void GameScript::initializeInstanceNpc(const std::shared_ptr<NpcInstance>& npc, size_t instance) {
+  LoadProbe::Startup::Detail::Scope detail("npc_init",[&] { return std::string(storyNpcName(uint32_t(instance))); });
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Script);
+  if(instance>UINT32_MAX)
+    throw BaseStore::Error("Invalid NPC identity");
+  const auto id = uint32_t(instance);
+  const auto model = npcTemplateId(id);
+  auto* alias = ownedInstance(id);
+  if(!model || alias==nullptr)
+    throw BaseStore::Error("Unknown NPC identity "+std::to_string(id));
 
-  initializeNpcDefinition(npc,sym,useRecords);
-
+  npc->setRecordIdentity(id);
+  *alias = npc;
+  ScopeVar context(storyActorSlot("SELF"),npc);
+  // The authored constructor can name its own template when instantiating a director NPC.
+  ScopeVar constructor(*ownedInstance(*model),npc);
+  initializeNpcDefinition(npc,*model);
   if(npc->daily_routine!=0) {
-    ScopeVar self(*vm.global_self(), npc);
-    auto* daily_routine = vm.find_symbol_by_index(uint32_t(npc->daily_routine));
-    if(daily_routine != nullptr) {
-      LoadProbe::Startup::Detail::Scope routine("daily_routine",[&]{return daily_routine->name();});
-      initializeRoutine(npc,daily_routine);
-      }
+    const auto routine = routineDefinitions.routines.find(uint32_t(npc->daily_routine));
+    if(routine==routineDefinitions.routines.end())
+      throw BaseStore::Error("Missing prepared daily routine ID "+std::to_string(npc->daily_routine));
+    addPreparedRoutine(findNpc(npc),routine->second);
     }
   }
 
@@ -499,109 +564,60 @@ void GameScript::loadQuests(Serialize& fin) {
   }
 
 void GameScript::saveVar(Serialize &fout) {
-  auto& dat = vm.symbols();
-  fout.write(uint32_t(dat.size()));
-  for(unsigned i = 0; i < dat.size(); ++i){
-    auto* sym = vm.find_symbol_by_index(i); // never returns nullptr
-    saveSym(fout,*sym);
+  std::vector<ScriptVars::Row> rows;
+  for(const auto& [id,slot] : runtimeState.slots()) {
+    auto value = stateValue(slot);
+    if(!std::holds_alternative<std::monostate>(value))
+      rows.push_back({id,std::move(value)});
     }
+  fout.write(uint32_t(rows.size()));
+  for(const auto& row : rows)
+    ScriptVars::writeRow(fout,row);
   }
 
 void GameScript::loadVar(Serialize &fin) {
-  std::string name;
-  uint32_t sz=0;
-  fin.read(sz);
-  for(size_t i=0;i<sz;++i){
-    auto t = uint32_t(daedalus::DaedalusDataType::VOID);
-    fin.read(t);
-    switch(daedalus::DaedalusDataType(t)) {
-      case daedalus::DaedalusDataType::INT:{
-        fin.read(name);
-        auto* s = findSymbol(name);
-        if(s==nullptr && name.rfind(OwnSymbols::Prefix,0)==0) {
-          // a save made before its symbols had an entry of their own: the director's story variable is ours now
-          std::string why;
-          s = own.addInt(name,why);
-          }
-
-        uint32_t size;
-        fin.read(size);
-
-        int v = 0;
-        for(unsigned j = 0; j < size; ++j) {
-          fin.read(v);
-          if (s != nullptr && !s->is_member() && !s->is_const()) {
-            s->set_int(v, uint16_t(j));
-            }
-          }
-
-        break;
-        }
-      case daedalus::DaedalusDataType::FLOAT:{
-        fin.read(name);
-        auto* s = findSymbol(name);
-
-        uint32_t size;
-        fin.read(size);
-
-        float v = 0;
-        for (unsigned j = 0; j < size; ++j) {
-          fin.read(v);
-          if (s != nullptr && !s->is_member() && !s->is_const()) {
-            s->set_float(v, uint16_t(j));
-            }
-          }
-
-        break;
-        }
-      case daedalus::DaedalusDataType::STRING:{
-        fin.read(name);
-        auto* s = findSymbol(name);
-
-        uint32_t size;
-        fin.read(size);
-
-        std::string v;
-        for (unsigned j = 0; j < size; ++j) {
-          fin.read(v);
-          if (s != nullptr && !s->is_member() && !s->is_const()) {
-            s->set_string(v, uint16_t(j));
-            }
-          }
-
-        break;
-        }
-      case daedalus::DaedalusDataType::INSTANCE:{
-        uint8_t dataClass=0;
-        fin.read(dataClass);
-        if(dataClass>0){
-          uint32_t id=0;
-          fin.read(name,id);
-          auto* s = findSymbol(name);
-          if (s == nullptr)
+  uint32_t count = 0;
+  fin.read(count);
+  for(uint32_t i=0; i<count; ++i) {
+    const auto row = ScriptVars::readRow(fin);
+    auto* slot = runtimeState.find(row.id);
+    if(slot==nullptr)
+      throw BaseStore::Error("Unknown runtime field ID in save: "+std::to_string(row.id));
+    std::visit([&](auto& value) {
+      using T = std::decay_t<decltype(value)>;
+      if constexpr(std::is_same_v<T,ScriptVars::Object>) {
+        const auto* ref = std::get_if<ScriptVars::Reference>(&row.value);
+        if(ref==nullptr)
+          throw std::runtime_error("Invalid object binding in save");
+        switch(ref->kind) {
+          case ScriptVars::ReferenceKind::Npc: {
+            const auto* npc = world().npcById(ref->object);
+            value = npc ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr;
             break;
-          if(dataClass==1) {
-            auto npc = world().npcById(id);
-            s->set_instance(npc ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr);
             }
-          else if(dataClass==2) {
-            auto itm = world().itmById(id);
-            s->set_instance(itm != nullptr ? std::static_pointer_cast<daedalus::IItem>(itm->handlePtr()) : nullptr);
+          case ScriptVars::ReferenceKind::WorldItem: {
+            auto* item = world().itmById(ref->object);
+            value = item ? std::static_pointer_cast<daedalus::IItem>(item->handlePtr()) : nullptr;
+            break;
             }
-          else if(dataClass==3) {
-            uint32_t itmClass=0;
-            fin.read(itmClass);
-            if(auto npc = world().npcById(id)) {
-              auto itm = npc->getItem(itmClass);
-              s->set_instance(itm ? std::static_pointer_cast<daedalus::IItem>(itm->handlePtr()) : nullptr);
-              }
+          case ScriptVars::ReferenceKind::InventoryItem: {
+            const auto* npc = world().npcById(ref->object);
+            auto* item = npc ? npc->inventory().itemByIndex(ref->item) : nullptr;
+            value = item ? std::static_pointer_cast<daedalus::IItem>(item->handlePtr()) : nullptr;
+            break;
             }
+          case ScriptVars::ReferenceKind::None:
+            value.reset();
+            break;
           }
-        break;
+        } else {
+        using Field = typename decltype(value.values)::value_type;
+        const auto* saved = std::get_if<std::vector<Field>>(&row.value);
+        if(saved==nullptr || saved->size()!=value.values.size())
+          throw std::runtime_error("Invalid value binding in save");
+        std::copy(saved->begin(),saved->end(),value.values.begin());
         }
-      default:
-        break;
-      }
+      },*slot);
     }
   }
 
@@ -616,8 +632,7 @@ void GameScript::loadPerc(Serialize& fin) {
   uint32_t count = 0;
   fin.read(count);
   if(count!=PERC_Count) {
-    if(hasSymbolName("initPerceptions"))
-      vm.call_function("initPerceptions");
+    initPerceptions();
     return;
     }
   for(size_t i=0; i<PERC_Count; ++i)
@@ -625,11 +640,11 @@ void GameScript::loadPerc(Serialize& fin) {
   }
 
 void GameScript::resetVarPointers() {
-  for(uint32_t i=0;i<vm.symbols().size();++i){
-    auto* s = vm.find_symbol_by_index(i); // never returns nullptr
-    if(s->is_instance_of<daedalus::INpc>() || s->is_instance_of<daedalus::IItem>()){
-      s->set_instance(nullptr);
-      }
+  for(auto& [id,slot] : runtimeState.slots()) {
+    auto* object = std::get_if<ScriptVars::Object>(&slot);
+    if(object!=nullptr && *object!=nullptr &&
+       ((*object)->instance_type()==&typeid(daedalus::INpc) || (*object)->instance_type()==&typeid(daedalus::IItem)))
+      object->reset();
     }
   }
 
@@ -637,76 +652,43 @@ const QuestLog& GameScript::questLog() const {
   return quests;
   }
 
-void GameScript::saveSym(Serialize &fout, daedalus::DaedalusSymbol& i) {
-  auto& w = world();
-  switch(i.type()) {
-    case daedalus::DaedalusDataType::INT:
-      if(i.count()>0 && !i.is_member() && !i.is_const()){
-        fout.write(uint32_t(i.type()), i.name(), i.count());
+ScriptVars::Value GameScript::stateValue(const ScriptVars::Slot& slot) {
+  return std::visit([&](const auto& value) -> ScriptVars::Value {
+    using T = std::decay_t<decltype(value)>;
+    if constexpr(std::is_same_v<T,ScriptVars::Object>) {
+      const auto ref = stateReference(value);
+      if(ref.kind==ScriptVars::ReferenceKind::None)
+        return {};
+      return ref;
+      } else {
+      using Field = typename decltype(value.values)::value_type;
+      return std::vector<Field>(value.values.begin(),value.values.end());
+      }
+    },slot);
+  }
 
-        for (unsigned j = 0; j < i.count(); ++j)
-          fout.write(i.get_int(uint16_t(j)));
-        return;
-        }
-      break;
-    case daedalus::DaedalusDataType::FLOAT:
-      if(i.count()>0 && !i.is_member() && !i.is_const()){
-        fout.write(uint32_t(i.type()), i.name(), i.count());
-
-        for (unsigned j = 0; j < i.count(); ++j)
-          fout.write(i.get_float(uint16_t(j)));
-        return;
-        }
-      break;
-    case daedalus::DaedalusDataType::STRING:
-      if(i.count()>0 && !i.is_member() && !i.is_const()){
-        fout.write(uint32_t(i.type()), i.name(), i.count());
-
-        for (unsigned j = 0; j < i.count(); ++j)
-          fout.write(i.get_string(uint16_t(j)));
-        return;
-        }
-      break;
-    case daedalus::DaedalusDataType::INSTANCE:
-      fout.write(uint32_t(i.type()));
-
-      if(i.is_instance_of<daedalus::INpc>()){
-        auto hnpc = reinterpret_cast<const daedalus::INpc*>(i.get_instance().get());
-        auto npc  = reinterpret_cast<const Npc*>(hnpc==nullptr ? nullptr : hnpc->user_ptr);
-        fout.write(uint8_t(1),i.name(),world().npcId(npc));
-        }
-      else if(i.is_instance_of<daedalus::IItem>()){
-        auto     item = reinterpret_cast<const daedalus::IItem*>(i.get_instance().get());
-        uint32_t id   = w.itmId(static_cast<const ItemRecord*>(item));
-        if(id!=uint32_t(-1) || item==nullptr) {
-          fout.write(uint8_t(2),i.name(),id);
-          } else {
-          uint32_t idNpc = uint32_t(-1);
-          for(uint32_t r=0; r<w.npcCount(); ++r) {
-            auto& n = *w.npcById(r);
-            if(n.itemCount(item->symbol_index())>0) {
-              idNpc = r;
-              fout.write(uint8_t(3),i.name(),idNpc,uint32_t(item->symbol_index()));
-              break;
-              }
-            }
-          if(idNpc==uint32_t(-1))
-            fout.write(uint8_t(2),i.name(),uint32_t(-1));
-          }
-        }
-      else if(i.is_instance_of<daedalus::IFocus>() ||
-              i.is_instance_of<daedalus::IGuildValues>() ||
-              i.is_instance_of<daedalus::IInfo>()) {
-        fout.write(uint8_t(0));
-        }
-      else {
-        fout.write(uint8_t(0));
-        }
-      return;
-    default:
-      break;
+ScriptVars::Reference GameScript::stateReference(const ScriptVars::Object& object) {
+  using Kind = ScriptVars::ReferenceKind;
+  if(object==nullptr)
+    return {};
+  if(object->instance_type()==&typeid(daedalus::INpc))
+    return {Kind::Npc,world().npcId(static_cast<const Npc*>(object->user_ptr))};
+  if(object->instance_type()!=&typeid(daedalus::IItem))
+    return {};
+  const auto* item = static_cast<const daedalus::IItem*>(object.get());
+  const auto id = world().itmId(static_cast<const ItemRecord*>(item));
+  if(id!=uint32_t(-1))
+    return {Kind::WorldItem,id};
+  for(uint32_t ownerId=0; ownerId<world().npcCount(); ++ownerId) {
+    if(const auto* npc=world().npcById(ownerId)) {
+      const auto& inv = npc->inventory();
+      const auto index = inv.indexOf(static_cast<const Item*>(item->user_ptr));
+      const auto* owned = inv.itemByIndex(index);
+      if(owned!=nullptr && &owned->handle()==static_cast<const ItemRecord*>(item))
+        return {Kind::InventoryItem,ownerId,index};
+      }
     }
-  fout.write(uint32_t(daedalus::DaedalusDataType::VOID));
+  return {};
   }
 
 void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {
@@ -768,59 +750,31 @@ World &GameScript::world() {
   return *owner.world();
   }
 
-daedalus::IFocus GameScript::findFocus(std::string_view name) {
-  auto id = vm.find_symbol_by_name(name);
-  if(id==nullptr)
-    return {};
-  try {
-    return *vm.init_instance<daedalus::IFocus>(id);
-    }
-  catch(const daedalus::DaedalusScriptError&) {
-    return {};
-    }
-  }
-
-void GameScript::storeItem(Item *itm) {
-  auto* s = vm.global_item();
-  if(itm!=nullptr) {
-    s->set_instance(std::static_pointer_cast<daedalus::IItem>(itm->handlePtr()));
-    } else {
-    s->set_instance(nullptr);
-    }
-  }
-
-daedalus::DaedalusSymbol* GameScript::findSymbol(std::string_view s) {
-  return vm.find_symbol_by_name(s);
-  }
-
-daedalus::DaedalusSymbol* GameScript::findSymbol(const size_t s) {
-  return vm.find_symbol_by_index(uint32_t(s));
+void GameScript::storeItem(Item* item) {
+  storyActorSlot("ITEM") = item!=nullptr ? std::static_pointer_cast<ItemInstance>(item->handlePtr()) : nullptr;
   }
 
 size_t GameScript::findSymbolIndex(std::string_view name) {
-  auto sym = vm.find_symbol_by_name(name);
-  return sym == nullptr ? size_t(-1) : sym->index();
-  }
-
-size_t GameScript::symbolsCount() const {
-  return vm.symbols().size();
+  if(const auto id = storySymbolIndex(name))
+    return uint32_t(*id);
+  return size_t(-1);
   }
 
 const SpellRecord& GameScript::spellDesc(int32_t splId) {
-  auto& tag = spellFxInstanceNames->get_string(uint16_t(splId));
+  auto& tag = spellFxInstanceNames.at(uint16_t(splId));
   return spells->find(tag);
   }
 
 const VisualFx* GameScript::spellVfx(int32_t splId) {
-  auto& tag = spellFxInstanceNames->get_string(uint16_t(splId));
+  auto& tag = spellFxInstanceNames.at(uint16_t(splId));
   string_frm name("spellFX_",tag);
   return Gothic::inst().loadVisualFx(name);
   }
 
 GameScript::PhysicalSpell GameScript::physicalSpell(int32_t splId) const {
-  if(spellFxInstanceNames==nullptr || splId<0 || size_t(splId)>=spellFxInstanceNames->count())
+  if(splId<0 || size_t(splId)>=spellFxInstanceNames.size())
     return PhysicalSpell::None;
-  auto tag = spellFxInstanceNames->get_string(uint16_t(splId));
+  auto tag = spellFxInstanceNames.at(uint16_t(splId));
   for(auto& c:tag)
     c = char(std::toupper(static_cast<unsigned char>(c)));
   if(tag=="WINDFIST" || tag=="STORMFIST")
@@ -838,8 +792,8 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
                                                              std::shared_ptr<NpcRecord> hnpc,
                                                              const std::vector<uint32_t>& except,
                                                              bool includeImp) {
-  ScopeVar self (*vm.global_self(),  hnpc);
-  ScopeVar other(*vm.global_other(), player);
+  ScopeVar self (storyActorSlot("SELF"),hnpc);
+  ScopeVar other(storyActorSlot("OTHER"),player);
   std::vector<daedalus::IInfo*> hDialog;
   for(auto& info : dialogsInfo) {
     if(info->npc==static_cast<int>(static_cast<const daedalus::INpc&>(*hnpc).symbol_index())) {
@@ -853,7 +807,14 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
       const daedalus::IInfo& info = *i;
       if(info.important!=important)
         continue;
-      bool npcKnowsInfo = doesNpcKnowInfo(*player,vm.find_symbol_by_instance(info)->index());
+      const auto* bennet = bennetOreDialog(info);
+      bool npcKnowsInfo = false;
+      if(bennet) {
+        BennetLookupAudit audit(bennetLookupScope);
+        npcKnowsInfo = dlgKnownInfos.contains({static_cast<const daedalus::INpc&>(*player).symbol_index(),bennet->infoId});
+        } else {
+        npcKnowsInfo = doesNpcKnowInfo(*player,info.symbol_index());
+        }
       if(npcKnowsInfo && !info.permanent)
         continue;
 
@@ -869,11 +830,19 @@ std::vector<GameScript::DlgChoice> GameScript::dialogChoices(std::shared_ptr<Npc
         }
 
       bool valid=true;
-      if(info.condition) {
-        auto* conditionSymbol = vm.find_symbol_by_index(uint32_t(info.condition));
-        if (conditionSymbol != nullptr) {
-          valid = dialogFunction(conditionSymbol,true) != 0;
+      if(bennet) {
+        auto& overlay = Gothic::inst().dialogScriptFn;
+        int32_t result = 0;
+        if(overlay && overlay(bennet->conditionId,result)) {
+          valid = result!=0;
+          } else {
+          BennetLookupAudit audit(bennetLookupScope);
+          auto* hero = findNpc(player.get());
+          auto* npc = findNpc(hnpc.get());
+          valid = hero!=nullptr && npc!=nullptr && bennetOffer(*bennet,*hero,*npc);
           }
+        } else if(info.condition) {
+        valid = dialogFunction(uint32_t(info.condition))!=0;
         }
       if(Gothic::inst().dialogFilterFn)
         Gothic::inst().dialogFilterFn(info,valid);
@@ -910,8 +879,8 @@ std::vector<GameScript::DlgChoice> GameScript::updateDialog(const GameScript::Dl
     }
   const daedalus::IInfo&               info = *dlg.handle;
 
-  ScopeVar self (*vm.global_self(), npc.handlePtr());
-  ScopeVar other(*vm.global_other(), player.handlePtr());
+  ScopeVar self (storyActorSlot("SELF"),npc.handlePtr());
+  ScopeVar other(storyActorSlot("OTHER"),player.handlePtr());
 
   for(size_t i=0;i<info.choices.size();++i){
     auto& sub = info.choices[i];
@@ -931,8 +900,8 @@ std::vector<GameScript::DlgChoice> GameScript::updateDialog(const GameScript::Dl
   }
 
 void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
-  ScopeVar self (*vm.global_self(), npc.handlePtr());
-  ScopeVar other(*vm.global_other(), player.handlePtr());
+  ScopeVar self (storyActorSlot("SELF"),npc.handlePtr());
+  ScopeVar other(storyActorSlot("OTHER"),player.handlePtr());
 
   if(dlg.handle==nullptr) {
     if(&player!=&npc)
@@ -948,6 +917,29 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
     player.stopAnim("");
   auto& pl = player.handle();
 
+  if(const auto* bennet = bennetOreDialog(info); bennet!=nullptr && dlg.scriptFn==uint32_t(info.information)) {
+    if(npc.instanceSymbol()!=size_t(info.npc) || &player==&npc)
+      return;
+    const std::pair<size_t,size_t> known = {static_cast<const daedalus::INpc&>(pl).symbol_index(),bennet->infoId};
+    bool newlyKnown = false;
+    {
+      BennetLookupAudit audit(bennetLookupScope);
+      newlyKnown = dlgKnownInfos.insert(known).second;
+      }
+    auto& overlay = Gothic::inst().dialogScriptFn;
+    int32_t result = 0;
+    if(!overlay || !overlay(bennet->answerId,result)) {
+      BennetLookupAudit audit(bennetLookupScope);
+      if(!bennetExecute(*bennet,player,npc)) {
+        if(newlyKnown)
+          dlgKnownInfos.erase(known);
+        return;
+        }
+      }
+    Gothic::inst().onDialogChosen(dlg,player,npc);
+    return;
+    }
+
   if(info.information==int(dlg.scriptFn)) {
     setNpcInfoKnown(pl,info);
     } else {
@@ -957,17 +949,17 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
         ++i;
       }
     }
-  auto* function = vm.find_symbol_by_index(dlg.scriptFn);
+  const auto function = storyProgramName(dlg.scriptFn);
   std::shared_ptr<HeroDeed> pickpocket;
-  if(function!=nullptr && function->name().ends_with("_DOIT") &&
-     (function->name().find("PICKPOCKET")!=std::string::npos || function->name()=="DIA_CASSIA_PICKME_DOIT")) {
+  if(function.ends_with("_DOIT") &&
+     (function.find("PICKPOCKET")!=std::string::npos || function=="DIA_CASSIA_PICKME_DOIT")) {
     pickpocket = HeroDeed::capture(player,"pickpocket",&npc);
     if(pickpocket!=nullptr) {
       pickpocket->inventoryBefore = HeroDeed::inventory(player);
       pickpocket->pickedPocketBefore = HeroDeed::aivar(npc,"AIV_PLAYERHASPICKEDMYPOCKET");
       }
     }
-  dialogFunction(function,false);
+  dialogFunction(dlg.scriptFn);
   Gothic::inst().onDialogChosen(dlg,player,npc);
   if(pickpocket!=nullptr) {
     pickpocket->inventoryAfter = HeroDeed::inventory(player);
@@ -979,257 +971,226 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
     }
   }
 
-int32_t GameScript::dialogFunction(daedalus::DaedalusSymbol* fn, bool returns) {
-  int32_t r = 0;
-  if(fn!=nullptr && Gothic::inst().dialogScriptFn && Gothic::inst().dialogScriptFn(*fn,r))
-    return r;
-  if(returns)
-    return vm.call_function<int>(fn);
-  vm.call_function(fn);
-  return 0;
-  }
-
 void GameScript::printCannotUseError(Npc& npc, int32_t atr, int32_t nValue) {
-  auto id = vm.find_symbol_by_name("G_CanNotUse");
-  if(id==nullptr)
-    return;
-
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(id, npc.isPlayer(), atr, nValue);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroEquipDenial(npc.isPlayer(),atr,nValue);
   }
 
 void GameScript::printCannotCastError(Npc &npc, int32_t plM, int32_t itM) {
-  auto id = vm.find_symbol_by_name("G_CanNotCast");
-  if(id==nullptr)
-    return;
-
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(id, npc.isPlayer(), itM, plM);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroCastDenial(npc.isPlayer(),itM,plM);
   }
 
 void GameScript::printCannotBuyError(Npc &npc) {
-  auto id = vm.find_symbol_by_name("player_trade_not_enough_gold");
-  if(id==nullptr)
-    return;
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_TRADE_NOT_ENOUGH_GOLD");
   }
 
 void GameScript::printMobMissingItem(Npc &npc) {
-  auto id = vm.find_symbol_by_name("player_mob_missing_item");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_MISSINGITEM","$MISSINGITEM",true);
   }
 
 void GameScript::printMobMissingKey(Npc& npc) {
-  auto id = vm.find_symbol_by_name("player_mob_missing_key");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_KEYMISSING","$KEYMISSING",true);
   }
 
 void GameScript::printMobAnotherIsUsing(Npc &npc) {
-  auto id = vm.find_symbol_by_name("player_mob_another_is_using");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_ANOTHERUSER",{},true);
   }
 
 void GameScript::printMobMissingKeyOrLockpick(Npc& npc) {
-  auto id = vm.find_symbol_by_name("player_mob_missing_key_or_lockpick");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_PICKLOCK_OR_KEYMISSING","$PICKLOCKORKEYMISSING",true);
   }
 
 void GameScript::printMobMissingLockpick(Npc& npc) {
-  auto id = vm.find_symbol_by_name("player_mob_missing_lockpick");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroMissingLockpick();
   }
 
 void GameScript::printMobTooFar(Npc& npc) {
-  auto id = vm.find_symbol_by_name("player_mob_too_far_away");
-  if(id==nullptr) {
-    owner.player()->playAnimByName("T_DONTKNOW", BS_NONE);
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_TOOFAR_AWAY",{},true);
   }
 
-void GameScript::invokeState(const std::shared_ptr<NpcRecord>& hnpc, const std::shared_ptr<NpcRecord>& oth, const char *name) {
-  auto id = vm.find_symbol_by_name(name);
-  if(id==nullptr)
-    return;
-
-  ScopeVar self (*vm.global_self(),  hnpc);
-  ScopeVar other(*vm.global_other(), oth);
-  NpcActivityProbe::Phase phase(findNpc(hnpc.get()),id->name());
-  vm.call_function<void>(id);
+void GameScript::invokeState(const std::shared_ptr<NpcRecord>& actor, const std::shared_ptr<NpcRecord>& other,
+                             const char* name) {
+  if(const auto id = storyScriptFunctionId(name))
+    invokeState(findNpc(actor.get()),findNpc(other.get()),nullptr,ScriptFn(*id));
   }
 
-int GameScript::invokeState(Npc* npc, Npc* oth, Npc* vic, ScriptFn fn) {
+int GameScript::invokeState(Npc* npc, Npc* other, Npc* victim, ScriptFn fn) {
   if(!fn.isValid())
     return 0;
-  if(oth==nullptr){
-    // oth=npc; //FIXME: PC_Levelinspektor?
-    }
-  if(vic==nullptr){
-    // vic=owner.player();
+  if(fn==ZS_Talk && (other==nullptr || !other->isPlayer())) {
+    Log::e("Unexpected talk perception actor");
+    return 0;
     }
 
-  if(fn==ZS_Talk){
-    if(oth==nullptr || !oth->isPlayer()) {
-      Log::e("unxepected perc acton");
-      return 0;
-      }
+  const auto id = uint32_t(fn.ptr);
+  if(const auto prepared = routineDefinitions.routines.find(id); prepared!=routineDefinitions.routines.end()) {
+    NpcActivityProbe::Phase phase(npc,prepared->second.name);
+    phase.fromRecord();
+    addPreparedRoutine(npc,prepared->second);
+    return 0;
     }
-
-  ScopeCtx ctx   (*this, npc!=nullptr ? npc->processPolicy() : NpcProcessPolicy::AiNormal);
-  ScopeVar self  (*vm.global_self(),   npc != nullptr ? npc->handlePtr() : nullptr);
-  ScopeVar other (*vm.global_other(),  oth != nullptr ? oth->handlePtr() : nullptr);
-  ScopeVar victim(*vm.global_victim(), vic != nullptr ? vic->handlePtr() : nullptr);
-  auto* sym = vm.find_symbol_by_index(uint32_t(fn.ptr));
-  NpcActivityProbe::Phase phase(npc,sym ? std::string_view(sym->name()) : std::string_view{});
-  int& ret = phase.result;
-  if(sym!=nullptr && sym->name().starts_with("RTN_")) {
-    ret = initializeRoutine(npc!=nullptr ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr,sym);
+  ScopeCtx ctx(*this,npc!=nullptr ? npc->processPolicy() : NpcProcessPolicy::AiNormal);
+  ScopeVar self(storyActorSlot("SELF"),npc!=nullptr ? npc->handlePtr() : nullptr);
+  ScopeVar target(storyActorSlot("OTHER"),other!=nullptr ? other->handlePtr() : nullptr);
+  ScopeVar witness(storyActorSlot("VICTIM"),victim!=nullptr ? victim->handlePtr() : nullptr);
+  const auto name = storyProgramName(id);
+  NpcActivityProbe::Phase phase(npc,name);
+  if(npc!=nullptr &&
+     (invokeActivity(*npc,id,phase) || invokeNativeRoutine(*npc,id,name,phase))) {
+    // The routine phase ran in the engine.
+    } else if(npc!=nullptr && usesNativeQuietSound(fn)) {
+    phase.fromRecord();
+    runQuietSoundReaction(*npc);
+    } else if(npc!=nullptr &&
+              (invokeNativeRoomPerception(name,phase) || invokeNativeMonsterPerception(name,phase) ||
+               invokeNativeRoutineReaction(*npc,name,phase) || invokeNativeTalkPerception(name,phase) ||
+               invokeNativeStatusPerception(*npc,name,phase) || invokeNativeHumanPerception(fn,phase))) {
+    // The perception ran in the engine.
+    } else {
+    bool failed = false;
+    if(!invokeStockProgram(id,phase.result,&failed) || failed)
+      throw BaseStore::Error("missing native NPC behavior " + std::to_string(id) + " " + std::string(name));
+    phase.fromRecord();
     }
-  else if(sym!=nullptr && npc!=nullptr && invokeActivity(*npc,sym->index(),phase)) {
-    // a routine activity from its record (D4.1)
-    }
-  else if(sym!=nullptr && sym->rtype() == daedalus::DaedalusDataType::INT) {
-    ret = vm.call_function<int>(sym);
-    }
-  else if(sym!=nullptr) {
-    vm.call_function<void>(sym);
-    ret = 0;
-    }
-  if(vm.global_other()->is_instance_of<daedalus::INpc>()){
-    auto oth2 = reinterpret_cast<daedalus::INpc*>(vm.global_other()->get_instance().get());
-    if(oth!=nullptr && oth2!=&oth->handle()) {
-      Npc* other = findNpc(oth2);
-      npc->setOther(other);
-      }
-    }
-  return ret;
+  if(npc!=nullptr && other!=nullptr)
+    if(auto* updated = dynamic_cast<NpcInstance*>(storyActorSlot("OTHER").get()); updated!=nullptr && updated!=&other->handle())
+      npc->setOther(findNpc(updated));
+  return phase.result;
   }
 
 void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
   if(fn==size_t(-1) || fn == 0)
     return;
-  auto functionSymbol = vm.find_symbol_by_index(uint32_t(fn.ptr));
-
-  if (functionSymbol == nullptr)
+  const auto* catalog=baseNativeCatalog();
+  const auto id=uint32_t(fn.ptr);
+  const auto* effect=NativeBaseCatalog::findIdentity(catalog->itemCallbacks,id);
+  if(effect==nullptr)
+    throw std::runtime_error("unknown item callback "+std::to_string(id));
+  ItemActorScope self(storyActorSlot("SELF"),npc);
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+  const auto restore=[&](const ItemDefinitionRuntime::RestoreChange& change) {
+    npc_changeattribute(actor,change.attribute,change.amount);
+    };
+  if(const auto it=itemDefinitions.restoreEffects.find(id); it!=itemDefinitions.restoreEffects.end()) {
+    restore(it->second.first);
+    if(it->second.second)
+      restore(*it->second.second);
     return;
-
-  ScopeVar self(*vm.global_self(), npc->handlePtr());
-  vm.call_function<void>(functionSymbol);
+    }
+  if(const auto it=itemDefinitions.fullRestoreEffects.find(id); it!=itemDefinitions.fullRestoreEffects.end()) {
+    actor->attribute[it->second.attribute]=actor->attribute[it->second.maximum];
+    return;
+    }
+  if(const auto it=itemDefinitions.permanentAttributeEffects.find(id); it!=itemDefinitions.permanentAttributeEffects.end()) {
+    const auto& permanent=it->second;
+    const auto amount=permanent.increase.amount;
+    const auto [_,other]=storyActors();
+    const auto raise=callStoryFunction("B_RAISEATTRIBUTE",npc,other,{npc,int32_t(permanent.increase.attribute),amount});
+    if(!raise.ok)
+      throw std::runtime_error("cannot raise item attribute: "+raise.error);
+    if(permanent.refill)
+      npc_changeattribute(actor,*permanent.refill,amount);
+    return;
+    }
+  if(applyArmorSetEffect(*npc,id) || applyFightSkillItemEffect(*npc,id) ||
+     applyEquipmentStatEffect(*npc,id) || applyStatefulEquipmentEffect(*npc,effect->name) ||
+     invokeStockItemProgram(id) || effect->name=="USE_RAKE")
+    return;
+  int32_t result=0;
+  bool failed=false;
+  if(invokeStockProgram(id,result,&failed) && !failed)
+    return;
+  throw std::runtime_error("missing or failed item effect "+effect->name);
   }
 
 int GameScript::invokeMana(Npc &npc, Npc* target, int mana) {
-  auto fn = vm.find_symbol_by_name("Spell_ProcessMana");
-  if(fn==nullptr)
-    return SpellCode::SPL_SENDSTOP;
-
-  ScopeVar self (*vm.global_self(),  npc.handlePtr());
-  ScopeVar other(*vm.global_other(), target != nullptr ? target->handlePtr() : nullptr);
-
-  return vm.call_function<int>(fn,mana);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  ItemActorScope other(storyActorSlot("OTHER"),target);
+  if(usesNativeShrinkSpell(npc.activeWeapon()))
+    return runShrinkMana(npc,mana,false);
+  if(const auto result=runStockSpellMana(npc,mana))
+    return *result;
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  setItemRuntimeInt("SPELL_PROCESSMANA.MANAINVESTED",mana);
+  setItemRuntimeInt("SPELL_PROCESSMANA.ACTIVESPELL",npc_getactivespell(actor));
+  return SPL_DONTINVEST;
   }
 
 int GameScript::invokeManaRelease(Npc &npc, Npc* target, int mana) {
-  auto fn = vm.find_symbol_by_name("Spell_ProcessMana_Release");
-  if(fn==nullptr)
-    return SpellCode::SPL_SENDSTOP;
-
-  ScopeVar self (*vm.global_self(),  npc.handlePtr());
-  ScopeVar other(*vm.global_other(), target != nullptr ? target->handlePtr() : nullptr);
-
-  return vm.call_function<int>(fn,mana);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  ItemActorScope other(storyActorSlot("OTHER"),target);
+  if(usesNativeShrinkSpell(npc.activeWeapon()))
+    return runShrinkMana(npc,mana,true);
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  setItemRuntimeInt("SPELL_PROCESSMANA_RELEASE.MANAINVESTED",mana);
+  const auto spell=npc_getactivespell(actor);
+  setItemRuntimeInt("SPELL_PROCESSMANA_RELEASE.ACTIVESPELL",spell);
+  for(const auto name : {"SPL_PYROKINESIS", "SPL_CHARGEFIREBALL", "SPL_CHARGEZAP", "SPL_WINDFIST"})
+    if(spell==itemRuntimeInt(name))
+      return SPL_SENDCAST;
+  return SPL_SENDSTOP;
   }
 
 void GameScript::invokeSpell(Npc &npc, Npc* target, Item &it) {
-  auto&      tag = spellFxInstanceNames->get_string(uint16_t(it.spellId()));
+  const auto& tag=spellFxInstanceNames.at(uint16_t(it.spellId()));
   string_frm name("Spell_Cast_",tag);
-  auto       fn = vm.find_symbol_by_name(name);
-  if(fn==nullptr)
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  ItemActorScope other(storyActorSlot("OTHER"),target);
+  const auto function=storygraph::nativeOperationName(name);
+  if(function=="SPELL_CAST_SHRINK" && usesNativeShrinkSpell(&it)) {
+    castShrink(npc,target);
     return;
-
-  // FIXME: actually set the spell level!
-  int32_t  splLevel = 0;
-  ScopeVar self (*vm.global_self(),  npc.handlePtr());
-  ScopeVar other(*vm.global_other(), target != nullptr ? target->handlePtr() : nullptr);
-  try {
-    if(fn->count()==1) {
-      // this is a leveled spell
-      vm.call_function<void>(fn, splLevel);
-      } else {
-      vm.call_function<void>(fn);
-      }
     }
-  catch(...) {
-    Log::d("unable to call spell-script: \"",name,"\'");
-    }
+  // The original transform spells apply their form through active spell info.
+  if(function=="SPELL_CAST_TRANSFORM" || runStockSpellCast(npc,function,0))
+    return;
+  throw std::runtime_error("unknown spell effect "+function);
   }
 
-int GameScript::invokeCond(Npc& npc, std::string_view func) {
-  auto fn = vm.find_symbol_by_name(func);
-  if(fn==nullptr) {
+int GameScript::invokeCond(Npc& npc, std::string_view name) {
+  const auto id = storyScriptFunctionId(name);
+  if(!id) {
     Gothic::inst().onPrint("MOBSI::conditionFunc is not invalid");
     return 1;
     }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  return vm.call_function<int>(fn);
+  ScopeVar self(storyActorSlot("SELF"),npc.handlePtr());
+  int32_t result = 0;
+  bool failed = false;
+  if(!invokeStockProgram(*id,result,&failed) || failed)
+    throw BaseStore::Error("missing native interaction condition " + std::string(name));
+  return result;
   }
 
 void GameScript::invokePickLock(Npc& npc, int bSuccess, int bBrokenOpen) {
-  auto fn   = vm.find_symbol_by_name("G_PickLock");
-  if(fn==nullptr)
-    return;
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(fn, bSuccess, bBrokenOpen);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockPickLock(bSuccess,bBrokenOpen);
   }
 
 void GameScript::invokeRefreshAtInsert(Npc& npc) {
   LoadProbe::Startup::Detail::Scope detail("refresh_at_insert");
-  if(B_RefreshAtInsert==nullptr)
-    return;
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  vm.call_function<void>(B_RefreshAtInsert);
+  ScopeVar self(storyActorSlot("SELF"),npc.handlePtr());
+  refreshNpcAtInsert(npc);
   }
 
 CollideMask GameScript::canNpcCollideWithSpell(Npc& npc, Npc* shooter, int32_t spellId) {
-  auto fn   = vm.find_symbol_by_name("C_CanNpcCollideWithSpell");
-  if(fn==nullptr)
+  if(shooter==nullptr)
     return COLL_DOEVERYTHING;
-
-  ScopeVar self (*vm.global_self(),  npc.handlePtr());
-  ScopeVar other(*vm.global_other(), shooter->handlePtr());
-  return CollideMask(vm.call_function<int>(fn, spellId));
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  ItemActorScope other(storyActorSlot("OTHER"),shooter);
+  return runStockSpellCollision(npc,*shooter,spellId);
   }
 
 int GameScript::playerHotKeyScreenMap(Npc& pl) {
-  auto fn   = vm.find_symbol_by_name("player_hotkey_screen_map");
-  if(fn==nullptr) {
-    return -1;
-    }
-
-  ScopeVar self(*vm.global_self(), pl.handlePtr());
-  int map = vm.call_function<int>(fn);
+  ItemActorScope self(storyActorSlot("SELF"),&pl);
+  const auto map=stockHeroMap();
   if(map>=0)
     pl.useItem(size_t(map));
   return map;
@@ -1240,15 +1201,10 @@ void GameScript::playerHotLamePotion(Npc& pl) {
   if(opt==0)
     return;
 
-  auto fn   = vm.find_symbol_by_name("player_hotkey_lame_potion");
-  if(fn==nullptr)
-    return;
-
   if(Settings::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,true))
     return;
-
-  ScopeVar self(*vm.global_self(), pl.handlePtr());
-  vm.call_function<void>(fn);
+  ItemActorScope self(storyActorSlot("SELF"),&pl);
+  runStockPotionHotkey(true);
   }
 
 void GameScript::playerHotLameHeal(Npc& pl) {
@@ -1256,67 +1212,16 @@ void GameScript::playerHotLameHeal(Npc& pl) {
   if(opt==0)
     return;
 
-  auto fn   = vm.find_symbol_by_name("player_hotkey_lame_heal");
-  if(fn==nullptr)
-    return;
-
   if(Settings::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,false))
     return;
-
-  ScopeVar self(*vm.global_self(), pl.handlePtr());
-  vm.call_function<void>(fn);
-  }
-
-bool GameScript::startHotkeyPotion(Npc& pl, bool mana) {
-  const char* kind = mana ? "mana" : "health";
-  auto note = [kind](std::string_view item) {
-    if(Bench::isActive())
-      Bench::note(string_frm("heal hotkey ",kind,": ",item).c_str());
-    };
-  if(pl.isDown()) {
-    note("none");
-    return true;
-    }
-  if(pl.hasState(BS_ITEMINTERACT) || pl.hasQueuedItemUse())
-    return true;
-
-  const char* healthItems[] = {"ITPO_HEALTH_01","ITPO_HEALTH_02","ITPO_HEALTH_03"};
-  const char* manaItems[] = {"ITPO_MANA_01","ITPO_MANA_02","ITPO_MANA_03"};
-  const char* healthAmounts[] = {"HP_ESSENZ","HP_EXTRAKT","HP_ELIXIER"};
-  const char* manaAmounts[] = {"MANA_ESSENZ","MANA_EXTRAKT","MANA_ELIXIER"};
-  Healing::Potion candidates[3] = {};
-  for(size_t i=0; i<3; ++i) {
-    auto* item = vm.find_symbol_by_name(mana ? manaItems[i] : healthItems[i]);
-    auto* amount = vm.find_symbol_by_name(mana ? manaAmounts[i] : healthAmounts[i]);
-    if(item==nullptr || amount==nullptr)
-      throw std::runtime_error("Missing potion hotkey item or amount symbol");
-    candidates[i] = {item->index(),amount->get_int(),pl.itemCount(item->index())>0};
-    }
-  const auto missing = pl.attribute(mana ? ATR_MANAMAX : ATR_HITPOINTSMAX) -
-                       pl.attribute(mana ? ATR_MANA : ATR_HITPOINTS);
-  // PLAYER_HOTKEY_LAME_* uses the strongest dose that fits the missing amount,
-  // otherwise the weakest available dose. Its no-item/full-gauge messages still run below.
-  const auto selected = Healing::choosePotion(candidates,missing);
-  if(selected==Healing::NoPotion) {
-    note("none");
-    return false;
-    }
-  note(vm.find_symbol_by_index(uint32_t(selected))->name());
-  if(pl.weaponState()!=WeaponState::NoWeapon && pl.itemUseInHandAnimation(*pl.getItem(selected)).empty()) {
-    if(Bench::isActive())
-      Bench::note(("item use "+std::string(Bench::who(&pl))+": "+
-                      vm.find_symbol_by_index(uint32_t(selected))->name()+" holster path: no compatible in-hand clip or deferred effect").c_str());
-    pl.stopAnim("");
-    pl.aiPush(AiQueue::aiRemoveWeapon());
-    }
-  pl.aiPush(AiQueue::aiUseItem(int32_t(selected)));
-  return true;
+  ItemActorScope self(storyActorSlot("SELF"),&pl);
+  runStockPotionHotkey(false);
   }
 
 std::string_view GameScript::spellCastAnim(Npc&, Item &it) {
-  if(spellFxAniLetters==nullptr)
+  if(spellFxAniLetters.empty())
     return "FIB";
-  return spellFxAniLetters->get_string(uint16_t(it.spellId()));
+  return spellFxAniLetters.at(uint16_t(it.spellId()));
   }
 
 bool GameScript::aiOutput(Npc &npc, std::string_view outputname, bool overlay) {
@@ -1415,26 +1320,17 @@ uint32_t GameScript::messageTime(std::string_view id) const {
   }
 
 void GameScript::printNothingToGet() {
-  auto id = vm.find_symbol_by_name("player_plunder_is_empty");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), owner.player()->handlePtr());
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),owner.player());
+  runStockHeroEmptyLoot();
   }
 
-void GameScript::useInteractive(const std::shared_ptr<NpcRecord>& hnpc, std::string_view func) {
-  auto fn = vm.find_symbol_by_name(func);
-  if(fn == nullptr)
+void GameScript::useInteractive(const std::shared_ptr<NpcRecord>& actor, std::string_view name) {
+  const auto id = storyScriptFunctionId(name);
+  if(!id)
     return;
-
-  ScopeVar self(*vm.global_self(),hnpc);
-  try {
-    vm.call_function<void>(fn);
-    }
-  catch (...) {
-    Log::i("unable to use interactive [",func,"]");
-    }
+  ScopeVar self(storyActorSlot("SELF"),actor);
+  if(!invokeNativeMobState(*id,storyProgramName(*id)))
+    Log::e("Unable to run native interaction ",name);
   }
 
 Attitude GameScript::guildAttitude(const Npc &p0, const Npc &p1) const {
@@ -1490,20 +1386,20 @@ void GameScript::onWldItemRemoved(const Item& itm) {
   onWldInstanceRemoved(&static_cast<const daedalus::IItem&>(itm.handle()));
   }
 
-void GameScript::onWldInstanceRemoved(const daedalus::DaedalusInstance* obj) {
-  vm.find_symbol_by_instance(*obj)->set_instance(nullptr);
+void GameScript::onWldInstanceRemoved(const RecordInstance* object) {
+  if(auto* alias = ownedInstance(object->symbol_index()); alias!=nullptr && alias->get()==object)
+    alias->reset();
   }
 
-void GameScript::makeCurrent(Item* w) {
-  if(w==nullptr)
+void GameScript::makeCurrent(Item* item) {
+  if(item==nullptr)
     return;
-  auto* s = vm.find_symbol_by_index(uint32_t(w->clsId()));
-  if(s != nullptr)
-    s->set_instance(std::static_pointer_cast<daedalus::IItem>(w->handlePtr()));
+  if(auto* alias = ownedInstance(uint32_t(item->clsId())))
+    *alias = std::static_pointer_cast<ItemInstance>(item->handlePtr());
   }
 
 bool GameScript::searchScheme(std::string_view sc, std::string_view listName) {
-  std::string_view list = findSymbol(listName)->get_string();
+  std::string_view list = stringSymbol(listName);
   for(size_t i=0; i<=list.size(); ++i) {
     if(i==list.size() || list[i]==',') {
       if(sc==list.substr(0,i))
@@ -1518,7 +1414,7 @@ bool GameScript::searchScheme(std::string_view sc, std::string_view listName) {
   }
 
 bool GameScript::hasSymbolName(std::string_view name) {
-  return vm.find_symbol_by_name(name)!=nullptr;
+  return storySymbolIndex(name).has_value();
   }
 
 uint64_t GameScript::tickCount() const {
@@ -1540,14 +1436,6 @@ std::string GameScript::randomState(const Npc* actor) const {
     out << it->second; else
     out << randGen;
   return out.str();
-  }
-
-Npc* GameScript::findNpc(daedalus::DaedalusSymbol* s) {
-  if(s->is_instance_of<daedalus::INpc>()) {
-    auto cNpc = reinterpret_cast<daedalus::INpc*>(s->get_instance().get());
-    return findNpc(cNpc);
-    }
-  return nullptr;
   }
 
 Npc* GameScript::findNpc(daedalus::INpc *handle) {
@@ -1582,12 +1470,11 @@ Item *GameScript::findItem(daedalus::IItem* handle) {
   return reinterpret_cast<Item*>(itData.user_ptr);
   }
 
-Item *GameScript::findItemById(size_t id) {
-  auto* handle = vm.find_symbol_by_index(uint32_t(id));
-  if(handle==nullptr||!handle->is_instance_of<daedalus::IItem>())
+Item* GameScript::findItemById(size_t id) {
+  if(id>UINT32_MAX)
     return nullptr;
-  auto hitm = reinterpret_cast<daedalus::IItem*>(handle->get_instance().get());
-  return findItem(hitm);
+  const auto* alias = ownedInstance(uint32_t(id));
+  return alias==nullptr ? nullptr : findItem(dynamic_cast<ItemInstance*>(alias->get()));
   }
 
 Item* GameScript::findItemById(const std::shared_ptr<daedalus::DaedalusInstance>& handle) {
@@ -1601,40 +1488,33 @@ Item* GameScript::findItemById(const std::shared_ptr<daedalus::DaedalusInstance>
   }
 
 Npc* GameScript::findNpcById(size_t id) {
-  auto* handle = vm.find_symbol_by_index(uint32_t(id));
-  if(handle==nullptr || !handle->is_instance_of<daedalus::INpc>())
+  if(id>UINT32_MAX)
     return nullptr;
-
-  auto hnpc = reinterpret_cast<daedalus::INpc*>(handle->get_instance().get());
-  if(hnpc==nullptr) {
-    auto obj = world().findNpcByInstance(id);
-    handle->set_instance(obj ? std::static_pointer_cast<daedalus::INpc>(obj->handlePtr()) : nullptr);
-    hnpc = reinterpret_cast<daedalus::INpc*>(handle->get_instance().get());
-    }
-  return findNpc(hnpc);
+  auto* alias = ownedInstance(uint32_t(id));
+  if(alias==nullptr)
+    return nullptr;
+  if(auto* actor = dynamic_cast<NpcInstance*>(alias->get()); actor!=nullptr && actor->user_ptr!=nullptr)
+    return findNpc(actor);
+  if(!npcTemplateId(uint32_t(id)))
+    return nullptr;
+  auto* actor = world().findNpcByInstance(id);
+  *alias = actor!=nullptr ? std::static_pointer_cast<NpcInstance>(actor->handlePtr()) : nullptr;
+  return actor;
   }
 
-daedalus::IInfo* GameScript::findInfo(size_t id) {
-  auto* sym = vm.find_symbol_by_index(uint32_t(id));
-  if(sym==nullptr||!sym->is_instance_of<daedalus::IInfo>())
+DialogInstance* GameScript::findInfo(size_t id) {
+  if(id>UINT32_MAX)
     return nullptr;
-  auto* h = sym->get_instance().get();
-  if(h==nullptr)
-    Log::e("invalid c_info object: \"",sym->name(),"\"");
-  return reinterpret_cast<daedalus::IInfo*>(h);
+  const auto* slot = ownedInstance(uint32_t(id));
+  return slot!=nullptr ? dynamic_cast<DialogInstance*>(slot->get()) : nullptr;
   }
 
 void GameScript::removeItem(Item &it) {
   world().removeItem(it);
   }
 
-void GameScript::setInstanceNPC(std::string_view name, Npc &npc) {
-  auto sym = vm.find_symbol_by_name(name);
-  if(sym == nullptr) {
-    Tempest::Log::e("Cannot set NPC instance ", name, ": Symbol not found.");
-    return;
-    }
-  sym->set_instance(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+void GameScript::setInstanceNPC(std::string_view name, Npc& npc) {
+  storyActorSlot(name) = std::static_pointer_cast<NpcInstance>(npc.handlePtr());
   }
 
 void GameScript::setInstanceItem(Npc &holder, size_t itemId) {
@@ -1652,24 +1532,16 @@ AiOuputPipe *GameScript::openDlgOuput(Npc &player, Npc &npc) {
   }
 
 ScriptFn GameScript::playerPercAssessMagic() {
-  auto id = vm.find_symbol_by_name("PLAYER_PERC_ASSESSMAGIC");
-  if(id==nullptr)
-    return ScriptFn();
-
-  if(id->count()>0)
-    return ScriptFn(uint32_t(id->get_int()));
-  return ScriptFn();
+  const auto id = globalIntSymbol("PLAYER_PERC_ASSESSMAGIC");
+  return id ? ScriptFn(uint32_t(*id)) : ScriptFn();
   }
 
 int GameScript::npcDamDiveTime() {
-  auto id = vm.find_symbol_by_name("NPC_DAM_DIVE_TIME");
-  if(id==nullptr)
-    return 0;
-  return id->get_int();
+  return globalIntSymbol("NPC_DAM_DIVE_TIME").value_or(0);
   }
 
 uint32_t GameScript::lockPickId() const {
-  return ItKE_lockpick!=nullptr ? ItKE_lockpick->index() : 0;
+  return lockPickInstance;
   }
 
 std::string_view GameScript::menuMain() const {

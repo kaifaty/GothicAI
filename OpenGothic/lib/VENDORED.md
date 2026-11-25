@@ -85,7 +85,8 @@ Keep these when updating a library from upstream.
   material hint bits (`shader/blood/blood_decal.frag`).
 - `rapidjson/include/rapidjson/document.h`: `GenericStringRef::operator=` deleted (GCC 15 diagnoses the
   old one), and `memcpy` into `GenericValue`/`Member` storage goes through `void*`, as upstream does now
-  (clang's `-Wnontrivial-memcall`; the engine builds with `-Werror`).
+  (clang's `-Wnontrivial-memcall`; the engine builds with `-Werror`). The symmetric comparison operators
+  call the member explicitly to prevent recursive overload resolution under GCC 13 in C++20.
 - `common/daedalus/` (our VM, a copy of ZenKit's; not in `lib/`) `DaedalusVm::unsafe_call_external`
   (`vm.h`, `vm.cpp`): calls an engine function the way the `BE` instruction does. The story graph (`ai_bridge/storygraph`) computes the AI
   director's conditions with the engine's own functions through it.
@@ -118,7 +119,9 @@ Keep these when updating a library from upstream.
   [the accepted physics summary](../../reports/physics/2026-10-14-jolt-stage1/validation-notes.md).
 - `common/daedalus/` `DaedalusVm::unsafe_call_bl` (`vm.h`, `vm.cpp`): calls a script function the way
   the `BL` instruction does, so an override (`override_function`) runs instead of its code. The story
-  graph's Interpreter calls script functions from a dialog's program through it.
+  graph's Interpreter checks `has_active_override` before resolving a nested graph program and uses
+  `unsafe_call_bl` for overrides and VM fallback. A typed or naked override can supply a predicate.
+  Both checks use the same lookup and a false predicate leaves the script available to the caller.
 - `common/daedalus/` `DaedalusScript::add_int_symbol` (`script.h`, `script.cpp`): adds a global integer
   variable that is not in the compiled scripts; `from_program` keeps room for `MAX_ADDED_SYMBOLS` of them, so no
   symbol moves. The AI director's story state (`DIR_*`, graph_patch `vars`) lives in such variables and is

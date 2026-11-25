@@ -1,33 +1,33 @@
 #include "musicdefinitions.h"
-#include "definitiontypes.h"
 
-#include <Tempest/Log>
+#include "basestore.h"
+#include "contentcensus.h"
+#include "resources.h"
 
-#include "gothic.h"
-
-using namespace Tempest;
+#include <algorithm>
+#include <cctype>
 
 MusicDefinitions::MusicDefinitions() {
-  vm = Gothic::inst().createPhoenixVm("Music.dat");
-
-  vm->enumerate_instances_by_class_name("C_MusicTheme", [this](daedalus::DaedalusSymbol& s) {
-    themes.emplace_back(s.index(),vm->init_instance<VmDef::MusicTheme>(&s)->copy());
-    });
-  }
-
-MusicDefinitions::~MusicDefinitions() {
+  constexpr auto program = MusicDefinitionData::stockProgram;
+  const auto base = Resources::baseDir();
+  const auto section = MusicDefinitionData::section(base,program);
+  try {
+    themes = MusicDefinitionData::read(base,program);
+    if(auto* census = Resources::contentCensus())
+      census->replaced("Music.dat","base/"+section.lexically_relative(base).generic_string());
+    }
+  catch(const std::runtime_error& error) {
+    throw BaseStore::Error(section.string()+": "+error.what());
+    }
   }
 
 const Def::MusicTheme* MusicDefinitions::operator [](std::string_view name) const {
-  if(!vm)
-    return nullptr;
-
-  auto id = vm->find_symbol_by_name(name);
-  if(id==nullptr)
-    return nullptr;
-  for(auto& i:themes) {
-    if(i.first == id->index())
-      return &i.second;
-    }
+  std::string upper(name);
+  std::transform(upper.begin(),upper.end(),upper.begin(),[](unsigned char c) {
+    return char(std::toupper(c));
+    });
+  for(const auto& theme : themes)
+    if(theme.name==upper)
+      return &theme.value;
   return nullptr;
   }

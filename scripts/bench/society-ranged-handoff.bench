@@ -1,0 +1,41 @@
+# @headless
+# Two native archers hand off with an arrow in flight in each direction.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+
+# The bow lane lies west of the hero, off the road and clear of the hero's body.
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 150
+cam game
+wait 500
+put BDT_1011_BANDIT_M 1200 -32
+put BAU_904_BAUER 1200 32
+stats npc BDT_1011_BANDIT_M str 100 dex 80 bow 80 talent auto hpmax 2400 hp 2400
+stats npc BAU_904_BAUER str 100 dex 80 bow 80 talent auto hpmax 2400 hp 2400
+npcequip BDT_1011_BANDIT_M ITRW_BOW_L_01
+npcequip BAU_904_BAUER ITRW_BOW_L_01
+arrows BDT_1011_BANDIT_M 40
+arrows BAU_904_BAUER 40
+npcaim on arrow
+npcaim sigma 0
+
+npcfight-record begin exchange BDT_1011_BANDIT_M BAU_904_BAUER
+npcfight-handoff arm BDT_1011_BANDIT_M BAU_904_BAUER
+fight BDT_1011_BANDIT_M BAU_904_BAUER
+fight BAU_904_BAUER BDT_1011_BANDIT_M
+npcfight-handoff wait native_hit
+# At this seed the second bandit arrow is in flight when the hero leaves.
+wait 1400
+mark leave_combat
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 22546 1200 -10265
+npcfight-handoff wait far_release
+mark return_combat
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 150
+cam game
+npcfight-handoff wait returned_hit
+npcfight-handoff end
+npcfight-record end
+mark combat_end

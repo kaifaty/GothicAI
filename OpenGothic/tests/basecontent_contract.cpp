@@ -2,6 +2,17 @@
 #include "asset/fromzenkit.h"
 #include "audiodata.h"
 #include "baseimport.h"
+#include "game/definitions/cameradefinitiondata.h"
+#include "game/definitions/cameradefinitions.h"
+#include "game/definitions/effectdefinitiondata.h"
+#include "game/definitions/particlesdefinitions.h"
+#include "game/definitions/visualfxdefinitions.h"
+#include "game/definitions/fightdefinitiondata.h"
+#include "game/definitions/nativebasecatalog.h"
+#include "game/definitions/musicdefinitiondata.h"
+#include "game/definitions/musicdefinitions.h"
+#include "game/definitions/sfxdefinitiondata.h"
+#include "game/definitions/sounddefinitions.h"
 #include "basemesh.h"
 #include "commandline.h"
 #include "contentcensus.h"
@@ -9,6 +20,8 @@
 #include "game/definitions/definitiontypes.h"
 #include "game/definitions/baseprogram.h"
 #include "game/definitions/basescripts.h"
+#include "game/definitions/stockstoryprograms.h"
+#include "game/definitions/symbolcatalog.h"
 #include "gamebasecontent.h"
 #include "gothic.h"
 #include "gltfmesh.h"
@@ -72,7 +85,10 @@
 #include <fstream>
 #include <exception>
 #include <functional>
+#include <future>
+#include <initializer_list>
 #include <map>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -681,7 +697,6 @@ struct BaseContentContract {
     Animation::AnimData baseSequence;
     {
     Resources resources;
-    Resources::loadBase();
     Gothic gothic;
     require(Resources::loadAnimationData("HUMANS-T_JUMPB.MAN",baseline),"base jump record must load");
     require(Resources::loadModelScriptData("HUMANS.MSB",baseScript),"base human script must load");
@@ -772,7 +787,6 @@ struct BaseContentContract {
     try {
       {
       Resources resources;
-      Resources::loadBase();
       Gothic gothic;
       asset::ModelScript merged;
       require(Resources::loadModelScriptData("HUMANS.MSB",merged),"content human script must load");
@@ -824,7 +838,7 @@ struct BaseContentContract {
       writeOverlay(scriptFile);
       logs.clear();
       {
-      Resources resources; Resources::loadBase(); Gothic gothic;
+      Resources resources; Gothic gothic;
       asset::ModelScript loaded;
       require(Resources::loadModelScriptData("HUMANS.MSB",loaded),"cross-kind collision must keep base script");
       require(ModelData::compare(baseScript,loaded).empty(),"cross-kind collision must reject the whole overlay before merging");
@@ -847,7 +861,7 @@ struct BaseContentContract {
       writeJson(scriptFile,badOverlay);
       logs.clear();
       {
-      Resources resources; Resources::loadBase();
+      Resources resources; Gothic gothic;
       asset::ModelScript loaded;
       require(Resources::loadModelScriptData("HUMANS.MSB",loaded),"broken overlay must keep base script");
       require(ModelData::compare(baseScript,loaded).empty(),"broken overlay must not partly mutate base script");
@@ -857,7 +871,7 @@ struct BaseContentContract {
       gothicglb::writeFile(indexFile,invalid.data(),invalid.size());
       logs.clear();
       {
-      Resources resources; Resources::loadBase(); Gothic gothic;
+      Resources resources; Gothic gothic;
       const auto* animation=Resources::loadAnimation("HUMANS.MSB");
       require(animation && !animation->sequence("T_TESTDASHB"),"broken content index must leave the base usable");
       equal(animation->sequence("T_JUMPB")->data->numFrames,14u,"broken index base jump frames");
@@ -869,7 +883,7 @@ struct BaseContentContract {
 
     setenv("OPENGOTHIC_CONTENT","",1);
     {
-    Resources resources; Resources::loadBase(); Gothic gothic;
+    Resources resources; Gothic gothic;
     asset::ModelAnimation loaded;
     require(Resources::loadAnimationData("HUMANS-T_JUMPB.MAN",loaded),"base jump must load after disabling content");
     require(ModelData::compare(baseline,loaded).empty(),"no-content jump record must be bit-identical to base");
@@ -1180,7 +1194,7 @@ struct BaseContentContract {
       }
     }
 
-  static size_t programs(const fs::path& base, const fs::path& censusPath) {
+  static void programs(const fs::path& base, const fs::path& censusPath) {
     const auto index=ProgramData::readIndex(base/"programs");
     const auto gothic=fs::path(CommandLine::inst().rootPath());
     require(!index.programs.empty(),"program corpus must contain native records");
@@ -1258,6 +1272,29 @@ struct BaseContentContract {
       equal(raw.size()-end,source.trailingBytes,field+" trailing bytes");
       auto native=daedalus::DaedalusScript::from_program(record);
       programSymbols(original,record,native,field);
+      if(digest==StockStoryPrograms::stockProgram) {
+        using Kind = ScriptSymbolCatalog::Kind;
+        const auto catalog = ScriptSymbolCatalog::load(base,digest);
+        require(catalog!=nullptr,"verified Gothic program needs the non-executable symbol catalog");
+        for(const auto& symbol : native.symbols()) {
+          const auto* entry = catalog->at(symbol.index());
+          const auto* current = native.find_symbol_by_name(symbol.name());
+          const auto expected = current!=nullptr ? std::optional(current->index()) : std::nullopt;
+          require(entry!=nullptr && entry->name==symbol.name() && catalog->find(symbol.name())==expected,
+                  "symbol catalog identity differs from the source at "+std::to_string(symbol.index()));
+          }
+        require(catalog->at(native.symbols().size())==nullptr,"symbol catalog must omit VM-only temporary entries");
+        constexpr std::pair<std::string_view,Kind> kinds[] = {
+          {"vlk_449_lares",Kind::Npc},{"itmi_gold",Kind::Item},{"dia_addon_lares_patch",Kind::Info},
+          {"newworld_zen",Kind::Constant},{"currentlevel",Kind::Variable},{"b_giveinvitems",Kind::Function},
+          {"c_item",Kind::Other},
+          };
+        for(const auto& [name,kind] : kinds) {
+          const auto id = catalog->find(name);
+          require(id && catalog->at(*id)->kind==kind,"stock catalog symbol kind differs for "+std::string(name));
+          }
+        require(!catalog->find("DIR_UNALLOCATED_TEST"),"runtime director symbols do not belong to the stock catalog");
+        }
       const auto count=original.symbols().size();
       const auto* first=count==0 ? nullptr : native.find_symbol_by_index(0);
       daedalus::DaedalusVm sourceVm(daedalus::DaedalusScript::from_program(asset::fromZenKit(original.export_program())));
@@ -1287,18 +1324,42 @@ struct BaseContentContract {
     for(const auto& row:index.selections) {
       if(row.language!=-1 || !row.source) continue;
       const auto& source=index.sources.at(*row.source);
-      const auto host=row.step.starts_with("host_") ? (gothic/source.path).u16string() : std::u16string{};
-      const auto script=loadBaseProgram(row.request,row.language,row.step,host);
-      equal(script.symbols().size(),ProgramData::readProgram(index.path(source)).symbols.size(),row.request+" selected symbol count");
+      const auto identity=selectBaseProgram(index,row.request,row.language);
+      require(&identity.source==&source && identity.branch==row.step,row.request+": program identity differs from imported selection");
+      std::string digest;
+      (void)ProgramData::readProgram(index.path(source),&digest);
+      require(digest==source.recordSha256,row.request+": selected program record identity differs");
       ++selected;
       }
-    equal(selected,8u,"all eight default scripts must select native records");
-    require(Resources::writeCensus(),"cannot write native program census");
+    equal(selected,8u,"all eight default scripts must select offline records");
+    require(Resources::writeCensus(),"cannot write offline program census");
     const auto after=json(censusPath);
-    require(before["files"]==after["files"],"native program loading must add zero original source opens");
-    equal(after["runtime_programs"]["selections"].Size(),selected,"actual native program census selections");
-    std::printf("Programs: %zu sources, %zu symbols and %zu bytecode bytes match independent DAT reads; all eight native selections add zero DAT opens\n",parsed,symbols,code);
-    return selected;
+    require(before["files"]==after["files"],"offline record checks must add zero original source opens");
+    require(after["runtime_programs"]["selections"].Empty(),"imported program records must stay outside runtime");
+    std::printf("Offline programs: %zu sources, %zu symbols and %zu bytecode bytes match independent DAT reads; all eight default records confirmed\n",parsed,symbols,code);
+    }
+
+  static void programIdentityPrecedence() {
+    // This index has no program payloads, even for its selected sources.
+    ProgramData::Index index;
+    index.sources.resize(4);
+    index.vfs.emplace("MENU.DAT",0);
+    index.host.emplace("_work/Data/Scripts/_compiled/folder/MENU.DAT",1);
+    index.host.emplace("_work/Data/Scripts_RU/_compiled/folder/MENU.DAT",2);
+    index.host.emplace("_work/Data/Scripts_RU/_compiled/MENU.DAT",3);
+    const auto check = [&](std::string_view request, size_t source, std::string_view branch) {
+      const auto selected=selectBaseProgram(index,request,3);
+      require(&selected.source==&index.sources[source] && selected.branch==branch,
+              "program identity must select "+std::string(branch));
+      };
+    check("MENU.DAT",0,"vfs_find_request");
+    check("folder/MENU.DAT",0,"vfs_find_basename");
+    index.vfs.clear();
+    check("folder/MENU.DAT",1,"host_ordinary");
+    index.host.erase("_work/Data/Scripts/_compiled/folder/MENU.DAT");
+    check("folder/MENU.DAT",2,"host_localized_full");
+    index.host.erase("_work/Data/Scripts_RU/_compiled/folder/MENU.DAT");
+    check("folder/MENU.DAT",3,"host_localized_basename");
     }
 
   // Each old addon field is checked explicitly against the separately bound engine record.
@@ -1502,7 +1563,7 @@ struct BaseContentContract {
       modelField(a.move[i],b.move[i],field+".move["+std::to_string(i)+"]");
     }
 
-  static void definitionSourceClasses(daedalus::DaedalusScript& sc) {
+  static void definitionSourceClasses(daedalus::DaedalusScript& sc, bool useNativeBindings=false) {
     auto registerIfExists = [&](std::string_view sym, auto d) {
       if(sc.find_symbol_by_name(sym) != nullptr) {
         d(sc);
@@ -1526,20 +1587,20 @@ struct BaseContentContract {
     registerOpaque  ("C_SVM"); // structure is very customizable, so better to use type-less mapping
     registerIfExists("C_MENU",         daedalus::IMenu::register_);
     registerIfExists("C_MENU_ITEM",    daedalus::IMenuItem::register_);
-    registerIfExists("CCAMSYS",        daedalus::ICamera::register_);
+    registerIfExists("CCAMSYS",        useNativeBindings ? VmDef::Camera::register_ : daedalus::ICamera::register_);
     registerIfExists("C_MUSICSYS_CFG", daedalus::IMusicSystem::register_);
-    registerIfExists("C_MUSICTHEME",   daedalus::IMusicTheme::register_);
+    registerIfExists("C_MUSICTHEME",   useNativeBindings ? VmDef::MusicTheme::register_ : daedalus::IMusicTheme::register_);
     registerIfExists("C_MUSICJINGLE",  daedalus::IMusicJingle::register_);
-    registerIfExists("C_PARTICLEFX",   daedalus::IParticleEffect::register_);
-    registerIfExists("CFX_BASE",       daedalus::IEffectBase::register_);
-    registerIfExists("C_PARTICLEFXEMITKEY", daedalus::IParticleEffectEmitKey::register_);
+    registerIfExists("C_PARTICLEFX",   useNativeBindings ? VmDef::ParticleEffect::register_ : daedalus::IParticleEffect::register_);
+    registerIfExists("CFX_BASE",       useNativeBindings ? VmDef::EffectBase::register_ : daedalus::IEffectBase::register_);
+    registerIfExists("C_PARTICLEFXEMITKEY", useNativeBindings ? VmDef::ParticleEffectEmitKey::register_ : daedalus::IParticleEffectEmitKey::register_);
     registerOpaque  ("C_FIGHTAI"); // many mods get it wrong/corrupted. Opaque binding is one is a way to get around it
-    registerIfExists("C_SFX",          daedalus::ISoundEffect::register_);
+    registerIfExists("C_SFX",          useNativeBindings ? VmDef::SoundEffect::register_ : daedalus::ISoundEffect::register_);
     registerIfExists("C_SNDSYS_CFG",   daedalus::ISoundSystem::register_);
     }
 
   static std::unique_ptr<daedalus::DaedalusVm> definitionSourceVm(const ProgramData::Index& index,
-                                                              std::string_view request, Gothic& gothic) {
+                                                             std::string_view request) {
     const auto row=std::find_if(index.selections.begin(),index.selections.end(),[&](const auto& selection) {
       return selection.request==request && selection.language==-1;
       });
@@ -1572,9 +1633,7 @@ struct BaseContentContract {
     auto script=daedalus::DaedalusScript::from_program(asset::fromZenKit(original.export_program()));
     // Replay the original registrations, including opaque Fight, before constructing the oracle VM.
     definitionSourceClasses(script);
-    auto vm=std::make_unique<daedalus::DaedalusVm>(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
-    gothic.setupVmCommonApi(*vm);
-    return vm;
+    return std::make_unique<daedalus::DaedalusVm>(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
     }
 
   static std::vector<std::pair<uint32_t,std::string>> definitionNames(daedalus::DaedalusVm& vm, std::string_view className) {
@@ -1652,7 +1711,7 @@ struct BaseContentContract {
       }
     }
 
-  static void definitionFights(daedalus::DaedalusVm& source, daedalus::DaedalusVm& native) {
+  static void definitionFights(daedalus::DaedalusVm& source, daedalus::DaedalusVm& native, const std::vector<FightTactic>& imported) {
     const auto names=definitionNames(source,"C_FIGHTAI");
     modelField(names,definitionNames(native,"C_FIGHTAI"),"Fight ordered instances");
     const auto* a=source.find_symbol_by_name("MAX_FIGHTAI");
@@ -1660,11 +1719,7 @@ struct BaseContentContract {
     require((a==nullptr)==(b==nullptr),"Fight MAX_FIGHTAI presence differs");
     const int count=a!=nullptr ? a->get_int() : 0;
     equal(count,b!=nullptr ? b->get_int() : 0,"Fight MAX_FIGHTAI");
-    const std::array<std::string_view,17> prefixes={
-      "FA_ENEMY_PREHIT_","FA_ENEMY_STORMPREHIT_","FA_MY_W_COMBO_","FA_MY_W_RUNTO_","FA_MY_W_STRAFE_",
-      "FA_MY_W_FOCUS_","FA_MY_W_NOFOCUS_","FA_MY_G_COMBO_","FA_MY_G_RUNTO_","FA_MY_G_STRAFE_",
-      "FA_MY_G_FOCUS_","FA_MY_FK_FOCUS_","FA_MY_G_FK_NOFOCUS_","FA_MY_FK_FOCUS_FAR_",
-      "FA_MY_FK_NOFOCUS_FAR_","FA_MY_FK_FOCUS_MAG_","FA_MY_FK_NOFOCUS_MAG_"};
+    equal(imported.size(),size_t(std::max(0,count)),"Fight imported tactic count");
     std::set<uint32_t> checked;
     size_t groups=0;
     const auto compare=[&](daedalus::DaedalusSymbol* a,daedalus::DaedalusSymbol* b,const std::string& name) {
@@ -1678,13 +1733,18 @@ struct BaseContentContract {
       require(old.second==own.second,name+": Fight initializer outcome differs");
       definitionFields(old.first,own.first,name);
       ++groups;
+      return old.first;
       };
     // Runtime's row zero is left value-initialized; rows 1..MAX_FIGHTAI-1 use these exact 17 groups.
     definitionFields(daedalus::IFightAi{},Def::FightAi{},"Fight row zero");
+    if(!imported.empty())
+      for(const auto& [prefix, field] : FightDefinitions::slots)
+        definitionFields(daedalus::IFightAi{},imported.front().*field,std::string(prefix)+"0 imported");
     for(int id=1;id<std::max(0,count);++id)
-      for(const auto prefix:prefixes) {
+      for(const auto& [prefix, field] : FightDefinitions::slots) {
         const auto name=std::string(prefix)+std::to_string(id);
-        compare(source.find_symbol_by_name(name),native.find_symbol_by_name(name),name);
+        const auto old=compare(source.find_symbol_by_name(name),native.find_symbol_by_name(name),name);
+        definitionFields(old,imported[size_t(id)].*field,name+" imported");
         }
     // Also cover declared records outside the runtime's groups, without changing production laziness.
     for(const auto& [index,name]:names)
@@ -1694,6 +1754,425 @@ struct BaseContentContract {
       require(checked.count(index)!=0,name+": Fight declaration was not checked");
     std::printf("Definitions C_FIGHTAI: %zu ordered instances and %zu runtime/extra groups; opaque six-move values match\n",
                 names.size(),groups);
+    }
+
+  static void linkBaseParts(const fs::path& base, const fs::path& fixture,
+                            std::initializer_list<std::string_view> excluded) {
+    // Preserve every part named by the source manifest outside the payload owned by the fixture.
+    for(const auto& entry : fs::directory_iterator(base)) {
+      const auto name = entry.path().filename();
+      if(std::find(excluded.begin(),excluded.end(),name.string())==excluded.end())
+        fs::create_symlink(entry.path(),fixture/name);
+      }
+    }
+
+  static fs::path linkBaseForDefinitionTest(const fs::path& base, const fs::path& fixture, const fs::path& section) {
+    // The manifest must validate before a fixture changes its own link to the selected section.
+    const auto definitionDir = section.parent_path();
+    const auto target = fixture/"definitions"/definitionDir.filename();
+    fs::create_directories(target);
+    linkBaseParts(base,fixture,{"definitions"});
+    for(const auto& entry : fs::directory_iterator(base/"definitions"))
+      if(entry.path().filename()!=definitionDir.filename())
+        fs::create_symlink(entry.path(),fixture/"definitions"/entry.path().filename());
+    for(const auto& entry : fs::directory_iterator(definitionDir))
+      fs::create_symlink(entry.path(),target/entry.path().filename());
+    return target/section.filename();
+    }
+
+  template<class Definitions>
+  static void requireUnavailableCatalog(const fs::path& section, const fs::path& censusPath) {
+    bool rejected = false;
+    try {
+      const Definitions unavailable;
+      }
+    catch(const BaseStore::Error& error) {
+      rejected = std::string_view(error.what()).find(section.string())!=std::string_view::npos;
+      }
+    require(rejected,"an unavailable prepared catalog must report its path");
+    require(Resources::writeCensus(),"cannot write unavailable catalog census");
+    const auto census = json(censusPath);
+    require(census["files"].Empty() && census["runtime_programs"]["selections"].Empty(),
+            "an unavailable prepared catalog must not open DAT or execute its program");
+    }
+
+  using CameraOracle = std::map<std::string,std::shared_ptr<daedalus::ICamera>>;
+
+  static void cameraRuntimePresets(const CameraDefinitions& cameras, const CameraOracle& original) {
+    using Getter = const Def::Camera& (CameraDefinitions::*)() const;
+    const std::pair<const char*,Getter> getters[] = {
+      {"CAMMODDIALOG",&CameraDefinitions::dialogCam},
+      {"CAMMODINVENTORY",&CameraDefinitions::inventoryCam},
+      {"CAMMODNORMAL",&CameraDefinitions::stdCam},
+      {"CAMMODLOOKBACK",&CameraDefinitions::backCam},
+      {"CAMMODFIRSTPERSON",&CameraDefinitions::fpCam},
+      {"CAMMODDEATH",&CameraDefinitions::deathCam},
+      {"CAMMODMELEE",&CameraDefinitions::meleeCam},
+      {"CAMMODRANGED",&CameraDefinitions::rangeCam},
+      {"CAMMODMAGIC",&CameraDefinitions::mageCam},
+      {"CAMMODSWIM",&CameraDefinitions::swimCam},
+      {"CAMMODDIVE",&CameraDefinitions::diveCam},
+      {"CAMMODFALL",&CameraDefinitions::fallCam},
+      };
+    for(const auto& [name,get] : getters)
+      definitionFields(*original.at(name),(cameras.*get)(),name);
+    definitionFields(*original.at("CAMMODMOBBED_FRONT"),cameras.mobsiCam("BED","FRONT"),"MOBSI position");
+    definitionFields(*original.at("CAMMODMOBBED"),cameras.mobsiCam("BED","MISSING"),"MOBSI tag fallback");
+    definitionFields(*original.at("CAMMODMOBBENCH"),cameras.mobsiCam("BENCH",""),"MOBSI tag without position");
+    definitionFields(*original.at("CAMMODMOBDEFAULT"),cameras.mobsiCam("MISSING","MISSING"),"MOBSI default fallback");
+    }
+
+  static void cameraRecords(const fs::path& base, const fs::path& temporary, const fs::path& censusPath) {
+    const auto index = ProgramData::readIndex(base/"programs");
+    const auto* selected = ProgramData::cameraProgram(index);
+    require(selected!=nullptr,"Camera.dat source selection missing");
+    const auto& sha = selected->recordSha256;
+    if(sha!=CameraDefinitionData::stockProgram)
+      return;
+
+    const auto section = CameraDefinitionData::section(base,sha);
+    const auto imported = CameraDefinitionData::read(base,sha);
+    CameraOracle original;
+    {
+    Resources resources;
+    Resources::loadBase();
+    auto source = definitionSourceVm(index,"Camera.dat");
+    source->observe_externals([](const auto& symbol) {
+      throw std::runtime_error("stock Camera.dat unexpectedly calls "+symbol.name());
+      });
+    const auto names = definitionNames(*source,"CCAMSYS");
+    equal(names.size(),33u,"stock camera count");
+    equal(imported.size(),names.size(),"imported camera count");
+    for(size_t i=0; i<names.size(); ++i) {
+      const auto& [id,name] = names[i];
+      const auto [instance,error] = definitionInstance<daedalus::ICamera>(*source,source->find_symbol_by_index(id));
+      require(instance!=nullptr,name+": original camera initialization failed: "+error);
+      require(imported[i].first==name,name+": imported camera order differs");
+      definitionFields(*instance,imported[i].second,name+" imported");
+      original.emplace(name,instance);
+      }
+
+    require(Resources::writeCensus(),"cannot write camera oracle census");
+    const auto before = json(censusPath);
+    const CameraDefinitions cameras;
+    cameraRuntimePresets(cameras,original);
+    require(Resources::writeCensus(),"cannot write camera records census");
+    const auto after = json(censusPath);
+    require(after["files"]==before["files"] && after["runtime_programs"]["selections"].Empty(),
+            "camera records must open neither original Camera.dat nor a VM program");
+    const auto recordPath = "base/"+section.lexically_relative(base).generic_string();
+    const auto& replacements = after["replacements"];
+    require(std::any_of(replacements.Begin(),replacements.End(),[&](const auto& row) {
+      return std::string_view(row["name"].GetString())=="CAMERA.DAT" &&
+             std::string_view(row["replacement"].GetString())==recordPath && row["opens"].GetUint64()==1;
+      }),"camera records must report their actual selection");
+    }
+
+    const auto fixture = temporary/"camera-runtime-base";
+    const auto fixtureSection = linkBaseForDefinitionTest(base,fixture,section);
+    setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
+    {
+    Resources resources;
+    Resources::loadBase();
+    require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private camera record link");
+    requireUnavailableCatalog<CameraDefinitions>(fixtureSection,censusPath);
+
+    auto renamed = imported;
+    const auto mobDefault = std::find_if(renamed.begin(),renamed.end(),[](const auto& row) { return row.first=="CAMMODMOBDEFAULT"; });
+    const auto dialog = std::find_if(renamed.begin(),renamed.end(),[](const auto& row) { return row.first=="CAMMODDIALOG"; });
+    require(mobDefault!=renamed.end() && dialog!=renamed.end(),"stock catalog must contain the fallback fixtures");
+    mobDefault->first = "CAMMODUNUSEDMOB";
+    dialog->first = "CAMMODUNUSEDDIALOG";
+    CameraDefinitionData::write(fixture,sha,renamed);
+    const CameraDefinitions withoutDefault;
+    definitionFields(*original.at("CAMMODNORMAL"),withoutDefault.mobsiCam("MISSING","MISSING"),"MOBSI normal fallback");
+    definitionFields(daedalus::ICamera{},withoutDefault.dialogCam(),"missing named camera remains value initialized");
+
+    auto corrupt = json(fixtureSection);
+    require(corrupt.HasMember("presets") && corrupt["presets"].IsArray() && !corrupt["presets"].Empty() &&
+            corrupt["presets"][0].HasMember("best_range"),"camera corruption fixture is missing its range field");
+    corrupt["presets"][0]["best_range"].SetString("invalid");
+    writeJson(fixtureSection,corrupt);
+    requireUnavailableCatalog<CameraDefinitions>(fixtureSection,censusPath);
+    }
+    setenv("OPENGOTHIC_BASE",base.c_str(),1);
+    std::puts("Camera records: 33 ordered presets and 759 fields match the original; unavailable catalogs rejected");
+    }
+
+  static void sfxRecords(const fs::path& base, const fs::path& temporary, const fs::path& censusPath) {
+    const auto index = ProgramData::readIndex(base/"programs");
+    const auto* selected = ProgramData::sfxProgram(index);
+    require(selected!=nullptr,"Sfx.dat source selection missing");
+    const auto& sha = selected->recordSha256;
+    if(sha!=SfxDefinitionData::stockProgram)
+      return;
+
+    const auto section = SfxDefinitionData::section(base,sha);
+    const auto imported = SfxDefinitionData::read(base,sha);
+    std::vector<std::shared_ptr<daedalus::ISoundEffect>> original;
+    const auto compareRuntime = [&](const SoundDefinitions& sounds) {
+      for(size_t i=0; i<imported.size(); ++i) {
+        const auto& name = imported[i].first;
+        definitionFields(*original[i],sounds[name],name+" runtime");
+        }
+      require(!sounds["LADDER_STEP"].file.empty(),"stock lookup must find LADDER_STEP");
+      definitionFields(daedalus::ISoundEffect{},sounds["ladder_step"],"sound lookup is case sensitive");
+      definitionFields(daedalus::ISoundEffect{},sounds["__SFX_CONTRACT_MISSING__"],"missing sound default");
+      };
+    {
+    Resources resources;
+    Resources::loadBase();
+    auto source = definitionSourceVm(index,"Sfx.dat");
+    source->observe_externals([](const auto& symbol) {
+      throw std::runtime_error("stock Sfx.dat unexpectedly calls "+symbol.name());
+      });
+    const auto names = definitionNames(*source,"C_SFX");
+    equal(names.size(),1770u,"stock sound count");
+    equal(imported.size(),names.size(),"imported sound count");
+    original.reserve(names.size());
+    for(size_t i=0; i<names.size(); ++i) {
+      const auto& [id,name] = names[i];
+      auto [instance,error] = definitionInstance<daedalus::ISoundEffect>(*source,source->find_symbol_by_index(id));
+      require(instance!=nullptr,name+": original sound initialization failed: "+error);
+      require(imported[i].first==name,name+": imported sound order differs");
+      definitionFields(*instance,imported[i].second,name+" imported");
+      original.push_back(std::move(instance));
+      }
+
+    require(Resources::writeCensus(),"cannot write Sfx oracle census");
+    const auto before = json(censusPath);
+    const SoundDefinitions sounds;
+    compareRuntime(sounds);
+    require(Resources::writeCensus(),"cannot write Sfx records census");
+    const auto after = json(censusPath);
+    require(after["files"]==before["files"] && after["runtime_programs"]["selections"].Empty(),
+            "Sfx records must open neither original Sfx.dat nor a VM program");
+    const auto recordPath = "base/"+section.lexically_relative(base).generic_string();
+    const auto& replacements = after["replacements"];
+    require(std::any_of(replacements.Begin(),replacements.End(),[&](const auto& row) {
+      return std::string_view(row["name"].GetString())=="SFX.DAT" &&
+             std::string_view(row["replacement"].GetString())==recordPath && row["opens"].GetUint64()==1;
+      }),"Sfx records must report their actual selection");
+    }
+
+    const auto fixture = temporary/"sfx-runtime-base";
+    const auto fixtureSection = linkBaseForDefinitionTest(base,fixture,section);
+    setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
+    {
+    Resources resources;
+    Resources::loadBase();
+    require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private Sfx record link");
+    requireUnavailableCatalog<SoundDefinitions>(fixtureSection,censusPath);
+
+    auto corrupt = json(section);
+    require(corrupt.HasMember("presets") && corrupt["presets"].IsArray() && !corrupt["presets"].Empty() &&
+            corrupt["presets"][0].HasMember("reverb_level"),"Sfx corruption fixture is missing its reverb field");
+    corrupt["presets"][0]["reverb_level"].SetString("invalid");
+    writeJson(fixtureSection,corrupt);
+    requireUnavailableCatalog<SoundDefinitions>(fixtureSection,censusPath);
+    }
+    setenv("OPENGOTHIC_BASE",base.c_str(),1);
+    std::puts("Sfx records: 1770 ordered presets and 15930 fields match the original; unavailable catalogs rejected");
+    }
+
+  static void musicRecords(const fs::path& base, const fs::path& temporary, const fs::path& censusPath) {
+    const auto index = ProgramData::readIndex(base/"programs");
+    const auto* selected = ProgramData::musicProgram(index);
+    require(selected!=nullptr,"Music.dat source selection missing");
+    const auto& sha = selected->recordSha256;
+    if(sha!=MusicDefinitionData::stockProgram)
+      return;
+
+    const auto section = MusicDefinitionData::section(base,sha);
+    const auto imported = MusicDefinitionData::read(base,sha);
+    std::vector<std::shared_ptr<daedalus::IMusicTheme>> original;
+    const auto compareRuntime = [&](const MusicDefinitions& music) {
+      std::map<std::string_view,const Def::MusicTheme*> byFile;
+      size_t sharedFiles = 0;
+      for(size_t i=0; i<imported.size(); ++i) {
+        const auto& theme = imported[i];
+        const auto* value = music[theme.name];
+        require(value!=nullptr,theme.name+": runtime theme not found");
+        definitionFields(*original[i],*value,theme.name+" runtime");
+        auto mixed = theme.name;
+        std::transform(mixed.begin()+1,mixed.end(),mixed.begin()+1,[](unsigned char c) {
+          return char(std::tolower(c));
+          });
+        require(music[mixed]==value,theme.name+": mixed-case lookup must return the same theme");
+        if(!theme.value.file.empty()) {
+          const auto [other,first] = byFile.try_emplace(theme.value.file,value);
+          if(!first) {
+            require(other->second!=value,theme.name+": two themes share a file, not an instance");
+            ++sharedFiles;
+            }
+          }
+        }
+      require(sharedFiles>0,"stock music fixture needs different themes for the same file");
+      require(music[byFile.begin()->first]==nullptr,"music file names are not theme names");
+      require(music["__MUSIC_CONTRACT_MISSING__"]==nullptr &&
+              music["JINGLEFOUNDITEM"]==nullptr && music["C_MUSICTHEME"]==nullptr,
+              "unknown, jingle and class symbols must not resolve to a music theme");
+      };
+    {
+    Resources resources;
+    Resources::loadBase();
+    auto source = definitionSourceVm(index,"Music.dat");
+    source->observe_externals([](const auto& symbol) {
+      throw std::runtime_error("stock Music.dat unexpectedly calls "+symbol.name());
+      });
+    const auto names = definitionNames(*source,"C_MUSICTHEME");
+    equal(names.size(),74u,"stock music theme count");
+    equal(imported.size(),names.size(),"imported music theme count");
+    require(source->find_symbol_by_name("JINGLEFOUNDITEM")!=nullptr,"stock music fixture needs a jingle symbol");
+    original.reserve(names.size());
+    for(size_t i=0; i<names.size(); ++i) {
+      const auto& [id,name] = names[i];
+      auto [instance,error] = definitionInstance<daedalus::IMusicTheme>(*source,source->find_symbol_by_index(id));
+      require(instance!=nullptr,name+": original music theme initialization failed: "+error);
+      require(imported[i].name==name,name+": imported theme order differs");
+      equal(imported[i].id,instance->symbol_index(),name+" imported source symbol ID");
+      definitionFields(*instance,imported[i].value,name+" imported");
+      original.push_back(std::move(instance));
+      }
+
+    require(Resources::writeCensus(),"cannot write music oracle census");
+    const auto before = json(censusPath);
+    const MusicDefinitions music;
+    compareRuntime(music);
+    require(Resources::writeCensus(),"cannot write music theme records census");
+    const auto after = json(censusPath);
+    require(after["files"]==before["files"] && after["runtime_programs"]["selections"].Empty(),
+            "music theme records must open neither original Music.dat nor a VM program");
+    const auto recordPath = "base/"+section.lexically_relative(base).generic_string();
+    const auto& replacements = after["replacements"];
+    require(std::any_of(replacements.Begin(),replacements.End(),[&](const auto& row) {
+      return std::string_view(row["name"].GetString())=="MUSIC.DAT" &&
+             std::string_view(row["replacement"].GetString())==recordPath && row["opens"].GetUint64()==1;
+      }),"music theme records must report their actual selection");
+    }
+
+    const auto fixture = temporary/"music-theme-runtime-base";
+    const auto fixtureSection = linkBaseForDefinitionTest(base,fixture,section);
+    setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
+    {
+    Resources resources;
+    Resources::loadBase();
+    require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private music theme record link");
+    requireUnavailableCatalog<MusicDefinitions>(fixtureSection,censusPath);
+
+    auto corrupt = json(section);
+    require(corrupt.HasMember("themes") && corrupt["themes"].IsArray() && !corrupt["themes"].Empty() &&
+            corrupt["themes"][0].HasMember("vol"),"music theme corruption fixture is missing its volume field");
+    corrupt["themes"][0]["vol"].SetString("invalid");
+    writeJson(fixtureSection,corrupt);
+    requireUnavailableCatalog<MusicDefinitions>(fixtureSection,censusPath);
+    }
+    setenv("OPENGOTHIC_BASE",base.c_str(),1);
+    std::puts("Music records: 74 ordered themes and 518 fields match the original; unavailable catalogs rejected");
+    }
+
+  template<class Source, class T>
+  static void effectCatalog(daedalus::DaedalusVm& vm, std::string_view className,
+                            const std::vector<EffectDefinitionData::Entry<T>>& imported, size_t stockCount) {
+    const auto names = definitionNames(vm,className);
+    equal(names.size(),stockCount,std::string(className)+" stock instance count");
+    equal(imported.size(),names.size(),std::string(className)+" imported instance count");
+    for(size_t i=0; i<names.size(); ++i) {
+      const auto& [id,name] = names[i];
+      const auto [instance,error] = definitionInstance<Source>(vm,vm.find_symbol_by_index(id));
+      require(instance!=nullptr,name+": original effect initialization failed: "+error);
+      require(imported[i].name==name,name+": imported effect order differs");
+      equal(imported[i].id,instance->symbol_index(),name+" imported source symbol ID");
+      definitionFields(*instance,imported[i].value,name+" imported");
+      }
+    }
+
+  static void effectRecords(const fs::path& base, const fs::path& temporary, const fs::path& censusPath) {
+    const auto index = ProgramData::readIndex(base/"programs");
+    const auto* selectedParticle = ProgramData::particleFxProgram(index);
+    const auto* selectedVisual = ProgramData::visualFxProgram(index);
+    require(selectedParticle!=nullptr && selectedVisual!=nullptr,"effect program source selection missing");
+    const auto& particleSha = selectedParticle->recordSha256;
+    const auto& visualSha = selectedVisual->recordSha256;
+    if(particleSha!=EffectDefinitionData::stockParticleProgram || visualSha!=EffectDefinitionData::stockVisualProgram)
+      return;
+
+    const struct Catalog {
+      const char* request;
+      const char* censusName;
+      const std::string& sha;
+      fs::path section;
+      } particle{"ParticleFx.dat","PARTICLEFX.DAT",particleSha,EffectDefinitionData::particleSection(base,particleSha)},
+        visual{"VisualFx.dat","VISUALFX.DAT",visualSha,EffectDefinitionData::visualSection(base,visualSha)};
+    const auto recordSelected = [&](const rapidjson::Document& census, const Catalog& catalog) {
+      const auto recordPath = "base/"+catalog.section.lexically_relative(base).generic_string();
+      const auto& replacements = census["replacements"];
+      return std::any_of(replacements.Begin(),replacements.End(),[&](const auto& row) {
+        return std::string_view(row["name"].GetString())==catalog.censusName &&
+               std::string_view(row["replacement"].GetString())==recordPath && row["opens"].GetUint64()==1;
+        });
+      };
+    {
+    Resources resources;
+    Resources::loadBase();
+    const auto noExternal = [](const auto& symbol) {
+      throw std::runtime_error("stock effect initializer unexpectedly calls "+symbol.name());
+      };
+    auto rawParticles = definitionSourceVm(index,particle.request);
+    rawParticles->observe_externals(noExternal);
+    auto rawVisuals = definitionSourceVm(index,visual.request);
+    rawVisuals->observe_externals(noExternal);
+    const auto particles = EffectDefinitionData::readParticles(base,particle.sha);
+    const auto visuals = EffectDefinitionData::readVisuals(base,visual.sha);
+    // definitionInstance applies the legacy quad-poly default before running the PFX initializer.
+    effectCatalog<daedalus::IParticleEffect>(*rawParticles,"C_PARTICLEFX",particles,528);
+    effectCatalog<daedalus::IEffectBase>(*rawVisuals,"CFX_BASE",visuals.effects,277);
+    effectCatalog<daedalus::IParticleEffectEmitKey>(*rawVisuals,"C_PARTICLEFXEMITKEY",visuals.keys,248);
+
+    require(Resources::writeCensus(),"cannot write effect oracle census");
+    const auto before = json(censusPath);
+    const ParticlesDefinitions particleDefinitions;
+    const VisualFxDefinitions visualDefinitions;
+    require(Resources::writeCensus(),"cannot write effect records census");
+    const auto after = json(censusPath);
+    require(after["files"]==before["files"] && after["runtime_programs"]["selections"].Empty(),
+            "effect records must open neither original DAT nor a VM program");
+    require(recordSelected(after,particle) && recordSelected(after,visual),"both runtime effect catalogs must report selection");
+    }
+
+    for(const bool missingParticle : {true,false}) {
+      const auto& missing = missingParticle ? particle : visual;
+      const auto& present = missingParticle ? visual : particle;
+      const auto fixture = temporary/(missingParticle ? "particle-runtime-base" : "visual-runtime-base");
+      const auto fixtureSection = linkBaseForDefinitionTest(base,fixture,missing.section);
+      setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
+      {
+      Resources resources;
+      Resources::loadBase();
+      require(fs::is_symlink(fixtureSection) && fs::remove(fixtureSection),"cannot remove the private effect record link");
+      const auto rejectUnavailable = [&] {
+        if(missingParticle)
+          requireUnavailableCatalog<ParticlesDefinitions>(fixtureSection,censusPath);
+        else
+          requireUnavailableCatalog<VisualFxDefinitions>(fixtureSection,censusPath);
+        };
+      rejectUnavailable();
+      if(missingParticle) {
+        const VisualFxDefinitions available;
+        } else {
+        const ParticlesDefinitions available;
+        }
+      require(Resources::writeCensus(),"cannot write remaining effect catalog census");
+      require(recordSelected(json(censusPath),present),"the other effect catalog must still load its records");
+
+      auto corrupt = json(missing.section);
+      corrupt["version"].SetInt(0);
+      writeJson(fixtureSection,corrupt);
+      rejectUnavailable();
+      }
+      }
+    setenv("OPENGOTHIC_BASE",base.c_str(),1);
+    std::puts("Effect records: 528 particles, 277 effects and 248 emit keys match the original across 51882 scalar fields; unavailable catalogs rejected");
     }
 
   static void definitionRecords(const fs::path& base, const fs::path& censusPath) {
@@ -1739,21 +2218,27 @@ struct BaseContentContract {
     definitionFields(daedalus::IEffectBase{},Def::EffectBase{},"EffectBase value initialization");
     definitionFields(daedalus::IParticleEffectEmitKey{},Def::ParticleEffectEmitKey{},"ParticleEffectEmitKey value initialization");
     const auto index=ProgramData::readIndex(base/"programs");
-    Gothic gothic;
     for(const std::string request:{"Fight.dat","Camera.dat","Sfx.dat","ParticleFx.dat","VisualFx.dat","Music.dat"}) {
-      auto source=definitionSourceVm(index,request,gothic);
+      auto source=definitionSourceVm(index,request);
       require(Resources::writeCensus(),"cannot write definition source census");
       const auto before=json(censusPath);
-      auto native=gothic.createPhoenixVm(request);
-      require(Resources::writeCensus(),"cannot write native definition census");
-      require(before["files"]==json(censusPath)["files"],request+": own definition VM added an original DAT open");
+      const auto selected=selectBaseProgram(index,request,-1);
+      auto script=daedalus::DaedalusScript::from_program(ProgramData::readProgram(index.path(selected.source)));
+      definitionSourceClasses(script,true);
+      auto native=std::make_unique<daedalus::DaedalusVm>(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+      require(Resources::writeCensus(),"cannot write offline definition census");
+      require(before["files"]==json(censusPath)["files"],request+": offline definition record added an original DAT open");
       const auto rejectRandom=[](int)->int {
         throw std::runtime_error("definition oracle encountered HLP_RANDOM; initializer parity requires investigation");
         };
       source->register_external("hlp_random",rejectRandom);
       native->register_external("hlp_random",rejectRandom);
       if(request=="Camera.dat") definitionInstances<daedalus::ICamera,VmDef::Camera>(*source,*native,"CCAMSYS");
-      if(request=="Fight.dat") definitionFights(*source,*native);
+      if(request=="Fight.dat") {
+        const auto* selected=ProgramData::fightProgram(index);
+        require(selected!=nullptr,"imported Fight.dat source is missing");
+        definitionFights(*source,*native,FightDefinitions::read(base,selected->recordSha256));
+        }
       if(request=="Sfx.dat") definitionInstances<daedalus::ISoundEffect,VmDef::SoundEffect>(*source,*native,"C_SFX");
       if(request=="Music.dat") definitionInstances<daedalus::IMusicTheme,VmDef::MusicTheme>(*source,*native,"C_MusicTheme");
       if(request=="ParticleFx.dat") definitionInstances<daedalus::IParticleEffect,VmDef::ParticleEffect>(*source,*native,"C_PARTICLEFX");
@@ -2346,8 +2831,7 @@ struct BaseContentContract {
   static void musicRuntime(const fs::path& base,const fs::path& temporary,const fs::path& censusPath) {
     const auto fixture=temporary/"music-runtime-base";
     fs::create_directories(fixture);
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","programs","outputunits","audio","sources"})
-      fs::create_symlink(base/part,fixture/part);
+    linkBaseParts(base,fixture,{"music"});
     fs::copy(base/"music",fixture/"music",fs::copy_options::recursive);
     setenv("OPENGOTHIC_BASE",fixture.c_str(),1);
     MusicData::Source selected;
@@ -2368,7 +2852,17 @@ struct BaseContentContract {
     std::vector<uint8_t> bin;
     require(resources.readGkMusic(request,"segment",bin)==DmResult_SUCCESS,"private GK reader must verify native record");
     vector(bin,musicRecord(resources.baseMusic,selected.gk),"private GK record bytes");
-    vector(resources.readDxMusic(dirs,name.c_str(),"segment"),musicRecord(resources.baseMusic,selected.dx8),"private Dx8 record bytes");
+    std::future<std::vector<uint8_t>> dx8Read;
+    bool readyWhileLocked = false;
+    {
+      std::lock_guard guard(resources.sync);
+      dx8Read = std::async(std::launch::async,[&] {
+        return Resources::readDxMusic(dirs,name.c_str(),"segment");
+        });
+      readyWhileLocked = dx8Read.wait_for(std::chrono::seconds(5))==std::future_status::ready;
+      }
+    require(readyWhileLocked,"Dx8 music read must not wait for the resource mutex");
+    vector(dx8Read.get(),musicRecord(resources.baseMusic,selected.dx8),"private Dx8 record bytes");
     const auto nativeIndex=resources.baseMusic;
     resources.baseMusic.gk.erase(resources.baseMusic.gk.find(upperMusic(request)));
     bin={1}; require(resources.readGkMusic(request,"segment",bin)==DmResult_NOT_FOUND && bin.empty(),"missing GK index entry must stay missing");
@@ -2685,12 +3179,10 @@ struct BaseContentContract {
     // Start with a valid base before adding the synthetic audio integrity fixtures.
     const auto fixtureBase=temporary/"audio-runtime-base";
     fs::create_directories(fixtureBase/"audio");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","programs","outputunits","music","sources"})
-      fs::create_symlink(base/part,fixtureBase/part);
+    linkBaseParts(base,fixtureBase,{"audio"});
     fs::copy(base/"audio",fixtureBase/"audio",fs::copy_options::recursive);
     setenv("OPENGOTHIC_BASE",fixtureBase.c_str(),1);
     Resources resources;
-    Resources::loadBase();
     Gothic gothic;
     require(Resources::isHeadless(),"audio integration must remain CPU-only");
     const auto pcm=[](uint16_t channels,const std::vector<int16_t>& samples) {
@@ -2801,21 +3293,16 @@ struct BaseContentContract {
     std::puts("Audio runtime: lazy payload checks, external priority, exact PCM and zero-data outcomes, integrity failures, verified identities and zero original opens checked");
     }
 
-  static void census(const fs::path& file, size_t meshes, size_t models, size_t fonts, size_t programs) {
+  static void census(const fs::path& file, size_t meshes, size_t models, size_t fonts) {
     const auto data=json(file);
-    equal(data["replacements"].Size(),meshes+models+programs,"census base mesh/model/program count");
-    size_t selectedMeshes=0,selectedModels=0,selectedPrograms=0,sourceModels=0,sourceFonts=0;
+    equal(data["replacements"].Size(),meshes+models,"census base mesh/model count");
+    size_t selectedMeshes=0,selectedModels=0,sourceModels=0,sourceFonts=0;
     for(const auto& row:data["replacements"].GetArray()) {
       const std::string_view kind=row["kind"].GetString(),path=row["replacement"].GetString();
       if(kind=="basemodel") {
         ++selectedModels;
         require(path.starts_with("base/models/"),"base model census path");
         equal(row["opens"].GetUint64(),1u,"base model selected once");
-        }
-      else if(kind=="baseprogram") {
-        ++selectedPrograms;
-        require(path.starts_with("base/programs/"),"base program census path");
-        equal(row["opens"].GetUint64(),1u,"base program selected once");
         }
       else {
         ++selectedMeshes;
@@ -2825,7 +3312,6 @@ struct BaseContentContract {
       }
     equal(selectedMeshes,meshes,"census selected mesh count");
     equal(selectedModels,models,"census selected model count");
-    equal(selectedPrograms,programs,"census selected program count");
     for(const auto& row:data["files"].GetArray()) {
       const std::string_view kind=row["kind"].GetString();
       if(kind=="font") {
@@ -3082,7 +3568,7 @@ struct BaseContentContract {
     std::printf("Archive order: %zu entries equal to independent legacy scan, including mods\n",expected.size());
     }
 
-  static void run(const fs::path& base, const fs::path& temporary) {
+  static void run(const fs::path& base, const fs::path& runtime, const fs::path& temporary) {
     archiveOrder();
     censusSource(temporary/"source-census.json");
     setenv("OPENGOTHIC_CONTENT","",1);
@@ -3090,7 +3576,7 @@ struct BaseContentContract {
     const auto censusPath=temporary/"census.json";
     setenv("OPENGOTHIC_CENSUS",censusPath.c_str(),1);
     std::string meshKey;
-    size_t textureCount=0,meshCount=0,modelCount=0,fontCount=0,programCount=0,dds=0,png=0,tga=0,vertices=0,indices=0,meshlets=0;
+    size_t textureCount=0,meshCount=0,modelCount=0,fontCount=0,dds=0,png=0,tga=0,vertices=0,indices=0,meshlets=0;
     {
     Resources resources;
     require(!resources.baseTextures.enabled && !resources.baseMeshes.enabled && !resources.baseModels.enabled && !resources.baseFonts.enabled,
@@ -3102,7 +3588,8 @@ struct BaseContentContract {
             "texture, mesh, model and font indices must contain files");
     modelCount=models(base);
     fontCount=fonts(base,resources);
-    programCount=programs(base,censusPath);
+    programIdentityPrecedence();
+    programs(base,censusPath);
     modelFixtures(temporary);
     for(const auto& [key,file]:resources.baseTextures.files) {
       auto* entry=sourceVfs().find(key+"-C.TEX");
@@ -3144,7 +3631,11 @@ struct BaseContentContract {
       }
     meshKey=resources.baseMeshes.files.begin()->first;
     }
-    census(censusPath,meshCount,modelCount,fontCount,programCount);
+    census(censusPath,meshCount,modelCount,fontCount);
+    cameraRecords(base,temporary,censusPath);
+    sfxRecords(base,temporary,censusPath);
+    musicRecords(base,temporary,censusPath);
+    effectRecords(base,temporary,censusPath);
     // Keep parser regression reads separate from the runtime-open census.
     {
     Resources resources;
@@ -3158,7 +3649,7 @@ struct BaseContentContract {
     musicIntegrity(base,temporary);
     musicRuntime(base,temporary,censusPath);
     audioCorpus(base);
-    audioRuntime(base,temporary,censusPath);
+    audioRuntime(runtime,temporary,censusPath);
     std::printf("Meshes: %zu equal; %zu vertices, %zu indices, %zu meshlets; physics packing equal\n",
                 meshCount,vertices,indices,meshlets);
 
@@ -3186,8 +3677,7 @@ struct BaseContentContract {
       const auto incomplete=temporary/("missing-"+kind+"-index");
       fs::create_directories(incomplete/kind);
       fs::copy_file(base/"base.json",incomplete/"base.json");
-      for(const auto* part:{"base-files.json","worlds","textures","meshes","zen","models","fonts","programs","outputunits","audio","music","sources"})
-        if(part!=kind) fs::create_symlink(base/part,incomplete/part);
+      linkBaseParts(base,incomplete,{"base.json",kind});
       for(const auto& file:fs::directory_iterator(base/kind))
         if(file.path().filename()!=kind+".json") fs::create_symlink(file.path(),incomplete/kind/file.path().filename());
       setenv("OPENGOTHIC_BASE",incomplete.c_str(),1);
@@ -3204,8 +3694,7 @@ struct BaseContentContract {
     {
     const auto broken=temporary/"broken-program-record";
     fs::create_directories(broken/"programs");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","outputunits","audio","music","sources"})
-      fs::create_symlink(base/part,broken/part);
+    linkBaseParts(base,broken,{"programs"});
     for(const auto& file:fs::directory_iterator(base/"programs"))
       fs::create_symlink(file.path(),broken/"programs"/file.path().filename());
     const auto index=ProgramData::readIndex(broken/"programs");
@@ -3221,17 +3710,15 @@ struct BaseContentContract {
     Resources resources;
     Resources::loadBase();
     fs::remove(bin);
-    const auto host=selected->step.starts_with("host_") ?
-      (fs::path(CommandLine::inst().rootPath())/source.path).u16string() : std::u16string{};
     const auto fails=[&](const std::string& description, const std::string& reason=std::string{}) {
       bool failed=false;
-      try { (void)loadBaseProgram(selected->request,selected->language,selected->step,host); }
-      catch(const BaseStore::Error& error) {
-        const std::string message=error.what();
-        failed=message.find("program "+selected->request+":")!=std::string::npos &&
-               (reason.empty() || message.find(reason)!=std::string::npos);
+      try {
+        std::string digest;
+        (void)ProgramData::readProgram(file,&digest);
+        require(digest==source.recordSha256,"program record identity differs from base index");
         }
-      require(failed,description+": selected native failure must be fatal");
+      catch(const std::exception& error) { failed=reason.empty() || std::string_view(error.what()).find(reason)!=std::string_view::npos; }
+      require(failed,description+": offline program reader must reject the invalid record");
       };
     fails("missing BIN");
     fs::create_symlink(base/"programs"/bin.filename(),bin);
@@ -3246,14 +3733,13 @@ struct BaseContentContract {
     }
     const auto failed=json(censusPath);
     require(failed["files"].Empty() && failed["replacements"].Empty() &&
-            failed["runtime_programs"]["selections"].Empty() && failed["base_misses"].Size()==3,
-            "failed native records must record misses without original opens or successful selections");
+            failed["runtime_programs"]["selections"].Empty(),
+            "offline program integrity checks must not load a game program");
     }
     {
     const auto broken=temporary/"broken-outputunits-record";
     fs::create_directories(broken/"outputunits");
-    for(const auto* part:{"base.json","base-files.json","worlds","textures","meshes","zen","models","fonts","programs","audio","music","sources"})
-      fs::create_symlink(base/part,broken/part);
+    linkBaseParts(base,broken,{"outputunits"});
     for(const auto& file:fs::directory_iterator(base/"outputunits"))
       fs::create_symlink(file.path(),broken/"outputunits"/file.path().filename());
     const auto index=OutputUnits::readIndex(broken/"outputunits");
@@ -3330,7 +3816,7 @@ struct BaseContentContract {
     equal(selected["replacements"].Size(),1u,"own replacement count");
     require(std::string(selected["replacements"][0]["kind"].GetString())=="mesh","own replacement census kind");
     std::puts("Selection: invalid base rejected; missing resources recorded; own content wins; census kinds stay separate");
-    contentAnimations(base,temporary);
+    contentAnimations(runtime,temporary);
     }
   };
 
@@ -3342,8 +3828,15 @@ int main() {
     const auto* gothic=std::getenv("GOTHIC_DIR");
     const auto* dir=std::getenv("OPENGOTHIC_BASE");
     BaseContentContract::require(gothic && *gothic,"GOTHIC_DIR must point to a Gothic II installation");
-    BaseContentContract::require(dir && *dir,"OPENGOTHIC_BASE must point to a content-convert base with textures and meshes");
+    BaseContentContract::require(dir && *dir,"OPENGOTHIC_BASE must point to a full source base for the offline oracle");
     const auto base=fs::absolute(dir);
+    const auto fingerprint=BaseStore::nativeCatalogIdentity(base,NativeBaseCatalog::catalogVersion).fingerprint;
+    const auto* runtimeDir=std::getenv("OPENGOTHIC_CONTRACT_NATIVE_BASE");
+    const auto runtime=runtimeDir && *runtimeDir ? fs::absolute(runtimeDir) : BaseStore::cacheRoot()/fingerprint;
+    BaseContentContract::require(fs::is_regular_file(runtime/"base.json"),
+        "Prepare the matching stock runtime base with content-convert resolve and set OPENGOTHIC_CONTRACT_NATIVE_BASE");
+    BaseContentContract::require(fs::is_regular_file(runtime/"definitions/native-catalog.json") && BaseImport::readIdentity(runtime).fingerprint==fingerprint,
+        "The runtime base must be the prepared projection of the offline oracle base");
     fs::create_directories(temporary);
     // Fixtures point OPENGOTHIC_BASE at bases inside `temporary`, and an explicit base is saved as the
     // installation's current base in the cache. Keep that pointer in the contract's own cache: in the shared
@@ -3351,7 +3844,7 @@ int main() {
     setenv("OPENGOTHIC_BASE_CACHE",(temporary/"base-cache").c_str(),1);
     const char* args[]={"gothic-basecontent-contract","-g",gothic};
     CommandLine commandLine(3,args);
-    BaseContentContract::run(base,temporary);
+    BaseContentContract::run(base,runtime,temporary);
     std::puts("base content contract: passed");
     }
   catch(const std::exception& error) {

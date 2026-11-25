@@ -9,6 +9,8 @@
 
 namespace storygraph {
 
+std::string toJson(const ExprP& e);
+
 // An expression in the JSON form the converter writes (server/src/gothic_ai/gamedata/storygraph.py describes it):
 // ["&&", ["==", ["var", "MIS_X"], ["int", 1]], ["call", "NPC_KNOWSINFO", ["inst", "OTHER"], ["sym", "DIA_X"]]].
 // Names may be in any case; whether they exist is found out when the expression is evaluated.

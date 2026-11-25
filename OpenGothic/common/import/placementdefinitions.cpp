@@ -4,6 +4,8 @@
 #include "asset/placementdefinitions.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
+#include "game/definitions/gameplaydefinitions.h"
+#include "game/placementdefinitionruntime.h"
 #include "programdata.h"
 
 #include <rapidjson/document.h>
@@ -431,13 +433,280 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
   put(json,"steps",std::move(steps),allocator);
   return json;
   }
+Json literalInsert(const DaedalusScript& script,uint32_t& pc,std::string_view root,Allocator& allocator,
+                   const DaedalusSymbol* expectedExternal = nullptr) {
+  require(pc<script.size() && script.size()-pc>=15,"truncated chapter placement in "+std::string(root));
+  const auto instance=script.instruction_at(pc);
+  const auto point=script.instruction_at(pc+5);
+  const auto insert=script.instruction_at(pc+10);
+  const auto* what=script.find_symbol_by_index(uint32_t(instance.immediate));
+  const auto* where=script.find_symbol_by_index(point.symbol);
+  const auto* external=script.find_symbol_by_index(insert.symbol);
+  require(instance.op==Op::PUSHI && what && what->type()==Type::INSTANCE && what->is_const() &&
+          point.op==Op::PUSHV && where && where->type()==Type::STRING && where->is_const() &&
+          insert.op==Op::BE && external && (external->name()=="WLD_INSERTNPC" || external->name()=="WLD_INSERTITEM") &&
+          (!expectedExternal || (external==expectedExternal && !where->is_member() && where->count()==1)),
+          "unexpected literal chapter placement in "+std::string(root));
+  Json row(rapidjson::kArrayType);
+  row.PushBack(Json(what->index()),allocator);
+  row.PushBack(Json(where->index()),allocator);
+  row.PushBack(Json(external->index()),allocator);
+  pc+=15;
+  return row;
+  }
+
+template<size_t N>
+Json lateChapterGroups(const DaedalusScript& script,std::string_view root,const std::array<uint32_t,N>& offsets,
+                       const std::array<size_t,N>& sizes,Allocator& allocator,bool killAfterFirstGroupInserts = false,
+                       const DaedalusSymbol* expectedExternal = nullptr) {
+  const auto* chapter=script.find_symbol_by_name(root);
+  require(chapter && chapter->type()==Type::FUNCTION && !chapter->is_external(),"missing placement chapter "+std::string(root));
+  const auto* kill=killAfterFirstGroupInserts ? script.find_symbol_by_name("B_KILLNPC") : nullptr;
+  require(!killAfterFirstGroupInserts || kill!=nullptr,"missing B_KILLNPC in placement chapter");
+  Json groups(rapidjson::kArrayType);
+  for(size_t i=0;i<N;++i) {
+    auto pc=chapter->address()+offsets[i];
+    Json rows(rapidjson::kArrayType);
+    for(size_t j=0;j<sizes[i];++j) {
+      auto row=literalInsert(script,pc,root,allocator,expectedExternal);
+      if(i==0 && kill) {
+        require(pc<script.size() && script.size()-pc>=10,"truncated kill after placement in "+std::string(root));
+        const auto instance=script.instruction_at(pc);
+        const auto call=script.instruction_at(pc+5);
+        require(instance.op==Op::PUSHI && uint32_t(instance.immediate)==row[0].GetUint() &&
+                call.op==Op::BL && call.address==kill->address(),"unexpected kill after placement in "+std::string(root));
+        pc+=10;
+        }
+      rows.PushBack(row,allocator);
+      }
+    groups.PushBack(rows,allocator);
+    }
+  return groups;
+  }
+Json dragonIsland(const DaedalusScript& script,Allocator& allocator) {
+  Json rows(rapidjson::kArrayType);
+  for(const auto* root:{"STARTUP_NEWWORLD_PART_DRAGON_ISLAND_01","STARTUP_NEWWORLD_PART_DRAGON_UNDEAD_01",
+                        "STARTUP_NEWWORLD_PART_DRAGON_FINAL_01"}) {
+    const auto* function=script.find_symbol_by_name(root);
+    require(function && function->type()==Type::FUNCTION && !function->is_external(),"missing Dragon Island section "+std::string(root));
+    auto pc=function->address();
+    while(pc<script.size() && script.instruction_at(pc).op!=Op::RSR)
+      rows.PushBack(literalInsert(script,pc,root,allocator),allocator);
+    require(pc<script.size(),"missing return in Dragon Island section "+std::string(root));
+    }
+  require(!rows.Empty(),"empty Dragon Island placements");
+  return rows;
+  }
+Json addonChapter4(const DaedalusScript& script,Allocator& allocator) {
+  constexpr auto root="B_ENTER_ADDONWORLD_KAPITEL_4";
+  const auto* chapter=script.find_symbol_by_name(root);
+  const auto* yes=script.find_symbol_by_name("TRUE");
+  const auto* no=script.find_symbol_by_name("FALSE");
+  const auto* entered=script.find_symbol_by_name("ENTERADW_KAPITEL4");
+  const auto* npc=script.find_symbol_by_name("WLD_INSERTNPC");
+  require(chapter && yes && no && entered && npc,"missing Addon World chapter 4 symbols");
+  auto pc=chapter->address();
+  const auto take=[&] {
+    require(pc<script.size(),"truncated Addon World chapter 4");
+    const auto instruction=script.instruction_at(pc);
+    pc+=instruction.size;
+    return instruction;
+    };
+  const auto compare=take();
+  const auto latch=take();
+  require(compare.op==Op::PUSHV && compare.symbol==no->index() && latch.op==Op::PUSHV &&
+          latch.symbol==entered->index() && take().op==Op::EQ,"invalid Addon World chapter 4 latch test");
+  const auto skip=take();
+  require(skip.op==Op::BZ,"invalid Addon World chapter 4 branch");
+  Json rows(rapidjson::kArrayType);
+  for(size_t i=0;i<Library::addonChapter4Count;++i)
+    rows.PushBack(literalInsert(script,pc,root,allocator,npc),allocator);
+  const auto value=take();
+  const auto update=take();
+  require(value.op==Op::PUSHV && value.symbol==yes->index() && update.op==Op::PUSHV &&
+          update.symbol==entered->index() && take().op==Op::MOVI && pc==skip.address && take().op==Op::RSR,
+          "invalid Addon World chapter 4 latch update");
+  return rows;
+  }
+Json roomInitializer(const DaedalusScript& script,const RoomInitializerShape& shape,Allocator& allocator) {
+  const auto* root=script.find_symbol_by_name(shape.name);
+  const auto* assign=script.find_symbol_by_name("WLD_ASSIGNROOMTOGUILD");
+  const auto* routine=script.find_symbol_by_name("WLD_SETMOBROUTINE");
+  const auto expect=[&](bool ok) { require(ok,"unexpected room initializer "+std::string(shape.name)); };
+  expect(root && assign && routine);
+  auto pc=root->address();
+  const auto take=[&] {
+    expect(pc<script.size());
+    const auto op=script.instruction_at(pc);
+    pc+=op.size;
+    return op;
+    };
+  const auto reference=[&](const DaedalusInstruction& op) {
+    return op.op==Op::PUSHV ? script.find_symbol_by_index(op.symbol) : nullptr;
+    };
+  const auto constant=[](const DaedalusSymbol* symbol,Type type) {
+    return symbol && symbol->type()==type && symbol->is_const() && !symbol->is_member() && symbol->count()==1;
+    };
+  const auto readRoom=[&](const DaedalusSymbol* room) {
+    const auto owner=take();
+    const auto* guild=reference(owner);
+    expect(constant(room,Type::STRING));
+    if(guild)
+      expect(constant(guild,Type::INT));
+    else
+      expect(owner.op==Op::PUSHI && owner.immediate==1 && take().op==Op::NEGATE);
+    const auto external=take();
+    expect(external.op==Op::BE && external.symbol==assign->index());
+    Json row(rapidjson::kArrayType);
+    row.PushBack(Json(room->index()),allocator);
+    row.PushBack(guild ? Json(guild->index()) : Json{},allocator);
+    return row;
+    };
+
+  Json mobs(rapidjson::kArrayType);
+  for(size_t i=0;i<shape.mobs;++i) {
+    const auto hour=take();
+    const auto minute=take();
+    const auto* name=reference(take());
+    const auto state=take();
+    const auto external=take();
+    expect(hour.op==Op::PUSHI && minute.op==Op::PUSHI && constant(name,Type::STRING) && state.op==Op::PUSHI &&
+           external.op==Op::BE && external.symbol==routine->index());
+    Json row(rapidjson::kArrayType);
+    row.PushBack(Json(hour.immediate),allocator);
+    row.PushBack(Json(minute.immediate),allocator);
+    row.PushBack(Json(name->index()),allocator);
+    row.PushBack(Json(state.immediate),allocator);
+    mobs.PushBack(row,allocator);
+    }
+  Json rooms(rapidjson::kArrayType);
+  size_t choices=0;
+  for(size_t i=0;i<shape.rooms;++i) {
+    const auto* first=reference(take());
+    if(constant(first,Type::STRING)) {
+      rooms.PushBack(readRoom(first),allocator);
+      continue;
+      }
+    const auto* flag=reference(take());
+    expect(constant(first,Type::INT) && flag && flag->type()==Type::INT && !flag->is_member() &&
+           !flag->is_const() && flag->count()==1 && take().op==Op::EQ);
+    const auto branch=take();
+    auto equal=readRoom(reference(take()));
+    const auto skip=take();
+    expect(branch.op==Op::BZ && skip.op==Op::B && pc==branch.address);
+    auto otherwise=readRoom(reference(take()));
+    expect(pc==skip.address);
+    Json row(rapidjson::kArrayType);
+    row.PushBack(Json(first->index()),allocator);
+    row.PushBack(Json(flag->index()),allocator);
+    row.PushBack(equal,allocator);
+    row.PushBack(otherwise,allocator);
+    rooms.PushBack(row,allocator);
+    ++choices;
+    }
+  expect(choices==shape.choices && take().op==Op::RSR);
+  Json result(rapidjson::kObjectType);
+  put(result,"mobs",std::move(mobs),allocator);
+  put(result,"rooms",std::move(rooms),allocator);
+  return result;
+  }
+
+Json firstEntryActors(const DaedalusScript& script,std::string_view name,size_t count,Allocator& allocator) {
+  const auto* trigger=script.find_symbol_by_name(name);
+  const auto* kill=script.find_symbol_by_name("B_KILLNPC");
+  require(trigger && kill,"missing first-entry function "+std::string(name));
+  auto pc=trigger->address()+16u; // The guard precedes the fixed literal calls.
+  Json actors(rapidjson::kArrayType);
+  for(size_t i=0;i<count;++i) {
+    require(pc<script.size() && script.size()-pc>=10,"truncated first-entry function "+std::string(name));
+    const auto instance=script.instruction_at(pc);
+    const auto call=script.instruction_at(pc+5);
+    const auto* actor=instance.op==Op::PUSHI ? script.find_symbol_by_index(uint32_t(instance.immediate)) : nullptr;
+    require(actor && actor->type()==Type::INSTANCE && call.op==Op::BL && call.address==kill->address(),
+            "unexpected first-entry actor in "+std::string(name));
+    actors.PushBack(Json(actor->index()),allocator);
+    pc+=10;
+    }
+  return actors;
+  }
+Json triggerInserts(const DaedalusScript& script,Allocator& allocator) {
+  const auto* npc=script.find_symbol_by_name("WLD_INSERTNPC");
+  require(npc!=nullptr,"missing NPC insertion external");
+  Json triggers(rapidjson::kObjectType);
+  const auto add=[&](std::string_view name,uint32_t offset,size_t count,bool onlyNpcs) {
+    put(triggers,name.data(),lateChapterGroups(script,name,std::array{offset},std::array{count},allocator,
+                                               false,onlyNpcs ? npc : nullptr),allocator);
+    };
+  add("EVT_CAVALORNSGOBBOS_FUNC",16,3,true);
+  add("EVT_TROLL_GRAVE_01",0,4,true);
+  add("EVT_ORNAMENT_SWITCH_FOREST_01_FUNC",16,2,false);
+  add("EVT_ORNAMENT_SWITCH_BIGFARM_01_FUNC",16,2,false);
+  for(const auto name:cryptTriggers)
+    add(name,16,name=="EVT_CRYPT_FINAL" ? 6u : 7u,true);
+  for(const auto& room:islandRoomSpawns)
+    add(room.name,16,room.count,true);
+  for(const auto name:islandTraps)
+    add(name,44,1,true);
+  add("EVT_TELEPORTSTATION_FUNC",1197,6,false);
+  constexpr std::array<uint32_t,5> attackOffsets{84,160,175,286,351};
+  constexpr std::array<size_t,5> attackCounts{4,1,2,4,4};
+  put(triggers,"EVT_ORKOBERST",lateChapterGroups(script,"EVT_ORKOBERST",attackOffsets,attackCounts,allocator,false,npc),allocator);
+  return triggers;
+  }
+
 Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
   Json json(rapidjson::kObjectType);
+  const bool stock=program.sha256==GameplayDefinitions::stockProgram;
   put(json,"format",text("gothic-placement-definitions",allocator),allocator);
-  put(json,"version",Json(1),allocator);
+  put(json,"version",Json(stock ? 7 : 1),allocator);
   put(json,"program_name",text(program.name,allocator),allocator);
   put(json,"program_sha256",text(program.sha256,allocator),allocator);
   put(json,"string_encoding",text("unicode-byte-mapping",allocator),allocator);
+  if(stock) {
+    const auto script=DaedalusScript::from_program(program.data);
+    // Offsets of the literal insert calls within the verified stock functions.
+    constexpr std::array<uint32_t,6> offsets4{82,328,1281,1552,2923,3330};
+    constexpr std::array<uint32_t,7> offsets5{160,191,206,482,554,1000,1772};
+    Json chapters(rapidjson::kObjectType);
+    put(chapters,"chapter_4",lateChapterGroups(script,"B_ENTER_NEWWORLD_KAPITEL_4",offsets4,
+                                              KhorinisLateChapters::chapter4Sizes,allocator),allocator);
+    put(chapters,"chapter_5",lateChapterGroups(script,"B_ENTER_NEWWORLD_KAPITEL_5",offsets5,
+                                              KhorinisLateChapters::chapter5Sizes,allocator),allocator);
+    put(json,"khorinis_late_chapters",std::move(chapters),allocator);
+    put(json,"addon_chapter_4",addonChapter4(script,allocator),allocator);
+    Json functions(rapidjson::kArrayType);
+    for(const auto id:PlacementDefinitionRuntime::startupFunctions(script))
+      functions.PushBack(Json(id),allocator);
+    put(json,"startup_functions",std::move(functions),allocator);
+    constexpr std::array<uint32_t,3> oldOffsets3{46,727,747};
+    constexpr std::array<uint32_t,8> oldOffsets4{291,581,672,703,734,765,780,4417};
+    Json oldWorld(rapidjson::kObjectType);
+    put(oldWorld,"chapter_3",lateChapterGroups(script,"B_ENTER_OLDWORLD_KAPITEL_3",oldOffsets3,
+                                              OldWorldChapters::chapter3Sizes,allocator),allocator);
+    put(oldWorld,"chapter_4",lateChapterGroups(script,"B_ENTER_OLDWORLD_KAPITEL_4",oldOffsets4,
+                                              OldWorldChapters::chapter4Sizes,allocator,true),allocator);
+    put(json,"old_world_chapters",std::move(oldWorld),allocator);
+    put(json,"dragon_island",dragonIsland(script,allocator),allocator);
+    Json rooms(rapidjson::kObjectType);
+    for(const auto& shape:roomInitializerShapes)
+      put(rooms,shape.name,roomInitializer(script,shape,allocator),allocator);
+    put(json,"room_initializers",std::move(rooms),allocator);
+    Json first(rapidjson::kObjectType);
+    put(first,"old_world",firstEntryActors(script,"ENTER_OLDWORLD_FIRSTTIME_TRIGGER",FirstEntries::oldWorldCount,allocator),allocator);
+    put(first,"addon_world",firstEntryActors(script,"ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC",FirstEntries::addonWorldCount,allocator),allocator);
+    put(json,"first_entries",std::move(first),allocator);
+    Json early(rapidjson::kObjectType);
+    const auto* npc=script.find_symbol_by_name("WLD_INSERTNPC");
+    require(npc!=nullptr,"missing Khorinis chapter 2 external");
+    auto chapter2=lateChapterGroups(script,"B_ENTER_NEWWORLD_KAPITEL_2",std::array<uint32_t,1>{42},
+                                    std::array{KhorinisEarlyChapters::chapter2Count},allocator,false,npc);
+    put(early,"chapter_2",std::move(chapter2[0]),allocator);
+    constexpr std::array<uint32_t,9> earlyOffsets3{116,161,227,293,479,625,1824,1965,2092};
+    put(early,"chapter_3",lateChapterGroups(script,"B_ENTER_NEWWORLD_KAPITEL_3",earlyOffsets3,
+                                           KhorinisEarlyChapters::chapter3Sizes,allocator),allocator);
+    put(json,"khorinis_early_chapters",std::move(early),allocator);
+    put(json,"trigger_inserts",triggerInserts(script,allocator),allocator);
+    }
   return json;
   }
 using DefinitionJson::difference;

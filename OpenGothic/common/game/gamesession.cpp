@@ -105,7 +105,7 @@ GameSession::GameSession(std::string file) {
   LoadProbe::Requests::begin();
   auto probeT = LoadProbe::now();
   vm.reset(new GameScript(*this));
-  initPerceptions();
+  vm->initPerceptions();
   if(LoadProbe::enabled())
     LoadProbe::mark("scripts_vm",LoadProbe::msSince(probeT));
 
@@ -154,6 +154,7 @@ GameSession::GameSession(std::string file) {
                     "npcs="+std::to_string(wrld->npcCount()));
   probeT = LoadProbe::now();
   wrld->triggerOnStart(true);
+  wrld->startSocietyProjection(clockRate());
   if(LoadProbe::enabled())
     LoadProbe::mark("trigger_start",LoadProbe::msSince(probeT));
   cam->reset(wrld->player());
@@ -185,15 +186,16 @@ GameSession::GameSession(std::string file) {
   }
 
 GameSession::GameSession(Serialize &fin) {
+  SaveGameHeader hdr;
+  fin.setEntry("header");
+  fin.read(hdr);
+  hdr.requireCompatible();
+  fin.setGlobalVersion(hdr.version);
+
   if(!Resources::isHeadless())
     sound = std::make_unique<Tempest::SoundDevice>();
   Gothic::inst().setLoadingProgress(0);
   setupSettings();
-
-  SaveGameHeader hdr;
-  fin.setEntry("header");
-  fin.read(hdr);
-  fin.setGlobalVersion(hdr.version);
 
   {
   uint16_t wssSize=0;
@@ -212,9 +214,9 @@ GameSession::GameSession(Serialize &fin) {
   cam.reset(new Camera());
   vm.reset(new GameScript(*this));
   vm->initDialogs();
-  // before the world: its npc's of ours find their symbols by index
-  if(fin.setEntry(OwnSymbols::SaveEntry))
-    vm->ownSymbols().load(fin);
+  // The world resolves director NPCs by their declared IDs.
+  if(!fin.setEntry(OwnSymbols::SaveEntry) || !vm->loadDirectorState(fin))
+    throw std::runtime_error("Invalid director state in save");
 
   if(true) {
     setWorld(std::unique_ptr<World>(new World(*this,*vm,wname,false,[&](int v){
@@ -227,19 +229,25 @@ GameSession::GameSession(Serialize &fin) {
 
   if(fin.setEntry("game/perc"))
     vm->loadPerc(fin); else
-    initPerceptions();
+    vm->initPerceptions();
 
   fin.setEntry("game/quests");
   vm->loadQuests(fin);
 
-  fin.setEntry("game/daedalus");
+  if(!fin.setEntry(ScriptVars::StateEntry))
+    throw std::runtime_error("Missing runtime state in save");
   vm->loadVar(fin);
+
+  if(!fin.setEntry("game/bennet"))
+    throw std::runtime_error("Missing Bennet progression in save");
+  vm->loadBennetProgress(fin);
 
   if(auto hero = wrld->player())
     vm->setInstanceNPC("HERO",*hero);
 
   fin.setEntry("game/camera");
   loadCamera(fin,*cam,wrld->player());
+  wrld->restoreSocietyProjection(clockRate(),fin);
   wrld->updateLandscape(*cam);
   wrld->updateNpcSimTiers();
   Gothic::inst().setLoadingProgress(96);
@@ -294,6 +302,7 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   Gothic::inst().setLoadingProgress(25);
 
   wrld->save(fout);
+  wrld->saveSocietyProjection(fout);
   Gothic::inst().setLoadingProgress(60);
 
   fout.setEntry("game/perc");
@@ -302,8 +311,10 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   fout.setEntry("game/quests");
   vm->saveQuests(fout);
 
-  fout.setEntry("game/daedalus");
+  fout.setEntry(ScriptVars::StateEntry);
   vm->saveVar(fout);
+  fout.setEntry("game/bennet");
+  vm->saveBennetProgress(fout);
   if(auto& fn = Gothic::inst().saveExtFn)
     fn(fout);
   Gothic::inst().setLoadingProgress(80);
@@ -498,7 +509,7 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
     Gothic::inst().setLoadingProgress(v);
     };
 
-  initPerceptions();
+  vm->initPerceptions();
   std::unique_ptr<World> ret = std::unique_ptr<World>(new World(*this,*vm,w,wss.isEmpty(),loadProgress));
   setWorld(std::move(ret));
 
@@ -604,12 +615,6 @@ bool GameSession::isWorldKnown(std::string_view name) const {
   return false;
   }
 
-void GameSession::initPerceptions() {
-  // NOTE: world is null at this point and most scrip-api will be prone to crash
-  if(vm->hasSymbolName("initPerceptions"))
-    vm->getVm().call_function("initPerceptions");
-  }
-
 void GameSession::initScripts(bool firstTime) {
   LoadProbe::Startup::Scope probe(LoadProbe::Startup::Script,true);
   LoadProbe::Startup::Detail::Scope script("script_phase");
@@ -620,27 +625,24 @@ void GameSession::initScripts(bool firstTime) {
   if(firstTime) {
     // Fresh start: Wld_InsertNpc leaves the floor fix to the final placement below (game/gamescript_startupfloor.h).
     vm->startupFloor().begin();
-    if(vm->hasSymbolName("startup_global")) {
+    {
       LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("STARTUP_GLOBAL");});
-      vm->runStartup("startup_global");
+      vm->runStartup("STARTUP_GLOBAL");
       }
-
-    string_frm startup("startup_", name);
-    if(vm->hasSymbolName(startup)) {
+    {
+      string_frm startup("startup_",name);
       LoadProbe::Startup::Detail::Scope call("script_function",[&]{return std::string(std::string_view(startup));});
       vm->runStartup(startup);
       }
     }
-
-  if(vm->hasSymbolName("init_global")) {
+  {
     LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("INIT_GLOBAL");});
-    vm->getVm().call_function("init_global");
+    vm->runWorldInit("INIT_GLOBAL");
     }
-
-  string_frm init("init_",name);
-  if(vm->hasSymbolName(init)) {
+  {
+    string_frm init("init_",name);
     LoadProbe::Startup::Detail::Scope call("script_function",[&]{return std::string(std::string_view(init));});
-    vm->getVm().call_function(init);
+    vm->runWorldInit(init);
     }
 
   script.stop();

@@ -1,0 +1,20 @@
+# @headless
+# Fresh NEWWORLD, 08:00. Use gothic-body-runner --game-parity --step-ms 8.
+# Start at the harbour mouth, facing open water. Return through the upper quarter and barracks to the market.
+# NPC CPU windows are steady..return, return..arrived, and arrived..end.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_CITY_HABOUR_SHIP_01
+watch player
+cam at -1385 42 3172 -2500 42 4176
+mark warm
+wait 6000
+mark steady
+wait 8000
+mark return
+cam follow 500 220 180
+route 500 NW_CITY_HABOUR_SHIP_01 NW_CITY_UPTOWN_PATH_11 NW_CITY_HABOUR_KASERN_18 NW_CITY_MERCHANT_PATH_17
+mark arrived
+wait 4000
+mark end

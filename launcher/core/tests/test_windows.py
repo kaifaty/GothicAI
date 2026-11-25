@@ -528,17 +528,18 @@ def test_preflight_names_the_windows_setup(setup_env, monkeypatch, capsys):
     assert "Папка игры не выбрана" in out and "Setup-GothicAI.cmd" in out
 
 
-def test_preflight_wants_the_converter_beside_the_game(setup_env, tmp_path, monkeypatch, capsys):
+def test_preflight_wants_a_prepared_base_or_the_converter(setup_env, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delenv("OPENGOTHIC_BASE", raising=False)
     build = tmp_path / "repo" / "OpenGothic" / "build" / "opengothic"
     build.mkdir(parents=True)
     (build / "Gothic2Notr.exe").write_bytes(b"")
+    setup_env.set("game.dir", str(gothic(tmp_path / "Gothic II")))
     cli.setup(setup_args(check=True))
-    assert "Игра ещё не собрана" in capsys.readouterr().out  # `up` would stop before the game
+    assert "Подготовьте игровую базу" in capsys.readouterr().out
     (build / "content-convert.exe").write_bytes(b"")
     cli.setup(setup_args(check=True))
-    assert "Игра ещё не собрана" not in capsys.readouterr().out
+    assert "Подготовьте игровую базу" not in capsys.readouterr().out
 
 
 # --- Windows itself --------------------------------------------------------------------------------

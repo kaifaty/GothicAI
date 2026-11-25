@@ -393,6 +393,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say(pl.bowDump());
     }
   else if((c=="stats" || c=="npcday" || c=="npcday-save" || c=="seed") && npcCommandsCommand(npcCommandsContext(),line,a,w,pl,ctrl)) return;
+  else if(c=="npcfight-record")
+    npcFightTraceCommand(bench.npcFightTrace,a,bench.crew,w,pl,bench.scenarioSeed);
+  else if(c=="npcfight-handoff")
+    npcCombatHandoffCommand(a,w,pl,bench.scenarioSeed);
   else if(npcSimCommand(bench.npcDuel,bench.npcTierTest,bench.npcSpeedTest,bench.pc,bench.prog,a,w,pl)) return;
   else if(bodyCommand(bodyContext(),a,w,pl)) return;
   else if(c=="knockdown-launch-equip") {
@@ -664,9 +668,11 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     ArcherAi::subjectProbe = ArcherAi::Probe();
     Flinch::probeNpc = bench.subject;
     char buf[160] = "watch nobody";
-    if(n!=nullptr)
-      if(auto sym = w.script().findSymbol(size_t(n->instanceSymbol())))
-        std::snprintf(buf,sizeof(buf),"watch %s dist=%.0f",sym->name().c_str(),double((n->position()-pl.position()).length()));
+    if(n!=nullptr) {
+      const auto name = w.script().storyNpcName(uint32_t(n->instanceSymbol()));
+      if(!name.empty())
+        std::snprintf(buf,sizeof(buf),"watch %.*s dist=%.0f",int(name.size()),name.data(),double((n->position()-pl.position()).length()));
+      }
     say(buf);
     }
   else if(c=="gazeinfo") {

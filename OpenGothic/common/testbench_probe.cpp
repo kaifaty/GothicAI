@@ -73,11 +73,14 @@ class Probe final : public BenchHooks {
     void beforeWorldTick(uint64_t dt) override {
       TestBench::beforeWorldTick(dt);
       }
-    void beforeNpcTick(Npc& npc) override {
-      TestBench::beforeNpcTick(npc);
+    BenchNpcTick beforeNpcTick(Npc& npc) override {
+      return TestBench::beforeNpcTick(npc);
       }
     bool tick(uint64_t dt, PlayerControl& player) override {
       return TestBench::tick(dt,player);
+      }
+    void sampleSocietyPose(World& world) override {
+      TestBench::sampleSocietyPose(world);
       }
     void sampleStreaming(const World& world) override {
       TestBench::sampleStreaming(world);

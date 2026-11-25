@@ -1,6 +1,10 @@
 #include "gamescript_daystats.h"
-#include "daedalus/classes.h"
 #include "utils/jsonescape.h"
+
+#ifndef GOTHIC_NATIVE_V3
+#include "daedalus/classes.h"
+#include "daedalus/vm.h"
+#endif
 
 namespace {
 std::string counts(const std::map<std::string,uint64_t>& values) {
@@ -13,18 +17,24 @@ std::string counts(const std::map<std::string,uint64_t>& values) {
   }
 }
 
-DayScriptStats::DayScriptStats(const RoutineDefinitions::Library& routines) {
+DayScriptStats::DayScriptStats(const RoutineDefinitions::Library& routines, Metric metric):metric(metric) {
   for(const auto& [name,rows]:routines.routines) {
     (void)name;
     for(const auto& row:rows) ++states[row.state].rows;
     }
   }
 
+void DayScriptStats::registerBeastState(std::string_view symbol) {
+  if(symbol.starts_with("ZS_MM_"))
+    states[statePhase(symbol).first];
+  }
+
+#ifndef GOTHIC_NATIVE_V3
 std::shared_ptr<DayScriptStats> DayScriptStats::attach(daedalus::DaedalusVm& vm, const RoutineDefinitions::Library& routines) {
-  auto stats=std::make_shared<DayScriptStats>(routines);
+  auto stats=std::make_shared<DayScriptStats>(routines,Metric::VmInstructions);
   for(const auto& symbol:vm.symbols()) {
-    if(symbol.type()==daedalus::DaedalusDataType::FUNCTION && symbol.name().starts_with("ZS_MM_"))
-      stats->states[statePhase(symbol.name()).first];
+    if(symbol.type()==daedalus::DaedalusDataType::FUNCTION)
+      stats->registerBeastState(symbol.name());
     auto* mutableSymbol=vm.find_symbol_by_index(symbol.index());
     if(mutableSymbol->is_instance_of<daedalus::IInfo>()) {
       const auto* info=static_cast<const daedalus::IInfo*>(mutableSymbol->get_instance().get());
@@ -32,19 +42,21 @@ std::shared_ptr<DayScriptStats> DayScriptStats::attach(daedalus::DaedalusVm& vm,
         if(const auto* fn=vm.find_symbol_by_index(uint32_t(function))) stats->dialogs.insert(fn->name());
       }
     }
-  vm.add_call_observer([stats,&vm](const auto& symbol) { if(stats->active) stats->call(symbol,vm); });
-  vm.observe_instructions([stats,&vm](const auto& instruction) { if(stats->active) stats->instruction(instruction,vm.pc()); });
-  vm.observe_externals([stats](const auto& symbol) { if(stats->active) stats->external(symbol); });
+  stats->callObserver=vm.add_call_observer([stats,&vm](const auto& symbol) { stats->call(symbol,vm); });
+  stats->instructionObserver=vm.add_instruction_observer([stats](const auto& machine,const auto& instruction) {
+    stats->instruction(instruction,machine.pc());
+    });
+  vm.observe_externals([stats](const auto& symbol) { stats->external(symbol); });
   return stats;
   }
 
 void DayScriptStats::stop(daedalus::DaedalusVm& vm) {
   active=false;
-  vm.observe_instructions({});
+  vm.remove_call_observer(callObserver);
+  vm.remove_instruction_observer(instructionObserver);
   vm.observe_externals({});
-  // add_call_observer preserves the startup probes. Its retained callback is inert
-  // after this interval; a later interval gets a new collector, never double counts.
   }
+#endif
 
 std::pair<std::string,std::string> DayScriptStats::statePhase(std::string_view symbol) {
   if(!symbol.starts_with("ZS_")) return {};
@@ -66,6 +78,7 @@ std::string DayScriptStats::family(std::string_view name) const {
   return "other";
   }
 
+#ifndef GOTHIC_NATIVE_V3
 void DayScriptStats::call(const daedalus::DaedalusSymbol& symbol, const daedalus::DaedalusVm& vm) {
   ++calls;
   ++symbols[symbol.name()];
@@ -78,16 +91,27 @@ void DayScriptStats::call(const daedalus::DaedalusSymbol& symbol, const daedalus
     }
   if(kind=="npc_creation" || kind=="item_creation") creationKinds[symbol.name()]=kind;
   if(auto* p=phase()) {
-    if(contexts.back().root) contexts.back().root=false; else ++p->nested;
+    auto& root=contexts.back().root;
+    if(root==RootCall::Pending)
+      root=RootCall::Observed;
+    else
+      ++p->nested;
     }
-  stack.push_back({symbol.name(),symbol.address(),false});
+  stack.push_back({symbol.name(),symbol.address()});
   }
 
 void DayScriptStats::instruction(const daedalus::DaedalusInstruction& instruction, uint32_t pc) {
   // An overridden BL can return without entering bytecode. It still counts as a
   // call, but must not become the top-level owner of later random draws.
-  while(!stack.empty() && !stack.back().entered && stack.back().address!=pc) stack.pop_back();
-  if(!stack.empty()) stack.back().entered=true;
+  while(!stack.empty() && stack.back().instructions==nullptr && stack.back().address!=pc) stack.pop_back();
+  if(stack.empty()) {
+    ++unattributedInstructions;
+    } else {
+    auto& frame=stack.back();
+    if(frame.instructions==nullptr)
+      frame.instructions=&instructionsBySymbol[frame.name];
+    ++*frame.instructions;
+    }
   if(auto* p=phase()) ++p->instructions;
   if(instruction.op==daedalus::DaedalusOpcode::RSR && !stack.empty()) stack.pop_back();
   }
@@ -95,6 +119,7 @@ void DayScriptStats::instruction(const daedalus::DaedalusInstruction& instructio
 void DayScriptStats::external(const daedalus::DaedalusSymbol& symbol) {
   if(auto* p=phase()) ++p->externals[symbol.name()];
   }
+#endif
 
 DayScriptStats::Phase* DayScriptStats::phase() {
   if(contexts.empty() || contexts.back().state.empty()) return nullptr;
@@ -105,14 +130,26 @@ DayScriptStats::Phase* DayScriptStats::phase() {
 void DayScriptStats::begin(std::string_view symbol) {
   auto [state,phase]=statePhase(symbol);
   if(state.empty() && !symbol.starts_with("RTN_")) perceptions.insert(std::string(symbol));
-  contexts.push_back({std::move(state),std::move(phase),true});
+  contexts.push_back({std::string(symbol),std::move(state),std::move(phase)});
   if(auto* p=this->phase()) ++p->engine;
   }
 
-// A phase from its record has no root script call: its first VM call (a deferred helper) is nested.
 void DayScriptStats::record() {
-  if(auto* p=phase()) ++p->records;
-  if(!contexts.empty()) contexts.back().root=false;
+  if(contexts.empty() || contexts.back().root==RootCall::Record)
+    return;
+  auto& context=contexts.back();
+  auto& root=context.root;
+  if(metric==Metric::NativePhases) {
+    ++calls;
+    ++symbols[context.symbol];
+    }
+  if(auto* p=phase()) {
+    ++p->records;
+    // Some native handlers report acceptance after running their helpers.
+    if(root==RootCall::Observed)
+      ++p->nested;
+    }
+  root=RootCall::Record;
   }
 
 void DayScriptStats::end() {
@@ -121,7 +158,11 @@ void DayScriptStats::end() {
 
 std::string DayScriptStats::source(bool script, bool actor) const {
   if(!script) return actor ? "native_combat" : "native_other";
-  if(!contexts.empty() && !contexts.back().state.empty()) return "HLP_RANDOM/"+contexts.back().state+"/"+contexts.back().phase;
+  if(!contexts.empty()) {
+    const auto& context=contexts.back();
+    if(!context.state.empty()) return "HLP_RANDOM/"+context.state+"/"+context.phase;
+    if(metric==Metric::NativePhases) return "HLP_RANDOM/outside/"+context.symbol;
+    }
   return "HLP_RANDOM/outside/"+(stack.empty() ? std::string("<engine>") : stack.front().name);
   }
 
@@ -138,8 +179,14 @@ std::string DayScriptStats::json() const {
     const auto found=creationKinds.find(name);
     families[found==creationKinds.end() ? family(name) : found->second]+=count;
     }
-  std::string out="{\"metric\":\"vm_instructions_inclusive\",\"calls\":"+std::to_string(calls)+",\"random\":"+std::to_string(rolls)+
-                  ",\"families\":"+counts(families)+",\"symbols\":"+counts(symbols)+",\"random_sources\":"+counts(sources)+",\"states\":{";
+  const bool vmMetric=metric==Metric::VmInstructions;
+  std::string out="{\"metric\":"+jsonEscape(vmMetric ? "vm_instructions_inclusive" : "native_phase_calls")+
+                  ",\"calls\":"+std::to_string(calls)+",\"random\":"+std::to_string(rolls)+
+                  ",\"families\":"+counts(families)+",\"symbols\":"+counts(symbols);
+  if(vmMetric)
+    out+=",\"instructions_by_symbol\":"+counts(instructionsBySymbol)+
+         ",\"unattributed_instructions\":"+std::to_string(unattributedInstructions);
+  out+=",\"random_sources\":"+counts(sources)+",\"states\":{";
   bool first=true;
   for(const auto& [name,state]:states) {
     if(!first) out+=",";
@@ -151,9 +198,12 @@ std::string DayScriptStats::json() const {
       const auto p=found==state.phases.end() ? Phase{} : found->second;
       if(!firstPhase) out+=",";
       firstPhase=false;
-      out+=jsonEscape(phaseName)+":{\"engine\":"+std::to_string(p.engine)+",\"records\":"+std::to_string(p.records)+
-           ",\"nested\":"+std::to_string(p.nested)+
-           ",\"instructions\":"+std::to_string(p.instructions)+",\"random\":"+std::to_string(p.random)+",\"externals\":"+counts(p.externals)+"}";
+      out+=jsonEscape(phaseName)+":{\"engine\":"+std::to_string(p.engine)+",\"records\":"+std::to_string(p.records);
+      if(vmMetric)
+        out+=",\"nested\":"+std::to_string(p.nested)+",\"instructions\":"+std::to_string(p.instructions);
+      out+=",\"random\":"+std::to_string(p.random);
+      if(vmMetric) out+=",\"externals\":"+counts(p.externals);
+      out+="}";
       }
     out+="}}";
     }

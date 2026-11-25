@@ -358,37 +358,91 @@ async def graph_programs(
     deeper = [c["text"] for c in await link.dialog_choices(npc, "DIR_CHOICE_TEST.2")]
     check("choice_offers_more", deeper == ["Опыт"], str(deeper))
 
-    # the same in the dialog window, as the player has it: the dialog, after its line its choices, one that
-    # offers another, then the dialogs again
-    async def menu(ok: Callable[[list[str]], bool], timeout: float = 30) -> list[str]:
+    # Close the fixture window without playing the stock farewell or starting its chapter screen.
+    exit_topic = {
+        "id": "DIR_PROGRAM_WINDOW_EXIT",
+        "npc": npc,
+        "description": "Завершить проверку диалога",
+        "nr": 54,
+        "program": [{"do": "call", "call": ["call", "AI_STOPPROCESSINFOS", ["inst", "SELF"]]}],
+    }
+    await story.apply({"op": "add_node", "node": exit_topic})
+
+    # At one frame per second the preceding speech can delay opening, then the new
+    # streamed line can hold the choices for another 50 seconds. Share one budget.
+    await link.debug("teleport", near=npc, distance=150)
+    window_deadline = time.monotonic() + 110
+
+    async def menu(ok: Callable[[list[str]], bool]) -> list[str]:
         seen: list[str] = []
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        while time.monotonic() < window_deadline:
             seen = await link.dialog_menu()
             if ok(seen):
                 break
             await asyncio.sleep(0.3)
         return seen
 
-    await link.debug("teleport", near=npc, distance=150)
+    def at_topics(entries: list[str]) -> bool:
+        return ask["description"] in entries and exit_topic["description"] in entries
+
     await link.start_talk(npc)
-    window: list[list[str]] = [await menu(lambda m: ask["description"] in m)]
+    window = [await menu(at_topics)]
     exp_before = (await hero())[1]
     for pick, then in ((ask["description"], ["Золото", "Дальше"]), ("Дальше", ["Опыт"]), ("Опыт", None)):
         if pick not in window[-1]:
             break
         await link.pick_in_menu(pick)
-        # after the last choice the window offers the dialogs again
-        window.append(await menu(lambda m, then=then: m == then if then else ask["description"] in m))
+        window.append(await menu(lambda m, then=then: m == then if then else at_topics(m)))
     gained = (await hero())[1] - exp_before
+    closed = False
+    if at_topics(window[-1]):
+        await link.pick_in_menu(exit_topic["description"])
+        closed = await _until_async(
+            link.story_state,
+            lambda state: state.get("dialog") is False and state.get("cutscene") is False,
+            max(0, window_deadline - time.monotonic()),
+        )
+    resumed = False
+    if closed:
+        # The bridge handles this application-level ping on the next unpaused world tick.
+        try:
+            await link.ping(timeout=max(0, window_deadline - time.monotonic()))
+        except TimeoutError:
+            pass
+        else:
+            resumed = True
+    await story.apply({"op": "remove_node", "node": exit_topic["id"]})
     check(
         "window",
-        window[1:3] == [["Золото", "Дальше"], ["Опыт"]] and gained == 3 and ask["description"] in window[-1],
-        f"{' -> '.join(map(str, window))}; exp +{gained}",
+        window[1:3] == [["Золото", "Дальше"], ["Опыт"]] and gained == 3 and resumed,
+        f"{' -> '.join(map(str, window))}; exp +{gained}; closed={closed}; resumed={resumed}",
     )
-    if window[-1]:
-        await link.pick_in_menu(window[-1][-1])  # the last one ends the talk
-        await menu(lambda m: not m, 15)
+    if not resumed:
+        return _logged(results)
+
+    # A relationship written by a director program is read by the original NPC query before and after loading.
+    attitude = ["call", "NPC_GETATTITUDE", ["inst", "SELF"], ["inst", "OTHER"]]
+    old_attitude, friendly, neutral = await link.story_eval(
+        npc, [attitude, ["var", "ATT_FRIENDLY"], ["var", "ATT_NEUTRAL"]]
+    )
+    target_attitude = neutral if old_attitude == friendly else friendly
+    attitude_node = {
+        "id": "DIR_ATTITUDE_TEST",
+        "npc": npc,
+        "description": "Проверка отношения к герою",
+        "nr": 52,
+        "program": [
+            {"do": "call", "call": ["call", "NPC_SETATTITUDE", ["inst", "SELF"], ["int", target_attitude]]},
+        ],
+    }
+    await story.apply({"op": "add_node", "node": attitude_node})
+    chosen = asyncio.ensure_future(wait_message(link, DialogChosen, lambda m: m.node == attitude_node["id"], 10))
+    await link.choose_dialog(npc, attitude_node["id"])
+    await chosen
+    [written_attitude] = await link.story_eval(npc, [attitude])
+    knows = ["call", "NPC_KNOWSINFO", ["inst", "HERO"], ["sym", info]]
+    dead = ["call", "NPC_ISDEAD", ["inst", "SELF"]]
+    gates_before = await link.story_eval(npc, [knows, dead, gold])
 
     # a program in place of a condition, made before a save, comes back after loading it
     await story.apply({"op": "program", "node": cond, "part": "condition", "steps": never})
@@ -402,10 +456,60 @@ async def graph_programs(
     offered = await link.offered_dialogs(npc)
     kept = await link.story_program(cond, "condition")
     check("after_load", cond not in offered and kept.get("patched") is True, " ".join(offered))
+    [loaded_attitude] = await link.story_eval(npc, [attitude])
+    check(
+        "attitude",
+        old_attitude != target_attitude == written_attitude == loaded_attitude,
+        f"{old_attitude} -> {written_attitude}, loaded {loaded_attitude}, expected {target_attitude}",
+    )
+
+    # Compare the state queries with the engine's independent routine report after loading.
+    routine = await link.routine(npc)
+    state_args = [["inst", "SELF"], ["sym", routine.current]]
+    state_queries = [
+        ["call", "NPC_ISINSTATE", *state_args],
+        ["call", "NPC_WASINSTATE", ["inst", "SELF"], ["int", -2]],
+        ["call", "NPC_ISINROUTINE", *state_args],
+    ]
+    state_results = await link.story_eval(npc, state_queries) if routine.current else []
+    scheduled = bool(routine.entries) and all(entry.state == routine.current for entry in routine.entries)
+    check(
+        "npc_state_conditions",
+        len(state_results) == 3 and state_results[:2] == [1, 0] and (not scheduled or state_results[2] == 1),
+        f"{routine.current}: {state_results}, all-day activity={scheduled}",
+    )
 
     live = await link.check_conditions()
     counts = live.get("programs") or {}
     check("counters", counts.get("replaced", 0) >= 1 and counts.get("failed") == 0, str(counts))
+
+    # A director program may use the same timed refusal effect as a lifted stock dialogue.
+    refusal = ["call", "NPC_REFUSETALK", ["inst", "SELF"]]
+    before = await link.story_eval(npc, [refusal, attitude])
+    refuse_node = {
+        "id": "DIR_REFUSE_TEST",
+        "npc": npc,
+        "description": "Проверка отказа от разговора",
+        "nr": 53,
+        "condition": ["&&", knows, ["!", dead], [">=", gold, ["int", 3]]],
+        "program": [
+            {"do": "call", "call": ["call", "NPC_SETREFUSETALK", ["inst", "SELF"], ["int", 15]]},
+        ],
+    }
+    await story.apply({"op": "add_node", "node": refuse_node})
+    gates_after = await link.story_eval(npc, [knows, dead, gold])
+    visible = refuse_node["id"] in await link.offered_dialogs(npc)
+    check(
+        "npc_conditions",
+        visible and gates_after == gates_before and len(gates_after) == 3
+        and gates_after[:2] == [1, 0] and gates_after[2] >= 3,
+        f"{gates_before} -> {gates_after}, offered={visible}",
+    )
+    chosen = asyncio.ensure_future(wait_message(link, DialogChosen, lambda m: m.node == refuse_node["id"], 10))
+    await link.choose_dialog(npc, refuse_node["id"])
+    await chosen
+    after = await link.story_eval(npc, [refusal, attitude])
+    check("refuse_talk", len(before) == 2 and before[0] == 0 and after == [1, before[1]], f"{before} -> {after}")
 
     for name, outcome in results.items():
         log.info("%-18s %s", name, outcome)

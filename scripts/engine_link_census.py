@@ -14,6 +14,13 @@ build are system ones; they are only counted.
 
     python3 scripts/engine_link_census.py OpenGothic/build             # markdown report
     python3 scripts/engine_link_census.py OpenGothic/build --json      # the same as JSON
+    python3 scripts/engine_link_census.py OpenGothic/build --check-native-game --json
+    python3 scripts/engine_link_census.py OpenGothic/build --check-native-v3 --target gothic-body-runner
+
+Both checks require the unstripped linked executable. The v2 check excludes the bytecode
+dispatcher and offline tooling. The v3 check also excludes the compatibility VM, program
+index and runtime bindings codec. Exit codes are 0 for a clean check, 1 for leaked code and 2
+for an uninspectable build.
 
 Step 8.2 of the engine layers plan: reports/engine/2026-11-13-empty-island/README.md.
 """
@@ -46,6 +53,26 @@ MACHO_LINE = re.compile(r"^(?:[0-9a-fA-F]+)?\s*\((?P<section>[^)]*)\)(?:\s+\(ali
                         r"(?P<kind>(?:weak\s+)?(?:private\s+)?external|non-external)\s+"
                         r"(?:\(was a private external\)\s+)?(?:\[[a-z ]+\]\s+)*(?P<name>\S.*?)"
                         r"(?:\s+\((?:from|weak import)[^)]*\))?$")
+DAEDALUS_DISPATCH = re.compile(r"^_ZN8daedalus10DaedalusVm4execEv(?:[.$@].*)?$")
+OFFLINE_ARCHIVES = {"StoryGraph", "StoryGraphLift", "gothic-program-codec"}
+OFFLINE_SOURCE = re.compile(
+    r"/(?:ai_bridge/storygraph/(?:bytecode|eval|exec|graphjson|lifter|model|program)"
+    r"|common/import/programcodec|common/game/definitions/symbolcatalog)\.cpp$"
+)
+OFFLINE_SYMBOL = re.compile(
+    r"^(?:_ZN10storygraph11liftProgram|_ZNK?10storygraph8Bytecode"
+    r"|_ZN11ProgramData(?:11readProgram|12(?:writeProgram|recordSha256)|13encodeProgram"
+    r"|18(?:readSymbolMetadata|symbolMetadataPath)|19writeSymbolMetadata|25symbolMetadataPayloadPath|7compare)"
+    r"|_ZN19ScriptSymbolCatalog(?:4load|5write))"
+)
+V3_SCRIPT_ARCHIVES = {"gothic-script-state", "gothic-script-data",
+                      "gothic-base-import", "gothic-npc-snapshot", "gothic-video-import"}
+V3_SCRIPT_SOURCE = re.compile(
+    r"/(?:common/(?:daedalus/|import/|programdata\.cpp$|asset/programfromzenkit\.cpp$"
+    r"|game/definitions/(?:baseprogram|runtimebindings)\.cpp$)|tools/runtimebindingroots\.cpp$)"
+)
+# Itanium names include namespace components in direct symbols, RTTI and instantiated templates.
+V3_SCRIPT_SYMBOL = re.compile(r"^_Z.*(?:8daedalus|11ProgramData|15RuntimeBindings)\d+")
 
 
 @dataclass
@@ -54,15 +81,16 @@ class Symbols:
     defined: dict[str, bool] = field(default_factory=dict)  # name -> weak
 
 
-def parse_nm(text: str, fmt: str) -> Symbols:
-    """Global symbols of one `nm` (ELF) or `nm -m` (Mach-O) output; Mach-O loses its leading `_`."""
+def parse_nm(text: str, fmt: str, *, include_local_text: bool = False) -> Symbols:
+    """Global symbols and optional local text from ELF/Mach-O nm; drop the Mach-O prefix."""
     out = Symbols()
     for line in text.splitlines():
         if not line.strip() or line.endswith(":"):
             continue
         if fmt == "macho":
             m = MACHO_LINE.match(line)
-            if not m or m["kind"] == "non-external":
+            if not m or (m["kind"] == "non-external" and
+                         not (include_local_text and m["section"] == "__TEXT,__text")):
                 continue
             name = m["name"].removeprefix("_")
             if m["section"] == "undefined":
@@ -76,7 +104,7 @@ def parse_nm(text: str, fmt: str) -> Symbols:
             kind, name = m["type"], m["name"]
             if kind in ELF_UNDEFINED:
                 out.undefined.add(name)
-            elif kind in ELF_DEFINED:
+            elif kind in ELF_DEFINED or (include_local_text and kind == "t"):
                 out.defined[name] = out.defined.get(name, True) and kind in ELF_WEAK
     out.undefined -= out.defined.keys()
     return out
@@ -102,7 +130,7 @@ def query_inputs(text: str) -> tuple[str, list[str]]:
     return rule, inputs
 
 
-def link_objects(build: Path, target: str) -> list[tuple[str, str]]:
+def link_objects(build: Path, target: str, *, archives: set[str] | None = None) -> list[tuple[str, str]]:
     """(object, library) pairs linked into `target`; objects of the target itself have its library name."""
     seen: set[str] = set()
     result: list[tuple[str, str]] = []
@@ -125,6 +153,8 @@ def link_objects(build: Path, target: str) -> list[tuple[str, str]]:
                     seen.add(i)
                     result.append((i, library))
             elif i.endswith(LINKABLE):
+                if archives is not None:
+                    archives.add(i)
                 walk(i, archive_name(i))
 
     walk(target, target)
@@ -166,10 +196,63 @@ def classify(source: str | None, engine: Path, build: Path) -> tuple[str, str | 
     return rel, layer_of(rel)
 
 
-def run_nm(nm: str, fmt: str, obj: Path) -> Symbols:
+def run_nm(nm: str, fmt: str, obj: Path, *, include_local_text: bool = False) -> Symbols:
     args = [nm, "-m", str(obj)] if fmt == "macho" else [nm, str(obj)]
     out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
-    return parse_nm(out, fmt)
+    return parse_nm(out, fmt, include_local_text=include_local_text)
+
+
+def executable_target(build: Path, target: str) -> str:
+    """Resolve a CMake Ninja executable alias to the executable in the supplied build."""
+    seen: set[str] = set()
+    node = target
+    while node not in seen:
+        seen.add(node)
+        rule, inputs = query_inputs(ninja(build, "-t", "query", node))
+        if re.match(r"^(?:C|CXX)_EXECUTABLE_LINKER__", rule):
+            return node
+        if rule != "phony" or len(inputs) != 1:
+            break
+        node = inputs[0]
+    raise ValueError(f"{target} is not a CMake Ninja executable target")
+
+
+def check_native_game(build: Path, target: str, nm: str, fmt: str, *, v3: bool = False) -> dict:
+    node = executable_target(build, target)
+    binary = (build / node).resolve()
+    if not binary.is_relative_to(build) or not binary.is_file():
+        raise ValueError(f"{binary}: linked executable is missing from the build")
+    symbols = run_nm(nm, fmt, binary, include_local_text=True)
+    if "main" not in symbols.defined:
+        raise ValueError(f"{binary}: no main symbol; use an unstripped executable")
+    archives: set[str] = set()
+    objects = link_objects(build, node, archives=archives)
+    if not objects:
+        raise ValueError(f"{target}: no object files found in the link inputs")
+    sources = source_map(build)
+    symbol_names = symbols.defined.keys() | symbols.undefined
+    daedalus_archives = sorted(path for path in archives if archive_name(path) == "gothic-daedalus")
+    vm_objects = sorted(obj for obj, _ in objects
+                        if sources.get(obj, "").endswith("/common/daedalus/vm_bytecode.cpp"))
+    dispatch_symbols = sorted(name for name in symbol_names if DAEDALUS_DISPATCH.fullmatch(name))
+    offline_archives = sorted(path for path in archives if archive_name(path) in OFFLINE_ARCHIVES)
+    offline_objects = sorted(obj for obj, _ in objects if OFFLINE_SOURCE.search(sources.get(obj, "")))
+    offline_symbols = sorted(name for name in symbol_names if OFFLINE_SYMBOL.match(name))
+    findings = {
+        "daedalus_archives": daedalus_archives,
+        "vm_objects": vm_objects,
+        "opcode_dispatch_symbols": dispatch_symbols,
+        "offline_archives": offline_archives,
+        "offline_objects": offline_objects,
+        "offline_symbols": offline_symbols,
+    }
+    if v3:
+        findings.update(
+            compatibility_archives=sorted(path for path in archives if archive_name(path) in V3_SCRIPT_ARCHIVES),
+            compatibility_objects=sorted(obj for obj, _ in objects if V3_SCRIPT_SOURCE.search(sources.get(obj, ""))),
+            compatibility_symbols=sorted(name for name in symbol_names if V3_SCRIPT_SYMBOL.match(name)),
+        )
+    return {"binary": str(binary), **findings, "status": "leaked" if any(findings.values()) else "clean"}
 
 
 def demangle(names: list[str], cxxfilt: str) -> dict[str, str]:
@@ -330,8 +413,32 @@ def main() -> int:
     ap.add_argument("--format", choices=("elf", "macho"), default="macho" if sys.platform == "darwin" else "elf")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--json", action="store_true")
+    native_check = ap.add_mutually_exclusive_group()
+    native_check.add_argument("--check-native-game", action="store_true",
+                              help="check the v2 game for bytecode dispatch and offline tooling")
+    native_check.add_argument("--check-native-v3", action="store_true",
+                              help="also reject compatibility VM, symbol data and runtime bindings")
     args = ap.parse_args()
     build = args.build.resolve()
+    if args.check_native_game or args.check_native_v3:
+        try:
+            result = check_native_game(build, args.target, args.nm, args.format, v3=args.check_native_v3)
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
+            if args.json:
+                print(json.dumps({"status": "error", "target": args.target, "error": detail}, indent=1))
+            else:
+                print(f"Native game link check: {detail}", file=sys.stderr)
+            return 2
+        if args.json:
+            print(json.dumps(result, indent=1))
+        else:
+            print(f"Native game link check: {result['status']} ({result['binary']})")
+            for key, items in result.items():
+                if key not in ("binary", "status"):
+                    for item in items:
+                        print(f"{key}: {item}")
+        return int(result["status"] == "leaked")
     engine = args.engine.resolve() if args.engine else engine_dir(build)
     units = collect(build, args.target, engine, args.nm, args.format, args.jobs)
     if not units:

@@ -50,7 +50,7 @@ five spruces of PROBE, thinned to `--share` of their triangles by mesh3d/blender
 stand in a grid of `--count` (forest_layout(), X0 and the next constants) on the ground of the base's world mesh,
 and spruce A alone on the hill west of it (LONE) unless `--no-sample`. The layer is
 worlds/NEWWORLD/vobs.d/tree-cost.json, the numbers of the spruces are in tree-cost.json of the set. `--count 0`
-is the control: the same set without the forest. The spruces of `--share 1` are those of `probe`, byte for byte.
+keeps only the lone spruce by default. At `--share 1` the mesh arrays match `probe`. The forest GLB also records `share`.
 `forest --hierarchy` uses the positions and yaw from the completed 1,024-tree stand in `--from`. All trees share
 spruce A and the levels, impostor and hierarchy of the record `--label` of the staged `bough` set, with that
 record's thresholds. The grid scales are applied to the instance matrices in the content's world override, since the
@@ -564,7 +564,7 @@ def ground_heights(world: Path, points: np.ndarray, reach: float = 50.) -> np.nd
             y = l0 * a[near, 1] + l1 * b[near, 1] + (1 - l0 - l1) * c[near, 1]
             height[k] = y[inside].max()
     height = height.reshape(len(points), len(offsets))
-    return np.where(np.isnan(height[:, 0]), np.nan, np.nanmin(height, axis=1))
+    return np.where(np.isnan(height[:, 0]), np.nan, np.fmin.reduce(height, axis=1))
 
 
 def newest_base() -> Path:

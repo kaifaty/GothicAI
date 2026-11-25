@@ -1,6 +1,8 @@
 #include "societyexport.h"
 
 #include "enginecommit.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "resources.h"
 #include "game/gamescript.h"
 #include "game/gamesession.h"
@@ -79,25 +81,21 @@ void optionalText(Writer& w, std::string_view s) {
 std::string symbolName(World& world, size_t symbol) {
   if(symbol==size_t(-1))
     return "-";
-  auto* sym = world.script().findSymbol(symbol);
-  return sym!=nullptr ? std::string(sym->name()) : std::to_string(symbol);
-  }
-
-bool npcSymbol(World& world, daedalus::DaedalusSymbol* s) {
-  if(s==nullptr)
-    return false;
-  auto* cls = s;
-  for(size_t i=0; i<16 && cls!=nullptr && cls->type()!=daedalus::DaedalusDataType::CLASS; ++i)
-    cls = world.script().findSymbol(size_t(cls->parent()));
-  return cls!=nullptr && cls->name()=="C_NPC";
+  const auto name = world.rules().symbolName(symbol);
+  return name.empty() ? std::to_string(symbol) : std::string(name);
   }
 
 std::vector<std::string> npcInstances(World& world) {
+  const auto* catalog=baseNativeCatalog();
+  if(catalog==nullptr)
+    throw std::runtime_error("society export requires a native game catalog");
   std::vector<std::string> ret;
-  for(const auto& s:world.script().getVm().symbols())
-    if(s.type()==daedalus::DaedalusDataType::INSTANCE && s.is_const() &&
-       npcSymbol(world,world.script().findSymbol(s.index())))
-      ret.push_back(s.name());
+  ret.reserve(catalog->identities.npcs.size());
+  for(const auto& npc:catalog->identities.npcs)
+    ret.push_back(npc.name);
+  for(const auto& entry:world.script().ownSymbols().entries())
+    if(entry.kind==OwnSymbols::Kind::Npc)
+      ret.push_back(entry.name);
   std::sort(ret.begin(),ret.end());
   return ret;
   }
@@ -107,17 +105,14 @@ struct RoomOwner {
   };
 
 RoomOwner resolveOwner(World& world, std::string_view name, const std::vector<std::string>& instances) {
-  auto* s = world.script().findSymbol(name);
-  if(s!=nullptr && s->type()==daedalus::DaedalusDataType::INSTANCE && npcSymbol(world,s)) {
-    // The alias's handle carries the actual C_NPC instance, rather than the variable's symbol index.
-    if(s->is_instance_of<daedalus::INpc>()) {
-      const auto id = symbolName(world,s->get_instance()->symbol_index());
-      if(std::binary_search(instances.begin(),instances.end(),id))
-        return {id,std::string(name),{}};
-      }
-    if(s->is_const())
-      return {s->name(),std::string(name),{}};
+  auto& script=world.script();
+  if(const auto* npc=script.directorNpc(name)) {
+    const auto id=symbolName(world,npc->instanceSymbol());
+    if(std::binary_search(instances.begin(),instances.end(),id))
+      return {id,std::string(name),{}};
     }
+  if(const auto id=script.storyNpcId(name))
+    return {std::string(script.storyNpcName(*id)),std::string(name),{}};
   RoomOwner ret;
   for(const auto& id:instances) {
     // A short name omits the prefix and numeric character id (VLK_409_ZURIS).
@@ -174,14 +169,13 @@ RoomGuild resolveRoomGuild(World& world, std::string_view room, bool npcOwner) {
   if(npcOwner)
     return {assigned,{},{}};
   const auto name = colon==std::string_view::npos ? room : room.substr(colon+1);
-  auto* max = world.script().findSymbol("GIL_MAX");
+  const auto max = world.script().intConstant("GIL_MAX");
   for(size_t end=name.size(); end!=std::string_view::npos;) {
     const auto part = name.substr(0,end);
     const auto key = part.starts_with("GIL_") ? std::string(part) : "GIL_"+std::string(part);
-    auto* sym = world.script().findSymbol(key);
-    if(sym!=nullptr && sym->type()==daedalus::DaedalusDataType::INT && sym->is_const() &&
-       sym->get_int()>=0 && max!=nullptr && sym->get_int()<max->get_int())
-      return {sym->get_int(),key,{}};
+    const auto guild = world.script().intConstant(key);
+    if(guild && max && *guild>=0 && *guild<*max)
+      return {*guild,key,{}};
     if(end==0)
       break;
     end = name.rfind('_',end-1);
@@ -213,26 +207,12 @@ double median(std::vector<double> v) {
   return v[v.size()/2];
   }
 
-// The monster schedule (G2 scripts): ZS_MM_AllScheduler starts the first of these states whose aivar hours hold the
-// time of day (Wld_IsTime(start,0,end,0)) or whose start is OnlyRoutine (-1). The export names the state and carries
-// the two aivar values; the order is the order of the scheduler's checks.
-struct MmWindow { const char* state; const char* start; const char* end; };
-constexpr MmWindow MmSchedule[] = {
-  {"ZS_MM_RTN_SLEEP",     "AIV_MM_SLEEPSTART",     "AIV_MM_SLEEPEND"},
-  {"ZS_MM_RTN_REST",      "AIV_MM_RESTSTART",      "AIV_MM_RESTEND"},
-  {"ZS_MM_RTN_ROAM",      "AIV_MM_ROAMSTART",      "AIV_MM_ROAMEND"},
-  {"ZS_MM_RTN_EATGROUND", "AIV_MM_EATGROUNDSTART", "AIV_MM_EATGROUNDEND"},
-  {"ZS_MM_RTN_WUSEL",     "AIV_MM_WUSELSTART",     "AIV_MM_WUSELEND"},
-  {"ZS_MM_RTN_ORCSIT",    "AIV_MM_ORCSITSTART",    "AIV_MM_ORCSITEND"},
-  };
-constexpr const char* MmScheduler = "ZS_MM_ALLSCHEDULER";
-
-// The aivar index a script constant names; the export fails when the scripts have no such constant.
+// The export requires a named constant for each scheduler variable.
 size_t aivarIndex(World& world, const char* name) {
-  auto* sym = world.script().findSymbol(name);
-  if(sym==nullptr || sym->get_int()<0 || size_t(sym->get_int())>=daedalus::INpc::aivar_count)
-    throw std::runtime_error(std::string("society export: the scripts have no aivar constant ")+name);
-  return size_t(sym->get_int());
+  const auto index = world.script().intConstant(name);
+  if(!index || *index<0 || size_t(*index)>=NpcRecord::aivar_count)
+    throw std::runtime_error(std::string("society export: missing or invalid aivar constant ")+name);
+  return size_t(*index);
   }
 
 struct Records {
@@ -383,7 +363,7 @@ Result build(World& world) {
   std::vector<double> walk, run;
   size_t people = 0, entries = 0, unresolved = 0, aistates = 0, schedules = 0;
   std::vector<std::pair<size_t,size_t>> mmAivars;
-  const auto scheduler = world.script().findSymbolIndex(MmScheduler);
+  const auto scheduler = world.rules().findFunction(GameScript::monsterScheduler);
   std::vector<std::string> startNearest;
   uint32_t ordinal = 0;
   for(size_t i=0; i<all.size(); ++i) {
@@ -417,18 +397,17 @@ Result build(World& world) {
     const float walkSpeed = npc.simplifiedMoveSpeed(WalkBit::WM_Walk);
     w.Key("walk_cm_per_s");  number(w,walkSpeed>0.f ? double(walkSpeed)*1000.0 : 0.0);
     aistates += aistate!=0 ? 1 : 0;
-    // The hours of ZS_MM_AllScheduler for an NPC that starts with it: [state, start aivar, end aivar] in the order
-    // of its checks (MmSchedule); null for any other NPC.
+    // [state, start hour, end hour] in scheduler priority order, or null for NPCs with a different start state.
     w.Key("mm_schedule");
-    if(aistate!=0 && size_t(aistate)==scheduler) {
+    if(aistate!=0 && scheduler==size_t(aistate)) {
       if(mmAivars.empty())
-        for(const auto& m:MmSchedule)
+        for(const auto& m:GameScript::monsterRoutineWindows)
           mmAivars.emplace_back(aivarIndex(world,m.start),aivarIndex(world,m.end));
       const auto& aiv = npc.handle().aivar;
       w.StartArray();
       for(size_t k=0; k<mmAivars.size(); ++k) {
         w.StartArray();
-        ascii(w,MmSchedule[k].state);
+        ascii(w,GameScript::monsterRoutineWindows[k].state);
         w.Int(aiv[mmAivars[k].first]);
         w.Int(aiv[mmAivars[k].second]);
         w.EndArray();

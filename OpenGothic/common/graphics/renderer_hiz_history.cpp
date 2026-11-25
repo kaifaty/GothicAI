@@ -66,11 +66,13 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     auto probe = scene.treeHistoryReferenceUbo();
     // Replay the ordinary occluders and pMain on the unfiltered list. The 3a probe
     // records owners in the normal target, so pMain keeps its usual attachments.
+    cmd.setGraphicsDescriptorArrayReuse(false);
     std::swap(reference, zbuffer);
     drawHiZ(cmd, view);
     std::swap(owners, gbufNormal);
     std::swap(probe, globals);
     drawGBuffer(cmd, fId, view);
+    cmd.setGraphicsDescriptorArrayReuse(view.drawBuckets().textureBankRebuilt());
     std::swap(probe, globals);
     std::swap(owners, gbufNormal);
     std::swap(reference, zbuffer);

@@ -1,0 +1,12 @@
+# @headless
+# Save a fresh world after PAL_238_RITTER has settled at his night post.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 24546 1200 -10265
+ztimer multiplyer 60
+wait 62500
+ztimer realtime
+wait 15000
+character save pilot-night

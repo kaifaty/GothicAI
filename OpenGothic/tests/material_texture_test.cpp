@@ -17,6 +17,7 @@
 #include "graphics/treeboughasset.h"
 #include "graphics/treelevelband.h"
 #include "resources.h"
+#include "shader.h"
 #include "texturebudget.h"
 #include "textureflow.h"
 #include "texturelevels.h"
@@ -41,6 +42,7 @@
 #include <iostream>
 #include <iterator>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -971,6 +973,7 @@ void trackRecords(Tempest::Device& device, const Fixture& fixture) {
           "a ground with a track or a border is asked no coarser than a repeat per the finest of its tiles");
   }
 #include "foliage_tree_test.h" // foliageTreeMaths, foliageTreeRecords
+#include "crown_light_test.h"
 #include "vsm_pair_cap_test.h" // vsmRecords
 #include "lights_bvh_test.h" // lightsBvhRecords
 
@@ -1522,12 +1525,13 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
     device.submit(command).wait();
     return changed;
     };
-  require(commit() && !commit(),"mip fixture must start with stable bucket descriptors");
+  require(commit() && buckets.textureBankRebuilt() && !commit() && !buckets.textureBankRebuilt(),
+          "only the initial commit should recreate the current texture bank");
   require(Shaders::options().doBindless && !buckets.textures().isEmpty() &&
           !buckets.normals().isEmpty() && !buckets.orm().isEmpty(),
           "mip fixture must exercise real bindless arrays for its albedo, normal and ORM");
   for(uint8_t frame=1;frame<Resources::MaxFramesInFlight;++frame)
-    require(commit(frame),"each frame bank must initialize its texture descriptors");
+    require(commit(frame) && buckets.textureBankRebuilt(),"each frame bank must initialize its texture descriptors");
   const auto probe=descriptorColorProbe(device);
   const auto encodeProbe=[&](Tempest::CommandBuffer& command, const Tempest::StorageBuffer& output) {
     auto encoder=command.startEncoding(device);
@@ -1593,8 +1597,8 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
     require(material==copy && bucket->mat==copy && mesh.sub[0].material==copy &&
             &*bucket==bucketIdentity && bucket.toInt()==bucketId && buckets.buckets().size()==2,
             "mip replacement must preserve material pointers and the original mesh and bucket");
-    require(commit(descriptorFrame) && !commit(descriptorFrame),
-            "mip replacement must refresh descriptors once without rebuilding buckets");
+    require(commit(descriptorFrame) && !buckets.textureBankRebuilt() && !commit(descriptorFrame),
+            "mip replacement must refresh descriptors once without recreating the texture bank");
     checkColors(wantFull ? 0xff0000ffu : 0xff00ff00u);
     };
 
@@ -3223,21 +3227,30 @@ void textureBudgetLevels(Tempest::Device& device, const Fixture& fixture) {
 
 int main(int argc, char** argv) {
   try {
-    ddsMipTails();
-    textureLevelMaths();
-    textureFlowMaths();
-    textureBudgetMaths();
-    if(argc==2 && std::string_view(argv[1])=="--dds-mip-tail") {
-      std::cout << "{\"test\":\"dds_mip_tail\",\"passed\":true,\"assertions\":" << assertions << "}\n";
-      return 0;
+    const bool crownOnly = argc==2 && std::string_view(argv[1])=="--crown-light";
+    if(!crownOnly) {
+      ddsMipTails();
+      textureLevelMaths();
+      textureFlowMaths();
+      textureBudgetMaths();
+      if(argc==2 && std::string_view(argv[1])=="--dds-mip-tail") {
+        std::cout << "{\"test\":\"dds_mip_tail\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+        return 0;
+        }
+      foliageWindMaths();
+      foliageTreeMaths();
+      variants();
       }
-    foliageWindMaths();
-    foliageTreeMaths();
-    variants();
     Fixture fixture;
     CommandLine commandLine(0,nullptr);
     Tempest::VulkanApi api;
     Tempest::Device device(api);
+    if(crownOnly) {
+      crownLightMaths();
+      crownLightPixels(device,fixture);
+      std::cout << "{\"test\":\"crown_light\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+      return 0;
+      }
     replacements(device,fixture);
     census(fixture);
     emptyTable(device,fixture);
@@ -3245,6 +3258,7 @@ int main(int argc, char** argv) {
     fringeRecords(device,fixture);
     foliageRecords(device,fixture);
     foliageTreeRecords(device,fixture);
+    crownLightPixels(device,fixture);
     vsmRecords(device);
     lightsBvhRecords(device);
     grassRecords(device,fixture);

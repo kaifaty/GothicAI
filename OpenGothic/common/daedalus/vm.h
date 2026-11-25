@@ -14,6 +14,7 @@
 #include <stack>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace daedalus {
 	struct IgnoreReturnValue {};
@@ -106,6 +107,10 @@ namespace daedalus {
 		/// \brief Creates a DaedalusVM DaedalusInstance for the given script.
 		/// \param scr The script to load into the VM.
 		explicit DaedalusVm(DaedalusScript&& scr, uint8_t flags = DaedalusVmExecutionFlag::NONE);
+
+		/// Retains symbols, externals and native overrides without loading the legacy interpreter.
+		static DaedalusVm without_legacy_dispatcher(DaedalusScript&& scr, uint8_t flags = DaedalusVmExecutionFlag::NONE);
+		[[nodiscard]] bool has_legacy_dispatcher() const noexcept { return _m_execute_bytecode!=nullptr; }
 
 		/// \brief Calls a function by it's name.
 		/// \tparam P The types for the argument values.
@@ -330,6 +335,7 @@ namespace daedalus {
 		[[nodiscard]] std::tuple<DaedalusSymbol*, std::uint8_t, std::shared_ptr<DaedalusInstance>>
 		pop_reference();
 		[[nodiscard]] bool top_is_reference() const;
+		[[nodiscard]] bool top_is_named_reference() const;
 
 		/// \brief Registers a Daedalus external function.
 		///
@@ -497,10 +503,12 @@ namespace daedalus {
 		/// \tparam P The parameters types of the external.
 		/// \param name The name of the function to override.
 		/// \param callback The C++ function to register as the external.
+		/// \param enabled An optional predicate evaluated before dispatch. False executes the script body.
 		/// \see #register_external(std::string_view, std::function)
 		/// \todo Deduplicate source code!
 		template <typename R, typename... P>
-		void override_function(std::string_view name, std::function<R(P...)> const& callback) {
+		void override_function(std::string_view name, std::function<R(P...)> const& callback,
+		                       std::function<bool()> enabled = {}) {
 			auto* sym = find_symbol_by_name(name);
 			if (sym == nullptr) throw DaedalusSymbolNotFound {std::string {name}};
 			if (sym->is_external()) throw DaedalusVmException {"symbol is already an external"};
@@ -542,7 +550,7 @@ namespace daedalus {
 			}
 
 			// *evil template hacking ensues*
-			_m_function_overrides[sym->address()] = [callback, sym](DaedalusVm& machine) {
+			auto call = [callback, sym](DaedalusVm& machine) {
 				machine.push_call(sym);
 				if constexpr (std::same_as<void, R>) {
 					if constexpr (sizeof...(P) > 0) {
@@ -560,6 +568,7 @@ namespace daedalus {
 				}
 				machine.pop_call();
 			};
+			_m_function_overrides[sym->address()] = {std::move(call), std::move(enabled)};
 		}
 
 		/// \brief Overrides a function in Daedalus code with an external naked call.
@@ -569,12 +578,14 @@ namespace daedalus {
 		///
 		/// \param name The name of the function to override.
 		/// \param callback The C++ function to register as the external.
-		void override_function(std::string_view name, std::function<DaedalusNakedCall(DaedalusVm&)> const& callback) {
+		/// \param enabled An optional predicate evaluated before dispatch. False executes the script body.
+		void override_function(std::string_view name, std::function<DaedalusNakedCall(DaedalusVm&)> const& callback,
+		                       std::function<bool()> enabled = {}) {
 			auto* sym = find_symbol_by_name(name);
 			if (sym == nullptr) throw DaedalusSymbolNotFound {std::string {name}};
 			if (sym->is_external()) throw DaedalusVmException {"symbol " + sym->name() + " is already an external"};
 
-			_m_function_overrides[sym->address()] = [callback](DaedalusVm& machine) { callback(machine); };
+			_m_function_overrides[sym->address()] = {[callback](DaedalusVm& machine) { callback(machine); }, std::move(enabled)};
 		}
 
 		/// \brief Overrides a function in Daedalus code with an external definition.
@@ -627,21 +638,24 @@ namespace daedalus {
 		// Assigned member elements are reported after the write, with their exact context and index.
 		void observe_member_writes(std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> callback) { _m_member_write_observer = std::move(callback); }
 		void observe_instructions(std::function<void(DaedalusInstruction const&)> callback) { _m_instruction_observer = std::move(callback); }
+		// Independent opcode observers coexist with the single offline observer.
+		using InstructionObserver = std::function<void(const DaedalusVm&, const DaedalusInstruction&)>;
+		uint64_t add_instruction_observer(InstructionObserver callback);
+		void remove_instruction_observer(uint64_t id);
+		// Used by the opt-in game audit. Reads and native calls remain available.
+		void require_native_execution(std::string_view program, bool metadataOnly = false);
 		// Optional script-call instrumentation; includes functions reached through BL overrides.
-		void observe_calls(std::function<void(DaedalusSymbol const&)> callback) { _m_call_observer = std::move(callback); }
-		void add_call_observer(std::function<void(DaedalusSymbol const&)> callback) {
-			auto previous = std::move(_m_call_observer);
-			_m_call_observer = [previous = std::move(previous), callback = std::move(callback)](auto const& symbol) {
-				if (previous) previous(symbol);
-				callback(symbol);
-			};
-		}
+		using CallObserver = std::function<void(DaedalusSymbol const&)>;
+		size_t call_observer_count() const { return _m_call_observers.size(); }
+		void observe_calls(CallObserver callback);
+		uint64_t add_call_observer(CallObserver callback);
+		void remove_call_observer(uint64_t id);
 		// Both bytecode and record playback report externals before consuming their arguments.
 		void observe_externals(std::function<void(DaedalusSymbol const&)> callback) { _m_external_observer = std::move(callback); }
 		[[nodiscard]] DaedalusStackFrame const& stack_frame(uint16_t depth) const;
 		// Like override_function, with a signature read from program records by the caller.
 		void override_function_custom(DaedalusSymbol const& sym, std::function<void(DaedalusVm&)> callback) {
-			_m_function_overrides[sym.address()] = std::move(callback);
+			_m_function_overrides[sym.address()] = {std::move(callback), {}};
 		}
 
 		/// \brief Registers a function to be called when script execution fails.
@@ -679,6 +693,16 @@ namespace daedalus {
 		///        return value is left there.
 		/// \note Local addition (OpenGothic ai_bridge), see lib/VENDORED.md.
 		void unsafe_call_bl(DaedalusSymbol const* sym);
+		[[nodiscard]] bool has_active_override(DaedalusSymbol const& sym) const;
+		/// Invoke a registered C++ implementation for a symbol bound during setup.
+		/// An unavailable implementation leaves the stack unchanged.
+		[[nodiscard]] bool has_bound_native(DaedalusSymbol& sym) const;
+		bool call_bound_native(DaedalusSymbol& sym, std::function<void()> const& push,
+		                       std::function<void()> const& pop);
+
+		// Expose arguments to existing external probes without dispatching the external through the VM.
+		[[nodiscard]] bool has_external_observer() const { return bool(_m_external_observer); }
+		void observe_bound_external(DaedalusSymbol const& sym, std::function<void()> const& push);
 		std::shared_ptr<DaedalusInstance> unsafe_get_gi();
 		void unsafe_set_gi(std::shared_ptr<DaedalusInstance> i);
 
@@ -738,6 +762,8 @@ namespace daedalus {
 	protected:
 		/// \brief Runs the instruction at the current program counter and advances it properly.
 		/// \return false, the instruction executed was a op_return instruction, otherwise true.
+		using BytecodeExecutor = void (*)(DaedalusVm&);
+		DaedalusVm(DaedalusScript&& scr, uint8_t flags, BytecodeExecutor execute_bytecode);
 		bool exec();
 
 		/// \brief Validates the given address and jumps to it (sets the program counter).
@@ -1042,15 +1068,25 @@ namespace daedalus {
 
 		std::vector<DaedalusCallStackFrame> _m_call_stack;
 		std::unordered_map<DaedalusSymbol*, std::function<void(DaedalusVm&)>> _m_externals;
-		std::unordered_map<uint32_t, std::function<void(DaedalusVm&)>> _m_function_overrides;
+		struct FunctionOverride {
+			std::function<void(DaedalusVm&)> call;
+			std::function<bool()> enabled;
+		};
+		[[nodiscard]] FunctionOverride const* active_override(DaedalusSymbol const& sym) const;
+		std::unordered_map<uint32_t, FunctionOverride> _m_function_overrides;
 		std::optional<std::function<void(DaedalusVm&, DaedalusSymbol&)>> _m_default_external {std::nullopt};
+		void invoke_external(DaedalusSymbol& sym, std::function<void(DaedalusVm&)> const& call);
 		std::function<void(DaedalusSymbol&)> _m_access_trap;
 		std::function<void(DaedalusSymbol const&)> _m_read_observer;
 		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_read_observer;
 		std::function<void(DaedalusSymbol const&)> _m_write_observer;
 		std::function<void(DaedalusSymbol const&, uint16_t, DaedalusInstance const*)> _m_member_write_observer;
 		std::function<void(DaedalusInstruction const&)> _m_instruction_observer;
-		std::function<void(DaedalusSymbol const&)> _m_call_observer;
+		uint64_t _m_next_instruction_observer = 0;
+		std::vector<std::pair<uint64_t, InstructionObserver>> _m_instruction_observers;
+		void notify_call(DaedalusSymbol const* symbol) const;
+		uint64_t _m_next_call_observer = 0;
+		std::vector<std::pair<uint64_t, CallObserver>> _m_call_observers;
 		std::function<void(DaedalusSymbol const&)> _m_external_observer;
 		std::optional<std::function<
 		    DaedalusVmExceptionStrategy(DaedalusVm&, DaedalusScriptError const&, DaedalusInstruction const&)>>
@@ -1067,6 +1103,7 @@ namespace daedalus {
 
 		std::shared_ptr<DaedalusInstance> _m_instance;
 		std::uint32_t _m_pc {0};
+		BytecodeExecutor _m_execute_bytecode = nullptr;
 		std::uint8_t _m_flags {DaedalusVmExecutionFlag::NONE};
 	};
 

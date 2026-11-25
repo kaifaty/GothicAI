@@ -19,16 +19,18 @@ include(../../OpenGothic/cmake/BaseImport.cmake)
 include(../../OpenGothic/cmake/BaseRuntime.cmake)
 include(../../OpenGothic/cmake/VideoImport.cmake)
 add_subdirectory(../../OpenGothic/common/daedalus daedalus)
+add_subdirectory(../../OpenGothic/ai_bridge/storygraph storygraph EXCLUDE_FROM_ALL)
 if(MSVC)
   # M_PI in the Bink decoder; OpenGothic/CMakeLists.txt defines this for every target
   target_compile_definitions(gothic-video-import PRIVATE _USE_MATH_DEFINES)
 endif()
 endif()
 add_executable(content-convert convert.cpp stressbase.cpp stressmeshes.cpp worldcook.cpp clusterlodcensus.cpp ../../OpenGothic/common/basestore.cpp
+  ../../OpenGothic/tools/runtimebindingroots.cpp ../../OpenGothic/tools/nativebasecatalogimport.cpp ../../OpenGothic/tools/nativeworldplacementimport.cpp
+  ../../OpenGothic/common/game/definitions/nativebasecatalog.cpp
   ../../OpenGothic/common/gltfmeshcolor.cpp
   ../../OpenGothic/common/world/voblayer.cpp ../../OpenGothic/common/world/movablevobs.cpp
-  ../../OpenGothic/common/game/definitions/particlecontent.cpp
-  ../../OpenGothic/common/game/definitions/definitiontypes.cpp)
+  ../../OpenGothic/common/game/definitions/particlecontent.cpp)
 get_filename_component(VOB_LAYER_MOVABLE_CSV "${CMAKE_CURRENT_SOURCE_DIR}/../../OpenGothic/data/movable-vobs.csv" ABSOLUTE)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VOB_LAYER_MOVABLE_CSV}")
@@ -36,8 +38,8 @@ endif()
 file(READ "${VOB_LAYER_MOVABLE_CSV}" MOVABLE_VOBS_CSV)
 configure_file(../../OpenGothic/common/world/movablevobsdata.h.in vob-layer-generated/movablevobsdata.h @ONLY)
 target_include_directories(content-convert PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/vob-layer-generated"
-  "${CMAKE_BINARY_DIR}/baseimport-generated")
-target_include_directories(content-convert PRIVATE ../../OpenGothic/common)
+  "${CMAKE_BINARY_DIR}/baseimport-generated" "${RUNTIME_BINDING_GENERATED_DIR}")
+target_include_directories(content-convert PRIVATE ../../OpenGothic/common ../../OpenGothic/tools)
 # time-world packs static collision's two inputs with the game's PackedMesh PK_Physic. It needs Tempest's graphics
 # library, so only the build with the game (OpenGothic/CMakeLists.txt) has it; the converter alone skips those rows.
 if(TARGET Tempest)
@@ -56,16 +58,24 @@ if(NOT MSVC)
   target_compile_options(content-convert PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wconversion>)
 endif()
 # Offline particle checks (check-particles) use the game's particlecontent loader and VM without writing base data.
+target_compile_definitions(content-convert PRIVATE CONTENT_CONVERT_PARTICLE_PROGRAMS=1)
 # Definitions import executes item constructors through the shared snapshot library.
-target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
+target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus gothic-offline-bindings)
 
-target_link_libraries(content-convert PRIVATE gothic-npc-snapshot)
-add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
+target_link_libraries(content-convert PRIVATE gothic-npc-snapshot StoryGraph)
+set(native_definition_readers
   ../../OpenGothic/common/game/itemdefinitionruntime.cpp
   ../../OpenGothic/common/game/npcdefinitionruntime.cpp
   ../../OpenGothic/common/game/npchelperruntime.cpp
+  ../../OpenGothic/common/game/routinedefinitionruntime.cpp)
+target_sources(content-convert PRIVATE ${native_definition_readers}
+  ../../OpenGothic/common/game/definitions/nativeworldplacement.cpp)
+target_include_directories(content-convert PRIVATE "${NPC_SNAPSHOT_GENERATED_DIR}")
+add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
+  ${native_definition_readers}
+  ../../OpenGothic/tools/itemdefinitionimport.cpp
+  ../../OpenGothic/common/game/definitions/nativebasecatalog.cpp
   ../../OpenGothic/common/game/placementdefinitionruntime.cpp
-  ../../OpenGothic/common/game/routinedefinitionruntime.cpp
   ../../OpenGothic/common/world/objects/npcroutinetable.cpp
   ../../OpenGothic/common/world/waypoint.cpp)
 target_include_directories(gothic-npc-snapshot-contract PRIVATE "${NPC_SNAPSHOT_GENERATED_DIR}")

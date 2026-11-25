@@ -16,7 +16,8 @@ class VPsoLayoutCache {
     VPsoLayoutCache(VDevice& dev);
     ~VPsoLayoutCache();
 
-    VkPipelineLayout      findLayout(const ShaderReflection::PushBlock &pb, VkDescriptorSetLayout lay);
+    VkPipelineLayout      findLayout(const ShaderReflection::PushBlock &pb, VkDescriptorSetLayout lay,
+                                     VkDescriptorSetLayout arrays = VK_NULL_HANDLE);
     VkPipelineLayout      findLayout(const ShaderReflection::PushBlock &pb, const ShaderReflection::LayoutDesc& lay);
 
   private:
@@ -24,6 +25,7 @@ class VPsoLayoutCache {
       VkShaderStageFlags    pushStage = 0;
       uint32_t              pushSize  = 0;
       VkDescriptorSetLayout lay       = VK_NULL_HANDLE;
+      VkDescriptorSetLayout arrays    = VK_NULL_HANDLE;
       VkPipelineLayout      pLay      = VK_NULL_HANDLE;
       };
 

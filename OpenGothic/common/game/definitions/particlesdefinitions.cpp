@@ -1,19 +1,25 @@
 #include "particlesdefinitions.h"
-#include "loadprobe.h"
-#include "definitiontypes.h"
+#include "basestore.h"
+#include "contentcensus.h"
 
 #include <Tempest/Log>
 #include <cmath>
 
 #include "graphics/pfx/particlefx.h"
-#include "gothic.h"
 #include "resources.h"
 
 using namespace Tempest;
 
 ParticlesDefinitions::ParticlesDefinitions() {
-  vm = Gothic::inst().createPhoenixVm("ParticleFx.dat");
-  content=ParticleContent::load(*vm,Resources::contentDir());
+  const auto base=Resources::baseDir();
+  catalog=ParticleContent::openStockCatalog(base);
+  const auto section=EffectDefinitionData::particleSection(base,EffectDefinitionData::stockParticleProgram);
+  if(!catalog)
+    throw BaseStore::Error(section.string()+": particles require the supported prepared catalog");
+
+  if(auto* census=Resources::contentCensus())
+    census->replaced("ParticleFx.dat","base/"+section.lexically_relative(base).generic_string());
+  content=ParticleContent::load(*catalog,Resources::contentDir());
   for(const auto& error:content.errors) Log::e("particles: skipped ",error);
   }
 
@@ -121,7 +127,7 @@ const ParticleFx* ParticlesDefinitions::implGet(const ParticleFx& base, const Vi
   }
 
 std::shared_ptr<Def::ParticleEffect> ParticlesDefinitions::implGetDirect(std::string_view name, bool relaxed) {
-  if(!vm || name.empty())
+  if(name.empty())
     return nullptr;
 
   if(const auto effect=content.effects.find(std::string(name)); effect!=content.effects.end())
@@ -130,9 +136,7 @@ std::shared_ptr<Def::ParticleEffect> ParticlesDefinitions::implGetDirect(std::st
   if(name=="PFX_GAI_PEE")
     return peeStream();
 
-  LoadProbe::Vobs::Scope probe("script_vm");
-  auto ret=ParticleContent::base(*vm,name);
-  probe.stop();
+  auto ret=catalog->materialize(name);
   if(ret==nullptr) {
     if(!relaxed)
       Log::e("invalid particle system: \"",name,"\"");
@@ -145,16 +149,10 @@ std::shared_ptr<Def::ParticleEffect> ParticlesDefinitions::implGetDirect(std::st
 // The game's own stream (PEE, the S_PEE animation starts it) aimed at a kneeling hero a metre ahead
 // (mercy.py's humiliation): its look and gravity, a faster throw up in the npc's frame, gone at the hero
 std::shared_ptr<Def::ParticleEffect> ParticlesDefinitions::peeStream() {
-  auto id = vm->find_symbol_by_name("PEE");
-  if(id==nullptr)
+  auto ret=catalog->materialize("PEE");
+  if(ret==nullptr)
     return nullptr;
-  auto instance = std::make_shared<VmDef::ParticleEffect>();
-  instance->vis_tex_is_quadpoly = 1;
-  {
-    LoadProbe::Vobs::Scope probe("script_vm");
-    vm->init_instance(instance, id);
-  }
-  auto ret = std::make_shared<Def::ParticleEffect>(instance->copy());
+
   // one key a hundred seconds long: the model keeps an effect only for its preferred time (MdlVisual::tick);
   // Npc::tickPeeStream stops it when the pose ends
   ret->pps_value          = PeeStream::pps;

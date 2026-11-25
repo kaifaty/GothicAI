@@ -1,16 +1,20 @@
 #pragma once
 
-#include "daedalus/vm.h"
-#include "daedalus/classes.h"
+#include "world/records/spellrecord.h"
+
+#include <map>
+#include <memory>
+#include <string>
+#include <string_view>
+
+class GameplayDefinitions;
 
 class SpellDefinitions final {
   public:
-    SpellDefinitions(daedalus::DaedalusVm &vm);
-    ~SpellDefinitions();
+    explicit SpellDefinitions(const GameplayDefinitions& records);
 
-    const daedalus::ISpell& find(std::string_view instanceName) const;
+    const SpellRecord& find(std::string_view instanceName) const;
 
   private:
-    daedalus::DaedalusVm&                          vm;
-    std::vector<std::shared_ptr<daedalus::ISpell>> spl;
+    std::map<std::string,std::shared_ptr<const SpellRecord>,std::less<>> spl;
   };

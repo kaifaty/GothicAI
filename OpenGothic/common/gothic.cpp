@@ -8,17 +8,16 @@
 #include <cstring>
 #include <cctype>
 #include <cassert>
+#include <cstdlib>
 
 #if defined(__GLIBC__)
 #include <chrono>
-#include <cstdlib>
 #include <malloc.h>
 #endif
 
-#include "daedalus/classes.h"
+#include "basestore.h"
 
-#include "game/definitions/definitiontypes.h"
-#include "game/definitions/baseprogram.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/bodyenginepolicy.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
@@ -41,6 +40,14 @@ using namespace FileUtil;
 Gothic* Gothic::instance = nullptr;
 
 Gothic::Gothic() {
+  for(const auto* name : {"OPENGOTHIC_ACTIVITY_EVENTS", "OPENGOTHIC_ACTIVITY_RECORDS",
+                          "OPENGOTHIC_ITEM_RECORDS", "OPENGOTHIC_NPC_HELPER_RECORDS",
+                          "OPENGOTHIC_NPC_RECORDS", "OPENGOTHIC_PLACEMENT_RECORDS",
+                          "OPENGOTHIC_ROUTINE_RECORDS", "GOTHIC_AI_STORYEXEC"}) {
+    if(const auto* value=std::getenv(name); value!=nullptr && std::string_view(value)=="0")
+      throw BaseStore::Error(std::string(name)+"=0 is unavailable in the native game. Unset it to play.");
+    }
+
   instance = this;
   BodyEnginePolicy::initialize();
   if(!Resources::isHeadless())
@@ -65,8 +72,6 @@ Gothic::Gothic() {
 
   settings.load(nestedPath({u"system",u"Gothic.ini"},Dir::FT_File),u"Gothic.ini");
 
-  Resources::loadBase();
-
   std::u16string_view mod = CommandLine::inst().modPath();
   if(!mod.empty()){
     modFile.reset(new IniFile(mod));
@@ -78,7 +83,11 @@ Gothic::Gothic() {
     if(split!=std::string::npos)
       wrldDef = wrldDef.substr(split+1);
     plDef      = modFile->getS("SETTINGS","PLAYER");
-    gameDatDef = modFile->getS("FILES","GAME");
+    std::string program(modFile->getS("FILES","GAME"));
+    for(auto& ch : program)
+      ch = char(std::toupper(static_cast<unsigned char>(ch)));
+    if(!program.empty() && program!="GOTHIC" && program!="GOTHIC.DAT")
+      throw BaseStore::Error("DAT script mods are unsupported: "+program);
     ouDef      = modFile->getS("FILES","OUTPUTUNITS");
     }
 
@@ -89,14 +98,12 @@ Gothic::Gothic() {
   if(plDef.empty())
     plDef = "PC_HERO";
 
-  if(gameDatDef.empty())
-    gameDatDef  = "GOTHIC.DAT"; else
-    gameDatDef += ".DAT";
-
   if(ouDef.empty()) {
     // suffixes added later in GameScript::loadDialogOU()
     ouDef = "OU";
     }
+
+  Resources::loadBase({.projectedOnly=true,.catalogVersion=NativeBaseCatalog::catalogVersion});
 
   Settings::inst().onSettingsChanged.bind(this,&Gothic::setupSettings);
   setupSettings();
@@ -618,7 +625,7 @@ std::string_view Gothic::defaultSave() const {
   }
 
 std::string_view Gothic::defaultGameDatFile() const {
-  return gameDatDef;
+  return "GOTHIC.DAT";
   }
 
 std::string_view Gothic::defaultOutputUnits() const {
@@ -631,61 +638,11 @@ std::string_view Gothic::menuMain() const {
   return ::menuMain;
   }
 
-std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
-  auto sc = loadScript(datFile, lang);
-  setupCommonScriptClasses(sc);
-
-  auto vm = std::make_unique<daedalus::DaedalusVm>(std::move(sc), daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
-  setupVmCommonApi(*vm);
-  return vm;
-  }
-
-daedalus::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {
-  return loadBaseProgram(datFile,int(lang));
-  }
-
-void Gothic::setupCommonScriptClasses(daedalus::DaedalusScript& sc) {
-  // Use customized setup, instead of daedalus::register_all_script_classes
-  auto registerIfExists = [&](std::string_view sym, auto d) {
-    if(sc.find_symbol_by_name(sym) != nullptr) {
-      d(sc);
-      }
-    };
-
-  auto registerOpaque = [&](std::string_view sym){
-    if(auto ptr = sc.find_symbol_by_name(sym)) {
-      sc.register_as_opaque(ptr);
-      }
-    };
-
-  registerIfExists("C_GILVALUES",    daedalus::IGuildValues::register_);
-  registerIfExists("C_NPC",          daedalus::INpc::register_);
-  registerIfExists("C_MISSION",      daedalus::IMission::register_);
-  registerIfExists("C_ITEM",         daedalus::IItem::register_);
-  registerIfExists("C_FOCUS",        daedalus::IFocus::register_);
-  registerIfExists("C_INFO",         daedalus::IInfo::register_);
-  registerIfExists("C_ITEMREACT",    daedalus::IItemReact::register_);
-  registerIfExists("C_SPELL",        daedalus::ISpell::register_);
-  registerOpaque  ("C_SVM"); // structure is very customizable, so better to use type-less mapping
-  registerIfExists("C_MENU",         daedalus::IMenu::register_);
-  registerIfExists("C_MENU_ITEM",    daedalus::IMenuItem::register_);
-  registerIfExists("CCAMSYS",        VmDef::Camera::register_);
-  registerIfExists("C_MUSICSYS_CFG", daedalus::IMusicSystem::register_);
-  registerIfExists("C_MUSICTHEME",   VmDef::MusicTheme::register_);
-  registerIfExists("C_MUSICJINGLE",  daedalus::IMusicJingle::register_);
-  registerIfExists("C_PARTICLEFX",   VmDef::ParticleEffect::register_);
-  registerIfExists("CFX_BASE",       VmDef::EffectBase::register_);
-  registerIfExists("C_PARTICLEFXEMITKEY", VmDef::ParticleEffectEmitKey::register_);
-  registerOpaque  ("C_FIGHTAI"); // many mods get it wrong/corrupted. Opaque binding is one is a way to get around it
-  registerIfExists("C_SFX",          VmDef::SoundEffect::register_);
-  registerIfExists("C_SNDSYS_CFG",   daedalus::ISoundSystem::register_);
-  }
-
 void Gothic::setupSettings() {
   Resources::configureTextures(Settings::getS("GAME","texture_budget_mb"),Settings::getS("GAME","texture_far_skip_mips"),
                                Settings::getS("GAME","texture_target_mb"),Settings::getS("GAME","texture_screen_mips"),
                                Settings::getS("GAME","texture_lookahead"));
-  Resources::censusProfile(gameDatDef,ouDef,Settings::getI("GAME","language"));
+  Resources::censusProfile(defaultGameDatFile(),ouDef,Settings::getI("GAME","language"));
   // Settings::setI/S/F emit onSettingsChanged synchronously. Publish before any
   // same-dispatch actor creation, prepare or input query can consume the change.
   settings.refreshPhysicsFlags();
@@ -752,57 +709,45 @@ std::u16string Gothic::nestedPath(const std::initializer_list<const char16_t*> &
   return CommandLine::inst().nestedPath(name,type);
   }
 
-void Gothic::setupVmCommonApi(daedalus::DaedalusVm& vm) {
-  vm.register_default_external([](std::string_view name) { notImplementedRoutine(std::string {name}); });
+void Gothic::bindNativeGameApi(storygraph::NativeExternals& operations) {
+  const auto bind = [&](std::string_view name, auto callback) {
+    operations.insert_or_assign(storygraph::nativeOperationName(name),
+                                storygraph::makeNativeExternal(std::function{callback}));
+    };
+  bind("concatstrings", [](std::string_view a, std::string_view b) { return Gothic::concatstrings(a, b);});
+  bind("inttostring",   [](int i)   { return Gothic::inttostring(i);   });
+  bind("floattostring", [](float f) { return Gothic::floattostring(f); });
+  bind("inttofloat",    [](int i)   { return Gothic::inttofloat(i);    });
+  bind("floattoint",    [](float f) { return Gothic::floattoint(f);    });
 
-  if(auto sym = vm.find_symbol_by_name("C_SVM"))
-    vm.register_as_opaque(sym);
-  if(auto sym = vm.find_symbol_by_name("C_FIGHTAI"))
-    vm.register_as_opaque(sym);
+  bind("hlp_strcmp",    [](std::string_view a, std::string_view b) { return Gothic::hlp_strcmp(a, b); });
+  bind("hlp_random",    [this](int max) { return hlp_random(max); });
 
-  vm.register_external("concatstrings", [](std::string_view a, std::string_view b) { return Gothic::concatstrings(a, b);});
-  vm.register_external("inttostring",   [](int i)   { return Gothic::inttostring(i);   });
-  vm.register_external("floattostring", [](float f) { return Gothic::floattostring(f); });
-  vm.register_external("inttofloat",    [](int i)   { return Gothic::inttofloat(i);    });
-  vm.register_external("floattoint",    [](float f) { return Gothic::floattoint(f);    });
+  bind("introducechapter", [this](std::string_view title, std::string_view subtitle, std::string_view img, std::string_view sound, int time){ introducechapter(title, subtitle, img, sound, time); });
+  bind("playvideo",        [this](std::string_view name){ return playvideo(name); });
+  bind("playvideoex",      [this](std::string_view name, bool a, bool b){ return playvideoex(name, a, b); });
+  bind("printscreen",      [this](std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printscreen(msg, posx, posy, font, timesec); });
+  bind("printdialog",      [this](int dialognr, std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printdialog(dialognr, msg, posx, posy, font, timesec); });
+  bind("print",            [this](std::string_view msg){ print(msg); });
 
-  vm.register_external("hlp_strcmp",    [](std::string_view a, std::string_view b) { return Gothic::hlp_strcmp(a, b); });
-  vm.register_external("hlp_random",    [this](int max) { return hlp_random(max); });
+  bind("doc_create",          [this](){ return doc_create(); });
+  bind("doc_createmap",       [this](){ return doc_createmap(); });
+  bind("doc_setpage",         [this](int handle, int page, std::string_view img, int scale){ doc_setpage(handle, page, img, scale); });
+  bind("doc_setpages",        [this](int handle, int count){ doc_setpages(handle, count); });
+  bind("doc_printline",       [this](int handle, int page, std::string_view text){ doc_printline(handle, page, text); });
+  bind("doc_printlines",      [this](int handle, int page, std::string_view text){ doc_printlines(handle, page, text); });
+  bind("doc_setmargins",      [this](int handle, int page, int left, int top, int right, int bottom, int mul){ doc_setmargins(handle, page, left, top, right, bottom, mul); });
+  bind("doc_setfont",         [this](int handle, int page, std::string_view font){ doc_setfont(handle, page, font); });
+  bind("doc_setlevel",        [this](int handle, std::string_view level){ doc_setlevel(handle, level); });
+  bind("doc_setlevelcoords",  [this](int handle, int left, int top, int right, int bottom){ doc_setlevelcoords(handle, left, top, right, bottom); });
+  bind("doc_show",            [this](int handle){ doc_show(handle); });
 
-  vm.register_external("introducechapter", [this](std::string_view title, std::string_view subtitle, std::string_view img, std::string_view sound, int time){ introducechapter(title, subtitle, img, sound, time); });
-  vm.register_external("playvideo",        [this](std::string_view name){ return playvideo(name); });
-  vm.register_external("playvideoex",      [this](std::string_view name, bool a, bool b){ return playvideoex(name, a, b); });
-  vm.register_external("printscreen",      [this](std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printscreen(msg, posx, posy, font, timesec); });
-  vm.register_external("printdialog",      [this](int dialognr, std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printdialog(dialognr, msg, posx, posy, font, timesec); });
-  vm.register_external("print",            [this](std::string_view msg){ print(msg); });
+  bind("exitgame",            [this](){ exitgame(); });
 
-  vm.register_external("doc_create",          [this](){ return doc_create(); });
-  vm.register_external("doc_createmap",       [this](){ return doc_createmap(); });
-  vm.register_external("doc_setpage",         [this](int handle, int page, std::string_view img, int scale){ doc_setpage(handle, page, img, scale); });
-  vm.register_external("doc_setpages",        [this](int handle, int count){ doc_setpages(handle, count); });
-  vm.register_external("doc_printline",       [this](int handle, int page, std::string_view text){ doc_printline(handle, page, text); });
-  vm.register_external("doc_printlines",      [this](int handle, int page, std::string_view text){ doc_printlines(handle, page, text); });
-  vm.register_external("doc_setmargins",      [this](int handle, int page, int left, int top, int right, int bottom, int mul){ doc_setmargins(handle, page, left, top, right, bottom, mul); });
-  vm.register_external("doc_setfont",         [this](int handle, int page, std::string_view font){ doc_setfont(handle, page, font); });
-  vm.register_external("doc_setlevel",        [this](int handle, std::string_view level){ doc_setlevel(handle, level); });
-  vm.register_external("doc_setlevelcoords",  [this](int handle, int left, int top, int right, int bottom){ doc_setlevelcoords(handle, left, top, right, bottom); });
-  vm.register_external("doc_show",            [this](int handle){ doc_show(handle); });
-
-  vm.register_external("exitgame",            [this](){ exitgame(); });
-
-  vm.register_external("printdebug",          [this](std::string_view msg){ printdebug(msg); });
-  vm.register_external("printdebugch",        [this](int ch, std::string_view msg){ printdebugch(ch, msg); });
-  vm.register_external("printdebuginst",      [this](std::string_view msg){ printdebuginst(msg); });
-  vm.register_external("printdebuginstch",    [this](int ch, std::string_view msg){ printdebuginstch(ch, msg); });
-  }
-
-void Gothic::notImplementedRoutine(std::string_view fn) {
-  static std::set<std::string, std::less<>> s;
-
-  if(s.find(fn)==s.end()){
-    auto [v, _] = s.insert(std::string {fn});
-    Log::e("not implemented call [",v->c_str(),"]");
-    }
+  bind("printdebug",          [this](std::string_view msg){ printdebug(msg); });
+  bind("printdebugch",        [this](int ch, std::string_view msg){ printdebugch(ch, msg); });
+  bind("printdebuginst",      [this](std::string_view msg){ printdebuginst(msg); });
+  bind("printdebuginstch",    [this](int ch, std::string_view msg){ printdebuginstch(ch, msg); });
   }
 
 std::string Gothic::concatstrings(std::string_view a, std::string_view b) {

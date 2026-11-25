@@ -28,9 +28,7 @@ constexpr uint64_t SampleEveryMs = 250;
 StuckProgress::Point point(const Tempest::Vec3& p) { return {p.x,p.y,p.z}; }
 
 std::string symbol(World& world, const Npc& npc) {
-  if(auto* sym = world.script().findSymbol(npc.instanceSymbol()))
-    return sym->name();
-  return {};
+  return std::string(world.script().storyNpcName(npc.instanceSymbol()));
   }
 
 void position(JsonWriter& out, std::string_view key, StuckProgress::Point p) {

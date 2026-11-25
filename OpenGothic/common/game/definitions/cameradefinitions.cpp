@@ -1,27 +1,30 @@
 #include "cameradefinitions.h"
-#include "definitiontypes.h"
-
+#include "cameradefinitiondata.h"
 #include <Tempest/Log>
 #include "asset/worldtypes.h"
 
-#include "gothic.h"
+#include "basestore.h"
+#include "contentcensus.h"
+#include "resources.h"
 #include "worlddata.h"
 #include "utils/string_frm.h"
 
 using namespace Tempest;
 
 CameraDefinitions::CameraDefinitions() {
-  auto vm = Gothic::inst().createPhoenixVm("Camera.dat");
-
-  vm->enumerate_instances_by_class_name("CCAMSYS", [this, &vm](daedalus::DaedalusSymbol& s) {
-    try {
-      auto cam = vm->init_instance<VmDef::Camera>(&s);
-      cameras.emplace_back(s.name(), cam->copy());
-      }
-    catch(const daedalus::DaedalusScriptError&) {
-      // There was an error initializing the Def::Camera. Ignore it.
-      }
-    });
+  constexpr auto program = CameraDefinitionData::stockProgram;
+  const auto base = Resources::baseDir();
+  const auto section = CameraDefinitionData::section(base,program);
+  try {
+    cameras = CameraDefinitionData::read(base,program);
+    }
+  catch(const std::runtime_error& error) {
+    throw BaseStore::Error(section.string()+": "+error.what());
+    }
+  if(cameras.empty())
+    throw BaseStore::Error(section.string()+": empty camera catalog");
+  if(auto* census = Resources::contentCensus())
+    census->replaced("Camera.dat","base/"+section.lexically_relative(base).generic_string());
 
   camModDialog    = getCam("CAMMODDIALOG");
   camModInventory = getCam("CAMMODINVENTORY");

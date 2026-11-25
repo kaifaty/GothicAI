@@ -185,11 +185,11 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     std::string inst(JsonRead::str(msg,"instance"));
     for(auto& c:inst)
       c = char(std::toupper(static_cast<unsigned char>(c)));
-    const size_t id   = world->script().findSymbolIndex(inst);
+    const auto   id   = world->script().storyNpcId(inst);
     const auto   near = JsonRead::str(msg,"near");
     Npc*         at   = near.empty() ? pl : npcBySymbol(*world,near);
-    if(id==size_t(-1) || at==nullptr) {
-      sendResult(req,false,id==size_t(-1) ? "unknown instance" : "unknown npc to spawn near");
+    if(!id || at==nullptr) {
+      sendResult(req,false,!id ? "unknown instance" : "unknown npc to spawn near");
       return;
       }
     // Prefer the old direction towards the player, else where the npc faces.
@@ -237,7 +237,7 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
         // Keep a single creature while testing its actual animated centre: that
         // is the endpoint used by enemy perception, including for attached NPCs.
         if(spawned==nullptr) {
-          spawned = world->addNpc(id,point);
+          spawned = world->addNpc(*id,point);
           } else {
           spawned->setPosition(point);
           spawned->updateTransform();
@@ -267,37 +267,38 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
         return;
         }
       }
-    sendResult(req,spawned!=nullptr || world->addNpc(id,pos)!=nullptr,"could not spawn");
+    sendResult(req,spawned!=nullptr || world->addNpc(*id,pos)!=nullptr,"could not spawn");
     return;
     }
   if(cmd=="own_npc") {
-    // an npc of the director's (v33): a symbol of ours made like the script's npc `like`, put at a waypoint
-    // or `distance` cm in front of the player. The save keeps both
+    // Make a persistent director NPC from the named archetype.
     std::string why;
-    auto*       sym = world->script().ownSymbols().addNpc(JsonRead::str(msg,"npc"),JsonRead::str(msg,"like"),why);
-    if(sym==nullptr) {
+    auto& script=world->script();
+    const auto id=script.addDirectorNpcSymbol(JsonRead::str(msg,"npc"),JsonRead::str(msg,"like"),why);
+    if(!id) {
       sendResult(req,false,why);
       return;
       }
+    const std::string name(script.storyNpcName(*id));
     const auto wp  = JsonRead::str(msg,"waypoint");
     Npc*       npc = nullptr;
     if(!wp.empty()) {
-      npc = world->addNpc(sym->index(),wp);
+      npc = world->addNpc(*id,wp);
       } else {
       const float dist = float(JsonRead::integer(msg,"distance",300));
       auto        pos  = pl->position();
       pos.x += dist*std::cos(pl->rotationRad());
       pos.z += dist*std::sin(pl->rotationRad());
-      npc = world->addNpc(sym->index(),pos);
+      npc = world->addNpc(*id,pos);
       }
     if(npc==nullptr) {
-      sendResult(req,false,"could not put " + sym->name() + " in the world");
+      sendResult(req,false,"could not put " + name + " in the world");
       return;
       }
     if(npc->visualSkeleton()==nullptr) {
       // the code it is made like gave it no body: the world cannot have it (perception needs a head)
       world->removeNpc(*npc);
-      sendResult(req,false,"the code of " + std::string(JsonRead::str(msg,"like")) + " gives " + sym->name() + " no body");
+      sendResult(req,false,"the code of " + std::string(JsonRead::str(msg,"like")) + " gives " + name + " no body");
       return;
       }
     // {npc, index: its symbol, name: as the game shows it}
@@ -305,8 +306,8 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     rapidjson::Writer<rapidjson::StringBuffer> w(buf);
     const auto                                 shown = TextCodec::toUtf8(npc->displayName());
     w.StartObject();
-    w.Key("npc");   w.String(sym->name().data(),rapidjson::SizeType(sym->name().size()));
-    w.Key("index"); w.Uint(sym->index());
+    w.Key("npc");   w.String(name.data(),rapidjson::SizeType(name.size()));
+    w.Key("index"); w.Uint(*id);
     w.Key("name");  w.String(shown.data(),rapidjson::SizeType(shown.size()));
     w.EndObject();
     sendResult(req,true,"",std::string_view(buf.GetString(),buf.GetSize()));
@@ -560,14 +561,14 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     std::string inst(JsonRead::str(msg,"item"));
     for(auto& c:inst)
       c = char(std::toupper(static_cast<unsigned char>(c)));
-    const size_t id = world->script().findSymbolIndex(inst);
-    if(id==size_t(-1)) {
+    const auto id = world->script().findItemInstance(inst);
+    if(!id) {
       sendResult(req,false,"unknown item " + inst);
       return;
       }
-    if(!pl->inventory().itemCount(id))
-      pl->addItem(id,1);
-    pl->useItem(id);
+    if(!pl->inventory().itemCount(*id))
+      pl->addItem(*id,1);
+    pl->useItem(*id);
     sendResult(req,true,"");
     return;
     }
@@ -576,16 +577,16 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     std::string inst(JsonRead::str(msg,"item"));
     for(auto& c:inst)
       c = char(std::toupper(static_cast<unsigned char>(c)));
-    const size_t id = world->script().findSymbolIndex(inst);
-    if(id==size_t(-1)) {
+    const auto id = world->script().findItemInstance(inst);
+    if(!id) {
       sendResult(req,false,"unknown item " + inst);
       return;
       }
-    if(!pl->inventory().itemCount(id))
-      pl->addItem(id,1);
-    const size_t before = pl->inventory().itemCount(id);
-    pl->dropItem(id,1);
-    const bool dropped = pl->inventory().itemCount(id)<before;
+    if(!pl->inventory().itemCount(*id))
+      pl->addItem(*id,1);
+    const size_t before = pl->inventory().itemCount(*id);
+    pl->dropItem(*id,1);
+    const bool dropped = pl->inventory().itemCount(*id)<before;
     sendResult(req,dropped,dropped ? "" : "the hero could not drop it now");
     return;
     }
@@ -595,8 +596,8 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     std::string inst(JsonRead::str(msg,"item"));
     for(auto& c:inst)
       c = char(std::toupper(static_cast<unsigned char>(c)));
-    const size_t id = world->script().findSymbolIndex(inst);
-    if(id==size_t(-1)) {
+    const auto id = world->script().findItemInstance(inst);
+    if(!id) {
       sendResult(req,false,"unknown item " + inst);
       return;
       }
@@ -607,7 +608,7 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     const auto land = world->physic()->landRay(pos+Tempest::Vec3(0,100,0),1500);
     if(land.hasCol)
       pos.y = land.v.y;
-    Item* item = world->addItem(id,pos);
+    Item* item = world->addItem(*id,pos);
     if(item!=nullptr)
       item->setCount(size_t(std::max<int64_t>(1,JsonRead::integer(msg,"count",1))));
     sendResult(req,item!=nullptr,item==nullptr ? "the item could not be created" : "");
@@ -620,17 +621,17 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     std::string inst(JsonRead::str(msg,"item"));
     for(auto& c:inst)
       c = char(std::toupper(static_cast<unsigned char>(c)));
-    const size_t id = world->script().findSymbolIndex(inst);
-    if(npc==nullptr || npc==pl || npc->isDead() || id==size_t(-1)) {
+    const auto id = world->script().findItemInstance(inst);
+    if(npc==nullptr || npc==pl || npc->isDead() || !id) {
       sendResult(req,false,npc==nullptr ? "unknown npc" : "unknown item or unavailable npc");
       return;
       }
     const size_t n = size_t(std::max<int64_t>(1,JsonRead::integer(msg,"count",1)));
-    if(npc->inventory().itemCount(id)<n)
-      npc->addItem(id,n-npc->inventory().itemCount(id));
-    const size_t before = npc->inventory().itemCount(id);
-    npc->dropItem(id,n);
-    const bool dropped = npc->inventory().itemCount(id)<before;
+    if(npc->inventory().itemCount(*id)<n)
+      npc->addItem(*id,n-npc->inventory().itemCount(*id));
+    const size_t before = npc->inventory().itemCount(*id);
+    npc->dropItem(*id,n);
+    const bool dropped = npc->inventory().itemCount(*id)<before;
     sendResult(req,dropped,dropped ? "" : "the npc could not drop it now");
     return;
     }
@@ -701,8 +702,8 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     std::string inst(JsonRead::str(msg,"item"));
     for(auto& c:inst)
       c = char(std::toupper(static_cast<unsigned char>(c)));
-    const size_t id = world->script().findSymbolIndex(inst);
-    if(id==size_t(-1)) {
+    const auto id = world->script().findItemInstance(inst);
+    if(!id) {
       sendResult(req,false,"unknown item " + inst);
       return;
       }
@@ -711,7 +712,7 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     float       best  = range*range;
     world->detectItem(pl->position(),range,[&](Item& i) {
       const float d = (i.position()-pl->position()).quadLength();
-      if(i.clsId()==id && d<best) {
+      if(i.clsId()==*id && d<best) {
         it   = &i;
         best = d;
         }
@@ -730,14 +731,14 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     std::string  inst(JsonRead::str(msg,"item"));
     for(auto& c:inst)
       c = char(std::toupper(static_cast<unsigned char>(c)));
-    const size_t id = world->script().findSymbolIndex(inst);
-    if(chest==nullptr || id==size_t(-1)) {
+    const auto id = world->script().findItemInstance(inst);
+    if(chest==nullptr || !id) {
       sendResult(req,false,chest==nullptr ? "no such chest" : "unknown item " + inst);
       return;
       }
-    const size_t n = std::min(chest->inventory().itemCount(id),size_t(std::max<int64_t>(1,JsonRead::integer(msg,"count",1))));
+    const size_t n = std::min(chest->inventory().itemCount(*id),size_t(std::max<int64_t>(1,JsonRead::integer(msg,"count",1))));
     if(n>0)
-      pl->addItem(id,*chest,n);
+      pl->addItem(*id,*chest,n);
     sendResult(req,n>0,"it is not in the chest",std::to_string(n));
     return;
     }

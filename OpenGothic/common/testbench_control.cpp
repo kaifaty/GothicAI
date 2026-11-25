@@ -23,7 +23,7 @@ bool keyAction(std::string_view k, KeyCodec::Action& a) {
     {"attack", KeyCodec::ActionGeneric},
     {"melee",  KeyCodec::WeaponMele},{"bow",KeyCodec::WeaponBow}, {"spell",KeyCodec::WeaponMage3},
     {"parade", KeyCodec::Parade},  {"breath",KeyCodec::Walk},     {"dodge",KeyCodec::Dodge},
-    {"heal", KeyCodec::Heal},      {"potion",KeyCodec::Potion},
+    {"heal", KeyCodec::Heal},      {"potion",KeyCodec::Potion}, {"map",KeyCodec::Map},
     };
   for(auto& i:keys)
     if(i.name==k) {

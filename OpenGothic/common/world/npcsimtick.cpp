@@ -1,0 +1,105 @@
+#include "npcsimtick.h"
+
+#include <Tempest/Log>
+
+#include <cstdlib>
+#include <cstring>
+#include <optional>
+
+#include "game/bodycontroller.h"
+#include "game/bodyobservations.h"
+#include "game/npckeys.h"
+#include "world/objects/npc.h"
+
+using namespace NpcSimTick;
+
+namespace {
+std::optional<Config>& replaced() {
+  static std::optional<Config> cfg;
+  return cfg;
+  }
+}
+
+Config NpcSimTick::parse(const char* period, const char* scope, std::string* problem) {
+  Config cfg;
+  if(period!=nullptr && period[0]!='\0') {
+    char* end = nullptr;
+    const long ms = std::strtol(period,&end,10);
+    if(end!=nullptr && *end=='\0' && (ms==0 || (ms>=long(MinPeriodMs) && ms<=long(MaxPeriodMs))))
+      cfg.periodMs = uint64_t(ms);
+    else if(problem!=nullptr)
+      *problem += std::string("OPENGOTHIC_NPC_SIM_TICK_MS=")+period+" is not 0 or 16..66: using 33. ";
+    }
+  if(scope!=nullptr && scope[0]!='\0') {
+    if(std::strcmp(scope,"tier")==0)
+      cfg.scope = Scope::Tier;
+    else if(std::strcmp(scope,"graph")!=0 && problem!=nullptr)
+      *problem += std::string("OPENGOTHIC_NPC_SIM_TICK_SCOPE=")+scope+" is not graph or tier: using graph. ";
+    }
+  return cfg;
+  }
+
+const Config& NpcSimTick::config() {
+  static const Config env = [] {
+    const char* period = std::getenv("OPENGOTHIC_NPC_SIM_TICK_MS");
+    const char* scope  = std::getenv("OPENGOTHIC_NPC_SIM_TICK_SCOPE");
+    std::string problem;
+    const Config cfg = parse(period,scope,&problem);
+    if(!problem.empty())
+      Tempest::Log::e(problem);
+    else if((period!=nullptr && period[0]!='\0') || (scope!=nullptr && scope[0]!='\0'))
+      Tempest::Log::i("NPC far tick: period ",cfg.periodMs," ms, scope ",name(cfg.scope));
+    return cfg;
+    }();
+  const auto& test = replaced();
+  return test ? *test : env;
+  }
+
+void NpcSimTick::setConfig(const Config& cfg) {
+  replaced() = cfg;
+  }
+
+const char* NpcSimTick::name(Scope scope) {
+  return scope==Scope::Tier ? "tier" : "graph";
+  }
+
+bool NpcSimTick::qualifies(const Npc& npc, Scope scope) {
+  if(npc.simTier()!=NpcSimTier::Simplified || npc.isPlayer())
+    return false;
+  // The physics step simulates or poses these bodies every frame (syncRagdoll, the living rig).
+  if(npc.hasRagdoll() || npc.livingBody()!=nullptr)
+    return false;
+  // Body policies, the stand's keys and the observations act or sample on each step of the NPC.
+  if((BodyController::hasOwners() && BodyController::owns(npc)) || NpcKeys::enabled(npc) || BodyObservations::watched(npc))
+    return false;
+  if(scope==Scope::Graph) {
+    if(npc.usesSimplifiedMovement())
+      return true;
+    if(!npc.canDeferIdleMonsterTick())
+      return false;
+    }
+  // Fighters are paired and their blades swept every frame; spell fields push airborne bodies every frame.
+  return !npc.isMeleeFighter() && !npc.spellFrozen() && !npc.spellWhirling() && !npc.isInAir();
+  }
+
+uint64_t NpcSimTick::phase(uint32_t creation, uint64_t periodMs) {
+  // Fibonacci hashing of the creation number: consecutive numbers fall evenly over the period.
+  const uint64_t fraction = (uint64_t(creation)*0x9e3779b97f4a7c15ull)>>32;
+  return (fraction*periodMs)>>32;
+  }
+
+uint64_t NpcSimTick::phase(const Npc& npc, uint64_t periodMs) {
+  return phase(npc.animationLodSeed(),periodMs);
+  }
+
+bool NpcSimTick::due(uint64_t clock, uint64_t dt, uint64_t owed, uint64_t phase, uint64_t periodMs) {
+  if(periodMs==0 || dt>=periodMs)
+    return true; // such a frame holds a node of every NPC
+  if(2*(owed+dt)>3*periodMs)
+    return true; // one more frame like this would stretch the NPC's step past 1.5 periods
+  if(dt==0 || clock<dt)
+    return false;
+  // Nodes phase + k*period up to t; one in (clock - dt, clock] is this NPC's turn.
+  const auto nodes = [&](uint64_t t) { return t<phase ? 0 : (t-phase)/periodMs+1; };
+  return nodes(clock)>nodes(clock-dt);
+  }

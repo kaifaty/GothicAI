@@ -1,7 +1,14 @@
 #pragma once
 
+#include <array>
+#include <atomic>
 #include <vector>
 #include <memory>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "asset/worldtypes.h"
 
@@ -13,6 +20,7 @@
 #include "game/rpgvocabulary.h"
 #include "objects/vob.h"
 #include "npcsimtier.h"
+#include "npcsimtick.h"
 #include "animationlod.h"
 #include "mobreservations.h"
 
@@ -60,7 +68,7 @@ class WorldObjects final {
     void           load(Serialize& fout);
     void           save(Serialize& fout);
     void           tick(uint64_t dt, uint64_t dtPlayer);
-    // Assigns every NPC its simulation tier (npcsimtier.h); tick() calls it
+    // Updates NPC simulation tiers (npcsimtier.h); tick() calls it
     // first, loading calls it once the hero, camera and residency are ready.
     void           updateSimTiers();
     const NpcSimTiers::Stats& simTierStats() const { return simTiers; }
@@ -171,6 +179,7 @@ class WorldObjects final {
     void           onItemRemoved(const Item& itm);
 
     Bullet&        shootBullet(const Item &itmId, const Tempest::Vec3& pos, const Tempest::Vec3& dir, float tgRange, float speed);
+    bool           hasActiveProjectileFrom(const Npc& npc) const;
 
     void           addInteractive(Interactive*         obj);
     void           addStatic     (StaticObj*           obj);
@@ -206,17 +215,93 @@ class WorldObjects final {
 
   private:
     friend class World;
+    friend class SocietyProjection;
+    void invalidateNpcOrder();
+    void refreshSocietyDispatch();
+    void noteNpcCellChange(Npc& npc);
+    void refreshNpcCells();
+    void updateNpcCell(Npc& npc);
+    void collectLatePoses(const AnimationLod::View& view, bool persistent);
+
+    using NpcCellKey = std::pair<int32_t,int32_t>;
+    struct NpcCellMember {
+      NpcCellKey    key{};
+      Tempest::Vec3 position{}, lo{}, hi{};
+      std::optional<NpcSimTier> tierOverride;
+      NpcProcessPolicy policy = NpcProcessPolicy::AiFar2;
+      bool          deferred = false;
+      bool          combat = false;
+      bool          campfire = false;
+      };
+    struct NpcCell {
+      std::vector<Npc*> actors;
+      Tempest::Vec3 lo{}, hi{};
+      size_t        deferred = 0;
+      uint64_t      viewRevision = 0;
+      bool          dirtyBounds = true;
+      bool          couldSee = false;
+      std::optional<std::array<NpcSimTier,2>> tiers;
+      };
+    std::map<NpcCellKey,NpcCell> npcCells;
+    std::unordered_map<Npc*,NpcCellMember> npcCellMembers;
+    std::unordered_set<Npc*> societyPoseDebts;
+    std::mutex npcCellChangeLock;
+    std::vector<Npc*> npcCellChanges, latePoses;
+    std::optional<AnimationLod::View> latePoseView;
+    uint64_t latePoseViewRevision = 0;
+    bool npcCellsDirty = true, npcSortDirty = true;
+    bool npcTiersRebuild = true, npcPoliciesRebuild = true;
+    bool npcTierFixture = false, npcPolicyFixture = false;
+    const ChunkResidency* npcTierResidency = nullptr;
+    const Npc* npcTierHero = nullptr;
+    const Npc* npcPolicyHero = nullptr;
+    std::optional<std::pair<ChunkId,ChunkId>> npcTierFocus;
+    std::optional<Tempest::Vec3> npcPolicyPosition;
+    std::unordered_set<Npc*> npcTierChanges, npcPolicyChanges, npcNearMembers, npcCombat, npcCampfires;
+    std::vector<Npc*> npcSpatialOrder;
+    static bool npcSimulationFixtureActive();
+    void orderNpcCandidates(const std::unordered_set<Npc*>& candidates);
+    void updateSocietyDispatch(Npc& npc);
+    void refreshSocietyPoseDispatch();
+    size_t nextNativeNpc(size_t first, bool persistent, bool idleCadence) const;
+    void noteIdleNpcChange(Npc& npc);
+    void prepareIdleNpcCadence(uint64_t dt, uint64_t period);
+    size_t clearIdleNpcCadence(uint64_t clock, size_t visited = 0);
+    void parkIdleNpc(Npc& npc);
+    void unparkIdleNpc(Npc& npc, uint64_t clock);
+    void noteNpcCadence(uint64_t dt);
+    uint64_t societyDueStep(const Npc& npc, uint64_t entered) const;
     bool           makeAnimationLodView(AnimationLod::View& view) const;
     void           pinAnimationLodTargets();
-    bool           mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const;
+    bool           mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view, bool allowSettledFurniture=false) const;
     // worldobjects_animtail.cpp: the main-thread steps after the animation pass (world/animationtail.h)
     static bool    animationTailKeepsShadow();
     void           updateAnimationTail(uint64_t dt, const Npc* player, bool skipFar, bool frozen);
     uint32_t       animationLodFrame = 0;
     uint64_t       animationLodDeferred = 0;
     std::vector<uint8_t> tailPlan; // per npcArr slot, AnimationTail::Step bits
+    std::vector<uint64_t> nativeNpcMask;
+    static constexpr size_t IdleAgeSlots = 2*NpcSimTick::MaxPeriodMs+1;
+    std::array<std::vector<uint64_t>, NpcSimTick::MaxPeriodMs> idlePhase;
+    std::array<std::vector<uint64_t>, IdleAgeSlots> idleAge;
+    std::vector<uint64_t> idleParked, idleReady;
+    std::unique_ptr<std::atomic<uint64_t>[]> idleUrgent;
+    uint64_t idlePeriod = 0;
+    bool idleCadenceInvalid = true;
+    std::vector<size_t> nativePoseIndices;
+    bool npcDispatchDirty = true;
+    bool poseDispatchDirty = true;
+    bool societyPoseWakePending = false;
+    uint64_t npcAnimationClock = 0;
+    struct NpcCadenceStep {
+      uint64_t clock = 0, dt = 0;
+      };
+    // A native cadence node is never further away than its period (at most 66 ms).
+    std::array<NpcCadenceStep, 68> npcCadence;
+    size_t npcCadenceEnd = 0, npcCadenceCount = 0;
     std::vector<Tempest::Vec3> fighters;
     friend struct WorldDataContract;
+    friend struct NpcDefinitionContract;
     void           saveItemPhysics(Serialize& fout) const;
     void           loadItemPhysics(Serialize& fin);
     void           savePlacedItems(Serialize& fout) const;
@@ -269,9 +354,13 @@ class WorldObjects final {
     std::vector<std::unique_ptr<Npc>>  npcRemoved; // removed, but may have a dangling references in game
     std::vector<Npc*>                  npcNear;
     NpcSimTiers::Stats                 simTiers;
+    bool                               campfireBodiesSuspended = false;
     static bool                       keepsFullSimulation(const Npc& npc);
     static bool                       keepsNearPolicy(const Npc& npc);
     void                              updateSimTiers(bool beforeTick);
+    // worldobjects_npctick.cpp: the Npc::tick loop; far NPCs at the rate of world/npcsimtick.h
+    void                              tickNpcs(uint64_t dt, uint64_t dtPlayer, const Npc* pl, bool freeCam, bool frozen);
+    uint64_t                          simTickClock = 0; // the sum of the dt the loop handed out (not dtPlayer)
     void                              updateNpcPolicies(const Npc* player, const Tempest::Vec3& position);
 
     std::vector<AbstractTrigger*>      triggers;

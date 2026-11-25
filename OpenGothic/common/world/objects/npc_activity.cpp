@@ -12,8 +12,15 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
   // collision, and OTHER may be null or a distant culprit, so native turning owns it.
   if(physicsNoiseCallback && (a.act==AI_TurnToNpc || a.act==AI_LookAtNpc))
     return;
+  wakeSociety();
+  resumeCampfireBody();
   a.physicsNoiseState = physicsNoiseCallback && a.act==AI_StartState;
   a.activity = a.activity || activityCommands;
+  if(!a.activity && activityEvents.activity && activityEvents.activity->point) {
+    activityEvents.awaitQueue = true; // recheck the place after external commands have finished
+    if(a.act==AI_GoToPoint && isActivityPoint(a.point))
+      a.i1=AiQueue::AiAction::ExternalPointWalk;
+    }
   a.nativeCombatTarget=nativeCombatQueueTarget;
   if(BodyController::owns(*this) && a.act!=AI_OutputSvmOverlay)
     BodyController::takeover(*this,"native_script_queue");
@@ -25,6 +32,7 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
 bool Npc::setInteraction(Interactive *id, bool quick) {
   if(currentInteract==id)
     return true;
+  wakeSociety();
 
   if(currentInteract!=nullptr) {
     return currentInteract->detach(*this,quick);
@@ -33,6 +41,7 @@ bool Npc::setInteraction(Interactive *id, bool quick) {
   if(id==nullptr)
     return (currentInteract==nullptr);
 
+  resumeCampfireBody();
   if(id->attach(*this)) {
     currentInteract = id;
     owner.mobReservations().attached(*this,*id);

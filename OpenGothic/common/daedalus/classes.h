@@ -5,8 +5,10 @@
 
 #pragma once
 #include "script.h"
+#include "game/definitions/menurecord.h"
 #include "world/records/npcrecord.h"
 #include "world/records/itemrecord.h"
+#include "world/records/liveinstances.h"
 #include "world/records/guildrecord.h"
 #include "world/records/spellrecord.h"
 #include "world/records/focusrecord.h"
@@ -35,10 +37,6 @@ namespace daedalus {
 	using NpcType = ::NpcType;
 	using NpcFlag = ::NpcFlag;
 
-	struct INpc : DaedalusInstance, NpcRecord {
-		static void register_(DaedalusScript& s);
-	};
-
 	struct IMission : DaedalusInstance {
 		var string name;
 		var string description;
@@ -59,32 +57,7 @@ namespace daedalus {
 
 	using ItemFlag = ::ItemFlag;
 
-	struct IItem : DaedalusInstance, ItemRecord {
-		static void register_(DaedalusScript& s);
-	};
 	struct IFocus : DaedalusInstance, FocusRecord {
-		static void register_(DaedalusScript& s);
-	};
-	struct IInfoChoice {
-		var string text;
-		var int32_t function = 0;
-	};
-
-	struct IInfo : DaedalusInstance {
-		var int32_t npc;
-		var int32_t nr;
-		var int32_t important;
-		var func condition;
-		var func information;
-		var string description;
-		var int32_t trade;
-		var int32_t permanent;
-
-		std::vector<IInfoChoice> choices {};
-
-		void add_choice(IInfoChoice const& ch);
-		void remove_choice(std::size_t index);
-
 		static void register_(DaedalusScript& s);
 	};
 
@@ -421,177 +394,17 @@ namespace daedalus {
 		static void register_(DaedalusScript& s);
 	};
 
-	enum class MenuFlag : std::uint32_t {
-		OVERTOP = 1 << 0,
-		EXCLUSIVE = 1 << 1,
-		NO_ANIMATION = 1 << 2,
-		DONT_SCALE_DIMENSION = 1 << 3,
-		DONT_SCALE_POSITION = 1 << 4,
-		ALIGN_CENTER = 1 << 5,
-		SHOW_INFO = 1 << 6,
+	using MenuFlag = MenuDefinitions::MenuFlag;
+	using MenuItemFlag = MenuDefinitions::MenuItemFlag;
+	using MenuItemType = MenuDefinitions::MenuItemType;
+	using MenuItemSelectEvent = MenuDefinitions::MenuItemSelectEvent;
+	using MenuItemSelectAction = MenuDefinitions::MenuItemSelectAction;
 
-		overtop = OVERTOP,
-		exclusive = EXCLUSIVE,
-		no_animation = NO_ANIMATION,
-		dont_scale_dimension = DONT_SCALE_DIMENSION,
-		dont_scale_position = DONT_SCALE_POSITION,
-		align_center = ALIGN_CENTER,
-		show_info = SHOW_INFO,
-	};
-	FLAG(MenuFlag)
-
-	struct IMenu : DaedalusInstance {
-		static constexpr std::uint8_t item_count = 150;
-
-		var string back_pic;
-		var string back_world;
-		var int32_t pos_x;
-		var int32_t pos_y;
-		var int32_t dim_x;
-		var int32_t dim_y;
-		var int32_t alpha;
-		var string music_theme;
-		var int32_t event_timer_msec;
-		var string items[item_count];
-		var MenuFlag flags;
-		var int32_t default_outgame;
-		var int32_t default_ingame;
-
+	struct IMenu : DaedalusInstance, MenuDefinitions::Menu {
 		static void register_(DaedalusScript& s);
 	};
 
-	enum class MenuItemFlag : std::uint32_t {
-		CHROMAKEYED = 1 << 0,
-		TRANSPARENT = 1 << 1,
-		SELECTABLE = 1 << 2,
-		MOVABLE = 1 << 3,
-		CENTERED = 1 << 4,
-		DISABLED = 1 << 5,
-		FADE = 1 << 6,
-		EFFECTS = 1 << 7,
-		ONLY_OUTGAME = 1 << 8,
-		ONLY_INGAME = 1 << 9,
-		PERF_OPTION = 1 << 10,
-		MULTILINE = 1 << 11,
-		NEEDS_APPLY = 1 << 12,
-		NEEDS_RESTART = 1 << 13,
-		EXTENDED_MENU = 1 << 14,
-		HOR_SELECTABLE = 1 << 15,
-
-		chromakeyed = CHROMAKEYED,
-		transparent = TRANSPARENT,
-		selectable = SELECTABLE,
-		movable = MOVABLE,
-		centered = CENTERED,
-		disabled = DISABLED,
-		fade = FADE,
-		effects = EFFECTS,
-		only_outgame = ONLY_OUTGAME,
-		only_ingame = ONLY_INGAME,
-		perf_option = PERF_OPTION,
-		multiline = MULTILINE,
-		needs_apply = NEEDS_APPLY,
-		needs_restart = NEEDS_RESTART,
-		extended_menu = EXTENDED_MENU,
-		hor_selectable = HOR_SELECTABLE,
-	};
-	FLAG(MenuItemFlag)
-
-	enum class MenuItemType : std::uint32_t {
-		UNKNOWN = 0,
-		TEXT = 1,
-		SLIDER = 2,
-		INPUT = 3,
-		CURSOR = 4,
-		CHOICEBOX = 5,
-		BUTTON = 6,
-		LISTBOX = 7,
-
-		unknown = UNKNOWN,
-		text = TEXT,
-		slider = SLIDER,
-		input = INPUT,
-		cursor = CURSOR,
-		choicebox = CHOICEBOX,
-		button = BUTTON,
-		listbox = LISTBOX,
-	};
-
-	enum class MenuItemSelectEvent : uint8_t {
-		EXECUTE = 1,
-		CHANGED = 2,
-		LEAVE = 3,
-		TIMER = 4,
-		CLOSE = 5,
-		INIT = 6,
-		SELECT_PREVIOUS = 7,
-		SELECT_NEXT = 8,
-
-		execute = EXECUTE,
-		changed = CHANGED,
-		leave = LEAVE,
-		timer = TIMER,
-		close = CLOSE,
-		init = INIT,
-		select_previous = SELECT_PREVIOUS,
-		select_next = SELECT_NEXT,
-	};
-
-	enum class MenuItemSelectAction : uint8_t {
-		UNKNOWN = 0,
-		BACK = 1,
-		START_MENU = 2,
-		START_ITEM = 3,
-		CLOSE = 4,
-		CON_COMMANDS = 5,
-		PLAY_SOUND = 6,
-		EXECUTE_COMMANDS = 7,
-
-		unknown = UNKNOWN,
-		back = BACK,
-		start_menu = START_MENU,
-		start_item = START_ITEM,
-		close = CLOSE,
-		con_commands = CON_COMMANDS,
-		play_sound = PLAY_SOUND,
-		execute_commands = EXECUTE_COMMANDS,
-	};
-
-	struct IMenuItem : DaedalusInstance {
-		static constexpr std::uint32_t text_count = 10;
-		static constexpr std::uint32_t select_action_count = 5;
-		static constexpr std::uint32_t event_action_count = 10;
-		static constexpr std::uint32_t user_item_count = 4;
-
-		var string fontname;
-		var string text[text_count];
-		var string backpic;
-		var string alphamode;
-		var int32_t alpha;
-		var MenuItemType type;
-		var int32_t on_sel_action[select_action_count];
-		var string on_sel_action_s[select_action_count];
-		var string on_chg_set_option;
-		var string on_chg_set_option_section;
-		var func on_event_action[event_action_count];
-		var int32_t pos_x;
-		var int32_t pos_y;
-		var int32_t dim_x;
-		var int32_t dim_y;
-		var float size_start_scale;
-		var MenuItemFlag flags;
-		var float open_delay_time;
-		var float open_duration;
-		var float user_float[user_item_count];
-		var string user_string[user_item_count];
-		var int32_t frame_posx;
-		var int32_t frame_posy;
-		var int32_t frame_sizex;
-		var int32_t frame_sizey;
-		var string hide_if_option_section_set;
-		var string hide_if_option_set;
-		var int32_t hide_on_value;
-
+	struct IMenuItem : DaedalusInstance, MenuDefinitions::MenuItem {
 		static void register_(DaedalusScript& s);
 	};
 

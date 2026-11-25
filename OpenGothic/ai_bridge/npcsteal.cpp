@@ -33,11 +33,12 @@ NpcSteal::Target NpcSteal::resolve(World& world, Npc& npc, const rapidjson::Valu
   const auto chest = JsonRead::str(args,"chest");
   auto name = AiNpc::upper(JsonRead::str(args,"what"));
   if(name.empty()) name = AiNpc::upper(JsonRead::str(args,"item"));
-  target.instance = world.script().findSymbolIndex(name);
-  if(target.instance==size_t(-1)) {
+  const auto instance = world.script().findItemInstance(name);
+  if(!instance) {
     error = "unknown theft item: " + name;
     return target;
     }
+  target.instance = *instance;
   if(!chest.empty()) {
     target.chest = NpcChests::find(world,chest);
     if(target.chest==nullptr) {
@@ -75,8 +76,8 @@ std::string NpcSteal::preview(World& world, const rapidjson::Value& args) {
   std::string ownerState;
   if(auto* owner = AiNpc::findNpc(world,target.owner))
     ownerState = AiNpc::stateName(world,owner->currentState());
-  std::string item;
-  if(auto* symbol = world.script().findSymbol(target.instance)) item = symbol->name();
+  const auto item = target.instance!=size_t(-1) ? world.script().storyItemName(uint32_t(target.instance))
+                                                : std::string_view();
   j.str("owner",target.owner).str("item",item).integer("count",int64_t(target.count))
    .boolean("mission",target.mission).str("owner_state",ownerState);
   if(!error.empty()) j.str("error",error);
@@ -95,7 +96,7 @@ bool NpcSteal::begin(World& world, Npc& npc, const rapidjson::Value& args, Activ
     return false;
     }
   const auto expectedItem = AiNpc::upper(JsonRead::str(args,"expected_item"));
-  if(!expectedItem.empty() && world.script().findSymbolIndex(expectedItem)!=active.target.instance) {
+  if(!expectedItem.empty() && world.script().findItemInstance(expectedItem)!=active.target.instance) {
     error = "theft item changed since preflight";
     return false;
     }

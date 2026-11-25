@@ -45,7 +45,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 64;
+constexpr int         ProtocolVersion = 65;
 AiBridge*             activeBridge = nullptr;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
@@ -1026,11 +1026,10 @@ void AiBridge::Impl::onBodyWatch(World& world, const rapidjson::Value& msg) {
       npc = world.player();
       }
     else {
-      const auto instance = world.script().findSymbolIndex(symbol);
-      if(instance!=size_t(-1)) {
-        npc = world.findNpcByInstance(instance);
+      if(const auto instance = world.script().storyNpcId(symbol)) {
+        npc = world.findNpcByInstance(*instance);
         // Script symbols identify types; refuse copies instead of silently watching the first.
-        if(world.findNpcByInstance(instance,1)!=nullptr) {
+        if(world.findNpcByInstance(*instance,1)!=nullptr) {
           sendResult(req,false,"ambiguous body_watch npc symbol: "+symbol);
           return;
           }
@@ -1135,7 +1134,7 @@ bool AiBridge::Impl::onRaiseDead(World& world, const rapidjson::Value& msg, std:
   }
 
 void AiBridge::Impl::onStoryEval(World& world, const rapidjson::Value& msg) {
-  // story graph expressions on the live VM, self = `npc`, other = the hero: what the director's rules ask
+  // Evaluate the director's expressions with self = the NPC and other = the hero.
   const auto req = JsonRead::str(msg,"req");
   Npc*       npc = npcBySymbol(world,JsonRead::str(msg,"npc"));
   auto       it  = msg.FindMember("exprs");
@@ -1709,8 +1708,8 @@ void AiBridge::Impl::tickDeal(World& world) {
   chat->markMissing([&](const ChatOverlay::DealLine& l) {
     if(l.item.empty())
       return false;  // not a thing given now: a lie forgiven, a debt to pay later
-    const size_t id = world.script().findSymbolIndex(l.item);
-    return id==size_t(-1) || pl->itemCount(id) < size_t(std::max(0,l.count));
+    const auto id = world.script().findItemInstance(l.item);
+    return !id || pl->itemCount(*id) < size_t(std::max(0,l.count));
     });
   }
 

@@ -25,14 +25,14 @@ inline std::string upper(std::string_view s) {
 inline Npc* findNpc(World& world, std::string_view name, const Npc* near = nullptr) {
   if(name=="PLAYER" || name=="HERO")
     return world.player();
-  const size_t id = world.script().findSymbolIndex(upper(name));
-  if(id==size_t(-1))
+  const auto id = world.script().storyNpcId(name);
+  if(!id)
     return nullptr;
   if(near!=nullptr) {
     Npc*  best  = nullptr;
     float bestD = 0;
     world.detectNpc(near->position(),5000,[&](Npc& n) {
-      if(n.instanceSymbol()!=id || n.isDead() || &n==near)
+      if(n.instanceSymbol()!=*id || n.isDead() || &n==near)
         return;
       const float d = n.qDistTo(*near);
       if(best==nullptr || d<bestD) {
@@ -43,19 +43,18 @@ inline Npc* findNpc(World& world, std::string_view name, const Npc* near = nullp
     if(best!=nullptr)
       return best;
     }
-  return world.findNpcByInstance(id);
+  return world.findNpcByInstance(*id);
   }
 
 // a script state function (ZS_ATTACK, ZS_FLEE...), invalid if the scripts have none by that name
 inline ScriptFn scriptState(World& world, std::string_view name) {
-  const size_t id = world.script().findSymbolIndex(upper(name));
-  return id==size_t(-1) ? ScriptFn() : ScriptFn(id);
+  const auto id = world.script().storyScriptFunctionId(name);
+  return id ? ScriptFn(*id) : ScriptFn();
   }
 
 // the name of a script state function, empty if none
 inline std::string stateName(World& world, ScriptFn fn) {
-  auto sym = fn.isValid() ? world.script().findSymbol(fn.ptr) : nullptr;
-  return sym!=nullptr ? sym->name() : "";
+  return fn.isValid() ? std::string(world.script().storyProgramName(uint32_t(fn.ptr))) : std::string();
   }
 
 // `from` hands up to `count` of `item` to `to` once it has walked up (within twice GiveRange): an attached

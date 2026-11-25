@@ -14,6 +14,7 @@
 #include "settings.h"
 #include "gameservices.h"
 #include "game/gamehost.h"
+#include "game/gamescript_nativecall.h"
 
 #include "game/chronicle.h"
 #include "game/gamesession.h"
@@ -176,6 +177,8 @@ class Gothic final : public GameServices, public GameHost {
     std::function<std::vector<std::string>()>                           dialogEntriesFn;
     std::function<bool(size_t)>                                         dialogPickFn;
 
+    bool printscreen(std::string_view msg, int posx, int posy, std::string_view font, int timesec);
+
     Tempest::Signal<void(std::string_view,int,int,int,const GthFont&)>  onPrintScreen;
     Tempest::Signal<void(std::string_view)>                             onPrint;
     Tempest::Signal<void(std::string_view, bool)>                       onVideo;
@@ -226,18 +229,16 @@ class Gothic final : public GameServices, public GameHost {
     // a dialog or a choice was chosen and has run
     Tempest::Signal<void(const GameScript::DlgChoice&,Npc&,Npc&)>       onDialogChosen;
     // a dialog's script function (its condition, its information or a choice) is about to run, self and other
-    // set: true if the story graph ran it in place of the VM, a condition's answer in `result`
-    std::function<bool(daedalus::DaedalusSymbol&,int32_t&)>               dialogScriptFn;
+    // set: true if the director handled the function, a condition's answer in result
+    std::function<bool(uint32_t,int32_t&)>                              dialogScriptFn;
+    std::function<void(bool ran,bool failed)>                           dialogStockResultFn;
 
     std::string_view                      messageFromSvm(std::string_view id, int voice) const;
     std::string_view                      messageByName (std::string_view id) const;
     uint32_t                              messageTime   (std::string_view id) const;
 
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
-    std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
-    daedalus::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
-    void                                  setupCommonScriptClasses(daedalus::DaedalusScript &sc);
-    void                                  setupVmCommonApi(daedalus::DaedalusVm &vm);
+    void                                  bindNativeGameApi(storygraph::NativeExternals& operations);
 
     static const FightAi&                 fai();
     static const SoundDefinitions&        sfx();
@@ -285,7 +286,7 @@ class Gothic final : public GameServices, public GameHost {
     bool                                    meleeBladeLabels = true;
     Benchmark                               isBenchmark    = Benchmark::None;
 
-    std::string                             wrldDef, plDef, gameDatDef, ouDef;
+    std::string                             wrldDef, plDef, ouDef;
 
     std::unique_ptr<IniFile>                modFile;
     std::unique_ptr<IniFile>                systemPackIniFile;
@@ -331,7 +332,7 @@ class Gothic final : public GameServices, public GameHost {
 
     auto                                    getDocument(int id) -> std::unique_ptr<DocumentMenu::Show>&;
 
-    static void                             notImplementedRoutine(std::string_view fn);
+    friend class MenuRoot;
 
     static std::string                      concatstrings     (std::string_view a, std::string_view b);
     static std::string                      inttostring       (int i);
@@ -345,7 +346,6 @@ class Gothic final : public GameServices, public GameHost {
     void                                    introducechapter  (std::string_view title, std::string_view subtitle, std::string_view img, std::string_view sound, int time);
     bool                                    playvideo         (std::string_view name);
     bool                                    playvideoex       (std::string_view name, bool screenBlend, bool exitSession);
-    bool                                    printscreen       (std::string_view msg, int posx, int posy, std::string_view font, int timesec);
     bool                                    printdialog       (int dialognr, std::string_view msg, int posx, int posy, std::string_view font, int timesec);
     void                                    print             (std::string_view msg);
 

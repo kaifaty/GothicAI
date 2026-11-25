@@ -7,12 +7,9 @@
 #include <string_view>
 
 class Npc;
+class GameScript;
 
-namespace daedalus {
-  class DaedalusVm;
-  }
-
-// What the director makes happen, through the scripts' own functions (docs/story-graph.md, stages 3–4):
+// What the director makes happen through game actions (docs/story-graph.md, stages 3–4):
 // in a dialog of its own, or as the consequence of a lie found out.
 struct StoryEffect final {
   std::string kind;     // give, xp, set, journal, end, attack, refuse_talk, routine, create, teach, calm, party,
@@ -40,12 +37,12 @@ struct StoryEffect final {
   bool        toHero = true;  // give: the npc gives to the hero, else the hero to the npc
   bool        toNpc  = false; // give (v39): the npc gives to another npc (`target`), far from the hero
 
-  // `{"do": "give", "item": ..., ...}`; an error if it is malformed or, with a VM, names something
-  // the scripts don't have
-  static std::string read(const rapidjson::Value& v, daedalus::DaedalusVm* vm, StoryEffect& e);
+  // Validate syntax before a session starts, and resolve game names when a session is available.
+  static std::string read(const rapidjson::Value& v, GameScript* script, StoryEffect& e);
+  static std::string read(const rapidjson::Value& v, GameScript& script, StoryEffect& e);
   // with the npc as self and the hero as other; failures are logged with `who`
-  void run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::string_view who) const;
+  void run(GameScript& script, Npc& npc, Npc& player, std::string_view who) const;
   // teach: the learning points it takes from the hero, as the scripts' teacher function counts them;
   // -1 and `error` if the scripts can't say
-  int32_t learnCost(daedalus::DaedalusVm& vm, Npc& player, std::string& error) const;
+  int32_t learnCost(GameScript& script, Npc& teacher, Npc& player, std::string& error) const;
   };

@@ -8,21 +8,16 @@
 
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
-#include "daedalus/vm.h"
 
 #include "game/gamescript.h"
-#include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/waypoint.h"
 #include "world/world.h"
 
-#include "eval.h"
 #include "jsonread.h"
 #include "textcodec.h"
 
 using namespace Tempest;
-using daedalus::DaedalusDataType;
-using storygraph::Value;
 
 namespace {
 
@@ -42,33 +37,11 @@ struct Entry final {
 struct Description final {
   std::string     like, name;
   const WayPoint* at    = nullptr;
-  bool            guilded = false;
-  int32_t         guild = 0;
-  bool            dressed = false;
-  int32_t         gender = 0, face = 0, skin = 0, armor = -1;  // armor: an item instance, -1 none
-  std::string     head;
+  std::optional<int32_t> guild;
+  std::optional<GameScript::DirectorNpcLook> look;
   std::vector<std::pair<uint32_t,int32_t>> items;
   std::vector<Entry> routine;
   };
-
-bool intConst(daedalus::DaedalusVm& vm, std::string_view name, int32_t& v) {
-  auto* s = name.empty() ? nullptr : vm.find_symbol_by_name(name);
-  if(s==nullptr || !s->is_const() || s->type()!=DaedalusDataType::INT)
-    return false;
-  v = s->get_int(0);
-  return true;
-  }
-
-// an instance of the scripts of this class (C_ITEM...)
-bool ofClass(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol* s, std::string_view cls) {
-  if(s==nullptr || s->type()!=DaedalusDataType::INSTANCE)
-    return false;
-  auto* c = vm.find_symbol_by_index(s->parent());
-  while(c!=nullptr && c->type()!=DaedalusDataType::CLASS)
-    c = vm.find_symbol_by_index(c->parent());
-  auto* want = vm.find_symbol_by_name(cls);
-  return c!=nullptr && want!=nullptr && c->index()==want->index();
-  }
 
 // "HH:MM"
 bool clock(std::string_view s, gtime& t) {
@@ -84,7 +57,7 @@ bool clock(std::string_view s, gtime& t) {
 
 // everything is checked before anything is made: a half-made npc would stay in the save
 std::string read(World& world, const rapidjson::Value& msg, Description& d) {
-  auto& vm = world.script().getVm();
+  auto& script = world.script();
   d.like = upper(JsonRead::str(msg,"like"));
   d.name = TextCodec::fromUtf8(JsonRead::str(msg,"name"));
   if(d.name.empty())
@@ -94,9 +67,9 @@ std::string read(World& world, const rapidjson::Value& msg, Description& d) {
   if(d.at==nullptr)
     return "no waypoint " + std::string(at);
   if(auto g = upper(JsonRead::str(msg,"guild")); !g.empty()) {
-    if(!intConst(vm,g,d.guild))
+    d.guild = script.intConstant(g);
+    if(!d.guild)
       return "no guild " + g;
-    d.guilded = true;
     }
 
   if(auto it = msg.FindMember("look"); it!=msg.MemberEnd() && it->value.IsObject()) {
@@ -104,36 +77,40 @@ std::string read(World& world, const rapidjson::Value& msg, Description& d) {
     const auto gender = upper(JsonRead::str(look,"gender"));
     const auto face   = upper(JsonRead::str(look,"face"));
     const auto skin   = upper(JsonRead::str(look,"skin"));
-    d.head = std::string(JsonRead::str(look,"head"));
-    if(!intConst(vm,gender,d.gender))
+    const auto genderId = script.intConstant(gender);
+    if(!genderId)
       return "look: no gender " + gender;
-    if(!intConst(vm,face,d.face))
+    const auto faceId = script.intConstant(face);
+    if(!faceId)
       return "look: no face " + face;
-    if(!intConst(vm,skin,d.skin))
+    const auto skinId = script.intConstant(skin);
+    if(!skinId)
       return "look: no skin " + skin;
-    if(d.head.empty())
+    auto head = std::string(JsonRead::str(look,"head"));
+    if(head.empty())
       return "look: needs a head";
+    int32_t armorId = -1;
     if(auto armor = upper(JsonRead::str(look,"armor")); !armor.empty()) {
-      auto* s = vm.find_symbol_by_name(armor);
-      if(!ofClass(vm,s,"C_ITEM"))
+      const auto id = script.findItemInstance(armor);
+      if(!id)
         return "look: no armor " + armor;
-      d.armor = int32_t(s->index());
+      armorId = int32_t(*id);
       }
-    if(vm.find_symbol_by_name("B_SETNPCVISUAL")==nullptr)
-      return "look: the scripts have no B_SETNPCVISUAL";
-    d.dressed = true;
+    if(!script.hasDirectorNpcVisual())
+      return "look: no prepared visual helper";
+    d.look = GameScript::DirectorNpcLook{std::move(head),*genderId,*faceId,*skinId,armorId};
     }
 
   if(auto it = msg.FindMember("items"); it!=msg.MemberEnd() && it->value.IsArray()) {
     for(auto& x : it->value.GetArray()) {
       const auto item  = upper(JsonRead::str(x,"item"));
       const auto count = JsonRead::integer(x,"count",1);
-      auto*      s     = vm.find_symbol_by_name(item);
-      if(!ofClass(vm,s,"C_ITEM"))
+      const auto id    = script.findItemInstance(item);
+      if(!id)
         return "items: no item " + item;
       if(count<=0 || count>1000)
         return "items: " + item + ": count must be 1..1000";
-      d.items.emplace_back(s->index(),int32_t(count));
+      d.items.emplace_back(*id,int32_t(count));
       }
     }
 
@@ -141,12 +118,12 @@ std::string read(World& world, const rapidjson::Value& msg, Description& d) {
     for(auto& x : it->value.GetArray()) {
       Entry      e;
       const auto state = upper(JsonRead::str(x,"state"));
-      auto*      fn    = vm.find_symbol_by_name(state);
       if(!clock(JsonRead::str(x,"start"),e.start) || !clock(JsonRead::str(x,"end"),e.end))
         return "routine: times are HH:MM";
-      if(fn==nullptr || fn->type()!=DaedalusDataType::FUNCTION || state.rfind("ZS_",0)!=0)
+      const auto fn = script.storyScriptFunctionId(state);
+      if(!state.starts_with("ZS_") || !fn)
         return "routine: no state " + state;
-      e.state    = fn->index();
+      e.state    = *fn;
       e.waypoint = std::string(JsonRead::str(x,"waypoint"));
       if(world.findPoint(e.waypoint,false)==nullptr)
         return "routine: no waypoint " + e.waypoint;
@@ -173,7 +150,6 @@ std::string answer(std::string_view npc, std::string_view state, uint32_t index)
 
 std::string StoryCast::npc(World& world, const rapidjson::Value& msg, std::string& error) {
   auto&      script = world.script();
-  auto&      vm     = script.getVm();
   auto&      own    = script.ownSymbols();
   const auto id     = upper(JsonRead::str(msg,"npc"));
 
@@ -190,11 +166,11 @@ std::string StoryCast::npc(World& world, const rapidjson::Value& msg, std::strin
   Description d;
   if(error = read(world,msg,d); !error.empty())
     return {};
-  auto* sym = own.addNpc(id,d.like,error);
-  if(sym==nullptr)
+  const auto index = script.addDirectorNpcSymbol(id,d.like,error);
+  if(!index)
     return {};
   // at its point, not at the template's: its day is its own
-  Npc* npc = world.addNpc(sym->index(),d.at->position());
+  Npc* npc = world.addNpc(*index,d.at->position());
   if(npc==nullptr) {
     error = "could not put " + id + " in the world";
     return {};
@@ -209,34 +185,12 @@ std::string StoryCast::npc(World& world, const rapidjson::Value& msg, std::strin
 
   auto& h = npc->handle();
   h.name[0] = d.name;
-  if(d.guilded) {
-    h.guild = d.guild;
-    npc->setTrueGuild(d.guild);
+  if(d.guild) {
+    h.guild = *d.guild;
+    npc->setTrueGuild(*d.guild);
     }
 
-  // the scripts' own functions, with it as self
-  auto* self = vm.global_self();
-  auto  prev = self->get_instance();
-  self->set_instance(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()));
-  auto call = [&](const char* fn, std::vector<Value> args) {
-    std::string err;
-    auto*       s = vm.find_symbol_by_name(fn);
-    if(s==nullptr || !storygraph::callFunction(vm,*s,args,err))
-      Log::e("[story] ",id,": ",fn," failed: ",s ? err : "no such function");
-    };
-  if(d.dressed) {
-    // the template's clothes go: B_SetNpcVisual puts the new ones on
-    if(Item* old = npc->currentArmor()) {
-      const size_t cls = old->clsId();
-      npc->unequipItem(cls);
-      npc->delItem(cls,1);
-      }
-    call("B_SETNPCVISUAL",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr())),Value::integer(d.gender),Value::str(d.head),
-                           Value::integer(d.face),Value::integer(d.skin),Value::integer(d.armor)});
-    }
-  for(auto& [item,count] : d.items)
-    call("CREATEINVITEMS",{Value::instance(std::static_pointer_cast<daedalus::INpc>(npc->handlePtr())),Value::integer(int32_t(item)),Value::integer(count)});
-  self->set_instance(prev);
+  script.setupDirectorNpcEquipment(*npc,d.look ? &*d.look : nullptr,d.items);
 
   if(!d.routine.empty()) {
     // its own day in place of the template's; it starts on the npc's first tick
@@ -245,5 +199,5 @@ std::string StoryCast::npc(World& world, const rapidjson::Value& msg, std::strin
       npc->addRoutine(e.start,e.end,e.state,e.waypoint);
     }
   Log::i("[story] ",id," made like ",d.like," at ",JsonRead::str(msg,"at"));
-  return answer(id,"made",sym->index());
+  return answer(id,"made",*index);
   }

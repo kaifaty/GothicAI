@@ -9,8 +9,10 @@
 #include <Tempest/Log>
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -164,21 +166,19 @@ namespace daedalus {
 			switch (sym.type()) {
 			case DaedalusDataType::INT:
 				record.int_values.resize(sym._m_count);
-				std::copy_n(std::get<std::unique_ptr<std::int32_t[]>>(sym._m_value).get(),
-				            sym._m_count,
-				            record.int_values.begin());
+				std::copy_n(sym.int_data(), sym._m_count, record.int_values.begin());
 				break;
 			case DaedalusDataType::FLOAT:
 				record.float_bits.resize(sym._m_count);
 				if (sym._m_count != 0) {
 					std::memcpy(record.float_bits.data(),
-					            std::get<std::unique_ptr<float[]>>(sym._m_value).get(),
+					            sym.float_data(),
 					            sym._m_count * sizeof(std::uint32_t));
 				}
 				break;
 			case DaedalusDataType::STRING:
 				record.string_values.resize(sym._m_count);
-				std::copy_n(std::get<std::unique_ptr<std::string[]>>(sym._m_value).get(),
+				std::copy_n(sym.string_data(),
 				            sym._m_count,
 				            record.string_values.begin());
 				break;
@@ -283,12 +283,26 @@ namespace daedalus {
 	}
 
 	DaedalusInstruction DaedalusScript::instruction_at(std::uint32_t address) const {
+		if (metadata_audit_active()) abort_metadata_access(address, nullptr);
 		// Out-of-range seeks leave the cursor unchanged, as in ZenKit's memory reader.
 		if (address <= _m_text->bytes.size()) _m_text->position = address;
 		auto code = std::span<std::byte const>(_m_text->bytes).subspan(_m_text->position);
 		auto instruction = DaedalusInstruction::decode(code);
 		_m_text->position += std::min(code.size(), std::size_t(instruction.size));
 		return instruction;
+	}
+
+	void DaedalusScript::abort_metadata_access(std::uint32_t address, const char* symbol) const {
+		if (symbol != nullptr) {
+			std::fprintf(stderr, "native-script-audit: bytecode execution attempted program=%s symbol=%s pc=%" PRIu32 " (metadata only)\n",
+			             _m_metadata_audit_program.c_str(), symbol, address);
+		} else {
+			std::fprintf(stderr, "native-script-audit: bytecode read attempted program=%s pc=%" PRIu32 " (metadata only)\n",
+			             _m_metadata_audit_program.c_str(), address);
+		}
+		std::fflush(stderr);
+		// A compatibility handler may ignore a script error. The diagnostic must stop at the first access.
+		std::_Exit(EXIT_FAILURE);
 	}
 
 	DaedalusSymbol const* DaedalusScript::find_symbol_by_index(std::uint32_t index) const {
@@ -517,7 +531,7 @@ namespace daedalus {
 			return *get_member_ptr<std::string>(index, context);
 		}
 
-		return std::get<std::unique_ptr<std::string[]>>(_m_value)[index];
+		return string_data()[index];
 	}
 
 	float DaedalusSymbol::get_float(std::uint16_t index, DaedalusInstance const* context) const {
@@ -541,7 +555,7 @@ namespace daedalus {
 			return *get_member_ptr<float>(static_cast<uint8_t>(index), context);
 		}
 
-		return std::get<std::unique_ptr<float[]>>(_m_value)[index];
+		return float_data()[index];
 	}
 
 	std::int32_t DaedalusSymbol::get_int(std::uint16_t index, DaedalusInstance const* context) const {
@@ -565,7 +579,7 @@ namespace daedalus {
 			return *get_member_ptr<std::int32_t>(index, context);
 		}
 
-		return std::get<std::unique_ptr<std::int32_t[]>>(_m_value)[index];
+		return int_data()[index];
 	}
 
 	void DaedalusSymbol::set_string(std::string_view value, std::uint16_t index, DaedalusInstance* context) {
@@ -589,7 +603,7 @@ namespace daedalus {
 
 			*get_member_ptr<std::string>(index, context) = value;
 		} else {
-			std::get<std::unique_ptr<std::string[]>>(_m_value).get()[index] = value;
+			string_data()[index] = value;
 		}
 	}
 
@@ -614,7 +628,7 @@ namespace daedalus {
 
 			*get_member_ptr<float>(index, context) = value;
 		} else {
-			std::get<std::unique_ptr<float[]>>(_m_value)[index] = value;
+			float_data()[index] = value;
 		}
 	}
 
@@ -639,8 +653,98 @@ namespace daedalus {
 
 			*get_member_ptr<std::int32_t>(index, context) = value;
 		} else {
-			std::get<std::unique_ptr<std::int32_t[]>>(_m_value)[index] = value;
+			int_data()[index] = value;
 		}
+	}
+
+	void DaedalusSymbol::bind_global_int(std::int32_t& value) {
+		if (type() != DaedalusDataType::INT || is_member() || is_const() || count() != 1 ||
+		    !std::holds_alternative<std::unique_ptr<std::int32_t[]>>(_m_value)) {
+			throw DaedalusScriptError {"cannot bind mutable global integer " + name()};
+		}
+
+		value = get_int();
+		_m_value = &value;
+	}
+
+	std::span<std::int32_t> DaedalusSymbol::bound_global_int() {
+		if (const auto* bound = std::get_if<std::int32_t*>(&_m_value))
+			return {*bound, count()};
+		return {};
+	}
+
+	std::int32_t* DaedalusSymbol::int_data() const {
+		if (const auto* bound = std::get_if<std::int32_t*>(&_m_value))
+			return *bound;
+		return std::get<std::unique_ptr<std::int32_t[]>>(_m_value).get();
+	}
+
+	float* DaedalusSymbol::float_data() const {
+		if (const auto* bound = std::get_if<float*>(&_m_value))
+			return *bound;
+		return std::get<std::unique_ptr<float[]>>(_m_value).get();
+	}
+
+	void DaedalusSymbol::bind_global_string(std::string& value) {
+		if (type() != DaedalusDataType::STRING || is_member() || is_const() || count() != 1 ||
+		    !std::holds_alternative<std::unique_ptr<std::string[]>>(_m_value)) {
+			throw DaedalusScriptError {"cannot bind mutable global string " + name()};
+		}
+
+		value = get_string();
+		_m_value = &value;
+	}
+
+	std::span<std::string> DaedalusSymbol::bound_global_string() {
+		if (const auto* bound = std::get_if<std::string*>(&_m_value))
+			return {*bound, count()};
+		return {};
+	}
+
+	std::string* DaedalusSymbol::string_data() const {
+		if (const auto* bound = std::get_if<std::string*>(&_m_value))
+			return *bound;
+		return std::get<std::unique_ptr<std::string[]>>(_m_value).get();
+	}
+
+	template<class T>
+	std::unique_ptr<T[]> DaedalusSymbol::take_global_values(DaedalusDataType expected) {
+		auto* values = std::get_if<std::unique_ptr<T[]>>(&_m_value);
+		if (type() != expected || is_member() || is_const() || values == nullptr) {
+			throw DaedalusScriptError {"cannot transfer global storage for " + name()};
+		}
+
+		auto owned = std::move(*values);
+		_m_value = owned.get();
+		return owned;
+	}
+
+	std::unique_ptr<std::int32_t[]> DaedalusSymbol::take_global_int() {
+		return take_global_values<std::int32_t>(DaedalusDataType::INT);
+	}
+
+	std::unique_ptr<float[]> DaedalusSymbol::take_global_float() {
+		return take_global_values<float>(DaedalusDataType::FLOAT);
+	}
+
+	std::unique_ptr<std::string[]> DaedalusSymbol::take_global_string() {
+		return take_global_values<std::string>(DaedalusDataType::STRING);
+	}
+
+	void DaedalusSymbol::bind_global_instance(std::shared_ptr<DaedalusInstance>& value) {
+		auto* instance = std::get_if<std::shared_ptr<DaedalusInstance>>(&_m_value);
+		if (type() != DaedalusDataType::INSTANCE || instance == nullptr) {
+			throw DaedalusScriptError {"cannot bind global instance " + name()};
+		}
+
+		value = std::move(*instance);
+		_m_value = &value;
+	}
+
+	std::shared_ptr<DaedalusInstance>& DaedalusSymbol::instance_data() {
+		if (const auto* bound = std::get_if<std::shared_ptr<DaedalusInstance>*>(&_m_value))
+			return **bound;
+		return std::get<std::shared_ptr<DaedalusInstance>>(_m_value);
 	}
 
 	std::shared_ptr<DaedalusInstance> const& DaedalusSymbol::get_instance() {
@@ -648,7 +752,7 @@ namespace daedalus {
 			throw DaedalusIllegalTypeAccess(this, DaedalusDataType::INSTANCE);
 		}
 
-		return std::get<std::shared_ptr<DaedalusInstance>>(_m_value);
+		return instance_data();
 	}
 
 	void DaedalusSymbol::set_instance(std::shared_ptr<DaedalusInstance> const& inst) {
@@ -656,7 +760,7 @@ namespace daedalus {
 			throw DaedalusIllegalTypeAccess(this, DaedalusDataType::INSTANCE);
 		}
 
-		std::get<std::shared_ptr<DaedalusInstance>>(_m_value) = inst;
+		instance_data() = inst;
 	}
 
 	void DaedalusSymbol::grow(uint32_t n) {

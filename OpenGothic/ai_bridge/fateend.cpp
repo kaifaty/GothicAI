@@ -225,8 +225,7 @@ void FateEnd::tick(World& world, bool busy) {
         return;
       std::string killer, name;
       if(Npc* by = hero->lastHitBy(); by!=nullptr && by!=hero) {
-        if(auto sym = world.script().findSymbol(by->instanceSymbol()))
-          killer = sym->name();
+        killer = world.script().storyNpcName(by->instanceSymbol());
         name = std::string(by->displayName());
         }
       exits = false;

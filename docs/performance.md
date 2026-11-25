@@ -50,7 +50,12 @@ NPC прошли цикл тел теней и сверку логических
 (только при нарушении порядка), `npc_policy` (политика и `npcNear`),
 `collision_zones`, `interactive_tick`, `triggers_tick`, `npc_tick_near` и
 `npc_perception`. Зоны `npc_full_tick`, `npc_simplified_tick`, `prepare`, `sync`
-сохраняются. Часы стоят вокруг циклов, а не каждого NPC.
+сохраняются. Часы стоят вокруг циклов, а не каждого NPC. Счётчики
+`npc_simplified_ticked` и `npc_simplified_deferred` — NPC уровня Simplified,
+тикнувшие и отложенные в кадре частотой тика дальних NPC
+([правило](world-streaming-npc.md#частота-тика-дальних-npc)),
+`npc_simplified_native` — NPC уровня Simplified на родном пути
+(`usesSimplifiedMovement()` ложно).
 
 Уровни симуляции, проверка порядка массива и метки бойцов выполняются одним
 проходом до первого тика NPC. Уровни назначаются по прежним правилам;

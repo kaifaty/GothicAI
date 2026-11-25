@@ -29,6 +29,7 @@
 #include "world/activityevents.h"
 #include "world/aiqueue.h"
 #include "world/npclogicalstate.h"
+#include "world/npcsimtick.h"
 #include "world/objects/attention.h"
 #include "world/objects/archer.h"
 #include "world/objects/npcroutinetable.h"
@@ -181,13 +182,14 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     NpcSimTier simTier() const { return simTierValue; }
     bool       hasSimTier() const { return simTierAssigned; }
     void       setSimTier(NpcSimTier t);
-    void       setSimTierOverride(std::optional<NpcSimTier> t) { simTierOverrideValue = t; }
+    void       setSimTierOverride(std::optional<NpcSimTier> t);
     auto       simTierOverride() const -> std::optional<NpcSimTier> { return simTierOverrideValue; }
 
     bool       isPlayer() const;
     void       setWalkMode(WalkBit m);
     WalkBit    walkMode() const;
     bool       usesSimplifiedMovement() const;
+    bool       canDeferIdleMonsterTick() const;
     bool       graphMovementFallback() const { return simpleMovement.nativeFallback; }
     bool       nativeCombatMovement() const;
     bool       nativeMobsiApproach() const;
@@ -196,6 +198,12 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     float      simplifiedMoveSpeed() const;
     // The same in another walk mode (WM_Walk, WM_Run), cm per ms of world time: the society export.
     float      simplifiedMoveSpeed(WalkBit mode) const;
+    bool       hasCampfireActivity() const;
+    bool       canSuspendCampfireBody() const;
+    bool       campfireBodySuspended() const { return physic.bodySuspended(); }
+    bool       suspendCampfireBody();
+    void       resumeCampfireBody();
+
     void       tick(uint64_t dt);
     const NpcLogicalState& logicalBodyState() const { return logicalBody; }
     void       syncLogicalBodyState(bool rebuild=false);
@@ -225,15 +233,28 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void       updateTransform();
     // Animation LOD (world/animationlod.h): an NPC outside the frustum keeps the
     // skipped frames' dt here; the next updateAnimation of any caller applies it.
-    void       deferAnimation(uint64_t dt) { animLodPendingDt += dt; }
+    void       deferAnimation(uint64_t dt);
+    void       deferDistantAnimation(uint64_t dt, uint64_t now) {
+      deferAnimation(dt);
+      visual.skipAnimationSoundsThrough(now);
+      }
     bool       hasDeferredAnimation() const { return animLodPendingDt>0; }
+    void       deferSocietyAnimation(uint64_t dt);
+    bool       hasSocietyAnimationDebt() const { return societyAnimationDebt || societyPoseSuspended; }
+    bool       needsLayerPoseUpdate() const { return visual.pose().needsLayerPoseUpdate(); }
+    bool       canPauseDistantPose(uint64_t gestureLead) const;
+    bool       settledFurniturePose() const;
     // Logic is about to read this NPC's bones: apply the deferred frames now.
     // Main thread only, outside the parallel pass; a no-op otherwise.
     void       syncDeferredAnimation() const;
     // Whose pose the world logic reads every frame: never deferred.
-    bool       animationLodPinned() const;
+    bool       animationLodPinned(bool allowSettledFurniture=false) const;
     void       setAnimationLodTargeted(bool t) { animLodTargeted = t; }
     uint32_t   animationLodSeed() const { return animLodSeed; }
+    // Far NPC tick (world/npcsimtick.h): world time not yet handed to tick(), its rhythm. Runtime only, not saved.
+    auto       simTick() -> NpcSimTick::State& { return simTickState; }
+    auto       simTick() const -> const NpcSimTick::State& { return simTickState; }
+    uint64_t   pendingSimTick() const;
 
     std::string_view displayName() const;
     auto       displayPosition() const -> Tempest::Vec3;
@@ -351,7 +372,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     int32_t    talentValue(Talent t) const;
     int32_t    hitChance(Talent t) const;
 
-    void       setRefuseTalk(uint64_t milis);
+    void       setRefuseTalkSeconds(int32_t seconds);
     bool       isRefuseTalk() const;
 
     int32_t    mageCycle() const;
@@ -406,7 +427,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      loseActivityReservation();
     ActivityEvents::Stage activityStage() const { return activityEvents.stage; }
     // external AI control (ai_bridge): routines and script perceptions are paused
-    void      setExternalControl(bool e) { externalCtrl = e; }
+    void      setExternalControl(bool e);
     bool      isExternalControl() const  { return externalCtrl; }
 
     bool      canSwitchWeapon() const;
@@ -673,7 +694,6 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point);
     // a day the scripts did not give (ai_bridge, the director's npc's): entries added after this replace it
     void      clearRoutine();
-    void      excRoutine(size_t callback);
 
     // the daily routine, read-only: for tools outside the scripts (the AI bridge)
     struct RoutineInfo final {
@@ -687,6 +707,16 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     // Index (in forEachRoutine order) of the entry in force now, -1 without routines: diagnostics only.
     int       currentRoutineIndex() const;
     ScriptFn  currentState() const { return aiState.funcIni; }
+    static bool supportsSocietyActivity(const ActivityEvents::Record& activity);
+    const WayPoint* societyWaitingPoint() const;
+    bool      societyFurnitureHold() const;
+    bool      societyGestureNeedsPose(uint64_t leadMs) const;
+    std::string_view societyRoutineBlocker(std::string_view state, bool groupPilot, bool wide) const;
+    bool      trySocietyEarlyTick();
+    void      applySimTier(NpcSimTier t);
+    bool      canDeferIdleMonsterBody() const;
+    bool      canSleepMonsterRest() const;
+    void      wakeSociety();
     // The initializer has run; installing funcIni alone does not start the state.
     bool      isStateStarted() const { return aiState.started; }
     Npc*      stateOther() const { return currentOther; }  // ai_bridge: whom the script state is about
@@ -826,10 +856,12 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      clearAiQueue();
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }
+    auto      lockedWayPoint() const -> const WayPoint* { return currentFpLock.point(); }
     auto      currentGoToPoint() const -> const WayPoint* { return go2.wp; }
     auto      navigationPath() const -> const WayPath& { return wayPath; }
     auto      currentTaPoint() const -> const WayPoint*;
     void      attachToPoint(const WayPoint* p);
+    bool      isOnFreePoint(std::string_view name) const;
     GoToHint  moveHint() const { return go2.flag; }
     // Passive navigation telemetry: reads the active destination or a ready go-to queue head.
     struct NavigationGoal final {
@@ -841,6 +873,8 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
       std::string_view name;
       };
     auto      navigationGoal() const -> NavigationGoal;
+    // Called by World for an admitted society route. Steps the existing waypoint walk once.
+    bool      stepSocietyWaypoint(uint64_t dt, float destDist);
     // Radius and full height of the landscape-query capsule, in game centimeters.
     auto      navigationCapsule() const -> Tempest::Vec2 {
       return {physic.capsuleRadius(),physic.capsuleHeight()};
@@ -967,6 +1001,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      updateWeaponSkeleton();
     void      tickTimedEvt(Animation::EvCount &ev);
     void      tickRegen(int32_t& v,const int32_t max,const int32_t chg, const uint64_t dt);
+    bool      implSetPosition(const Tempest::Vec3& pos, bool keepBodySuspended);
     void      setViewPosition(const Tempest::Vec3& pos);
     void      syncCharacterVirtualSupport(const Tempest::Vec3& pos);
     bool      tickCast(uint64_t dt);
@@ -993,7 +1028,9 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      implGoTo   (uint64_t dt);
     bool      implGoTo   (uint64_t dt, float destDist);
     bool      implSimpleGoTo(uint64_t dt, float destDist);
+    auto      societyRouteDestination() const -> const WayPoint*;
     bool      nativeBodyAction() const;
+    bool      hasNativeCombatActivity() const;
     auto      pendingSimpleGoTo() const -> const AiQueue::AiAction*;
     static bool simplifiedMovementEnabled();
     void      fallbackSimpleMovement(std::string_view reason, bool ground = false);
@@ -1024,14 +1061,24 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     bool      isPlayerEnabledState(const ::AiState& st) const;
     void      tickRoutine();
+    void      finishState(bool noFinalize, uint16_t reason);
     void      runStateInit();
-    void      startActivityEvents(const ActivityDefinitions::MobActivity* activity);
-    bool      armActivityEvents();
-    void      tickActivityEvents();
+    void      startActivityEvents(const ActivityEvents::Record* activity);
+    void      restoreActivityEvents(const ActivityEvents::Record* activity);
+    void      tickActivityEvents(bool runLoop);
     void      tickActivityDeadline();
     void      fireActivityWatchdog();
     void      dropActivityCommand();
     void      stepActivityEvents(uint16_t wakes);
+    void      seekActivityPoint(uint16_t wakes);
+    bool      isActivityPoint(const WayPoint* point) const;
+    void      stopWaitingForPoints();
+    bool      pointGestureDue(uint64_t leadMs=0) const;
+    void      tickPointGesture();
+    bool      mobGestureDue(uint64_t leadMs=0) const;
+    void      tickMobTimer();
+    void      playActivityGesture();
+    void      pushActivityCommand(AiQueue::AiAction&& action);
     void      seekActivityPlace();
     int       invokeRoutine(ScriptFn function);
     void      nextAiAction(AiQueue& queue, uint64_t dt);
@@ -1123,8 +1170,15 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     // Transient placement of an animated lying mesh; never changes the walking root.
     float                          lieVisualYOffset = 0;
     uint64_t                       animLodPendingDt = 0;
+    bool                           societyAnimationDebt = false;
+    bool                           societySleeping = false;
+    bool                           societyPoseSuspended = false;
+    uint32_t                       societyDispatchIndex = uint32_t(-1);
+    bool                           npcCellChangePending = false;
     bool                           animLodTargeted = false;
     uint32_t                       animLodSeed = 0;
+    NpcSimTick::State              simTickState;
+    bool                           monsterRestSleeping = false;
     Tempest::Vec3                  characterVisualSamplePosition;
     Tempest::Vec3                  characterVisualSampleNormal;
     uint64_t                       characterVisualSampleTick = 0;
@@ -1472,6 +1526,9 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     Sound                          sfxWeapon;
 
   friend class GameScript;
+  friend class SocietyProjection;
+  friend class World;
+  friend class WorldObjects;
   friend class MoveAlgo;
   friend class BodyController;
   friend class BodyArena;

@@ -14,6 +14,7 @@ class DescriptorArray {
     DescriptorArray& operator=(DescriptorArray&&);
 
     bool isEmpty() const { return impl.handler==nullptr; }
+    bool supportsBatchUpdates() const { return impl.handler!=nullptr && impl.handler->supportsBatchUpdates(); }
 
     // The caller must finish GPU use of this array before changing a slot.
     void set(size_t index, const Texture2d* texture);

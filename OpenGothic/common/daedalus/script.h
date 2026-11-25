@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "asset/program.h"
+#include "world/records/recordinstance.h"
 
 namespace daedalus {
 	class Error : public std::exception {
@@ -289,44 +290,6 @@ namespace daedalus {
 
 	/// \brief Represents an object associated with an instance in the script.
 	///
-	/// Every class defined in C++ that can be used as an instance has to inherit from this class.
-	class DaedalusInstance {
-	public:
-		virtual ~DaedalusInstance() = default;
-
-		/// \return The index of the symbol this instance is bound to.
-		[[nodiscard]] uint32_t symbol_index() const {
-			return _m_symbol_index;
-		}
-
-		[[nodiscard]] std::type_info const* instance_type() const {
-			return _m_type;
-		}
-
-		/// \brief A pointer which may be used by the user of this API
-		void* user_ptr = nullptr;
-
-	protected:
-		virtual std::uint8_t* data() {
-			return reinterpret_cast<std::uint8_t*>(this);
-		}
-
-		[[nodiscard]] virtual std::uint8_t const* data() const {
-			return reinterpret_cast<std::uint8_t const*>(this);
-		}
-
-	private:
-		friend class DaedalusTransientInstance;
-		friend class DaedalusSymbol;
-		friend class DaedalusScript;
-		friend class DaedalusVm;
-
-		uint32_t _m_symbol_index {static_cast<uint32_t>(-1)};
-		std::type_info const* _m_type {nullptr};
-	};
-
-	/// \brief Represents an object associated with an instance in the script.
-	///
 	/// Instances allocated with init_opaque will be backed up by this class with plain memory storage
 	class DaedalusOpaqueInstance final : public DaedalusInstance {
 	public:
@@ -559,6 +522,16 @@ namespace daedalus {
 		/// context.
 		void set_int(std::int32_t value, std::uint16_t index = 0, DaedalusInstance* context = nullptr);
 
+		/// Preserve this mutable scalar in storage that outlives the symbol.
+		void bind_global_int(std::int32_t& value);
+		void bind_global_string(std::string& value);
+		void bind_global_instance(std::shared_ptr<DaedalusInstance>& value);
+		std::span<std::int32_t> bound_global_int();
+		std::span<std::string>  bound_global_string();
+		std::unique_ptr<std::int32_t[]> take_global_int();
+		std::unique_ptr<float[]>        take_global_float();
+		std::unique_ptr<std::string[]>  take_global_string();
+
 		/// \brief Validates that the symbol is an instance and sets it's value
 		/// \param inst The instance value to set
 		/// \throws DaedalusIllegalTypeAccess if the #type of this symbol is not dt_instance.
@@ -724,11 +697,21 @@ namespace daedalus {
 
 	private:
 		friend class DaedalusScript;
+		template<class T> std::unique_ptr<T[]> take_global_values(DaedalusDataType expected);
+		std::int32_t* int_data() const;
+		float* float_data() const;
+		std::string* string_data() const;
+		std::shared_ptr<DaedalusInstance>& instance_data();
+
 		std::string _m_name;
 		std::variant<std::unique_ptr<std::int32_t[]>,
 		             std::unique_ptr<float[]>,
 		             std::unique_ptr<std::string[]>,
-		             std::shared_ptr<DaedalusInstance>>
+		             std::shared_ptr<DaedalusInstance>,
+		             std::int32_t*,
+		             float*,
+		             std::string*,
+		             std::shared_ptr<DaedalusInstance>*>
 		    _m_value;
 
 		std::int32_t _m_address {-1};
@@ -961,6 +944,10 @@ namespace daedalus {
 		void register_as_opaque(DaedalusSymbol* sym);
 
 	protected:
+		void arm_metadata_audit(std::string_view program) { _m_metadata_audit_program = program; }
+		[[nodiscard]] bool metadata_audit_active() const noexcept { return !_m_metadata_audit_program.empty(); }
+		[[noreturn]] void abort_metadata_access(std::uint32_t address, const char* symbol) const;
+
 		template <typename _member, int N>
 		DaedalusSymbol* _check_member(std::string_view name, std::type_info const* type) {
 			auto* sym = find_symbol_by_name(name);
@@ -1012,6 +999,7 @@ namespace daedalus {
 		std::unordered_map<std::uint32_t, uint32_t> _m_symbols_by_address;
 
 		mutable std::unique_ptr<Bytecode> _m_text;
+		std::string _m_metadata_audit_program;
 		std::uint8_t _m_version {0};
 	};
 } // namespace daedalus

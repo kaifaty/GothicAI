@@ -1,8 +1,10 @@
 #include "exec.h"
+#include "execcore.h"
 
 #include "daedalus/vm.h"
 
 #include <cstring>
+#include <utility>
 
 using namespace storygraph;
 using daedalus::DaedalusDataType;
@@ -40,94 +42,26 @@ std::optional<Value> asParameter(DaedalusDataType t, const Value& v) {
     }
   }
 
-bool isInt(const std::optional<Value>& v) { return v && v->type==Value::Int; }
-
 }
 
 Interpreter::Result Interpreter::run(const Program& p, const std::vector<Value>& args) {
+  auto state = execute(p, args, true);
   Result r;
-  if(!p.error.empty()) {
-    r.ok    = false;
-    r.error = "not a program: " + p.error;
-    return r;
-    }
-  // an engine function a program calls may run another program (Npc_CheckInfo checks the conditions)
-  auto outerParams   = params;
-  auto outerReturned = std::move(returned);
-  auto outerError    = std::move(error);
-  params   = &args;
-  returned = Value::integer(0);
-  error.clear();
-  Flow f = Flow::Fail;
-  try {
-    f = steps(p.steps);
-    }
-  catch(const std::exception& e) {
-    fail(std::string("vm: ") + e.what());
-    }
-  if(f==Flow::Fail) {
-    r.ok    = false;
-    r.error = error.empty() ? std::string("failed") : error;
-    } else {
-    r.returned = returned;
-    }
-  params   = outerParams;
-  returned = std::move(outerReturned);
-  error    = std::move(outerError);
+  r.ok = state.error.empty();
+  r.error = std::move(state.error);
+  if(r.ok && state.returned)
+    r.returned = std::move(state.returned->value);
   return r;
   }
 
-std::optional<Value> Interpreter::fail(std::string why) {
-  if(error.empty())
-    error = std::move(why);
-  return std::nullopt;
+Interpreter::Frame Interpreter::execute(const Program& p, const std::vector<Value>& args, bool readReturn) {
+  return execution::Core::execute(*this,p,args,readReturn,"failed","vm: ");
   }
 
-Interpreter::Flow Interpreter::steps(const std::vector<Step>& s) {
-  for(auto& st : s) {
-    switch(st.kind) {
-      case Step::Call:
-        if(!eval(*st.call))
-          return Flow::Fail;
-        break;
-      case Step::Store:
-        if(!store(st))
-          return Flow::Fail;
-        break;
-      case Step::If: {
-        auto c = eval(*st.cond);
-        if(!isInt(c)) {
-          if(c)
-            fail("condition is not an int: " + st.cond->str());
-          return Flow::Fail;
-          }
-        auto f = steps(c->i!=0 ? st.then : st.otherwise);
-        if(f!=Flow::Next)
-          return f;
-        break;
-        }
-      case Step::Return:
-        if(st.value!=nullptr) {
-          auto v = eval(*st.value);
-          if(!v)
-            return Flow::Fail;
-          returned = *v;
-          }
-        return Flow::Return;
-      case Step::Say:
-        if(!say(st))
-          return Flow::Fail;
-        break;
-      case Step::Choice:
-      case Step::ClearChoices:
-        if(!choices || !choices(st)) {
-          fail("choices of its own are for the director's dialogs");
-          return Flow::Fail;
-          }
-        break;
-      }
-    }
-  return Flow::Next;
+std::optional<Value> Interpreter::fail(std::string why) {
+  if(frame->error.empty())
+    frame->error = std::move(why);
+  return std::nullopt;
   }
 
 bool Interpreter::say(const Step& s) {
@@ -317,9 +251,9 @@ std::optional<Interpreter::Item> Interpreter::item(const Expr& e) {
       return it;
       }
     case Expr::Param:
-      if(params==nullptr || e.index<0 || size_t(e.index)>=params->size())
+      if(e.index<0 || size_t(e.index)>=frame->args.size())
         return failed("no argument " + std::to_string(e.index));
-      it.value = (*params)[size_t(e.index)];
+      it.value = frame->args[size_t(e.index)];
       return it;
     case Expr::Call:
     case Expr::Fn:
@@ -343,16 +277,12 @@ std::optional<Interpreter::Item> Interpreter::call(const Expr& e) {
     return failed("wrong argument count: " + e.str());
 
   // pushed first to last, read when the call pops them
-  std::vector<Item> pushed;
-  for(auto& a : e.args) {
-    auto it = item(*a);
-    if(!it)
-      return std::nullopt;
-    pushed.push_back(std::move(*it));
-    }
-  std::vector<Value> args(pushed.size());
-  for(size_t k=0; k<pushed.size(); ++k) {
-    auto v = read(pushed[k]);
+  auto pushed = execution::Core::push(*this,e.args,execution::Core::Order::Arguments);
+  if(!pushed)
+    return std::nullopt;
+  std::vector<Value> args(pushed->size());
+  for(size_t k=0; k<pushed->size(); ++k) {
+    auto v = read((*pushed)[k]);
     if(!v)
       return std::nullopt;
     auto p = asParameter(types[k].type(), *v);
@@ -366,7 +296,29 @@ std::optional<Interpreter::Item> Interpreter::call(const Expr& e) {
     r.value = asReturned(fn->rtype(), ext.call(*fn, args));
     return r;
     }
-  // a script function runs in the VM; it may return a variable, read when the value is popped
+  const bool native = (resolveProgram || !allowUnresolvedScriptCalls) && vm.has_active_override(*fn);
+  if(resolveProgram && !fn->has_local_variables_enabled() && !native) {
+    if(const auto* p = resolveProgram(*fn); p!=nullptr && p->error.empty()) {
+      auto state = execute(*p, args, false);
+      if(!state.error.empty())
+        return failed(std::move(state.error));
+      if(!fn->has_return() || !state.returned) {
+        r.value = asReturned(fn->rtype(), Value{});
+        return r;
+        }
+      auto& returned = *state.returned;
+      if(returned.ref==nullptr && returned.field==nullptr) {
+        auto value = asParameter(fn->rtype(), returned.value);
+        if(!value)
+          return failed("wrong return type: " + ident(e.name));
+        returned.value = std::move(*value);
+        }
+      return std::move(returned);
+      }
+    }
+  if(!native && !allowUnresolvedScriptCalls)
+    return failed("unresolved nested program: " + ident(fn->name()));
+  // An enabled native override or a script function may return a variable, read when the value is popped.
   for(auto& a : args)
     switch(a.type) {
       case Value::Int:   vm.push_int(a.i);         break;
@@ -396,58 +348,10 @@ std::optional<Interpreter::Item> Interpreter::call(const Expr& e) {
   }
 
 std::optional<Interpreter::Item> Interpreter::op(const Expr& e) {
-  // the VM pushes the right operand first: operands are computed last to first, then read
-  const size_t n = e.args.size();
-  std::vector<Item> pushed(n);
-  for(size_t k=n; k>0; --k) {
-    auto it = item(*e.args[k-1]);
-    if(!it)
-      return std::nullopt;
-    pushed[k-1] = std::move(*it);
-    }
-  std::vector<int32_t> v(n);
-  for(size_t k=0; k<n; ++k) {
-    auto x = read(pushed[k]);
-    if(!x)
-      return std::nullopt;
-    if(x->type!=Value::Int)
-      return failed("arithmetic on a non-int: " + e.str());
-    v[k] = x->i;
-    }
-
-  Item r;
-  auto& o = e.name;
-  auto  integer = [&r](int32_t x) { r.value = Value::integer(x); return r; };
-  if(n==1) {
-    if(o=="!")   return integer(v[0]==0);
-    if(o=="neg") return integer(int32_t(0u-uint32_t(v[0])));
-    if(o=="~")   return integer(~v[0]);
-    return failed("unary " + o);
-    }
-  if(n!=2)
-    return failed("operator " + o + " with " + std::to_string(n) + " operands");
-  // like the VM: the left operand is args[0], arithmetic wraps, && and || compute both sides
-  const int32_t a = v[0], b = v[1];
-  const auto ua = uint32_t(a), ub = uint32_t(b);
-  if(o=="&&") return integer(a && b);
-  if(o=="||") return integer(a || b);
-  if(o=="==") return integer(a==b);
-  if(o=="!=") return integer(a!=b);
-  if(o=="<")  return integer(a<b);
-  if(o==">")  return integer(a>b);
-  if(o=="<=") return integer(a<=b);
-  if(o==">=") return integer(a>=b);
-  if(o=="+")  return integer(int32_t(ua+ub));
-  if(o=="-")  return integer(int32_t(ua-ub));
-  if(o=="*")  return integer(int32_t(ua*ub));
-  if(o=="&")  return integer(a & b);
-  if(o=="|")  return integer(a | b);
-  if(o=="<<") return integer(int32_t(ua << (ub & 31)));
-  if(o==">>") return integer(a >> (b & 31));
-  if(o=="/" || o=="%") {
-    if(b==0)
-      return failed("vm: division by zero");
-    return integer(o=="/" ? a/b : a%b);
-    }
-  return failed("operator " + o);
+  auto value = execution::Core::arithmetic(*this,e);
+  if(!value)
+    return std::nullopt;
+  Item result;
+  result.value = Value::integer(*value);
+  return result;
   }

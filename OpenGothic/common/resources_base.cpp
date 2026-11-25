@@ -86,20 +86,20 @@ std::filesystem::path Resources::worldContentDir(const std::filesystem::path& ro
   return root/"worlds"/name;
   }
 
-void Resources::loadBase() {
+void Resources::loadBase(BaseStore::Profile profile) {
   if(!inst->automaticBase.path.empty()) return;
   try {
     const auto gothic=std::filesystem::path(CommandLine::inst().rootPath());
     BaseImport::Files archives;
     const auto* explicitBase=std::getenv("OPENGOTHIC_BASE");
     const auto* fingerprint=std::getenv("OPENGOTHIC_BASE_FINGERPRINT");
-    if((explicitBase && *explicitBase) || !fingerprint || !*fingerprint)
+    if(profile.catalogVersion==0 && ((explicitBase && *explicitBase) || !fingerprint || !*fingerprint))
       for(const auto& archive:BaseImport::runtimeArchives(gothic))
         if(!archive.mod) archives.emplace_back(archive.name,archive.size);
     inst->automaticBase=BaseStore::resolve(gothic,archives,
                                          [](std::string_view message) {
       Log::i(message);
-      });
+      },{},profile);
     inst->indexBaseContent();
     BaseImport::Files identityLoose;
     const auto identity=BaseImport::readIdentity(inst->automaticBase.path);

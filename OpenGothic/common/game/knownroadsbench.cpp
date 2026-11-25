@@ -101,8 +101,7 @@ void append(const char* file,const std::string& row) {
   if(!out) throw std::runtime_error(std::string("cannot write roads journal ")+file);
 }
 std::string symbol(World& world,const Npc& npc) {
-  const auto* sym=world.script().findSymbol(size_t(npc.instanceSymbol()));
-  return sym?std::string(sym->name()):std::string{};
+  return std::string(world.rules().symbolName(npc.instanceSymbol()));
 }
 Npc& resolve(World& world,const std::string& selector) {
   Npc* npc=nullptr;
@@ -112,8 +111,8 @@ Npc& resolve(World& world,const std::string& selector) {
     const auto id=std::stoull(selector.substr(3));
     if(id<=std::numeric_limits<uint32_t>::max()) npc=world.npcById(uint32_t(id));
   } else {
-    const auto sym=world.script().findSymbolIndex(upper(selector));
-    if(sym!=size_t(-1)) npc=world.findNpcByInstance(sym);
+    const auto id=world.script().storyNpcId(upper(selector));
+    if(id) npc=world.findNpcByInstance(*id);
   }
   if(!npc) throw std::runtime_error("roads actor unavailable: "+selector);
   return *npc;

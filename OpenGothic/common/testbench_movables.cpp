@@ -14,6 +14,8 @@
 #include <stdexcept>
 
 #include "game/gamescript.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/playercontrol.h"
 #include "game/serialize.h"
 #include "gothic.h"
@@ -91,17 +93,16 @@ void prepareSpellFixture(World& world,Npc& player,std::string_view fixture) {
   if(fixture=="ice" || fixture=="airborne") state.spellActors[0].npc->setExternalControl(false);
   context.subject=state.spellActors[0].npc;
   if(state.spellRunes.empty()) {
-    for(size_t i=0;i<world.script().symbolsCount();++i) {
-      const auto* symbol=world.script().findSymbol(i);
-      if(!symbol || symbol->type()!=daedalus::DaedalusDataType::INSTANCE) continue;
-      auto name=symbol->name();for(auto& c:name) c=char(std::toupper(static_cast<unsigned char>(c)));
+    const auto* catalog=baseNativeCatalog();
+    if(!catalog) {arenaAbort("spell fixture requires a native item catalog");return;}
+    for(const auto& [itemId,name]:catalog->identities.items) {
       if(!name.starts_with("ITRU_") && !name.starts_with("ITSC_")) continue;
-      auto candidate=std::make_unique<Item>(world,i,Item::T_Inventory);
+      auto candidate=std::make_unique<Item>(world,itemId,Item::T_Inventory);
       const auto id=candidate->spellId();
       if((id!=23 && id!=26 && id!=30 && id!=33 && id!=71) || state.spellRunes.contains(id)) continue;
-      state.spellRunes[id]=i;player.addItem(i,candidate->isRune()?1:5);
+      state.spellRunes[id]=itemId;player.addItem(itemId,candidate->isRune()?1:5);
       event("spell_physics_rune","\"id\":"+std::to_string(id)+",\"symbol\":"+jsonStr(name)+
-        ",\"class_id\":"+std::to_string(i)+",\"projectile\":"+(candidate->isSpellShoot()?"true":"false"));
+        ",\"class_id\":"+std::to_string(itemId)+",\"projectile\":"+(candidate->isSpellShoot()?"true":"false"));
       }
     }
   player.handle().attribute[ATR_MANA]=50000;player.handle().attribute[ATR_MANAMAX]=50000;player.setTalentSkill(TALENT_MAGE,6);
@@ -818,12 +819,16 @@ void prepareMovableCast(World& world,Npc& player) {
   npc->clearAiQueue();npc->clearState(false);npc->setExternalControl(true);
   npc->handle().attribute[ATR_HITPOINTS]=npc->handle().attribute[ATR_HITPOINTSMAX]=50000;
   npc->setDirection(player.position()-target);npc->updateTransform();state.spellActors.push_back({npc,"movable_target"});
-  for(size_t i=0;i<world.script().symbolsCount() && !state.spellRunes.contains(23);++i) {
-    const auto* symbol=world.script().findSymbol(i);if(!symbol || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)continue;
-    auto name=symbol->name();for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
-    if(!name.starts_with("ITRU_") && !name.starts_with("ITSC_"))continue;
-    auto item=std::make_unique<Item>(world,i,Item::T_Inventory);
-    if(item->spellId()==23) {state.spellRunes[23]=i;player.addItem(i,item->isRune()?1:5);}
+  if(!state.spellRunes.contains(23)) {
+    const auto* catalog=baseNativeCatalog();
+    if(!catalog) {arenaAbort("movable fireball fixture requires a native item catalog");return;}
+    for(const auto& [itemId,name]:catalog->identities.items) {
+      if(!name.starts_with("ITRU_") && !name.starts_with("ITSC_"))continue;
+      Item item(world,itemId,Item::T_Inventory);
+      if(item.spellId()!=23)continue;
+      state.spellRunes[23]=itemId;player.addItem(itemId,item.isRune()?1:5);
+      break;
+      }
     }
   player.handle().attribute[ATR_MANA]=player.handle().attribute[ATR_MANAMAX]=50000;player.setTalentSkill(TALENT_MAGE,6);
   Settings::setI("GAME","spell_physics",1);

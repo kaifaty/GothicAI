@@ -35,8 +35,8 @@ set(platform_allowed_dependencies
   shlwapi DbgHelp ws2_32 -lpthread -ldl "-framework AppKit"
   gothic-base-runtime gothic-video-runtime)
 get_target_property(platform_dependencies OpenGothic LINK_LIBRARIES)
-# The VM belongs to OpenGothic only; it has never been an input of the platform link.
-list(REMOVE_ITEM platform_dependencies gothic-daedalus)
+# The VM and the game's authored story runtime belong to OpenGothic only.
+list(REMOVE_ITEM platform_dependencies gothic-daedalus gothic-script-state StoryGraphRuntime)
 foreach(dependency IN LISTS platform_dependencies)
   if(NOT dependency IN_LIST platform_allowed_dependencies)
     message(FATAL_ERROR "engine-platform: OpenGothic dependency '${dependency}' is not an allowed platform link input. "

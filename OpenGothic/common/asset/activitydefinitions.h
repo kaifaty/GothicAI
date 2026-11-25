@@ -1,23 +1,59 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Routine activities as data (reports/engine/2026-11-14-npc-data/README.md, step D4). The import
 // recognises a template in the three script phases of a routine state; the game runs the same
 // template walk below instead of the script. Both sides share this file, so the call stream the
 // import compares with the VM is the stream the game issues.
 namespace ActivityDefinitions {
+inline constexpr int FormatVersion = 5;
 enum class Phase : uint8_t { Init, Loop, End };
 enum class Approach : uint8_t { NearestWaypoint, Distance };
+
+inline bool mobInitChecksBody(std::string_view state) {
+  return state=="ZS_SIT_BENCH" || state=="ZS_SIT_CHAIR" || state=="ZS_SIT_THRONE";
+  }
+
+inline bool timedMobState(std::string_view state) {
+  return state=="ZS_SIT_BENCH" || state=="ZS_SIT_CHAIR" || state=="ZS_SAW" ||
+         state=="ZS_REPAIR_HUT" || state=="ZS_PRAY_INNOS";
+  }
 
 // "An activity at a world object": approach the routine point, use the named object whenever it
 // is free and the body is not already busy with it, leave the object at the end. The perception
 // set stays a script helper executed by the VM at its place (reactions are step D5).
 struct MobActivity {
+  struct Timer {
+    struct Gesture {
+      std::string animation;
+      int32_t throughRoll = 0; // inclusive upper limit, using the same draw for the whole queue
+      bool operator==(const Gesture&) const = default;
+      };
+    int32_t timerSeconds = 0;
+    int32_t rollRange = 0; // zero: only reset the timer
+    std::string rollVariable;
+    std::vector<Gesture> gestures;
+    bool operator==(const Timer&) const = default;
+    };
+  struct Item {
+    enum class End { None, Use, Remove };
+    int32_t required = 0;
+    bool equip = false; // equip on entry, including when already present
+    End endAction = End::None;
+    int32_t endItem = 0;
+    bool operator==(const Item&) const = default;
+    };
+  std::optional<Item> item;
   std::string perceptions;          // deferred helper without arguments, first in Init
   int32_t     walkMode = 0;         // AI_SetWalkMode argument
   Approach    approach = Approach::NearestWaypoint;
@@ -27,11 +63,47 @@ struct MobActivity {
   int32_t     useState = 0;         // AI_UseMob state in Loop
   int32_t     leaveState = 0;       // AI_UseMob state in End
   int32_t     loopResult = 0;       // Loop result
+  bool skipApproachWhenBusy = false;
+  std::optional<Timer> timer;
   bool operator==(const MobActivity&) const = default;
+  };
+
+// The form fixes the order and conditions of the three phases.
+struct PointActivity {
+  enum class Form { Guard, Campfire, ArmsCrossed, Waypoint, Pee };
+  static constexpr std::array<std::string_view,5> FormNames={"guard","campfire","arms_crossed","waypoint","pee"};
+  struct Gesture {
+    std::string animation; // empty: no gesture for this outcome
+    bool resetTimer = false;
+    bool operator==(const Gesture&) const = default;
+    };
+  struct PortalEvent {
+    std::string function; // deferred script helper, after the gesture and before the timer reset
+    int32_t rollRange = 0, triggerRoll = 0;
+    int32_t world = 0, ravenDead = 0, excludedGuild = 0;
+    bool operator==(const PortalEvent&) const = default;
+    };
+  Form form = Form::Guard;
+  std::string perceptions;
+  int32_t walkMode = 1;
+  int32_t approachDistance = 500;
+  std::string point;
+  std::string enterAnimation, leaveAnimation;
+  int32_t enterBodyState = 0, leaveBodyState = 0; // Campfire: AI_PlayAniBS, also the sitting test
+  int32_t timerSeconds = 5;
+  int32_t rollRange = 10;
+  std::vector<Gesture> gestures; // indexed by the random outcome, [0, rollRange)
+  int32_t initialStage = 1, walkingStage = 2, arrivedStage = 1, poseStage = 0; // aivar[19]
+  int32_t loopResult = 0;
+  std::optional<PortalEvent> portal; // ArmsCrossed in the addon; Classic goes straight to the timer reset
+  bool timed() const { return form==Form::Guard || form==Form::ArmsCrossed || form==Form::Waypoint; }
+  std::string_view occupied() const { return form==Form::Campfire ? "wait" : "align_waypoint"; }
+  bool operator==(const PointActivity&) const = default;
   };
 
 struct Library {
   std::map<std::string,MobActivity> activities; // by the Init symbol of the state
+  std::map<std::string,PointActivity> points;
   std::map<std::string,std::string> uncaptured; // state -> reason: detail
   };
 
@@ -53,6 +125,11 @@ class Host {
     virtual bool        isMobAvailable(std::string_view scheme) = 0;        // WLD_ISMOBAVAILABLE(self,scheme)
     virtual int32_t     bodyState() = 0;                                    // NPC_GETBODYSTATE(self)
     virtual void        useMob(std::string_view scheme, int32_t state) = 0; // AI_USEMOB(self,scheme,state)
+    virtual int32_t     itemCount(int32_t item) = 0;
+    virtual void        createItem(int32_t item) = 0;
+    virtual void        equipItem(int32_t item) = 0;
+    virtual void        useItem(int32_t item) = 0;
+    virtual void        removeItem(int32_t item) = 0;
   };
 
 // Writes every call of a host as text, in the form the import gives the script's own calls:
@@ -118,6 +195,28 @@ class Recorder final : public Host {
       host.useMob(scheme,state);
       }
 
+    int32_t itemCount(int32_t item) override {
+      const auto count=host.itemCount(item);
+      sink("NPC_HASITEMS(self,"+std::to_string(item)+")->"+std::to_string(count));
+      return count;
+      }
+    void createItem(int32_t item) override {
+      sink("CREATEINVITEM(self,"+std::to_string(item)+")");
+      host.createItem(item);
+      }
+    void equipItem(int32_t item) override {
+      sink("EQUIPITEM(self,"+std::to_string(item)+")");
+      host.equipItem(item);
+      }
+    void useItem(int32_t item) override {
+      sink("AI_USEITEM(self,"+std::to_string(item)+")");
+      host.useItem(item);
+      }
+    void removeItem(int32_t item) override {
+      sink("NPC_REMOVEINVITEMS(self,"+std::to_string(item)+",1)->0");
+      host.removeItem(item);
+      }
+
   private:
     Host& host;
     Sink  sink;
@@ -130,16 +229,21 @@ inline bool bodyStateContains(int32_t bodyState, int32_t wanted) {
   return (bodyState & BodyStateMask)==(wanted & BodyStateMask);
   }
 
+inline void resetForActivity(Host& host, std::string_view perceptions) {
+  host.deferred(perceptions);
+  if(host.isValidNpc(host.lookAtTarget()))
+    host.stopLookAt();
+  host.removeWeapon();
+  }
+
 // One phase of the template. Evaluation order follows the script: both operands of a condition
 // are asked even when the first one already decides it, as Daedalus does not short-circuit.
 inline int run(const MobActivity& activity, Phase phase, Host& host) {
   switch(phase) {
     case Phase::Init: {
-      host.deferred(activity.perceptions);
-      // B_ResetAll: stop looking at a valid target, put the weapon away.
-      if(host.isValidNpc(host.lookAtTarget()))
-        host.stopLookAt();
-      host.removeWeapon();
+      resetForActivity(host,activity.perceptions);
+      if(activity.skipApproachWhenBusy && bodyStateContains(host.bodyState(),activity.busyBodyState))
+        return 0;
       host.setWalkMode(activity.walkMode);
       bool away = false;
       if(activity.approach==Approach::NearestWaypoint) {
@@ -150,6 +254,12 @@ inline int run(const MobActivity& activity, Phase phase, Host& host) {
         }
       if(away)
         host.gotoWaypoint(host.waypoint());
+      if(const auto& item=activity.item) {
+        if(host.itemCount(item->required)==0)
+          host.createItem(item->required);
+        if(item->equip)
+          host.equipItem(item->required);
+        }
       return 0;
       }
     case Phase::Loop: {
@@ -161,6 +271,12 @@ inline int run(const MobActivity& activity, Phase phase, Host& host) {
       }
     case Phase::End:
       host.useMob(activity.scheme,activity.leaveState);
+      if(const auto& item=activity.item) {
+        if(item->endAction==MobActivity::Item::End::Use)
+          host.useItem(item->endItem);
+        if(item->endAction==MobActivity::Item::End::Remove && host.itemCount(item->endItem)>=1)
+          host.removeItem(item->endItem);
+        }
       return 0;
     }
   return 0;

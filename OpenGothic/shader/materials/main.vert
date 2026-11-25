@@ -102,6 +102,10 @@ uint shadowPageId = 0;
 #if defined(VIRTUAL_SHADOW) && !defined(GL_VERTEX_SHADER)
 // the meshlet's vertices in clip space (x, y, w): the facing of its triangles (meshShader)
 shared vec3 vsmClip[MaxVert];
+#if defined(ATEST) && (MESH_TYPE==T_OBJ)
+#define SUN_CROWN_PAGE_CULL
+shared uint vsmOutside[MaxVert];
+#endif
 #endif
 
 #if defined(VIRTUAL_SHADOW)
@@ -187,6 +191,10 @@ vec4 processVertexVsm(out Varyings var, const Vertex vert, const uint bucketId, 
 
   float clip[4];
   pos4 = mapViewport(pos4, clip);
+#if defined(SUN_CROWN_PAGE_CULL)
+  vsmOutside[laneID] = (clip[0]<0.0 ? 1u : 0u) | (clip[1]<0.0 ? 2u : 0u) |
+                       (clip[2]<0.0 ? 4u : 0u) | (clip[3]<0.0 ? 8u : 0u);
+#endif
 #if defined(GL_VERTEX_SHADER)
   [[unroll]] for(int i=0; i<4; ++i)
     gl_ClipDistance[i] = clip[i];
@@ -390,6 +398,12 @@ void meshShader(const uvec4 task, const uint materialRef) {
     const bool bothSides = false;
 #endif
     gl_MeshPrimitivesEXT[laneID].gl_CullPrimitiveEXT = det>0.0 && (!omni || !twoSided) && !bothSides;
+#if defined(SUN_CROWN_PAGE_CULL)
+    // All three vertices must lie strictly outside the same edge of the page.
+    if(!omni && (bucket[bucketId].flags & BK_CROWN)!=0u &&
+       (vsmOutside[prim.x] & vsmOutside[prim.y] & vsmOutside[prim.z])!=0u)
+      gl_MeshPrimitivesEXT[laneID].gl_CullPrimitiveEXT = true;
+#endif
     }
 #endif
   }

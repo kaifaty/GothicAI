@@ -1,4 +1,6 @@
 #include "npc.h"
+
+#include "asset/activitydefinitions.h"
 #include "npc_transformback.h"
 #include "npc_melee_shadow.h"
 #include "npc_melee.h"
@@ -105,7 +107,9 @@ struct Npc::BodyMovementTrace final {
   };
 
 void Npc::GoTo::save(Serialize& fout) const {
-  fout.write(npc, uint8_t(flag), wp, pos);
+  // A waypoint walk does not use pos. Keep its exact free point there for names shared by several posts.
+  const bool freePoint = (flag==GT_Way || flag==GT_NextFp) && wp && wp->isFreePoint();
+  fout.write(npc, uint8_t(flag), wp, freePoint ? wp->position() : pos);
   }
 
 void Npc::GoTo::load(Serialize& fin) {
@@ -360,36 +364,83 @@ bool Npc::performOutput(const AiQueue::AiAction &act) {
   return false;
   }
 
+uint64_t Npc::pendingSimTick() const {
+  return simTickState.idleParked ? owner.npcCadenceClock()-simTickState.lastIdleTick : simTickState.pending;
+  }
+
+void Npc::wakeSociety() {
+  monsterRestSleeping = false;
+  if(simTickState.idleParked)
+    owner.noteIdleNpcChange(*this);
+  if(societySleeping)
+    owner.wakeSocietyNpc(*this);
+  }
+
+void Npc::setExternalControl(bool e) {
+  if(externalCtrl!=e)
+    wakeSociety();
+  externalCtrl = e;
+  }
+
 void Npc::setProcessPolicy(NpcProcessPolicy t) {
   if(aiPolicy==t)
     return;
+  wakeSociety();
   if(aiPolicy==NpcProcessPolicy::Player)
     runAng = 0;
   aiPolicy=t;
+  owner.noteNpcCellChange(*this);
   visual.setTextureOwner(position(),!isPlayer());
   }
 
+void Npc::setSimTierOverride(std::optional<NpcSimTier> t) {
+  if(simTierOverrideValue==t)
+    return;
+  simTierOverrideValue = t;
+  owner.noteNpcCellChange(*this);
+  }
+
 void Npc::setSimTier(NpcSimTier t) {
+  if(simTierValue!=t || !simTierAssigned)
+    owner.invalidateNpcTiers();
+  applySimTier(t);
+  }
+
+void Npc::applySimTier(NpcSimTier t) {
+  if(simTierValue!=t)
+    wakeSociety();
   simTierValue = t;
   simTierAssigned = true;
   if(!loadedFpReferences)
     return;
   loadedFpReferences = false;
-  if(t!=NpcSimTier::Simplified || isPlayer() || !simplifiedMovementEnabled())
+  const bool graph = t==NpcSimTier::Simplified && !isPlayer() && simplifiedMovementEnabled();
+  const auto* record = activityEvents.activity;
+  const auto* guard = record ? record->point : nullptr;
+  if(!graph && !guard)
     return;
 
-  // Names are the existing save representation. Defer their disambiguation
-  // until the loaded world has assigned tiers, using the original saved pose.
-  const auto resolve=[&](const WayPoint* point,const char* reference) {
-    if(point==nullptr || !point->isFreePoint())
+  // An exact saved destination identifies the guard's walk and lock. For a pose or an older
+  // save without that destination, keep the point nearest to the saved body.
+  const auto* savedWalk = (go2.flag==GT_Way || go2.flag==GT_NextFp) ? go2.wp : nullptr;
+  const auto* retained=pendingSimpleGoTo();
+  const auto* retainedPost=guard && retained && retained->hasExactPoint() ? retained->point : nullptr;
+  const auto resolve=[&](const WayPoint* point,const char* reference,bool walk=false) {
+    if(point==nullptr || !point->isFreePoint() || (!graph && !point->checkName(guard->point)))
       return point;
+    // A graph walk may still be on an intermediate edge while its retained command owns the final post.
+    if(walk && retainedPost && retainedPost->name==point->name)
+      return retainedPost;
     const WayPoint* nearest=nullptr;
+    const WayPoint* exact=nullptr;
     size_t matches=0;
     float distance=std::numeric_limits<float>::max();
     owner.forEachWayPoint([&](const WayPoint& candidate) {
       if(!candidate.isFreePoint() || candidate.name!=point->name)
         return;
       ++matches;
+      if(walk && point==savedWalk && guard && candidate.checkName(guard->point) && candidate.position()==go2.pos)
+        exact=&candidate;
       const float d=(candidate.position()-loadedFpPosition).quadLength();
       if(d<distance) {
         distance=d;
@@ -398,6 +449,10 @@ void Npc::setSimTier(NpcSimTier t) {
       });
     if(matches<=1)
       return point;
+    if(exact)
+      nearest=exact;
+    if(!graph)
+      return nearest;
     owner.noteGraphFpLoadResolution();
     const auto symbol=owner.rules().symbolName(instanceSymbol());
     Log::i("npc_graph_fp_load_resolution npc=",!symbol.empty() ? symbol : displayName(),
@@ -407,20 +462,24 @@ void Npc::setSimTier(NpcSimTier t) {
            ") changed=",nearest!=point);
     return nearest;
     };
-  currentFp=resolve(currentFp,"currentFp");
-  currentFpLock=FpLock(resolve(currentFpLock.point(),"currentFpLock"));
-  go2.wp=resolve(go2.wp,"goTo");
+  currentFp=resolve(currentFp,"currentFp",true);
+  const auto* lock=resolve(currentFpLock.point(),"currentFpLock",true);
+  currentFpLock=FpLock(lock,isActivityPoint(lock));
+  go2.wp=resolve(go2.wp,"goTo",true);
   WayPath path;
   while(const auto* point=wayPath.pop())
     path.add(*resolve(point,"path"));
   path.reverse();
   wayPath=std::move(path);
   for(auto* queue:{&aiQueue,&aiQueueOverlay}) {
+    bool terminal=queue==&aiQueue && pendingSimpleGoTo()!=nullptr;
     std::vector<AiQueue::AiAction> actions;
     actions.reserve(queue->size());
     while(queue->size()>0) {
       auto action=queue->pop();
-      action.point=resolve(action.point,"queue");
+      if(!action.hasExactPoint())
+        action.point=resolve(action.point,"queue",terminal);
+      terminal=false;
       actions.push_back(std::move(action));
       }
     for(auto i=actions.rbegin();i!=actions.rend();++i)
@@ -576,8 +635,11 @@ void Npc::refreshMeleeFighter() {
   const bool melee = mode==WeaponState::Fist || mode==WeaponState::W1H || mode==WeaponState::W2H;
   const auto delta = currentTarget!=nullptr ? currentTarget->position()-position() : Vec3{};
   if(MeleeFighter::qualifies(isPlayer(),melee,isAttack(),currentTarget!=nullptr,
-                            currentTarget!=nullptr && currentTarget->isDown(),delta.x*delta.x+delta.z*delta.z))
+                            currentTarget!=nullptr && currentTarget->isDown(),delta.x*delta.x+delta.z*delta.z)) {
+    if(currentTarget->simTickState.idleParked)
+      owner.noteIdleNpcChange(*currentTarget);
     MeleeFighter::refresh(meleeFighter,currentTarget->meleeFighter,owner.tickCount());
+    }
   }
 
 bool Npc::isMeleeFighter() const {
@@ -972,7 +1034,15 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
-  Bench::beforeNpcTick(*this);
+  const auto benchTick = Bench::beforeNpcTick(*this);
+  if(benchTick==BenchNpcTick::MeleeDrain) {
+    tickAnimationTags();
+    if(isAttackAnim())
+      mvAlgo.tick(dt,MoveAlgo::WaitMove);
+    return;
+    }
+  if(benchTick==BenchNpcTick::Paused)
+    return;
   updateQuiver();
   updateSimpleMovement();
   NpcLogicalState::Tick logicalTick(*this,dt);
@@ -1162,7 +1232,8 @@ void Npc::tick(uint64_t dt) {
       }
     }
 
-  mvAlgo.tick(dt);
+  if(!campfireBodySuspended())
+    mvAlgo.tick(dt);
   implAiTick(dt);
   }
 
@@ -1216,7 +1287,14 @@ void Npc::setTarget(Npc *t) {
   if(currentTarget==t)
     return;
 
+  wakeSociety();
+  if(t!=nullptr) {
+    t->wakeSociety();
+    resumeCampfireBody();
+    t->resumeCampfireBody();
+    }
   currentTarget = t;
+  owner.noteNpcCellChange(*this);
   if(!go2.empty() && !isPlayer())
     clearGoTo();
   }

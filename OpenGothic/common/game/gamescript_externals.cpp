@@ -6,6 +6,9 @@
 #include <cctype>
 #include <limits>
 
+#include "basestore.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "utils/string_frm.h"
 #include "game/npcactivityhost.h"
 #include "world/objects/npc.h"
@@ -103,13 +106,12 @@ int GameScript::wld_getguildattitude(int gil1, int gil2) {
   }
 
 void GameScript::wld_exchangeguildattitudes(std::string_view name) {
-  auto guilds = vm.find_symbol_by_name(name);
-  if(guilds==nullptr)
-    return;
-  for(size_t i=0;i<gilTblSize;++i) {
-    for(size_t r=0;r<gilTblSize;++r)
-      gilAttitudes[i*gilCount+r] = guilds->get_int(uint16_t(i * gilTblSize + r));
-    }
+  const auto* entry = NativeBaseCatalog::findConstant(*baseNativeCatalog(),name);
+  const auto* values = entry==nullptr ? nullptr : std::get_if<std::vector<int32_t>>(&entry->values);
+  if(values==nullptr || values->size()!=gilTblSize*gilTblSize)
+    throw BaseStore::Error("invalid native guild attitude table " + std::string(name));
+  for(size_t i=0;i<gilTblSize;++i)
+    std::copy_n(values->data()+i*gilTblSize,gilTblSize,gilAttitudes.data()+i*gilCount);
   }
 
 bool GameScript::wld_istime(int hour0, int min0, int hour1, int min1) {
@@ -197,7 +199,7 @@ bool GameScript::wld_detectnpc(std::shared_ptr<daedalus::INpc> npcRef, int inst,
       }
     });
   if(ret)
-    vm.global_other()->set_instance(std::static_pointer_cast<daedalus::INpc>(ret->handlePtr()));
+    setInstanceNPC("OTHER",*ret);
   return ret != nullptr;
   }
 
@@ -223,7 +225,7 @@ bool GameScript::wld_detectnpcex(std::shared_ptr<daedalus::INpc> npcRef, int ins
       }
     });
   if(ret)
-    vm.global_other()->set_instance(std::static_pointer_cast<daedalus::INpc>(ret->handlePtr()));
+    setInstanceNPC("OTHER",*ret);
   return ret != nullptr;
   }
 
@@ -246,7 +248,7 @@ bool GameScript::wld_detectitem(std::shared_ptr<daedalus::INpc> npcRef, int flag
     });
 
   if(ret)
-    vm.global_item()->set_instance(std::static_pointer_cast<daedalus::IItem>(ret->handlePtr()));
+    storeItem(ret);
   return ret != nullptr;
   }
 
@@ -444,6 +446,10 @@ void GameScript::ai_stopprocessinfos(std::shared_ptr<daedalus::INpc> selfRef) {
     }
   }
 
+void GameScript::endDirectorDialog(Npc& npc) {
+  ai_stopprocessinfos(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+  }
+
 void GameScript::ai_standup(std::shared_ptr<daedalus::INpc> selfRef) {
   auto self = findNpc(selfRef);
   if(self!=nullptr)
@@ -538,8 +544,8 @@ void GameScript::ai_outputsvm_overlay(std::shared_ptr<daedalus::INpc> selfRef, s
 void GameScript::ai_startstate(std::shared_ptr<daedalus::INpc> selfRef, int func, int state, std::string_view wp) {
   auto self = findNpc(selfRef);
   if(self!=nullptr && func>0) {
-    Npc*  oth = findNpc(vm.global_other());
-    Npc*  vic = findNpc(vm.global_victim());
+    Npc*  oth = findNpc(dynamic_cast<NpcInstance*>(storyActorSlot("OTHER").get()));
+    Npc*  vic = findNpc(dynamic_cast<NpcInstance*>(storyActorSlot("VICTIM").get()));
     auto& st  = aiState(size_t(func));
     self->aiPush(AiQueue::aiStartState(st.funcIni,state,oth,vic,wp));
     }
@@ -549,6 +555,14 @@ void GameScript::ai_playani(std::shared_ptr<daedalus::INpc> npcRef, std::string_
   auto npc = findNpc(npcRef);
   if(npc!=nullptr)
     npc->aiPush(AiQueue::aiPlayAnim(name));
+  }
+
+void GameScript::ai_stopfx(std::shared_ptr<daedalus::INpc> npcRef, std::string_view name) {
+  auto* npc=findNpc(npcRef);
+  if(npc==nullptr)
+    return;
+  if(const auto* effect=Gothic::inst().loadVisualFx(name))
+    npc->stopEffect(*effect);
   }
 
 void GameScript::ai_setwalkmode(std::shared_ptr<daedalus::INpc> npcRef, int modeBits) {
@@ -768,15 +782,18 @@ void GameScript::ai_pointatnpc(std::shared_ptr<daedalus::INpc> npcRef, std::shar
   }
 
 int GameScript::ai_printscreen(std::string_view msg, int posx, int posy, std::string_view font, int timesec) {
-  auto npc = findNpc(vm.global_self());
+  printScreenFor(findNpc(dynamic_cast<NpcInstance*>(storyActorSlot("SELF").get())),msg,posx,posy,font,timesec);
+  return 0;
+  }
+
+void GameScript::printScreenFor(Npc* npc, std::string_view msg, int posx, int posy, std::string_view font, int timesec) {
   if(npc==nullptr)
     npc = owner.player();
   if(npc==nullptr) {
     Gothic::inst().onPrintScreen(msg,posx,posy,timesec,Resources::font(font,Resources::FontType::Normal,1.0));
-    return 0;
+    return;
     }
   npc->aiPush(AiQueue::aiPrintScreen(timesec,font,posx,posy,msg));
-  return 0;
   }
 
 int GameScript::mob_hasitems(std::string_view tag, int item) {
@@ -809,21 +826,18 @@ void GameScript::log_addentry(std::string_view topicName, std::string_view entry
 
 void GameScript::equipitem(std::shared_ptr<daedalus::INpc> npcRef, int cls) {
   LoadProbe::Startup::Detail::Scope detail("equipitem",[&]{
-    const auto* symbol=vm.find_symbol_by_index(uint32_t(cls));
-    return symbol!=nullptr ? symbol->name() : std::to_string(cls);
+    const auto name=storyItemName(uint32_t(cls));
+    return name.empty() ? std::to_string(cls) : std::string(name);
     });
   auto self = findNpc(npcRef);
-  if(self!=nullptr) {
-    if(self->itemCount(uint32_t(cls))==0)
-      self->addItem(uint32_t(cls),1);
-    self->useItem(uint32_t(cls),Item::NSLOT,true);
-    }
+  if(self!=nullptr)
+    NpcEngineCalls::equipItem(*self,uint32_t(cls));
   }
 
 void GameScript::createinvitem(std::shared_ptr<daedalus::INpc> npcRef, int itemInstance) {
   LoadProbe::Startup::Detail::Scope detail("createinvitem",[&]{
-    const auto* symbol=vm.find_symbol_by_index(uint32_t(itemInstance));
-    return symbol!=nullptr ? symbol->name() : std::to_string(itemInstance);
+    const auto name=storyItemName(uint32_t(itemInstance));
+    return name.empty() ? std::to_string(itemInstance) : std::string(name);
     });
   auto self = findNpc(npcRef);
   if(self!=nullptr) {
@@ -834,8 +848,8 @@ void GameScript::createinvitem(std::shared_ptr<daedalus::INpc> npcRef, int itemI
 
 void GameScript::createinvitems(std::shared_ptr<daedalus::INpc> npcRef, int itemInstance, int amount) {
   LoadProbe::Startup::Detail::Scope detail("createinvitems",[&]{
-    const auto* symbol=vm.find_symbol_by_index(uint32_t(itemInstance));
-    return (symbol!=nullptr ? symbol->name() : std::to_string(itemInstance))+":"+std::to_string(amount);
+    const auto name=storyItemName(uint32_t(itemInstance));
+    return (name.empty() ? std::to_string(itemInstance) : std::string(name))+":"+std::to_string(amount);
     });
   auto self = findNpc(npcRef);
   if(self!=nullptr && amount>0) {

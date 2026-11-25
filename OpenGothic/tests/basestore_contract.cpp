@@ -172,8 +172,57 @@ void fingerprintSelection(const fs::path& root) {
   require(BaseStore::resolve(base,{},observe).path==base && !fs::exists(cache/"current"),
           "explicit base used as game directory must not create a pointer or current lock");
   unsetenv("OPENGOTHIC_BASE_FINGERPRINT");
+
+  const auto projected=root/"native";
+  const auto projection=BaseStore::nativeProjectionIdentity(base);
+  write(projected/"programs/programs.json","{}");
+  write(projected/"definitions/fixture/ready.json","{}");
+  writeBaseFixture(projected,projection);
+  const BaseStore::Profile profile{.stockProgram="fixture", .projectedOnly=true,
+                                 .validateProgramMetadata=[](const fs::path&,std::string_view) {}};
+  setenv("OPENGOTHIC_BASE",projected.c_str(),1);
+  require(BaseStore::resolve(game,{},observe,{},profile).path==projected,
+          "production projection must resolve without symbols");
+  const auto legacy=projected/"definitions/fixture/program-symbols.symbols";
+  write(legacy,"full symbol table");
+  reason.clear();
+  try { (void)BaseStore::resolve(game,{},observe,{},profile); }
+  catch(const std::exception& error) { reason=error.what(); }
+  require(reason.find("native base contains a full symbol table")!=std::string::npos,
+          "production selection must reject even an unlisted full symbol table: "+reason);
+  fs::remove(legacy);
+
+  constexpr int catalogVersion=7;
+  const BaseStore::Profile catalogProfile{.projectedOnly=true,.catalogVersion=catalogVersion};
+  const auto rejectCatalog=[&](std::string_view expected) {
+    std::string error;
+    try { (void)BaseStore::resolve(game,{},observe,{},catalogProfile); }
+    catch(const std::exception& e) { error=e.what(); }
+    require(error.find(expected)!=std::string::npos,"native catalog must reject "+std::string(expected)+": "+error);
+    };
+  rejectCatalog("catalog version"); // The selected v2 base remains an offline fixture.
+  const auto catalog=BaseStore::nativeCatalogIdentity(base,catalogVersion);
+  const auto catalogPath=cache/catalog.fingerprint;
+  write(catalogPath/"definitions/native-catalog.json","{\"format\":\"gothic-native-base-catalog\",\"version\":7}");
+  write(catalogPath/"storygraph/story.json","{}");
+  write(catalogPath/"outputunits/outputunits.json","{}");
+  writeBaseFixture(catalogPath,catalog);
   unsetenv("OPENGOTHIC_BASE");
-  std::cout << "fingerprint selection: cache/store, pointer, missing/corrupt refusal, explicit precedence; direct base has no current pointer/lock\n";
+  setenv("OPENGOTHIC_BASE_FINGERPRINT",catalog.fingerprint.c_str(),1);
+  require(BaseStore::resolve(game,{},observe,{},catalogProfile).path==catalogPath,
+          "catalog fingerprint must select a self-contained native base");
+  unsetenv("OPENGOTHIC_BASE_FINGERPRINT");
+  require(BaseStore::resolve(game,{},observe,{},catalogProfile).path==catalogPath,
+          "catalog must select its native pointer without installation data");
+  setenv("OPENGOTHIC_BASE",catalogPath.c_str(),1);
+  for(const char* payload:{"definitions/program-symbols.json","programs/programs.json","overlay/GOTHIC.DAT"}) {
+    write(catalogPath/payload,"{}");
+    rejectCatalog("legacy script artifact");
+    fs::remove(catalogPath/payload);
+    if(fs::path(payload).parent_path()=="programs") fs::remove(catalogPath/"programs");
+    }
+  unsetenv("OPENGOTHIC_BASE");
+  std::cout << "fingerprint selection: cache/store, pointer, corrupt and legacy payload refusal, explicit precedence; direct base has no current pointer/lock\n";
   }
 
 void snapshotSelection(const fs::path& root) {

@@ -5,13 +5,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
-#include <set>
 #include <stdexcept>
 #include <unordered_set>
 
 namespace {
 using Type = daedalus::DaedalusDataType;
-using Op = daedalus::DaedalusOpcode;
 using Value = PlacementDefinitions::Value;
 using Kind = Value::Kind;
 
@@ -20,7 +18,6 @@ Value resolveValue(Value value, const daedalus::DaedalusScript& script) {
     const auto* symbol=script.find_symbol_by_name(value.text);
     if(symbol==nullptr) throw std::runtime_error("unknown symbol "+value.text);
     value.integer=int32_t(symbol->index());
-    value.text.clear();
     }
   return value;
   }
@@ -56,34 +53,6 @@ void push(daedalus::DaedalusVm& vm, const PlacementDefinitionRuntime::Argument& 
     }
   }
 
-std::unordered_set<uint32_t> placementFunctions(const daedalus::DaedalusScript& script) {
-  std::map<uint32_t,uint32_t> addresses;
-  std::vector<uint32_t> pending;
-  for(const auto& symbol:script.symbols())
-    if(!symbol.is_external() && (symbol.type()==Type::FUNCTION || symbol.type()==Type::PROTOTYPE ||
-        (symbol.type()==Type::INSTANCE && symbol.is_const() && symbol.address()>0 && symbol.name().find('.')==std::string::npos)) &&
-       symbol.address()<script.size()) {
-      addresses.emplace(symbol.address(),symbol.index());
-      if(symbol.name().starts_with("STARTUP_")) pending.push_back(symbol.address());
-      }
-  std::set<uint32_t> visited;
-  std::unordered_set<uint32_t> result;
-  while(!pending.empty()) {
-    const auto address=pending.back(); pending.pop_back();
-    if(!visited.insert(address).second) continue;
-    const auto found=addresses.find(address);
-    if(found==addresses.end()) throw std::runtime_error("placement probe: missing function at "+std::to_string(address));
-    result.insert(found->second);
-    const auto next=std::next(found);
-    const auto end=next==addresses.end() ? script.size() : next->first;
-    for(auto pc=address;pc<end;) {
-      const auto op=script.instruction_at(pc);
-      if(op.op==Op::BL) pending.push_back(op.address);
-      pc+=op.size;
-      }
-    }
-  return result;
-  }
 }
 
 bool PlacementDefinitionRuntime::enabled() {
@@ -94,6 +63,80 @@ bool PlacementDefinitionRuntime::enabled() {
 PlacementDefinitionRuntime::Definitions PlacementDefinitionRuntime::resolve(
     const PlacementDefinitions::Library& library, const daedalus::DaedalusScript& script) {
   Definitions definitions;
+  const auto validate = [&script](const auto& rows,bool onlyNpcs) {
+    for(const auto& row:rows) {
+      const auto* instance=script.find_symbol_by_index(row.instance);
+      const auto* point=script.find_symbol_by_index(row.point);
+      const auto* external=script.find_symbol_by_index(row.external);
+      if(!instance || instance->type()!=Type::INSTANCE || !instance->is_const() ||
+         !point || point->type()!=Type::STRING || !point->is_const() || point->count()==0 || point->is_member() ||
+         !external || !external->is_external() || (external->name()!="WLD_INSERTNPC" && (onlyNpcs || external->name()!="WLD_INSERTITEM")))
+        throw std::runtime_error("placement definitions: invalid chapter placement symbol");
+      }
+    };
+  if(library.khorinisLateChapters) {
+    for(const auto& rows:library.khorinisLateChapters->chapter4) validate(rows,false);
+    for(const auto& rows:library.khorinisLateChapters->chapter5) validate(rows,false);
+    definitions.khorinisLateChapters=library.khorinisLateChapters;
+    }
+  if(library.khorinisEarlyChapters) {
+    validate(library.khorinisEarlyChapters->chapter2,true);
+    for(const auto& rows:library.khorinisEarlyChapters->chapter3) validate(rows,false);
+    definitions.khorinisEarlyChapters=library.khorinisEarlyChapters;
+    }
+  for(const auto& [name,groups]:library.triggerInserts) {
+    const bool onlyNpcs=name!="EVT_ORNAMENT_SWITCH_FOREST_01_FUNC" && name!="EVT_ORNAMENT_SWITCH_BIGFARM_01_FUNC" &&
+                        name!="EVT_TELEPORTSTATION_FUNC";
+    for(const auto& rows:groups)
+      validate(rows,onlyNpcs);
+    }
+  definitions.triggerInserts=library.triggerInserts;
+  validate(library.addonChapter4,true);
+  definitions.addonChapter4=library.addonChapter4;
+  if(library.oldWorldChapters) {
+    for(const auto& rows:library.oldWorldChapters->chapter3) validate(rows,false);
+    for(const auto& rows:library.oldWorldChapters->chapter4) validate(rows,false);
+    definitions.oldWorldChapters=library.oldWorldChapters;
+    }
+  validate(library.dragonIsland,false);
+  definitions.dragonIsland=library.dragonIsland;
+  const auto scalar = [&script](uint32_t index,Type type,bool constant) {
+    const auto* symbol=script.find_symbol_by_index(index);
+    return symbol && symbol->type()==type && symbol->is_const()==constant && !symbol->is_member() && symbol->count()==1;
+    };
+  const auto roomAssignment = [&](const PlacementDefinitions::RoomAssignment& room) {
+    return scalar(room.label,Type::STRING,true) && (!room.guild || scalar(*room.guild,Type::INT,true));
+    };
+  for(const auto& [name,region]:library.roomInitializers) {
+    const auto* root=script.find_symbol_by_name(name);
+    if(!root || root->type()!=Type::FUNCTION || root->is_external() || root->count()!=0 || root->has_return())
+      throw std::runtime_error("placement definitions: invalid room initializer "+name);
+    for(const auto& mob:region.mobs)
+      if(!scalar(mob.name,Type::STRING,true))
+        throw std::runtime_error("placement definitions: invalid mob routine in "+name);
+    for(const auto& room:region.rooms) {
+      bool valid=false;
+      if(const auto* fixed=std::get_if<PlacementDefinitions::RoomAssignment>(&room))
+        valid=roomAssignment(*fixed);
+      else {
+        const auto& choice=std::get<PlacementDefinitions::RoomChoice>(room);
+        valid=scalar(choice.expected,Type::INT,true) && scalar(choice.flag,Type::INT,false) &&
+              roomAssignment(choice.equal) && roomAssignment(choice.otherwise);
+        }
+      if(!valid)
+        throw std::runtime_error("placement definitions: invalid room assignment in "+name);
+      }
+    }
+  definitions.roomInitializers=library.roomInitializers;
+  if(library.firstEntries) {
+    for(const auto* actors:{&library.firstEntries->oldWorld,&library.firstEntries->addonWorld})
+      for(const auto index:*actors) {
+        const auto* actor=script.find_symbol_by_index(index);
+        if(!actor || actor->type()!=Type::INSTANCE)
+          throw std::runtime_error("placement definitions: invalid first-entry actor");
+        }
+    definitions.firstEntries=library.firstEntries;
+    }
   std::map<std::string,std::pair<uint32_t,uint8_t>> literals;
   for(const auto& symbol:script.symbols())
     if(symbol.type()==Type::STRING && symbol.is_const() && !symbol.is_member())
@@ -143,11 +186,10 @@ PlacementDefinitionRuntime::Definitions PlacementDefinitionRuntime::resolve(
             if(literal==literals.end()) throw std::runtime_error("no immutable string literal for "+call.function);
             argument.literal=literal->second.first;
             argument.literalIndex=literal->second.second;
-            argument.value.text.clear();
             }
           resolved.args.push_back(std::move(argument));
           }
-        steps.push_back(std::move(resolved));
+        steps.emplace_back(std::in_place_type<Call>,std::move(resolved));
         }
       definitions.placements.emplace(symbol->index(),std::move(steps));
       }
@@ -164,9 +206,13 @@ PlacementDefinitionRuntime::Definitions PlacementDefinitionRuntime::load(
 void PlacementDefinitionRuntime::observeCalls(daedalus::DaedalusVm& vm, const std::filesystem::path& base,
                                              std::string_view sha256) {
   if(!LoadProbe::Placement::enabled()) return;
-  auto functions=placementFunctions(vm);
+  auto library=PlacementDefinitions::read(base,sha256);
+  const auto functionIds=library.startupFunctions ? std::move(*library.startupFunctions) : startupFunctions(vm);
+  for(const auto index:functionIds)
+    if(vm.find_symbol_by_index(index)==nullptr)
+      throw std::runtime_error("placement probe: unknown startup function index "+std::to_string(index));
+  std::unordered_set<uint32_t> functions(functionIds.begin(),functionIds.end());
   std::unordered_set<uint32_t> deferred;
-  const auto library=PlacementDefinitions::read(base,sha256);
   for(const auto& [name,definition]:library.placements) {
     (void)name;
     for(const auto& step:definition.steps)
@@ -186,7 +232,7 @@ void PlacementDefinitionRuntime::observeCalls(daedalus::DaedalusVm& vm, const st
   }
 
 bool PlacementDefinitionRuntime::execute(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol* function,
-                                         const Definitions& definitions) {
+                                         const Definitions& definitions, const std::function<bool(const Call&)>& applyNative) {
   const auto found=function ? definitions.placements.find(function->index()) : definitions.placements.end();
   const bool playback=enabled() && found!=definitions.placements.end();
   LoadProbe::Placement::Scope probe(!playback);
@@ -203,6 +249,8 @@ bool PlacementDefinitionRuntime::execute(daedalus::DaedalusVm& vm, const daedalu
       continue;
       }
     const auto& call=std::get<Call>(step);
+    if(applyNative && applyNative(call))
+      continue;
     for(const auto& argument:call.args) push(vm,argument);
     const auto* target=vm.find_symbol_by_index(call.function);
     if(call.deferred) {

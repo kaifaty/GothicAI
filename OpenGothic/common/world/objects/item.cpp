@@ -58,6 +58,13 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
     }
   }
 
+Item::Item(World& owner, std::shared_ptr<ItemRecord> record, uint32_t instance)
+  :Vob(owner), hitem(std::move(record)), itemInstanceSymbol(instance) {
+  owner.rules().attachItem(hitem,*this);
+  setCount(1);
+  setObjMatrix(Tempest::Matrix4x4::mkIdentity());
+  }
+
 Item::Item(World &owner, Serialize &fin, Type type)
   :Vob(owner) {
   hitem = owner.rules().loadItem(fin,*this,itemInstanceSymbol);

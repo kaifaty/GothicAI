@@ -2,11 +2,10 @@
 # base and video converter and the story graph converter, the AI services' sources and locks, the pinned
 # uv and the entry points. Run by hand only, before a release (the user's decision of 2026-10-31: pull
 # requests do not build these). One job per platform on standard GitHub-hosted runners, no caches. The
-# `windows` and `linux` inputs choose the platforms. With `release: none` (the default) the run only
-# validates: build, converter and launcher checks and the package checks, and the archives stay on the
-# runners. With `draft` or `prerelease` each platform job hands its archive, manifest and SHA256SUMS to
-# the `release` job as a one-day workflow artifact, and that job, the only one that may write, makes one
-# GitHub release with every built archive and one SHA256SUMS over all of them, after everything passed.
+# The `windows` and `linux` inputs choose the platforms. Each job keeps its checked game and tools
+# archives, manifests and SHA256SUMS as a one-day workflow artifact. With `release: none` (the
+# default) the run ends there. With `draft` or `prerelease` the `release` job, the only one that may
+# write, uses these artifacts to make one GitHub release after everything passed.
 # `draft` is a draft prerelease the maintainer publishes after checking the assets; `prerelease` is
 # published at once. Documented in docs/development.md (Windows, Linux) and docs/threat-model.md.
 name: Release
@@ -23,7 +22,7 @@ on:
         type: boolean
         default: true
       release:
-        description: "none: only build and check; draft: a draft prerelease; prerelease: a published prerelease"
+        description: "none: build, check, and keep artifacts for one day; draft: a draft prerelease; prerelease: a published prerelease"
         type: choice
         options: [none, draft, prerelease]
         default: none
@@ -199,14 +198,15 @@ jobs:
           Add-Content $env:GITHUB_ENV "PACKAGE_NAME=$name"
           Add-Content $env:GITHUB_ENV "PACKAGE_DIR=$dist"
 
-      - name: Hand the archive to the release job
-        if: ${{ inputs.release != 'none' }}
+      - name: Upload the checked archives
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows
           path: |
             ${{ env.PACKAGE_DIR }}/${{ env.PACKAGE_NAME }}.zip
             ${{ env.PACKAGE_DIR }}/${{ env.PACKAGE_NAME }}.manifest.json
+            ${{ env.PACKAGE_DIR }}/${{ env.PACKAGE_NAME }}-tools.zip
+            ${{ env.PACKAGE_DIR }}/${{ env.PACKAGE_NAME }}-tools.manifest.json
             ${{ env.PACKAGE_DIR }}/SHA256SUMS
           if-no-files-found: error
           retention-days: 1
@@ -327,6 +327,12 @@ jobs:
       - name: Build this fork's game (AI bridge), content-convert and storygraph with GCC
         run: scripts/linux/build.sh
 
+      - name: Verify that the game and headless runner link without Daedalus
+        run: |
+          cmake --build OpenGothic/build --target gothic-body-runner
+          python3 scripts/engine_link_census.py OpenGothic/build --target Gothic2Notr --check-native-v3 --json
+          python3 scripts/engine_link_census.py OpenGothic/build --target gothic-body-runner --check-native-v3 --json
+
       - name: The converter passes its self-test and refuses a folder without Gothic II
         env:
           HOME: ${{ runner.temp }}/home  # a throwaway home: nothing in the runner's own
@@ -391,14 +397,15 @@ jobs:
             echo "PACKAGE_DIR=$dist"
           } >> "$GITHUB_ENV"
 
-      - name: Hand the archive to the release job
-        if: ${{ inputs.release != 'none' }}
+      - name: Upload the checked archives
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux
           path: |
             ${{ env.PACKAGE_DIR }}/${{ env.PACKAGE_NAME }}.tar.gz
             ${{ env.PACKAGE_DIR }}/${{ env.PACKAGE_NAME }}.manifest.json
+            ${{ env.PACKAGE_DIR }}/${{ env.PACKAGE_NAME }}-tools.tar.gz
+            ${{ env.PACKAGE_DIR }}/${{ env.PACKAGE_NAME }}-tools.manifest.json
             ${{ env.PACKAGE_DIR }}/SHA256SUMS
           if-no-files-found: error
           retention-days: 1
@@ -460,7 +467,8 @@ jobs:
             fi
             echo >> "$notes"
           done
-          echo 'Check the archives against SHA256SUMS before use; each manifest lists every file with its SHA-256 and every binary with the libraries it needs.' >> "$notes"
+          echo 'Download the game archive and the matching `-tools` archive for your platform. Run `content-convert resolve` once from the tools archive to prepare your Gothic II installation before starting the game.' >> "$notes"
+          echo 'Check the archives against SHA256SUMS before use. The manifests record binary hashes and their runtime dependencies.' >> "$notes"
           (cd "$out" && sha256sum -- "${assets[@]##*/}" > SHA256SUMS)
           cat "$out/SHA256SUMS"
           tag="r$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT-${GITHUB_SHA::7}"

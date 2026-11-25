@@ -64,10 +64,18 @@ struct Index {
   // findVfs, findHost and server throw std::runtime_error when the matched source is skipped.
   };
 
+const Source* fightProgram(const Index& index);
+const Source* cameraProgram(const Index& index);
+const Source* sfxProgram(const Index& index);
+const Source* musicProgram(const Index& index);
+const Source* particleFxProgram(const Index& index);
+const Source* visualFxProgram(const Index& index);
+
 // Throws std::runtime_error("program data: <file>: <reason>") on missing, corrupt or
 // unsupported data.
 Index readIndex(const std::filesystem::path& dir);   // dir/programs.json
 
+// The full program and symbol codecs below are linked only by offline tools and contracts.
 struct Encoded {
   std::string          name;    // hex SHA-256 of the version byte followed by bin
   std::string          json;
@@ -81,6 +89,15 @@ std::string writeProgram(const asset::ProgramRecord& program, const std::filesys
 // `file` is <name>.json. With actualSha256, the identity of the bytes that were decoded.
 asset::ProgramRecord readProgram(const std::filesystem::path& file, std::string* actualSha256 = nullptr);
 std::string recordSha256(const std::filesystem::path& file);
+
+// A manifest-bound program metadata record with the original table and no instructions.
+std::filesystem::path symbolMetadataPath(const std::filesystem::path& base, std::string_view sourceProgramSha256);
+std::filesystem::path symbolMetadataPayloadPath(std::filesystem::path file);
+asset::ProgramRecord readSymbolMetadata(const std::filesystem::path& file, std::string_view sourceProgramSha256);
+// Returns the fixed sibling that holds the encoded symbol section.
+std::filesystem::path writeSymbolMetadata(const std::filesystem::path& file, std::string_view sourceProgramSha256,
+                                          const asset::ProgramRecord& program);
+
 // Empty when equal: version, symbol count and order, every field, value arrays (float bits), bytecode.
 std::string compare(const asset::ProgramRecord& expected, const asset::ProgramRecord& actual);
 

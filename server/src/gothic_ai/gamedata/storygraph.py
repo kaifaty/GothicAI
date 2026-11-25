@@ -23,6 +23,7 @@ import subprocess
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from gothic_ai.gamedata import base
 
@@ -33,6 +34,7 @@ ALGORITHM_VERSION = 1
 # the converter, built in the repository (docs/story-graph.md, stage 1)
 REPO = Path(__file__).resolve().parents[4]
 TOOL = REPO / "OpenGothic" / "ai_bridge" / "storygraph" / "build" / "storygraph"
+PREPARED_GRAPH = "storygraph/story.json"
 
 Expr = list
 
@@ -194,19 +196,44 @@ def load(path: Path) -> StoryGraph:
 
 
 def ensure(game_dir: Path, cache: Path, tool: Path | None = None) -> Path | None:
-    """Cache the graph by ready-base identity and converter, without probing installation files."""
+    """Cache the manifest-bound graph or build one for an older ready base."""
     with base.resolve(game_dir) as selected:
         return _ensure(selected, cache, tool)
 
 
 def _ensure(selected: base.Base, cache: Path, tool: Path | None) -> Path | None:
-    tool = tool or Path(os.environ.get("STORYGRAPH_TOOL", TOOL))
     stamp = cache.with_suffix(".base.json")
     source = {"base_fingerprint": selected.fingerprint, "algorithm_version": ALGORITHM_VERSION}
     try:
         previous = json.loads(stamp.read_text())
     except (OSError, ValueError):
         previous = {}
+    if selected.has_file(PREPARED_GRAPH):
+        raw = selected.read(PREPARED_GRAPH)
+        try:
+            graph = json.loads(raw)
+        except ValueError as error:
+            raise RuntimeError(f"invalid prepared story graph: {selected.path}") from error
+        if not isinstance(graph, dict) or graph.get("version") != VERSION:
+            raise RuntimeError(f"invalid prepared story graph version: {selected.path}")
+        source["prepared_sha256"] = hashlib.sha256(raw).hexdigest()
+        if cache.is_file() and previous == source and cache.read_bytes() == raw:
+            return cache
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        for path, content in ((cache, raw), (stamp, json.dumps(source).encode())):
+            temporary = None
+            try:
+                with NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}-", delete=False) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(content)
+                temporary.replace(path)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+        log.info("story graph: %s from prepared base %s", cache, selected.fingerprint)
+        return cache
+
+    tool = tool or Path(os.environ.get("STORYGRAPH_TOOL", TOOL))
     if not tool.exists():
         if (
             cache.is_file()

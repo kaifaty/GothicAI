@@ -16,6 +16,19 @@ set(BASE_SOURCES
   common/musicdata.cpp common/dmusic/musicrecord.cpp common/musicnative.c common/musicnativeimport.c
   common/import/itemdefinitions.cpp common/itemdefinitions.cpp common/import/routinedefinitions.cpp common/routinedefinitions.cpp common/npcdefinitions.cpp common/placementdefinitions.cpp common/activitydefinitions.cpp
   common/npchelperdefinitions.cpp common/asset/npchelperdefinitions.cpp
+  common/game/definitions/fightdefinitiondata.cpp common/import/fightdefinitions.cpp
+  common/game/definitions/menudefinitions.cpp common/import/menudefinitions.cpp
+  common/game/definitions/cameradefinitiondata.cpp common/import/cameradefinitions.cpp
+  common/game/definitions/sfxdefinitiondata.cpp common/import/sfxdefinitions.cpp
+  common/game/definitions/musicdefinitiondata.cpp common/import/musicthemedefinitions.cpp
+  common/game/definitions/effectdefinitiondata.cpp common/import/effectdefinitions.cpp
+  common/import/storygraph.cpp
+  common/import/dialoginfodata.cpp common/game/definitions/dialoginfodata.cpp
+  common/import/questclosuredata.cpp common/game/definitions/questclosuredata.cpp
+  common/import/npcworlddata.cpp common/game/definitions/npcworlddata.cpp
+  common/import/tradeinventorydata.cpp common/game/definitions/tradeinventorydata.cpp
+  common/import/stockstoryprograms.cpp common/game/definitions/symbolcatalog.cpp
+  common/import/deathtrophydefinitions.cpp common/game/definitions/deathtrophydefinitions.cpp
   common/dmusic/directmusicimport.cpp common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp)
 set(BASE_NATIVE_IO
   lib/Tempest/Engine/io/rfile.cpp lib/Tempest/Engine/io/idevice.cpp lib/Tempest/Engine/utility/dir.cpp
@@ -30,6 +43,8 @@ endif()
 file(GLOB_RECURSE BASE_FORMAT_INPUTS ${BASE_FORMAT_CONFIGURE_DEPENDS} RELATIVE "${BASE_ROOT}"
   "${BASE_ROOT}/common/asset/*.h" "${BASE_ROOT}/common/asset/fromzenkit.cpp"
   "${BASE_ROOT}/common/import/npcsnapshot.*" "${BASE_ROOT}/common/daedalus/*" "${BASE_ROOT}/common/world/records/*"
+  "${BASE_ROOT}/common/game/definitions/nativebasecatalog.*" "${BASE_ROOT}/common/game/definitions/nativeworldplacement.*"
+  "${BASE_ROOT}/tools/nativebasecatalogimport.*" "${BASE_ROOT}/tools/nativeworldplacementimport.*"
   "${BASE_ROOT}/lib/ZenKit/src/*" "${BASE_ROOT}/lib/ZenKit/include/*"
   "${BASE_ROOT}/lib/ZenKit/vendor/libsquish/*.h" "${BASE_ROOT}/lib/ZenKit/vendor/libsquish/*.cpp"
   "${BASE_ROOT}/lib/rapidjson/include/*.h"
@@ -39,7 +54,7 @@ file(GLOB_RECURSE BASE_FORMAT_INPUTS ${BASE_FORMAT_CONFIGURE_DEPENDS} RELATIVE "
 # Runtime chunk reading (worldchunksruntime.*) is deliberately outside this
 # fingerprint: changing residency metadata or reading must not reimport the base.
 list(APPEND BASE_FORMAT_INPUTS ${BASE_SOURCES} ${BASE_NATIVE_IO}
-  common/sha256.h common/baseimport.h common/baseidentity.h common/basemusic.h common/worldchunks.h common/worlddata.h common/modeldata.h common/fontdata.h common/programdata.h common/outputunits.h common/audiodata.h common/basemesh.h
+  common/sha256.h common/baseimport.h common/baseidentity.h common/basemusic.h common/worldchunks.h common/worlddata.h common/modeldata.h common/fontdata.h common/programdata.h common/programdatajson.h common/import/programcodec.cpp common/outputunits.h common/audiodata.h common/basemesh.h
   common/gothicglb.h common/gltfmesh.h common/utils/fileutil.h common/dmusic/sourcefile.h common/dmusic/riff.h common/dmusic/segment.h
   common/dmusic/track.h common/dmusic/style.h common/dmusic/band.h common/dmusic/reference.h common/dmusic/info.h common/dmusic/pattern.h
   common/dmusic/structs.h common/dmusic/dlscollection.h common/dmusic/wave.h common/dmusic/soundfont.h common/dmusic/hydra.h
@@ -49,8 +64,26 @@ list(APPEND BASE_FORMAT_INPUTS ${BASE_SOURCES} ${BASE_NATIVE_IO}
   lib/Tempest/Engine/system/platform.h lib/Tempest/Engine/include/Tempest/File lib/Tempest/Engine/include/Tempest/Dir
   lib/Tempest/Engine/include/Tempest/TextCodec lib/Tempest/Engine/include/Tempest/Except lib/Tempest/Engine/include/Tempest/IDevice
   lib/Tempest/Engine/include/Tempest/Platform lib/cgltf/cgltf.h lib/miniz/miniz.h lib/miniz/miniz.c
-  common/itemdefinitions.h common/routinedefinitions.h common/npcdefinitions.h common/asset/npcdefinitions.h common/import/npcdefinitions.cpp common/placementdefinitions.h common/import/placementdefinitions.cpp common/activitydefinitions.h common/import/activitydefinitions.cpp cmake/NpcSnapshot.cmake cmake/BaseImport.cmake cmake/BaseFormat.cmake)
-list(APPEND BASE_FORMAT_INPUTS common/npchelperdefinitions.h common/import/npchelperdefinitions.cpp common/definitionjson.h)
+  common/itemdefinitions.h common/routinedefinitions.h common/npcdefinitions.h common/asset/npcdefinitions.h common/import/npcdefinitions.cpp common/asset/placementdefinitions.h common/placementdefinitions.h common/game/placementdefinitionruntime.h common/import/placementdefinitions.cpp common/activitydefinitions.h common/import/activitydefinitions.cpp cmake/NpcSnapshot.cmake cmake/BaseImport.cmake cmake/BaseFormat.cmake)
+list(APPEND BASE_FORMAT_INPUTS common/npchelperdefinitions.h common/import/npchelperdefinitions.cpp common/definitionjson.h
+  common/game/definitions/fightdefinitiondata.h common/game/definitions/fightdefinitioncapture.h common/game/fighttactic.h common/records/definitions.h
+  common/import/gameplaydefinitions.cpp common/game/definitions/gameplaydefinitions.h
+  common/game/definitions/questclosuredata.h
+  common/game/definitions/dialoginfodata.h common/game/definitions/npcworlddata.h
+  common/game/definitions/tradeinventorydata.h
+  common/game/definitions/menudefinitions.h common/game/definitions/menurecord.h
+  common/game/definitions/cameradefinitiondata.h common/game/definitions/sfxdefinitiondata.h
+  common/game/definitions/musicdefinitiondata.h common/game/definitions/effectdefinitiondata.h)
+list(APPEND BASE_FORMAT_INPUTS common/game/definitions/symbolcatalog.h common/game/definitions/stockstoryprograms.h common/game/definitions/stockstoryprograms.cpp
+  common/game/definitions/deathtrophydefinitions.h
+  ai_bridge/storygraph/bytecode.h ai_bridge/storygraph/bytecode.cpp
+  ai_bridge/storygraph/program.h ai_bridge/storygraph/program.cpp ai_bridge/storygraph/vocab.h
+  ai_bridge/storygraph/expr.h ai_bridge/storygraph/expr.cpp ai_bridge/storygraph/exprjson.h ai_bridge/storygraph/exprjson.cpp ai_bridge/storygraph/exprjsonwrite.h
+  ai_bridge/textcodec.h ai_bridge/textcodec.cpp)
+list(APPEND BASE_FORMAT_INPUTS ai_bridge/storygraph/graphjson.h ai_bridge/storygraph/graphjson.cpp
+  ai_bridge/storygraph/lifter.h ai_bridge/storygraph/lifter.cpp
+  ai_bridge/storygraph/model.h ai_bridge/storygraph/model.cpp
+  ai_bridge/storygraph/predicates.h ai_bridge/storygraph/predicates.cpp)
 list(REMOVE_DUPLICATES BASE_FORMAT_INPUTS)
 list(SORT BASE_FORMAT_INPUTS)
 set(BASE_FORMAT_SUMS "")

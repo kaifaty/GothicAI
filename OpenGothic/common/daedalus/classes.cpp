@@ -41,45 +41,15 @@ namespace daedalus {
 
 #undef IF_SYM_EXIST
 
-#define ZKLOG_CLASS(a, b) log(LogLevel::DEBUG, "Daedalus", "Registering script class \"%s\" as zenkit::%s", a, b)
+#define ZKLOG_CLASS(a, b) daedalus::log(daedalus::LogLevel::DEBUG, "Daedalus", "Registering script class \"%s\" as zenkit::%s", a, b)
 
 void daedalus::IGuildValues::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_GILVALUES", "IGuildValues");
-	s.register_member<IGuildValues>("C_GILVALUES.WATER_DEPTH_KNEE", &IGuildValues::water_depth_knee);
-	s.register_member<IGuildValues>("C_GILVALUES.WATER_DEPTH_CHEST", &IGuildValues::water_depth_chest);
-	s.register_member<IGuildValues>("C_GILVALUES.JUMPUP_HEIGHT", &IGuildValues::jumpup_height);
-	s.register_member<IGuildValues>("C_GILVALUES.SWIM_TIME", &IGuildValues::swim_time);
-	s.register_member<IGuildValues>("C_GILVALUES.DIVE_TIME", &IGuildValues::dive_time);
-	s.register_member<IGuildValues>("C_GILVALUES.STEP_HEIGHT", &IGuildValues::step_height);
-	s.register_member<IGuildValues>("C_GILVALUES.JUMPLOW_HEIGHT", &IGuildValues::jumplow_height);
-	s.register_member<IGuildValues>("C_GILVALUES.JUMPMID_HEIGHT", &IGuildValues::jumpmid_height);
-	s.register_member<IGuildValues>("C_GILVALUES.SLIDE_ANGLE", &IGuildValues::slide_angle);
-	s.register_member<IGuildValues>("C_GILVALUES.SLIDE_ANGLE2", &IGuildValues::slide_angle2);
-	s.register_member<IGuildValues>("C_GILVALUES.DISABLE_AUTOROLL", &IGuildValues::disable_autoroll);
-	s.register_member<IGuildValues>("C_GILVALUES.SURFACE_ALIGN", &IGuildValues::surface_align);
-	s.register_member<IGuildValues>("C_GILVALUES.CLIMB_HEADING_ANGLE", &IGuildValues::climb_heading_angle);
-	s.register_member<IGuildValues>("C_GILVALUES.CLIMB_HORIZ_ANGLE", &IGuildValues::climb_horiz_angle);
-	s.register_member<IGuildValues>("C_GILVALUES.CLIMB_GROUND_ANGLE", &IGuildValues::climb_ground_angle);
-	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_BASE", &IGuildValues::fight_range_base);
-	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_FIST", &IGuildValues::fight_range_fist);
-	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_1HS", &IGuildValues::fight_range_1hs);
-	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_1HA", &IGuildValues::fight_range_1ha);
-	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_2HS", &IGuildValues::fight_range_2hs);
-	s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_2HA", &IGuildValues::fight_range_2ha);
-	s.register_member<IGuildValues>("C_GILVALUES.FALLDOWN_HEIGHT", &IGuildValues::falldown_height);
-	s.register_member<IGuildValues>("C_GILVALUES.FALLDOWN_DAMAGE", &IGuildValues::falldown_damage);
-	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_DISABLED", &IGuildValues::blood_disabled);
-	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_MAX_DISTANCE", &IGuildValues::blood_max_distance);
-	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_AMOUNT", &IGuildValues::blood_amount);
-	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_FLOW", &IGuildValues::blood_flow);
-	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_EMITTER", &IGuildValues::blood_emitter);
-	s.register_member<IGuildValues>("C_GILVALUES.BLOOD_TEXTURE", &IGuildValues::blood_texture);
-	s.register_member<IGuildValues>("C_GILVALUES.TURN_SPEED", &IGuildValues::turn_speed);
-
-	// Gothic 2 only
-	if (s.find_symbol_by_name("C_GILVALUES.FIGHT_RANGE_G") != nullptr) {
-		s.register_member<IGuildValues>("C_GILVALUES.FIGHT_RANGE_G", &IGuildValues::fight_range_g);
-	}
+	GuildRecord::fields([&](std::string_view name, auto member) {
+		if (name == "C_GILVALUES.FIGHT_RANGE_G" && s.find_symbol_by_name(name) == nullptr)
+			return;
+		s.register_member<IGuildValues>(name, member);
+	});
 }
 
 void daedalus::IFightAi::register_(DaedalusScript& s) {
@@ -147,7 +117,8 @@ void daedalus::IParticleEffectEmitKey::register_(DaedalusScript& s) {
 	s.register_member("C_PARTICLEFXEMITKEY.EMFXLIFESPAN", &IParticleEffectEmitKey::em_fx_lifespan);
 }
 
-void daedalus::INpc::register_(DaedalusScript& s) {
+void NpcInstance::register_(daedalus::DaedalusScript& s) {
+	using daedalus::INpc;
 	ZKLOG_CLASS("C_NPC", "INpc");
 	s.register_member<INpc>("C_NPC.ID", &INpc::id);
 	s.register_member<INpc>("C_NPC.NAME", &INpc::name);
@@ -208,7 +179,8 @@ void daedalus::IMission::register_(DaedalusScript& s) {
 	s.register_member("C_MISSION.RUNNING", &IMission::running);
 }
 
-void daedalus::IItem::register_(DaedalusScript& s) {
+void ItemInstance::register_(daedalus::DaedalusScript& s) {
+	using daedalus::IItem;
 	ZKLOG_CLASS("C_ITEM", "IItem");
 	s.register_member<IItem>("C_ITEM.ID", &IItem::id);
 	s.register_member<IItem>("C_ITEM.NAME", &IItem::name);
@@ -266,28 +238,13 @@ void daedalus::IItem::register_(DaedalusScript& s) {
 
 void daedalus::IFocus::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_FOCUS", "IFocus");
-	s.register_member<IFocus>("C_FOCUS.NPC_LONGRANGE", &IFocus::npc_longrange);
-	s.register_member<IFocus>("C_FOCUS.NPC_RANGE1", &IFocus::npc_range1);
-	s.register_member<IFocus>("C_FOCUS.NPC_RANGE2", &IFocus::npc_range2);
-	s.register_member<IFocus>("C_FOCUS.NPC_AZI", &IFocus::npc_azi);
-	s.register_member<IFocus>("C_FOCUS.NPC_ELEVDO", &IFocus::npc_elevdo);
-	s.register_member<IFocus>("C_FOCUS.NPC_ELEVUP", &IFocus::npc_elevup);
-	s.register_member<IFocus>("C_FOCUS.NPC_PRIO", &IFocus::npc_prio);
-	s.register_member<IFocus>("C_FOCUS.ITEM_RANGE1", &IFocus::item_range1);
-	s.register_member<IFocus>("C_FOCUS.ITEM_RANGE2", &IFocus::item_range2);
-	s.register_member<IFocus>("C_FOCUS.ITEM_AZI", &IFocus::item_azi);
-	s.register_member<IFocus>("C_FOCUS.ITEM_ELEVDO", &IFocus::item_elevdo);
-	s.register_member<IFocus>("C_FOCUS.ITEM_ELEVUP", &IFocus::item_elevup);
-	s.register_member<IFocus>("C_FOCUS.ITEM_PRIO", &IFocus::item_prio);
-	s.register_member<IFocus>("C_FOCUS.MOB_RANGE1", &IFocus::mob_range1);
-	s.register_member<IFocus>("C_FOCUS.MOB_RANGE2", &IFocus::mob_range2);
-	s.register_member<IFocus>("C_FOCUS.MOB_AZI", &IFocus::mob_azi);
-	s.register_member<IFocus>("C_FOCUS.MOB_ELEVDO", &IFocus::mob_elevdo);
-	s.register_member<IFocus>("C_FOCUS.MOB_ELEVUP", &IFocus::mob_elevup);
-	s.register_member<IFocus>("C_FOCUS.MOB_PRIO", &IFocus::mob_prio);
+	FocusRecord::fields([&](std::string_view name, auto member) {
+		s.register_member<IFocus>(name, member);
+	});
 }
 
-void daedalus::IInfo::register_(DaedalusScript& s) {
+void DialogInstance::register_(daedalus::DaedalusScript& s) {
+	using daedalus::IInfo;
 	ZKLOG_CLASS("C_INFO", "IInfo");
 	s.register_member("C_INFO.NPC", &IInfo::npc);
 	s.register_member("C_INFO.NR", &IInfo::nr);
@@ -297,14 +254,6 @@ void daedalus::IInfo::register_(DaedalusScript& s) {
 	s.register_member("C_INFO.DESCRIPTION", &IInfo::description);
 	s.register_member("C_INFO.TRADE", &IInfo::trade);
 	s.register_member("C_INFO.PERMANENT", &IInfo::permanent);
-}
-
-void daedalus::IInfo::add_choice(IInfoChoice const& ch) {
-	choices.insert(choices.begin(), ch);
-}
-
-void daedalus::IInfo::remove_choice(std::size_t index) {
-	choices.erase(choices.begin() + static_cast<decltype(choices)::difference_type>(index));
 }
 
 void daedalus::IItemReact::register_(DaedalusScript& s) {
@@ -320,18 +269,9 @@ void daedalus::IItemReact::register_(DaedalusScript& s) {
 
 void daedalus::ISpell::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_SPELL", "ISpell");
-	s.register_member<ISpell>("C_SPELL.TIME_PER_MANA", &ISpell::time_per_mana);
-	s.register_member<ISpell>("C_SPELL.DAMAGE_PER_LEVEL", &ISpell::damage_per_level);
-	s.register_member<ISpell>("C_SPELL.DAMAGETYPE", &ISpell::damage_type);
-	s.register_member<ISpell>("C_SPELL.SPELLTYPE", &ISpell::spell_type);
-	s.register_member<ISpell>("C_SPELL.CANTURNDURINGINVEST", &ISpell::can_turn_during_invest);
-	s.register_member<ISpell>("C_SPELL.CANCHANGETARGETDURINGINVEST", &ISpell::can_change_target_during_invest);
-	s.register_member<ISpell>("C_SPELL.ISMULTIEFFECT", &ISpell::is_multi_effect);
-	s.register_member<ISpell>("C_SPELL.TARGETCOLLECTALGO", &ISpell::target_collect_algo);
-	s.register_member<ISpell>("C_SPELL.TARGETCOLLECTTYPE", &ISpell::target_collect_type);
-	s.register_member<ISpell>("C_SPELL.TARGETCOLLECTRANGE", &ISpell::target_collect_range);
-	s.register_member<ISpell>("C_SPELL.TARGETCOLLECTAZI", &ISpell::target_collect_azi);
-	s.register_member<ISpell>("C_SPELL.TARGETCOLLECTELEV", &ISpell::target_collect_elev);
+	SpellRecord::fields([&](std::string_view name, auto member) {
+		s.register_member<ISpell>(name, member);
+	});
 }
 
 #define REG_IF_SYM_EXIST(sym, ref)                                                                                     \
@@ -662,58 +602,58 @@ void daedalus::ISvm::register_(DaedalusScript& s) {
 
 void daedalus::IMenu::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_MENU", "IMenu");
-	s.register_member("C_MENU.BACKPIC", &IMenu::back_pic);
-	s.register_member("C_MENU.BACKWORLD", &IMenu::back_world);
-	s.register_member("C_MENU.POSX", &IMenu::pos_x);
-	s.register_member("C_MENU.POSY", &IMenu::pos_y);
-	s.register_member("C_MENU.DIMX", &IMenu::dim_x);
-	s.register_member("C_MENU.DIMY", &IMenu::dim_y);
-	s.register_member("C_MENU.ALPHA", &IMenu::alpha);
-	s.register_member("C_MENU.MUSICTHEME", &IMenu::music_theme);
-	s.register_member("C_MENU.EVENTTIMERMSEC", &IMenu::event_timer_msec);
-	s.register_member("C_MENU.ITEMS", &IMenu::items);
-	s.register_member("C_MENU.FLAGS", &IMenu::flags);
-	s.register_member("C_MENU.DEFAULTOUTGAME", &IMenu::default_outgame);
-	s.register_member("C_MENU.DEFAULTINGAME", &IMenu::default_ingame);
+	s.register_member<IMenu>("C_MENU.BACKPIC", &IMenu::back_pic);
+	s.register_member<IMenu>("C_MENU.BACKWORLD", &IMenu::back_world);
+	s.register_member<IMenu>("C_MENU.POSX", &IMenu::pos_x);
+	s.register_member<IMenu>("C_MENU.POSY", &IMenu::pos_y);
+	s.register_member<IMenu>("C_MENU.DIMX", &IMenu::dim_x);
+	s.register_member<IMenu>("C_MENU.DIMY", &IMenu::dim_y);
+	s.register_member<IMenu>("C_MENU.ALPHA", &IMenu::alpha);
+	s.register_member<IMenu>("C_MENU.MUSICTHEME", &IMenu::music_theme);
+	s.register_member<IMenu>("C_MENU.EVENTTIMERMSEC", &IMenu::event_timer_msec);
+	s.register_member<IMenu>("C_MENU.ITEMS", &IMenu::items);
+	s.register_member<IMenu>("C_MENU.FLAGS", &IMenu::flags);
+	s.register_member<IMenu>("C_MENU.DEFAULTOUTGAME", &IMenu::default_outgame);
+	s.register_member<IMenu>("C_MENU.DEFAULTINGAME", &IMenu::default_ingame);
 }
 
 void daedalus::IMenuItem::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_MENU_ITEM", "IMenuItem");
-	s.register_member("C_MENU_ITEM.FONTNAME", &IMenuItem::fontname);
-	s.register_member("C_MENU_ITEM.TEXT", &IMenuItem::text);
-	s.register_member("C_MENU_ITEM.BACKPIC", &IMenuItem::backpic);
-	s.register_member("C_MENU_ITEM.ALPHAMODE", &IMenuItem::alphamode);
-	s.register_member("C_MENU_ITEM.ALPHA", &IMenuItem::alpha);
-	s.register_member("C_MENU_ITEM.TYPE", &IMenuItem::type);
-	s.register_member("C_MENU_ITEM.ONSELACTION", &IMenuItem::on_sel_action);
-	s.register_member("C_MENU_ITEM.ONSELACTION_S", &IMenuItem::on_sel_action_s);
-	s.register_member("C_MENU_ITEM.ONCHGSETOPTION", &IMenuItem::on_chg_set_option);
-	s.register_member("C_MENU_ITEM.ONCHGSETOPTIONSECTION", &IMenuItem::on_chg_set_option_section);
-	s.register_member("C_MENU_ITEM.ONEVENTACTION", &IMenuItem::on_event_action);
-	s.register_member("C_MENU_ITEM.POSX", &IMenuItem::pos_x);
-	s.register_member("C_MENU_ITEM.POSY", &IMenuItem::pos_y);
-	s.register_member("C_MENU_ITEM.DIMX", &IMenuItem::dim_x);
-	s.register_member("C_MENU_ITEM.DIMY", &IMenuItem::dim_y);
-	s.register_member("C_MENU_ITEM.SIZESTARTSCALE", &IMenuItem::size_start_scale);
-	s.register_member("C_MENU_ITEM.FLAGS", &IMenuItem::flags);
-	s.register_member("C_MENU_ITEM.OPENDELAYTIME", &IMenuItem::open_delay_time);
-	s.register_member("C_MENU_ITEM.OPENDURATION", &IMenuItem::open_duration);
-	s.register_member("C_MENU_ITEM.USERFLOAT", &IMenuItem::user_float);
-	s.register_member("C_MENU_ITEM.USERSTRING", &IMenuItem::user_string);
-	s.register_member("C_MENU_ITEM.FRAMESIZEX", &IMenuItem::frame_sizex);
-	s.register_member("C_MENU_ITEM.FRAMESIZEY", &IMenuItem::frame_sizey);
+	s.register_member<IMenuItem>("C_MENU_ITEM.FONTNAME", &IMenuItem::fontname);
+	s.register_member<IMenuItem>("C_MENU_ITEM.TEXT", &IMenuItem::text);
+	s.register_member<IMenuItem>("C_MENU_ITEM.BACKPIC", &IMenuItem::backpic);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ALPHAMODE", &IMenuItem::alphamode);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ALPHA", &IMenuItem::alpha);
+	s.register_member<IMenuItem>("C_MENU_ITEM.TYPE", &IMenuItem::type);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ONSELACTION", &IMenuItem::on_sel_action);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ONSELACTION_S", &IMenuItem::on_sel_action_s);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ONCHGSETOPTION", &IMenuItem::on_chg_set_option);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ONCHGSETOPTIONSECTION", &IMenuItem::on_chg_set_option_section);
+	s.register_member<IMenuItem>("C_MENU_ITEM.ONEVENTACTION", &IMenuItem::on_event_action);
+	s.register_member<IMenuItem>("C_MENU_ITEM.POSX", &IMenuItem::pos_x);
+	s.register_member<IMenuItem>("C_MENU_ITEM.POSY", &IMenuItem::pos_y);
+	s.register_member<IMenuItem>("C_MENU_ITEM.DIMX", &IMenuItem::dim_x);
+	s.register_member<IMenuItem>("C_MENU_ITEM.DIMY", &IMenuItem::dim_y);
+	s.register_member<IMenuItem>("C_MENU_ITEM.SIZESTARTSCALE", &IMenuItem::size_start_scale);
+	s.register_member<IMenuItem>("C_MENU_ITEM.FLAGS", &IMenuItem::flags);
+	s.register_member<IMenuItem>("C_MENU_ITEM.OPENDELAYTIME", &IMenuItem::open_delay_time);
+	s.register_member<IMenuItem>("C_MENU_ITEM.OPENDURATION", &IMenuItem::open_duration);
+	s.register_member<IMenuItem>("C_MENU_ITEM.USERFLOAT", &IMenuItem::user_float);
+	s.register_member<IMenuItem>("C_MENU_ITEM.USERSTRING", &IMenuItem::user_string);
+	s.register_member<IMenuItem>("C_MENU_ITEM.FRAMESIZEX", &IMenuItem::frame_sizex);
+	s.register_member<IMenuItem>("C_MENU_ITEM.FRAMESIZEY", &IMenuItem::frame_sizey);
 
 	// switch
 	if (s.find_symbol_by_name("C_MENU_ITEM.FRAMEPOSX") != nullptr) {
-		s.register_member("C_MENU_ITEM.FRAMEPOSX", &IMenuItem::frame_posx);
-		s.register_member("C_MENU_ITEM.FRAMEPOSY", &IMenuItem::frame_posy);
+		s.register_member<IMenuItem>("C_MENU_ITEM.FRAMEPOSX", &IMenuItem::frame_posx);
+		s.register_member<IMenuItem>("C_MENU_ITEM.FRAMEPOSY", &IMenuItem::frame_posy);
 	}
 
 	// Gothic 2 only
 	if (s.find_symbol_by_name("C_MENU_ITEM.HIDEIFOPTIONSECTIONSET") != nullptr) {
-		s.register_member("C_MENU_ITEM.HIDEIFOPTIONSECTIONSET", &IMenuItem::hide_if_option_section_set);
-		s.register_member("C_MENU_ITEM.HIDEIFOPTIONSET", &IMenuItem::hide_if_option_set);
-		s.register_member("C_MENU_ITEM.HIDEONVALUE", &IMenuItem::hide_on_value);
+		s.register_member<IMenuItem>("C_MENU_ITEM.HIDEIFOPTIONSECTIONSET", &IMenuItem::hide_if_option_section_set);
+		s.register_member<IMenuItem>("C_MENU_ITEM.HIDEIFOPTIONSET", &IMenuItem::hide_if_option_set);
+		s.register_member<IMenuItem>("C_MENU_ITEM.HIDEONVALUE", &IMenuItem::hide_on_value);
 	}
 }
 

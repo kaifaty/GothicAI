@@ -34,41 +34,56 @@ if(PROJECT_IS_TOP_LEVEL)
   endif()
 endif()
 
-set(STORYGRAPH_SOURCES
-  bytecode.cpp bytecode.h
-  eval.cpp     eval.h
-  exec.cpp     exec.h
-  expr.cpp     expr.h
-  exprjson.cpp exprjson.h
-  lifter.cpp   lifter.h
-  model.cpp    model.h
+add_library(StoryGraphRuntime STATIC
+  expr.cpp expr.h
+  exprjson.cpp exprjson.h exprjsonwrite.h
   predicates.cpp predicates.h
-  program.cpp  program.h
-  vocab.h
-  ../textcodec.cpp ../textcodec.h)
-if(PROJECT_IS_TOP_LEVEL)
-  add_library(StoryGraph STATIC ${STORYGRAPH_SOURCES})
-else()
-  add_library(StoryGraph OBJECT ${STORYGRAPH_SOURCES})
-endif()
-target_link_libraries(StoryGraph PUBLIC gothic-daedalus)
-target_include_directories(StoryGraph PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
-# rapidjson 1.1 trips modern clang warnings; treat it as a system header
-target_include_directories(StoryGraph SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rapidjson/include)
+  nativeexec.cpp nativeexec.h execcore.h
+  program.h vocab.h
+  ../textcodec.cpp ../textcodec.h
+  ../../common/game/definitions/stockstoryprograms.cpp ../../common/game/definitions/stockstoryprograms.h)
+target_include_directories(StoryGraphRuntime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(StoryGraphRuntime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+target_include_directories(StoryGraphRuntime SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rapidjson/include)
+
+add_library(StoryGraphLift STATIC
+  bytecode.cpp bytecode.h
+  lifter.cpp lifter.h)
+target_link_libraries(StoryGraphLift PUBLIC StoryGraphRuntime gothic-script-data)
+
+add_library(StoryGraph STATIC
+  eval.cpp eval.h
+  exec.cpp exec.h
+  graphjson.cpp graphjson.h
+  model.cpp model.h
+  program.cpp)
+target_link_libraries(StoryGraph PUBLIC StoryGraphLift gothic-script-state)
+target_link_libraries(StoryGraph PRIVATE gothic-base-runtime)
 
 if(NOT MSVC)
+  target_compile_options(StoryGraphRuntime PRIVATE -Wall -Wconversion -Werror)
+  target_compile_options(StoryGraphLift PRIVATE -Wall -Wconversion -Werror)
   target_compile_options(StoryGraph PRIVATE -Wall -Wconversion -Werror)
 endif()
 
 # The game build exposes the tool as an explicit target, without building it by default.
 option(STORYGRAPH_TOOL "build the storygraph command line tool" ${PROJECT_IS_TOP_LEVEL})
-add_executable(storygraph main.cpp scan.cpp check.cpp check.h fuzz.cpp saveworld.cpp saveworld.h
+add_executable(storygraph main.cpp oumessages.cpp scan.cpp check.cpp check.h fuzz.cpp saveworld.cpp saveworld.h
                             effects.cpp effects.h execcheck.cpp execcheck.h snapshot.h
                             ../../common/basestore.cpp)
-target_link_libraries(storygraph PRIVATE StoryGraph gothic-base-import gothic-video-import)
+target_link_libraries(storygraph PRIVATE StoryGraph gothic-base-import gothic-video-import gothic-daedalus
+  gothic-offline-bindings)
 if(NOT STORYGRAPH_TOOL)
   set_target_properties(storygraph PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
 if(NOT MSVC)
   target_compile_options(storygraph PRIVATE -Wall -Wconversion -Werror)
+endif()
+
+# The server's reader only needs the prepared output-unit catalogue.
+add_executable(storygraph-ou EXCLUDE_FROM_ALL oumain.cpp oumessages.cpp ../../common/basestore.cpp)
+target_include_directories(storygraph-ou SYSTEM PRIVATE ../../lib/rapidjson/include)
+target_link_libraries(storygraph-ou PRIVATE gothic-base-runtime gothic-video-runtime)
+if(NOT MSVC)
+  target_compile_options(storygraph-ou PRIVATE -Wall -Wconversion -Werror)
 endif()

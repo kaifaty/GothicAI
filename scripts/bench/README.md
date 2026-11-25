@@ -344,25 +344,32 @@ waits and four frames more once everything is loaded (also when it was loaded on
 TAA history and the SSAO history start over at phase 0 and 16 fixed steps run with visibility in
 a canonical cluster order (sorted by sphere and meshlets, not by the ids streaming handed out)
 before `shot`; texture levels settle and stand still until the shot.
-Two runs of one binary then give byte-identical `perf-market` and `perf-harbour` PNGs, and
-`perf-forest` and `perf-island` PNGs in most pairs: at 1920x1080 on Ryzen, virtual shadow maps on,
-five runs gave 0 changed pixels at the market and the harbour in all ten pairs, 0 or 1 pixel in the
-forest and 0, 3 or 35–38 pixels (max 2 levels) on the island, the same pixels every time (issue
-#946). `perf-market-teleport` is shot without a streaming wait by design and still depends on
-loading. Accept a render change off ↔ on as two consecutive runs on one host and binary, toggled by
-the feature's own variable:
-`uv run --no-project --with pillow --with numpy python
-reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir>` must report 0
-changed pixels at the four waited points (`--all-pairs` compares every pair of several runs). If a
-point differs, run off and on once more: the change is accepted when every one of the four points
-gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+With probe GI active, the wait also restarts the probe pool, its frame clock, fog sky visibility and
+eye adaptation. During the fixed steps, a probe's grid position determines its offscreen relight phase.
+Ray hits vote by cell before the renderer selects up to 512 requests. Each bounce propagates the
+source probe's use stamp from the start of the relight.
+`perf-market-teleport` captures the first frame after the return jump and still depends on loading.
 
-The virtual shadow maps stay on for the comparison on Ryzen: their GPU passes no longer depend on
-the order of shader invocations.
-[Report](../../reports/engine/2026-11-10-still-shots-repeat/README.md): the SSAO cycle's phase that
-was not reset, the two shader bugs behind the VSM noise (an uninitialised depth in
-`fog_epipolar.comp`, a page lost in `vsm_mark_pages.comp`), the second state of a still (whether the
-wait had to wait) and what is left.
+Compare consecutive runs on one host with one binary. For an off ↔ on render check, toggle the
+feature's own variable between runs. Each acceptance pair must report zero changed RGBA pixels
+at all four waited points in the same comparison. Set `first` and `second` to the output directories
+and use `--host mac` for Metal.
+
+```sh
+uv run --no-project --with pillow --with numpy python \
+  reports/engine/2026-11-03-streaming-optimisation/shots_diff.py \
+  --host ryzen --shots perf-market,perf-harbour,perf-forest,perf-island a="$first" b="$second"
+```
+
+On `8cfe16dc4`, one Ryzen RTX 3080 pair at 1920×1080 with VSM and probe GI and three Metal pairs
+at 800×600 matched at all four points. On `95f9dfdea`, the Ryzen pair had 0, 0, 5 and 1 changed
+RGBA pixels in market, harbour, forest and island respectively. The maximum channel differences were
+0, 0, 1 and 1. Issue #946 remains open. [Measurements](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#пара-ryzen-после-ревью).
+
+The regular VSM fog pass uses one NDC from the top-left depth pixel for both epipolar ray selection and the shadow threshold.
+It supplies zero depth for a missing ray or texel and keeps all 32 threshold comparisons.
+Replaying the FGT2 inputs on the CPU removes the divergence reproduced by contracting the old NDC expression.
+Two standard RTX 3080 runs on `01fdf2a6b` differed in 0, 62, 0 and 1 RGBA pixels respectively across the four waited shots, with a maximum channel difference of 1. [Replay and control](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md#контроль-ryzen-после-исправления-тумана).
 
 `motion-vectors` and `motion-vectors-clips` check the motion vectors of objects (graphics plan 1b,
 [report](../../reports/render-features/2026-11-10-motion-vectors/step-1b.md)). `motion-vectors` takes stills: a still
@@ -397,6 +404,8 @@ and its landscape BLAS is freed) run as a copy named `streaming-flythrough` for 
 
 ## План и журнал
 
+- 2026-11-22: a deterministic wait starts probe GI from an empty pool and phase zero. Its fixed
+  steps give the same offscreen turn, hit request selection and use stamp under a permutation of probe slots.
 - 2026-11-11: `deterministic on` walks visibility clusters in a canonical order (sorted by sphere and meshlets,
   not by the ids streaming handed out). On the Mac it removed the dependence on the id order; on Ryzen four
   runs still give the discrete states of issue #946 (0–32 px), so the acceptance rule stays as it is.
@@ -691,6 +700,11 @@ and an absolute census/output path. `world <ZEN> [waypoint]` requests the existi
 `world-check <ZEN>` fails unless that world is current. Both commands use only indexed worlds.
 Successful benchmark music selection logs `Dx8 music: <SGT>` after the mixer accepts it.
 A normal startup logs `Main menu ready: <id>` after menu initialization; no keyboard driver is needed.
+
+`hero-script-probe` uses the normal hero input for a map and the legacy healing shortcut, then
+uses a quest item. Run it with `GOTHIC_AI=0 MELEE_HEAL_INTERRUPT=0 WORLD=NEWWORLD.ZEN`.
+The [migration report](../../reports/engine/2026-11-14-npc-data/README.md#игровая-приёмка)
+records the instruction comparison from the separately instrumented revisions.
 
 A run takes the game start (~10 s from a save) plus the scenario time. On Mac the game window is minimized,
 does not take the focus and plays no sound, so it can run while someone works on the same machine.
@@ -992,7 +1006,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
-| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer drops the TAA history and jitter phase, then 16 fixed steps run before the next command, and visibility appends clusters in a canonical order (sorted on the CPU by sphere and meshlets; one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
+| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the world stands four frames more, the renderer resets TAA, SSAO and active probe GI, then 16 fixed steps run before the next command, and visibility appends clusters in a canonical order (sorted on the CPU by sphere and meshlets; one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
 | `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
 | `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
 | `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |
@@ -1352,6 +1366,43 @@ the syllables) and `key.txt` (nods, the largest step of a frame, the first frame
 
 ### Как работает сейчас
 
+`npcfight-record begin <label> <actor> ...` and `npcfight-record end` wrap an existing bench fight with a diagnostic
+trace. Select two to four distinct actors by a unique script instance, `id:<world NPC index>`, `player`, or `crew`
+(all actors from the last `arc`). The window leaves actor setup and combat to ordinary bench commands such as
+`arc`, `fight`, `wait` and `waitdown`. For the single native archer in
+[`archery-smoke.bench`](archery-smoke.bench), open the trace with `npcfight-record begin archer crew player` after
+the archer and hero are ready, then close it after `waitdown`.
+
+`events.jsonl` has `npc_fight_record_begin` with the seed, initial stats, weapons, mana and positions,
+`npc_fight_record_hit` with native positive HP loss typed `melee`, `ranged` or `spell`, and
+`npc_fight_record_end` with elapsed simulation time, final HP, position, down and dead flags. Creation IDs identify
+actors within the trace even if two have the same instance. Hits involving a participant and a bystander have
+`external:true`. A removed or reloaded actor has `present:false` at the end. A missing end produces
+`npc_fight_record_error`. The trace captures the chosen window. An oracle for a combat model also needs scenarios
+with verified starting conditions and an episode-level outcome rule.
+
+`npcfight-handoff arm <archer A> <archer B>` exercises one bench-only transfer between the native game and the Society
+combat queue. Equip the two existing NPCs with bows and at least 20 arrows each. Start their native fight and use
+`npcfight-handoff wait native_hit` to wait for a native hit from each archer. Move the hero at least 60 m away from both
+and use `npcfight-handoff wait far_release` to wait for two hits and another release. Return the hero to the fight,
+use `npcfight-handoff wait returned_hit` to check that a new native shot landed, and close with `npcfight-handoff end`.
+The `npc_combat_handoff_*` rows show actual HP and inventory, the controller switches, and one shot ID per paired
+Society release and impact. The fixture uses damage observed in the initial native exchange and fixed timing. An arrow
+already in flight resolves before the native actor ticks resume.
+
+For one-handed melee use `npcfight-handoff arm_melee <actor A> <actor B>` with two humans and physical blade contacts.
+After `wait native_hit`, `wait native_swing` waits for a single swing before contact. Move the hero away on that tick.
+The native animation and its blade contacts finish the existing swing while the bench holds combat decisions.
+Use `wait far_hits` before returning the hero and the same `wait returned_hit` and `end` milestones as for archers.
+The native swing number is logged at start, contact and end. `OPENGOTHIC_BODY_TRACE=1` also records the physical
+contact in `melee-blade-shadow.jsonl`.
+
+`npcfight-handoff arm_magic <caster> <target> <rune symbol> <mana cost symbol>` exercises a single caster with a
+reusable projectile rune. Start the native fight, then use `wait native_hit` and `wait native_projectile` before moving
+the hero away. `wait far_release` and `wait returned_hit` check the round trip. The handoff journal records mana at
+release, HP at impact, and the inherited state of both NPCs. `OPENGOTHIC_ARROW_TRACE=<absolute CSV path>` records native
+spell projectile IDs and contacts.
+
 `npcduel <attacker instance> <defender instance> <seed> [timeout_ms]` creates two fresh
 script NPCs, 3 m apart and 12 m in front of the stationary immortal observer, as in
 `bodyduel`. Only these two copies retain `AiNormal`, the near-hero contact rig and
@@ -1497,6 +1548,154 @@ are retained. `gamedata/far_fight.json` stays `uncalibrated`.
   timeouts in the data rather than treating them as invalid records.
 - 2026-11-01: added the native nonlethal calibration bench and plan/run/smoke/report
   tools for user decision Б3 in [Дальний бой NPC](../../reports/Дальний%20бой%20NPC.md).
+
+### Society handoff scenarios
+
+Use the Mac headless runner with a fresh matching game base. Export `NEWWORLD.ZEN` once and use the same
+file for preparation and replay. Set `GOTHIC_DIR` to your game directory and `RUNNER_BIN` to the built
+`gothic-body-runner` before running these commands from the repository root. The scenarios use lockstep and
+seed 73106.
+
+```bash
+out="$PWD/.bench-out/society-handoff"
+mkdir -p "$out"
+export GOTHIC_DIR RUNNER_BIN
+export BENCH_HOST=local NO_BUILD=1 GOTHIC_AI=0
+export OPENGOTHIC_SOCIETY_CONFIG= OPENGOTHIC_SOCIETY_PILOT_NPC=
+export OPENGOTHIC_SOCIETY_PILOT_ROUTE= OPENGOTHIC_SOCIETY_PILOT_POST=
+export OPENGOTHIC_SOCIETY_PILOT_GROUP= OPENGOTHIC_SOCIETY_PILOT_CSV=
+"$RUNNER_BIN" -g "$GOTHIC_DIR" --world NEWWORLD.ZEN --society-export "$out/world.json"
+export OPENGOTHIC_SOCIETY_WORLD="$out/world.json"
+```
+
+#### Combat
+
+Each case starts from a fresh world. In `events.jsonl`, the `npc_combat_handoff_*` rows must show native
+departure, Society acquisition, return and a new native hit on the same participants. All native damage must
+agree with the separate `npc_fight_record_hit` rows.
+
+| Scenario | Evidence to check |
+| --- | --- |
+| [Ranged](society-ranged-handoff.bench) | One native arrow is still in flight when the hero leaves. Its hit resolves once before Society acquires the actors. Both archers hit while far. One Society arrow resolves as the hero returns. Both drains preserve the debit already made at release. |
+| [Melee](society-melee-handoff.bench) | One native swing opens before departure and deals one physical hit before Society acquires the actors. Both fighters hit while far. The melee blade trace joins the departing swing to its physical contact. |
+| [Magic](society-magic-handoff.bench) | Xardas commits a Fireball before departure. Its native hit spends no additional mana. Society inherits the live HP and mana, resolves its last committed hit during return, and Xardas lands a new native projectile. |
+
+```bash
+WORLD=NEWWORLD.ZEN OPENGOTHIC_ARROW_TRACE="$out/ranged-flight.csv" \
+  scripts/bench.sh society-ranged-handoff "$out/ranged"
+WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 \
+  scripts/bench.sh society-melee-handoff "$out/melee"
+WORLD=NEWWORLD.ZEN OPENGOTHIC_ARROW_TRACE="$out/magic-flight.csv" \
+  scripts/bench.sh society-magic-handoff "$out/magic"
+```
+
+#### Standing and route
+
+Generate the two saves with the matching Society export active and the pilot off. The [standing preparation](society-standing-handoff-prep.bench)
+saves after the night guard settles. The [route preparation](society-route-handoff-prep.bench) saves just before his
+23:00 route. Run each scenario from the corresponding save. For a native control, replay that same save and
+scenario into a separate output directory with `OPENGOTHIC_SOCIETY_PILOT_NPC=`.
+
+```bash
+WORLD=NEWWORLD.ZEN \
+  scripts/bench.sh society-standing-handoff-prep "$out/standing-prep"
+WORLD= SAVE="$out/standing-prep/session-pilot-night.sav" OPENGOTHIC_SOCIETY_PILOT_NPC='PAL_238_RITTER#0' \
+  scripts/bench.sh society-standing-handoff "$out/standing"
+
+WORLD=NEWWORLD.ZEN \
+  scripts/bench.sh society-route-handoff-prep "$out/route-prep"
+WORLD= SAVE="$out/route-prep/session-route-start.sav" OPENGOTHIC_SOCIETY_PILOT_NPC='PAL_238_RITTER#0' \
+  OPENGOTHIC_SOCIETY_PILOT_ROUTE=1 \
+  scripts/bench.sh society-route-handoff "$out/route"
+```
+
+For [standing](society-standing-handoff.bench), look for `Society pilot tick` skips while far, native activity
+and contact near the hero, and resumed skips after departure. For [route](society-route-handoff.bench), look
+for `Society route` movement steps in both far phases and none near the hero. Compare the position, destination,
+animation and collision ray samples with the native control.
+
+#### Guarded post
+
+The [guard scenario](society-guard-handoff.bench) starts from a fresh world and ends after the 09:00 shift
+change. In `npc_character_place_probe`, the original guard holds the sole lock across all three attempts
+by Pablo to reach the point. After the guard leaves, Pablo reaches the post and acquires it.
+
+```bash
+WORLD=NEWWORLD.ZEN OPENGOTHIC_SOCIETY_PILOT_NPC='MIL_322_MILIZ#0' OPENGOTHIC_SOCIETY_PILOT_POST=1 \
+  scripts/bench.sh society-guard-handoff "$out/guard"
+```
+
+### Society NPC CPU
+
+Use a `gothic-body-runner` built with `-DOPENGOTHIC_ENABLE_FRAME_PROFILE=ON`, a prepared `GOTHIC_DIR` and an absolute
+`RUNNER_BIN`. The [city](society-npc-city.bench) and [forest](society-npc-forest.bench) routes use fresh Khorinis,
+the same seed, and an 8 ms fixed step. Compare native execution, Society in observation mode, and its routine pilot
+with a limit of 24 NPCs. The settled, approach and arrived windows are marked in `events.jsonl`.
+
+```bash
+root="$PWD"
+out="$root/.bench-out/society-npc-cpu"
+mkdir -p "$out"
+export GOTHIC_AI=0 OPENGOTHIC_SOCIETY_CONFIG= OPENGOTHIC_SOCIETY_WEIGHTS=
+export OPENGOTHIC_SOCIETY_PILOT_NPC= OPENGOTHIC_SOCIETY_PILOT_ROUTE= OPENGOTHIC_SOCIETY_PILOT_POST=
+export OPENGOTHIC_SOCIETY_PILOT_ANIM=0 OPENGOTHIC_SOCIETY_PILOT_EARLY=0 OPENGOTHIC_SOCIETY_PILOT_WIDE=0 OPENGOTHIC_SOCIETY_POSE_TRACE=0
+"$RUNNER_BIN" -g "$GOTHIC_DIR" --world NEWWORLD.ZEN --society-export "$out/world.json"
+for scene in city forest; do
+  for mode in stock shadow group; do
+    run="$out/$scene/$mode"
+    mkdir -p "$run"
+    case "$mode" in
+      stock) world=; count=; society_csv= ;;
+      shadow) world="$out/world.json"; count=; society_csv="$run/society.csv" ;;
+      group) world="$out/world.json"; count=24; society_csv="$run/society.csv" ;;
+    esac
+    (cd "$run" && OPENGOTHIC_FRAME_PROFILE="$run/frameprofile.csv" \
+      OPENGOTHIC_SOCIETY_WORLD="$world" OPENGOTHIC_SOCIETY_PILOT_GROUP="$count" \
+      OPENGOTHIC_SOCIETY_PILOT_CSV="$society_csv" "$RUNNER_BIN" -g "$GOTHIC_DIR" --game-parity \
+      --world NEWWORLD.ZEN --scenario "$root/scripts/bench/society-npc-$scene.bench" \
+      --output "$run" --mode lockstep --step-ms 8 > game.log 2>&1)
+  done
+  base="$out/$scene"
+  python3 scripts/society_npc_cpu_report.py stock="$base/stock" shadow="$base/shadow" group="$base/group" \
+    --phase steady:steady:return --phase return:return:arrived --phase arrived:arrived:end \
+    --release-phase return --json "$base/summary.json"
+done
+```
+
+Start with an empty output directory on each comparison. The cohort CSV distinguishes selected NPCs from actual
+routine holds. The report joins it to the frame profile by world tick, checks the transition journal against the
+individual NPC IDs, and reports animation worker elapsed time separately from the main-thread pass.
+
+For the animation A/B, keep `OPENGOTHIC_SOCIETY_PILOT_GROUP=24` in both takes and toggle
+`OPENGOTHIC_SOCIETY_PILOT_ANIM=0/1`. Use the same city and forest routes and keep the pose trace off.
+The report includes the parallel animation pass, its serial tail and the late catch-up after camera movement.
+Use the animation worker update count to compare actual calls. The Society deferral counter also includes
+ticks that the normal animation LOD would have skipped.
+
+To measure early ownership, keep the group at 24 and `OPENGOTHIC_SOCIETY_PILOT_ANIM=1` in both takes.
+Toggle `OPENGOTHIC_SOCIETY_PILOT_EARLY=0/1`. Compare the marked `steady..return` window on each route.
+The `society_npc_tick_skipped` counter records calls to `Npc::tick` avoided after the ordinary cadence check.
+
+For the world-wide standing and waiting cohort, keep `OPENGOTHIC_SOCIETY_PILOT_EARLY=1` in both takes and
+toggle `OPENGOTHIC_SOCIETY_PILOT_WIDE=0/1`. The wide take uses the eligible population across the world.
+Count `Society group early tick` records for distinct actors that actually skipped a native tick, and keep the
+frame profile skip counter for the timed window. For a pose comparison, enable wide selection in both takes
+so the native reference tracks the newly eligible actors, then toggle early ownership and pose deferral together.
+
+To measure persistent ownership, freeze the previous runner as the control. Use `WIDE=1`, `EARLY=1`, and
+the same group limit for both runners. Keep pose tracing off for the timed runs. Compare both run orders
+at a fixed 8 ms step and join `society.csv` by the world tick. `bridge_ns` covers the admission checks,
+ownership queues, camera interest and sampling. `bridge_outside_tick_ns` marks the portion to add to the
+existing NPC subtotal. `wake_ns`, `wake_count` and `sleeping` report native return preparation, wake events
+and maintained ownership. The native tick skip counter records admissions that avoided a scheduled
+native tick. Once admitted, a dormant NPC is absent from the dispatch mask. To verify the first exposed
+pose, use the animation-on control and enable the pose trace in both runs.
+
+For a separate pose check, run [mid-gesture return](society-pose-midgesture.bench) with
+`OPENGOTHIC_SOCIETY_POSE_TRACE=1` under both animation modes. Compare the two output directories with
+`python3 scripts/society_pose_report.py <control> <paused> --min-wakes 8 --require-active-gesture --require-live-debt`.
+The comparison checks the root, six rendered bones, gesture name and phase, and collider rays on the first exposed
+tick and the next four ticks. It requires both a real first-exposure catch-up and a return during a guard gesture.
 
 ## Live P30 capture on Mac
 
@@ -1904,11 +2103,11 @@ explain the bounds and remaining combat/body work. `npcday` files:
 | File | Contents |
 |---|---|
 | `npc-day.json` | Tier mode, seed, private random streams, period, start time and hero; at the end the sample/event counts, wall time and the NPC tick time per tier |
-| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag |
+| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag; appended `fp,fp_x,fp_y,fp_z,on_fp,aivar_19,fp_available,on_routine_wp` |
 | `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
 | `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
-| `npc-day-script.json` | Opt-in `probe`: deterministic script calls by symbol/family, per-state engine Init/Loop/End entries, nested calls, inclusive VM instruction counts, externals and RNG sources. Header records `npc` or `shared` random streams. |
-| `npc-day-activity.jsonl` | Opt-in `trace=ID,SYMBOL,display-name`: phase entry/result, engine queue commands with raw action arguments, RNG bound/result/source, FP and MOB occupancy, observed body-state changes. Numeric IDs are world-array NPC IDs; symbols select all matching instances. |
+| `npc-day-script.json` | Opt-in `probe` records per-state engine Init/Loop/End entries, accepted phase records and RNG sources. `native_phase_calls` counts successful native dispatches by symbol and family. Archived `vm_instructions_inclusive` runs count VM calls and include nested calls, externals and instruction counts. `instructions_by_symbol` counts executed bytecode by function body and `unattributed_instructions` counts bytecode without a resolved stack frame. The header records `npc` or `shared` random streams. |
+| `npc-day-activity.jsonl` | Opt-in `trace=ID,SYMBOL,display-name`: phase entry/result, queue commands, RNG, FP and MOB occupancy, and body changes. `activity_transition` records the wake reasons, stages, place, owner NPC ID and queue head after the step. `physics_noise` identifies the culprit and whether the quiet-sound reaction entered the VM. Numeric IDs are world-array NPC IDs; symbols select all matching instances. |
 | `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
 
 The society stand's core is checked against the same journal: `scripts/society_parity.py` compares its marks
@@ -1921,8 +2120,10 @@ stops, so commands after `npcday` use the shared stream again. Do not combine `n
 in one scenario: the arena isolates its actors and clears all streams on reset. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
 States that start and end within one world tick are not seen by the event poll.
 
-`probe` and `trace=...` install measurement only for that journal interval; both are off by default.
-The original journal fields and event thresholds are unchanged. `trace=` implies `probe`.
+`trace=...` records selected NPCs independently of the Daedalus observer. Its JSONL header carries
+`trace_version: 2`, with RNG sources labeled
+`engine` or `script`. Add `probe` for the VM counters and detailed RNG attribution. Both options
+apply only during the journal interval and are off by default.
 The instruction metric includes helpers and reentrant script work during the engine phase; it is
 not wall time. `engine` counts entries through `invokeState`, while `nested` excludes that entry.
 `records` counts the entries that ran from an activity record (D4.1) instead of the script; such a phase has no
@@ -1957,12 +2158,10 @@ boundaries, first differences and source analysis are in the
 [D4 baseline](../../reports/engine/2026-11-14-npc-data/d4-baseline.md#харад-и-загрузка-на-занятии).
 `npc-day-smith-save.bench` and `npc-day-smith-reload.bench` provide this fixture for Harad.
 `gothic-npc-day-contract` checks nested VM calls, random ownership, totals, repeated JSON bytes and
-actual engine queue observation on a synthetic program, without game data. The synthetic fixture of
-`gothic-placed-items-contract` additionally exercises `invokeState` through the real `Hlp_Random`,
-`GameScript::rand` and measurement probe, and verifies JSONL commands from both regular and overlay
-`Npc::aiPush` queues. The day contract also checks that merged `LookAtNpc` commands are both traced.
-Repeated probe intervals in one VM retain inactive call observer links and their collectors;
-removable VM observers are tracked in [#1550](https://github.com/kaifaty/GothicAI/issues/1550).
+actual engine queue observation on a synthetic program, without game data. The native day contract also checks phase counters and the distinction between regular and overlay commands.
+At the end of each interval the probe removes its call observer and releases its collector.
+Call observers must leave the VM's call-observer list unchanged during notification.
+The day contract runs two intervals on one VM and checks that other call observers still run in registration order.
 
 
 `scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out, with his events
@@ -2025,6 +2224,80 @@ python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
   --tolerances scripts/bench/npc-day-parity.tolerances-activity.json \
   --out /absolute/activity.md --json /absolute/activity.json
 ```
+
+Point activities use `npc-day-parity.tolerances-points.json`. The lead accepted E2.1 preparation
+for strict E2.2 acceptance against control 73106 **with the same seed 73106**. All thresholds stay
+unchanged: the candidate must have **zero missed shifts and zero stuck NPCs**, with no NPC-specific exceptions.
+The complete shared-stream days 73106 and 73107 were recalculated with the verified HUMANS center
+offset and active-TA waypoint; all eight combinations of three rounded boundary bits give identical metrics.
+The current result is 31585 samples, 341 arrivals, p95 0 / maximum 5 game minutes, no collisions,
+but three missing fallback-only shifts of PAL_227 on SHIP_DECK_29 (one NPC in the tool's stuck counter).
+This is a cross-seed observation of the original, not an allowance of three or proof of an actual hang
+between samples. Both self-comparisons pass 12/12 (341 arrivals for 73106, 342 for 73107).
+The unchanged zero limits fail on the cross-seed pair:
+pooled and guarding checks pass 10/12; the other four forms pass 12/12. Historical 12/12 on
+`bd6391ddc` does not validate the corrected metric. Replay evidence is in `npc-events-e2/review-f1-f4/`.
+The cancelled prefix is excluded. The profile covers the five measured forms, pooled and individually:
+held FP agreement >=94%, pose time 0.99..1.01, arrival p95 <=5 / maximum <=10 game minutes,
+zero missed segments, stuck NPCs and double occupancy. The FP allowance reflects two seated campfire
+NPCs exchanging points. Use `--activity-states` for the states being changed and inspect their margins.
+[Measurements, causes and headroom](../../reports/engine/2026-11-14-npc-data/e2-tolerance.md).
+
+The derived controls are `/mnt/shared/gothic-ai/npc-events-e2/accepted-calibration/seed-73106/`
+and `seed-73107/`; primary CSVs and their SHA-256 hashes are unchanged. The folder also contains
+the reproduction recipe, three rounded boundary bits, and unknown visibility lookups.
+Guarding has no metric-sensitive unknowns (fallback A/B 5084/5080). Four ARMSCROSSED visibility
+bits per seed remain unknown; the 256-pair proof of identical gated values applies to `bd6391ddc`. Before comparing
+a future candidate across all five forms, run the archived `variants.py REPO CANDIDATE` to retain
+all 16 alternatives of control 73106. Archive-pair invariance does not prove candidate invariance.
+
+```sh
+python3 scripts/npc_day_parity.py /absolute/control /absolute/candidate \
+  --activity-states ZS_STAND_GUARDING \
+  --tolerances scripts/bench/npc-day-parity.tolerances-points.json \
+  --out /absolute/points.md --json /absolute/points.json
+```
+
+The new sample columns follow every old column, in its original order:
+
+| Column | Meaning |
+|---|---|
+| `fp`, `fp_x`, `fp_y`, `fp_z` | Held free point name and coordinates in cm (`-`, zeros without one); repeated names do not identify a point |
+| `on_fp` | `Npc_IsOnFP(self, held_name)`: current point is free, its name matches, and it is close by `MoveAlgo::isClose(..., MAX_AI_USE_DISTANCE)`; the comparer also checks its activity name |
+| `aivar_19` | Raw script stage; 2 walking, 1 ready to enter, 0 pose for guarding, arms crossed, STAND_WP and PEE |
+| `fp_available` | The script's point lookup for STAND / CAMPFIRE / PEE finds a point (1) or none (0); -1 outside these four forms |
+| `on_routine_wp` | Distance <=500 cm to the active TA row's waypoint, using the existing `Npc_GetDistToWP` engine call; independent of the nearest waypoint and the lagging `self.wp` |
+
+`points.total` and `points.by_state` report held-coordinate agreement (raw and with legal fallback in either run
+excluded), pose sample time B/A, signed first arrival p95/max, missed reference TA segments and
+double occupancy in B. Point samples use the scheduled TA state; the activity table keeps actual active-ZS
+counts. A state present only in TA has an empty active-ZS row (undefined ratios), while its point misses
+still contribute to per-state and total stuck counts. The collision search includes occupants outside the state filter. Campfire
+pose uses body state 11 (`BS_SIT`); the other four forms require standing body state 0 and `aivar_19 == 0`. Physical arrival
+does not require an active ZS: End/Init can leave it empty while the NPC stays on point. Pose accepts
+the reference ZS or this transient empty ZS, but not a known different ZS. Physical arrival at any
+FP, STAND_WP arrival and legal fallback require the row's target waypoint to match A's.
+STAND_WP has no held free point: arrival/pose use `on_routine_wp`, and held-point agreement is not applicable.
+When TA changes the target waypoint, the initial uninterrupted hold of the previous free point
+outside the new approach radius is excluded from arrivals, independently in A and B. A newly acquired
+hold near the preceding target waypoint is also excluded. A suitable
+point already in that radius fulfils the new routine without leaving and reclaiming it.
+
+A legal fallback is a standing NPC near its routine waypoint with no suitable available free point.
+It has a separate A/B row. Raw pose time is reported (waiting for a campfire is not sitting); acceptance
+excludes a legal wait from both pose populations and held-point agreement only if the other run
+is also in the activity pose or legally waiting. An inactive candidate cannot hide behind A's wait.
+Observed legal B waiting intervals are subtracted from a later arrival's delay.
+An entirely waiting segment is allowed only if **every reference on-point sample** has legal fallback
+in B. Waiting once cannot hide losing an otherwise empty point for the rest of the segment.
+If A's entire shift has only legal waiting, B must fulfil it at least once (on-point or legal wait);
+otherwise it counts as a missing segment, with no invented physical arrival time for A.
+Missing point columns fail enabled point checks and never add point misses to legacy stuck counts.
+MOB checks are **not applicable** when the selected reference samples have no objects; Extra MOB
+still reports objects added only in B. An empty state selection still fails numeric checks. The shared
+`max_activity_stuck` gate includes unique NPCs from missed point segments as well as missing MOBs.
+TA-only point samples also make MOB checks inapplicable. Pose time 0/0 is inapplicable, while losing
+an observed reference pose gives ratio 0. Nonempty TA strings must have the four fields of `routineText`.
 
 ## Engine side
 

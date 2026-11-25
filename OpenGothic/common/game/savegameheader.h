@@ -12,6 +12,8 @@ class SaveGameHeader final {
     SaveGameHeader() = default;
     SaveGameHeader(Serialize& fin);
 
+    bool isCompatible() const;
+    void requireCompatible() const;
     void save(Serialize& fout) const;
 
     uint16_t        version = 0;

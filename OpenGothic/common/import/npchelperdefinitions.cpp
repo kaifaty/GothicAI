@@ -473,11 +473,9 @@ std::map<std::string,std::vector<Situation>> corpus(const fs::path& npcs,std::st
       if(const auto* field=std::get_if<Field>(&step)) {
         if(field->value.kind==Kind::Int) input.fields[{field->binding,field->index}]=field->value.integer;
         }
-      else {
-        const auto& call=std::get<Call>(step);
-        if(!call.deferred) continue;
-        input.args=call.args;
-        helpers[call.function].push_back(input);
+      else if(const auto* call=std::get_if<Call>(&step); call && call->deferred) {
+        input.args=call->args;
+        helpers[call->function].push_back(input);
         }
     }
   return helpers;

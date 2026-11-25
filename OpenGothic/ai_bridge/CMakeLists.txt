@@ -14,18 +14,15 @@ FetchContent_Declare(ixwebsocket
   SYSTEM)
 FetchContent_MakeAvailable(ixwebsocket)
 
-# the story graph (lifting and evaluating dialog conditions); it brings textcodec.cpp along
-set(STORYGRAPH_TOOL OFF CACHE BOOL "" FORCE)
-add_subdirectory(storygraph)
-
 file(GLOB AIBRIDGE_SOURCES CONFIGURE_DEPENDS "*.h" "*.cpp")
 list(REMOVE_ITEM AIBRIDGE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/textcodec.cpp)
 
 add_library(AiBridge STATIC ${AIBRIDGE_SOURCES})
+target_compile_definitions(AiBridge PRIVATE GOTHIC_NATIVE_V3=1)
 target_include_directories(AiBridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # rapidjson 1.1 trips modern clang warnings; treat it as a system header
 target_include_directories(AiBridge SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
-target_link_libraries(AiBridge PUBLIC OpenGothic PRIVATE ixwebsocket::ixwebsocket StoryGraph)
+target_link_libraries(AiBridge PUBLIC OpenGothic PRIVATE ixwebsocket::ixwebsocket StoryGraphRuntime)
 
 if(NOT MSVC)
   target_compile_options(AiBridge PRIVATE -Wall -Wconversion -Wno-strict-aliasing -Werror)

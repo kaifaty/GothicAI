@@ -9,11 +9,14 @@ docs/asset-migration.md, П12). Only the standard library is used.
 Without an argument it takes OPENGOTHIC_BASE or the newest base in ~/.cache/gothic-ai/base.
 """
 import collections
+import hashlib
 import json
 import os
+import re
 import statistics
 import struct
 import sys
+from functools import cache
 from pathlib import Path
 
 WIDE = {61: 4, 62: 4, 64: 4, 65: 4, 67: 4, 75: 4, 76: 4, 80: 4, 245: 5}  # opcode -> operand bytes
@@ -22,6 +25,7 @@ ASSIGN = {9, 19, 20, 21, 22, 70, 71, 72, 73, 74}
 T_CLASS, T_FUNC, T_PROTO, T_INST = 4, 5, 6, 7
 EXTERNAL = 1 << 3
 CONST = 1 << 0
+GAME = Path(__file__).resolve().parents[3] / "OpenGothic/common/game"
 
 
 def base_dir() -> Path:
@@ -68,10 +72,62 @@ def read_program(path: Path):
     return symbols, code
 
 
+def phase_routes(base, program):
+    """Match the native dispatcher and this base's captured activity records."""
+    records_source = (GAME / "definitions/gameplaydefinitions.h").read_text()
+    stock_sha = re.search(r'stockProgram\s*=\s*"([0-9a-f]{64})"', records_source)[1]
+    if program != stock_sha:
+        return set(), set(), "program is outside the verified NotR route"
+
+    phases = (GAME / "gamescript_activities.cpp").read_text()
+    names = re.findall(r'\{("ZS_[A-Z0-9_]+"|\w+),\s*&GameScript::\w+', phases)
+    if not names:
+        raise ValueError("Native state registrations not found")
+    header = (GAME / "gamescript.h").read_text()
+    constants = dict(re.findall(r'\b(\w+)\s*=\s*"(ZS_[A-Z0-9_]+)"', header))
+    native = {name.strip('"') if name.startswith('"') else constants[name] for name in names}
+
+    path = base / "definitions" / program / "activities.json"
+    if not path.is_file():
+        return native, set(), "activity records are absent"
+    section = json.loads(path.read_text())
+    if section["program_sha256"] != program:
+        raise ValueError("Activity records do not match the selected program")
+    captured = {row["symbol"] for row in section["records"] if row["status"] == "captured"}
+    return native, captured, f"activity format v{section['version']}"
+
+
+def perception_sites(coded, symbols, ops):
+    """Find literal function arguments of the stock NPC_PERCENABLE external."""
+    callbacks = collections.defaultdict(set)
+    sites = matched = 0
+    for _, n in coded:
+        instructions = list(ops(n))
+        for i, (op, arg) in enumerate(instructions):
+            if op != BE or not 0 <= arg < len(symbols) or symbols[arg]["name"] != "NPC_PERCENABLE":
+                continue
+            sites += 1
+            previous = instructions[max(0, i - 3):i]
+            if tuple(p[0] for p in previous) != (PUSHVI, PUSHV, PUSHI):
+                continue
+            _, perception_id = previous[1]
+            _, target_id = previous[2]
+            if not (0 <= perception_id < len(symbols) and 0 <= target_id < len(symbols)):
+                continue
+            perception = symbols[perception_id]["name"]
+            target = symbols[target_id]
+            if perception.startswith("PERC_") and target["type"] == T_FUNC:
+                callbacks[target["name"]].add((perception, symbols[n]["name"]))
+                matched += 1
+    return callbacks, sites, matched
+
+
 def main() -> None:
-    programs = base_dir() / "programs"
+    base = base_dir()
+    programs = base / "programs"
     path = max(programs.glob("*.bin"), key=lambda p: p.stat().st_size)
     symbols, code = read_program(path)
+    program = hashlib.sha256(path.with_suffix(".json").read_bytes() + path.read_bytes()).hexdigest()
     print(f"# Main script program: {len(symbols)} symbols, {len(code)} bytes of bytecode\n")
 
     def root(i: int) -> str:
@@ -98,6 +154,7 @@ def main() -> None:
             yield op, arg
             at += 1 + width
 
+    @cache
     def profile(n: int):
         calls, externals, branches, assigns = [], [], 0, 0
         for op, arg in ops(n):
@@ -196,7 +253,7 @@ def main() -> None:
     print(f"- distinct engine functions the AI code calls: {len(ext)} ("
           + ", ".join(f"{k}_ {v}" for k, v in prefix.most_common(8)) + ")")
     print("- most called: " + ", ".join(f"`{k}` {v}" for k, v in ext.most_common(16)))
-    by_name = {symbols[n]["name"]: n for n in functions}
+    by_name = {symbols[n]["name"]: n for _, n in coded}
 
     def closure(seeds):
         seen, queue = set(seeds), list(seeds)
@@ -210,11 +267,64 @@ def main() -> None:
 
     zs = [n for n in functions if symbols[n]["name"].startswith("ZS_")]
     reach = closure(zs)
-    print(f"- reachable from the states by direct calls: {len(reach)} functions, {sum(map(size, reach))} bytes "
+    print(f"- reachable from the states by direct calls: {len(reach)} bytecode symbols, {sum(map(size, reach))} bytes "
           f"({100 * sum(map(size, reach)) / len(code):.1f}% of the bytecode)")
     routine_states = closure([n for n in functions if symbols[n]["name"].startswith("TA_")])
     used = sorted({e for n in routine_states for e in profile(n)[1]})
     print(f"- activities (TA_) reach {len(routine_states)} functions; engine functions they call: " + ", ".join(f"`{e}`" for e in used))
+
+    native, captured, route_scope = phase_routes(base, program)
+    missing = (native | captured) - states.keys()
+    if missing:
+        raise ValueError("Registered states absent from the program: " + ", ".join(sorted(missing)))
+    routes = dict.fromkeys(captured, "captured template")
+    routes.update(dict.fromkeys(native, "native dispatcher"))
+    print(f"\n## NPC entry inventory\n\nProgram `{program}` ({route_scope}).\n")
+    print(f"Named states: {len(states)}, native table: {len(native)}, captured templates: {len(captured)}, "
+          f"outside both tables: {len(states.keys() - routes.keys())}.")
+    print("Static routes describe the stock program with activities enabled. "
+          "A dispatcher or a captured record can still reach helpers in the VM. "
+          "Check entry into actual bytecode in a game fixture.\n")
+
+    def links(seeds):
+        direct = sorted({name for n in seeds for name in profile(n)[0]})
+        return ", ".join(f"`{name}`" for name in direct) or "—", len(closure(seeds) - set(seeds))
+
+    print("| State | Phase route | Direct BL targets in stock bytecode | All other BL-reachable symbols |")
+    print("|---|---|---|---:|")
+    for name in sorted(states):
+        phases = (name, f"{name}_LOOP", f"{name}_END")
+        seeds = [by_name[phase] for phase in phases if phase in by_name]
+        route = routes.get(name, "script to audit")
+        direct, count = links(seeds)
+        print(f"| `{name}` | {route} | {direct} | {count} |")
+
+    callbacks, sites, matched = perception_sites(coded, symbols, ops)
+    kinds = {kind for registrations in callbacks.values() for kind, _ in registrations}
+    print(f"\nLiteral perception registrations: {matched}/{sites} sites, "
+          f"{len(callbacks)} callback symbols across {len(kinds)} perception kinds.\n")
+    print("| Callback | Perceptions | Registered by | Direct BL targets in stock bytecode | All other BL-reachable symbols |")
+    print("|---|---|---|---|---:|")
+    for name, registrations in sorted(callbacks.items()):
+        kinds = ", ".join(f"`{kind}`" for kind in sorted({kind for kind, _ in registrations}))
+        callers = ", ".join(f"`{caller}`" for caller in sorted({caller for _, caller in registrations}))
+        direct, count = links([by_name[name]] if name in by_name else [])
+        print(f"| `{name}` | {kinds} | {callers} | {direct} | {count} |")
+
+    print("\n| Other script roots | Symbols | Other BL-reachable symbols |")
+    print("|---|---:|---:|")
+    npc_constructors = instances["C_NPC"]
+    print(f"| NPC constructors | {len(npc_constructors)} | {len(closure(npc_constructors) - set(npc_constructors))} |")
+    for title, prefixes in (
+        ("Initial world state", ("STARTUP_", "INIT_", "INITPERCEPTIONS")),
+        ("Conversation functions", ("DIA_", "PC_")),
+        ("Item handlers by name", ("USE", "EQUIP_", "UNEQUIP_")),
+        ("Spell functions by name", ("SPELL_",)),
+    ):
+        seeds = [n for n in functions if symbols[n]["name"].startswith(prefixes)]
+        print(f"| {title} | {len(seeds)} | {len(closure(seeds) - set(seeds))} |")
+    print("\nThese edges follow literal BL instructions. Engine callbacks, runtime registrations, "
+          "symbol references from save files and bridge entry points require separate review.")
 
     print("\n## Other families\n")
     for title, pick in (("world start (STARTUP_, INIT_)", lambda s: s.startswith(("STARTUP_", "INIT_"))),

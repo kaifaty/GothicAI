@@ -49,15 +49,13 @@
 namespace {
 
 std::string npcSymbol(World& world, Npc& npc) {
-  if(auto sym = world.script().findSymbol(npc.instanceSymbol()))
-    return sym->name();
-  return {};
+  return std::string(world.script().storyNpcName(npc.instanceSymbol()));
   }
 
-// any npc of the world by script symbol (attached or not)
+// An NPC of the world by its instance name.
 Npc* npcBySymbol(World& world, std::string_view symbol) {
-  const size_t id = world.script().findSymbolIndex(symbol);
-  return id==size_t(-1) ? nullptr : world.findNpcByInstance(id);
+  const auto id = world.script().storyNpcId(symbol);
+  return id ? world.findNpcByInstance(*id) : nullptr;
   }
 
 }

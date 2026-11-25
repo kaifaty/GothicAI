@@ -46,6 +46,7 @@ from .commands import (
     load_config,
     new_log_dir,
     preparation,
+    prepared_game_environment,
     repo_dir,
     services,
     storygraph_tool,
@@ -83,7 +84,7 @@ def _up(args: argparse.Namespace, session: SessionFile) -> int:
     if args.continue_:
         save = latest_save(layout.game_home)
         if save is None:
-            print(f"no saves in {layout.game_home} yet: starting with the menu")
+            print(f"no compatible saves in {layout.game_home}: starting with the menu")
     _warn_login(config)
     print(f"logs: {log_dir}")
     if sys.platform == "linux":
@@ -340,10 +341,14 @@ def _preflight(config: Config) -> int:
         missing.append(f"Не найден uv или папка проекта. Запустите {hint}.")
     else:
         game_bin = s.paths.game_bin or default_game_bin(repo)
-        # `up` prepares the base with the converter beside the game, unless a base is given explicitly
-        prepares = not os.environ.get("OPENGOTHIC_BASE")
-        if not game_bin.is_file() or (prepares and not content_converter(game_bin).is_file()):
+        if not game_bin.is_file():
             missing.append(f"Игра ещё не собрана. Запустите {hint}.")
+        elif s.game.dir is not None and not content_converter(game_bin).is_file():
+            try:
+                prepared_game_environment(game_bin, s.game.dir)
+            except RuntimeError:
+                missing.append("Подготовьте игровую базу отдельным content-convert resolve "
+                               "и задайте OPENGOTHIC_BASE.")
         if "STORYGRAPH_TOOL" not in os.environ and not storygraph_tool(repo).is_file():
             missing.append(f"Не собран граф сюжета, без него NPC не знают сюжета. Запустите {hint}.")
     providers = _providers_in_use(config)

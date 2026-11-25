@@ -7,6 +7,9 @@ set(BUILD_SHARED_LIBS OFF)
 
 option(OPENGOTHIC_ENABLE_FRAME_PROFILE "Compile opt-in frame profiling diagnostics" OFF)
 option(OPENGOTHIC_ENABLE_APP_CADENCE "Compile the normal-game death cadence benchmark" OFF)
+if(OPENGOTHIC_LEGACY_DAEDALUS)
+  message(FATAL_ERROR "The game no longer supports the Daedalus runtime. Clear OPENGOTHIC_LEGACY_DAEDALUS and use a prepared game base.")
+endif()
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/opengothic)
@@ -23,6 +26,16 @@ if(OPENGOTHIC_ENABLE_APP_CADENCE)
   target_compile_definitions(${PROJECT_NAME} PUBLIC OPENGOTHIC_ENABLE_APP_CADENCE=1)
 endif()
 add_executable(Gothic2Notr)
+target_compile_definitions(${PROJECT_NAME} PRIVATE GOTHIC_NATIVE_V3=1)
+target_compile_definitions(Gothic2Notr PRIVATE GOTHIC_NATIVE_V3=1)
+
+set(nativeCatalogHeader "${PROJECT_SOURCE_DIR}/common/game/definitions/nativebasecatalog.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${nativeCatalogHeader}")
+file(STRINGS "${nativeCatalogHeader}" nativeCatalogVersion REGEX "^inline constexpr int catalogVersion = [1-9][0-9]*;")
+if(NOT nativeCatalogVersion MATCHES "catalogVersion = ([1-9][0-9]*)")
+  message(FATAL_ERROR "The native catalog version is missing")
+endif()
+file(GENERATE OUTPUT "$<TARGET_FILE_DIR:Gothic2Notr>/native-catalog-version.txt" CONTENT "${CMAKE_MATCH_1}\n")
 
 if(MSVC)
   add_definitions(-D_USE_MATH_DEFINES)
@@ -75,7 +88,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/vm_bytecode daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources import/npcsnapshot import/itemdefinitions itemdefinitions import/routinedefinitions routinedefinitions import/npcdefinitions npcdefinitions import/placementdefinitions placementdefinitions import/activitydefinitions activitydefinitions worldchunks worldchunksruntime worldchunkmanifest worldchunkbinary worldchunkindex worldchunkcook worldchunkassemble worldchunkcookedsource worldchunkcatalogue physics/worldcloth physics/worldclothbundle physics/worldcollisionmesh worlddata modeldata fontdata programdata import/programcodec outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/musicrecord dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -85,6 +98,37 @@ endforeach()
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/graphics/mesh/clusterlod.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/npchelperdefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/asset/npchelperdefinitions.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/common/import/npchelperdefinitions.cpp")
+list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/fightdefinitiondata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/fightdefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/gameplaydefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/dialoginfodata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/questclosuredata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/questclosuredata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/dialoginfodata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/npcworlddata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/npcworlddata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/tradeinventorydata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/tradeinventorydata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/menudefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/menudefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/cameradefinitiondata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/cameradefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/sfxdefinitiondata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/sfxdefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/musicdefinitiondata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/musicthemedefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/effectdefinitiondata.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/effectdefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/stockstoryprograms.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/deathtrophydefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/deathtrophydefinitions.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/symbolcatalog.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/runtimebindings.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/baseprogram.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/definitiontypes.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/placementdefinitionruntime.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/stockstoryprograms.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/import/storygraph.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/meshclusterlod.cpp")
 if(NOT OPENGOTHIC_ENABLE_FRAME_PROFILE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/frameprofile.cpp")
@@ -92,8 +136,9 @@ endif()
 if(NOT OPENGOTHIC_ENABLE_APP_CADENCE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/appcadence.cpp")
 endif()
-# The society stand's core is its own library (society-core below), not part of the engine yet.
+# The runner and the game use the same independent simulation library.
 list(FILTER OPENGOTHIC_SOURCES EXCLUDE REGEX "/common/society/")
+add_subdirectory(common/society)
 
 target_sources(${PROJECT_NAME} PRIVATE ${OPENGOTHIC_SOURCES} ${ObjCSOURCES})
 
@@ -187,6 +232,34 @@ add_definitions(-DMINIZ_NO_STDIO)
 add_library(miniz STATIC EXCLUDE_FROM_ALL "lib/miniz/miniz.h" "lib/miniz/miniz.c")
 target_link_libraries(${PROJECT_NAME} miniz)
 include(cmake/BaseImport.cmake)
+# Generate typed StoryGraph access from the field names already bound for imported content.
+set(STORY_CLASSES_FILE "${CMAKE_CURRENT_SOURCE_DIR}/common/daedalus/classes.cpp")
+set(STORY_FOCUS_FILE "${CMAKE_CURRENT_SOURCE_DIR}/common/world/records/focusrecord.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${STORY_CLASSES_FILE}" "${STORY_FOCUS_FILE}")
+file(READ "${STORY_CLASSES_FILE}" STORY_CLASS_BINDINGS)
+file(READ "${STORY_FOCUS_FILE}" STORY_FOCUS_BINDINGS)
+set(STORY_RECORD_FIELDS "")
+function(story_record_fields record class binding_type)
+  string(REGEX MATCHALL "member(<${binding_type}>)?\\(\"${class}\\.[^\"]+\", &${binding_type}::[A-Za-z0-9_]+\\)"
+    STORY_FIELDS "${STORY_CLASS_BINDINGS}${STORY_FOCUS_BINDINGS}")
+  if(NOT STORY_FIELDS)
+    message(FATAL_ERROR "StoryGraph: no generated fields for ${class}")
+  endif()
+  string(APPEND STORY_RECORD_FIELDS "constexpr std::string_view recordPrefix(${record}*) { return \"${class}.\"; }\n")
+  string(APPEND STORY_RECORD_FIELDS "template<class F> void recordFields(${record}*, F visit) {\n")
+  foreach(STORY_FIELD IN LISTS STORY_FIELDS)
+    string(REGEX MATCH "\"${class}\\.([^\"]+)\", &${binding_type}::([A-Za-z0-9_]+)" STORY_BINDING "${STORY_FIELD}")
+    string(APPEND STORY_RECORD_FIELDS "  visit.template operator()<&${record}::${CMAKE_MATCH_2}>(\"${CMAKE_MATCH_1}\");\n")
+  endforeach()
+  string(APPEND STORY_RECORD_FIELDS "}\n")
+  set(STORY_RECORD_FIELDS "${STORY_RECORD_FIELDS}" PARENT_SCOPE)
+endfunction()
+story_record_fields(NpcRecord C_NPC INpc)
+story_record_fields(ItemRecord C_ITEM IItem)
+story_record_fields(daedalus::IInfo C_INFO IInfo)
+story_record_fields(FocusRecord C_FOCUS FocusRecord)
+story_record_fields(MenuDefinitions::MenuItem C_MENU_ITEM IMenuItem)
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/storyrecordfields.h" CONTENT "@STORY_RECORD_FIELDS@" @ONLY)
 # Runtime manifest reading, cooked chunks, world cloth and the MSVC flag: one list for every build with the base.
 include(cmake/BaseRuntime.cmake)
 include(cmake/VideoImport.cmake)
@@ -199,8 +272,8 @@ target_compile_definitions(gothic-cluster-lod-test PRIVATE
 if(NOT MSVC)
   target_compile_options(gothic-cluster-lod-test PRIVATE -Wall -Wconversion -Werror -ffp-contract=off)
 endif()
-add_subdirectory(common/daedalus)
-target_link_libraries(${PROJECT_NAME} gothic-daedalus)
+# Only import tools and explicit comparison contracts link Daedalus.
+add_subdirectory(common/daedalus EXCLUDE_FROM_ALL)
 target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/convert/CMakeLists.txt")
   add_subdirectory(../scripts/convert content-convert)
@@ -297,6 +370,11 @@ if(WIN32)
 endif()
 target_link_libraries(Gothic2Notr PRIVATE OpenGothic)
 
+# The authored game runs StoryGraph even when the networking bridge is disabled.
+set(STORYGRAPH_TOOL OFF CACHE BOOL "" FORCE)
+add_subdirectory(ai_bridge/storygraph)
+target_link_libraries(${PROJECT_NAME} StoryGraphRuntime)
+
 # external AI control bridge (fork-specific, see ai_bridge/)
 add_subdirectory(ai_bridge)
 target_link_libraries(Gothic2Notr PRIVATE AiBridge)
@@ -304,6 +382,7 @@ target_link_libraries(Gothic2Notr PRIVATE AiBridge)
 # Uses the shared engine/CPU simulation without constructing a window or graphics/audio device.
 if(UNIX)
   add_executable(gothic-body-runner game/bodyrunner.cpp game/societyexport.cpp)
+  target_compile_definitions(gothic-body-runner PRIVATE GOTHIC_NATIVE_V3=1)
   target_link_libraries(gothic-body-runner PRIVATE OpenGothic AiBridge)
   # --society-export names the engine's commit: refreshed on every build of the runner, the header is
   # rewritten only when the commit changes ("unknown" in a copy without .git).
@@ -317,8 +396,8 @@ if(UNIX)
   # Pure production resolver/command gates: no assets, simulation or rendering device.
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
-  add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp)
-  target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge)
+  add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp common/game/gamescript_daystats.cpp)
+  target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge StoryGraph gothic-daedalus)
   target_include_directories(gothic-npc-day-contract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   # Real NPC/world fixture for growing and shrinking the live observation subscription.
   add_executable(gothic-body-watch-test tests/body_watch_test.cpp)
@@ -380,7 +459,7 @@ if(UNIX)
   target_link_libraries(gothic-render-rig-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-render-rig-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
-  add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
+  add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp common/game/definitions/baseprogram.cpp)
   target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)
   target_include_directories(gothic-mesh-gltf-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_definitions(gothic-mesh-gltf-test PRIVATE
@@ -393,16 +472,6 @@ if(UNIX)
   target_compile_options(gothic-platform-draw-test PRIVATE -Wall -Wconversion -Werror)
 endif()
 
-# The society stand's core (common/society/README.md): the standard library and rapidjson only. Its include path
-# is set alone, without the engine's directories, so an engine header does not compile there.
-  file(GLOB SOCIETY_CORE_SOURCES common/society/*.cpp)
-  add_library(society-core STATIC ${SOCIETY_CORE_SOURCES})
-  set_property(TARGET society-core PROPERTY INCLUDE_DIRECTORIES "")
-  target_include_directories(society-core SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/rapidjson/include)
-  target_include_directories(society-core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/common)
-  if(NOT MSVC)
-    target_compile_options(society-core PRIVATE -Wall -Wconversion -Werror)
-  endif()
   # Plays N days of an export by the routine: the journal, the 5-minute marks and the time.
   add_executable(gothic-society-day game/societyday.cpp)
   target_link_libraries(gothic-society-day PRIVATE society-core)
@@ -575,9 +644,10 @@ endif()
     tests/physics_contract_noise.cpp
     tests/physics_bonds_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
-  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL
-    tests/placed_items_contract.cpp tests/npc_live_fixture.cpp)
-  target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
+  target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge)
+  add_executable(gothic-native-story-contract EXCLUDE_FROM_ALL tests/native_story_contract.cpp)
+  target_link_libraries(gothic-native-story-contract PRIVATE OpenGothic AiBridge)
   # The society stand's world (docs/society-sim.md): runs gothic-body-runner --society-export twice on the
   # game's data (GOTHIC_DIR) and checks it against evals/npc-decisions/day_people.json and places.json.
   # Only where the runner exists (UNIX, see above).
@@ -772,8 +842,9 @@ endif()
       target_compile_options(gothic-vob-layer-test PRIVATE -Wall -Wconversion -Werror)
     endif()
   endif()
-  add_executable(gothic-basecontent-contract EXCLUDE_FROM_ALL tests/basecontent_contract.cpp)
-  target_link_libraries(gothic-basecontent-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  add_executable(gothic-basecontent-contract EXCLUDE_FROM_ALL tests/basecontent_contract.cpp common/game/definitions/baseprogram.cpp)
+  target_link_libraries(gothic-basecontent-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import
+    gothic-offline-bindings)
   target_include_directories(gothic-basecontent-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   if(UNIX)
     add_executable(gothic-video-contract EXCLUDE_FROM_ALL tests/video_contract.cpp)
@@ -867,8 +938,11 @@ endif()
 
 # installation
 install(TARGETS Gothic2Notr DESTINATION bin)
+install(FILES "$<TARGET_FILE_DIR:Gothic2Notr>/native-catalog-version.txt" DESTINATION bin)
 
 include(cmake/ZenKitGuard.cmake)
 include(cmake/EngineLayerGuard.cmake)
 include(cmake/EnginePlatform.cmake)
+# Society belongs to the RPG layer and the platform must not inherit it.
+target_link_libraries(OpenGothic society-core)
 include(cmake/Island.cmake)

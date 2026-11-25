@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import re
+import sys
+from collections.abc import Callable, Mapping
 from pathlib import Path, PurePosixPath
 
 try:
@@ -72,6 +74,7 @@ class Base:
             ):
                 raise ValueError("invalid base.json")
             self.fingerprint = metadata["fingerprint"]
+            self.native_profile = metadata.get("native_script_base")
             if expected is not None and self.fingerprint != expected:
                 raise ValueError("pointer base fingerprint differs")
             binding = metadata["manifest"]
@@ -108,6 +111,9 @@ class Base:
             self.close()
             raise
 
+    def has_file(self, relative: str) -> bool:
+        return relative in self._files
+
     def read(self, relative: str) -> bytes:
         try:
             entry = self._files[relative]
@@ -136,20 +142,55 @@ class Base:
         self.close()
 
 
-def resolve(game_dir: Path) -> Base:
-    """Select an explicit base or this canonical game directory's P18a pointer."""
+def resolve(
+    game_dir: Path, *, verify_native: Callable[[Base], None] | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> Base:
+    """Select an explicit, pinned native, or current base, in that order."""
+    env = os.environ if environ is None else environ
     game = Path(game_dir).expanduser().resolve()
     try:
-        cache_name = os.environ.get("OPENGOTHIC_BASE_CACHE", str(Path.home() / ".cache/gothic-ai/base"))
+        cache_name = env.get("OPENGOTHIC_BASE_CACHE", str(Path.home() / ".cache/gothic-ai/base"))
         if not cache_name:
             raise ValueError("base cache path is empty")
         cache = Path(cache_name).expanduser().resolve()
-        explicit = os.environ.get("OPENGOTHIC_BASE")
+
+        def checked_base(path: Path, expected: str | None = None) -> Base:
+            selected = Base(path, cache, expected)
+            if verify_native is not None:
+                try:
+                    verify_native(selected)
+                except Exception:
+                    selected.close()
+                    raise
+            return selected
+
+        explicit = env.get("OPENGOTHIC_BASE")
         if explicit:
-            return Base(Path(explicit).expanduser(), cache)
+            return checked_base(Path(explicit).expanduser())
+        fingerprint = env.get("OPENGOTHIC_BASE_FINGERPRINT")
+        if verify_native is not None and fingerprint:
+            if not _digest(fingerprint):
+                raise ValueError("invalid OPENGOTHIC_BASE_FINGERPRINT")
+            paths = [cache / fingerprint]
+            shared = "/Volumes/shared/gothic-ai" if sys.platform == "darwin" else "/mnt/shared/gothic-ai"
+            store = env.get("OPENGOTHIC_BASE_STORE", shared)
+            if store:
+                paths.append(Path(store) / "base" / fingerprint)
+            failure = None
+            for path in paths:
+                try:
+                    if path.is_dir():
+                        return checked_base(path, fingerprint)
+                except (OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError) as error:
+                    failure = error
+            if failure is not None:
+                raise failure
+            raise FileNotFoundError(f"base {fingerprint} was not found in the cache or store")
         pointer = cache / "current" / f"{hashlib.sha256(str(game).encode()).hexdigest()}.json"
         current = json.loads(pointer.read_bytes())
-        part = current["base"]
+        part = (current.get("native_base") if verify_native is not None
+                else current.get("native_base", current.get("base")))
         if (
             current.get("version") != 1
             or current.get("gothic") != str(game)
@@ -159,9 +200,9 @@ def resolve(game_dir: Path) -> Base:
             or not _digest(part.get("fingerprint"))
         ):
             raise ValueError("invalid or foreign current base pointer")
-        return Base(Path(part["path"]), cache, part["fingerprint"])
+        return checked_base(Path(part["path"]), part["fingerprint"])
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         raise RuntimeError(
-            f"no ready base for {game}; run the game once with the installation "
+            f"no ready base for {game}; prepare it with content-convert resolve "
             f"or set OPENGOTHIC_BASE: {error}"
         ) from error

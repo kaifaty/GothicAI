@@ -3,6 +3,7 @@
 #include <Tempest/Log>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 
@@ -55,16 +56,20 @@ int GameScript::npc_getdisttowp(std::shared_ptr<daedalus::INpc> npcRef, std::str
   }
 
 void GameScript::npc_exchangeroutine(std::shared_ptr<daedalus::INpc> npcRef, std::string_view rname) {
-  auto npc = findNpc(npcRef);
-  if(npc!=nullptr) {
-    auto& v = npc->handle();
-    string_frm name("Rtn_",rname,'_',v.id);
+  if(auto* npc = findNpc(npcRef))
+    exchangeNpcRoutine(*npc,rname);
+  }
 
-    auto* sym = vm.find_symbol_by_name(name);
-    size_t d = sym != nullptr ? sym->index() : 0;
-    if(d>0)
-      npc->excRoutine(d);
-    }
+bool GameScript::exchangeNpcRoutine(Npc& npc, std::string_view name) {
+  string_frm key("RTN_",name,'_',npc.handle().id);
+  std::transform(key.begin(),key.end(),key.begin(),[](unsigned char ch) { return char(std::toupper(ch)); });
+  const auto found = routineDefinitions.names.find(std::string_view(key));
+  if(found==routineDefinitions.names.end())
+    return false;
+
+  npc.clearRoutine();
+  addPreparedRoutine(&npc,routineDefinitions.routines.at(found->second));
+  return true;
   }
 
 bool GameScript::npc_isdead(std::shared_ptr<daedalus::INpc> npcRef) {
@@ -106,7 +111,7 @@ int GameScript::npc_gettalentvalue(std::shared_ptr<daedalus::INpc> npcRef, int s
 void GameScript::npc_setrefusetalk(std::shared_ptr<daedalus::INpc> npcRef, int timeSec) {
   auto npc = findNpc(npcRef);
   if(npc)
-    npc->setRefuseTalk(uint64_t(std::max(timeSec*1000,0)));
+    npc->setRefuseTalkSeconds(timeSec);
   }
 
 bool GameScript::npc_refusetalk(std::shared_ptr<daedalus::INpc> npcRef) {
@@ -297,22 +302,13 @@ void GameScript::npc_changeattribute(std::shared_ptr<daedalus::INpc> npcRef, int
 
 bool GameScript::npc_isonfp(std::shared_ptr<daedalus::INpc> npcRef, std::string_view val) {
   auto npc = findNpc(npcRef);
-  if(npc==nullptr)
-    return false;
-
-  auto w = npc->currentWayPoint();
-  if(w==nullptr || !MoveAlgo::isClose(*npc,*w,MAX_AI_USE_DISTANCE) || !w->checkName(val))
-    return false;
-  return w->isFreePoint();
+  return npc!=nullptr && npc->isOnFreePoint(val);
   }
 
 int GameScript::npc_getheighttonpc(std::shared_ptr<daedalus::INpc> aRef, std::shared_ptr<daedalus::INpc> bRef) {
   auto a = findNpc(aRef);
   auto b = findNpc(bRef);
-  float ret = 0;
-  if(a!=nullptr && b!=nullptr)
-    ret = std::abs(a->position().y - b->position().y);
-  return int32_t(ret);
+  return a && b ? NpcEngineCalls::heightDifference(*a,*b) : 0;
   }
 
 std::shared_ptr<daedalus::IItem> GameScript::npc_getequippedmeleeweapon(std::shared_ptr<daedalus::INpc> npcRef) {
@@ -457,14 +453,14 @@ void GameScript::npc_settarget(std::shared_ptr<daedalus::INpc> npcRef, std::shar
  */
 bool GameScript::npc_gettarget(std::shared_ptr<daedalus::INpc> npcRef) {
   auto npc = findNpc(npcRef);
-  auto s   = vm.global_other();
+  auto& other = storyActorSlot("OTHER");
 
   if(npc!=nullptr && npc->target()) {
-    s->set_instance(std::static_pointer_cast<daedalus::INpc>(npc->target()->handlePtr()));
+    other = std::static_pointer_cast<NpcInstance>(npc->target()->handlePtr());
     return true;
     }
 
-  s->set_instance(nullptr);
+  other.reset();
   return false;
   }
 
@@ -490,12 +486,12 @@ bool GameScript::npc_getnexttarget(std::shared_ptr<daedalus::INpc> npcRef) {
       npc->setTarget(ret);
     }
 
-  auto s = vm.global_other();
+  auto& other = storyActorSlot("OTHER");
   if(ret!=nullptr) {
-    s->set_instance(std::static_pointer_cast<daedalus::INpc>(ret->handlePtr()));
+    other = std::static_pointer_cast<NpcInstance>(ret->handlePtr());
     return true;
     } else {
-    s->set_instance(nullptr);
+    other.reset();
     return false;
     }
   }
@@ -521,7 +517,7 @@ void GameScript::npc_sendsingleperc(std::shared_ptr<daedalus::INpc> npcRef, std:
 
 bool GameScript::npc_checkinfo(std::shared_ptr<daedalus::INpc> npcRef, int imp) {
   auto n    = findNpc(npcRef);
-  auto hero = findNpc(vm.global_other());
+  auto hero = findNpc(dynamic_cast<NpcInstance*>(storyActorSlot("OTHER").get()));
   if(n==nullptr || hero==nullptr)
     return false;
 
@@ -533,11 +529,8 @@ bool GameScript::npc_checkinfo(std::shared_ptr<daedalus::INpc> npcRef, int imp) 
     if(npcKnowsInfo && !info->permanent)
       continue;
     bool valid=false;
-    if(info->condition) {
-      auto* conditionSymbol = vm.find_symbol_by_index(uint32_t(info->condition));
-      if (conditionSymbol != nullptr)
-        valid = dialogFunction(conditionSymbol,true)!=0;
-      }
+    if(info->condition)
+      valid = dialogFunction(uint32_t(info->condition))!=0;
     if(Gothic::inst().dialogFilterFn)
       Gothic::inst().dialogFilterFn(*info,valid);
     if(valid) {
@@ -745,9 +738,9 @@ bool GameScript::npc_isdetectedmobownedbynpc(std::shared_ptr<daedalus::INpc> usr
   auto usr = findNpc(usrRef);
 
   if(npc!=nullptr && usr!=nullptr && usr->interactive()!=nullptr){
-    auto* inst = vm.find_symbol_by_index(npc->instanceSymbol());
-    auto  ow   = usr->interactive()->ownerName();
-    return inst->name() == ow;
+    const auto id = npc->instanceSymbol();
+    const auto name = storyNpcName(uint32_t(id));
+    return !name.empty() && name==usr->interactive()->ownerName();
     }
   return false;
   }
@@ -765,7 +758,6 @@ bool GameScript::npc_isdetectedmobownedbyguild(std::shared_ptr<daedalus::INpc> n
   if(npc!=nullptr && npc->detectedMob()!=nullptr) {
     auto  ow   = npc->detectedMob()->ownerName();
     (void)ow;
-    //vm.setReturn(inst.name==ow ? 1 : 0);
     return false;
     }
   return false;
@@ -787,8 +779,9 @@ bool GameScript::npc_ownedbynpc(std::shared_ptr<daedalus::IItem> itmRef, std::sh
     return false;
     }
 
-  auto* sym = vm.find_symbol_by_index(uint32_t(itm->handle().owner));
-  return sym != nullptr && std::static_pointer_cast<daedalus::INpc>(npc->handlePtr())==sym->get_instance();
+  const auto id = uint32_t(itm->handle().owner);
+  const auto* owner = ownedInstance(id);
+  return owner!=nullptr && owner->get()==static_cast<NpcInstance*>(npc->handlePtr().get());
   }
 
 bool GameScript::npc_canseesource(std::shared_ptr<daedalus::INpc> npcRef) {

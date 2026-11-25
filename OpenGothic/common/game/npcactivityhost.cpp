@@ -1,6 +1,7 @@
 #include "npcactivityhost.h"
 
 #include "world/objects/npc.h"
+#include "world/objects/item.h"
 #include "world/world.h"
 
 #include <cmath>
@@ -22,7 +23,10 @@ std::string NpcEngineCalls::nearestWaypoint(World& world, const Npc& npc) {
 
 int32_t NpcEngineCalls::distanceToWaypoint(World& world, const Npc& npc, std::string_view name) {
   //NOTE: in CoM, some way-point and free-points share same name - need to be precise
-  auto* wp = world.findWayPoint(name);
+  return distanceToWaypoint(npc,world.findWayPoint(name));
+  }
+
+int32_t NpcEngineCalls::distanceToWaypoint(const Npc& npc, const WayPoint* wp) {
   if(wp==nullptr)
     return std::numeric_limits<int32_t>::max();
   float ret = std::sqrt(npc.qDistTo(wp));
@@ -31,20 +35,29 @@ int32_t NpcEngineCalls::distanceToWaypoint(World& world, const Npc& npc, std::st
   return std::numeric_limits<int32_t>::max();
   }
 
+int32_t NpcEngineCalls::heightDifference(const Npc& npc, const Npc& other) {
+  return int32_t(std::abs(npc.position().y-other.position().y));
+  }
+
+const WayPoint* NpcEngineCalls::resolveWaypoint(World& world, const Npc& npc, std::string_view name) {
+  if(const auto* to=world.findWayPoint(npc.position(),name))
+    return to;
+  return world.findPoint(name,false); // the original AI_GotoWP also accepts free-point names
+  }
+
 void NpcEngineCalls::gotoWaypoint(World& world, Npc& npc, std::string_view name) {
-  auto to = world.findWayPoint(npc.position(), name);
-  if(to!=nullptr) {
-    npc.aiPush(AiQueue::aiGoToPoint(*to));
-    return;
-    }
-  // in vanilla 'ai_gotowp' sometimes is used incorrectly, so we need to check all other points
-  to = world.findPoint(name, false);
-  if(to!=nullptr)
+  if(const auto* to=resolveWaypoint(world,npc,name))
     npc.aiPush(AiQueue::aiGoToPoint(*to));
   }
 
-NpcActivityHost::NpcActivityHost(World& world, Npc& npc, Helper helper)
-  :world(world), npc(npc), helper(std::move(helper)) {
+void NpcEngineCalls::equipItem(Npc& npc, uint32_t item) {
+  if(npc.itemCount(item)==0)
+    npc.addItem(item,1);
+  npc.useItem(item,Item::NSLOT,true);
+  }
+
+NpcActivityHost::NpcActivityHost(World& world, Npc& npc, Helper helper, ItemCreator itemCreator)
+  :world(world), npc(npc), helper(std::move(helper)), itemCreator(std::move(itemCreator)) {
   }
 
 void NpcActivityHost::deferred(std::string_view name) {
@@ -101,4 +114,24 @@ int32_t NpcActivityHost::bodyState() {
 
 void NpcActivityHost::useMob(std::string_view scheme, int32_t state) {
   npc.aiPush(AiQueue::aiUseMob(scheme,state));
+  }
+
+int32_t NpcActivityHost::itemCount(int32_t item) {
+  return int32_t(npc.itemCount(uint32_t(item)));
+  }
+
+void NpcActivityHost::createItem(int32_t item) {
+  itemCreator(item);
+  }
+
+void NpcActivityHost::equipItem(int32_t item) {
+  NpcEngineCalls::equipItem(npc,uint32_t(item));
+  }
+
+void NpcActivityHost::useItem(int32_t item) {
+  npc.aiPush(AiQueue::aiUseItem(item));
+  }
+
+void NpcActivityHost::removeItem(int32_t item) {
+  npc.delItem(uint32_t(item),1);
   }

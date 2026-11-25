@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <stdexcept>
 
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -12,6 +13,8 @@
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 
 #include "game/gamescript.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "settings.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -64,8 +67,8 @@ void itemHullCensus(World& world) {
   std::map<std::string,size_t> reasons;
   std::vector<float> ratios,pointsBefore,pointsAfter;
   std::string outliers="[",extraPadding="[";
-  world.script().getVm().enumerate_instances_by_class_name("C_ITEM",[&](daedalus::DaedalusSymbol& symbol) {
-    Item item(world,symbol.index(),Item::T_Inventory);++instances;
+  const auto inspect=[&](uint32_t id,std::string_view name) {
+    Item item(world,id,Item::T_Inventory);++instances;
     std::string visual=item.handle().visual;
     for(auto& c:visual)c=char(std::toupper(static_cast<unsigned char>(c)));
     if(visual.empty())return;
@@ -105,11 +108,16 @@ void itemHullCensus(World& world) {
     const auto before=oldBody.mass(),after=newBody.mass();
     if(before>0 && after>0 && (after/before>10.f || before/after>10.f)) {
       if(outliers.size()>1)outliers+=',';
-      outliers+="{\"symbol\":"+jsonStr(symbol.name())+",\"visual\":"+jsonStr(visual)+
+      outliers+="{\"symbol\":"+jsonStr(name)+",\"visual\":"+jsonStr(visual)+
         ",\"off_mass_kg\":"+ragdollNumber(before)+",\"on_mass_kg\":"+ragdollNumber(after)+
         ",\"on_over_off\":"+ragdollNumber(after/before)+"}";
       }
-    });
+    };
+  const auto* catalog=baseNativeCatalog();
+  if(catalog==nullptr)
+    throw std::runtime_error("item hull census requires a native game catalog");
+  for(const auto& [id,name]:catalog->identities.items)
+    inspect(id,name);
   std::sort(ratios.begin(),ratios.end());
   std::sort(pointsBefore.begin(),pointsBefore.end());std::sort(pointsAfter.begin(),pointsAfter.end());
   const auto percentile=[](const std::vector<float>& values,float fraction) {
@@ -254,10 +262,11 @@ void itemHullSetup(ItemHulls& state,World& world,Npc& player,std::string_view su
     {"cup",{"ITMI_CUP","ITMI_SILVERCUP","ITMI_GOLDCUP","ITMI_PLATE"}}
     };
   for(size_t i=0;i<(state.itemHullLoad?50:std::size(specs));++i) {
-    const auto& spec=specs[i%std::size(specs)];size_t symbol=size_t(-1);
-    for(const auto name:spec.symbols)if((symbol=world.script().findSymbolIndex(name))!=size_t(-1))break;
-    if(symbol==size_t(-1)) {arenaAbort("item hull fixture script instance missing: "+std::string(spec.label));return;}
-    Item definition(world,symbol,Item::T_Inventory);
+    const auto& spec=specs[i%std::size(specs)];
+    std::optional<uint32_t> symbol;
+    for(const auto name:spec.symbols)if((symbol=world.script().findItemInstance(name)))break;
+    if(!symbol) {arenaAbort("item hull fixture item instance missing: "+std::string(spec.label));return;}
+    Item definition(world,*symbol,Item::T_Inventory);
     const auto* mesh=Resources::loadMesh(definition.handle().visual);
     if(!mesh) {arenaAbort("item hull fixture has no rendered mesh: "+std::string(spec.label));return;}
     const auto& hull=world.physic()->itemHullShape(*mesh,definition.handle().visual);
@@ -295,10 +304,10 @@ void itemHullSetup(ItemHulls& state,World& world,Npc& player,std::string_view su
     if(!floor.hasCol || std::abs(floor.v.y-anchor.y-surfaceY)>(surface=="terrain"?1.f:.1f)) {
       arenaAbort("item hull native support ray disagrees with authored surface");return;
       }
-    auto* item=world.addItemDyn(symbol,pose,world.npcId(&player));
+    auto* item=world.addItemDyn(*symbol,pose,world.npcId(&player));
     if(!item || !item->isDynamic()) {arenaAbort("item hull fixture world Item has no native body");return;}
     ItemHulls::ItemHullDrop drop;drop.item=item;drop.label=spec.label;
-    drop.symbol=world.script().findSymbol(symbol)->name();drop.vertices=std::move(visibleVertices);drop.shape=hull.originalShape;
+    drop.symbol=world.rules().symbolName(*symbol);drop.vertices=std::move(visibleVertices);drop.shape=hull.originalShape;
     drop.extraPaddingCm=Settings::getI("GAME","item_hulls")?hull.extraPaddingCm:0.f;
     if(spec.longAxis)drop.axis=axis;
     drop.mass=item->physicsMass();state.itemHullDrops.push_back(std::move(drop));

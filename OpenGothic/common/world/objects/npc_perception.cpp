@@ -1,8 +1,11 @@
 #include "npc.h"
 
+#include "world/npcactivityprobe.h"
+
 #include <algorithm>
 #include <cmath>
 
+#include "asset/activitydefinitions.h"
 #include "game/bodycontroller.h"
 #include "game/deedwitness.h"
 #include "game/herodeed.h"
@@ -16,6 +19,8 @@
 using namespace Tempest;
 
 void Npc::setPerceptionTime(uint64_t time) {
+  if(perceptionTime!=time)
+    wakeSociety();
   perceptionTime = time;
   }
 
@@ -312,17 +317,25 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
   const uint64_t now = owner.tickCount();
   if(noise.culprit==this || !canHearPhysicsNoise() || isPhysicsInvestigating() || now<physicsNoiseNextTime)
     return false;
+  wakeSociety();
   // The observer checks sight now, before either the native turn or a script callback.
   GameHost::inst().emitPhysicsNoiseHeard(*this,noise);
   physicsNoiseNextTime = now+2001;
   physicsNoisePosition = noise.position;
   physicsNoiseUntil = now+2000;
-  // Vanilla B_AssessQuietSound dereferences OTHER. Unknown physical causes
-  // still turn the listener natively, without inventing a script actor.
-  const bool callbackDispatched = noise.culprit!=nullptr && hasPerc(PERC_ASSESSQUIETSOUND);
+  // A native turn has no queued action. Recheck the poses whose Loop realigns after it.
+  using Form = ActivityDefinitions::PointActivity::Form;
+  const auto* point = activityEvents.activity ? activityEvents.activity->point : nullptr;
+  if(point && (point->form==Form::ArmsCrossed || point->form==Form::Pee))
+    activityEvents.awaitQueue = true;
+  // Quiet sound needs a source NPC. Impacts without one still turn the listener.
+  const auto callback=perception[PERC_ASSESSQUIETSOUND].func;
+  const bool callbackDispatched=noise.culprit!=nullptr && callback.isValid();
+  if(auto* probe=NpcActivityProbe::instance)
+    probe->physicsNoise(*this,noise.culprit,callbackDispatched && !owner.rules().usesNativeQuietSound(callback));
   if(callbackDispatched) {
     physicsNoiseCallback = true;
-    owner.rules().invokeState(this,noise.culprit,nullptr,perception[PERC_ASSESSQUIETSOUND].func);
+    owner.rules().invokeState(this,noise.culprit,nullptr,callback);
     physicsNoiseCallback = false;
     // B_AssessQuietSound clears perceptions before queuing its state. Run only
     // that transition and its initializer now; its queued actions still wait
@@ -338,6 +351,7 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
 bool Npc::startPhysicsInvestigation(const Tempest::Vec3& at, uint64_t scanMs) {
   if(!canHearPhysicsNoise() || !isHuman() || weaponState()!=WeaponState::NoWeapon)
     return false;
+  wakeSociety();
   clearAiQueue();
   physicsInvestigationPosition = at;
   physicsInvestigationUntil = owner.tickCount()+45000;

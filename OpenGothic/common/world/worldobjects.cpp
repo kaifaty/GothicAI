@@ -108,6 +108,7 @@ void WorldObjects::load(Serialize &fin) {
   items.clear();
 
   uint32_t sz = fin.directorySize("worlds/",fin.worldName(),"/npc/");
+  invalidateNpcOrder();
   npcArr.resize(sz);
   for(size_t i=0; i<sz; ++i)
     npcArr[i] = std::make_unique<Npc>(owner,size_t(-1),"");
@@ -533,11 +534,16 @@ bool WorldObjects::keepsFullSimulation(const Npc& npc) {
   return NavDemos::fullSimulation(npc) || BodyArena::isActor(npc);
   }
 
+bool WorldObjects::npcSimulationFixtureActive() {
+  return NavDemos::hasFullSimulationActors() || BodyArena::enabled();
+  }
+
 bool WorldObjects::keepsNearPolicy(const Npc& npc) {
   return NavDemos::fullSimulation(npc);
   }
 
 void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
+  owner.prepareSocietyTick(dt);
   updateSimTiers(true);
   reservations.tick();
   const auto& logic = NpcLogicAudit::stats();
@@ -553,55 +559,7 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   const auto pl      = owner.player();
   // Body training with a frozen world: other NPCs (but the hero) and interactive objects stand still.
   const bool frozen  = BodyArena::frozenWorld();
-  // One clock read per run of consecutive NPCs of the same tier keeps the cost
-  // proportional to tier changes along the array, not to the NPC count.
-  using Clock = std::chrono::steady_clock;
-  std::optional<FrameProfile::Scope> tierZone;
-  NpcSimTier        runTier  = NpcSimTier::Full;
-  bool              runOpen  = false;
-  Clock::time_point runStart;
-  double            tierMs[2] = {};
-  uint64_t          tierTicks[2] = {};
-  for(size_t i=0; i<npcArr.size(); ++i) {
-    auto& npc = *npcArr[i];
-    uint64_t d = (pl==&npc ? dtPlayer : dt);
-    if(freeCam && pl==&npc)
-      continue;
-    if(frozen && pl!=&npc && !BodyArena::isActor(npc))
-      continue;
-    const auto tier = npc.simTier();
-    if(!runOpen || tier!=runTier) {
-      const auto now = Clock::now();
-      if(runOpen)
-        tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(now-runStart).count();
-      tierZone.reset();
-      tierZone.emplace(tier==NpcSimTier::Full ? FrameProfile::Zone::NpcFullTick : FrameProfile::Zone::NpcSimplifiedTick);
-      runTier  = tier;
-      runStart = now;
-      runOpen  = true;
-      }
-    ++tierTicks[size_t(tier)];
-    const bool nativeCombat=tier==NpcSimTier::Simplified && npc.nativeCombatMovement();
-    const bool nativeMobsi=tier==NpcSimTier::Simplified && npc.nativeMobsiApproach();
-    const bool graphFallback=npc.graphMovementFallback();
-    npc.tick(d);
-    if(tier==NpcSimTier::Simplified && (nativeCombat || npc.nativeCombatMovement()))
-      ++simTiers.nativeCombatNpcTicks;
-    if(tier==NpcSimTier::Simplified && (nativeMobsi || npc.nativeMobsiApproach()))
-      ++simTiers.nativeMobsiApproachNpcTicks;
-    if(graphFallback || npc.graphMovementFallback())
-      ++simTiers.graphFallbackNpcTicks;
-    }
-  if(runOpen)
-    tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(Clock::now()-runStart).count();
-  tierZone.reset();
-  simTiers.fullTickMs             = tierMs[size_t(NpcSimTier::Full)];
-  simTiers.simplifiedTickMs       = tierMs[size_t(NpcSimTier::Simplified)];
-  simTiers.fullTickMsTotal       += simTiers.fullTickMs;
-  simTiers.simplifiedTickMsTotal += simTiers.simplifiedTickMs;
-  simTiers.fullNpcTicks         += tierTicks[size_t(NpcSimTier::Full)];
-  simTiers.simplifiedNpcTicks   += tierTicks[size_t(NpcSimTier::Simplified)];
-  ++simTiers.ticks;
+  tickNpcs(dt,dtPlayer,pl,freeCam,frozen);
   FrameProfile::add(FrameProfile::Amount::NpcLogicSamples,logic.ticks-logicBefore[0]);
   FrameProfile::add(FrameProfile::Amount::NpcLogicBodyMismatch,logic.bodyMismatch-logicBefore[1]);
   FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponMismatch,logic.weaponMismatch-logicBefore[2]);
@@ -732,6 +690,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
     npc->attachToPoint(pos);
     npc->updateTransform();
     owner.rules().invokeRefreshAtInsert(*npc);
+    invalidateNpcOrder();
     npcArr.emplace_back(npc);
     } else {
     const auto sym = owner.rules().symbolName(npcInstance);
@@ -761,6 +720,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, const Vec3& pos) {
   npc->updateTransform();
   owner.rules().invokeRefreshAtInsert(*npc);
 
+  invalidateNpcOrder();
   npcArr.emplace_back(npc);
   return npc;
   }
@@ -782,6 +742,7 @@ Npc* WorldObjects::insertPlayer(std::unique_ptr<Npc> &&npc, std::string_view at)
   npc->setDirection (pos->direction());
   npc->attachToPoint(pos);
   npc->updateTransform();
+  invalidateNpcOrder();
   npcArr.emplace_back(std::move(npc));
   return npcArr.back().get();
   }
@@ -791,6 +752,10 @@ std::unique_ptr<Npc> WorldObjects::takeNpc(const Npc* ptr) {
     auto& npc=*npcArr[i];
     if(&npc==ptr){
       npc.suspendRagdoll();
+      npc.wakeSociety();
+      npc.simTick().pending = npc.pendingSimTick();
+      npc.simTick().idleParked = false;
+      invalidateNpcOrder();
       auto ret=std::move(npcArr[i]);
       npcArr.erase(npcArr.begin() + int32_t(i));
       return ret;
@@ -909,6 +874,7 @@ void WorldObjects::pinAnimationLodTargets() {
     if(npc->weaponState()==WeaponState::NoWeapon || npc->isDead())
       continue;
     if(auto* t = npc->target()) {
+      t->wakeSociety();
       t->setAnimationLodTargeted(true);
       fighters.push_back(npc->position());
       }
@@ -919,24 +885,26 @@ void WorldObjects::pinAnimationLodTargets() {
     const auto at = npc->position();
     for(const auto& f:fighters)
       if((at-f).quadLength()<BladeReach*BladeReach) {
+        npc->wakeSociety();
         npc->setAnimationLodTargeted(true);
         break;
         }
     }
   }
 
-bool WorldObjects::mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const {
+bool WorldObjects::mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view, bool allowSettledFurniture) const {
   // NpcProcessPolicy::AiNormal is the hero's 30 m ring: perceptions, living
   // bodies, dialogs and native combat around the hero read the pose there.
   return npc.processPolicy()!=NpcProcessPolicy::AiFar && npc.processPolicy()!=NpcProcessPolicy::AiFar2 ? true :
-         npc.animationLodPinned() || view.nearCamera(npc) || BodyObservations::watched(npc) ||
+         npc.animationLodPinned(allowSettledFurniture) || view.nearCamera(npc) || BodyObservations::watched(npc) ||
          BodyArena::isActor(npc) || NavDemos::fullSimulation(npc) || animationProbed(npc);
   }
 
 bool WorldObjects::animationPassSkips(const Npc& npc, const Npc* player, bool skipFar, bool frozen) {
   // Headless body training may skip NPCs beyond the far range (>60 m from the hero)
   // that are not arena actors: nobody sees them, and they are most of the world.
-  if(skipFar && npc.processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(npc))
+  if(npc.societyPoseSuspended ||
+     (skipFar && npc.processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(npc)))
     return true;
   return frozen && &npc!=player && !BodyArena::isActor(npc);
   }
@@ -954,33 +922,62 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     }();
   const bool frozen = BodyArena::frozenWorld();
   const auto pl     = owner.player();
+  const bool persistent = owner.persistentSocietyEnabled();
+  if(persistent)
+    owner.updateSocietyInterest();
   bool animationProbe=FrameProfile::enabled();
   const auto& lodCfg = AnimationLod::config();
+  const bool societyAnim = owner.societyAnimationEnabled() && !frozen && !skipFar;
   AnimationLod::View view;
-  const bool hasView = (lodCfg.enabled || animationProbe) && makeAnimationLodView(view);
+  const bool hasView = (lodCfg.enabled || animationProbe || societyAnim) && makeAnimationLodView(view);
   const bool lod     = lodCfg.enabled && hasView && !frozen;
+  const bool societyLod = societyAnim && hasView;
   const uint32_t rate  = lodCfg.rate;
+  const uint64_t gestureLead = 4*rate*dt;
   const uint32_t frame = animationLodFrame++;
-  if(lod)
+  const auto now = owner.tickCount();
+  if(lod || societyLod || persistent)
     pinAnimationLodTargets();
+  // Animation uses the step before the game-clock multiplier is applied.
+  npcAnimationClock += dt;
+  societyPoseWakePending = false;
   const bool keepShadow = animationTailKeepsShadow();
   // What the steps after the pass have to do for each NPC (world/animationtail.h); the pass
   // decides it at the end of its work on that NPC, the skipped ones included.
   tailPlan.assign(npcArr.size(),0);
   std::atomic<uint64_t> deferred{0};
+  std::atomic<uint64_t> societyDeferred{0};
   FrameProfile::Scope npcPass(FrameProfile::Zone::AnimationNpcPass);
   AnimationLod::beginPass();
-  Workers::parallelTasks(npcArr,[&](std::unique_ptr<Npc>& i){
+  const auto updateNpc = [&](std::unique_ptr<Npc>& i){
     auto& plan = tailPlan[size_t(&i-npcArr.data())];
     if(animationPassSkips(*i,pl,skipFar,frozen)) {
       plan = i->animationTailPlan(true,keepShadow);
       return;
       }
-    if(lod && i.get()!=pl && (frame+AnimationLod::phase(*i))%rate!=0 &&
-       !view.visible(*i) && !mustUpdateAnimation(*i,view)) {
+    const bool society = societyLod && i->processPolicy()==NpcProcessPolicy::AiFar2 &&
+                         !i->needsLayerPoseUpdate() && owner.societyHoldsAnimation(*i,gestureLead);
+    // Once Society releases an actor, its next native pose bypasses the cadence gate.
+    const bool nativeLod = lod && i.get()!=pl && !i->hasSocietyAnimationDebt();
+    const bool deferNative = nativeLod && (frame+AnimationLod::phase(*i))%rate!=0;
+    const bool farLod = nativeLod && i->processPolicy()==NpcProcessPolicy::AiFar2;
+    const bool furniture = i->interactive()!=nullptr;
+    const bool pauseFurniture = farLod && furniture && i->settledFurniturePose() && i->canPauseDistantPose(gestureLead);
+    const bool pauseFar = pauseFurniture || (farLod && !deferNative && !furniture && i->canPauseDistantPose(gestureLead));
+    if((society || deferNative || pauseFar) && !view.visible(*i) && !mustUpdateAnimation(*i,view,pauseFurniture)) {
       // Outside the frustum and its shadow: the next update applies this dt.
-      i->deferAnimation(dt);
-      deferred.fetch_add(1,std::memory_order_relaxed);
+      if(society) {
+        i->deferSocietyAnimation(dt);
+        societyDeferred.fetch_add(1,std::memory_order_relaxed);
+        } else {
+        // At a skipped cadence slot the actor was outside earshot, so this
+        // sound window would already have expired even without a pose pause.
+        if(pauseFar)
+          i->deferDistantAnimation(dt,now);
+        else
+          i->deferAnimation(dt);
+        deferred.fetch_add(1,std::memory_order_relaxed);
+        }
       // The same bones the shadow loop would pose this body from in place.
       i->prepareMeleeShadowBody();
       plan = i->animationTailPlan(false,keepShadow);
@@ -999,11 +996,20 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     // The melee shadow loop below publishes this body unless its bones move first.
     i->prepareMeleeShadowBody();
     plan = i->animationTailPlan(false,keepShadow);
-    });
+    };
+  if(persistent) {
+    refreshSocietyPoseDispatch();
+    Workers::parallelTasks(nativePoseIndices,[&](size_t i) { updateNpc(npcArr[i]); });
+    } else {
+    Workers::parallelTasks(npcArr,updateNpc);
+    }
   AnimationLod::endPass();
   npcPass.finish();
-  animationLodDeferred = deferred.load(std::memory_order_relaxed);
+  const auto deferredBySociety = societyDeferred.load(std::memory_order_relaxed);
+  animationLodDeferred = deferred.load(std::memory_order_relaxed)+deferredBySociety;
   FrameProfile::add(FrameProfile::Amount::NpcAnimDeferred,animationLodDeferred);
+  if(deferredBySociety!=0)
+    FrameProfile::add(FrameProfile::Amount::SocietyAnimDeferred,deferredBySociety);
   updateAnimationTail(dt,pl,skipFar,frozen);
   }
 
@@ -1011,20 +1017,50 @@ void WorldObjects::catchUpAnimation() {
   // Runs after the camera has moved for this frame and before anything is
   // drawn: an NPC the turn has brought into view gets its pose now.
   FrameProfile::add(FrameProfile::Amount::NpcAnimSyncOnRead,AnimationLod::takeSyncs());
-  // Nobody deferred in this frame's pass: every NPC consumed its pending time.
-  if(!AnimationLod::config().enabled || animationLodDeferred==0)
+  const bool persistent = owner.persistentSocietyEnabled();
+  const bool catchUp = animationLodDeferred!=0 || societyPoseWakePending;
+  societyPoseWakePending = false;
+  if(!catchUp && !campfireBodiesSuspended)
     return;
+  FrameProfile::Scope timing(FrameProfile::Zone::NpcAnimationCatchUp);
   AnimationLod::View view;
   if(!makeAnimationLodView(view))
     return;
+  if(campfireBodiesSuspended) {
+    // A camera turn can bring a distant campfire into view in the same frame.
+    // Restore the collision entry on this thread before the parallel pose pass.
+    refreshNpcCells();
+    orderNpcCandidates(npcCampfires);
+    for(auto* npc:npcSpatialOrder)
+      if(npc->campfireBodySuspended() && (mustUpdateAnimation(*npc,view) || view.visible(*npc)))
+        npc->resumeCampfireBody();
+    }
+  if(!catchUp)
+    return;
+  collectLatePoses(view,persistent);
+  FrameProfile::add(FrameProfile::Amount::NpcLatePoseCandidates,latePoses.size());
+  const auto needsPose = [&](const Npc& npc) {
+    if(!npc.hasDeferredAnimation())
+      return false;
+    const bool societyWake = npc.hasSocietyAnimationDebt() &&
+                             (npc.needsLayerPoseUpdate() || !owner.societyHoldsAnimation(npc) || mustUpdateAnimation(npc,view));
+    return societyWake || view.visible(npc) || view.nearCamera(npc);
+    };
+#ifndef NDEBUG
+  for(const auto& npc:npcArr)
+    if((!persistent || !npc->societyPoseSuspended) && needsPose(*npc))
+      assert(std::binary_search(latePoses.begin(),latePoses.end(),npc.get(),[](const Npc* a,const Npc* b) {
+        return a->societyDispatchIndex<b->societyDispatchIndex;
+        }));
+#endif
+  if(latePoses.empty())
+    return;
   std::atomic<uint64_t> caught{0};
   AnimationLod::beginPass();
-  Workers::parallelTasks(npcArr,[&](std::unique_ptr<Npc>& i){
-    if(!i->hasDeferredAnimation())
+  Workers::parallelTasks(latePoses,[&](Npc* npc) {
+    if(!needsPose(*npc))
       return;
-    if(!view.visible(*i) && !view.nearCamera(*i))
-      return;
-    i->updateAnimation(0);
+    npc->updateAnimation(0);
     caught.fetch_add(1,std::memory_order_relaxed);
     });
   AnimationLod::endPass();
@@ -1268,6 +1304,12 @@ Bullet& WorldObjects::shootBullet(const Item& itmId, const Vec3& pos, const Vec3
   b.setDirection(dir*speed/l);
   b.setTargetRange(tgRange + rgnBias);
   return b;
+  }
+
+bool WorldObjects::hasActiveProjectileFrom(const Npc& npc) const {
+  return std::any_of(bullets.begin(),bullets.end(),[&npc](const Bullet& bullet) {
+    return bullet.origin()==&npc && !bullet.isFinished();
+    });
   }
 
 Item *WorldObjects::addItem(size_t itemInstance, std::string_view at) {
@@ -1648,6 +1690,7 @@ void WorldObjects::emitPhysicsNoise(const PhysicsNoise& noise) {
   }
 
 void WorldObjects::resetPositionToTA() {
+  invalidateNpcOrder();
   for(auto& r:routines)
     r.curState = 0;
 

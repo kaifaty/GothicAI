@@ -962,16 +962,36 @@ bool MdlVisual::isUsingTorch() const {
   return torch.view!=nullptr;
   }
 
+bool MdlVisual::canPauseAnimation() const {
+  if(!effects.empty() || pfx.view.handle()!=nullptr || hnpcVisual.view.handle()!=nullptr ||
+     isUsingTorch() || !stuckArrows.empty())
+    return false;
+  for(const auto* part:{&sword,&shield,&bow,&ammunition,&stateItm})
+    if(part->view.hasEffect())
+      return false;
+  for(const auto& part:item)
+    if(part.view.hasEffect())
+      return false;
+  // Let active transitions and particle events keep their ordinary pose samples.
+  for(size_t i=0; i<skInst->logicalLayerCount(); ++i) {
+    const auto* sequence = skInst->logicalLayer(i).sequence;
+    if(sequence->animCls==Animation::Transition || !sequence->data->pfx.empty())
+      return false;
+    }
+  return true;
+  }
+
 bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint64_t dt, bool force, bool pausePose) {
   Pose&    pose      = *skInst;
   uint64_t tickCount = world.tickCount();
   auto     pos3      = Vec3{pos.at(3,0), pos.at(3,1), pos.at(3,2)};
 
   if(!pausePose && npc!=nullptr && world.isInSfxRange(pos3))
-    pose.processSfx(*npc,tickCount);
+    pose.processSfx(*npc,tickCount,skippedAnimationSoundUntil);
   if(!pausePose && mobsi!=nullptr && world.isInSfxRange(pos3))
     pose.processSfx(*mobsi,tickCount);
   if(!pausePose) {
+    skippedAnimationSoundUntil = 0;
     // out of the particles' range stops and looped effects still come (World::animationPfx)
     VisualAnimationPfx pfx(world,*this,world.isInPfxRange(pos3));
     pose.processPfx(pfx,tickCount);

@@ -9,10 +9,13 @@
 #include "gamemusic.h"
 #include "game/gamesession.h"
 #include "game/serialize.h"
+#include "game/definitions/effectdefinitiondata.h"
 #include "game/definitions/particlecontent.h"
+#include "game/definitions/particlesdefinitions.h"
 #include "graphics/pfx/particlefx.h"
 #include "graphics/pfx/pfxmotion.h"
 #include "graphics/lightsource.h"
+#include "graphics/visualfx.h"
 #include "world/world.h"
 #include "world/movablevobs.h"
 #include "world/objects/vobbundle.h"
@@ -541,25 +544,14 @@ void saveBoundPolicy(const Fixture& f) {
   require(cases==180,"all 44 class tags, unknown and both operations/subtree guards are checked");
   }
 
-void particleFields(daedalus::DaedalusVm& vm, const Def::ParticleEffect& actual,
-                    const Def::ParticleEffect& expected) {
-  const auto* cls=vm.find_symbol_by_name("C_PARTICLEFX");
-  require(cls!=nullptr,"particle class exists in base program");
-  const auto fields=vm.find_class_members(*cls);
-  require(fields.size()==57,"every original C_PARTICLEFX field is compared");
+void particleFields(const Def::ParticleEffect& actual, const Def::ParticleEffect& expected) {
   size_t compared=0;
-  for(const auto* field:fields) {
 #define COMPARE_PARTICLE_FIELD(type, fieldName, extent, symbol) \
-    if(field->name()=="C_PARTICLEFX." symbol) { \
-      require(actual.fieldName==expected.fieldName,"inherited/set source particle field "+field->name()); \
-      ++compared; \
-      continue; \
-      }
-    DEF_PARTICLE_EFFECT_FIELDS(COMPARE_PARTICLE_FIELD)
+  require(actual.fieldName==expected.fieldName,"inherited/set source particle field C_PARTICLEFX." symbol); \
+  ++compared;
+  DEF_PARTICLE_EFFECT_FIELDS(COMPARE_PARTICLE_FIELD)
 #undef COMPARE_PARTICLE_FIELD
-    throw std::runtime_error("unexpected particle field "+field->name());
-    }
-  require(compared==57,"every original C_PARTICLEFX field was compared");
+  require(compared==57,"every prepared C_PARTICLEFX field was compared");
   }
 
 void particleSettings(const ParticleFx& actual, const ParticleFx& expected) {
@@ -589,7 +581,29 @@ void particleSettings(const ParticleFx& actual, const ParticleFx& expected) {
           actual.effectPrefferedTime()==expected.effectPrefferedTime(),"derived lifetime and emission limits");
   }
 
+void preparedParticleToolChecks(const fs::path& contentRoot, const fs::path& baseRoot) {
+  const Fixture native;
+  constexpr auto stock=EffectDefinitionData::stockParticleProgram;
+  const auto source=EffectDefinitionData::particleSection(baseRoot,stock);
+  const auto target=EffectDefinitionData::particleSection(native.base,stock);
+  fs::create_directories(target.parent_path());
+  fs::copy_file(source,target);
+  require(!fs::exists(native.base/"programs"),"offline base has a particle catalog without a program index");
+
+  const auto file=native.content/"emitters.json";
+  textFile(file,"{\"format\":1,\"add\":["+emitter("base-flame","fire_medium.PfX")+","+
+           emitter("own-flame","own_test_smoke.pfx")+"]}");
+  require(subprocess({GOTHIC_CONTENT_CONVERT,"check-particles",native.base.string(),contentRoot.string()})==0,
+          "converter CLI checks own particle definitions against a catalog without packed bytecode");
+  require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-layer",native.world.string(),file.string(),contentRoot.string()})==0,
+          "converter CLI checks a layer's base and own particle names without packed bytecode");
+  require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-tree",native.base.string(),file.string(),contentRoot.string()})==0,
+          "converter CLI checks a tree's base and own particle names without packed bytecode");
+  }
+
 void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
+  const auto catalog=ParticleContent::openStockCatalog(baseRoot);
+  require(catalog.has_value(),"particle fixture requires the prepared stock catalog");
   const auto directory=f.content/"particles.d";
   textFile(directory/"10-smoke.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_COPY","base":"fire_smoke.pfx","set":{}},
@@ -610,11 +624,11 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"name":"OWN_TEST_PUFF","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":8,"rows":8,"frames":64,"fps":10,"once":true}},
     {"name":"FIRE_SPARKS","base":"OWN_TEST_SPARKS","replaces":true,"set":{"ppsValue":7.0},"with":["OWN_TEST_PUFF","OWN_TEST_TAIL"]},
     {"name":"OWN_TEST_DROP","base":"FIRE_SMOKE","set":{"useEmittersFOR":0},"land":"own_test_puff.pfx"}]})");
-  auto vm=ParticleContent::openProgram(baseRoot);
-  const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
+  textFile(directory/"70-pee.json",R"({"format":1,"effects":[{"name":"PEE","base":"PEE","replaces":true,"set":{"flyGravity_S":"0 -1 0"}}]})");
+  const auto original=catalog->materialize("FIRE_SMOKE");
   require(original!=nullptr,"base FIRE_SMOKE definition");
-  const auto loaded=ParticleContent::load(*vm,f.content);
-  require(loaded.errors.empty() && loaded.effects.size()==14,"own definitions load in filename and declaration order");
+  const auto loaded=ParticleContent::load(*catalog,f.content);
+  require(loaded.errors.empty() && loaded.effects.size()==15,"own definitions load in filename and declaration order");
   const auto& sparks=loaded.motions.at("OWN_TEST_SPARKS_CHILD");
   require(sparks.curlStrength==1.5f && sparks.curlFrequency==4.f && sparks.curlSpeed==0.3f && sparks.drag==3.f &&
           sparks.stretch==0.025f && sparks.minPixels==1.5f && loaded.motions.at("OWN_TEST_SPARKS").drag==2.f &&
@@ -647,16 +661,17 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
           flip->second.fps==24.f && flip->second.yaw && flip->second.steady,"flipbook fields are read");
   require(loaded.flipbooks.count("OWN_TEST_FLIP_CHILD")==1 && loaded.flipbooks.at("OWN_TEST_FLIP_CHILD").frames==30 &&
           loaded.flipbooks.count("OWN_TEST_SMOKE")==0,"a flipbook is inherited from an own base only");
-  particleFields(*vm,*loaded.effects.at("OWN_TEST_COPY"),*original);
+  particleFields(*loaded.effects.at("OWN_TEST_COPY"),*original);
   auto expected=*original;
   expected.vis_tex_color_start_s="80 80 80"; expected.vis_alpha_start=200;
   expected.lsp_part_avg=12000; expected.pps_is_smooth=1;
-  particleFields(*vm,*loaded.effects.at("OWN_TEST_SMOKE"),expected);
+  particleFields(*loaded.effects.at("OWN_TEST_SMOKE"),expected);
   expected.vel_avg=0.23f;
-  particleFields(*vm,*loaded.effects.at("OWN_TEST_CHAIN"),expected);
-  particleFields(*vm,*loaded.effects.at("OWN_TEST_NEXT"),expected);
+  particleFields(*loaded.effects.at("OWN_TEST_CHAIN"),expected);
+  particleFields(*loaded.effects.at("OWN_TEST_NEXT"),expected);
   require(subprocess({GOTHIC_CONTENT_CONVERT,"check-particles",baseRoot.string(),f.content.string()})==0,
           "converter CLI accepts own definitions and chains");
+  preparedParticleToolChecks(f.content,baseRoot);
 
   const std::vector<std::pair<std::string,std::string>> invalid={
     {"unknown-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"unknownField":1}})"},
@@ -727,7 +742,7 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     textFile(file,"{\"format\":"+std::string(kind=="format" ? "2" : "1")+
              R"(,"effects":[{"name":"OWN_ROLLED_BACK","base":"OWN_PREVIOUS","set":{}},)"+entry+"]}");
     textFile(errorsRoot/"particles.d/20-valid.json",R"({"format":1,"effects":[{"name":"OWN_AFTER_ERROR","base":"OWN_PREVIOUS","set":{}}]})");
-    const auto checked=ParticleContent::check(baseRoot,errorsRoot);
+    const auto checked=ParticleContent::load(*catalog,errorsRoot);
     require(checked.errors.size()==1 && checked.errors.front().find(file.string())!=std::string::npos,
             kind+": error identifies the rejected particle file");
     require(checked.effects.size()==2 && checked.effects.count("OWN_PREVIOUS")==1 &&
@@ -747,12 +762,40 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   require(original && copy && custom,"Gothic resolves base and custom names case-insensitively with suffix");
   require(custom==gothic.loadParticleFx("OWN_TEST_SMOKE"),"custom aliases reuse one cached ParticleFx");
   particleSettings(*copy,*original);
-  auto vm=ParticleContent::openProgram(baseRoot);
-  const auto definitions=ParticleContent::load(*vm,f.content);
+  const auto catalog=ParticleContent::openStockCatalog(baseRoot);
+  require(catalog.has_value(),"runtime particle fixture requires the prepared stock catalog");
+  const auto definitions=ParticleContent::load(*catalog,f.content);
   ParticleFx expected(*definitions.effects.at("OWN_TEST_SMOKE"),"expected");
   particleSettings(*custom,expected);
   require(custom->visTexColorStart==Tempest::Vec3(80,80,80) && custom->visAlphaStart==200.f/255.f &&
           custom->lspPartAvg==12000 && custom->ppsIsSmooth,"custom settings reach the derived native effect");
+  {
+  // a looped emitter with a fractional key period (3 keys at 7/s = 3000/7 ms) keeps the beat of its
+  // light and its object's animation: keySpan counts the phase in exact key ticks, not in the ceil of
+  // the period in ms, which drifts each cycle and loses the beat over an hour (issue #1701)
+  auto frac=*definitions.effects.at("OWN_TEST_SMOKE");
+  frac.pps_scale_keys_s="0.25 0.5 1"; frac.pps_fps=7.f; frac.pps_is_looping=1; frac.pps_is_smooth=0;
+  const ParticleFx pulse(frac,"fractional pulse");
+  require(pulse.ppsScaleKeys.size()==3 && pulse.ppsFPS==7.f && pulse.ppsIsLooping && pulse.prefferedTime==429,
+          "a fractional period is 3 keys at 7/s, its ceil in ms 429");
+  const auto key=[](uint64_t t) { return size_t(uint64_t(7.f*float(t))/1000)%3; };
+  const auto beats=[&](uint64_t now,uint64_t dt) {
+    const auto span=pulse.keySpan(true,0,now,dt,0);
+    const uint64_t to=now, from=now>dt ? now-dt : 0;
+    return key(span.first)==key(from) && key(span.second)==key(to);
+    };
+  // an hour of the world's clock: 3'600'000 ms is 8400 whole cycles of 3 keys, the phase is 0 again
+  const uint64_t hour=3'600'000;
+  const auto beat=pulse.keySpan(true,0,hour,16,0);
+  require(beats(hour,16) && key(beat.second)==key(hour) && key(hour)==0,
+          "after an hour a fractional pulse is on the same key as ppsScale at the exact time, not drifted");
+  require(beats(100'050,16) && beats(12'345,16) && beats(999'999,16),
+          "a fractional pulse keeps the key of its absolute time within a cycle too");
+  require(pulse.keySpan(true,0,10,16,0)==std::pair<uint64_t,uint64_t>(0,10),
+          "born within the step: a fractional pulse counts its keys from 0");
+  require(pulse.keySpan(false,0,hour,16,40)==std::pair<uint64_t,uint64_t>(40,56),
+          "a burst counts its keys from its block, not from its birth");
+  }
   const auto* chain=gothic.loadParticleFx("OWN_TEST_NEXT");
   require(chain && chain->velAvg==0.23f && chain->lspPartAvg==12000 &&
           chain->visTexColorStart==custom->visTexColorStart,"runtime resolves chains across particle files");
@@ -795,6 +838,39 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   require(custom->hazeShift==0 && custom->visMaterial.alpha!=Material::Ghost,"effects without a haze keep their material");
   require(!custom->motion.active() && custom->stretchMs==0 && custom->minPixels==0 && custom->hdrTo==0 &&
           custom->hdrEdge==1.f && !original->motion.active(),"base effects and effects without own motion keep the native path");
+  {
+    require(definitions.effects.contains("PEE"),"the PEE overlay loads from prepared data");
+    const auto raw=catalog->materialize("PEE");
+    require(raw!=nullptr,"stock PEE is available as a raw definition");
+    const ParticleFx baseline(*raw,"expected raw PEE");
+    const auto* replaced=gothic.loadParticleFx("PEE");
+    const auto* aimed=gothic.loadParticleFx("PFX_GAI_PEE");
+    require(replaced && replaced->flyGravity==Tempest::Vec3(0,-1,0),"the PEE overlay reaches ordinary PEE lookups");
+    require(aimed && aimed->flyGravity==baseline.flyGravity && aimed->flyGravity!=replaced->flyGravity &&
+            aimed->ppsValue==PeeStream::pps && aimed->velAvg==PeeStream::vel,
+            "the aimed stream derives its gravity from raw PEE and retains the native aim and emission overrides");
+    }
+  }
+
+void runtimeVisualKeys(Gothic& gothic) {
+  const auto* firebolt=gothic.loadVisualFx("spellfx_firebolt");
+  require(firebolt && firebolt->key(SpellFxKey::Open) && firebolt->key(SpellFxKey::Init) &&
+          firebolt->key(SpellFxKey::Collide) && !firebolt->key(SpellFxKey::Invest),
+          "Firebolt resolves its fixed phases case-insensitively");
+  const auto* cast=firebolt->key(SpellFxKey::Cast);
+  const auto* castParticle=gothic.loadParticleFx("mfx_firebolt_cast");
+  require(cast && castParticle && cast->visName==castParticle && firebolt->emFXCollStat && firebolt->emFXCollDyn,
+          "Firebolt resolves the cast particle and linked collision effects");
+
+  const auto* fireball=gothic.loadVisualFx("SPELLFX_CHARGEFIREBALL");
+  require(fireball!=nullptr,"Charge Fireball is available");
+  for(int32_t level=1; level<=4; ++level)
+    require(fireball->key(SpellFxKey::Invest,level)!=nullptr,"Charge Fireball resolves invest level "+std::to_string(level));
+  require(fireball->key(SpellFxKey::Invest,5)==nullptr,"Charge Fireball stops at the first missing invest level");
+
+  const auto* transform=gothic.loadVisualFx("SPELLFX_TRANSFORM");
+  require(transform && transform->key(SpellFxKey::Invest,0)==nullptr && transform->key(SpellFxKey::Invest,1)!=nullptr,
+          "Transform ignores the stock _KEY_INVEST_0 record and uses numbered keys from one");
   }
 
 
@@ -1235,7 +1311,10 @@ struct WorldDataContract {
       if(phase==0) flameLayer(fixture,Resources::baseDir());
       gothic.isNpcInDialogFn=[](const Npc*) { return false; };
       gothic.setupGlobalScripts();
-      if(phase==0) runtimeParticles(gothic,fixture,Resources::baseDir());
+      if(phase==0) {
+        runtimeParticles(gothic,fixture,Resources::baseDir());
+        runtimeVisualKeys(gothic);
+        }
       if(phase==2)
         require(gothic.loadParticleFx("OWN_TEST_SMOKE")!=nullptr,"disabling vob layers retains custom particle definitions");
       if(phase==3)

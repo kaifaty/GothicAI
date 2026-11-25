@@ -16,6 +16,8 @@
 #include "gothic.h"
 #include "settings.h"
 #include "game/gamescript.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/gamesession.h"
 #include "game/serialize.h"
 #include "physics/cloth.h"
@@ -627,21 +629,20 @@ void clothShoot(ClothContext ctx,World& world,Npc& player,std::string_view kind)
     }
   if(bestArea<1.f) {arenaAbort("cloth projectile has no exposed native cloth face");return;}
   const bool arrow=kind=="arrow";
-  size_t symbol=size_t(-1);
-  if(arrow)symbol=world.script().findSymbolIndex("ITRW_ARROW");
+  std::optional<uint32_t> symbol;
+  if(arrow)symbol=world.script().findItemInstance("ITRW_ARROW");
   else if(kind=="fireball" || kind=="wind") {
-    for(size_t i=0;i<world.script().symbolsCount();++i) {
-      const auto* entry=world.script().findSymbol(i);
-      if(!entry || entry->type()!=daedalus::DaedalusDataType::INSTANCE)continue;
-      auto name=entry->name();for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
+    const auto* catalog=baseNativeCatalog();
+    if(!catalog) {arenaAbort("cloth projectile fixture requires a native item catalog");return;}
+    for(const auto& [itemId,name]:catalog->identities.items) {
       if(!name.starts_with("ITRU_") && !name.starts_with("ITSC_"))continue;
-      Item candidate(world,i,Item::T_Inventory);
+      Item candidate(world,itemId,Item::T_Inventory);
       if(world.script().physicalSpell(candidate.spellId())==
-         (kind=="wind"?GameScript::PhysicalSpell::WindFist:GameScript::PhysicalSpell::Fireball)) {symbol=i;break;}
+         (kind=="wind"?GameScript::PhysicalSpell::WindFist:GameScript::PhysicalSpell::Fireball)) {symbol=itemId;break;}
       }
     }
-  if(symbol==size_t(-1)) {arenaAbort("cloth fixture native projectile instance is unavailable");return;}
-  Item item(world,symbol,Item::T_Inventory);
+  if(!symbol) {arenaAbort("cloth fixture native projectile instance is unavailable");return;}
+  Item item(world,*symbol,Item::T_Inventory);
   const auto from=target+normal*250.f;
   // shootArrow is the public free-direction entry to WorldObjects::shootBullet;
   // the Item still creates the native spell Bullet, spell VFX and collision path.

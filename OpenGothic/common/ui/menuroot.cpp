@@ -2,18 +2,37 @@
 
 #include <Tempest/Log>
 
+#include "basestore.h"
+#include "contentcensus.h"
 #include "ui/gamemenu.h"
 #include "gothic.h"
+#include "resources.h"
 #include "settings.h"
 
+#include <algorithm>
+
 using namespace Tempest;
+
+namespace {
+std::string menuSymbol(std::string_view name) {
+  std::string key(name);
+  std::transform(key.begin(),key.end(),key.begin(),[](char ch) {
+    return ch>='a' && ch<='z' ? char(ch-'a'+'A') : ch;
+    });
+  return key;
+  }
+
+void applyVideoOptions() {
+  Log::d("TODO: apply_options_video");
+  }
+}
 
 MenuRoot::MenuRoot(KeyCodec& keyCodec)
   :keyCodec(keyCodec) {
   setCursorShape(CursorShape::Hidden);
 
-  Settings::inst().onSettingsChanged.bind(this,&MenuRoot::initSettings);
   initSettings();
+  Settings::inst().onSettingsChanged.bind(this,&MenuRoot::initSettings);
   }
 
 MenuRoot::~MenuRoot() {
@@ -22,27 +41,74 @@ MenuRoot::~MenuRoot() {
 
 void MenuRoot::initSettings() {
   const auto lang = Settings::getI("GAME", "language");
-  if(lang==vmLang && vm!=nullptr)
+  if(lang==menuLanguage && records.has_value())
     return;
 
-  // clear pointer to vm-objects
-  for(auto& i:menuStack)
-    i->resetVm(nullptr);
-  if(current!=nullptr)
-    current->resetVm(nullptr);
+  constexpr auto sha = MenuDefinitions::stockProgram;
+  const auto base = Resources::baseDir();
+  const auto section = MenuDefinitions::section(base,sha);
+  try {
+    records = MenuDefinitions::read(base,sha);
+    if(auto* census = Resources::contentCensus())
+      census->replaced("MENU.DAT","base/"+section.lexically_relative(base).generic_string());
+    }
+  catch(const std::runtime_error& error) {
+    throw BaseStore::Error(section.string()+": "+error.what());
+    }
+  menuLanguage = lang;
 
-  vmLang = lang;
-  vm     = Gothic::inst().createPhoenixVm("MENU.DAT", ScriptLang(vmLang));
-  vm->register_external("apply_options_video",[](){
-    Log::d("TODO: apply_options_video");
-    });
-
   for(auto& i:menuStack)
-    i->resetVm(vm.get());
+    i->reloadItems();
   if(current!=nullptr)
-    current->resetVm(vm.get());
+    current->reloadItems();
 
   update();
+  }
+
+bool MenuRoot::hasMenu(std::string_view name) const {
+  return records->menus.contains(menuSymbol(name));
+  }
+
+std::shared_ptr<MenuDefinitions::Menu> MenuRoot::menu(std::string_view name) {
+  return std::make_shared<MenuDefinitions::Menu>(records->menus.at(menuSymbol(name)));
+  }
+
+std::shared_ptr<MenuDefinitions::MenuItem> MenuRoot::menuItem(std::string_view name) {
+  const auto item = records->items.find(menuSymbol(name));
+  if(item!=records->items.end())
+    return std::make_shared<MenuDefinitions::MenuItem>(item->second);
+  Log::e("Unknown menu item: ",name);
+  return std::make_shared<MenuDefinitions::MenuItem>();
+  }
+
+std::optional<std::pair<int32_t,int32_t>> MenuRoot::infoPosition() const {
+  return records->infoPosition;
+  }
+
+void MenuRoot::execute(int32_t symbol) {
+  if(symbol<=0)
+    return;
+
+  // The callbacks may publish an event that changes settings and reloads this catalog.
+  const auto actions = records->actions.at(symbol);
+  for(const auto& action : actions) {
+    switch(action.kind) {
+      case MenuDefinitions::Action::Kind::Video:
+        Gothic::inst().onVideo(action.video,false);
+        break;
+      case MenuDefinitions::Action::Kind::ApplyVideoOptions:
+        applyVideoOptions();
+        break;
+      case MenuDefinitions::Action::Kind::ApplyPerformanceOptions: {
+        static const bool reported = [] {
+          Log::e("not implemented call [APPLY_OPTIONS_PERFORMANCE]");
+          return true;
+          }();
+        (void)reported;
+        break;
+        }
+      }
+    }
   }
 
 void MenuRoot::setMainMenu() {
@@ -51,11 +117,11 @@ void MenuRoot::setMainMenu() {
   }
 
 void MenuRoot::setMenu(std::string_view menuEv, KeyCodec::Action key) {
-  if(vm->find_symbol_by_name(menuEv) == nullptr){
+  if(!hasMenu(menuEv)) {
     Log::e("invalid menu-id: ",menuEv);
     return;
     }
-  setMenu(new GameMenu(*this,keyCodec,*vm,menuEv,key));
+  setMenu(new GameMenu(*this,keyCodec,menuEv,key));
   }
 
 void MenuRoot::setMenu(GameMenu *w) {

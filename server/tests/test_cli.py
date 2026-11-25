@@ -340,7 +340,7 @@ def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, mo
     monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(tmp_path / "cache"))
     assert cli._story_graph(SimpleNamespace(story_graph=None), game) is None
     assert f"no ready base for {game}" in caplog.text
-    assert "run the game once with the installation or set OPENGOTHIC_BASE" in caplog.text
+    assert "prepare it with content-convert resolve or set OPENGOTHIC_BASE" in caplog.text
 
 
 @pytest.mark.parametrize(("scenario", "backend_kind", "outcome", "code"), [

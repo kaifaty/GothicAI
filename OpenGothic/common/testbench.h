@@ -15,6 +15,7 @@ class PlayerControl;
 class Npc;
 class World;
 struct PhysicsNoise;
+enum class BenchNpcTick : uint8_t;
 
 // Test bench for developing game mechanics: runs a scenario file inside the game with a fixed time step,
 // drives the player and the camera, records video with a debug overlay and per-frame metrics.
@@ -25,6 +26,7 @@ namespace TestBench {
   // Explicit graph fixtures must fail instead of accepting a native fallback.
   bool     strictGraphMovement(const Npc& npc);
   // Only the current npcduel copies retain near-hero simulation and physics at any distance.
+  bool     npcDuelRunning();
   bool     npcDuelActor(const Npc& npc);
   void     npcDuelSwingStart(const Npc& npc);
   void     npcDuelSwingEnd(const Npc& npc, std::string_view outcome);
@@ -48,7 +50,7 @@ namespace TestBench {
   // Explicit scenario participants for a passive body_watch, including duplicate script symbols.
   std::vector<Npc*> bodyObservationActors();
   // Fixed time step while a scenario runs: the video and the metrics do not depend on the frame rate
-  uint64_t frameDt(uint64_t dt);
+  uint64_t frameDt(uint64_t dt, bool fixedStep = false);
   // `deterministic on` (streaming-shots): every frame is a step, wall time does not skip one (MainWindow::tick)
   bool     deterministic();
   // ... and while `streaming wait` waits, the world takes no step at all
@@ -61,9 +63,12 @@ namespace TestBench {
   // Move synthetic support fixtures before both NPC and player world steps.
   void     beforeWorldTick(uint64_t dt);
   // Exact healing strikes run at the advanced clock before the player consumes animation events.
-  void     beforeNpcTick(Npc& npc);
+  // Returns true when the combat handoff fixture owns this NPC's tick.
+  BenchNpcTick beforeNpcTick(Npc& npc);
   // Runs the scenario after the world update; true if this frame has to be captured
   bool     tick(uint64_t dt, PlayerControl& player);
+  // Proof-only pose trace after the last camera and animation update for this frame.
+  void     sampleSocietyPose(World& world);
   // Called after the frame's residency update; deferred metrics for perf route segments.
   void     sampleStreaming(const World& world);
   // The captured frame: draws the overlay and writes it to the video; uiScale: the interface's (the

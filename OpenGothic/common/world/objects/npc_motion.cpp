@@ -16,9 +16,20 @@
 using namespace Tempest;
 
 bool Npc::setPosition(float ix, float iy, float iz) {
+  return setPosition(Vec3{ix,iy,iz});
+  }
+
+bool Npc::setPosition(const Tempest::Vec3& pos) {
+  return implSetPosition(pos,false);
+  }
+
+bool Npc::implSetPosition(const Tempest::Vec3& pos, bool keepBodySuspended) {
+  const float ix=pos.x, iy=pos.y, iz=pos.z;
   if(x==ix && y==iy && z==iz)
     return false;
-  const bool liveTeleport = !isDown() && !ragdoll && (position()-Vec3(ix,iy,iz)).length()>300.f;
+  wakeSociety();
+  const auto displacement = position()-pos;
+  const bool liveTeleport = !isDown() && !ragdoll && displacement.length()>300.f;
   const auto* skeleton = visual.visualSkeleton();
   std::optional<Ragdoll::State> movedBody, movedDormant;
   auto relocate = [&](Ragdoll::State& state) {
@@ -48,6 +59,7 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   x = ix;
   y = iy;
   z = iz;
+  owner.noteNpcCellChange(*this);
   visual.setTextureOwner(Vec3(x,y,z),!isPlayer());
   resetCharacterVisualHeight();
   if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual))
@@ -66,17 +78,25 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   ragdollHasLastPosition = false;
   ragdollLastVelocity = {};
   durtyTranform |= TR_Pos;
-  physic.setPosition(Vec3{x,y,z});
+  physic.setPosition(Vec3{x,y,z},keepBodySuspended);
+  // A direct relocation can leave the waypoint pointer in place (npc_goto).
+  if(activityEvents.activity && activityEvents.activity->point && go2.empty() &&
+     (activityEvents.stage==ActivityEvents::Stage::Wait || isActivityPoint(currentFp)) &&
+     (!currentFp || !MoveAlgo::isClose(*this,*currentFp,MAX_AI_USE_DISTANCE))) {
+    stopWaitingForPoints();
+    attachToPoint(nullptr);
+    wakeActivity(ActivityEvents::Detached);
+    }
   if(movedBody)
     syncRagdoll();
   return true;
   }
 
-bool Npc::setPosition(const Tempest::Vec3& pos) {
-  return setPosition(pos.x,pos.y,pos.z);
-  }
-
 void Npc::setViewPosition(const Tempest::Vec3& pos) {
+  if(pos!=position()) {
+    wakeSociety();
+    owner.noteNpcCellChange(*this);
+    }
   // Routine legacy alignment must not move the frozen physical pose. Explicit
   // teleports use setPosition and translate the dormant state there.
   x = pos.x;
@@ -102,6 +122,8 @@ void Npc::setDirection(const Tempest::Vec3& pos) {
   }
 
 void Npc::setDirection(float rotation) {
+  if(angle!=rotation)
+    wakeSociety();
   durtyTranform |= TR_Rot;
   angle = rotation;
   physic.setRotation(angle);
@@ -115,6 +137,8 @@ void Npc::setDirectionY(float rotation) {
   rotation = std::fmod(rotation,360.f);
   if(!mvAlgo.isDive() && !(interactive()!=nullptr && interactive()->isLadder()))
     return;
+  if(angleY!=rotation)
+    wakeSociety();
   angleY = rotation;
   durtyTranform |= TR_Rot;
   }
@@ -227,6 +251,7 @@ void Npc::resetNavigationEpisode() {
   std::destroy_at(&mvAlgo);
   std::construct_at(&mvAlgo,*this);
   currentTarget = nearestEnemy = currentOther = currentVictim = lastHit = nullptr;
+  owner.noteNpcCellChange(*this);
   outWaitTime = aiOutputBarrier = physicsNoiseUntil = 0;
   castLevel = CS_NoCast;
   currentSpellCast = size_t(-1);

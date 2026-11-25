@@ -136,6 +136,8 @@ class MdlVisual final {
 
     void                           setTorch(bool t, World& owner);
     bool                           isUsingTorch() const;
+    bool                           canPauseAnimation() const;
+    void                           skipAnimationSoundsThrough(uint64_t now) { skippedAnimationSoundUntil = now; }
 
     Pose&                          pose() { return *skInst; }
     const Pose&                    pose() const { return *skInst; }
@@ -443,6 +445,7 @@ class MdlVisual final {
     bool                           quiverNear = false;
     float                          quiverHand = 0; // the right hand on the quiver as it slides (QuiverHand), 0..1
 
+    uint64_t                       skippedAnimationSoundUntil = 0;
     std::vector<PfxSlot>           effects;
     std::string_view               muted;
     PfxSlot                        pfx;

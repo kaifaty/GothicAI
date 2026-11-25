@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 
 using namespace Tempest;
@@ -86,6 +87,29 @@ bool AnimationLod::View::visible(const Npc& npc) const {
   const Vec3  lo(std::min(c.x,e.x)-r,std::min(c.y,e.y)-r,std::min(c.z,e.z)-r);
   const Vec3  hi(std::max(c.x,e.x)+r,std::max(c.y,e.y)+r,std::max(c.z,e.z)+r);
   return frustum.testBbox(lo,hi)!=Frustrum::T_Invisible;
+  }
+
+void AnimationLod::View::bodyBounds(const Npc& npc, Vec3& lo, Vec3& hi) {
+  Vec3 center;
+  float radius = 0;
+  bodySphere(npc,center,radius);
+  lo = center-Vec3(radius,radius,radius);
+  hi = center+Vec3(radius,radius,radius);
+  }
+
+bool AnimationLod::View::couldSee(const Vec3& lo, const Vec3& hi) const {
+  const auto shift = shadow ? shadowDir*ShadowReach : Vec3();
+  const Vec3 lower(lo.x+std::min(shift.x,0.f),lo.y+std::min(shift.y,0.f),lo.z+std::min(shift.z,0.f));
+  const Vec3 upper(hi.x+std::max(shift.x,0.f),hi.y+std::max(shift.y,0.f),hi.z+std::max(shift.z,0.f));
+  if(frustum.testBbox(lower,upper)!=Frustrum::T_Invisible)
+    return true;
+  const Vec3 closest(std::clamp(camera.x,lo.x,hi.x),std::clamp(camera.y,lo.y,hi.y),std::clamp(camera.z,lo.z,hi.z));
+  return (camera-closest).quadLength()<CameraRadius*CameraRadius;
+  }
+
+bool AnimationLod::View::sameView(const View& other) const {
+  return camera==other.camera && shadow==other.shadow && shadowDir==other.shadowDir &&
+         std::memcmp(frustum.f,other.frustum.f,sizeof(frustum.f))==0;
   }
 
 bool AnimationLod::View::nearCamera(const Npc& npc) const {

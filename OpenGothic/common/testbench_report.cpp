@@ -4,9 +4,12 @@
 #include <Tempest/SystemApi>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <unordered_map>
 
 #include "npcdayjournal.h"
 #include "camera.h"
@@ -169,6 +172,157 @@ void writeAnim() {
   }
 
 }
+
+namespace {
+
+constexpr std::array SocietyPoseBones = {
+  "BIP01 HEAD", "BIP01 PELVIS", "BIP01 L HAND", "BIP01 R HAND", "BIP01 L FOOT", "BIP01 R FOOT"
+  };
+constexpr uint64_t SocietyPoseTailMs = 64;
+
+struct SocietyPoseSample {
+  uint64_t tick = 0, stateTime = 0;
+  bool held = false, debt = false, exposed = false;
+  uint32_t body = 0;
+  int32_t routine = 0;
+  Vec3 root;
+  std::string state, animations, gesture;
+  float gesturePhase = -1.f;
+  std::string_view visibilityBlocker;
+  std::array<Matrix4x4,SocietyPoseBones.size()> bones;
+  bool hasBones = false;
+  };
+
+struct SocietyPoseTrack {
+  SocietyPoseSample previous;
+  const Skeleton* skeleton = nullptr;
+  std::array<size_t,SocietyPoseBones.size()> ids;
+  uint64_t written = 0, until = 0;
+  bool deferredSinceExposure = false;
+  };
+
+void sampleSocietyBones(SocietyPoseTrack& track, SocietyPoseSample& sample, const Npc& npc) {
+  const auto* skeleton = npc.visualSkeleton();
+  if(skeleton==nullptr)
+    return;
+  if(track.skeleton!=skeleton) {
+    track.skeleton = skeleton;
+    for(size_t i=0;i<track.ids.size();++i)
+      track.ids[i] = skeleton->findNode(SocietyPoseBones[i]);
+    }
+  for(size_t i=0;i<track.ids.size();++i) {
+    if(track.ids[i]==size_t(-1))
+      return;
+    // Reading the published matrices directly leaves animation debt and LOD pins untouched.
+    sample.bones[i] = npc.renderedBone(track.ids[i]);
+    }
+  sample.hasBones = true;
+  }
+
+void sampleSocietyGesture(SocietyPoseSample& sample, const Npc& npc) {
+  for(std::string_view layers = sample.animations; !layers.empty();) {
+    const auto end = layers.find(' ');
+    const auto name = layers.substr(0,end);
+    if((name.starts_with("T_HGUARD_") || name.starts_with("T_LGUARD_")) && name.find("_2_")==std::string_view::npos) {
+      sample.gesture = name;
+      sample.gesturePhase = npc.animProgress(name);
+      return;
+      }
+    if(end==std::string_view::npos)
+      return;
+    layers.remove_prefix(end+1);
+    }
+  }
+
+void writeSocietyPose(World& world, const Npc& npc, const SocietyPoseSample& sample, bool recovered,
+                      bool firstExposure, bool afterDebt, int colliderHits) {
+  std::string bones = "[";
+  if(sample.hasBones) {
+    for(const auto& bone:sample.bones) {
+      if(bones.size()>1)
+        bones += ',';
+      bones += ragdollMatrix(bone);
+      }
+    }
+  event("society_pose","\"tick_ms\":"+std::to_string(sample.tick)+",\"actor\":"+std::to_string(npc.creationSeq())+
+    ",\"symbol\":"+jsonStr(symName(world,&npc))+",\"held\":"+(sample.held ? "true" : "false")+
+    ",\"debt\":"+(sample.debt ? "true" : "false")+",\"recovered\":"+(recovered ? "true" : "false")+
+    ",\"first_exposure\":"+(firstExposure ? "true" : "false")+",\"after_debt\":"+(afterDebt ? "true" : "false")+
+    ",\"visibility_blocker\":"+jsonStr(sample.visibilityBlocker)+",\"root_cm\":"+ragdollVector(sample.root)+
+    ",\"body\":"+std::to_string(sample.body)+",\"routine\":"+std::to_string(sample.routine)+
+    ",\"state\":"+jsonStr(sample.state)+",\"state_time_ms\":"+std::to_string(sample.stateTime)+
+    ",\"animations\":"+jsonStr(sample.animations)+",\"gesture\":"+jsonStr(sample.gesture)+
+    ",\"gesture_phase\":"+ragdollNumber(sample.gesturePhase)+",\"collider_hits\":"+std::to_string(colliderHits)+
+    ",\"bones\":"+bones+"]");
+  }
+
+}
+
+void TestBench::sampleSocietyPose(World& world) {
+  static const bool enabled = [] {
+    const char* value = std::getenv("OPENGOTHIC_SOCIETY_POSE_TRACE");
+    return value!=nullptr && std::string_view(value)=="1";
+    }();
+  if(!enabled || !bench.started || bench.done)
+    return;
+  static const World* lastWorld = nullptr;
+  static uint64_t lastTick = 0;
+  static std::unordered_map<uint32_t,SocietyPoseTrack> tracks;
+  const auto tick = world.tickCount();
+  if(lastWorld!=&world || tick<=lastTick)
+    tracks.clear();
+  lastWorld = &world;
+  lastTick = tick;
+  for(uint32_t i=0;i<world.npcCount();++i) {
+    auto* npc = world.npcById(i);
+    const auto id = npc->creationSeq();
+    const bool held = world.societyHoldsRoutineAfterTick(*npc);
+    const bool debt = npc->hasSocietyAnimationDebt();
+    if(!held && !debt && !tracks.contains(id))
+      continue;
+    auto& track = tracks[id];
+    const auto& previous = track.previous;
+    auto sample = SocietyPoseSample{};
+    sample.tick = tick;
+    sample.held = held;
+    sample.debt = debt;
+    sample.visibilityBlocker = world.societyVisibilityBlocker(*npc);
+    sample.exposed = sample.visibilityBlocker=="hero_near" || sample.visibilityBlocker=="camera_visible";
+    sample.root = npc->position();
+    sample.body = uint32_t(npc->bodyStateMasked());
+    sample.routine = npc->currentRoutineIndex();
+    sample.stateTime = npc->stateTime();
+    sample.state = stateName(world,*npc);
+    sample.animations = npc->animNames();
+    sampleSocietyBones(track,sample,*npc);
+    sampleSocietyGesture(sample,*npc);
+
+    track.deferredSinceExposure |= debt;
+    const bool firstExposure = sample.exposed && !previous.exposed;
+    const bool recovered = previous.debt && !debt;
+    const bool released = previous.held && !held;
+    if(firstExposure || recovered || released) {
+      if(previous.tick>track.written)
+        writeSocietyPose(world,*npc,previous,false,false,false,-1);
+      track.until = tick+SocietyPoseTailMs;
+      }
+    if(tick<=track.until) {
+      const auto center = npc->centerPosition();
+      const std::array offsets{Vec3(80,0,0),Vec3(-80,0,0),Vec3(0,0,80),Vec3(0,0,-80)};
+      const int hits = int(std::ranges::count_if(offsets,[&](Vec3 offset) {
+        return world.physic()->rayNpc(center+offset,center,world.player()).npcHit==npc;
+      }));
+      writeSocietyPose(world,*npc,sample,recovered,firstExposure,track.deferredSinceExposure,hits);
+      track.written = tick;
+      }
+    if(firstExposure)
+      track.deferredSinceExposure = false;
+    if(!held && !debt && sample.exposed && tick>=track.until)
+      tracks.erase(id);
+    else
+      track.previous = std::move(sample);
+    }
+  }
 
 namespace testbench_detail {
 
@@ -338,6 +492,14 @@ void finish() {
   if(bench.npcDuel.active) {
     Gothic::inst().onCombatHit.ubind(&bench.npcDuel,&Bench::NpcDuel::hit);
     bench.npcDuel.active=false;
+    }
+  if(!bench.npcFightTrace.actors.empty()) {
+    event("npc_fight_record_error","\"reason\":\"missing end command\",\"label\":"+jsonStr(bench.npcFightTrace.label));
+    bench.npcFightTrace.stop();
+    }
+  if(bench.npcCombatHandoff.world!=nullptr) {
+    event("npc_combat_handoff_error","\"reason\":\"missing end command\"");
+    bench.npcCombatHandoff.stop();
     }
   if(bench.bodyImpact.observing) {
     Gothic::inst().onHeroDeed.ubind(&bench.bodyImpact,&Bench::BodyImpact::deed);

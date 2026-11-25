@@ -99,8 +99,8 @@
 
 **Что нужно:** русская Gothic II Gold (с «Ночью Ворона»), подписка ChatGPT (мозг жителей), ключ API Inworld (распознавание речи и голоса) и микрофон. Быстрым моделям для реакций, распорядка и выкриков в бою нужна своя видеокарта: они работают на отдельном GPU-сервере. Без них игра идёт, но эти части молчат.
 
-- **Windows 10/11** — предварительная сборка, инструкция в [`START_HERE.ru.md`](START_HERE.ru.md). Архив — в [Releases](https://github.com/kaifaty/GothicAI/releases), на настоящем компьютере пока не проверен.
-- **Linux x64** (glibc 2.35+: Ubuntu 22.04+, Debian 12+, Fedora 36+, SteamOS 3) — предварительная сборка, инструкция в [`START_HERE.linux.ru.md`](START_HERE.linux.ru.md). Архив — в [Releases](https://github.com/kaifaty/GothicAI/releases), на настоящем компьютере пока не проверен.
+- **Windows 10/11** — предварительная сборка и отдельный архив инструментов подготовки базы. Прогон на физическом ПК ещё предстоит. [Инструкция](START_HERE.ru.md) · [Releases](https://github.com/kaifaty/GothicAI/releases)
+- **Linux x64** (glibc 2.35+: Ubuntu 22.04+, Debian 12+, Fedora 36+, SteamOS 3) — предварительная сборка и отдельный архив инструментов подготовки базы. Прогон на физическом ПК ещё предстоит. [Инструкция](START_HERE.linux.ru.md) · [Releases](https://github.com/kaifaty/GothicAI/releases)
 - **macOS из исходников** — [`docs/development.md`](docs/development.md): сборка движка, лаунчер, который запускает всё одной кнопкой, сервисы и тесты.
 
 ## Вокруг игры

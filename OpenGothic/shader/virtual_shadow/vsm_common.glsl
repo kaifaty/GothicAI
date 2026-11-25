@@ -9,6 +9,13 @@
 const int VSM_PAGE_SIZE     = 128;
 const int VSM_PAGE_TBL_SIZE = 32;  // small for testing, 64 can be better
 const int VSM_PAGE_MIPS     = 16;
+// Receiver depth is written with its low 16 bits clear. On the fog caster mips the low bit is
+// set for fog-only marks and remains clear where the GBuffer marked a receiver before fog.
+const uint VSM_FOG_ONLY_DEPTH_BIT = 1u;
+bool vsmFogCasterMip(uint mip) {
+  return mip==5u || mip==6u;
+  }
+
 //const int VSM_FOG_MIP       = 6;
 //const int VSM_PAGE_PER_ROW  = 4096/VSM_PAGE_SIZE;
 const int VSM_FOG_MIP       = 5;

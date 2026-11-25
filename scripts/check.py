@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import ast
 from collections import Counter, defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
@@ -372,7 +372,13 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
     groups = GROUPS if groups is None else groups
     if level not in {"direct", "full"}:
         raise ValueError(f"Unsupported selection level: {level}")
-    changed = sorted(set(changed_files))
+    root = root.resolve()
+    changed = set(changed_files)
+    targets = {root / path for path in changed}
+    # Legacy tests may import or name a tracked symlink to a changed file.
+    staged = subprocess.check_output(["git", "ls-files", "-s", "-z"], cwd=root).decode().split("\0")
+    links = (entry.split("\t", 1)[1] for entry in staged if entry.startswith("120000 "))
+    changed = sorted(changed.union(link for link in links if (root / link).resolve() in targets))
     files = git_files(root, untracked=True)
     shared_names = Counter(PurePosixPath(path).name for path in {*files, *changed})
     deps = dependencies(root, groups)
@@ -499,7 +505,16 @@ def main() -> int:
     event = args.event if args.mode == "ci-matrix" else "pull_request"
     paths = [] if event == "workflow_dispatch" else changed_paths(root, args.base, working_tree=args.mode != "ci-matrix")
     level = "full" if args.mode == "ci-matrix" or (args.mode == "run" and args.all) else "direct"
-    selections = select_groups(root, paths, event=event, level=level)
+    groups = GROUPS
+    if args.mode == "ci-matrix":
+        groups = tuple(
+            replace(group, command=(
+                *group.command[:2], "--with", "pytest-xdist", *group.command[2:],
+                "-n", "2", "--dist", "loadfile", "--durations=20",
+            )) if group.name in {"server", "scripts", "content"} else group
+            for group in groups
+        )
+    selections = select_groups(root, paths, event=event, level=level, groups=groups)
     if args.mode == "ci-matrix":
         print(json.dumps([{k: v for k, v in group.items() if k != "reasons"} for group in selections], separators=(",", ":")))
         return 0

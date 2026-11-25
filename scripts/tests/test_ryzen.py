@@ -661,6 +661,9 @@ class CacheTests(unittest.TestCase):
         shutil.copyfile(SCRIPT.with_name('ryzen-build.sh'), self.source / 'scripts/ryzen-build.sh')
         shutil.copyfile(SCRIPT.with_name('e2e-services.sh'), self.source / 'scripts/e2e-services.sh')
         (self.source / 'OpenGothic/ai_bridge/storygraph').mkdir(parents=True)
+        catalog = self.source / 'OpenGothic/common/game/definitions/nativebasecatalog.h'
+        catalog.parent.mkdir(parents=True)
+        catalog.write_text('inline constexpr int catalogVersion = 7;\n')
         settings = self.home / 'gothic-ai/game-settings/system'
         settings.mkdir(parents=True)
         for name in ('Gothic.ini', 'SystemPack.ini'):
@@ -752,23 +755,26 @@ assert Path(sys.argv[0]).with_name('runtime.dat').read_text() == 'runtime'
 import os
 from pathlib import Path
 import sys
-assert sys.argv[1:] == [os.environ['GOTHIC_DIR'], '--ou-messages']
-fingerprint = os.environ['OPENGOTHIC_BASE_FINGERPRINT']
-(Path(os.environ['TEST_ROOT']) / 'selected-base').write_text(fingerprint)
+explicit = os.environ.get('OPENGOTHIC_BASE')
+assert sys.argv[1:] == [explicit or os.environ['GOTHIC_DIR'], '--ou-messages']
+selected = explicit or os.environ['OPENGOTHIC_BASE_FINGERPRINT']
+(Path(os.environ['TEST_ROOT']) / 'selected-base').write_text(selected)
 ''')
         selected = self.root / 'selected-base'
         (self.source / 'scripts/e2e.sh').write_text(
-            'test "$(cat "$TEST_ROOT/selected-base")" = "$OPENGOTHIC_BASE_FINGERPRINT"\n'
+            'test "$(cat "$TEST_ROOT/selected-base")" = "${OPENGOTHIC_BASE:-$OPENGOTHIC_BASE_FINGERPRINT}"\n'
             '"$GAME_BIN" --test\n')
-        # The pre-server selection must work with both a missing and a stale selection.
-        for previous in (None, 'd' * 64):
+        # A stale selection must not override the current fingerprint or an explicit base.
+        explicit = str(self.root / 'native v3')
+        for previous, pinned in ((None, ''), ('d' * 64, ''), ('d' * 64, explicit)):
+            self.env['OPENGOTHIC_BASE'] = pinned
             if previous is not None:
                 selected.write_text(previous)
             result = self.shell(r'''
 remote_probe e2e "$TEST_ROOT/worktree" run stages
 remote_run e2e "$TEST_ROOT/worktree" run
 ''')
-            self.assertEqual(selected.read_text(), 'c' * 64)
+            self.assertEqual(selected.read_text(), pinned or 'c' * 64)
         self.assertIn(f'engine from cache {self.engine_digest[:12]} (0s)', result.stdout)
         self.assertEqual((self.root / 'game-path').read_text(), str(cached / 'Gothic2Notr'))
         self.assertFalse((self.state / 'build').exists())
@@ -895,7 +901,7 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         self.assertFalse(manifest.exists())
         self.assertEqual(environment(self.home, overrides), overrides)
 
-    def format_setup(self):
+    def format_setup(self, script_base=None, catalog_version=None):
         self.base_cache = self.root / 'base-cache'
         self.base_store = self.root / 'base-store'
         for key in tuple(self.env):
@@ -903,9 +909,14 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
                 self.env.pop(key)
         self.env.update(OPENGOTHIC_BASE_CACHE=str(self.base_cache), OPENGOTHIC_BASE_STORE=str(self.base_store))
         self.converter = self.bin / 'content-convert'
+        formats = {'base': '2' * 64, 'videos': '4' * 64}
+        if script_base is not None:
+            formats['script_base'] = script_base
+        if catalog_version is not None:
+            formats['catalog_version'] = catalog_version
         self.converter.write_text(
             f'#!{sys.executable}\nimport json, sys\nassert sys.argv[1:] == ["formats"]\n'
-            f'print(json.dumps({{"base": {"2" * 64!r}, "videos": {"4" * 64!r}}}))\n')
+            f'print(json.dumps({formats!r}))\n')
         self.converter.chmod(0o755)
         self.base_part('c' * 64, '1' * 64)
 
@@ -951,8 +962,37 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE_FINGERPRINT'], 'd' * 64)
         self.assertEqual(pointer.read_bytes(), previous)
 
+    def test_game_settings_selects_automatic_base_by_script_profile(self):
+        pointer = self.home / 'gothic-ai/game-base.json'
+        old, fixture, projected, combined = (digit * 64 for digit in 'cabd')
+        catalog_version = 7
+        for profile in (None, 'compatibility', 'native'):
+            with self.subTest(profile=profile):
+                self.format_setup(profile, catalog_version if profile == 'native' else None)
+                self.base_part(fixture, '2' * 64, no_programs_fixture={'version': 2})
+                native_path = self.base_part(projected, '2' * 64, native_script_base={
+                    'version': 3, 'catalog_version': catalog_version})
+                previous_projection, stale_catalog_version = (digit * 64 for digit in '01')
+                self.base_part(previous_projection, '2' * 64, native_script_base={'version': 2})
+                self.base_part(stale_catalog_version, '2' * 64, native_script_base={
+                    'version': 3, 'catalog_version': 6})
+                self.base_part(combined, '2' * 64)
+                expected = projected if profile == 'native' else combined
+                for fingerprint in (old, previous_projection, stale_catalog_version, projected, combined):
+                    pointer.write_text(json.dumps({'base': fingerprint, 'videos': ''}))
+                    result = self.game_result()
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE_FINGERPRINT'], expected)
+
+                result = self.game_result(OPENGOTHIC_BASE_FINGERPRINT=projected)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE_FINGERPRINT'], projected)
+                result = self.game_result(OPENGOTHIC_BASE=str(native_path))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE'], str(native_path))
+
     def test_mac_and_ryzen_select_the_same_installation_across_formats(self):
-        self.format_setup()
+        self.format_setup('native', 7)
         shared_cache = self.home / '.cache/gothic-ai/base'
         shared_cache.parent.mkdir(parents=True)
         shutil.move(self.base_cache, shared_cache)
@@ -981,9 +1021,10 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         ):
             with self.subTest(kind=kind, field=field):
                 base = self.base_part('c' * 64, ('1' if kind == 'base' else '2') * 64,
-                                      sources=binding)
+                                      sources=binding, native_script_base={'version': 3, 'catalog_version': 7})
                 if kind == 'base':
-                    pointed, candidate = base, self.base_part('d' * 64, '2' * 64, sources=binding)
+                    pointed, candidate = base, self.base_part(
+                        'd' * 64, '2' * 64, sources=binding, native_script_base={'version': 3, 'catalog_version': 7})
                     metadata = json.loads((candidate / 'base.json').read_text())
                     metadata[field] = value
                     (candidate / 'base.json').write_text(json.dumps(metadata))
@@ -1121,23 +1162,28 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
 import os
 from pathlib import Path
 import sys
-assert sys.argv[1:] == [os.environ['GOTHIC_DIR'], '--ou-messages']
-(Path(os.environ['TEST_ROOT']) / 'selected-base').write_text(os.environ['OPENGOTHIC_BASE_FINGERPRINT'])
+explicit = os.environ.get('OPENGOTHIC_BASE')
+assert sys.argv[1:] == [explicit or os.environ['GOTHIC_DIR'], '--ou-messages']
+selected = explicit or os.environ['OPENGOTHIC_BASE_FINGERPRINT']
+(Path(os.environ['TEST_ROOT']) / 'selected-base').write_text(selected)
 ''')
         storygraph.chmod(0o755)
         self.env.pop('GOTHIC_DIR', None)
         commands = r'''
 build_storygraph() { export RYZEN_STORYGRAPH_BIN="$TEST_ROOT/bin/storygraph"; }
 uv() {
-  test "$(cat "$TEST_ROOT/selected-base")" = "$OPENGOTHIC_BASE_FINGERPRINT"
+  test "$(cat "$TEST_ROOT/selected-base")" = "${OPENGOTHIC_BASE:-$OPENGOTHIC_BASE_FINGERPRINT}"
   printf '%s\n' "$GOTHIC_DIR" "$@" >"$TEST_ROOT/pytest-env"
 }
 remote_run pytest "$TEST_ROOT/worktree" run -rs tests/test_storygraph.py
 '''
-        self.shell(commands)
-        self.assertEqual((self.root / 'pytest-env').read_text().splitlines(), [
-            str(self.home / 'gothic-ai/game-settings'), 'run', 'pytest', '-rs', 'tests/test_storygraph.py',
-        ])
+        for explicit in ('', str(self.root / 'native v3')):
+            self.env['OPENGOTHIC_BASE'] = explicit
+            self.shell(commands)
+            self.assertEqual((self.root / 'pytest-env').read_text().splitlines(), [
+                str(self.home / 'gothic-ai/game-settings'), 'run', 'pytest', '-rs', 'tests/test_storygraph.py',
+            ])
+            self.assertEqual((self.root / 'selected-base').read_text(), explicit or 'c' * 64)
         (self.root / 'pytest-env').unlink()
         (self.home / 'gothic-ai/game-base.json').unlink()
         shutil.rmtree(self.home / 'gothic-ai/game-settings')
@@ -1153,7 +1199,9 @@ remote_run pytest "$TEST_ROOT/worktree" run -rs tests/test_storygraph.py
         game.mkdir()
         part = self.root / 'mac-base'
         part.mkdir()
-        (part / 'base.json').write_text(json.dumps({'format_sha256': 'a' * 64}))
+        (part / 'base.json').write_text(json.dumps({
+            'format_sha256': 'a' * 64, 'native_script_base': {'version': 3, 'catalog_version': 7},
+        }))
         pointers = self.home / '.cache/gothic-ai/base/current'
         pointers.mkdir(parents=True)
         pointer = pointers / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')
@@ -1190,7 +1238,8 @@ rsync() {
                 self.assertEqual(list(remote_cache.glob('.setup-*')), [foreign])
                 self.assertTrue((foreign / 'keep').exists())
 
-    def setup_part(self, kind, fingerprint, format_digest, *, path=None, source='installation'):
+    def setup_part(self, kind, fingerprint, format_digest, *, path=None, source='installation',
+                   native_catalog_version=7):
         cache = self.home / '.cache/gothic-ai/base'
         part = path or cache / ('' if kind == 'base' else 'videos') / fingerprint
         part.mkdir(parents=True)
@@ -1198,6 +1247,8 @@ rsync() {
         if kind == 'base':
             identity.update(archives=[{'name': source}], loose_files=[{'path': source}], sources=[{'name': source}])
             metadata = dict(identity, fingerprint=fingerprint)
+            if native_catalog_version is not None:
+                metadata['native_script_base'] = {'version': 3, 'catalog_version': native_catalog_version}
         else:
             identity['sources'] = [{'name': source}]
             metadata = {'fingerprint': fingerprint, 'identity': json.dumps(identity)}
@@ -1367,6 +1418,73 @@ preparation_needed() { return 1; }
         for kind, digest in (('base', 'a'), ('videos', 'b')):
             self.assertIn(f"Ryzen: Mac pointer has importer format {'f' * 64}, using Mac cache part "
                           f"{expected[kind]['fingerprint']} of format {digest * 64}", result.stderr)
+
+    def test_autosync_prefers_current_catalog_version_and_falls_back_to_combined_base(self):
+        stale = self.setup_part('base', 'c' * 64, 'a' * 64, native_catalog_version=6)
+        combined = self.setup_part('base', 'd' * 64, 'a' * 64, native_catalog_version=None)
+        native = self.setup_part('base', 'f' * 64, 'a' * 64)
+        cache = self.root / 'remote/.cache/gothic-ai/base'
+        self.remote_game_setup(base=stale['fingerprint'])
+        parts = {'native_base': stale, 'base': combined}
+        for part in (stale, combined, native):
+            shutil.copytree(part['path'], cache / part['fingerprint'])
+        for local_parts in (parts, None):
+            with self.subTest(source='Mac' if local_parts else 'host'):
+                result, copies = self.run_setup(local_parts, action='bench')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assert_synced_environment({'OPENGOTHIC_BASE_FINGERPRINT': native['fingerprint']},
+                                               absent=('RYZEN_PREPARE_NATIVE_BASE',))
+        shutil.rmtree(native['path'])
+        shutil.rmtree(cache / native['fingerprint'])
+        for local_parts in (parts, None):
+            with self.subTest(source='Mac' if local_parts else 'host', projection='needed'):
+                result, copies = self.run_setup(local_parts, action='bench')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assert_synced_environment({'OPENGOTHIC_BASE_FINGERPRINT': combined['fingerprint'],
+                                                'RYZEN_PREPARE_NATIVE_BASE': '1'})
+
+        shutil.rmtree(stale['path'])
+        result, _ = self.run_setup(parts, action='bench')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_synced_environment({'OPENGOTHIC_BASE_FINGERPRINT': combined['fingerprint'],
+                                        'RYZEN_PREPARE_NATIVE_BASE': '1'})
+
+    def test_combined_base_is_projected_by_preparation_only(self):
+        cache = self.home / 'gothic-ai/engine-cache/current'
+        cache.mkdir(parents=True)
+        converter = cache / 'content-convert'
+        converter.write_text('#!/bin/bash\n'
+                             '[[ "$1" == resolve && "$2" == "$GOTHIC_DIR" && '
+                             '"$OPENGOTHIC_BASE_FINGERPRINT" == combined ]] || exit 9\n'
+                             'touch "$TEST_ROOT/converter-called"\n'
+                             'printf "%s\\n" "$TEST_ROOT/projected"\n')
+        converter.chmod(0o755)
+        projected = self.root / 'projected'
+        projected.mkdir()
+        (projected / 'base.json').touch()
+        harness = '\n'.join([
+            'set -euo pipefail',
+            *(function(name) for name in ('remote_probe', 'remote_prepare', 'require_prepared')),
+            'toolchain() { :; }',
+            'source_digest() { echo current; }',
+            'engine_ready() { export RYZEN_GAME_BIN="$HOME/gothic-ai/engine-cache/current/Gothic2Notr"; }',
+            'build_engine() { engine_ready; }',
+            'game_settings() { export GOTHIC_DIR="$TEST_ROOT/settings"; }',
+            'export RYZEN_PREPARE_NATIVE_BASE=1 OPENGOTHIC_BASE_FINGERPRINT=combined',
+            'state="$TEST_ROOT/state"',
+            'mkdir -p "$state/inputs/run"',
+            'if remote_probe bench "$state" run smoke; then exit 10; fi',
+            'if require_prepared bench "$state" run smoke; then exit 11; fi',
+            'test ! -e "$TEST_ROOT/converter-called"',
+            'remote_prepare bench "$state" run smoke',
+            'test -e "$TEST_ROOT/converter-called"',
+            'remote_probe bench "$state" run smoke',
+            'chmod -x "$HOME/gothic-ai/engine-cache/current/content-convert"',
+            'require_prepared bench "$state" run smoke',
+            '[[ "$OPENGOTHIC_BASE" == "$TEST_ROOT/projected" && -z "${OPENGOTHIC_BASE_FINGERPRINT+x}" ]]',
+        ])
+        result = subprocess.run(['bash', '-c', harness], env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_setup_requires_decision_before_copying_when_checkout_format_is_missing(self):
         for kind, digest in (('base', 'a'), ('videos', 'b')):

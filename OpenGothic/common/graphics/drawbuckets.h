@@ -11,6 +11,7 @@
 class StaticMesh;
 class AnimMesh;
 namespace TreeBough { struct Page; }
+namespace FrameProfile { class Scope; }
 
 class DrawBuckets {
   public:
@@ -61,19 +62,21 @@ class DrawBuckets {
     const Tempest::StorageBuffer& primitiveOffsetTable() const { return primitiveOffsets; }
     const Tempest::StorageBuffer& primitiveCountTable() const { return primitiveCounts; }
 
-    auto& textures() const { return textureDesc[currentFrame].arrays[0]; }
-    auto& normals()  const { return textureDesc[currentFrame].arrays[1]; }
-    auto& orm()      const { return textureDesc[currentFrame].arrays[2]; }
-    auto& vbo()      const { return desc.vbo;     }
-    auto& ibo()      const { return desc.ibo;     }
-    auto& morphId()  const { return desc.morphId; }
-    auto& morph()    const { return desc.morph;   }
+    const Tempest::DescriptorArray& textures() const;
+    const Tempest::DescriptorArray& normals()  const;
+    const Tempest::DescriptorArray& orm()      const;
+    const Tempest::DescriptorArray& vbo()      const;
+    const Tempest::DescriptorArray& ibo()      const;
+    const Tempest::DescriptorArray& morphId()  const;
+    const Tempest::DescriptorArray& morph()    const;
 
     bool commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    bool textureBankRebuilt() const { return rebuiltTextureBank; }
 
   private:
     void updateBindlessArrays(bool updateBuffers, uint8_t fId);
-    void updateTextureArrays(uint8_t fId);
+    void updateTextureArrays(uint8_t fId, FrameProfile::Scope& timing);
+    void updateBufferArrays(uint8_t fId, FrameProfile::Scope& timing);
     void updatePrimitiveCounts(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     enum BucketFlg : uint32_t {
@@ -142,23 +145,28 @@ class DrawBuckets {
       };
     static_assert(sizeof(BucketGpu)==144); // GPU array stride of Bucket in scene.glsl
 
-    struct {
+    struct BufferArrays {
       Tempest::DescriptorArray vbo;
       Tempest::DescriptorArray ibo;
       Tempest::DescriptorArray morphId;
       Tempest::DescriptorArray morph;
-      } desc;
+      };
+    BufferArrays desc;
 
     using TextureSlot = std::pair<uint8_t,uint32_t>;
     struct TextureArrays {
       std::array<Tempest::DescriptorArray,3> arrays;
       std::vector<TextureSlot> pending;
       bool rebuild = true;
+      // A mutable buffer array and all its cached descriptor sets belong to this slot.
+      bool updateBuffers = false;
+      BufferArrays buffers;
       };
     std::vector<TextureArrays> textureDesc;
     std::array<std::vector<const Tempest::Texture2d*>,3> textureSlots;
     std::unordered_map<const Tempest::Texture2d*,std::vector<TextureSlot>> textureUsers;
     uint8_t currentFrame = 0;
+    bool rebuiltTextureBank = false;
 
     // the fringes' maps (albedo, normal, ORM) in the bindless arrays after the buckets and their frames, one entry
     // per distinct set: BucketGpu::fringeTex is the first's index plus its place here. A meadow's two layers

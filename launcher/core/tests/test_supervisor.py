@@ -62,8 +62,9 @@ def prepared_game(tmp_path, monkeypatch):
     binary = tmp_path / "bin/Gothic2Notr"
     binary.parent.mkdir()
     binary.write_text(
-        f"#!{sys.executable}\nfrom pathlib import Path\n"
+        f"#!{sys.executable}\nimport os\nfrom pathlib import Path\n"
         f"assert Path({str(tmp_path / 'prepared')!r}).is_file()\n"
+        f"Path({str(tmp_path / 'game.base')!r}).write_text(os.getenv('OPENGOTHIC_BASE', ''))\n"
         f"Path({str(tmp_path / 'game.started')!r}).touch()\n"
     )
     binary.chmod(0o755)
@@ -138,10 +139,13 @@ async def test_the_game_starts_once_the_services_are_ready_and_ends_the_session(
 
 
 async def test_content_is_resolved_before_the_game_and_progress_is_reported(tmp_path, session, prepared_game):
+    base = tmp_path / "ready base"
+    base.mkdir()
+    (base / "base.json").write_text("{}")
     prepare, selected_game = prepared_game(
         "print('Importing base 1/2', file=sys.stderr, flush=True)\n"
         "print('Preparing videos 2/2', file=sys.stderr, flush=True)\n"
-        "print('/ready/base', flush=True)\n"
+        f"print({str(base)!r}, flush=True)\n"
         f"Path({str(tmp_path / 'prepared')!r}).touch()\n"
     )
     rec = Recorder()
@@ -149,11 +153,12 @@ async def test_content_is_resolved_before_the_game_and_progress_is_reported(tmp_
     assert await asyncio.wait_for(sup.run(), 10) == 0
     assert json.loads((tmp_path / "resolve.json").read_text()) == ["resolve", str(tmp_path / "Gothic II")]
     assert (tmp_path / "game.started").is_file()
+    assert (tmp_path / "game.base").read_text() == str(base)
     progress = [e.detail for e in rec.events if e.proc == "prepare" and e.kind == "status"]
     assert progress == ["Importing base 1/2", "Preparing videos 2/2"]
     log = (tmp_path / "logs/prepare.log").read_text()
     assert all(line in log for line in progress)
-    assert "/ready/base" not in log
+    assert str(base) not in log
     kinds = [(e.proc, e.kind) for e in rec.events]
     assert kinds.index(("prepare", "ready")) < kinds.index(("game", "starting"))
 

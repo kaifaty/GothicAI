@@ -44,7 +44,9 @@ class VPipeline : public AbstractGraphicsApi::Pipeline {
     VkPipelineLayout   pipelineLayout = VK_NULL_HANDLE;
     uint32_t           defaultStride  = 0;
 
-    VkPipeline         instance(const VkPipelineRenderingCreateInfoKHR& info, VkRenderPass pass, VkPipelineLayout pLay, size_t stride);
+    bool               canSplitDescriptors() const { return supportsSplitDescriptors; }
+    VkPipeline         instance(const VkPipelineRenderingCreateInfoKHR& info, VkRenderPass pass, VkPipelineLayout pLay, size_t stride,
+                                bool splitDescriptors = false);
 
     IVec3              workGroupSize() const override;
     size_t             sizeofBuffer(size_t id, size_t arraylen) const override;
@@ -74,6 +76,7 @@ class VPipeline : public AbstractGraphicsApi::Pipeline {
     DSharedPtr<const VShader*>             modules[5] = {};
     std::unique_ptr<Decl::ComponentType[]> decl;
     IVec3                                  wgSize = {};
+    bool                                   supportsSplitDescriptors = false;
 
     SpinLock                               syncInst;
     std::vector<InstRp>                    instRp;
@@ -86,7 +89,7 @@ class VPipeline : public AbstractGraphicsApi::Pipeline {
                                                       const VkRenderPass rpass, const VkPipelineRenderingCreateInfoKHR* dynLay, const RenderState &st,
                                                       const Decl::ComponentType *decl, size_t declSize, size_t stride,
                                                       Topology tp,
-                                                      const DSharedPtr<const VShader*>* shaders);
+                                                      const DSharedPtr<const VShader*>* shaders, bool splitDescriptors);
 
     static void initPushMappings(VDevice& device,
                                  VkShaderDescriptorSetAndBindingMappingInfoEXT& info, VkDescriptorSetAndBindingMappingEXT* mappings,

@@ -69,7 +69,16 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/videoimport", "import"),
     ("common/dmusic/directmusicimport", "import"),
     ("common/bink/*", "import"),
-    ("ai_bridge/storygraph/*", "tools"),
+    ("ai_bridge/storygraph/main", "tools"),
+    ("ai_bridge/storygraph/scan", "tools"),
+    ("ai_bridge/storygraph/check", "tools"),
+    ("ai_bridge/storygraph/fuzz", "tools"),
+    ("ai_bridge/storygraph/saveworld", "tools"),
+    ("ai_bridge/storygraph/effects", "tools"),
+    ("ai_bridge/storygraph/execcheck", "tools"),
+    ("ai_bridge/storygraph/snapshot", "tools"),
+    ("ai_bridge/storygraph/*", "gothic"),
+    ("ai_bridge/textcodec", "gothic"),
     # Benches, training tools and side executables.
     ("common/testbench*", "tools"),
     ("common/navbench", "tools"),
@@ -88,9 +97,9 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/game/bodytrajectory", "tools"),
     ("game/bodyrunner", "tools"),
     ("game/society*", "tools"),
-    # The AI bridge and the society core it feeds.
+    # The AI bridge and the independent society simulation used by the RPG world.
     ("ai_bridge/*", "bridge"),
-    ("common/society/*", "bridge"),
+    ("common/society/*", "rpg"),
     # Gothic itself: the script VM and its bindings, G2 rules, Gothic's app shell and menus,
     # Gothic's media formats at runtime.
     ("common/daedalus/*", "gothic"),
@@ -128,6 +137,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     ("common/gamemusic", "gothic"),
     ("common/dmusic/*", "gothic"),
     ("common/programdata", "gothic"),
+    ("common/programdatajson", "gothic"),
     ("common/itemdefinitions", "rpg"),
     ("common/placementdefinitions", "rpg"),
     ("common/activitydefinitions", "rpg"),

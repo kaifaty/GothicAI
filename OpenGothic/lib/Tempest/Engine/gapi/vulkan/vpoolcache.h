@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <mutex>
+#include <span>
 
 #include "vulkan_sdk.h"
 
@@ -27,14 +28,22 @@ class VPoolCache {
       VkPipelineLayout      pLay = VK_NULL_HANDLE;
       };
 
+    struct SplitInst {
+      VkDescriptorSet  sets[2] = {};
+      VkPipelineLayout pLay    = VK_NULL_HANDLE;
+      };
+
     void             setupLimits();
     void             notifyDestroy(const AbstractGraphicsApi::NoCopy* res);
     void             notifyUpdate(const VDescriptorArray& arr, uint32_t element);
+    struct Range { uint32_t first, count; };
+    void             notifyUpdate(const VDescriptorArray& arr, std::span<const Range> ranges);
 
     VkDescriptorPool allocPool();
     void             freePool(VkDescriptorPool p);
 
     Inst             allocBindless(const PushBlock &pb, const LayoutDesc& layout, const Bindings& binding);
+    SplitInst        allocSplit(const PushBlock& pb, const LayoutDesc& layout, const Bindings& binding);
 
   private:
     static constexpr const size_t MaxCache = 2;
@@ -49,8 +58,11 @@ class VPoolCache {
       };
 
     uint32_t         bindlessCapacity(ShaderReflection::Class cls, size_t size);
+    LayoutDesc       bindlessLayout(const LayoutDesc& layout, const Bindings& binding);
     VkDescriptorPool allocPool(const LayoutDesc &l);
     VkDescriptorSet  allocDescSet(VkDescriptorPool pool, VkDescriptorSetLayout lay);
+    VkDescriptorSet  cacheSet(std::vector<DSet>& entries, VkDescriptorSetLayout setLayout,
+                             const LayoutDesc& layout, const Bindings& binding);
     void             initDescriptorSet(VkDescriptorSet dset, const Bindings &binding, const LayoutDesc& l);
 
     VDevice&                      dev;
@@ -60,6 +72,7 @@ class VPoolCache {
     std::mutex                    sync;
     std::vector<VkDescriptorPool> cache;
     std::vector<DSet>             descriptors;
+    std::vector<DSet>             splitDescriptors;
   };
 
 }

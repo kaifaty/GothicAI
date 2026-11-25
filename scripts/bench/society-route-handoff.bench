@@ -1,0 +1,26 @@
+# @headless
+# Cross the pilot's boundary while PAL_238_RITTER follows his native night route.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 24546 1200 -10265
+npccharacter trace PAL_238_RITTER
+wait 10200
+npccharacter probe PAL_238_RITTER far_walking
+mark approach_walking
+near PAL_238_RITTER 1200 90
+cam game
+wait 150
+npccharacter probe PAL_238_RITTER near_walking
+wait 4350
+npccharacter probe PAL_238_RITTER near_before_leave
+mark leave_walking
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 24546 1200 -10265
+wait 150
+npccharacter probe PAL_238_RITTER far_walking_again
+wait 22000
+npccharacter probe PAL_238_RITTER arrived
+mark end_walking
+npccharacter trace off

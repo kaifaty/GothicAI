@@ -1,6 +1,6 @@
 ---
 name: own-animations
-description: Own animations of moves for the Gothic AI game (combat port, step 6) — a Kimodo move retargeted to BIP01, finished by scripts/content/anim/finish.py, its defects fixed by a layer of small fixes (fix_layer.py) from a list the user confirms on a numbered frame sheet, filmed in the game before and after, accepted by the user's eye. Covers picking variants of a move from existing Kimodo samples (per 1H talent level), timing by phases, defect measures, the Blender frame sheet, bench takes and videos, installing into the content folder. Claude does this work itself, never Codex. MotionBricks is not used to polish a Kimodo move. Use whenever a task touches an animation of a person in the game — a new move, a variant, a fix, a look at a move, also in Russian (анимация, анимации, ход, перекат, рывок, кувырок, удар, уклонение, Kimodo, Кимодо, MotionBricks, лист кадров, дефекты анимации, изъяны, правки слоем, fix_layer, по уровням владения, новичок боец мастер, «было | стало»).
+description: Own animations of moves for the Gothic AI game (combat port, step 6) — a Kimodo move retargeted to BIP01, finished by scripts/content/anim/finish.py, its defects fixed by a layer of small fixes (fix_layer.py) from a list the user confirms on a numbered frame sheet, filmed in the game before and after, accepted by the user's eye. Covers picking variants of a move from existing Kimodo samples (per 1H talent level), timing by phases, defect measures, the Blender frame sheet, bench takes and videos, installing into the content folder. MotionBricks is not used to polish a Kimodo move. Use whenever a task touches an animation of a person in the game — a new move, a variant, a fix, a look at a move, also in Russian (анимация, анимации, ход, перекат, рывок, кувырок, удар, уклонение, Kimodo, Кимодо, MotionBricks, лист кадров, дефекты анимации, изъяны, правки слоем, fix_layer, по уровням владения, новичок боец мастер, «было | стало»).
 ---
 
 # Свои анимации ходов
@@ -10,8 +10,6 @@ description: Own animations of moves for the Gothic AI game (combat port, step 6
 2. `finish.py` доводит его под игру.
 3. Каждый изъян правится отдельно, слоем поверх хода. Правятся только изъяны из списка, который пользователь подтвердил по листу кадров.
 4. Принимает пользователь по ролику из игры «было | стало».
-
-Это визуальная работа: делаешь сам, Codex её не получает (`AGENTS.md`).
 
 - **Замысел, цели ходов, решения пользователя и журнал** — [отчёт «Свои анимации для боя»](../../../reports/Свои%20анимации%20для%20боя.md). Перед работой прочитай его «Решения пользователя» и раздел хода, который трогаешь.
 - **Инструменты репозитория и соглашения скелета** — [README инструментов](../../../scripts/content/anim/README.md).

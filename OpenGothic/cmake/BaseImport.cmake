@@ -20,16 +20,23 @@ endif()
 # The game links the whole Tempest target; the converter builds only these sources.
 set(BASE_RUNTIME_SOURCES
   common/baseidentity.cpp common/sha256.cpp common/worldchunks.cpp common/worlddata.cpp common/modeldata.cpp
-  common/fontdata.cpp common/programdata.cpp common/outputunits.cpp common/audiodata.cpp common/basemesh.cpp
+  common/fontdata.cpp common/outputunits.cpp common/audiodata.cpp common/basemesh.cpp
   common/itemdefinitions.cpp common/routinedefinitions.cpp common/npcdefinitions.cpp common/placementdefinitions.cpp common/activitydefinitions.cpp
   common/npchelperdefinitions.cpp common/asset/npchelperdefinitions.cpp
+  common/game/definitions/fightdefinitiondata.cpp common/game/definitions/menudefinitions.cpp
+  common/game/definitions/cameradefinitiondata.cpp common/game/definitions/sfxdefinitiondata.cpp
+  common/game/definitions/musicdefinitiondata.cpp
+  common/game/definitions/questclosuredata.cpp
+  common/game/definitions/effectdefinitiondata.cpp common/game/definitions/dialoginfodata.cpp
+  common/game/definitions/npcworlddata.cpp common/game/definitions/tradeinventorydata.cpp
+  common/game/definitions/deathtrophydefinitions.cpp
   common/gothicglb.cpp common/gltfmesh.cpp common/utils/fileutil.cpp common/musicdata.cpp common/dmusic/musicrecord.cpp common/musicnative.c
   common/dmusic/dlsruntime.cpp common/dmusic/styleruntime.cpp common/dmusic/waveruntime.cpp
   common/dmusic/hydra.cpp common/dmusic/soundfont.cpp)
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/baseimport-generated/baseformat.h"
   CONTENT "#pragma once\ninline constexpr char BaseFormatSha256[] = \"@BASE_FORMAT_SHA256@\";\n" @ONLY)
 set(BASE_IMPORT_SOURCES ${BASE_SOURCES})
-list(REMOVE_ITEM BASE_IMPORT_SOURCES ${BASE_RUNTIME_SOURCES})
+list(REMOVE_ITEM BASE_IMPORT_SOURCES ${BASE_RUNTIME_SOURCES} common/programdata.cpp)
 list(TRANSFORM BASE_IMPORT_SOURCES PREPEND "${BASE_ROOT}/")
 list(TRANSFORM BASE_RUNTIME_SOURCES PREPEND "${BASE_ROOT}/")
 add_library(gothic-base-runtime STATIC ${BASE_RUNTIME_SOURCES})
@@ -41,6 +48,10 @@ target_include_directories(gothic-base-runtime SYSTEM PRIVATE "${BASE_ROOT}/lib/
   "${BASE_ROOT}/lib/dmusic/src" "${BASE_ROOT}/lib/dmusic/vendor/TinySoundFont")
 set_target_properties(gothic-base-runtime PROPERTIES C_STANDARD 11)
 target_link_libraries(gothic-base-runtime PUBLIC miniz dmusic)
+add_library(gothic-program-codec STATIC "${BASE_ROOT}/common/programdata.cpp"
+  "${BASE_ROOT}/common/import/programcodec.cpp")
+target_include_directories(gothic-program-codec SYSTEM PRIVATE "${BASE_ROOT}/lib/rapidjson/include")
+target_link_libraries(gothic-program-codec PUBLIC gothic-base-runtime)
 target_link_libraries(gothic-base-import PUBLIC gothic-base-runtime)
 target_include_directories(gothic-base-import PUBLIC "${BASE_ROOT}/common" "${BASE_ROOT}/lib/Tempest/Engine/include")
 target_include_directories(gothic-base-import PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/baseimport-generated")
@@ -50,6 +61,7 @@ target_include_directories(gothic-base-import SYSTEM PRIVATE "${BASE_ROOT}/lib/r
 # including project) and reads its parsed structures, which need C11.
 set_target_properties(gothic-base-import PROPERTIES C_STANDARD 11)
 target_link_libraries(gothic-base-import PUBLIC zenkit miniz dmusic)
+target_link_libraries(gothic-base-import PRIVATE StoryGraph)
 set(NPC_SNAPSHOT_GENERATED_DIR "${CMAKE_BINARY_DIR}/npc-generated")
 file(CONFIGURE OUTPUT "${NPC_SNAPSHOT_GENERATED_DIR}/npcsnapshotfields.h" CONTENT "@BASE_NPC_FIELDS@" @ONLY)
 file(CONFIGURE OUTPUT "${NPC_SNAPSHOT_GENERATED_DIR}/itemrecordfields.h" CONTENT "@BASE_ITEM_FIELDS@" @ONLY)
@@ -57,10 +69,11 @@ target_include_directories(gothic-base-runtime PUBLIC "${NPC_SNAPSHOT_GENERATED_
 add_library(gothic-npc-snapshot STATIC "${BASE_ROOT}/common/import/npcsnapshot.cpp"
   "${BASE_ROOT}/common/import/npcdefinitions.cpp" "${BASE_ROOT}/common/import/placementdefinitions.cpp"
   "${BASE_ROOT}/common/import/activitydefinitions.cpp")
-target_sources(gothic-npc-snapshot PRIVATE "${BASE_ROOT}/common/import/npchelperdefinitions.cpp")
+target_sources(gothic-npc-snapshot PRIVATE "${BASE_ROOT}/common/import/npchelperdefinitions.cpp"
+  "${BASE_ROOT}/common/import/gameplaydefinitions.cpp")
 target_include_directories(gothic-npc-snapshot PUBLIC "${BASE_ROOT}/common/import" "${NPC_SNAPSHOT_GENERATED_DIR}")
 target_include_directories(gothic-npc-snapshot SYSTEM PRIVATE "${BASE_ROOT}/lib/rapidjson/include")
-target_link_libraries(gothic-npc-snapshot PUBLIC gothic-daedalus gothic-base-runtime)
+target_link_libraries(gothic-npc-snapshot PUBLIC gothic-daedalus gothic-program-codec)
 target_link_libraries(gothic-base-import PUBLIC gothic-npc-snapshot)
 if(TARGET Tempest)
   target_link_libraries(gothic-base-runtime PUBLIC Tempest)
@@ -84,4 +97,5 @@ target_compile_definitions(zenkit PRIVATE squish=gothic_import_squish)
 if(NOT MSVC)
   target_compile_options(gothic-base-import PRIVATE -Wall -Wconversion)
   target_compile_options(gothic-base-runtime PRIVATE -Wall -Wconversion)
+  target_compile_options(gothic-program-codec PRIVATE -Wall -Wconversion)
 endif()

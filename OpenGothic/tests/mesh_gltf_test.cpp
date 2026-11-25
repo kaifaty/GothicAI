@@ -32,6 +32,8 @@
 #include "shader.h"
 #include "asset/fromzenkit.h"
 #include "baseimport.h"
+#include "game/definitions/baseprogram.h"
+#include "programdata.h"
 #include "basemesh.h"
 #include "gothicglb.h"
 #include "musicdata.h"
@@ -3173,13 +3175,19 @@ std::string visualReceipt(const VisualFx& v) {
   return r;
   }
 
-// The original records of one definition class, for choosing receipt cases only: the program as
-// Gothic::loadScript returns it, bound to the original ZenKit class in a local VM. Initializers run on
-// the CPU here; no engine effect is constructed and no engine cache changes.
+daedalus::DaedalusScript readEffectOracle(const ProgramData::Index& index, std::string_view request) {
+  const auto selected = selectBaseProgram(index,request,-1);
+  std::string digest;
+  auto program = ProgramData::readProgram(index.path(selected.source),&digest);
+  require(digest==selected.source.recordSha256,"effect oracle program identity differs from the index");
+  return daedalus::DaedalusScript::from_program(std::move(program));
+  }
+
+// Run original class initializers through the offline oracle to select the receipt cases.
 template<class T>
-std::vector<std::pair<std::string,std::shared_ptr<T>>> originalRecords(Gothic& gothic, std::string_view dat,
-                                                                       std::string_view cls) {
-  auto script = gothic.loadScript(dat,ScriptLang::NONE);
+std::vector<std::pair<std::string,std::shared_ptr<T>>> originalRecords(Gothic& gothic, const ProgramData::Index& index,
+                                                                       std::string_view dat, std::string_view cls) {
+  auto script = readEffectOracle(index,dat);
   T::register_(script);
   daedalus::DaedalusVm vm(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   gothic.setupVmCommonApi(vm);
@@ -3196,6 +3204,9 @@ std::vector<std::pair<std::string,std::shared_ptr<T>>> originalRecords(Gothic& g
 // GOTHIC_DIR and the caller's OPENGOTHIC_BASE. Runs before the toy fixture exists, so its
 // CommandLine, Resources and Gothic never overlap the fixture's. Prints "p13-effect" lines.
 void effectCases(const std::string& game, const std::string& base) {
+  const auto* oracleBase = std::getenv("OPENGOTHIC_CONTRACT_ORACLE_BASE");
+  require(oracleBase && *oracleBase,"OPENGOTHIC_CONTRACT_ORACLE_BASE must point to the full base for the offline effect oracle");
+  const auto oracle = ProgramData::readIndex(std::filesystem::path(oracleBase)/"programs");
   setenv("OPENGOTHIC_BASE",base.c_str(),1);
   setenv("OPENGOTHIC_CONTENT","",1);
   setenv("OPENGOTHIC_TEXTURES","",1);
@@ -3295,16 +3306,16 @@ void effectCases(const std::string& game, const std::string& base) {
 
     // Cases: the first original record (symbol order) with each property.
     std::string looping, mesh, keyed, linked;
-    for(const auto& [name,pfx]:originalRecords<daedalus::IParticleEffect>(gothic,"ParticleFx.dat","C_PARTICLEFX")) {
+    for(const auto& [name,pfx]:originalRecords<daedalus::IParticleEffect>(gothic,oracle,"ParticleFx.dat","C_PARTICLEFX")) {
       if(looping.empty() && pfx->pps_is_looping!=0)
         looping = name;
       if(mesh.empty() && pfx->shp_type_s=="MESH" && !pfx->shp_mesh_s.empty())
         mesh = name;
       }
-    auto vfxScript = gothic.loadScript("VisualFx.dat",ScriptLang::NONE);
+    auto vfxScript = readEffectOracle(oracle,"VisualFx.dat");
     const auto has = [&vfxScript](const std::string& sym) { return vfxScript.find_symbol_by_name(sym)!=nullptr; };
     std::string anyKey;
-    for(const auto& [name,fx]:originalRecords<daedalus::IEffectBase>(gothic,"VisualFx.dat","CFX_BASE")) {
+    for(const auto& [name,fx]:originalRecords<daedalus::IEffectBase>(gothic,oracle,"VisualFx.dat","CFX_BASE")) {
       const bool key = has(name+"_KEY_OPEN") || has(name+"_KEY_INIT") || has(name+"_KEY_CAST") ||
                        has(name+"_KEY_INVEST") || has(name+"_KEY_COLLIDE");
       if(anyKey.empty() && key)

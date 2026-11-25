@@ -13,11 +13,6 @@
 #include <unordered_map>
 #include <vector>
 
-namespace daedalus {
-  struct INpc;
-  struct IItem;
-  }
-
 namespace zenkit {
   struct VNpc;
   class  WayNet;

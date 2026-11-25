@@ -22,12 +22,14 @@
 #include "testbench.h"
 #include "utils/workers.h"
 #include "world/objects/npc.h"
+#include "world/records/liveinstances.h"
 #include "world/objects/item.h"
 #include "world/bullet.h"
 #include "world/waypoint.h"
 #include "world/world.h"
 #include "world/worldobjects.h"
 #include "world/animationtail.h"
+#include "world/npcsimtick.h"
 #include "game/bodyarena.h"
 
 #include <rapidjson/document.h>
@@ -43,6 +45,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -53,6 +56,17 @@
 #include <vector>
 #include <unistd.h>
 #include <sys/wait.h>
+
+struct NpcDefinitionContract {
+  static bool checkInfo(GameScript& script, const std::shared_ptr<NpcRecord>& npc, Npc& other) {
+    auto& slot=script.storyActorSlot("OTHER");
+    const auto previous=slot;
+    slot=std::static_pointer_cast<NpcInstance>(other.handlePtr());
+    const auto result=script.npc_checkinfo(std::static_pointer_cast<NpcInstance>(npc),1);
+    slot=previous;
+    return result;
+    }
+  };
 
 namespace {
 using Json = rapidjson::Document;
@@ -1196,6 +1210,240 @@ class NpcLogicalStateContract final {
       world.removeNpc(*first); world.removeNpc(*fighter);
       }
 
+    // Frame steps of the far tick cases: random 7/8 or 6..10 ms from a fixed seed, the same on every platform.
+    static uint64_t farTickStep(uint64_t seed, uint64_t frame, uint64_t from, uint64_t count) {
+      uint64_t z=seed+frame+0x9e3779b97f4a7c15ull;
+      z=(z^(z>>30))*0xbf58476d1ce4e5b9ull;
+      z=(z^(z>>27))*0x94d049bb133111ebull;
+      return from+(z^(z>>31))%count;
+      }
+
+    // The far tick rule itself on 728 NPC states, without game objects: at most 40 % of them tick in a frame
+    // at 8 ms, after a 33 ms frame and at random 7/8 and 6..10 ms steps, and the ticks hand over all the time.
+    static void farTickRule() {
+      ++cases;
+      constexpr uint64_t Period=33;
+      constexpr size_t   States=728;
+      std::vector<NpcSimTick::State> state(States);
+      std::vector<uint64_t> phase(States), given(States,0);
+      for(size_t i=0;i<States;++i) phase[i]=NpcSimTick::phase(uint32_t(i),Period);
+      uint64_t clock=0;
+      const auto frame=[&](uint64_t dt) {
+        clock+=dt;
+        size_t ticked=0;
+        for(size_t i=0;i<States;++i) {
+          const auto owed=state[i].pending+dt;
+          if(NpcSimTick::due(clock,dt,owed,phase[i],Period)) { given[i]+=owed; state[i].pending=0; ++ticked; }
+          else state[i].pending=owed;
+          }
+        return ticked;
+        };
+      const std::array<std::pair<const char*,std::function<uint64_t(uint64_t)>>,4> blocks{{
+        {"8 ms",[](uint64_t) { return uint64_t(8); }},
+        {"8 ms after a 33 ms frame",[](uint64_t f) { return f==0 ? Period : 8; }},
+        {"random 7/8 ms",[](uint64_t f) { return farTickStep(1,f,7,2); }},
+        {"random 6..10 ms",[](uint64_t f) { return farTickStep(2,f,6,5); }},
+        }};
+      for(const auto& [name,step]:blocks) {
+        size_t most=0;
+        for(uint64_t f=0;f<2001;++f) {
+          const auto dt=step(f);
+          const auto ticked=frame(dt);
+          if(dt<Period) most=std::max(most,ticked);
+          }
+        expect(most*10<=States*4,std::string("the far tick rule spreads 728 NPCs at ")+name+": at most 40 % in a frame, got "+
+               std::to_string(most));
+        }
+      for(size_t i=0;i<States;++i)
+        expect(given[i]+state[i].pending==clock,"the far tick rule hands every NPC the world time");
+      }
+
+    // Far NPC tick (world/npcsimtick.h) on real standing NPCs through WorldObjects::tick. What a tick really got
+    // is measured by its effect: regeneration of 1000 hit points a second gives one hit point per ms of every
+    // Npc::tick (Npc::tickRegen); the time still owed is Npc::simTick().pending.
+    static void farTick(Npc& anchor) {
+      auto& world=anchor.world();
+      const auto kind=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
+      const auto restore=NpcSimTick::config();
+      // 96: with fewer, the Fibonacci hash of consecutive numbers is not even enough for a third at 10 ms steps.
+      constexpr size_t Count=96;
+      constexpr uint64_t Period=33;
+      std::vector<Npc*> npcs;
+      for(size_t i=0;i<Count;++i) {
+        // 45 m from the hero: no perception and no living body. Made in a row: consecutive creation numbers.
+        auto* npc=world.addNpc(kind,world.player()->position()+Tempest::Vec3(float(i%16)*150.f,0,4500+float(i/16)*150.f));
+        npc->clearAiQueue(); npc->clearState(true); npc->clearGoTo(); npc->stopWalking();
+        npc->closeWeapon(true); npc->setTarget(nullptr); npc->setExternalControl(true);
+        npc->visual.pose().stopAllAnim(); npc->setAnim(Npc::Anim::Idle);
+        npc->setSimTierOverride(NpcSimTier::Simplified);
+        npc->handle().attribute[ATR_HITPOINTSMAX]=1000000;
+        npc->handle().attribute[ATR_HITPOINTS]=1;
+        npc->handle().attribute[ATR_REGENERATEHP]=1000;
+        npcs.push_back(npc);
+        }
+      struct Track { std::vector<uint64_t> frame, dt; };
+      std::vector<Track> track(Count);
+      uint64_t frames=0, worldMs=0;
+      const auto hp=[](const Npc* npc) { return uint64_t(npc->attribute(ATR_HITPOINTS)); };
+      // One world tick: how many of the NPCs ticked; each tick must get, once, exactly the time its NPC waited.
+      const auto frame=[&](uint64_t dt) {
+        std::vector<uint64_t> waited(Count), before(Count);
+        for(size_t i=0;i<Count;++i) { waited[i]=npcs[i]->simTick().pending; before[i]=hp(npcs[i]); }
+        world.tick(dt);
+        ++frames; worldMs+=dt;
+        size_t ticked=0;
+        for(size_t i=0;i<Count;++i) {
+          const auto got=hp(npcs[i])-before[i];
+          if(npcs[i]->simTick().pending>0) {
+            expect(npcs[i]->simTick().pending==waited[i]+dt && got==0,
+                   "a waiting NPC gets no time and keeps the frame's for its next tick");
+            continue;
+            }
+          expect(got==waited[i]+dt && npcs[i]->logicalBodyState().worldStep==got,
+                 "a far tick gets, once, all the world time since the NPC's previous tick: got "+std::to_string(got)+
+                 ", owed "+std::to_string(waited[i]+dt));
+          track[i].frame.push_back(frames); track[i].dt.push_back(got);
+          ++ticked;
+          }
+        return ticked;
+        };
+      const auto clear=[&] { for(auto& t:track) { t.frame.clear(); t.dt.clear(); } };
+      const auto everyFrame=[&](uint64_t step,unsigned count,const char* what) {
+        for(unsigned f=0;f<count;++f) {
+          clear();
+          expect(frame(step)==Count,std::string(what)+" ticks every far NPC every frame");
+          for(const auto& t:track) expect(t.dt.size()==1 && t.dt[0]==step,std::string(what)+" gives a far NPC the frame's step");
+          }
+        };
+
+      // Constant 8 ms: after the first tick steps of 32 or 40 ms, 303 +- 1 ticks in 10 s, a third at most in a frame.
+      ++cases;
+      NpcSimTick::setConfig({Period,NpcSimTick::Scope::Graph});
+      size_t most=0;
+      std::vector<size_t> inTenSeconds(Count);
+      for(unsigned f=0;f<2000;++f) {
+        most=std::max(most,frame(8));
+        if(f==0)
+          for(auto* npc:npcs)
+            expect(NpcSimTick::qualifies(*npc,NpcSimTick::Scope::Graph),"the far tick fixture stands in graph movement");
+        if(frames==1250)
+          for(size_t i=0;i<Count;++i) inTenSeconds[i]=track[i].dt.size();
+        }
+      expect(most*3<=Count,"8 ms frames spread the far ticks: at most a third of the NPCs in a frame, got "+
+             std::to_string(most)+" of "+std::to_string(Count));
+      for(size_t i=0;i<Count;++i) {
+        const auto& t=track[i];
+        expect(inTenSeconds[i]>=302 && inTenSeconds[i]<=304,"a far NPC ticks 303 +- 1 times in 10 s of 8 ms frames, got "+
+               std::to_string(inTenSeconds[i]));
+        for(size_t k=1;k<t.dt.size();++k)
+          expect(t.dt[k]==32 || t.dt[k]==40,"8 ms frames give a far NPC steps of 32 or 40 ms: "+std::to_string(t.dt[k]));
+        }
+
+      // The spread holds after a long frame and at random steps: the nodes of the grid do not move.
+      const std::array<std::pair<const char*,std::function<uint64_t(uint64_t)>>,3> blocks{{
+        {"8 ms after a 33 ms frame",[](uint64_t f) { return f==0 ? Period : 8; }},
+        {"random 7/8 ms",[](uint64_t f) { return farTickStep(1,f,7,2); }},
+        {"random 6..10 ms",[](uint64_t f) { return farTickStep(2,f,6,5); }},
+        }};
+      for(const auto& [name,step]:blocks) {
+        ++cases;
+        clear();
+        most=0;
+        for(uint64_t f=0;f<2001;++f) {
+          const auto dt=step(f);
+          const auto ticked=frame(dt);
+          if(dt<Period) most=std::max(most,ticked);
+          else expect(ticked==Count,"a 33 ms frame ticks every far NPC");
+          }
+        expect(most*3<=Count,std::string(name)+" spreads the far ticks: at most a third of the NPCs in a frame, got "+
+               std::to_string(most)+" of "+std::to_string(Count));
+        }
+
+      // 25 and 30 ms frames, below the period: every frame by the 1.5-period limit, 25 ms at its edge (one more
+      // frame would give 50 > 49.5 ms); at 24 ms an NPC off its node waits. Then 33, 34 and 50 ms.
+      ++cases;
+      expect(frame(25)==Count,"a 25 ms frame ticks every far NPC");
+      everyFrame(25,10,"a 25 ms frame");
+      everyFrame(30,10,"a 30 ms frame");
+      size_t fewest=Count;
+      for(unsigned f=0;f<10;++f) fewest=std::min(fewest,frame(24));
+      expect(fewest<Count,"24 ms frames let a far NPC off its node wait");
+      ++cases;
+      expect(frame(Period)==Count,"a 33 ms frame ticks every far NPC");
+      for(const uint64_t step:{uint64_t(33),uint64_t(34),uint64_t(50)})
+        everyFrame(step,3,"a frame step not below the period");
+
+      // An NPC that stops qualifying between its ticks ticks in that frame with all it waited, then every frame.
+      ++cases;
+      for(unsigned f=0;f<8;++f) frame(8); // back on the grid after the long frames
+      Npc* fighter=nullptr;
+      for(unsigned f=0;f<8 && fighter==nullptr;++f) {
+        frame(8);
+        for(auto* npc:npcs)
+          if(npc->simTick().pending==8) fighter=npc; // ticked at its node one frame ago: the next is 33 ms on
+        }
+      expect(fighter!=nullptr,"a far NPC waits one frame after its tick");
+      fighter->setToFistMode();
+      expect(!NpcSimTick::qualifies(*fighter,NpcSimTick::Scope::Graph),"native combat movement leaves graph scope");
+      frame(8);
+      expect(fighter->simTick().pending==0 && fighter->logicalBodyState().worldStep==16,
+             "an NPC that stops qualifying ticks in the same frame with the time it waited");
+      for(unsigned f=0;f<3;++f) {
+        frame(8);
+        expect(fighter->simTick().pending==0 && fighter->logicalBodyState().worldStep==8,"an NPC that does not qualify ticks every frame");
+        }
+      fighter->closeWeapon(true);
+
+      // The frames come from the creation number, not from the place in npcArr: at 8 ms the grid repeats every
+      // 33 frames (264 ms), so a re-sorted npcArr ticks every NPC in the same frames of the next 33.
+      ++cases;
+      for(unsigned f=0;f<8;++f) frame(8);
+      const auto window=[&] {
+        clear();
+        for(unsigned f=0;f<33;++f) frame(8);
+        std::vector<std::vector<uint64_t>> at(Count);
+        for(size_t i=0;i<Count;++i)
+          for(const auto t:track[i].frame) at[i].push_back(t-(frames-33));
+        return at;
+        };
+      const auto before=window();
+      const auto place=world.npcId(npcs[0]);
+      // Reversed and lowest: the pre-tick pass re-sorts npcArr before the next ticks.
+      for(size_t i=0;i<Count;++i) npcs[i]->handle().id=std::numeric_limits<int32_t>::min()+int32_t(Count-i);
+      const auto after=window();
+      expect(world.npcId(npcs[0])!=place && world.npcId(npcs[0])>world.npcId(npcs[1]),"the phase fixture re-sorts npcArr");
+      for(size_t i=0;i<Count;++i)
+        expect(after[i]==before[i],"a far NPC ticks in the frames of its own phase, not of its place in npcArr");
+
+      // Tier scope also takes native movement: a standing NPC in Fist without a target or a physics body, as the
+      // monsters at rest, waits for its turn; graph scope ticks it every frame.
+      ++cases;
+      NpcSimTick::setConfig({Period,NpcSimTick::Scope::Tier});
+      auto* native=npcs[0];
+      const auto* ground=world.findWayPoint(native->position());
+      expect(ground!=nullptr,"the tier fixture stands at a waypoint");
+      native->setPosition(ground->groundPos); native->updateTransform(); // native movement stands on the ground
+      native->setToFistMode();
+      for(unsigned f=0;f<4;++f) frame(8);
+      expect(native->weaponState()==WeaponState::Fist && native->target()==nullptr && !native->usesSimplifiedMovement() &&
+             !native->hasRagdoll() && native->livingBody()==nullptr && NpcSimTick::qualifies(*native,NpcSimTick::Scope::Tier),
+             "tier scope takes a standing Simplified NPC in Fist on its native path");
+      bool waited=false;
+      for(unsigned f=0;f<33;++f) { frame(8); waited|=native->simTick().pending>0; }
+      expect(waited,"tier scope defers the ticks of a standing NPC in Fist");
+      native->closeWeapon(true);
+
+      // Period 0: every NPC every frame, as without the rule.
+      ++cases;
+      NpcSimTick::setConfig({0,NpcSimTick::Scope::Graph});
+      frame(8);
+      everyFrame(8,8,"period 0");
+      for(auto* npc:npcs)
+        expect(hp(npc)-1==worldMs,"the far ticks hand every NPC the world time, each ms once");
+      NpcSimTick::setConfig(restore);
+      for(auto* npc:npcs) world.removeNpc(*npc);
+      }
+
     static void restoreStamina(Npc& actor) {
       MeleeStamina::reset(actor.meleeStamina,actor.staminaMax(),actor.world().tickCount());
       }
@@ -1993,6 +2241,7 @@ int main(int argc,const char** argv) {
       }
     if(scenario.empty()) throw std::runtime_error("--scenario scripts/bench/body-api.bench is required");
     clockSwitching();
+    NpcLogicalStateContract::farTickRule();
     bool missingNetwork=false;
 #ifdef GOTHIC_BODY_ENGINE_NET
     // A fresh process exercises the one-time startup load with absent weights.
@@ -2011,6 +2260,8 @@ int main(int argc,const char** argv) {
     // Canonical body fixtures keep the background native; individual cases
     // explicitly opt their subject into Simplified.
     setenv("OPENGOTHIC_NPC_SIM_TIER","full",1);
+    // Every NPC ticks every frame in the other fixtures; the far tick case sets its own rate.
+    setenv("OPENGOTHIC_NPC_SIM_TICK_MS","0",1);
     Workers::setSerialExecution(true);
     CommandLine commandLine(argc,argv);
     Resources resources;
@@ -2052,26 +2303,21 @@ int main(int argc,const char** argv) {
     if(!missingNetwork) {
       ++cases;
       auto& script=gothic.world()->script();
-      auto& vm=script.getVm();
-      const auto current=std::static_pointer_cast<daedalus::INpc>(gothic.player()->handlePtr());
-      const auto copied=std::static_pointer_cast<daedalus::INpc>(script.copyNpc(gothic.player()->handlePtr()));
+      auto& hero=*gothic.player();
+      const auto current=hero.handlePtr();
+      const auto copied=script.copyNpc(current);
       expect(copied!=current,"dialog fixture uses a copied NPC instance");
-      const auto previousOther=vm.global_other()->get_instance();
       auto previousExtra=std::move(gothic.dialogExtraFn);
       bool receivedCurrent=false;
-      vm.global_other()->set_instance(current);
-      gothic.dialogExtraFn=[&](const daedalus::INpc& npc,bool,std::vector<GameScript::DlgChoice>&) {
+      gothic.dialogExtraFn=[&](const auto& npc,bool,std::vector<GameScript::DlgChoice>&) {
         receivedCurrent=&npc==current.get();
         };
-      vm.push_instance(copied);
-      vm.push_int(1);
-      expect(vm.unsafe_call_external(vm.find_symbol_by_name("NPC_CHECKINFO")),"NPC_CHECKINFO external is registered");
-      const auto offered=vm.pop_int();
-      vm.global_other()->set_instance(previousOther);
+      const bool offered=NpcDefinitionContract::checkInfo(script,copied,hero);
       gothic.dialogExtraFn=std::move(previousExtra);
-      expect(receivedCurrent && offered==0,"NPC_CHECKINFO extra dialogs receive the current NPC instance");
+      expect(receivedCurrent && !offered,"NPC_CHECKINFO extra dialogs receive the current NPC instance");
       }
     if(!missingNetwork) NpcLogicalStateContract::preTickOrder(b);
+    if(!missingNetwork) NpcLogicalStateContract::farTick(b);
     if(!missingNetwork) NpcLogicalStateContract::meleeAi(a,b);
 #ifdef GOTHIC_BODY_ENGINE_NET
     if(missingNetwork) {
@@ -2124,11 +2370,8 @@ int main(int argc,const char** argv) {
 #endif
     {
       auto& script=gothic.world()->script();
-      auto& vm=script.getVm();
       GameRules& rules=script;
-      auto* integer=vm.add_int_symbol("RULES_INT_CONTRACT");
-      expect(integer!=nullptr,"rules fixture adds an integer symbol");
-      integer->set_int(314);
+      expect(script.addStoryVariable("RULES_INT_CONTRACT",314).empty(),"rules fixture adds an integer field");
       expect(rules.intSymbol("RULES_INT_CONTRACT",19)==314,"rules read the integer value rather than its index");
       expect(rules.intSymbol("RULES_MISSING_CONTRACT",19)==19 && rules.intSymbol("ZS_DEAD",23)==23,
              "rules preserve missing and non-integer fallbacks");
@@ -2148,39 +2391,9 @@ int main(int argc,const char** argv) {
              "rules distinguish the NPC class from item and missing symbols");
       expect(rules.npcRecord(npcId).get()==gothic.player()->handlePtr().get(),
              "rules expose the current NPC instance rather than a copy");
-      bool foundString=false;
-      for(const auto& symbol:vm.symbols()) {
-        if(symbol.type()!=daedalus::DaedalusDataType::STRING || symbol.is_member() || symbol.count()==0)
-          continue;
-        auto* text=vm.find_symbol_by_index(symbol.index());
-        const auto saved=text->get_string();
-        text->set_string("Rules string contract");
-        const auto actual=std::string(rules.stringSymbol(symbol.name()));
-        text->set_string(saved);
-        expect(actual=="Rules string contract","rules read the requested string value");
-        foundString=true;
-        break;
-        }
-      expect(foundString,"rules fixture exercises a string symbol");
-      const char* names[]={"NPCTYPE_MAIN","NPCTYPE_OCMAIN","NPCTYPE_BL_MAIN"};
-      const int32_t values[]={31,43,59};
-      for(size_t i=0;i<3;++i) {
-        auto* symbol=vm.find_symbol_by_name(names[i]);
-        if(symbol==nullptr) symbol=vm.add_int_symbol(names[i]);
-        expect(symbol!=nullptr,"rules fixture has a story type integer");
-        symbol->set_int(values[i]);
-        }
-      expect(rules.storyNpcTypes()==std::array<int32_t,3>{31,43,59},"rules read all three story types from the VM");
-      auto* duration=vm.find_symbol_by_name("SPL_TIME_WHIRLWIND");
-      if(duration==nullptr) duration=vm.add_int_symbol("SPL_TIME_WHIRLWIND");
-      expect(duration!=nullptr,"rules fixture has the whirlwind duration");
-      duration->set_int(17);
-      expect(rules.whirlwindDuration()==17,"rules use the scripted whirlwind duration");
-      duration->set_int(-4);
-      expect(rules.whirlwindDuration()==1,"rules preserve the lower whirlwind duration clamp");
-      duration->set_int(91);
-      expect(rules.whirlwindDuration()==60,"rules preserve the upper whirlwind duration clamp");
-      expect(rules.scriptVmMemorySize()>10000000,"rules include the symbol table in the VM memory probe");
+      expect(rules.stringSymbol("PRINT_LP")==" LP","rules read the stock text constant");
+      expect(rules.storyNpcTypes()==std::array<int32_t,3>{1,4,7},"rules read the three stock story types");
+      expect(rules.whirlwindDuration()==10,"rules use the catalog's whirlwind duration");
       ++cases;
       auto& source=*gothic.player();
       auto* target=gothic.world()->addNpc(rules.findSymbolIndex("BDT_1003_BANDIT_M"),source.position()+Tempest::Vec3(150,0,0));
@@ -2257,22 +2470,7 @@ int main(int argc,const char** argv) {
       tacticOne.my_w_focus.move[0]=savedOne;
       tacticTwo.my_w_focus.move[0]=savedTwo;
       expect(actualOne==7 && actualTwo==11,"fight rules select the requested tactic table");
-      auto* finishDistance=vm.find_symbol_by_name("NPC_ATTACK_FINISH_DISTANCE");
-      expect(finishDistance!=nullptr,"fight rules fixture has the finishing distance");
-      if(finishDistance->type()==daedalus::DaedalusDataType::FLOAT) {
-        const auto saved=finishDistance->get_float();
-        finishDistance->set_float(247.5f);
-        const auto actual=rules.attackFinishDistance();
-        finishDistance->set_float(saved);
-        expect(actual==247.5f,"fight rules retain a fractional scripted finishing distance");
-        } else {
-        expect(finishDistance->type()==daedalus::DaedalusDataType::INT,"fight rules fixture has a numeric finishing distance");
-        const auto saved=finishDistance->get_int();
-        finishDistance->set_int(247);
-        const auto actual=rules.attackFinishDistance();
-        finishDistance->set_int(saved);
-        expect(actual==247.f,"fight rules retain an integer scripted finishing distance");
-        }
+      expect(rules.attackFinishDistance()==180.f,"fight rules use the stock finishing distance");
       }
     {
       ++cases;

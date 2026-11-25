@@ -192,6 +192,14 @@ void smallWorld(const fs::path& root) {
   require(!inputs.baseFingerprint.empty() && !inputs.contentFingerprint.empty(),"small-world inputs unavailable");
   const WayHeights::Key key{inputs.baseFingerprint,"SMALL",inputs.contentFingerprint};
   DynamicWorld physics(nullptr,floorMesh());
+  const auto profilePoint=[&] {
+    WayHeights cache(root,key);
+    const auto& profile=cache.profile({100,0,100},{314.15f,0,736.24f},50.f,.7f,physics);
+    return bits(profile.samples.front().position);
+    };
+  const auto coldPoint=profilePoint();
+  require(profilePoint()==coldPoint,"fresh and reloaded ground profiles must use identical sample positions");
+
   auto expected=smallPoints();
   for(auto& point:expected) {
     const auto ray=physics.landRay(point.position());

@@ -15,6 +15,7 @@
 #include <Tempest/Vec>
 #include <array>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -23,7 +24,7 @@ class Item;
 class Npc;
 class Serialize;
 class VisualFx;
-namespace ActivityDefinitions { struct MobActivity; }
+namespace ActivityEvents { struct Record; }
 
 class GameRules {
   public:
@@ -61,7 +62,9 @@ class GameRules {
     virtual void invokeState(const std::shared_ptr<NpcRecord>& npc, const std::shared_ptr<NpcRecord>& other, const char* name) = 0;
     virtual int  invokeState(Npc* npc, Npc* other, Npc* victim, ScriptFn fn) = 0;
     // The record of a state whose activity runs by events (world/activityevents.h), null when its Loop is polled.
-    virtual const ActivityDefinitions::MobActivity* eventActivity(ScriptFn init) = 0;
+    virtual const ActivityEvents::Record* eventActivity(ScriptFn init) = 0;
+    virtual void runActivityGesture(Npc& npc, const ActivityEvents::Record& activity) = 0;
+    virtual bool routineTimerDue(const Npc&, ScriptFn) const { return true; }
     virtual void invokeItem(Npc* npc, ScriptFn fn) = 0;
     virtual int  invokeCond(Npc& npc, std::string_view func) = 0;
     virtual void invokePickLock(Npc& npc, int success, int brokenOpen) = 0;
@@ -73,6 +76,7 @@ class GameRules {
     virtual bool isAttack(const Npc& npc) const = 0;
     virtual ScriptFn playerPercAssessMagic() = 0;
     virtual const PerDist& percRanges() const = 0;
+    virtual bool usesNativeQuietSound(ScriptFn) const { return false; }
 
     // Guilds and attitudes.
     virtual const GuildTraits& guildTraits() const = 0;
@@ -141,5 +145,5 @@ class GameRules {
     virtual void startupFloorBeforeResetMove(Npc& npc, const Tempest::Vec3& destination) = 0;
     virtual void startupFloorBeforeKeep(Npc& npc) = 0;
     virtual std::array<int32_t,3> storyNpcTypes() = 0;
-    virtual size_t scriptVmMemorySize() const = 0;
+    virtual size_t scriptStatePayloadSize() const = 0;
   };

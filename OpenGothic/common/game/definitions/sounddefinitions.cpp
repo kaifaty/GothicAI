@@ -1,22 +1,24 @@
 #include "sounddefinitions.h"
-#include "definitiontypes.h"
-
-#include <Tempest/Log>
-#include <gothic.h>
-
-using namespace Tempest;
+#include "basestore.h"
+#include "contentcensus.h"
+#include "resources.h"
+#include "sfxdefinitiondata.h"
 
 SoundDefinitions::SoundDefinitions() {
-  auto vm = Gothic::inst().createPhoenixVm("Sfx.dat");
-
-  vm->enumerate_instances_by_class_name("C_SFX", [this, &vm](daedalus::DaedalusSymbol& s) {
-    try {
-      this->sfx[s.name()] = std::make_shared<Def::SoundEffect>(vm->init_instance<VmDef::SoundEffect>(&s)->copy());
+  constexpr auto program = SfxDefinitionData::stockProgram;
+  const auto base = Resources::baseDir();
+  const auto section = SfxDefinitionData::section(base,program);
+  try {
+    auto presets = SfxDefinitionData::read(base,program);
+    sfx.reserve(presets.size());
+    for(auto& [name,effect] : presets)
+      sfx.emplace(std::move(name),std::make_shared<Def::SoundEffect>(std::move(effect)));
+    if(auto* census = Resources::contentCensus())
+      census->replaced("Sfx.dat","base/"+section.lexically_relative(base).generic_string());
+    }
+  catch(const std::runtime_error& error) {
+    throw BaseStore::Error(section.string()+": "+error.what());
       }
-    catch(const daedalus::DaedalusScriptError&) {
-      // There was an error during initialization. Ignore it.
-      }
-  });
   }
 
 const Def::SoundEffect& SoundDefinitions::operator[](std::string_view name) const {

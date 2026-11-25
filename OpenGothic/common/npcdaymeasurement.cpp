@@ -1,13 +1,14 @@
 #include "npcdaymeasurement.h"
+#include "npcdayjournal.h"
 
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "game/gamescript_daystats.h"
-#include "game/definitions/baseprogram.h"
 #include "game/definitions/basescripts.h"
-#include "gothic.h"
-#include "programdata.h"
-#include "settings.h"
+#include "game/definitions/gameplaydefinitions.h"
+#include "game/definitions/nativebasecatalog.h"
+#include "resources.h"
 #include "utils/jsonescape.h"
+#include "world/mobreservations.h"
 #include "world/npcactivityprobe.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -15,17 +16,41 @@
 #include "world/waypoint.h"
 #include "world/world.h"
 
+#ifndef GOTHIC_NATIVE_V3
+#include "game/definitions/baseprogram.h"
+#include "game/gamescript.h"
+#include "gothic.h"
+#include "programdata.h"
+#include "settings.h"
+#endif
+
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
 
 namespace {
+std::string_view stageName(ActivityEvents::Stage stage) {
+  using ActivityEvents::Stage;
+  switch(stage) {
+    case Stage::Off:         return "off";
+    case Stage::Approach:    return "approach";
+    case Stage::Attach:      return "attach";
+    case Stage::WalkToPoint: return "walk_to_point";
+    case Stage::Wait:        return "wait";
+    case Stage::Hold:        return "hold";
+    }
+  return {};
+  }
+
 class Measurement final : public NpcActivityProbe {
   public:
     World& world;
     std::FILE* output=nullptr;
     std::FILE* trace=nullptr;
     std::shared_ptr<DayScriptStats> stats;
+#ifndef GOTHIC_NATIVE_V3
+    daedalus::DaedalusVm* observedVm=nullptr;
+#endif
     std::vector<std::string> selected;
     std::string header;
     struct Context { const Npc* npc; std::string symbol; };
@@ -66,7 +91,7 @@ class Measurement final : public NpcActivityProbe {
       }
     void phaseBegin(const Npc* npc, std::string_view name) override {
       phases.push_back({npc,std::string(name)});
-      stats->begin(name);
+      if(stats) stats->begin(name);
       if(npc) body(*npc);
       const auto [state,phase]=DayScriptStats::statePhase(name);
       emit(npc,"phase_begin",",\"state\":"+jsonEscape(state)+",\"phase\":"+jsonEscape(phase));
@@ -75,15 +100,16 @@ class Measurement final : public NpcActivityProbe {
       const auto* npc=phases.back().npc;
       if(npc) body(*npc);
       emit(npc,"phase_end",",\"result\":"+std::to_string(result));
-      stats->end();
+      if(stats) stats->end();
       phases.pop_back();
       }
     void phaseRecord() override {
-      stats->record();
+      if(stats) stats->record();
       }
     void random(const Npc* npc, uint32_t bound, uint32_t result, bool script) override {
-      const auto source=stats->source(script,npc!=nullptr);
-      stats->random(script,npc!=nullptr);
+      if(stats) stats->random(script,npc!=nullptr);
+      if(!watches(npc)) return;
+      const auto source=stats ? stats->source(script,npc!=nullptr) : (script ? "script" : "engine");
       emit(npc,"random",",\"bound\":"+std::to_string(bound)+",\"result\":"+std::to_string(result)+",\"source\":"+jsonEscape(source));
       }
     void queued(const Npc* npc, const AiQueue::AiAction& a) override {
@@ -108,26 +134,73 @@ class Measurement final : public NpcActivityProbe {
            ",\"zen_id\":"+std::to_string(object.zenId())+",\"scheme\":"+jsonEscape(object.schemeName()));
       body(npc);
       }
+    void activityTransition(const Npc& npc, uint16_t wakes, ActivityEvents::Stage before) override {
+      if(!watches(&npc)) return;
+      std::string reasons = "[";
+      for(size_t i=0;i<ActivityEvents::WakeCount;++i) {
+        if((wakes & (1u<<i))==0) continue;
+        if(reasons.size()>1) reasons+=",";
+        reasons+=jsonEscape(ActivityEvents::wakeName(i));
+        }
+      reasons+="]";
+
+      const auto* point=npc.currentWayPoint();
+      const auto* object=npc.interactive();
+      if(!object) object=world.mobReservations().reserved(npc);
+      const auto* head=npc.aiQueueFront();
+      const bool owns=object || (point && point->isFreePoint() && npc.lockedWayPoint()==point);
+      emit(&npc,"activity_transition",
+           ",\"state\":"+jsonEscape(world.rules().symbolName(npc.currentState().ptr))+
+           ",\"reasons\":"+reasons+",\"from\":"+jsonEscape(stageName(before))+
+           ",\"to\":"+jsonEscape(stageName(npc.activityStage()))+
+           ",\"executor\":\"engine\",\"place\":"+jsonEscape(object ? object->vobNameStr() : point ? point->name : "")+
+           ",\"owner\":"+(owns ? std::to_string(world.npcId(&npc)) : "null")+
+           ",\"queue_head\":"+jsonEscape(head ? AiQueue::actionName(uint32_t(head->act)) : ""));
+      }
+    void physicsNoise(const Npc& npc, const Npc* culprit, bool vmCallback) override {
+      if(!watches(&npc)) return;
+      emit(&npc,"physics_noise",",\"culprit\":"+jsonEscape(symbol(culprit))+
+           ",\"executor\":"+jsonEscape(vmCallback ? "vm" : "engine"));
+      }
   };
 std::unique_ptr<Measurement> measurement;
 }
 
-bool NpcDayMeasurement::start(World& w, const std::string& directory, uint32_t seed, bool isolate,
-                              const std::vector<std::string>& selected, std::string& error) {
+bool NpcDayMeasurement::start(World& w, const NpcDayJournal::Options& options, std::string& error) {
+  if(NpcActivityProbe::instance!=nullptr) {
+    error="an activity observation is already running";
+    return false;
+    }
   try {
     auto m=std::make_unique<Measurement>(w);
-    m->output=std::fopen((directory+"/npc-day-script.json").c_str(),"w");
-    if(!selected.empty()) m->trace=std::fopen((directory+"/npc-day-activity.jsonl").c_str(),"w");
-    if(!m->output || (!selected.empty() && !m->trace)) throw std::runtime_error("cannot write day measurements in "+directory);
-    // Read the same verified program selection as GameScript, regardless of the routine playback switch.
-    std::string sha;
-    loadBaseProgram(Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"),&sha);
-    const auto routines=RoutineDefinitions::read(baseProgramIndex().dir.parent_path(),sha);
-    m->selected=selected;
-    m->header="\"seed\":"+std::to_string(seed)+",\"stream\":"+jsonEscape(isolate ? "npc" : "shared")+
+    const auto& directory=options.directory;
+    if(options.scriptProbe) m->output=std::fopen((directory+"/npc-day-script.json").c_str(),"w");
+    if(!options.traceNpcs.empty()) m->trace=std::fopen((directory+"/npc-day-activity.jsonl").c_str(),"w");
+    if((options.scriptProbe && !m->output) || (!options.traceNpcs.empty() && !m->trace))
+      throw std::runtime_error("cannot write day measurements in "+directory);
+    m->selected=options.traceNpcs;
+    m->header="\"seed\":"+std::to_string(options.seed)+",\"stream\":"+jsonEscape(options.isolate ? "npc" : "shared")+
               ",\"start_world_ms\":"+std::to_string(w.time().toInt());
-    m->stats=DayScriptStats::attach(w.script().getVm(),routines);
-    if(m->trace) std::fprintf(m->trace,"{\"kind\":\"header\",%s}\n",m->header.c_str());
+    if(options.scriptProbe) {
+      if(const auto* catalog=baseNativeCatalog()) {
+        const auto routines=RoutineDefinitions::read(Resources::baseDir(),GameplayDefinitions::stockProgram);
+        m->stats=std::make_shared<DayScriptStats>(routines,DayScriptStats::Metric::NativePhases);
+        for(const auto& state:catalog->states)
+          m->stats->registerBeastState(state.name);
+        } else {
+#ifndef GOTHIC_NATIVE_V3
+        // Use the same program selection as GameScript, regardless of the routine playback switch.
+        const auto program=selectBaseProgram(baseProgramIndex(),Gothic::inst().defaultGameDatFile(),
+                                             Settings::getI("GAME","language")).source.recordSha256;
+        const auto routines=RoutineDefinitions::read(Resources::baseDir(),program);
+        m->observedVm=&w.script().getVm();
+        m->stats=DayScriptStats::attach(*m->observedVm,routines);
+#else
+        throw std::runtime_error("NPC day measurements require a native game catalog");
+#endif
+        }
+      }
+    if(m->trace) std::fprintf(m->trace,"{\"kind\":\"header\",\"trace_version\":2,%s}\n",m->header.c_str());
     measurement=std::move(m);
     NpcActivityProbe::instance=measurement.get();
     tick(w);
@@ -137,16 +210,20 @@ bool NpcDayMeasurement::start(World& w, const std::string& directory, uint32_t s
   }
 
 void NpcDayMeasurement::tick(World& w) {
-  if(!measurement) return;
+  if(!measurement || !measurement->trace) return;
   for(uint32_t i=0;i<w.npcCount();++i) measurement->body(*w.npcById(i));
-  if(measurement->trace) std::fflush(measurement->trace);
+  std::fflush(measurement->trace);
   }
 
 void NpcDayMeasurement::stop(World& w) {
   if(!measurement) return;
   NpcActivityProbe::instance=nullptr;
-  measurement->stats->stop(w.script().getVm());
-  std::fprintf(measurement->output,"{%s,\"end_world_ms\":%lld,\"stats\":%s}\n",measurement->header.c_str(),
-               (long long)w.time().toInt(),measurement->stats->json().c_str());
+  if(measurement->stats) {
+#ifndef GOTHIC_NATIVE_V3
+    if(auto* vm=measurement->observedVm) measurement->stats->stop(*vm);
+#endif
+    std::fprintf(measurement->output,"{%s,\"end_world_ms\":%lld,\"stats\":%s}\n",measurement->header.c_str(),
+                 (long long)w.time().toInt(),measurement->stats->json().c_str());
+    }
   measurement.reset();
   }

@@ -16,6 +16,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -136,6 +137,7 @@ class Runner {
       auto npc=std::make_shared<INpc>();
       auto* root=vm.find_symbol_by_index(id);
       require(root!=nullptr,"missing NPC symbol "+std::to_string(id));
+      const bool captureTalents=program.sha256==TalentWriteProgram && writesPlayerTalents(root->name());
       bool engineState=false;
       std::vector<const DaedalusSymbol*> frames;
       auto overridden=[&](const DaedalusSymbol& function) {
@@ -189,6 +191,20 @@ class Runner {
           result.definition.steps.emplace_back(Field{key.first,key.second,std::move(value)});
         pending.clear();
         };
+      struct TalentTarget {
+        const DaedalusSymbol* symbol;
+        uint16_t index;
+        bool written = false;
+        };
+      std::optional<TalentTarget> talentTarget;
+      auto flushTalent=[&] {
+        if(talentTarget && talentTarget->written) {
+          const auto* symbol=talentTarget->symbol;
+          const auto index=talentTarget->index;
+          result.definition.steps.emplace_back(GlobalIntWrite{symbol->name(),index,symbol->get_int(index)});
+          }
+        talentTarget.reset();
+        };
       vm.observe_reads([&](const DaedalusSymbol& symbol) {
         if(mutableGlobal(symbol,vm)) throw Stop("game_state",symbol.name());
         });
@@ -213,6 +229,11 @@ class Runner {
         throw Defer{(*helper)->address()};
         });
       vm.observe_writes([&](const DaedalusSymbol& symbol) {
+        if(talentTarget && talentTarget->symbol==&symbol) {
+          // The VM has consumed the operands. Read the stored value at the next instruction.
+          talentTarget->written=true;
+          return;
+          }
         if(mutableGlobal(symbol,vm) || &symbol==vm.global_self())
           throw Stop("game_state_write",symbol.name());
         });
@@ -235,7 +256,19 @@ class Runner {
         });
       size_t instructions=0;
       vm.observe_instructions([&](const DaedalusInstruction& op) {
+        flushTalent();
         if(++instructions>1000000) throw Stop("execution_limit",root->name());
+        if(captureTalents && op.op==Op::MOVI && frames.size()==1 && frames.back()==root) {
+          const auto& target=vm.stack_frame(0);
+          if(target.reference) {
+            const auto* symbol=std::get<DaedalusSymbol*>(target.value);
+            if(symbol && isPlayerTalentArray(symbol->name()) && mutableGlobal(*symbol,vm) &&
+               symbol->type()==Type::INT && target.index<symbol->count()) {
+              flush();
+              talentTarget=TalentTarget{symbol,target.index};
+              }
+            }
+          }
         if(op.op==Op::RSR) {
           require(!frames.empty(),"NPC capture call stack is empty");
           frames.pop_back();
@@ -408,6 +441,11 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
       put(value,"index",Json(field->index),allocator);
       put(value,"value",valueJson(field->value,allocator),allocator);
       }
+    else if(const auto* write=std::get_if<GlobalIntWrite>(&step)) {
+      put(value,"global",text(write->binding,allocator),allocator);
+      put(value,"index",Json(write->index),allocator);
+      put(value,"value",Json(write->value),allocator);
+      }
     else {
       const auto& call=std::get<Call>(step);
       Json arguments(rapidjson::kArrayType);
@@ -424,7 +462,7 @@ Json recordJson(const std::string& symbol,const Capture& capture,Allocator& allo
 Json envelope(const NpcSnapshot::Program& program,Allocator& allocator) {
   Json json(rapidjson::kObjectType);
   put(json,"format",text("gothic-npc-definitions",allocator),allocator);
-  put(json,"version",Json(1),allocator);
+  put(json,"version",Json(program.sha256==TalentWriteProgram ? 2 : 1),allocator);
   put(json,"program_name",text(program.name,allocator),allocator);
   put(json,"program_sha256",text(program.sha256,allocator),allocator);
   put(json,"string_encoding",text("unicode-byte-mapping",allocator),allocator);

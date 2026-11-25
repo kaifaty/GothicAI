@@ -13,7 +13,7 @@ TriggerScript::TriggerScript(Vob* parent, World &world, const asset::VTriggerScr
 
 void TriggerScript::onTrigger(const TriggerEvent &) {
   try {
-    world.script().getVm().call_function(function);
+    world.script().invokeWorldTrigger(function);
     }
   catch(const std::exception& e){
     Tempest::Log::e("exception in trigger-script: ",e.what());
