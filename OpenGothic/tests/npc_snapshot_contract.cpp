@@ -695,6 +695,60 @@ void helperDefinitions(const fs::path& dir) {
     environment(nullptr); check(NpcHelperRuntime::enabled(),"helper records are enabled by default by the game's shared switch");
     environment("0"); check(!NpcHelperRuntime::enabled(),"zero selects the VM path for all helpers");
     environment("1"); check(NpcHelperRuntime::enabled(),"nonzero selects helper records");
+
+    // A prepared helper still works when neither bytecode nor a VM external is registered.
+    using Value=NpcHelperDefinitions::Value;
+    auto script=DaedalusScript::from_program(program.data);
+    INpc::register_(script);
+    auto vm=DaedalusVm::without_legacy_dispatcher(std::move(script));
+    const auto records=NpcHelperRuntime::resolve(library,vm);
+    const auto ambient=vm.find_symbol_by_name("B_CREATEAMBIENTINV")->index();
+    auto npc=std::make_shared<INpc>();
+    vm.allocate_instance(npc,vm.find_symbol_by_name("NPC_NO_ID"));
+    npc->guild=-1;
+    const auto& table=std::get<NpcHelperDefinitions::AmbientInventory>(library.helpers.at("B_CREATEAMBIENTINV"));
+    const auto& roll=table.fallback.rolls.at(0);
+    auto* savedRoll=vm.find_symbol_by_name("B_CREATEAMBIENTINV.ZUFALL");
+    auto* savedTable=vm.find_symbol_by_name(table.fallback.helper+".INVENTORYSET");
+    auto* savedActor=vm.find_symbol_by_name("B_CREATEAMBIENTINV.SLF");
+    savedRoll->set_int(-7);
+    savedTable->set_int(-8);
+
+    std::vector<std::string> observed;
+    vm.observe_externals([&](const DaedalusSymbol& function) {
+      observed.push_back(function.name());
+      if(function.name()=="HLP_RANDOM") {
+        check(std::get<int32_t>(vm.stack_frame(0).value)==table.randomBound,"probe sees the recorded bound");
+        check(savedActor->get_instance()==npc && savedRoll->get_int()==-7,"actor is bound before the random draw");
+        } else {
+        check(std::get<std::shared_ptr<DaedalusInstance>>(vm.stack_frame(2).value)==npc &&
+              savedRoll->get_int()==0 && savedTable->get_int()==0,"the selected roll is written before inventory effects");
+        }
+      });
+    vm.push_int(73106);
+    size_t calls=0;
+    const auto dispatch=[&](const DaedalusSymbol& function,std::span<const Value> args,const std::function<void()>& observe) {
+      check(!vm.has_bound_native(*vm.find_symbol_by_index(function.index())) && vm.pop_int()==73106,
+            "typed helper dispatch leaves the engine stack untouched");
+      vm.push_int(73106);
+      observe();
+      if(calls++==0) {
+        check(function.name()=="HLP_RANDOM" && args.size()==1 && args[0].integer==table.randomBound,
+              "the first operation is the original random draw");
+        } else {
+        const auto& item=roll.at(calls-2);
+        check(function.name()=="CREATEINVITEMS" && args.size()==3 && args[0].kind==Value::Kind::Self &&
+              args[1].text==item.item && args[2].integer==item.count,"the selected inventory operations keep their order");
+        }
+      return 0;
+      };
+    Value self;
+    self.kind=Value::Kind::Self;
+    check(NpcHelperRuntime::invokePrepared(vm,npc,ambient,records,std::span(&self,1),dispatch) &&
+          calls==roll.size()+1 && observed.size()==calls && vm.pop_int()==73106 && vm.unsafe_get_gi()==nullptr &&
+          savedActor->get_instance()==npc && savedRoll->get_int()==0 && savedTable->get_int()==0,
+          "native helper keeps one draw, original effects, saved locals and the caller context");
+    vm.observe_externals({});
     }
   catch(...) { environment(saved ? saved->c_str() : nullptr); throw; }
   environment(saved ? saved->c_str() : nullptr);

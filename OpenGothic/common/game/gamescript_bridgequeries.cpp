@@ -6,9 +6,10 @@ std::optional<int32_t> GameScript::globalIntSymbol(std::string_view name) const 
   if(const auto value = own.intValue(name))
     return value;
   const auto* symbol = nativeRoutineProgram ? storySlot(name) : vm.find_symbol_by_name(name);
-  if(symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::INT && !symbol->is_member())
-    return symbol->get_int(0);
-  return std::nullopt;
+  if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT || symbol->is_member())
+    return std::nullopt;
+  const auto* field = std::get_if<ScriptVars::Array<int32_t>>(runtimeState.find(symbol->index()));
+  return field!=nullptr ? field->values.front() : symbol->get_int(0);
   }
 
 std::optional<int32_t> GameScript::intConstant(std::string_view name) const {
@@ -100,7 +101,11 @@ bool GameScript::setGlobalIntSymbol(std::string_view name, int32_t value) {
   auto* symbol = nativeRoutineProgram ? storySlot(name) : vm.find_symbol_by_name(name);
   if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::INT || symbol->is_member() || symbol->is_const())
     return false;
-  symbol->set_int(value);
+  auto* field = std::get_if<ScriptVars::Array<int32_t>>(runtimeState.find(symbol->index()));
+  if(field!=nullptr)
+    field->values.front() = value;
+  else
+    symbol->set_int(value);
   return true;
   }
 

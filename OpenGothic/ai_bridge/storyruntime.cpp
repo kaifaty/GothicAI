@@ -8,11 +8,10 @@
 #include "definitionjson.h"
 #include "execcore.h"
 #include "exprjson.h"
-#include "game/definitions/basescripts.h"
 #include "game/definitions/stockstoryprograms.h"
 #include "game/gamescript.h"
 #include "gothic.h"
-#include "programdata.h"
+#include "resources.h"
 #include "world/world.h"
 
 using namespace Tempest;
@@ -28,7 +27,7 @@ struct PreparedQueries {
 
 PreparedQueries readPreparedQueries() {
   using namespace DefinitionJson;
-  const auto path = baseProgramIndex().dir.parent_path()/"storygraph"/"story.json";
+  const auto path = Resources::baseDir()/"storygraph"/"story.json";
   if(!std::filesystem::exists(path))
     return {};
 

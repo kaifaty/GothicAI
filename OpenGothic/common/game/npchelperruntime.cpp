@@ -21,8 +21,9 @@ DaedalusSymbol& symbol(DaedalusVm& vm,std::string_view name) {
 
 class RuntimeHost final : public Host {
   public:
-    RuntimeHost(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,const NpcHelperRuntime::Definitions& definitions)
-      :vm(vm),npc(npc),definitions(definitions) {}
+    RuntimeHost(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,const NpcHelperRuntime::Definitions& definitions,
+                const NpcHelperRuntime::InvokeExternal* invoke=nullptr)
+      :vm(vm),npc(npc),definitions(definitions),invoke(invoke) {}
     int32_t get(std::string_view binding,uint16_t index) override {
       vm.unsafe_set_gi(npc);
       return symbol(vm,binding).get_int(index,npc.get());
@@ -32,20 +33,12 @@ class RuntimeHost final : public Host {
       symbol(vm,binding).set_int(value,index,npc.get());
       }
     void external(std::string_view name,std::span<const Value> arguments) override {
-      const auto& function=symbol(vm,name);
-      const auto parameters=vm.find_parameters_for_function(&function);
-      if(!function.is_external() || function.has_return() || parameters.size()!=arguments.size())
-        throw std::runtime_error("NPC helper definitions: invalid engine call "+std::string(name));
-      for(size_t i=0;i<arguments.size();++i) push(arguments[i],parameters[i].type());
-      if(!vm.unsafe_call_external(&function))
-        throw std::runtime_error("NPC helper definitions: external is not registered: "+std::string(name));
+      call(name,arguments,false);
       }
     int32_t random(int32_t bound) override {
-      const auto& function=symbol(vm,"HLP_RANDOM");
-      vm.push_int(bound);
-      if(!vm.unsafe_call_external(&function))
-        throw std::runtime_error("NPC helper definitions: HLP_RANDOM is not registered");
-      return vm.pop_int();
+      Value argument;
+      argument.integer=bound;
+      return call("HLP_RANDOM",std::span(&argument,1),true);
       }
     void local(std::string_view name,const Value& value) override {
       auto& target=symbol(vm,name);
@@ -63,6 +56,33 @@ class RuntimeHost final : public Host {
       }
 
   private:
+    int32_t call(std::string_view name,std::span<const Value> arguments,bool returns) {
+      const auto& function=symbol(vm,name);
+      const auto parameters=vm.find_parameters_for_function(&function);
+      if(!function.is_external() || function.has_return()!=returns ||
+         (returns && function.rtype()!=Type::INT) || parameters.size()!=arguments.size())
+        throw std::runtime_error("NPC helper definitions: invalid engine call "+std::string(name));
+      const auto pushArguments=[&] {
+        for(size_t i=0;i<arguments.size();++i)
+          push(arguments[i],parameters[i].type());
+        };
+      if(invoke!=nullptr) {
+        std::function<void()> observe;
+        if(vm.has_external_observer())
+          observe=[&] { vm.observe_bound_external(function,pushArguments); };
+        struct RestoreContext {
+          DaedalusVm& vm;
+          std::shared_ptr<DaedalusInstance> previous;
+          ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
+          } restore{vm,vm.unsafe_get_gi()};
+        return (*invoke)(function,arguments,observe);
+        }
+      pushArguments();
+      if(!vm.unsafe_call_external(&function))
+        throw std::runtime_error("NPC helper definitions: external is not registered: "+std::string(name));
+      return returns ? vm.pop_int() : 0;
+      }
+
     void push(const Value& value,Type type) {
       switch(value.kind) {
         case Kind::Self: vm.push_instance(npc); break;
@@ -91,6 +111,7 @@ class RuntimeHost final : public Host {
     DaedalusVm& vm;
     const std::shared_ptr<INpc>& npc;
     const NpcHelperRuntime::Definitions& definitions;
+    const NpcHelperRuntime::InvokeExternal* invoke;
   };
 
 size_t arguments(const Definition& definition) {
@@ -160,25 +181,22 @@ bool NpcHelperRuntime::invoke(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,
   return true;
   }
 
-bool NpcHelperRuntime::addFightSkill(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,
-                                    int32_t talent,int32_t percent,const Definitions& definitions) {
-  if(!enabled()) return false;
-  const auto* helper=vm.find_symbol_by_name("B_ADDFIGHTSKILL");
-  if(helper==nullptr) return false;
-  const auto found=definitions.helpers.find(helper->index());
-  if(found==definitions.helpers.end() || !std::holds_alternative<AddFightSkill>(found->second))
+bool NpcHelperRuntime::invokePrepared(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,
+                                     uint32_t function,const Definitions& definitions,
+                                     std::span<const Value> args,const InvokeExternal& invokeExternal) {
+  if(!enabled())
     return false;
-
+  const auto found=definitions.helpers.find(function);
+  if(found==definitions.helpers.end())
+    return false;
+  if(npc==nullptr || args.size()!=arguments(found->second) || (!args.empty() && args.front().kind!=Kind::Self))
+    throw std::runtime_error("NPC helper definitions: invalid prepared helper arguments");
   struct RestoreContext {
     DaedalusVm& vm;
     std::shared_ptr<DaedalusInstance> previous;
     ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
     } restore{vm,vm.unsafe_get_gi()};
-  std::array<Value,3> args{};
-  args[0].kind=Kind::Self;
-  args[1].integer=talent;
-  args[2].integer=percent;
-  RuntimeHost host(vm,npc,definitions);
+  RuntimeHost host(vm,npc,definitions,invokeExternal ? &invokeExternal : nullptr);
   run(found->second,args,host);
   return true;
   }

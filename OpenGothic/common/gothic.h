@@ -14,6 +14,7 @@
 #include "settings.h"
 #include "gameservices.h"
 #include "game/gamehost.h"
+#include "game/gamescript_nativecall.h"
 
 #include "game/chronicle.h"
 #include "game/gamesession.h"
@@ -239,7 +240,7 @@ class Gothic final : public GameServices, public GameHost {
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
     static void                            enableScriptAudit(daedalus::DaedalusVm& vm, std::string_view datFile);
     static void                            setupCommonScriptClasses(daedalus::DaedalusScript &sc);
-    void                                  setupVmCommonApi(daedalus::DaedalusVm &vm);
+    void                                  setupVmCommonApi(daedalus::DaedalusVm& vm,storygraph::NativeExternals* natives=nullptr);
 
     static const FightAi&                 fai();
     static const SoundDefinitions&        sfx();

@@ -12,7 +12,7 @@ SoundDefinitions::SoundDefinitions() {
   if(source==nullptr || source->recordSha256!=SfxDefinitionData::stockProgram)
     throw BaseStore::Error("sound effects require the supported prepared catalog");
 
-  const auto base = index.dir.parent_path();
+  const auto base = Resources::baseDir();
   const auto section = SfxDefinitionData::section(base,source->recordSha256);
   try {
     auto presets = SfxDefinitionData::read(base,source->recordSha256);

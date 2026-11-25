@@ -49,7 +49,7 @@ void MenuRoot::initSettings() {
 
   const auto& index = baseProgramIndex();
   const auto& sha = selectBaseProgram(index,"MENU.DAT",lang).source.recordSha256;
-  const auto base = index.dir.parent_path();
+  const auto base = Resources::baseDir();
   const auto section = MenuDefinitions::section(base,sha);
   if(sha!=MenuDefinitions::stockProgram)
     throw BaseStore::Error("menus require the supported prepared catalog");

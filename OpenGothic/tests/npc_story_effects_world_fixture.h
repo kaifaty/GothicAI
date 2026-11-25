@@ -930,6 +930,54 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
         Guard() { ++BennetLookupAudit::depth; }
         ~Guard() { --BennetLookupAudit::depth; }
         } guard;
+      const auto previousItem=vm.global_item()->get_instance();
+      const auto previousName=actor->handle().name[4];
+      auto item=std::make_shared<daedalus::IItem>(); // A native record with no VM class allocation.
+      item->text[5]="Story field test";
+      vm.global_item()->set_instance(item);
+      rapidjson::Document fields;
+      fields.Parse(R"([
+        {"do":"set","target":["field",["inst","ITEM"],"FLAGS"],"value":["int",-2147483648]},
+        {"do":"set","target":["field",["inst","SELF"],"NAME",4],"value":["field",["inst","ITEM"],"TEXT",5]},
+        {"do":"return","value":["field",["inst","SELF"],"NAME",4]}
+      ])");
+      const auto updated=script.runStoryProgram(storygraph::readProgram(fields,true),actor,hero,true);
+      require(updated.ok && updated.returned.s==item->text[5] && actor->handle().name[4]==item->text[5] &&
+              uint32_t(item->flags)==0x80000000u,"StoryGraph must read and write NPC and item fields without a VM member binding");
+      fields.Parse(R"([{"do":"return","value":["field",["inst","ITEM"],"NAME",1]}])");
+      const auto wrongIndex=script.runStoryProgram(storygraph::readProgram(fields,true),actor,hero,true);
+      require(!wrongIndex.ok && wrongIndex.started,"the NPC name array must not extend an item's scalar name");
+      actor->handle().name[4]=previousName;
+
+      const auto runFields=[&](const std::shared_ptr<daedalus::DaedalusInstance>& record, const char* program) {
+        vm.global_item()->set_instance(record);
+        fields.Parse(program);
+        return script.runStoryProgram(storygraph::readProgram(fields,true),actor,hero,true);
+        };
+      auto info=std::make_shared<daedalus::IInfo>();
+      const auto infoResult=runFields(info,R"([
+        {"do":"set","target":["field",["inst","ITEM"],"DESCRIPTION"],"value":["str","Story topic"]},
+        {"do":"return","value":["field",["inst","ITEM"],"DESCRIPTION"]}])");
+      require(infoResult.ok && infoResult.returned.s=="Story topic" && info->description=="Story topic",
+              "StoryGraph must access dialog fields on the dialog record");
+      auto focus=std::make_shared<daedalus::IFocus>();
+      const auto focusResult=runFields(focus,R"([
+        {"do":"set","target":["field",["inst","ITEM"],"NPC_RANGE1"],"value":["int",1069547520]},
+        {"do":"return","value":["field",["inst","ITEM"],"NPC_RANGE1"]}])");
+      require(focusResult.ok && focusResult.returned.type==storygraph::NativeValue::Float &&
+              focusResult.returned.f==1.5f && focus->npc_range1==1.5f,
+              "StoryGraph must preserve the float bit pattern in a focus field");
+      auto menuRecord=std::make_shared<daedalus::IMenuItem>();
+      const auto menuResult=runFields(menuRecord,R"([
+        {"do":"set","target":["field",["inst","ITEM"],"TEXT",9],"value":["str","Story menu"]},
+        {"do":"return","value":["field",["inst","ITEM"],"TEXT",9]}])");
+      require(menuResult.ok && menuResult.returned.s=="Story menu" && menuRecord->text[9]=="Story menu",
+              "StoryGraph must use the menu's own text extent when both object classes have TEXT");
+      const auto nullResult=runFields(nullptr,R"([{"do":"return","value":["field",["inst","ITEM"],"NPC_RANGE1"]}])");
+      require(nullResult.ok && nullResult.returned.type==storygraph::NativeValue::Int && nullResult.returned.i==0,
+              "a missing focus instance must still read as integer zero");
+      vm.global_item()->set_instance(previousItem);
+
       std::string symbolError;
       directorNpcId=script.addDirectorNpcSymbol(directorNpc,actorName,symbolError);
       require(directorNpcId.has_value(),symbolError.c_str());
@@ -1117,6 +1165,59 @@ void nativeStoryGraphContract(const std::filesystem::path& caseDir) {
               static_cast<daedalus::IItem*>(npcOre->handlePtr().get()),nullptr} &&
           vm.pop_int()==0x12345678,
           "the external probe must see exact actors and leave the VM stack intact");
+
+  vm.register_external("NPC_GETNEARESTWP",std::function<std::string(NpcRef)>{[](NpcRef) -> std::string {
+    throw std::runtime_error("The VM waypoint callback must not run for a native story call");
+    }});
+  const auto expectedWaypoint=NpcEngineCalls::nearestWaypoint(world,*bandit);
+  const auto nearest=script.callStoryFunction("NPC_GETNEARESTWP",bandit,hero,{bandit});
+  require(!expectedWaypoint.empty() && nearest.ok && nearest.returned.type==storygraph::NativeValue::Str &&
+          nearest.returned.s==expectedWaypoint,"native waypoint lookup must return the engine's owning string");
+  vm.register_external("AI_WAIT",std::function<void(NpcRef,float)>{[](NpcRef,float) {
+    throw std::runtime_error("The VM wait callback must not run for a native story call");
+    }});
+  Contract::queue(*bandit).clear();
+  const auto waited=script.callStoryFunction("AI_WAIT",bandit,hero,{bandit,0.25f});
+  const auto* queued=bandit->aiQueueFront();
+  require(waited.ok && queued && queued->act==AI_Wait && queued->i0==250,
+          "native wait must keep the original floating-point seconds and enqueue 250 ms");
+
+  vm.register_external("INTTOFLOAT",std::function<float(int32_t)>{[](int32_t) -> float {
+    throw std::runtime_error("The VM float conversion must not run for a native story call");
+    }});
+  vm.register_external("DOC_PRINTLINE",std::function<void(int32_t,int32_t,std::string_view)>{
+    [](int32_t,int32_t,std::string_view) { throw std::runtime_error("The VM document callback must not run"); }});
+  std::vector<std::string> commonCalls;
+  vm.observe_externals([&](const auto& symbol) { commonCalls.push_back(symbol.name()); });
+  const auto number=script.callStoryFunction("INTTOFLOAT",bandit,hero,{-31});
+  require(number.ok && number.returned.type==storygraph::NativeValue::Float && number.returned.f==-31.f,
+          "native numeric conversion must return a float");
+  const auto text=script.callStoryFunction("CONCATSTRINGS",bandit,hero,{std::string("native "),std::string("document")});
+  require(text.ok && text.returned.s=="native document","native strings must keep their original bytes");
+
+  constexpr uint32_t randomSeed=73106,randomBound=100019;
+  script.setSeed(randomSeed);
+  std::mt19937 expectedRandom(randomSeed);
+  const auto draw=script.callStoryFunction("HLP_RANDOM",bandit,hero,{int32_t(randomBound)});
+  require(draw.ok && draw.returned.i==int32_t(expectedRandom()%randomBound),
+          "the session random callback must override the shared Gothic callback");
+
+  struct DocumentCapture {
+    std::string text;
+    void record(const DocumentMenu::Show& document) { text=document.pages.at(0).text; }
+    } documentCapture;
+  gothic.onShowDocument.bind(&documentCapture,&DocumentCapture::record);
+  const auto document=script.callStoryFunction("DOC_CREATE",bandit,hero,{});
+  require(document.ok && document.returned.i>=0,"native document creation must return a handle");
+  const auto handle=document.returned.i;
+  const auto pages=script.callStoryFunction("DOC_SETPAGES",bandit,hero,{handle,1});
+  const auto line=script.callStoryFunction("DOC_PRINTLINE",bandit,hero,{handle,0,text.returned.s});
+  const auto show=script.callStoryFunction("DOC_SHOW",bandit,hero,{handle});
+  gothic.onShowDocument.ubind(&documentCapture,&DocumentCapture::record);
+  vm.observe_externals({});
+  require(pages.ok && line.ok && show.ok && documentCapture.text=="native document\n" &&
+          commonCalls==std::vector<std::string>{"INTTOFLOAT","HLP_RANDOM","DOC_CREATE","DOC_SETPAGES","DOC_PRINTLINE","DOC_SHOW"},
+          "native documents must preserve contents and the existing external observer order");
   gothic.clearGame().reset();
 #endif
   }

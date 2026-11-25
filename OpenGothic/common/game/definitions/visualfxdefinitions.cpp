@@ -31,7 +31,7 @@ VisualFxDefinitions::VisualFxDefinitions() {
   if(source==nullptr || source->recordSha256!=EffectDefinitionData::stockVisualProgram)
     throw BaseStore::Error("visual effects require the supported prepared catalog");
 
-  const auto base = index.dir.parent_path();
+  const auto base = Resources::baseDir();
   const auto section = EffectDefinitionData::visualSection(base,source->recordSha256);
   try {
     auto records = EffectDefinitionData::readVisuals(base,source->recordSha256);

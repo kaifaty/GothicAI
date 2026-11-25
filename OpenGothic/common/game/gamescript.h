@@ -463,6 +463,8 @@ class GameScript final : public GameRules {
     int32_t countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
+    bool invokeNpcHelper(const std::shared_ptr<daedalus::INpc>& npc,uint32_t function,
+                         std::span<const NpcHelperDefinitions::Value> args);
     bool startHotkeyPotion(Npc& pl, bool mana);
 
     struct GlobalOutput : AiOuputPipe {
@@ -480,13 +482,7 @@ class GameScript final : public GameRules {
       };
 
     template<class R, class... P>
-    std::function<R(P...)> externalCallback(const std::string& name, R(GameScript::*function)(P...));
-
-    template<class R, class... P>
     void bindExternal(const std::string& name, R(GameScript::*function)(P...));
-
-    template<class R, class... P>
-    void bindNativeExternal(const std::string& name, R(GameScript::*function)(P...));
 
     // StartupFloor: the NPC arguments of an external about to run.
     template <class ... A>
@@ -881,6 +877,7 @@ class GameScript final : public GameRules {
     bool bennetExecute(const BennetOreDialog& dialog, Npc& player, Npc& npc);
 
     void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
+    ScriptVars::Object& storyActorSlot(std::string_view name);
     ScriptVars::Value stateValue(const ScriptVars::Slot& slot);
     ScriptVars::Reference stateReference(const ScriptVars::Object& object);
 
@@ -952,7 +949,7 @@ class GameScript final : public GameRules {
     OwnSymbols                                                  own{runtimeState};
     daedalus::DaedalusVm                                          vm;
     std::unique_ptr<StockPrograms>                                stockPrograms;
-    std::map<std::string,storygraph::NativeExternal,std::less<>>    nativeExternals;
+    storygraph::NativeExternals                                  nativeExternals;
     std::unique_ptr<BennetOre>                                    bennetOre;
     daedalus::DaedalusSymbol*                                     levelUpSound = nullptr;
     std::function<void(bool)>                                    bennetLookupScope;

@@ -57,6 +57,8 @@
 //       Copy a ready base for metadata tests, extracting stock game symbols and omitting executable programs.
 //   content-convert native-base <ready stock base> <new dir>
 //       Publish the native profile with runtime bindings and without full symbol tables.
+//   content-convert native-base-v3 <ready stock base> <new dir>
+//       Prepare the catalog and manifest for the next native profile. This output is for offline verification.
 //   content-convert stress-base <ready base> <out dir> --subdivide 0..3 | verify-stress-base <base> <copy>
 //       A copy of a ready base with every world triangle split in four N times (stressbase.h).
 //   content-convert cook-world|verify-cooked-world <world dir> [--content <dir>] [--out <dir>]
@@ -77,6 +79,8 @@
 #include "videodata.h"
 #include "sha256.h"
 #include "asset/fromzenkit.h"
+#include "daedalus/script.h"
+#include "definitionjson.h"
 #include "basemesh.h"
 #include "fontdata.h"
 #include "programdata.h"
@@ -93,6 +97,7 @@
 #include "game/definitions/fightdefinitiondata.h"
 #include "game/definitions/menudefinitions.h"
 #include "game/definitions/musicdefinitiondata.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/definitions/particlecontent.h"
 #include "game/definitions/sfxdefinitiondata.h"
 #include "game/definitions/stockstoryprograms.h"
@@ -100,6 +105,7 @@
 #include "gothicglb.h"
 #include "stressbase.h"
 #include "npcsnapshot.h"
+#include "nativebasecatalogimport.h"
 #include "worldcook.h"
 
 #include <zenkit/Archive.hh>
@@ -134,6 +140,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -167,11 +174,12 @@ rapidjson::Document fixtureJson(const fs::path& file, std::string* sha=nullptr) 
   return doc;
   }
 
-enum class ProgramProjection { TestFixture, Native };
+enum class ProgramProjection { TestFixture, Native, NativeCatalogs };
 
 void prepareProgramProjection(const fs::path& source, const fs::path& output, ProgramProjection profile,
                               bool temporary=false) {
-  const bool native=profile==ProgramProjection::Native;
+  const bool v3=profile==ProgramProjection::NativeCatalogs;
+  const bool native=profile!=ProgramProjection::TestFixture;
   const auto base=fs::canonical(source);
   const auto out=fs::weakly_canonical(output);
   const auto relative=out.lexically_relative(base);
@@ -200,15 +208,17 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
   std::set<std::string> programs;
   for(const auto& record:manifest["files"].GetArray()) {
     const std::string path=record["path"].GetString();
-    if(path.starts_with("programs/") && path!="programs/programs.json") {
+    if(path.starts_with("programs/") && (v3 || path!="programs/programs.json")) {
       programs.insert(path);
       continue;
       }
-    if(native && BaseStore::isFullSymbolFile(path))
+    if((native && BaseStore::isFullSymbolFile(path)) ||
+       (v3 && fs::path(path).filename()=="game-bindings.json"))
       continue;
     kept.emplace(path,record["sha256"].GetString());
     }
-  require(kept.contains("programs/programs.json") && kept.contains("storygraph/story.json"),
+  require((kept.contains("programs/programs.json") || programs.contains("programs/programs.json")) &&
+          kept.contains("storygraph/story.json"),
           "projection source must bind the program index and the prepared story graph");
 
   const auto bound=[&](const fs::path& path) {
@@ -256,6 +266,13 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
 
   auto program=NpcSnapshot::load(base);
   require(program.sha256==game->recordSha256,"projection requires the stock runtime program selection");
+  std::optional<NativeBaseCatalog::Selection> catalogs;
+  if(v3) {
+    bound(base/"outputunits"/"outputunits.json");
+    catalogs=NativeBaseCatalog::prepare(index,OutputUnits::readIndex(base/"outputunits"));
+    catalogs->states=NativeBaseCatalog::prepareStates(daedalus::DaedalusScript::from_program(std::move(program.data)));
+    }
+
   const auto sourceSymbols=ProgramData::symbolMetadataPath(base,program.sha256);
   const auto sourcePayload=ProgramData::symbolMetadataPayloadPath(sourceSymbols);
   const auto hasSymbols=kept.contains(sourceSymbols.lexically_relative(base).generic_string());
@@ -264,17 +281,26 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     bound(sourcePayload);
     }
 
-  if(native) {
+  if(native && !v3) {
     identity=BaseStore::nativeProjectionIdentity(identity,sourceManifest);
     }
   else {
     auto& allocator=metadata.GetAllocator();
     rapidjson::Value binding(rapidjson::kObjectType);
-    binding.AddMember("version",2,allocator);
+    binding.AddMember("version",v3 ? NativeBaseCatalog::projectionVersion : 2,allocator);
     binding.AddMember("source_fingerprint",rapidjson::Value(identity.fingerprint.c_str(),allocator),allocator);
     binding.AddMember("source_manifest_sha256",rapidjson::Value(sourceManifest.c_str(),allocator),allocator);
-    metadata.AddMember("no_programs_fixture",binding,allocator);
-    identity.fingerprint=BaseImport::sha256("no-programs-fixture-v2\n"+identity.fingerprint+"\n"+sourceManifest);
+    if(v3) {
+      binding.AddMember("catalog_version",NativeBaseCatalog::catalogVersion,allocator);
+      metadata.AddMember("native_script_base",binding,allocator);
+      }
+    else {
+      metadata.AddMember("no_programs_fixture",binding,allocator);
+      }
+    const auto salt=v3 ? "native-script-base-v"+std::to_string(NativeBaseCatalog::projectionVersion)+
+                         "\ncatalog-v"+std::to_string(NativeBaseCatalog::catalogVersion)
+                       : "no-programs-fixture-v2";
+    identity.fingerprint=BaseImport::sha256(salt+"\n"+identity.fingerprint+"\n"+sourceManifest);
     metadata["fingerprint"].SetString(identity.fingerprint.c_str(),allocator);
     rapidjson::StringBuffer json;
     rapidjson::Writer<rapidjson::StringBuffer> writer(json);
@@ -292,7 +318,12 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
       fs::create_directories(target.parent_path());
       fs::copy_file(from,target);
       }
-    if(native) {
+    if(catalogs) {
+      NativeBaseCatalog::write(out,*catalogs);
+      const auto file=NativeBaseCatalog::section(out);
+      kept.emplace(file.lexically_relative(out).generic_string(),BaseImport::sha256File(file));
+      NativeBaseCatalog::verify(out,*catalogs);
+      } else if(native) {
       RuntimeBindings::write(out,program.sha256,program.data,RuntimeBindings::collect(out,program.data));
       const auto file=RuntimeBindings::path(out,program.sha256);
       kept.emplace(file.lexically_relative(out).generic_string(),BaseImport::sha256File(file));
@@ -309,7 +340,7 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
       require(difference.empty(),"projection program symbol metadata round trip: "+difference);
       }
     BaseImport::writeBaseMetadata(out,identity);
-    if(native)
+    if(native && !v3)
       RuntimeBindings::validate(out,program.sha256);
     const auto outputManifest=fixtureJson(out/"base-files.json");
     require(outputManifest["files"].Size()==kept.size(),"projection manifest file count differs");
@@ -325,7 +356,8 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     throw;
     }
   if(!temporary)
-    std::cout << (native ? "Native script base: " : "No-programs fixture: ") << out.string()
+    std::cout << (v3 ? "Offline native base v3: " : native ? "Native script base: " : "No-programs fixture: ")
+              << out.string()
               << " (" << identity.fingerprint << ", " << programs.size() << " program files omitted).\n";
   }
 
@@ -1054,6 +1086,50 @@ int selfTest() {
 
   WorldData::selfTest(dir/"world-data");
   StressBase::selfTest(dir);
+  // Native catalog selection keeps the matching locale and the selected fight identity.
+  {
+  ProgramData::Index programs;
+  programs.sources.resize(3);
+  programs.sources[0].recordSha256=StockStoryPrograms::stockProgram;
+  programs.sources[1].recordSha256=MenuDefinitions::stockProgram;
+  programs.sources[2].recordSha256=BaseImport::sha256("synthetic fight tactics");
+  programs.vfs.emplace("FIGHT.DAT",2);
+  programs.selections={
+    {"GOTHIC.DAT",-1,{}, {},0},
+    {"GOTHIC.DAT", 3,{}, {},0},
+    {"MENU.DAT",3,{}, {},1},
+    };
+  OutputUnits::Index units;
+  units.sources.resize(1);
+  units.selections.push_back({3,{}, {}, {},0});
+  auto expectedCatalog=NativeBaseCatalog::prepare(programs,units);
+  expectedCatalog.states={
+    {7,"ZS_TEST",8,9},
+    {8,"ZS_TEST_LOOP",std::nullopt,std::nullopt},
+    {9,"ZS_TEST_END",std::nullopt,std::nullopt},
+    {10,"ZS_SINGLE",std::nullopt,std::nullopt},
+    {11,"ZS_LOOP_ONLY",12,std::nullopt},
+    {12,"ZS_LOOP_ONLY_LOOP",std::nullopt,std::nullopt},
+    };
+  const auto output=dir/"native-catalog";
+  NativeBaseCatalog::write(output,expectedCatalog);
+  const auto catalog=NativeBaseCatalog::read(output);
+  require(catalog.fight==programs.sources[2].recordSha256 && catalog.language==3 && catalog.states==expectedCatalog.states,
+          "native catalog identity, language and NPC state round trip");
+  const auto stateFile=NativeBaseCatalog::section(output);
+  auto invalid=DefinitionJson::read(stateFile);
+  invalid["npc_states"][0][2].SetNull();
+  DefinitionJson::write(stateFile,invalid);
+  bool rejected=false;
+  try {
+    (void)NativeBaseCatalog::read(output);
+    }
+  catch(const std::runtime_error&) {
+    rejected=true;
+    }
+  require(rejected,"native catalog rejects a missing link to an existing NPC state phase");
+  }
+
   fs::remove_all(dir);
   std::cout << "self-test passed\n";
   return 0;
@@ -1137,6 +1213,10 @@ int main(int argc, char** argv) {
       return BaseImport::convertWorld(args[1],args[2],args[3]);
     if(args.size()==3 && args[0]=="base") {
       BaseImport::build(args[1],args[2]);
+      return 0;
+      }
+    if(args.size()==3 && args[0]=="native-base-v3") {
+      prepareProgramProjection(args[1],args[2],ProgramProjection::NativeCatalogs);
       return 0;
       }
     if(args.size()==3 && (args[0]=="no-programs-fixture" || args[0]=="native-base")) {
@@ -1247,6 +1327,7 @@ int main(int argc, char** argv) {
                  "       content-convert base <gothic dir> <dir>\n"
                  "       content-convert no-programs-fixture <ready stock base> <new dir>\n"
                  "       content-convert native-base <ready stock base> <new dir>\n"
+                 "       content-convert native-base-v3 <ready stock base> <new dir> (offline verification)\n"
                  "       content-convert formats\n" << StressBase::usage << WorldCook::usage <<
                  "       " << clusterLodCensusUsage <<
                  "       content-convert --self-test\n";

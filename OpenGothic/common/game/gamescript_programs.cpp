@@ -4,9 +4,7 @@
 
 #include "basestore.h"
 #include "contentcensus.h"
-#include "game/definitions/basescripts.h"
 #include "gothic.h"
-#include "programdata.h"
 #include "resources.h"
 #include "world/objects/npc.h"
 
@@ -17,7 +15,7 @@ GameScript::StockPrograms::StockPrograms(GameScript& script)
   : script(script), vm(script.getVm()) {
   try {
     if(script.nativeRoutineProgram) {
-      const auto base = baseProgramIndex().dir.parent_path();
+      const auto base = Resources::baseDir();
       const auto section = StockStoryPrograms::section(base);
       if(std::filesystem::exists(section)) {
         prepared = StockStoryPrograms::read(base);
@@ -51,17 +49,11 @@ GameScript::StockPrograms::StockPrograms(GameScript& script)
         calls.try_emplace(slot.name(),vm,slot);
       }
 
-    constexpr std::array classes = {"C_NPC","C_ITEM","C_INFO","C_FOCUS","C_MENU_ITEM"};
-    for(size_t i=0; i<classes.size(); ++i) {
-      const auto* cls = vm.find_symbol_by_name(classes[i]);
-      if(cls==nullptr)
-        continue;
-      for(auto* member : vm.find_class_members(*cls)) {
-        const std::string_view field = member->name();
-        members[i].emplace(field.substr(field.find('.')+1),member);
-        bindSymbol(*member,SymbolKind::Other);
-        }
-      }
+    constexpr std::array classes = {"C_INFO","C_FOCUS","C_MENU_ITEM","C_NPC","C_ITEM"};
+    for(const auto* name : classes)
+      if(const auto* cls = vm.find_symbol_by_name(name))
+        for(auto* member : vm.find_class_members(*cls))
+          bindSymbol(*member,SymbolKind::Other);
     for(auto* alias : {vm.global_self(), vm.global_other(), vm.global_victim(), vm.global_hero()})
       if(alias!=nullptr)
         bindSymbol(*alias,SymbolKind::Npc);

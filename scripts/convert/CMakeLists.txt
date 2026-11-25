@@ -26,7 +26,8 @@ if(MSVC)
 endif()
 endif()
 add_executable(content-convert convert.cpp stressbase.cpp stressmeshes.cpp worldcook.cpp clusterlodcensus.cpp ../../OpenGothic/common/basestore.cpp
-  ../../OpenGothic/tools/runtimebindingroots.cpp
+  ../../OpenGothic/tools/runtimebindingroots.cpp ../../OpenGothic/tools/nativebasecatalogimport.cpp
+  ../../OpenGothic/common/game/definitions/nativebasecatalog.cpp
   ../../OpenGothic/common/gltfmeshcolor.cpp
   ../../OpenGothic/common/world/voblayer.cpp ../../OpenGothic/common/world/movablevobs.cpp
   ../../OpenGothic/common/game/definitions/particlecontent.cpp
@@ -39,7 +40,7 @@ file(READ "${VOB_LAYER_MOVABLE_CSV}" MOVABLE_VOBS_CSV)
 configure_file(../../OpenGothic/common/world/movablevobsdata.h.in vob-layer-generated/movablevobsdata.h @ONLY)
 target_include_directories(content-convert PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/vob-layer-generated"
   "${CMAKE_BINARY_DIR}/baseimport-generated" "${RUNTIME_BINDING_GENERATED_DIR}")
-target_include_directories(content-convert PRIVATE ../../OpenGothic/common)
+target_include_directories(content-convert PRIVATE ../../OpenGothic/common ../../OpenGothic/tools)
 # time-world packs static collision's two inputs with the game's PackedMesh PK_Physic. It needs Tempest's graphics
 # library, so only the build with the game (OpenGothic/CMakeLists.txt) has it; the converter alone skips those rows.
 if(TARGET Tempest)
@@ -58,6 +59,7 @@ if(NOT MSVC)
   target_compile_options(content-convert PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wconversion>)
 endif()
 # Offline particle checks (check-particles) use the game's particlecontent loader and VM without writing base data.
+target_compile_definitions(content-convert PRIVATE CONTENT_CONVERT_PARTICLE_PROGRAMS=1)
 # Definitions import executes item constructors through the shared snapshot library.
 target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
 

@@ -52,6 +52,7 @@ class State final {
   public:
     void bind(daedalus::DaedalusSymbol& symbol);
     Slot* find(uint32_t id);
+    const Slot* find(uint32_t id) const;
     auto& slots() { return values; }
     const auto& slots() const { return values; }
 
