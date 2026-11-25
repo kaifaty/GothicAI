@@ -25,9 +25,19 @@ class TreeBoughRender {
     void expand(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint32_t token, bool lateHiZ);
     void draw(Tempest::Encoder<Tempest::CommandBuffer>& enc, DrawCommands::HistoryDraw history);
     void readStats(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, bool expanded);
+    bool diagnose(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, const Tempest::Texture2d& depth,
+                  const Tempest::Matrix4x4& viewProject, bool verify, uint64_t stamp);
 
   private:
     static constexpr uint32_t StatsCount = 8;
+    static constexpr uint32_t DiagnosticCount = 7;
+
+    struct DiagnosticRead {
+      Tempest::StorageBuffer counts, before, after;
+      uint64_t stamp = 0;
+      uint32_t commandWords = 0;
+      bool stockCounts = false;
+      };
 
     struct Asset {
       std::vector<DrawBuckets::Id> buckets;
@@ -55,6 +65,8 @@ class TreeBoughRender {
     void uploadReference();
     void copy(Tempest::Encoder<Tempest::CommandBuffer>& enc, const Tempest::StorageBuffer& source,
               Tempest::StorageBuffer& destination, uint32_t offset, uint32_t count, uint32_t sourceCount);
+    uint32_t copyCommands(Tempest::Encoder<Tempest::CommandBuffer>& enc, Tempest::StorageBuffer& destination);
+    void readDiagnostic(DiagnosticRead& slot);
 
     DrawCommands& owner;
     std::map<uint32_t,Entry> entries;
@@ -70,5 +82,9 @@ class TreeBoughRender {
     std::array<bool,Resources::MaxFramesInFlight> readPending = {};
     Tempest::ComputePipeline cullPipelines[4][2];
     Tempest::ComputePipeline expandPipeline, copyPipeline, historyPipeline;
+    Tempest::ComputePipeline diagnosticPipeline;
+    Tempest::StorageBuffer diagnosticCounts;
+    std::array<DiagnosticRead,Resources::MaxFramesInFlight> diagnosticRead;
+    uint32_t expandedToken = 0, expandedFlags = 0;
     const bool cpu;
   };
