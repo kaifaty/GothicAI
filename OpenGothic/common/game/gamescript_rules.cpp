@@ -4065,7 +4065,7 @@ auto GameScript::npcRecord(size_t id) -> std::shared_ptr<NpcRecord> {
   }
 
 size_t GameScript::goldItemId() const {
-  return itMi_Gold->index();
+  return goldInstance;
   }
 
 void GameScript::startupFloorForget(Npc& npc) {

@@ -6,6 +6,9 @@
 #include <cctype>
 #include <limits>
 
+#include "basestore.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "utils/string_frm.h"
 #include "game/npcactivityhost.h"
 #include "world/objects/npc.h"
@@ -103,6 +106,15 @@ int GameScript::wld_getguildattitude(int gil1, int gil2) {
   }
 
 void GameScript::wld_exchangeguildattitudes(std::string_view name) {
+  if(const auto* catalog = baseNativeCatalog()) {
+    const auto* entry = NativeBaseCatalog::findConstant(*catalog,name);
+    const auto* values = entry==nullptr ? nullptr : std::get_if<std::vector<int32_t>>(&entry->values);
+    if(values==nullptr || values->size()!=gilTblSize*gilTblSize)
+      throw BaseStore::Error("invalid native guild attitude table " + std::string(name));
+    for(size_t i=0;i<gilTblSize;++i)
+      std::copy_n(values->data()+i*gilTblSize,gilTblSize,gilAttitudes.data()+i*gilCount);
+    return;
+    }
   auto guilds = vm.find_symbol_by_name(name);
   if(guilds==nullptr)
     return;

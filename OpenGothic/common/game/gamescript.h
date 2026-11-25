@@ -202,14 +202,12 @@ class GameScript final : public GameRules {
     AiOuputPipe* openAiOuput() override;
     AiOuputPipe* openDlgOuput(Npc &player, Npc &npc) override;
 
-    auto*            goldId() const { return itMi_Gold; }
     ScriptFn         playerPercAssessMagic() override;
     std::string_view currencyName() const { return goldTxt; }
     int              npcDamDiveTime() override;
     // cm: G2's dice for arrows - the talent's chance at the first, none at the second (AI_Constants.d)
     float            rangedChanceMinDist() const { return rangedChanceMin; }
     float            rangedChanceMaxDist() const { return rangedChanceMax; }
-    auto*            lockPickSymbol() const { return ItKE_lockpick; }
     uint32_t         lockPickId() const override;
 
     const FocusRecord&           focusNorm()  const override { return cFocusNorm;  }
@@ -987,12 +985,12 @@ class GameScript final : public GameRules {
     std::unique_ptr<AiOuputPipe>                                aiDefaultPipe;
 
     QuestLog                                                    quests;
-    daedalus::DaedalusSymbol*                                     itMi_Gold = nullptr;
-    daedalus::DaedalusSymbol*                                     ItKE_lockpick = nullptr;
+    uint32_t                                                    goldInstance = 0;
+    uint32_t                                                    lockPickInstance = 0;
     daedalus::DaedalusSymbol*                                     B_RefreshAtInsert = nullptr;
     float                                                       tradeValMult = 0.3f;
-    daedalus::DaedalusSymbol*                                     spellFxInstanceNames = nullptr;
-    daedalus::DaedalusSymbol*                                     spellFxAniLetters = nullptr;
+    std::vector<std::string>                                    spellFxInstanceNames;
+    std::vector<std::string>                                    spellFxAniLetters;
     std::string                                                 goldTxt;
     float                                                       viewTimePerChar = 0.5;
     float                                                       rangedChanceMin = 1500;

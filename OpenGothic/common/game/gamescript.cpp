@@ -9,7 +9,9 @@
 #include <optional>
 #include <sstream>
 #include <type_traits>
+#include <utility>
 
+#include "basestore.h"
 #include "game/definitions/basescripts.h"
 #include "game/definitions/gameplaydefinitions.h"
 #include "game/definitions/nativebasecatalog.h"
@@ -431,39 +433,65 @@ void GameScript::initCommon() {
   ZS_Attack            = aiState(findSymbolIndex("ZS_Attack")).funcIni;
   ZS_MM_Attack         = aiState(findSymbolIndex("ZS_MM_Attack")).funcIni;
 
-  spellFxInstanceNames = vm.find_symbol_by_name("spellFxInstanceNames");
-  spellFxAniLetters    = vm.find_symbol_by_name("spellFxAniLetters");
+  const auto* catalog = baseNativeCatalog();
+  const auto constant = [&]<class T>(std::string_view name) -> const std::vector<T>& {
+    const auto* entry = NativeBaseCatalog::findConstant(*catalog,name);
+    const auto* values = entry==nullptr ? nullptr : std::get_if<std::vector<T>>(&entry->values);
+    if(values==nullptr || values->empty())
+      throw BaseStore::Error("missing native gameplay constant " + std::string(name));
+    return *values;
+    };
+  const auto scriptStrings = [&](std::string_view name) {
+    const auto* entry = vm.find_symbol_by_name(name);
+    if(entry==nullptr)
+      throw std::runtime_error("missing gameplay constant " + std::string(name));
+    std::vector<std::string> values;
+    values.reserve(entry->count());
+    for(uint16_t i=0;i<entry->count();++i)
+      values.push_back(entry->get_string(i));
+    return values;
+    };
+  const auto floatConstant = [&](std::string_view name, float fallback) {
+    if(catalog!=nullptr)
+      return constant.template operator()<float>(name).front();
+    const auto* entry = vm.find_symbol_by_name(name);
+    return entry==nullptr ? fallback : entry->get_float();
+    };
+  const auto intConstant = [&](std::string_view name) {
+    if(catalog!=nullptr)
+      return constant.template operator()<int32_t>(name).front();
+    const auto* entry = vm.find_symbol_by_name(name);
+    return entry==nullptr ? 0 : entry->get_int();
+    };
 
-  if(spellFxInstanceNames==nullptr || spellFxAniLetters==nullptr) {
-    throw std::runtime_error("spellFxInstanceNames and/or spellFxAniLetters not found");
+  if(catalog!=nullptr) {
+    spellFxInstanceNames = constant.template operator()<std::string>("SPELLFXINSTANCENAMES");
+    spellFxAniLetters = constant.template operator()<std::string>("SPELLFXANILETTERS");
+    goldInstance = findItemInstance(constant.template operator()<std::string>("TRADE_CURRENCY_INSTANCE").front()).value();
+    lockPickInstance = findItemInstance("ITKE_LOCKPICK").value();
+    } else {
+    spellFxInstanceNames = scriptStrings("spellFxInstanceNames");
+    spellFxAniLetters = scriptStrings("spellFxAniLetters");
+    if(const auto* currency = vm.find_symbol_by_name("TRADE_CURRENCY_INSTANCE"))
+      if(const auto* item = vm.find_symbol_by_name(currency->get_string()))
+        goldInstance = item->index();
+    if(const auto* item = vm.find_symbol_by_name("ItKE_lockpick"))
+      lockPickInstance = item->index();
+    B_RefreshAtInsert = vm.find_symbol_by_name("B_RefreshAtInsert");
     }
 
-  auto* currency = vm.find_symbol_by_name("TRADE_CURRENCY_INSTANCE");
-  itMi_Gold      = currency!=nullptr ? vm.find_symbol_by_name(currency->get_string()) : nullptr;
-  if(itMi_Gold!=nullptr){ // FIXME
-    goldTxt = createItemForQuery(itMi_Gold->index())->name;
-    }
-  auto* tradeMul = vm.find_symbol_by_name("TRADE_VALUE_MULTIPLIER");
-  tradeValMult   = tradeMul != nullptr ? tradeMul->get_float() : 1.0f;
-
-  auto* vtime     = vm.find_symbol_by_name("VIEW_TIME_PER_CHAR");
-  viewTimePerChar = vtime != nullptr ? vtime->get_float() : 550.f;
+  if(goldInstance!=0)
+    goldTxt = createItemForQuery(goldInstance)->name;
+  tradeValMult = floatConstant("TRADE_VALUE_MULTIPLIER",1.0f);
+  viewTimePerChar = floatConstant("VIEW_TIME_PER_CHAR",550.f);
   if(viewTimePerChar<=0.f)
     viewTimePerChar = 550.f;
-
-  ItKE_lockpick     = vm.find_symbol_by_name("ItKE_lockpick");
-  B_RefreshAtInsert = vm.find_symbol_by_name("B_RefreshAtInsert");
-
-  if(auto v = vm.find_symbol_by_name("RANGED_CHANCE_MINDIST"))
-    rangedChanceMin = v->get_float();
-  if(auto v = vm.find_symbol_by_name("RANGED_CHANCE_MAXDIST"))
-    rangedChanceMax = v->get_float();
-
-  auto* gilMax = vm.find_symbol_by_name("GIL_MAX");
-  gilCount = gilMax!=nullptr ? size_t(gilMax->get_int()) : 0;
-
-  auto* tblSz = vm.find_symbol_by_name("TAB_ANZAHL");
-  gilTblSize = tblSz!=nullptr ? size_t(std::sqrt(tblSz->get_int())) : 0;
+  rangedChanceMin = floatConstant("RANGED_CHANCE_MINDIST",rangedChanceMin);
+  rangedChanceMax = floatConstant("RANGED_CHANCE_MAXDIST",rangedChanceMax);
+  gilCount = size_t(intConstant("GIL_MAX"));
+  gilTblSize = size_t(std::sqrt(intConstant("TAB_ANZAHL")));
+  if(gilTblSize>gilCount)
+    throw BaseStore::Error("guild table exceeds native guild count");
   gilAttitudes.resize(gilCount*gilCount,ATT_HOSTILE);
   wld_exchangeguildattitudes("GIL_ATTITUDES");
 
@@ -894,20 +922,20 @@ size_t GameScript::symbolsCount() const {
   }
 
 const SpellRecord& GameScript::spellDesc(int32_t splId) {
-  auto& tag = spellFxInstanceNames->get_string(uint16_t(splId));
+  auto& tag = spellFxInstanceNames.at(uint16_t(splId));
   return spells->find(tag);
   }
 
 const VisualFx* GameScript::spellVfx(int32_t splId) {
-  auto& tag = spellFxInstanceNames->get_string(uint16_t(splId));
+  auto& tag = spellFxInstanceNames.at(uint16_t(splId));
   string_frm name("spellFX_",tag);
   return Gothic::inst().loadVisualFx(name);
   }
 
 GameScript::PhysicalSpell GameScript::physicalSpell(int32_t splId) const {
-  if(spellFxInstanceNames==nullptr || splId<0 || size_t(splId)>=spellFxInstanceNames->count())
+  if(splId<0 || size_t(splId)>=spellFxInstanceNames.size())
     return PhysicalSpell::None;
-  auto tag = spellFxInstanceNames->get_string(uint16_t(splId));
+  auto tag = spellFxInstanceNames.at(uint16_t(splId));
   for(auto& c:tag)
     c = char(std::toupper(static_cast<unsigned char>(c)));
   if(tag=="WINDFIST" || tag=="STORMFIST")
@@ -1391,7 +1419,7 @@ int GameScript::invokeManaRelease(Npc &npc, Npc* target, int mana) {
   }
 
 void GameScript::invokeSpell(Npc &npc, Npc* target, Item &it) {
-  auto&      tag = spellFxInstanceNames->get_string(uint16_t(it.spellId()));
+  auto&      tag = spellFxInstanceNames.at(uint16_t(it.spellId()));
   string_frm name("Spell_Cast_",tag);
   auto       fn = vm.find_symbol_by_name(name);
   if(fn==nullptr)
@@ -1518,9 +1546,9 @@ void GameScript::playerHotLameHeal(Npc& pl) {
   }
 
 std::string_view GameScript::spellCastAnim(Npc&, Item &it) {
-  if(spellFxAniLetters==nullptr)
+  if(spellFxAniLetters.empty())
     return "FIB";
-  return spellFxAniLetters->get_string(uint16_t(it.spellId()));
+  return spellFxAniLetters.at(uint16_t(it.spellId()));
   }
 
 bool GameScript::aiOutput(Npc &npc, std::string_view outputname, bool overlay) {
@@ -1904,7 +1932,7 @@ int GameScript::npcDamDiveTime() {
   }
 
 uint32_t GameScript::lockPickId() const {
-  return ItKE_lockpick!=nullptr ? ItKE_lockpick->index() : 0;
+  return lockPickInstance;
   }
 
 std::string_view GameScript::menuMain() const {
