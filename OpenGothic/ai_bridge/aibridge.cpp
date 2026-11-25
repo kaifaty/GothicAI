@@ -1026,11 +1026,10 @@ void AiBridge::Impl::onBodyWatch(World& world, const rapidjson::Value& msg) {
       npc = world.player();
       }
     else {
-      const auto instance = world.script().findSymbolIndex(symbol);
-      if(instance!=size_t(-1)) {
-        npc = world.findNpcByInstance(instance);
+      if(const auto instance = world.script().storyNpcId(symbol)) {
+        npc = world.findNpcByInstance(*instance);
         // Script symbols identify types; refuse copies instead of silently watching the first.
-        if(world.findNpcByInstance(instance,1)!=nullptr) {
+        if(world.findNpcByInstance(*instance,1)!=nullptr) {
           sendResult(req,false,"ambiguous body_watch npc symbol: "+symbol);
           return;
           }
@@ -1709,8 +1708,8 @@ void AiBridge::Impl::tickDeal(World& world) {
   chat->markMissing([&](const ChatOverlay::DealLine& l) {
     if(l.item.empty())
       return false;  // not a thing given now: a lie forgiven, a debt to pay later
-    const size_t id = world.script().findSymbolIndex(l.item);
-    return id==size_t(-1) || pl->itemCount(id) < size_t(std::max(0,l.count));
+    const auto id = world.script().findItemInstance(l.item);
+    return !id || pl->itemCount(*id) < size_t(std::max(0,l.count));
     });
   }
 

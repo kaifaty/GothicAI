@@ -793,14 +793,13 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
         }
       const auto reasonName = run.nonlethal ? std::string("AR_NONE") : upper(JsonRead::str(args,"reason"));
       if(!reasonName.empty()) {
-        auto* reason = world.script().findSymbol(reasonName);
+        const auto reason = world.script().intConstant(reasonName);
         const auto attack = HeroDeed::constant(*npc,"AIV_ATTACKREASON");
         const auto last = HeroDeed::constant(*npc,"AIV_LASTPLAYERAR");
         const auto fight = HeroDeed::constant(*npc,"AIV_LASTFIGHTAGAINSTPLAYER");
         const auto comment = HeroDeed::constant(*npc,"AIV_LASTFIGHTCOMMENT");
-        const auto valid = [](int32_t index) { return index>=0 && uint32_t(index)<daedalus::INpc::aivar_count; };
-        if(!reasonName.starts_with("AR_") || reason==nullptr || !reason->is_const() ||
-           reason->type()!=daedalus::DaedalusDataType::INT || !valid(attack) ||
+        const auto valid = [](int32_t index) { return index>=0 && uint32_t(index)<NpcRecord::aivar_count; };
+        if(!reasonName.starts_with("AR_") || !reason || !valid(attack) ||
            (target->isPlayer() && !valid(last)) || !valid(fight) || !valid(comment)) {
           result("rejected","fight needs a vanilla AR_* reason and its attack variables");
           return;
@@ -808,9 +807,9 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
         // Match B_Attack's combat bookkeeping without B_MemorizePlayerCrime:
         // the server already owns the witness memory and community counters.
         auto& aiv = npc->handlePtr()->aivar;
-        aiv[size_t(attack)] = reason->get_int(0);
+        aiv[size_t(attack)] = *reason;
         if(target->isPlayer())
-          aiv[size_t(last)] = reason->get_int(0);
+          aiv[size_t(last)] = *reason;
         aiv[size_t(fight)] = HeroDeed::constant(*npc,"FIGHT_CANCEL",0);
         aiv[size_t(comment)] = 0;
         }
@@ -975,16 +974,8 @@ void NpcObserver::routine(World& world, const rapidjson::Value& msg) {
      .end();
     });
   j.endArray().array("routines");
-  // the npc's routine variants: Rtn_<name>_<id> in the scripts
-  const std::string suffix = "_" + std::to_string(npc->handle().id);
-  for(size_t i=0; i<world.script().symbolsCount(); ++i) {
-    auto sym = world.script().findSymbol(i);
-    if(sym==nullptr)
-      continue;
-    const std::string& n = sym->name();
-    if(n.size()>4+suffix.size() && n.starts_with("RTN_") && n.ends_with(suffix))
-      j.item(n.substr(4,n.size()-4-suffix.size()));
-    }
+  for(auto name : world.script().storyRoutineVariants(npc->handle().id))
+    j.item(name);
   j.endArray().array("event_activities");
   for(auto name:world.script().eventActivityNames())
     j.item(name);

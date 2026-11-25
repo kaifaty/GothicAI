@@ -50,8 +50,7 @@ std::string runeOf(std::string_view spell) {
   }
 
 int32_t spellId(World& world, std::string_view spell) {
-  auto* s = world.script().findSymbol(spell);
-  return s!=nullptr ? s->get_int() : -1;
+  return world.script().intConstant(spell).value_or(-1);
   }
 
 void playFx(World& world, std::string_view name, const Tempest::Vec3& at) {
@@ -174,11 +173,11 @@ bool Necromancy::start(World& world, Npc& npc, Card c, std::string spl, std::str
     error = "the hero can't raise himself";
     return false;
     }
-  if(spellId(world,spl)<0 || world.script().findSymbolIndex(runeOf(spl))==size_t(-1)) {
+  if(spellId(world,spl)<0 || !world.script().findItemInstance(runeOf(spl))) {
     error = "no spell " + spl;
     return false;
     }
-  if(world.script().findSymbolIndex(SkeletonNpc)==size_t(-1)) {
+  if(!world.script().storyNpcId(SkeletonNpc)) {
     error = "no skeleton in the scripts";
     return false;
     }
@@ -206,12 +205,14 @@ void Necromancy::enter(World& world, Stage s) {
 
 bool Necromancy::cast(World& world, Npc& npc, Npc& hero) {
   const int32_t id   = spellId(world,spell);
-  const size_t  rune = world.script().findSymbolIndex(runeOf(spell));
+  const auto    rune = world.script().findItemInstance(runeOf(spell));
+  if(id<0 || !rune)
+    return false;
   npc.setTarget(&hero);
   npc.changeAttribute(ATR_MANA,npc.attribute(ATR_MANAMAX),false);
   if(npc.weaponState()!=WeaponState::Mage) {
     if(!npc.inventory().hasSpell(id))
-      npc.addItem(rune,1);
+      npc.addItem(*rune,1);
     npc.aiPush(AiQueue::aiTurnToNpc(&hero));
     npc.aiPush(AiQueue::aiReadySpell(id,0));
     return false;
@@ -224,11 +225,11 @@ bool Necromancy::cast(World& world, Npc& npc, Npc& hero) {
 
 void Necromancy::raise(World& world, Npc& npc, Npc& hero) {
   const int32_t id   = spellId(world,SummonSpell);
-  const size_t  rune = world.script().findSymbolIndex(SummonRune);
-  if(id>=0 && rune!=size_t(-1)) {
+  const auto    rune = world.script().findItemInstance(SummonRune);
+  if(id>=0 && rune) {
     // the summoning readied, not cast: the creature comes out of the body, not beside the caster
     if(!npc.inventory().hasSpell(id))
-      npc.addItem(rune,1);
+      npc.addItem(*rune,1);
     npc.clearAiQueue();
     npc.aiPush(AiQueue::aiTurnToNpc(&hero));
     npc.aiPush(AiQueue::aiReadySpell(id,0));
@@ -240,8 +241,8 @@ void Necromancy::rise(World& world, Npc& hero) {
   // back from ZS_Dead, then the shape of a skeleton: the body that lay there gets up
   hero.clearState(true);
   hero.changeAttribute(ATR_HITPOINTS,hero.attribute(ATR_HITPOINTSMAX),false);
-  const size_t id = world.script().findSymbolIndex(SkeletonNpc);
-  const bool transformed=hero.transformInto(id);
+  const auto id = world.script().storyNpcId(SkeletonNpc);
+  const bool transformed = id && hero.transformInto(*id);
   if(!transformed)
     Log::e("[necro] the hero did not become a skeleton");
   if(const auto* trace=std::getenv("OPENGOTHIC_RAGDOLL_TRACE");trace!=nullptr && trace[0]=='1')

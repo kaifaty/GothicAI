@@ -100,10 +100,7 @@ std::string itemName(const Inventory& inv, size_t cls) {
   }
 
 std::string scriptString(World& world, std::string_view name, std::string_view fallback) {
-  auto sym = world.script().findSymbol(name);
-  if(sym!=nullptr && sym->type()==daedalus::DaedalusDataType::STRING)
-    return sym->get_string();
-  return std::string(fallback);
+  return std::string(world.script().stringSymbol(name,fallback));
   }
 
 // "pos": [x,y,z], "points": [names]: the waypoint nearest to pos, of these points if given (a place: its
