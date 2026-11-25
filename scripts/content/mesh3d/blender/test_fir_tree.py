@@ -335,7 +335,8 @@ def test_spruce_a_has_the_size_of_the_intent_within_the_budget(spruce, config):
     metrics = spruce['metrics']
     assert metrics['fails'] == []
     assert metrics['triangles'] <= config['budget_tris'] == 48000
-    assert 44900 <= metrics['triangles'] <= 45400       # a bough's triangle is drawn once: 83 912 with the twins
+    assert metrics['triangles'] == 45_167
+    assert metrics['cards_total'] == 7_175
     assert 17.5 <= metrics['height_m'] <= 18.5
     assert .5 <= metrics['trunk_diameter_m'][1] <= .7 < metrics['trunk_diameter_m'][0]
     assert metrics['inside_out_parts'] == 0
@@ -561,10 +562,10 @@ def digest(tree) -> str:
     return h.hexdigest()
 
 
-def test_spruce_a_is_built_as_before_and_thin_is_a_separate_step(spruce):
+def test_spruce_a_rebuilds_deterministically_and_thin_is_a_separate_step(spruce):
     tree = spruce['tree']
-    # Built with fir_tree.py and fir.json from 0e7d1cc9, before the cost stand (#1545).
-    accepted = '8be2b1489a4c3f34cf2b5859855ac3250aea5823cbf9abeb5dab3d9e0cbc069a'
+    # Accepted geometry in reports/engine/2026-11-16-modern-trees/tree-crown-fix.md.
+    accepted = '0c89a6df799f6ee4f8d449dc622fbe658188bc25f405735265fd3b89401125a6'
     assert digest(tree) == accepted
     assert fir_tree.thin(tree, 1.) is tree
     full_width = np.ptp(tree.parts[1]['position'][:, :2], axis=0)

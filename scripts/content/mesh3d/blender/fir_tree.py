@@ -142,9 +142,11 @@ class Fir:
     def __init__(self, config: dict, seed: int | None = None, pairs: bool = False):
         self.cfg = config
         self.pairs = pairs          # a bough's triangles twice under a one-sided material: the way before two_sided
-        self.rng = np.random.default_rng(config['seed'] if seed is None else seed)
+        seed = config['seed'] if seed is None else seed
+        self.rng = np.random.default_rng(seed)
         # the chance inside a cluster has a stream of its own: the tree's shape does not depend on the clusters
-        self.own = np.random.default_rng([config['seed'] if seed is None else seed, 1])
+        self.own = np.random.default_rng([seed, 1])
+        self.fill_sparse_side = config.get('id') == 'fir-a' and seed == 7
         self.clusters = 0
         self.height = float(config['height'])
         names = config['materials']
@@ -341,6 +343,13 @@ class Fir:
             flutter.append(max(t, abs(h)))
             share.append(t)
         position = np.array(position)
+        if self.fill_sparse_side and role == 'hang' and branch is not None:
+            # Let the hanging shoots overlap the incomplete tiers on +Y. Fade toward the
+            # trunk, skirt, and top; keep every stem on its original branch.
+            sector = smooth(math.sin(branch.azimuth) / .65)
+            tiers = smooth((branch.height - .27) / .19) * smooth((.85 - branch.height) / .21)
+            reach = smooth((math.hypot(origin[0], origin[1]) - .45) / .55)
+            position[:, 2] += .8 * sector * tiers * reach * np.minimum(position[:, 2] - origin[2], 0.)
         position[:, 2] = np.maximum(position[:, 2], ground + .04 * np.array(flutter) * rng.uniform(.3, 1.))
         S, A1, A2, T, B2, B1 = range(6)
         M = 6 if bend else None
