@@ -886,11 +886,11 @@ void WorldObjects::pinAnimationLodTargets() {
     }
   }
 
-bool WorldObjects::mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const {
+bool WorldObjects::mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view, bool allowSettledFurniture) const {
   // NpcProcessPolicy::AiNormal is the hero's 30 m ring: perceptions, living
   // bodies, dialogs and native combat around the hero read the pose there.
   return npc.processPolicy()!=NpcProcessPolicy::AiFar && npc.processPolicy()!=NpcProcessPolicy::AiFar2 ? true :
-         npc.animationLodPinned() || view.nearCamera(npc) || BodyObservations::watched(npc) ||
+         npc.animationLodPinned(allowSettledFurniture) || view.nearCamera(npc) || BodyObservations::watched(npc) ||
          BodyArena::isActor(npc) || NavDemos::fullSimulation(npc) || animationProbed(npc);
   }
 
@@ -954,9 +954,11 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     // Once Society releases an actor, its next native pose bypasses the cadence gate.
     const bool nativeLod = lod && i.get()!=pl && !i->hasSocietyAnimationDebt();
     const bool deferNative = nativeLod && (frame+AnimationLod::phase(*i))%rate!=0;
-    const bool pauseFar = nativeLod && !deferNative && i->processPolicy()==NpcProcessPolicy::AiFar2 &&
-                          i->canPauseDistantPose(gestureLead);
-    if((society || deferNative || pauseFar) && !view.visible(*i) && !mustUpdateAnimation(*i,view)) {
+    const bool farLod = nativeLod && i->processPolicy()==NpcProcessPolicy::AiFar2;
+    const bool furniture = i->interactive()!=nullptr;
+    const bool pauseFurniture = farLod && furniture && i->settledFurniturePose() && i->canPauseDistantPose(gestureLead);
+    const bool pauseFar = pauseFurniture || (farLod && !deferNative && !furniture && i->canPauseDistantPose(gestureLead));
+    if((society || deferNative || pauseFar) && !view.visible(*i) && !mustUpdateAnimation(*i,view,pauseFurniture)) {
       // Outside the frustum and its shadow: the next update applies this dt.
       if(society) {
         i->deferSocietyAnimation(dt);

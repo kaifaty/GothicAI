@@ -437,7 +437,9 @@ bool Npc::societyGestureNeedsPose(uint64_t leadMs) const {
   using Form = ActivityDefinitions::PointActivity::Form;
   const auto* activity = activityEvents.activity;
   const auto* point = activity!=nullptr ? activity->point : nullptr;
-  if(point==nullptr || !point->timed())
+  if(point==nullptr)
+    return currentInteract!=nullptr && aiState.loopNextTime<=owner.tickCount()+leadMs && mobGestureDue(leadMs);
+  if(!point->timed())
     return false;
   // A gesture blend needs recent samples of its outgoing stance and velocity.
   if(point->form!=Form::Guard && aiState.loopNextTime>owner.tickCount()+leadMs)
@@ -450,10 +452,15 @@ void Npc::tickPointGesture() {
     playActivityGesture();
   }
 
+bool Npc::mobGestureDue(uint64_t leadMs) const {
+  const auto* activity = activityEvents.activity;
+  const auto* mob = activity!=nullptr ? activity->mob : nullptr;
+  return mob!=nullptr && mob->timer && int32_t((stateTime()+leadMs)/1000)>mob->timer->timerSeconds &&
+         ActivityDefinitions::bodyStateContains(int32_t(bodyState()),mob->busyBodyState);
+  }
+
 void Npc::tickMobTimer() {
-  const auto& mob=*activityEvents.activity->mob;
-  if(mob.timer && int32_t(stateTime()/1000)>mob.timer->timerSeconds &&
-     ActivityDefinitions::bodyStateContains(int32_t(bodyState()),mob.busyBodyState))
+  if(mobGestureDue())
     playActivityGesture();
   }
 

@@ -217,7 +217,7 @@ class WorldObjects final {
     uint64_t societyDueStep(const Npc& npc, uint64_t entered) const;
     bool           makeAnimationLodView(AnimationLod::View& view) const;
     void           pinAnimationLodTargets();
-    bool           mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const;
+    bool           mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view, bool allowSettledFurniture=false) const;
     // worldobjects_animtail.cpp: the main-thread steps after the animation pass (world/animationtail.h)
     static bool    animationTailKeepsShadow();
     void           updateAnimationTail(uint64_t dt, const Npc* player, bool skipFar, bool frozen);

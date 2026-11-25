@@ -6,6 +6,7 @@
 #include "asset/activitydefinitions.h"
 #include "game/bodycontroller.h"
 #include "game/npckeys.h"
+#include "world/objects/interactive.h"
 #include "world/waymatrix.h"
 #include "world/world.h"
 
@@ -161,7 +162,16 @@ bool Npc::supportsSocietyActivity(const ActivityEvents::Record& activity) {
   using Form = ActivityDefinitions::PointActivity::Form;
   if(const auto* point = activity.point)
     return point->timed() || point->form==Form::Campfire;
-  return activity.mob!=nullptr && !activity.mob->timer;
+  return activity.mob!=nullptr && (!activity.mob->timer || activity.mob->skipApproachWhenBusy);
+  }
+
+bool Npc::societyFurnitureHold() const {
+  const auto* record = activityEvents.activity;
+  const auto* mob = record!=nullptr ? record->mob : nullptr;
+  return mob!=nullptr && activityEvents.stage==ActivityEvents::Stage::Hold &&
+         ActivityDefinitions::mobInitChecksBody(aiState.hint) && mob->loopResult==LOOP_CONTINUE &&
+         currentInteract!=nullptr && currentInteract->checkMobName(mob->scheme) &&
+         currentInteract->stateId()==mob->useState && settledFurniturePose();
   }
 
 const WayPoint* Npc::societyWaitingPoint() const {
@@ -180,8 +190,10 @@ std::string_view Npc::societyRoutineBlocker(std::string_view state, bool groupPi
   const bool waiting = activityEvents.stage==Stage::Wait && (wide || (groupPilot && guardedPost));
   if(activityEvents.stage!=Stage::Hold && !waiting)
     return "native_activity_stage";
-  if(wide && (record==nullptr || !supportsSocietyActivity(*record) ||
-              (!waiting && (point==nullptr || !point->timed())) || campfireBodySuspended()))
+  const bool furniture = wide && owner.persistentSocietyEnabled() && societyFurnitureHold();
+  if(wide && (record==nullptr || !supportsSocietyActivity(*record) || campfireBodySuspended()))
+    return "native_activity_type";
+  if(wide && !furniture && (waiting ? record->mob!=nullptr && record->mob->timer : point==nullptr || !point->timed()))
     return "native_activity_type";
   if(!aiState.started || activityEvents.init!=aiState.funcIni.ptr ||
      activityEvents.pending!=0 || activityEvents.awaitQueue || activityEvents.retry || activityEvents.restart)
@@ -196,13 +208,17 @@ std::string_view Npc::societyRoutineBlocker(std::string_view state, bool groupPi
   const auto body = bodyStateMasked();
   // The stock standing poses can carry no body-state tag.
   const bool idle = body==BS_NONE && !isFalling() && visual.pose().isInAnim(guardedPost ? "S_HGUARD" : "S_LGUARD");
-  if(isInAir() || (body!=BS_STAND && !idle))
+  if(isInAir() || (!furniture && body!=BS_STAND && !idle))
     return "native_body_state";
   if(weaponState()!=WeaponState::NoWeapon)
     return "native_weapon";
-  if(animationLodPinned())
+  if(animationLodPinned(furniture) || (furniture && !canPauseDistantPose(0)))
     return "native_pose_pinned";
-  if(wide && waiting) {
+  if(furniture) {
+    if(!usesSimplifiedMovement() || societyWaitingPoint()==nullptr ||
+       qDistTo(*currentInteract)>MAX_AI_USE_DISTANCE*MAX_AI_USE_DISTANCE)
+      return "native_furniture_anchor";
+    } else if(wide && waiting) {
     // Place-release events still arrive through the native wait registration.
     const auto* anchor = societyWaitingPoint();
     constexpr auto reach = WayMatrix::distanceThreshold;
@@ -256,6 +272,13 @@ bool Npc::trySocietyEarlyTick() {
      (attributes[ATR_REGENERATEMANA]>0 && attributes[ATR_MANA]<attributes[ATR_MANAMAX]) ||
      (hasStamina() && (meleeStamina.exhausted || stamina()<staminaMax())))
     return false;
+
+  if(currentInteract!=nullptr) {
+    const auto& pose = visual.pose();
+    for(size_t i=0; i<pose.logicalLayerCount(); ++i)
+      if(!pose.logicalLayer(i).sequence->data->sfx.empty())
+        return false;
+    }
 
   if(!owner.societyHoldsRoutine(*this,{}))
     return false;

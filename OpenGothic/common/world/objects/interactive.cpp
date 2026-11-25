@@ -760,6 +760,21 @@ bool Interactive::isStaticState() const {
   return loopState;
   }
 
+bool Interactive::hasSettledUser(const Npc& npc) const {
+  if(!loopState || reverseState || state!=stateNum || world.tickCount()<waitAnim)
+    return false;
+
+  bool found = false;
+  for(const auto& p:attPos) {
+    if(p.user==nullptr)
+      continue;
+    if(found || p.user!=&npc || !p.attachMode || p.started!=Started)
+      return false;
+    found = true;
+    }
+  return found;
+  }
+
 bool Interactive::isDetachState(const Npc& npc) const {
   for(auto& i:attPos)
     if(i.user==&npc)
@@ -860,6 +875,7 @@ bool Interactive::attach(Npc &npc) {
 bool Interactive::detach(Npc &npc, bool quick) {
   for(auto& i:attPos) {
     if(i.user==&npc && (i.attachMode || (quick && Settings::physicsFlags().meleePosture))) {
+      npc.wakeSociety();
       if(quick || canQuitAtState(*i.user,state)) {
         if(!quick) {
           auto sq = npc.setAnimAngGet(Npc::Anim::InteractToStand);
@@ -1045,6 +1061,10 @@ bool Interactive::setAnim(Npc* npc, Anim dir) {
   }
 
 void Interactive::setState(int st) {
+  if(st!=state)
+    for(const auto& p:attPos)
+      if(p.user!=nullptr)
+        p.user->wakeSociety();
   state = st;
   onStateChanged();
   }
@@ -1124,6 +1144,9 @@ void Interactive::marchInteractives(DbgPainter &p) const {
   }
 
 void Interactive::moveEvent() {
+  for(const auto& p:attPos)
+    if(p.user!=nullptr)
+      p.user->wakeSociety();
   Vob::moveEvent();
   visual.setObjMatrix(transform());
   }

@@ -338,6 +338,8 @@ void Npc::setScale(float x, float y, float z) {
   }
 
 const Animation::Sequence* Npc::playAnimByName(std::string_view name, BodyState bs, bool force) {
+  if(currentInteract!=nullptr)
+    syncDeferredAnimation();
   return visual.startAnimAndGet(*this,name,calcAniComb(),bs,force);
   }
 
@@ -422,6 +424,8 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
         a = Anim::Idle;
       }
     }
+  if(currentInteract!=nullptr && (a==Anim::InteractOut || a==Anim::InteractToStand))
+    syncDeferredAnimation();
   const auto result = visual.startAnimAndGet(*this,a,comb,st,wlk);
   if(result!=nullptr && isUsingItemInHand() && (a==Anim::AttackBlock || a==Anim::Jump || a==Anim::JumpUp ||
      a==Anim::JumpUpLow || a==Anim::JumpUpMid || a==Anim::JumpHang))
@@ -766,15 +770,25 @@ bool Npc::canPauseDistantPose(uint64_t gestureLead) const {
          !societyGestureNeedsPose(gestureLead) && !owner.isInSfxRange(position()) && visual.canPauseAnimation();
   }
 
-bool Npc::animationLodPinned() const {
-  // Melee shadow bodies and blades, living hit bodies, ragdolls and mobsi read
-  // this NPC's bones every frame from world logic. A drawn weapon alone does not
-  // pin: monsters keep Fist mode at rest. A fighter has a target, swings, or has
-  // an open shadow-blade window.
+bool Npc::settledFurniturePose() const {
+  if(currentInteract==nullptr || !currentInteract->hasSettledUser(*this))
+    return false;
+
+  const auto scheme = currentInteract->schemeName();
+  const auto body   = bodyStateMasked();
+  if(scheme=="BEDHIGH")
+    return body==BS_LIE;
+  return body==BS_SIT && (scheme=="BENCH" || scheme=="CHAIR" || scheme=="THRONE");
+  }
+
+bool Npc::animationLodPinned(bool allowSettledFurniture) const {
+  // Melee, living hit bodies and ragdolls need the current bones. Interactive
+  // users also keep them unless this caller can defer a settled furniture pose.
+  // A weapon pins the pose during targeting, attacks or an open blade window.
   const bool fighting = weaponState()!=WeaponState::NoWeapon &&
                         (currentTarget!=nullptr || isAttackAnim() || (meleeShadow && meleeShadow->window));
   return animLodTargeted || isPlayer() || fighting ||
-         ragdoll!=nullptr || living!=nullptr || currentInteract!=nullptr || spellFrozen();
+         ragdoll!=nullptr || living!=nullptr || (currentInteract!=nullptr && !allowSettledFurniture) || spellFrozen();
   }
 
 void Npc::resetCharacterVisualHeight() {

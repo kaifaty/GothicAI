@@ -514,7 +514,8 @@ std::string_view World::societyVisibilityBlocker(const Npc& npc, const Animation
     return "no_hero";
   if((hero->position()-npc.position()).quadLength()<SocietyProjection::FarDistance*SocietyProjection::FarDistance)
     return "hero_near";
-  if(wobj.mustUpdateAnimation(npc,view))
+  const bool furniture = persistentSocietyEnabled() && npc.societyFurnitureHold();
+  if(wobj.mustUpdateAnimation(npc,view,furniture))
     return "native_pose_needed";
   if(view.visible(npc))
     return "camera_visible";

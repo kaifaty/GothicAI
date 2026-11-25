@@ -83,6 +83,7 @@ class Interactive : public Vob, public AnimationSound, public AnimationInteracti
 
     bool                isAvailable() const;
     bool                isStaticState() const;
+    bool                hasSettledUser(const Npc& npc) const;
     bool                isDetachState(const Npc& npc) const;
     bool                canQuitAtState(const Npc& npc, int32_t state) const;
     bool                attach(Npc& npc);

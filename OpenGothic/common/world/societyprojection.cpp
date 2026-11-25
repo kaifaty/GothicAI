@@ -406,7 +406,8 @@ std::string_view SocietyProjection::routineState(const Npc& npc) const {
   }
 
 const WayPoint* SocietyProjection::routinePoint(const Npc& npc) const {
-  if(wideGroupPilot && npc.activityStage()==ActivityEvents::Stage::Wait)
+  if(wideGroupPilot && (npc.activityStage()==ActivityEvents::Stage::Wait ||
+                        (persistentEnabled() && npc.interactive()!=nullptr)))
     return npc.societyWaitingPoint();
   return npc.currentWayPoint();
   }
@@ -513,7 +514,8 @@ void SocietyProjection::recordEarlyTick(const Npc& npc) {
 void SocietyProjection::schedule(uint32_t actor, uint64_t now) {
   auto& record = sleeping[actor];
   const auto& npc = *record.npc;
-  const auto* point = npc.activityEvents.activity->point;
+  const auto& activity = *npc.activityEvents.activity;
+  const auto* point = activity.point;
   auto next = npc.aiState.loopNextTime;
   if(point!=nullptr && point->timed() && npc.handlePtr()->aivar[19]==point->poseStage) {
     auto gesture = npc.aiState.sTime + uint64_t(point->timerSeconds+1)*1000;
@@ -522,6 +524,11 @@ void SocietyProjection::schedule(uint32_t actor, uint64_t now) {
     if(npc.societyPoseSuspended)
       gesture = gesture>poseLead ? gesture-poseLead : 0;
     next = std::min(next,gesture);
+    } else if(activity.mob!=nullptr && activity.mob->timer && npc.societyPoseSuspended) {
+    const auto threshold = npc.aiState.sTime + uint64_t(activity.mob->timer->timerSeconds+1)*1000;
+    const auto gesture = std::max(threshold,npc.aiState.loopNextTime);
+    const auto prepare = gesture>poseLead ? gesture-poseLead : 0;
+    next = std::min(next,prepare);
     }
   record.stepAt = std::max(next,now+1);
   deadlines.emplace(record.stepAt,actor);
@@ -640,8 +647,10 @@ void SocietyProjection::runDeadlines(World& world, uint64_t dt) {
       resumePose(world,npc);
     const bool loopDue = npc.aiState.loopNextTime<=now;
     const auto* point = npc.activityEvents.activity->point;
-    const bool gestureDue = point!=nullptr && point->timed() &&
-                            (loopDue || point->form==ActivityDefinitions::PointActivity::Form::Guard) && npc.pointGestureDue();
+    const bool gestureDue = point!=nullptr ?
+                            point->timed() && (loopDue || point->form==ActivityDefinitions::PointActivity::Form::Guard) &&
+                            npc.pointGestureDue() :
+                            loopDue && npc.mobGestureDue();
     if(loopDue || gestureDue) {
       const auto elapsed = world.wobj.societyDueStep(npc,record.entered);
       if(elapsed>0) {

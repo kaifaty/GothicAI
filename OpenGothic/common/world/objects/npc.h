@@ -241,11 +241,12 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool       hasSocietyAnimationDebt() const { return societyAnimationDebt || societyPoseSuspended; }
     bool       needsLayerPoseUpdate() const { return visual.pose().needsLayerPoseUpdate(); }
     bool       canPauseDistantPose(uint64_t gestureLead) const;
+    bool       settledFurniturePose() const;
     // Logic is about to read this NPC's bones: apply the deferred frames now.
     // Main thread only, outside the parallel pass; a no-op otherwise.
     void       syncDeferredAnimation() const;
     // Whose pose the world logic reads every frame: never deferred.
-    bool       animationLodPinned() const;
+    bool       animationLodPinned(bool allowSettledFurniture=false) const;
     void       setAnimationLodTargeted(bool t) { animLodTargeted = t; }
     uint32_t   animationLodSeed() const { return animLodSeed; }
     // Far NPC tick (world/npcsimtick.h): world time not yet handed to tick(), its rhythm. Runtime only, not saved.
@@ -705,6 +706,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     ScriptFn  currentState() const { return aiState.funcIni; }
     static bool supportsSocietyActivity(const ActivityEvents::Record& activity);
     const WayPoint* societyWaitingPoint() const;
+    bool      societyFurnitureHold() const;
     bool      societyGestureNeedsPose(uint64_t leadMs) const;
     std::string_view societyRoutineBlocker(std::string_view state, bool groupPilot, bool wide) const;
     bool      trySocietyEarlyTick();
@@ -1066,6 +1068,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void      stopWaitingForPoints();
     bool      pointGestureDue(uint64_t leadMs=0) const;
     void      tickPointGesture();
+    bool      mobGestureDue(uint64_t leadMs=0) const;
     void      tickMobTimer();
     void      playActivityGesture();
     void      pushActivityCommand(AiQueue::AiAction&& action);
