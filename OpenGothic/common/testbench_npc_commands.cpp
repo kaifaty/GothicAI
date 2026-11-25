@@ -31,10 +31,10 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
     // hp <npc> [full]: hit points of the 3 nearest npcs of that script symbol (sheep are all over the world),
     // and how far (did the arrow hit); full: the nearest gets them all back first
     const std::string name = a.size()>1 ? a[1] : "";
-    const size_t      id   = w.script().findSymbolIndex(name);
+    const auto id=w.script().storyNpcId(name);
     std::vector<std::pair<float,Npc*>> list;
     for(uint32_t i=0; i<w.npcCount(); ++i)
-      if(Npc* n = w.npcById(i); n!=nullptr && n->instanceSymbol()==id)
+      if(Npc* n = w.npcById(i); id && n!=nullptr && n->instanceSymbol()==*id)
         list.emplace_back((n->position()-pl.position()).length(),n);
     std::sort(list.begin(),list.end(),[](auto& x, auto& y) { return x.first<y.first; });
     if(a.size()>2 && a[2]=="full" && !list.empty() && !list[0].second->isDown()) {
@@ -51,14 +51,14 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
   else if(c=="give" || c=="equip") {
     // give <item> [count]: into the hero's inventory; equip <item>: give one and put it on (a bow, a rune)
     const std::string name = a.size()>1 ? a[1] : "";
-    const size_t      id   = w.script().findSymbolIndex(name);
-    if(id==size_t(-1)) {
+    const auto id=w.script().findItemInstance(name);
+    if(!id) {
       say(c + ": no item " + name);
       return true;
       }
-    pl.addItem(id,size_t(c=="give" ? num(a,2,1) : 1));
+    pl.addItem(*id,size_t(c=="give" ? num(a,2,1) : 1));
     if(c=="equip")
-      pl.useItem(id,Item::NSLOT,true); // whatever the hero's strength
+      pl.useItem(*id,Item::NSLOT,true); // whatever the hero's strength
     healingObserve(context.healing,w,pl);
     say(c + " " + name);
     }
@@ -267,13 +267,13 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
   else if(c=="npcequip") {
     // npcequip <npc> <item> [count]: into its inventory, the first one put on (a bow and its arrows)
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
-    const size_t id = w.script().findSymbolIndex(a.size()>2 ? a[2] : "");
-    if(n==nullptr || id==size_t(-1)) {
+    const auto id=w.script().findItemInstance(a.size()>2 ? a[2] : "");
+    if(n==nullptr || !id) {
       say("npcequip: no npc or item " + line);
       return true;
       }
-    n->addItem(id,size_t(num(a,3,1)));
-    n->useItem(id,Item::NSLOT,true);
+    n->addItem(*id,size_t(num(a,3,1)));
+    n->useItem(*id,Item::NSLOT,true);
     say("npcequip " + symName(w,n) + " " + a[2]);
     }
   else if(c=="wander" && a.size()>1 && a[1]=="stats") {
@@ -337,11 +337,11 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
     if(Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest"))
       who.push_back(n);
     Npc*         tg     = findNpc(w,pl,a.size()>2 ? a[2] : "player");
-    const size_t state  = w.script().findSymbolIndex("ZS_ATTACK");
+    const auto   state  = w.script().findFunction("ZS_ATTACK");
     const bool   deed   = a.size()==4 && a[3]=="deed";
-    auto         reason = w.script().findSymbol("AIV_ATTACKREASON");
-    auto         kill   = w.script().findSymbol("AR_KILL");
-    if(tg==nullptr || state==size_t(-1)) {
+    auto         reason = w.script().intConstant("AIV_ATTACKREASON");
+    auto         kill   = w.script().intConstant("AR_KILL");
+    if(tg==nullptr || !state.isValid()) {
       say("fight: no target or no ZS_ATTACK " + line);
       return true;
       }
@@ -354,23 +354,22 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
       if(n==tg || n->isDown())
         continue;
       if(deed) {
-        auto* none = w.script().findSymbol("AR_NONE");
+        const auto none=w.script().intConstant("AR_NONE");
         const auto attack = HeroDeed::constant(*n,"AIV_ATTACKREASON");
         const auto fight = HeroDeed::constant(*n,"AIV_LASTFIGHTAGAINSTPLAYER");
         const auto comment = HeroDeed::constant(*n,"AIV_LASTFIGHTCOMMENT");
         const auto valid = [](int32_t i) { return i>=0 && uint32_t(i)<daedalus::INpc::aivar_count; };
-        if(none==nullptr || !none->is_const() || none->type()!=daedalus::DaedalusDataType::INT ||
-           !valid(attack) || !valid(fight) || !valid(comment))
+        if(!none || !valid(attack) || !valid(fight) || !valid(comment))
           throw std::runtime_error("fight deed needs native attack variables and AR_NONE");
         auto& aiv = n->handle().aivar;
-        aiv[size_t(attack)] = none->get_int(0);
+        aiv[size_t(attack)] = *none;
         aiv[size_t(fight)] = HeroDeed::constant(*n,"FIGHT_CANCEL",0);
         aiv[size_t(comment)] = 0;
         n->stopListening();
         n->thinkOfAnswer(0);
         n->clearAiQueue();
         n->setExternalControl(false);
-        if(!n->startState(ScriptFn(state),"",gtime::endOfTime(),true))
+        if(!n->startState(state,"",gtime::endOfTime(),true))
           throw std::runtime_error("fight deed could not start ZS_ATTACK");
         n->setOther(tg);
         n->setVictim(nullptr);
@@ -381,11 +380,11 @@ bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& lin
           n->aiPush(AiQueue::aiDrawWeapon());
         }
       else {
-        if(reason!=nullptr && kill!=nullptr && size_t(reason->get_int())<std::size(n->handle().aivar))
-          n->handle().aivar[size_t(reason->get_int())] = kill->get_int();
+        if(reason && kill && size_t(*reason)<std::size(n->handle().aivar))
+          n->handle().aivar[size_t(*reason)] = *kill;
         n->setExternalControl(false);
         n->setTarget(tg);
-        n->aiPush(AiQueue::aiStartState(ScriptFn(state),0,tg,nullptr,""));
+        n->aiPush(AiQueue::aiStartState(state,0,tg,nullptr,""));
         }
       ++sent;
       }

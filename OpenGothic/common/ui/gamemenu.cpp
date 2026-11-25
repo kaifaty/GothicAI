@@ -15,6 +15,8 @@
 #include "utils/fileutil.h"
 #include "utils/keycodec.h"
 #include "game/definitions/musicdefinitions.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/serialize.h"
 #include "game/savegameheader.h"
 #include "gothic.h"
@@ -1204,20 +1206,23 @@ void GameMenu::updateValues() {
   }
 
 void GameMenu::setPlayer(const Npc &pl) {
-  auto world = Gothic::inst().world();
-  if(world==nullptr)
+  const auto* catalog=baseNativeCatalog();
+  if(catalog==nullptr || Gothic::inst().world()==nullptr)
     return;
 
-  auto& sc    = world->script();
-  auto* gilds = sc.findSymbol("TXT_GUILDS");
-  auto* tal   = sc.findSymbol("TXT_TALENTS");
-  auto* talV  = sc.findSymbol("TXT_TALENTS_SKILLS");
-
-  if(gilds==nullptr || tal==nullptr || talV==nullptr) {
+  const auto strings=[&](std::string_view name) {
+    const auto* constant=NativeBaseCatalog::findConstant(*catalog,name);
+    return constant ? std::get_if<std::vector<std::string>>(&constant->values) : nullptr;
+    };
+  const auto* guilds=strings("TXT_GUILDS");
+  const auto* talents=strings("TXT_TALENTS");
+  const auto* skills=strings("TXT_TALENTS_SKILLS");
+  const auto guild=size_t(pl.guild());
+  if(guilds==nullptr || talents==nullptr || skills==nullptr || guild>=guilds->size() ||
+     talents->size()<TALENT_MAX_G2 || skills->size()<TALENT_MAX_G2)
     return;
-    }
 
-  set("MENU_ITEM_PLAYERGUILD", gilds->get_string(uint16_t(pl.guild())));
+  set("MENU_ITEM_PLAYERGUILD",(*guilds)[guild]);
 
   set("MENU_ITEM_LEVEL",       pl.level());
   set("MENU_ITEM_EXP",         pl.experience());
@@ -1237,7 +1242,7 @@ void GameMenu::setPlayer(const Npc &pl) {
 
   const int  talentMax = TALENT_MAX_G2;
   for(uint16_t i=0; i<talentMax; ++i) {
-    auto& str = tal->get_string(i);
+    const auto& str=(*talents)[i];
     if(str.empty())
       continue;
 
@@ -1245,7 +1250,7 @@ void GameMenu::setPlayer(const Npc &pl) {
     const int val = pl.hitChance(Talent(i));
 
     set(string_frm("MENU_ITEM_TALENT_",i,"_TITLE"), str);
-    set(string_frm("MENU_ITEM_TALENT_",i,"_SKILL"), strEnum(talV->get_string(i),sk,textBuf));
+    set(string_frm("MENU_ITEM_TALENT_",i,"_SKILL"), strEnum((*skills)[i],sk,textBuf));
     set(string_frm("MENU_ITEM_TALENT_",i),          string_frm(val,"%"));
     }
   }

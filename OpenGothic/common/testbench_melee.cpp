@@ -94,10 +94,10 @@ bool meleeCommand(const MeleeContext& context,const std::vector<std::string>& a,
       pl.setTalentSkill(TALENT_1H,2);pl.setTalentSkill(TALENT_2H,2);
       if(weapon=="fist") pl.setToFistMode();
       else {
-        const auto symbol=w.script().findSymbolIndex(weapon=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
-        if(symbol==size_t(-1)) {arenaAbort("melee shadow stock weapon is absent");return false;}
-        pl.setToFightMode(symbol);
-        if(!pl.currentMeleeWeapon() || pl.currentMeleeWeapon()->clsId()!=symbol) {
+        const auto symbol=w.script().findItemInstance(weapon=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
+        if(!symbol) {arenaAbort("melee shadow stock weapon is absent");return false;}
+        pl.setToFightMode(*symbol);
+        if(!pl.currentMeleeWeapon() || pl.currentMeleeWeapon()->clsId()!=*symbol) {
           arenaAbort("melee shadow weapon did not equip");return false;
           }
         }
@@ -119,21 +119,21 @@ bool meleeCommand(const MeleeContext& context,const std::vector<std::string>& a,
         Vec3 pos=places[i];
         const auto floor=w.physic()->landRay(pos+Vec3(0,200,0),500.f);
         const auto path=w.physic()->ray(pl.position()+Vec3(0,90,0),pos+Vec3(0,90,0));
-        const auto symbol=w.script().findSymbolIndex(symbols[i]);
-        if(!floor.hasCol || floor.n.y<.8f || path.hasCol || symbol==size_t(-1)) {
+        const auto symbol=w.script().storyNpcId(symbols[i]);
+        if(!floor.hasCol || floor.n.y<.8f || path.hasCol || !symbol) {
           arenaAbort("melee shadow target lacks supported unobstructed real ground");return true;
           }
         pos.y=floor.v.y;
-        auto* npc=w.addNpc(symbol,pos);
+        auto* npc=w.addNpc(*symbol,pos);
         if(!npc) {arenaAbort("melee shadow target insertion failed");return true;}
         npc->clearAiQueue();npc->clearState(true);npc->clearGoTo();npc->stopWalking();npc->setExternalControl(true);
         npc->handle().attribute[ATR_HITPOINTSMAX]=100000;
         npc->handle().attribute[ATR_HITPOINTS]=100000;
         npc->setDirection(forward*-1.f);npc->updateTransform();
         if(i==2) {
-          const auto sword=w.script().findSymbolIndex("ITMW_1H_COMMON_01");
-          if(sword==size_t(-1)) {arenaAbort("melee shadow bandit weapon is absent");return true;}
-          npc->setToFightMode(sword);
+          const auto sword=w.script().findItemInstance("ITMW_1H_COMMON_01");
+          if(!sword) {arenaAbort("melee shadow bandit weapon is absent");return true;}
+          npc->setToFightMode(*sword);
           }
         state.meleeShadowActors.push_back(npc);state.meleeShadowPlaces.push_back(pos);
         event("melee_shadow_actor","\"index\":"+std::to_string(i)+",\"npc\":"+jsonStr(TestBench::who(npc))+
@@ -158,11 +158,11 @@ bool meleeCommand(const MeleeContext& context,const std::vector<std::string>& a,
       if(actor==nullptr) {arenaAbort("melee shadow bandit is absent");return true;}
       auto& npc=*actor;
       if(a[2]=="none") {npc.closeWeapon(true);return true;}
-      const auto symbol=w.script().findSymbolIndex(a[2]=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
-      if(symbol==size_t(-1)) {arenaAbort("melee shadow bandit weapon is absent");return true;}
+      const auto symbol=w.script().findItemInstance(a[2]=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
+      if(!symbol) {arenaAbort("melee shadow bandit weapon is absent");return true;}
       npc.closeWeapon(true);
-      npc.setToFightMode(symbol);
-      if(!npc.currentMeleeWeapon() || npc.currentMeleeWeapon()->clsId()!=symbol) {
+      npc.setToFightMode(*symbol);
+      if(!npc.currentMeleeWeapon() || npc.currentMeleeWeapon()->clsId()!=*symbol) {
         arenaAbort("melee shadow bandit weapon did not equip");return true;
         }
       }
@@ -252,17 +252,17 @@ bool meleeCommand(const MeleeContext& context,const std::vector<std::string>& a,
       Settings::setI("GAME","living_bodies",0);
     w.physic()->configureMeleeBench(substeps);
     state.meleeMode=mode;state.meleePelvis=pelvis;
-    const auto symbol=w.script().findSymbolIndex("BDT_1013_BANDIT_L");
-    const auto sword=w.script().findSymbolIndex("ItMw_1h_Common_01");
-    if(symbol==size_t(-1) || sword==size_t(-1)) {arenaAbort("melee fixture symbols missing");return true;}
+    const auto symbol=w.script().storyNpcId("BDT_1013_BANDIT_L");
+    const auto sword=w.script().findItemInstance("ItMw_1h_Common_01");
+    if(!symbol || !sword) {arenaAbort("melee fixture symbols missing");return true;}
     const auto bodyMode=mode=="full" ? Npc::MeleeBenchMode::Full : mode=="chain" ? Npc::MeleeBenchMode::Chain :
                         mode=="blade" ? Npc::MeleeBenchMode::Blade : mode=="game" ? Npc::MeleeBenchMode::Off : Npc::MeleeBenchMode::Base;
     for(int i=0;i<count;++i) {
-      auto* npc=w.addNpc(symbol,context.ragdollArenaPlaces[size_t(i)+5]);
+      auto* npc=w.addNpc(*symbol,context.ragdollArenaPlaces[size_t(i)+5]);
       if(!npc) {arenaAbort("melee NPC insertion failed");return true;}
       npc->clearAiQueue();npc->clearState(false);npc->setTarget(nullptr);npc->setExternalControl(true);
       npc->setDirection(pl.position()-npc->position());npc->updateTransform();
-      if(npc->currentMeleeWeapon()==nullptr) {npc->addItem(sword,1);npc->useItem(sword,Item::NSLOT,true);}
+      if(npc->currentMeleeWeapon()==nullptr) {npc->addItem(*sword,1);npc->useItem(*sword,Item::NSLOT,true);}
       if(npc->currentMeleeWeapon()==nullptr) {arenaAbort("melee fixture actor has no equipped sword");return true;}
       npc->configureMeleeBench(bodyMode,pelvis=="dynamic");
       context.crew.push_back(npc);context.livingWalkers.emplace_back();
@@ -293,12 +293,12 @@ bool meleeCommand(const MeleeContext& context,const std::vector<std::string>& a,
     if(!state.meleeFixture || (state.meleeMode!="base" && state.meleeMode!="game") || context.crew.size()!=6) {
       arenaAbort("melee brawl requires the six-actor base or game fixture");return true;
       }
-    const auto attack=w.script().findSymbolIndex("ZS_ATTACK");
-    const auto tactic=w.script().findSymbol("FAI_HUMAN_MASTER");
-    const auto reason=w.script().findSymbol("AIV_ATTACKREASON");
-    const auto kill=w.script().findSymbol("AR_KILL");
-    if(attack==size_t(-1) || !tactic || !reason || !kill || reason->get_int()<0 ||
-       size_t(reason->get_int())>=daedalus::INpc::aivar_count) {
+    const auto attack=w.script().findFunction("ZS_ATTACK");
+    const auto tactic=w.script().intConstant("FAI_HUMAN_MASTER");
+    const auto reason=w.script().intConstant("AIV_ATTACKREASON");
+    const auto kill=w.script().intConstant("AR_KILL");
+    if(!attack.isValid() || !tactic || !reason || !kill || *reason<0 ||
+       size_t(*reason)>=daedalus::INpc::aivar_count) {
       arenaAbort("melee brawl script symbols are absent");return true;
       }
     for(size_t i=0;i<context.crew.size();++i) {
@@ -313,15 +313,15 @@ bool meleeCommand(const MeleeContext& context,const std::vector<std::string>& a,
       h.flags=daedalus::NpcFlag(uint32_t(h.flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
       h.attribute[ATR_HITPOINTSMAX]=100000;h.attribute[ATR_HITPOINTS]=100000;
       h.attribute[ATR_STRENGTH]=60;h.hitchance[TALENT_1H]=60;npc.setTalentSkill(TALENT_1H,2);
-      h.guild=i%2==0 ? GIL_BDT : GIL_PAL;h.fight_tactic=tactic->get_int();
-      h.aivar[size_t(reason->get_int())]=kill->get_int();
+      h.guild=i%2==0 ? GIL_BDT : GIL_PAL;h.fight_tactic=*tactic;
+      h.aivar[size_t(*reason)]=*kill;
       npc.setPosition(position);npc.updateTransform();
       }
     for(size_t i=0;i<context.crew.size();++i) {
       auto& npc=*context.crew[i];auto* target=context.crew[(i+3)%context.crew.size()];
       npc.setDirection(target->position()-npc.position());npc.updateTransform();
       npc.setExternalControl(false);npc.setTarget(target);
-      npc.aiPush(AiQueue::aiStartState(ScriptFn(attack),0,target,nullptr,""));
+      npc.aiPush(AiQueue::aiStartState(attack,0,target,nullptr,""));
       }
     state.meleeBrawl=true;
     event("melee_physics_brawl","\"actors\":6,\"hp_each\":100000,\"radius_cm\":220");

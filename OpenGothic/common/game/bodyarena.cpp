@@ -153,15 +153,16 @@ void BodyArena::setup(World& world, Npc& player) {
   auto& s=state();
   if(!s.enabled || s.ready) throw std::runtime_error("arena setup requires a fresh configured reset");
   const bool twoHanded=s.config.weapon=="2h";
-  const char* names[]={"BDT_1003_BANDIT_M","PAL_255_RITTER",twoHanded ? "ITMW_2H_BAU_AXE" : "ItMw_1h_Common_01","ItAr_Leather_L",
-                       "ZS_ATTACK","FAI_HUMAN_MASTER","AIV_ATTACKREASON","AR_KILL"};
-  size_t ids[std::size(names)]={};
-  for(size_t i=0;i<std::size(names);++i) {
-    ids[i]=world.script().findSymbolIndex(names[i]);
-    if(ids[i]==size_t(-1)) throw std::runtime_error(std::string("arena missing symbol ")+names[i]);
-    }
-  const auto attackReason=world.script().findSymbol(names[6])->get_int();
-  if(attackReason<0 || size_t(attackReason)>=daedalus::INpc::aivar_count)
+  auto& script=world.script();
+  const std::array actors={script.storyNpcId("BDT_1003_BANDIT_M"),script.storyNpcId("PAL_255_RITTER")};
+  const auto weapon=script.findItemInstance(twoHanded ? "ITMW_2H_BAU_AXE" : "ItMw_1h_Common_01");
+  const auto armor=script.findItemInstance("ItAr_Leather_L");
+  const auto tactic=script.intConstant("FAI_HUMAN_MASTER");
+  const auto attackReason=script.intConstant("AIV_ATTACKREASON");
+  const auto kill=script.intConstant("AR_KILL");
+  if(!actors[0] || !actors[1] || !weapon || !armor || !tactic || !attackReason || !kill || !script.findFunction("ZS_ATTACK").isValid())
+    throw std::runtime_error("arena authored actor, equipment or fight rule is missing");
+  if(*attackReason<0 || size_t(*attackReason)>=NpcRecord::aivar_count)
     throw std::runtime_error("arena invalid attack reason");
   world.script().setSeed(s.config.seed);
   world.script().clearIsolatedRandom();
@@ -182,7 +183,7 @@ void BodyArena::setup(World& world, Npc& player) {
     const auto role=i%2;
     if(customSetup() && (positions[role]-player.position()).quadLength()>2800.f*2800.f)
       throw std::runtime_error("arena custom placement exceeds active observer radius");
-    Npc* npc=world.addNpc(ids[role],positions[role^s.config.side]);
+    Npc* npc=world.addNpc(*actors[role],positions[role^s.config.side]);
     if(npc==nullptr) throw std::runtime_error("arena NPC creation failed");
     s.actors[i]=npc;
     if(isolatedScriptRandom())
@@ -194,8 +195,8 @@ void BodyArena::setup(World& world, Npc& player) {
       if(it.isEquipped()) equipped.push_back(it->clsId());
     for(auto item:equipped) npc->unequipItem(item);
     npc->clearInventory();
-    npc->addItem(ids[2],1); npc->useItem(ids[2],Item::NSLOT,true);
-    npc->addItem(ids[3],1); npc->useItem(ids[3],Item::NSLOT,true);
+    npc->addItem(*weapon,1); npc->useItem(*weapon,Item::NSLOT,true);
+    npc->addItem(*armor,1); npc->useItem(*armor,Item::NSLOT,true);
     auto& handle=npc->handle();
     handle.flags=daedalus::NpcFlag(uint32_t(handle.flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
     handle.attribute[ATR_HITPOINTS]=handle.attribute[ATR_HITPOINTSMAX]=s.config.loadFixture ? 3000 : 300;
@@ -204,8 +205,8 @@ void BodyArena::setup(World& world, Npc& player) {
     handle.hitchance[talent]=60; npc->setTalentSkill(talent,2);
     handle.protection[PROT_EDGE]=handle.protection[PROT_BLUNT]=30;
     handle.guild=role==0 ? GIL_BDT : GIL_PAL;
-    handle.fight_tactic=world.script().findSymbol(names[5])->get_int();
-    handle.aivar[size_t(attackReason)]=world.script().findSymbol(names[7])->get_int();
+    handle.fight_tactic=*tactic;
+    handle.aivar[size_t(*attackReason)]=*kill;
     const auto sword=npc->currentMeleeWeapon();
     if(sword==nullptr || sword->is2H()!=twoHanded || npc->currentArmor()==nullptr || npc->currentRangedWeapon()!=nullptr || npc->isImmortal())
       throw std::runtime_error("arena melee profile validation failed");
@@ -412,11 +413,11 @@ std::string BodyArena::actorJson(Npc& actor, unsigned i) {
   auto out=jsonStream();
   const auto& s=state(); const auto pos=actor.position();
   const auto weapon=actor.currentMeleeWeapon(); const auto armor=actor.currentArmor();
-  const auto* weaponSymbol=weapon==nullptr ? nullptr : actor.world().script().findSymbol(weapon->clsId());
+  auto& script=actor.world().script();
   // Retain the original snapshot spelling for the stock one-handed sword.
-  const auto weaponName=weaponSymbol==nullptr ? std::string_view() :
-                        weapon->clsId()==actor.world().script().findSymbolIndex("ItMw_1h_Common_01") ?
-                        std::string_view("ItMw_1h_Common_01") : std::string_view(weaponSymbol->name());
+  const auto sword=script.findItemInstance("ItMw_1h_Common_01");
+  const auto weaponName=weapon==nullptr ? std::string_view{} :
+                        sword && weapon->clsId()==*sword ? std::string_view("ItMw_1h_Common_01") : script.storyItemName(uint32_t(weapon->clsId()));
   const auto body=actor.bodyObservationState(); const auto control=BodyController::snapshot(actor);
   const auto* target=actor.currentTarget;
   out << "{\"entity_id\":" << BodyObservations::entityId(actor)
@@ -584,12 +585,12 @@ void BodyArena::start(std::string_view provider) {
                                (s.config.scenario=="native_duel" && second!=s.config.opponentOwned)))
     throw std::runtime_error("scripted arena ownership does not match scenario");
   s.provider=provider; s.started=true; s.startTime=gameTime();
-  auto& script=Gothic::inst().world()->script(); const auto attack=script.findSymbolIndex("ZS_ATTACK");
+  auto& script=Gothic::inst().world()->script(); const auto attack=script.findFunction("ZS_ATTACK");
   script.setSeed(s.config.seed);
   reseedActors(script);
   for(unsigned i=0;i<s.actorCount;++i)
     if(!BodyController::owns(*s.actors[i]))
-      s.actors[i]->aiPush(AiQueue::aiStartState(ScriptFn(attack),0,s.actors[i^1],nullptr,""));
+      s.actors[i]->aiPush(AiQueue::aiStartState(attack,0,s.actors[i^1],nullptr,""));
   journal("start");
   if(s.config.reactionHold) journal("reaction_held");
   }
@@ -643,8 +644,8 @@ void BodyArena::activateReaction(const ReactionRequest& request) {
   auto& s=state(); const auto gate=reactionGate();
   const auto reason=validateReactionActivation(gate,request);
   if(std::string_view(reason)!="allowed") throw std::runtime_error(std::string("reaction activation rejected: ")+reason);
-  auto& script=Gothic::inst().world()->script(); const auto attack=script.findSymbolIndex("ZS_ATTACK");
-  if(attack==size_t(-1)) throw std::runtime_error("reaction activation missing ZS_ATTACK");
+  auto& script=Gothic::inst().world()->script(); const auto attack=script.findFunction("ZS_ATTACK");
+  if(!attack.isValid()) throw std::runtime_error("reaction activation missing ZS_ATTACK");
   s.reactionActivating=true;
   try { BodyController::activateBenchReaction(*s.actors[0],*s.actors[1],request.provider=="native",request.mode); }
   catch(...) { s.reactionActivating=false; throw; }
@@ -652,7 +653,7 @@ void BodyArena::activateReaction(const ReactionRequest& request) {
   s.reactionActivationGame=gameTime(); s.reactionActivationStep=BodyObservations::currentStep();
   s.provider=request.provider=="native" ? "native_with_scripted_opponent" : "scripted";
   if(request.provider=="native")
-    s.actors[0]->aiPush(AiQueue::aiStartState(ScriptFn(attack),0,s.actors[1],nullptr,""));
+    s.actors[0]->aiPush(AiQueue::aiStartState(attack,0,s.actors[1],nullptr,""));
   journal("reaction_active");
   }
 void BodyArena::finish(std::string_view outcome, std::string_view reason) {

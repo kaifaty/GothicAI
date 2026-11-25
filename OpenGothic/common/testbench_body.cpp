@@ -417,15 +417,23 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
       say(c+": "+reason);
       context.pc = context.prog.size();
       };
-    const char* names[] = {"BDT_1003_BANDIT_M","PAL_255_RITTER","ItMw_1h_Common_01","ItAr_Leather_L",
-                           "ZS_ATTACK","FAI_HUMAN_MASTER","AIV_ATTACKREASON","AR_KILL"};
-    size_t ids[std::size(names)] = {};
-    for(size_t i=0;i<std::size(names);++i) {
-      ids[i] = w.script().findSymbolIndex(names[i]);
-      if(ids[i]==size_t(-1)) { fail(std::string("missing symbol ")+names[i]); return true; }
+    auto& script=w.script();
+    constexpr const char* actorNames[]={"BDT_1003_BANDIT_M","PAL_255_RITTER"};
+    const std::array actorIds={script.storyNpcId(actorNames[0]),script.storyNpcId(actorNames[1])};
+    const auto sword=script.findItemInstance("ItMw_1h_Common_01");
+    const auto armor=script.findItemInstance("ItAr_Leather_L");
+    const auto attack=script.findFunction("ZS_ATTACK");
+    const auto tactic=script.intConstant("FAI_HUMAN_MASTER");
+    const auto reason=script.intConstant("AIV_ATTACKREASON");
+    const auto kill=script.intConstant("AR_KILL");
+    if(!actorIds[0] || !actorIds[1] || !sword || !armor || !attack.isValid() || !tactic || !reason || !kill) {
+      fail("missing authored actor, equipment or fight rule");
+      return true;
       }
-    const int reason = w.script().findSymbol(names[6])->get_int();
-    if(reason<0 || size_t(reason)>=daedalus::INpc::aivar_count) { fail("invalid attack reason"); return true; }
+    if(*reason<0 || size_t(*reason)>=NpcRecord::aivar_count) {
+      fail("invalid AIV_ATTACKREASON index");
+      return true;
+      }
     for(auto* actor:context.observeActors)
       w.removeNpc(*actor);
     context.observeActors.clear();
@@ -443,7 +451,7 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
       positions[i] = p;
       }
     for(size_t i=0;i<actorCount;++i) {
-      Npc* actor = w.addNpc(ids[i%2],positions[i]);
+      Npc* actor = w.addNpc(*actorIds[i%2],positions[i]);
       if(actor==nullptr) { fail("NPC creation failed"); return true; }
       context.observeActors.push_back(actor);
       actor->setExternalControl(true);
@@ -454,8 +462,8 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
         if(it.isEquipped()) equipped.push_back(it->clsId());
       for(auto item:equipped) actor->unequipItem(item);
       actor->clearInventory();
-      actor->addItem(ids[2],1); actor->useItem(ids[2],Item::NSLOT,true);
-      actor->addItem(ids[3],1); actor->useItem(ids[3],Item::NSLOT,true);
+      actor->addItem(*sword,1); actor->useItem(*sword,Item::NSLOT,true);
+      actor->addItem(*armor,1); actor->useItem(*armor,Item::NSLOT,true);
       auto& h = actor->handle();
       h.flags = daedalus::NpcFlag(uint32_t(h.flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
       h.attribute[ATR_HITPOINTS] = h.attribute[ATR_HITPOINTSMAX] = 1000000;
@@ -463,8 +471,8 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
       h.hitchance[TALENT_1H] = 60; actor->setTalentSkill(TALENT_1H,2);
       h.protection[PROT_EDGE] = h.protection[PROT_BLUNT] = 30;
       h.guild = i%2==0 ? GIL_BDT : GIL_PAL;
-      h.fight_tactic = w.script().findSymbol(names[5])->get_int();
-      h.aivar[size_t(reason)] = w.script().findSymbol(names[7])->get_int();
+      h.fight_tactic = *tactic;
+      h.aivar[size_t(*reason)] = *kill;
       actor->setPosition(positions[i]); actor->setDirection(positions[i^1]-positions[i]);
       actor->updateTransform();
       if(actor->currentMeleeWeapon()==nullptr || actor->currentRangedWeapon()!=nullptr || actor->isImmortal()) {
@@ -477,12 +485,12 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
       auto* actor = context.observeActors[i];
       auto* target = context.observeActors[i^1];
       actor->setExternalControl(false); actor->setTarget(target);
-      actor->aiPush(AiQueue::aiStartState(ScriptFn(ids[4]),0,target,nullptr,""));
+      actor->aiPush(AiQueue::aiStartState(attack,0,target,nullptr,""));
       TestBench::bodyEvent(*actor,target,"observation_actor_mapping",w.tickCount(),
                           "\"observation_entity_id\":"+std::to_string(BodyObservations::entityId(*actor)));
       if(i>0) actors += ",";
       actors += "{\"entity_id\":"+std::to_string(BodyObservations::entityId(*actor))+
-                ",\"symbol\":"+jsonStr(names[i%2])+",\"hp\":1000000,\"hp_max\":1000000,\"immortal\":false}";
+                ",\"symbol\":"+jsonStr(actorNames[i%2])+",\"hp\":1000000,\"hp_max\":1000000,\"immortal\":false}";
       }
     context.observeFrom = w.tickCount(); context.observeEnd = context.observeFrom+duration;
     // Stage 3 explicitly forbids external/frozen actors. Stage 4 intentionally tests those
@@ -504,18 +512,22 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
       fail("OPENGOTHIC_BODY_TRACE=1 is required");
       return true;
       }
-    const char* names[] = {"BDT_1003_BANDIT_M", "PAL_255_RITTER", "ItMw_1h_Common_01", "ItAr_Leather_L",
-                           "ZS_ATTACK", "FAI_HUMAN_MASTER", "AIV_ATTACKREASON", "AR_KILL"};
-    size_t ids[std::size(names)] = {};
-    for(size_t i=0; i<std::size(names); ++i) {
-      ids[i] = w.script().findSymbolIndex(names[i]);
-      if(ids[i]==size_t(-1)) {
-        fail(std::string("missing symbol ") + names[i]);
-        return true;
-        }
+    auto& script=w.script();
+    constexpr const char* actorNames[]={"BDT_1003_BANDIT_M","PAL_255_RITTER"};
+    const std::array actorIds={script.storyNpcId(actorNames[0]),script.storyNpcId(actorNames[1])};
+    constexpr auto swordName="ItMw_1h_Common_01";
+    constexpr auto armorName="ItAr_Leather_L";
+    const auto sword=script.findItemInstance(swordName);
+    const auto armor=script.findItemInstance(armorName);
+    const auto attack=script.findFunction("ZS_ATTACK");
+    const auto tactic=script.intConstant("FAI_HUMAN_MASTER");
+    const auto reason=script.intConstant("AIV_ATTACKREASON");
+    const auto kill=script.intConstant("AR_KILL");
+    if(!actorIds[0] || !actorIds[1] || !sword || !armor || !attack.isValid() || !tactic || !reason || !kill) {
+      fail("missing authored actor, equipment or fight rule");
+      return true;
       }
-    const int reason = w.script().findSymbol(names[6])->get_int();
-    if(reason<0 || size_t(reason)>=daedalus::INpc::aivar_count) {
+    if(*reason<0 || size_t(*reason)>=NpcRecord::aivar_count) {
       fail("invalid AIV_ATTACKREASON index");
       return true;
       }
@@ -546,8 +558,8 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
         }
       p.y = ground.v.y;
       }
-    context.duelA = w.addNpc(ids[0],pos[0]);
-    context.duelB = w.addNpc(ids[1],pos[1]);
+    context.duelA = w.addNpc(*actorIds[0],pos[0]);
+    context.duelB = w.addNpc(*actorIds[1],pos[1]);
     if(context.duelA==nullptr || context.duelB==nullptr) {
       fail("NPC creation failed");
       return true;
@@ -569,10 +581,10 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
       for(auto cls:equipped)
         n.unequipItem(cls);
       n.clearInventory();
-      n.addItem(ids[2],1);
-      n.useItem(ids[2],Item::NSLOT,true);
-      n.addItem(ids[3],1);
-      n.useItem(ids[3],Item::NSLOT,true);
+      n.addItem(*sword,1);
+      n.useItem(*sword,Item::NSLOT,true);
+      n.addItem(*armor,1);
+      n.useItem(*armor,Item::NSLOT,true);
       auto& h = n.handle();
       h.flags = daedalus::NpcFlag(uint32_t(h.flags) & ~uint32_t(daedalus::NpcFlag::IMMORTAL));
       h.attribute[ATR_STRENGTH] = 60;
@@ -584,13 +596,13 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
       h.protection[PROT_EDGE] = 30;
       h.protection[PROT_BLUNT] = 30;
       h.guild = i==0 ? GIL_BDT : GIL_PAL;
-      h.fight_tactic = w.script().findSymbol(names[5])->get_int();
-      h.aivar[size_t(reason)] = w.script().findSymbol(names[7])->get_int();
+      h.fight_tactic = *tactic;
+      h.aivar[size_t(*reason)] = *kill;
       n.setPosition(pos[i]);
       n.setDirection(pos[1-i]-pos[i]);
       n.updateTransform();
-      auto sword = n.currentMeleeWeapon();
-      if(sword==nullptr || n.currentRangedWeapon()!=nullptr || n.currentArmor()==nullptr || n.isImmortal()) {
+      const auto* currentWeapon=n.currentMeleeWeapon();
+      if(currentWeapon==nullptr || n.currentRangedWeapon()!=nullptr || n.currentArmor()==nullptr || n.isImmortal()) {
         fail("melee-only equipment or mortality validation failed");
         return true;
         }
@@ -603,10 +615,10 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
                     i,seed,n.attribute(ATR_HITPOINTS),n.attribute(ATR_HITPOINTSMAX),n.attribute(ATR_STRENGTH),
                     n.attribute(ATR_DEXTERITY),n.hitChance(TALENT_1H),n.talentSkill(TALENT_1H),
                     n.protection(PROT_EDGE),n.protection(PROT_BLUNT),h.fight_tactic,h.guild,
-                    sword->handle().damage_total,sword->handle().range,double(pos[i].x),double(pos[i].y),double(pos[i].z),
+                    currentWeapon->handle().damage_total,currentWeapon->handle().range,double(pos[i].x),double(pos[i].y),double(pos[i].z),
                     double((pos[i]-pl.position()).length()));
       TestBench::bodyEvent(n,fighters[1-i],"actor_setup",w.tickCount(),std::string(fields) +
-                           ",\"weapon\":"+jsonStr(names[2])+",\"armor\":"+jsonStr(names[3]));
+                           ",\"weapon\":"+jsonStr(swordName)+",\"armor\":"+jsonStr(armorName));
       }
     // Separate the native fight RNG from constructor/equipment callback consumption. No scripted
     // attacks, strike/hit commands, invulnerability, held inputs or model take part in the duel.
@@ -625,7 +637,7 @@ bool bodyCommand(const BodyContext& context,const std::vector<std::string>& a,Wo
     for(size_t i=0; i<2; ++i) {
       fighters[i]->setExternalControl(false);
       fighters[i]->setTarget(fighters[1-i]);
-      fighters[i]->aiPush(AiQueue::aiStartState(ScriptFn(ids[4]),0,fighters[1-i],nullptr,""));
+      fighters[i]->aiPush(AiQueue::aiStartState(attack,0,fighters[1-i],nullptr,""));
       }
     say("bodyduel seed "+std::to_string(seed)+" timeout "+std::to_string(timeout));
     }
