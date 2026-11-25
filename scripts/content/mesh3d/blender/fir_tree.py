@@ -131,6 +131,7 @@ class Tree:
     branches: list[Branch]
     cards: list[dict] = field(default_factory=list)     # role, kind, branch, first vertex and count in the boughs
     stubs: int = 0                                      # the first branches are dead stubs
+    fill_sparse_side: bool = False
 
 
 def signed_volume(position: np.ndarray, index: np.ndarray) -> float:
@@ -700,7 +701,7 @@ class Fir:
             cards_by_role={role: sum(r['role'] == role for r in self.records)
                            for role in sorted({r['role'] for r in self.records})},
             closed_parts=self.tubes, inside_out_parts=self.inside_out, scale=scale)
-        return Tree(parts, metrics, self.branches, self.records, stubs)
+        return Tree(parts, metrics, self.branches, self.records, stubs, self.fill_sparse_side)
 
 
 def build(config: dict, seed: int | None = None, scale: float = 1., pairs: bool = False) -> Tree:
@@ -1059,7 +1060,12 @@ def design_level(tree: Tree, level: dict, mask: np.ndarray, atlas: np.ndarray) -
     best = None
     group_ids = np.array(groups_by_option)
     biases = (0., -12., 12., 24., 36.) if pixel_fit else (0., 12., 24.)
-    for share in (level['target_share'], level['share']):
+    shares = (level['target_share'], level['share'])
+    if tree.fill_sparse_side and level['px'] == 200:
+        # Search more tone weights within the original triangle target for spruce A's L2.
+        biases = (0., -12., 12., 24., 36., 48.)
+        shares = (level['target_share'],)
+    for share in shares:
         limit = int(tree.metrics['triangles'] * share) - len(trunk['index'])
         fits = []
         for penalty in (.25, .65, 1.):

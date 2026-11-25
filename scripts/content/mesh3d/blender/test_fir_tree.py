@@ -629,6 +629,8 @@ def test_designed_levels_preserve_the_crown_and_the_source_cards_wind(spruce, co
     level_wood, level_boughs = level.parts
     triangles = sum(len(part['index']) for part in level.parts)
     assert triangles <= int(tree.metrics['triangles'] * settings['share'])
+    if px == 200:
+        assert triangles <= 5_645
     assert triangles <= fir_tree.thin(tree, old_share, seed=4).metrics['triangles']
     assert (level_wood['owner'] == 0).all()
     assert any(len(card['members']) > 1 for card in level.cards)
