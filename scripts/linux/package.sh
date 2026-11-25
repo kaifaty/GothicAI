@@ -171,13 +171,13 @@ EOF
 add_license "$work/SOURCE.txt" SOURCE.txt
 
 # the offline programs keep their paths and corresponding source notices
+cp -Rp "$stage/licenses" "$tools_stage/licenses"
 (
   stage="$tools_stage"
   copy_from_repo "$GAME/content-convert"
   copy_from_repo "$STORYGRAPH/storygraph"
   copy_from_repo LICENSE
 )
-cp -Rp "$stage/licenses" "$tools_stage/licenses"
 
 # x86-64 ELF binaries that need only the system's libraries, glibc up to 2.35 and no libstdc++
 is_elf() { [[ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" == 7f454c46 ]]; }
