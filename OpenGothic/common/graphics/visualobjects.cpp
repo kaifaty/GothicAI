@@ -920,11 +920,14 @@ void VisualObjects::prepareGlobals(Encoder<CommandBuffer>& enc, uint8_t fId) {
   }
 
 void VisualObjects::preFrameUpdate() {
-  preFrameUpdateWind();
-  preFrameUpdateMorph();
-  preFrameUpdateStrands();
-  preFrameUpdateTrees();
-  preFrameUpdateLevels();
+  FrameProfile::add(FrameProfile::Amount::ObjectsLevelsN,objectsLevels.size());
+  FrameProfile::add(FrameProfile::Amount::ObjectsTreeN,objectsTree.size());
+  FrameProfile::add(FrameProfile::Amount::ObjectsWindN,objectsWind.size());
+  { FrameProfile::Scope t(FrameProfile::Zone::PreFrameWind);    preFrameUpdateWind();    }
+  { FrameProfile::Scope t(FrameProfile::Zone::PreFrameMorph);   preFrameUpdateMorph();   }
+  { FrameProfile::Scope t(FrameProfile::Zone::PreFrameStrands); preFrameUpdateStrands(); }
+  { FrameProfile::Scope t(FrameProfile::Zone::PreFrameTrees);   preFrameUpdateTrees();   }
+  { FrameProfile::Scope t(FrameProfile::Zone::PreFrameLevels);  preFrameUpdateLevels();  }
   }
 
 // The wind of a tree fades with the distance (FoliageTree::fade; tree-wind.md, section 4), and a tree with less

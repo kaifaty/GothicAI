@@ -1,5 +1,6 @@
 #include "interactive.h"
 #include "loadprobe.h"
+#include "frameprofile.h"
 
 #include <Tempest/Painter>
 #include <Tempest/Log>
@@ -258,6 +259,15 @@ void Interactive::updateAnimation(uint64_t dt) {
   }
 
 void Interactive::tick(uint64_t dt) {
+  if(FrameProfile::enabled()) {
+    FrameProfile::add(FrameProfile::Amount::InteractiveN,1);
+    bool user = false;
+    for(auto& i:attPos)
+      if(i.user!=nullptr)
+        user = true;
+    if(!user && state<=0 && world.tickCount()>=waitAnim)
+      FrameProfile::add(FrameProfile::Amount::InteractiveIdleN,1);
+    }
   visual.processLayers(world);
 
   if(animChanged) {

@@ -3,6 +3,9 @@
 #include "vpoolcache.h"
 #include "vdevice.h"
 #include "vdescriptorarray.h"
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "frameprofile.h"
+#endif
 
 #include <algorithm>
 #include <bit>
@@ -327,6 +330,11 @@ VPoolCache::LayoutDesc VPoolCache::bindlessLayout(const LayoutDesc& layout, cons
   }
 
 VPoolCache::Inst VPoolCache::allocBindless(const PushBlock& pb, const LayoutDesc& layout, const Bindings& binding) {
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  FrameProfile::add(FrameProfile::Amount::DescBindlessCalls,1);
+  static thread_local uint32_t scanSample=0;
+  FrameProfile::Scope timing(FrameProfile::Zone::DescBindlessSampled,(++scanSample & 7u)==0);
+#endif
   const auto lx = bindlessLayout(layout, binding);
 
   Inst ret;
@@ -337,6 +345,9 @@ VPoolCache::Inst VPoolCache::allocBindless(const PushBlock& pb, const LayoutDesc
   for(auto& i:descriptors) {
     if(i.dLay!=ret.dLay || i.bindings!=binding)
       continue;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    FrameProfile::add(FrameProfile::Amount::DescBindlessHits,1);
+#endif
     ret.set = i.set;
     return ret;
     }

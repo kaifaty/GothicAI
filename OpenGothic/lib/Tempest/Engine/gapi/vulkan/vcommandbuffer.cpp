@@ -639,6 +639,10 @@ void VCommandBuffer::setPushData(const void* data, size_t size) {
   }
 
 void VCommandBuffer::handleSync(const ShaderReflection::LayoutDesc& lay, const ShaderReflection::SyncDesc& sync, PipelineStage st) {
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  static thread_local uint32_t syncSample=0;
+  FrameProfile::Scope timing(FrameProfile::Zone::DescSyncSampled,(++syncSample & 7u)==0);
+#endif
   if(st!=PipelineStage::S_Graphics) {
     bindings.read  = NonUniqResId::I_None;
     bindings.write = NonUniqResId::I_None;
@@ -699,6 +703,9 @@ void VCommandBuffer::implSetUniforms(const PipelineStage st) {
                      curDrawPipeline->canSplitDescriptors();
   if(!bindings.durty && split==splitDescriptors)
     return;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  FrameProfile::add(FrameProfile::Amount::DescSetUniformsCalls,1);
+#endif
 
   using PushBlock  = ShaderReflection::PushBlock;
   using LayoutDesc = ShaderReflection::LayoutDesc;

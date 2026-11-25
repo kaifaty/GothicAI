@@ -1,4 +1,5 @@
 #include "movealgo.h"
+#include "frameprofile.h"
 
 #include <Tempest/Log>
 
@@ -234,6 +235,7 @@ void MoveAlgo::tickClimb(uint64_t dt) {
 
 void MoveAlgo::tick(uint64_t dt, MvFlags moveFlg) {
   if(npc.usesSimplifiedMovement()) {
+    FrameProfile::add(FrameProfile::Amount::MvGraph,1);
     // Detached native Mobsi ownership has finished before the graph resumes.
     if(npc.interactive()==nullptr)
       npcVirtualMobTransition=false;
@@ -251,6 +253,7 @@ void MoveAlgo::tick(uint64_t dt, MvFlags moveFlg) {
     }
 
   if(npc.interactive()!=nullptr) {
+    FrameProfile::add(FrameProfile::Amount::MvMobsi,1);
     resetCharacterVirtual(true);
     tickMobsi(dt);
     return;
@@ -291,10 +294,12 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
     }
 
   if(flags==ClimbUp) {
+    FrameProfile::add(FrameProfile::Amount::MvClimb,1);
     tickClimb(dt);
     return true;
     }
   if(flags==JumpUp) {
+    FrameProfile::add(FrameProfile::Amount::MvClimb,1);
     tickJumpup(dt);
     return true;
     }
@@ -338,6 +343,7 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
     // A body at rest passes only its stance's root sway: it must not slide
     // down a walkable slope (the controller's static friction).
     const bool standing = bs==BS_STAND && assist==Tempest::Vec3() && state!=Slide;
+    FrameProfile::add(standing ? FrameProfile::Amount::MvVirtualStand : FrameProfile::Amount::MvVirtualMove,1);
     const auto assistOrigin = npc.position();
     const bool moved = tickCharacterVirtual(dt,wallStop(dp),standing,assist!=Tempest::Vec3());
     npc.noteMeleeStep(root,assist,npc.position()-assistOrigin,dt);
@@ -353,6 +359,8 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
     dp += virtualJumpVelocity*float(dt);
 
   DynamicWorld::CollisionTest info;
+  FrameProfile::add((dp.x==0.f && dp.y==0.f && dp.z==0.f) ? FrameProfile::Amount::MvLegacyZero
+                                                         : FrameProfile::Amount::MvLegacyMove,1);
   const bool moved=tryMove(dp,info);
   if(preserveMovementImpulse(impulseGeneration,state,"legacy"))
     return true;

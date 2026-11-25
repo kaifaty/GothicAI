@@ -831,9 +831,12 @@ bool WorldObjects::execTriggerEvent(const TriggerEvent& e) {
   }
 
 void WorldObjects::prepareRagdolls() {
+  const bool profiled = FrameProfile::enabled();
   for(auto& npc:npcArr) {
     npc->prepareRagdoll();
     npc->prepareLivingBody();
+    if(profiled && npc->livingBody()!=nullptr)
+      FrameProfile::add(FrameProfile::Amount::LivingBodyN,1);
     }
   }
 
