@@ -51,6 +51,9 @@ void main() {
     gl_MeshVerticesEXT[laneID].gl_Position = processVertex(var, vertTask.x, boughFirstIndex(vertTask), bucketId, vertLane);
     bucketIdOut[laneID]  = bucketId;
     boughFadeOut[laneID] = boughFade(vertTask, boughMaskOut[laneID]);
+#if defined(BOUGH_VERIFY_OWNER)
+    boughOwnerOut[laneID] = vertTask.x;
+#endif
 #include "mesh_varyings.glsl"
     }
   }

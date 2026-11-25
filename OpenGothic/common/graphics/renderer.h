@@ -63,10 +63,16 @@ class Renderer final {
       Tempest::StorageImage pyramid, earlyDepth;
       Tempest::ZBuffer referenceDepth;
       HiZHistoryVerify verify;
+      BoughHiZVerify boughVerify;
       bool valid = false;
       } treeHistory;
     void drawTreeHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
                          const BenchProbe::HistoryVerifyRequest& request);
+    void seedBoughHiZReference(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view, bool reset);
+    void drawBoughHiZReference(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
+                               DrawCommands::HistoryDraw mode);
+    void compareBoughHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const BenchProbe::HistoryVerifyRequest& request,
+                          bool reset, bool optimized);
     struct {
       Tempest::StorageImage finalPyramid;
       Tempest::Matrix4x4 previousViewProject;
@@ -130,14 +136,15 @@ class Renderer final {
     void surfelsTrace     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, Tempest::StorageBuffer& surfels, bool postPass);
 
     void drawHiZ          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
-    void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history = nullptr);
+    void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history = nullptr,
+                           bool boughBase = false);
     void drawVsm          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void logVsmStats      (const WorldView& view);
     void logVsmFrame      (uint8_t fId);
     void copyVsmFrame     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void drawGBuffer      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
                            DrawCommands::HistoryDraw history = DrawCommands::HistoryDraw::Off,
-                           Tempest::Attachment* winners = nullptr);
+                           Tempest::Attachment* winners = nullptr, bool boughOnly = false);
     void drawGWater       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawShadowMap    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void drawShadowResolve(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view,

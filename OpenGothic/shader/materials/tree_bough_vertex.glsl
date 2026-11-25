@@ -15,4 +15,7 @@ void vertexShader(uvec4 task, uint materialRef) {
   bucketIdOut  = materialRef;
   shOut        = var;
   boughFadeOut = boughFade(task, boughMaskOut);
+#if defined(BOUGH_VERIFY_OWNER)
+  boughOwnerOut = task.x;
+#endif
   }

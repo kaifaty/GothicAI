@@ -9,6 +9,11 @@ layout(triangles, max_vertices = MaxVert, max_primitives = MaxPrim) out;
 layout(location = 7) flat out uvec3 boughFadeOut[];
 layout(location = 8) flat out vec3 boughMaskOut[];
 #endif
+#if defined(BOUGH_VERIFY_OWNER) && defined(GL_VERTEX_SHADER)
+layout(location = 11) flat out uint boughOwnerOut;
+#elif defined(BOUGH_VERIFY_OWNER)
+layout(location = 11) flat out uint boughOwnerOut[];
+#endif
 
 // Each range starts with its first vertex and vertex count, followed by scalar indices.
 uint boughIndex(uint bucketId, uint at) {

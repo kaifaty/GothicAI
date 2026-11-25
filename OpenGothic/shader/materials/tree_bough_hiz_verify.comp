@@ -1,0 +1,54 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D referenceDepth;
+layout(binding = 1) uniform usampler2D referenceOwners;
+layout(binding = 2) uniform sampler2D enabledDepth;
+layout(binding = 3) uniform usampler2D enabledOwners;
+layout(binding = 4, std430) buffer Results { uint results[]; };
+
+layout(push_constant, std430) uniform Push { uint pair; };
+
+const uint BoughOwnerTag = 0x40000000u;
+const uint BoughOwnerMask = 0xc0000000u;
+const uint ResultSize = 7u;
+
+shared uvec2 counts[64];
+
+void main() {
+  const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+  const ivec2 size = textureSize(referenceDepth, 0);
+  const uint row = pair * ResultSize;
+  const uint lane = gl_LocalInvocationIndex;
+  uvec2 count = uvec2(0u);
+
+  if(all(lessThan(pos, size))) {
+    const uint reference = texelFetch(referenceOwners, pos, 0).r;
+    const uint enabled = texelFetch(enabledOwners, pos, 0).r;
+    const bool referenceBough = (reference & BoughOwnerMask)==BoughOwnerTag;
+    const bool enabledBough = (enabled & BoughOwnerMask)==BoughOwnerTag;
+    const bool ownerMismatch = reference!=enabled;
+    const bool depthMismatch = floatBitsToUint(texelFetch(referenceDepth, pos, 0).r)!=
+                               floatBitsToUint(texelFetch(enabledDepth, pos, 0).r);
+    const bool coverageMismatch = referenceBough!=enabledBough;
+    count.x = 1u | (uint(ownerMismatch) << 8u) | (uint(depthMismatch) << 16u) | (uint(coverageMismatch) << 24u);
+    count.y = uint(referenceBough) | (uint(enabledBough) << 8u);
+    if(ownerMismatch || depthMismatch || coverageMismatch)
+      atomicMin(results[row+6u], uint(pos.y * size.x + pos.x));
+    }
+
+  // Each packed byte counts at most 64 samples in a workgroup.
+  counts[lane] = count;
+  barrier();
+  for(uint step = 32u; step>0u; step >>= 1u) {
+    if(lane<step)
+      counts[lane] += counts[lane+step];
+    barrier();
+    }
+  if(lane<6u) {
+    const uint value = (counts[0][lane/4u] >> ((lane%4u)*8u)) & 255u;
+    if(value!=0u)
+      atomicAdd(results[row+lane], value);
+    }
+  }

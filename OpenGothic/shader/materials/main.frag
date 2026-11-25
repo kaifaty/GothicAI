@@ -42,6 +42,9 @@ layout(location = 1) in Varyings  shInp;
 layout(location = 7) in flat uvec3 boughFadeIn;
 layout(location = 8) in flat vec3 boughMaskIn;
 #endif
+#if defined(BOUGH_VERIFY_OWNER)
+layout(location = 11) in flat uint boughOwnerIn;
+#endif
 #if defined(TREE_BOUGH_JOINT) && defined(DEPTH_ONLY)
 layout(location = 9) in vec2 boughBandCellIn;
 layout(location = 10) in flat uvec2 boughBandIn;
@@ -1259,7 +1262,9 @@ void main() {
     }
 #endif
 #if defined(HISTORY_OWNER)
-#if defined(HISTORY_PAYLOAD)
+#if defined(BOUGH_VERIFY_OWNER)
+  outHistoryOwner = 0x40000000u | boughOwnerIn;
+#elif defined(HISTORY_PAYLOAD)
   outHistoryOwner = historyOwner;
 #else
   // Opaque particles can win the pixel after a mesh and must clear its owner.

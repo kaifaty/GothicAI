@@ -15,6 +15,7 @@ class BenchProbe {
       uint32_t frame = 0;
       uint64_t elapsedMs = 0;
       bool finish = false;
+      bool bough = false;
 
       explicit operator bool() const { return !segment.empty(); }
       };

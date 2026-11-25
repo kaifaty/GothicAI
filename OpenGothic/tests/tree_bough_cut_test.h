@@ -271,7 +271,13 @@ void treeBoughCutCases() {
   require(pipeline.sizeofBuffer(1, 2) == 2 * sizeof(View), "tree bough projection layout on GPU");
 
   const size_t stride = asset.nodes.size() + 1;
-  std::vector<std::array<uint32_t, 4>> cuts(stride * views.size());
+  const size_t boundsStart = stride * views.size();
+  std::vector<std::array<uint32_t, 4>> cuts(boundsStart + 2);
+  // A 4x2 base level for a 64x32 screen. Include clear sky and missing depth next to usable occluders.
+  const float depthValues[] = {0.3f, 0.3f, 1.f, 0.f, 0.3f, 0.6f, 0.3f, 0.3f};
+  Pixmap depthMap(4, 2, TextureFormat::R32F);
+  std::memcpy(depthMap.data(), depthValues, sizeof(depthValues));
+  const auto depthPyramid = device.texture(depthMap, false);
   const auto nodes = device.ssbo(asset.nodes);
   const auto projections = device.ssbo(views);
   const auto joints = device.ssbo(jointWeights);
@@ -284,10 +290,17 @@ void treeBoughCutCases() {
     encoder.setBinding(1, projections);
     encoder.setBinding(3, output);
     encoder.setBinding(4, joints);
+    encoder.setBinding(5, depthPyramid, Sampler::nearest(ClampMode::ClampToEdge));
     encoder.dispatchThreads(1);
   }
   device.submit(command).wait();
   device.readBytes(output, cuts.data(), cuts.size() * sizeof(cuts.front()));
+  const auto& visibility = cuts[boundsStart];
+  require(visibility[0]==1u && visibility[1]==0u, "tree bough HiZ dropped a previous candidate now exposed by the camera");
+  require(visibility[2]==0u && visibility[3]==0u, "tree bough HiZ ignored missing depth or sky in the pixel guard");
+  const auto& bounds = cuts[boundsStart + 1];
+  require(bounds[0]==1u && bounds[1]==0u, "tree bough HiZ lost the wind-expanded extent");
+  require(bounds[2]==0u && bounds[3]==0u, "tree bough HiZ discarded an uncertain depth or a near-plane intersection");
 
   uint32_t binaryHistory = 0;
   std::vector<Selected> selected;

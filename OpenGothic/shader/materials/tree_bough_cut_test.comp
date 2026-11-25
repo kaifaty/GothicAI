@@ -3,12 +3,14 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "tree_bough_cut.glsl"
+#include "tree_bough_hiz.glsl"
 
 layout(local_size_x = 1) in;
 layout(binding = 0, std430) readonly buffer Nodes { BoughNode nodes[]; };
 layout(binding = 1, std430) readonly buffer Views { BoughProjection views[]; };
 layout(binding = 3, std430) writeonly buffer Cuts { uvec4 cuts[]; };
 layout(binding = 4, std430) readonly buffer JointWeights { uint joints[]; };
+layout(binding = 5) uniform sampler2D depthPyramid;
 
 uint first, count, maskFailures;
 
@@ -35,6 +37,32 @@ void boughEmit(uint i, uint transition, float weight) {
     maskFailures += coverageFailures(BoughFadeActive | uint(weight * float(BoughWeightMask)), i);
   }
 
+bool hizHidden(mat4 viewProject, vec3 lo, vec3 hi) {
+  vec4 rect;
+  float nearest;
+  return projectBounds(viewProject, mat4(0), lo, hi, 0.1, rect, nearest)==BoundsProjected &&
+         coveredByDepth(depthPyramid, ivec2(64, 32), rect, nearest);
+  }
+
+void hizCases(uint firstResult) {
+  const mat4 viewProject = mat4(1);
+  mat4 turned = viewProject;
+  turned[3].x = 1.0;
+  const vec3 lo = vec3(-0.8, -0.6, 0.5), hi = vec3(-0.7, -0.4, 0.6);
+  cuts[firstResult] = uvec4(
+    hizHidden(viewProject, lo, hi),
+    hizHidden(turned, lo, hi), // The previous candidate is visible with the current view.
+    hizHidden(viewProject, lo + vec3(1.5, 0, 0), hi + vec3(1.5, 0, 0)), // Missing depth.
+    hizHidden(viewProject, vec3(-0.2, -0.6, 0.5), vec3(-0.01, -0.4, 0.6))); // The pixel guard reaches the sky.
+
+  const vec3 windLo = vec3(lo.xy, 0.32);
+  cuts[firstResult+1u] = uvec4(
+    hizHidden(viewProject, windLo, hi),
+    hizHidden(viewProject, windLo - 0.025, hi + 0.025),
+    hizHidden(viewProject, vec3(lo.xy, 0.30001), hi), // D16 depth rounding can erase this gap.
+    hizHidden(viewProject, vec3(lo.xy, -0.001), hi)); // The box crosses the near clip plane.
+  }
+
 void main() {
   const uint stride = uint(nodes.length()) + 1u;
   for(uint sampleId = 0; sampleId < uint(views.length()); ++sampleId) {
@@ -57,4 +85,5 @@ void main() {
       boughWalkSlice(at, min(at+slice, nodeCount), views[sampleId]);
     cuts[first] = uvec4(count, uint(compact), maskFailures, joint);
     }
+  hizCases(uint(views.length()) * stride);
   }

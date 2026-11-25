@@ -217,8 +217,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   if(c=="water-film" && waterFilmCommand(waterFilmContext(),a,w,pl)) return;
   else if(c=="cloth" && clothCommand(clothContext(),a,w,pl)) return;
   else if(c=="foliage" && foliageCommand(a,w)) return;
-  else if(c=="hiz-verify") {
+  else if(c=="hiz-verify" || c=="bough-verify") {
     auto& verify = bench.historyVerify;
+    const bool bough = c=="bough-verify";
+    if(verify.total!=0 && verify.bough!=bough) {
+      arenaAbort("Finish the pending HiZ verification first");
+      return;
+      }
+    verify.bough = bough;
     if(a.size()==2 && a[1]=="finish") {
       verify.finish = true;
       return;
@@ -231,7 +237,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     uint32_t frames = 0, duration = 0;
     if((a.size()!=3 && a.size()!=4) || !readNumber(a[2], frames) || frames==0 ||
        (a.size()==4 && (frames<2 || !readNumber(a[3], duration)))) {
-      arenaAbort("hiz-verify expects <segment> <frames> [duration in ms] or finish");
+      arenaAbort(std::string(c) + " expects <segment> <frames> [duration in ms] or finish");
       return;
       }
     verify.segment = a[1];
@@ -239,6 +245,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     verify.next = 0;
     verify.start = bench.time;
     verify.duration = duration;
+    if(bough && verify.segment=="reset")
+      bench.renderReset = true;
     return;
     }
   else if(c=="impostor" && a.size()==3 && a[1]=="probe" && (a[2]=="on" || a[2]=="off")) {

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -65,6 +66,14 @@ TreeBoughRender::~TreeBoughRender() {
     demandProxyTextures(*mesh->treeBough,false);
   }
 
+bool TreeBoughRender::hiZCullEnabled() {
+  static const bool enabled = [] {
+    const auto* env = std::getenv("OPENGOTHIC_BOUGH_HIZ_CULL");
+    return env!=nullptr && std::strcmp(env, "1")==0;
+    }();
+  return enabled;
+  }
+
 uint32_t TreeBoughRender::command(const Material& material, uint16_t bucket, uint32_t unit) {
   const bool bindless = Shaders::options().doBindless && !material.hasFrameAnimation();
   const uint32_t bucketId = bindless ? uint32_t(-1) : bucket;
@@ -84,6 +93,7 @@ uint32_t TreeBoughRender::command(const Material& material, uint16_t bucket, uin
   dest.draw.type = DrawCommands::Static;
   dest.draw.bucketId = bucketId;
   dest.unit = unit;
+  dest.twoSided = material.twoSided;
   return uint32_t(commands.size()-1);
   }
 
@@ -228,15 +238,23 @@ void TreeBoughRender::uploadData() {
     asset.offset = base;
     }
   uint32_t entry = entryBase;
-  uint32_t stateOffset = StatsCount;
+  const bool hizCull = hiZCullEnabled() && DrawCommands::treeHistoryEnabled();
+  uint32_t stateOffset = StatsCount + (hizCull ? HiZStatsCount : 0u);
+  size_t candidateSlots = 0;
   referenceSize = 0;
   for(auto& [cluster,v]:entries) {
     words[4u+cluster] = entry;
     v.referenceOffset = referenceSize;
     if(cpu)
       referenceSize += 1u + 2u*uint32_t(v.mesh->treeBough->nodes.size());
-    const uint32_t record[] = {cluster,v.commands,v.first,v.count,assets.at(v.mesh).offset,
-                               stateOffset++,v.referenceOffset,0u};
+    const auto& asset = assets.at(v.mesh);
+    const uint32_t record[] = {cluster,v.commands,v.first,v.count,asset.offset,
+                               stateOffset++,v.referenceOffset,uint32_t(candidateSlots)};
+    if(hizCull) {
+      ++candidateSlots; // The first slot holds the current number of deferred nodes.
+      for(const auto& capacity : asset.capacity)
+        candidateSlots += capacity.second;
+      }
     std::copy_n(record,8,words.data()+entry);
     entry += 8u;
     }
@@ -262,6 +280,12 @@ void TreeBoughRender::uploadData() {
   if(payload.byteSize()<bytes || payload.byteSize()>bytes*2u) {
     Resources::recycle(std::move(payload));
     payload = device.ssbo(Uninitialized,bytes);
+    }
+  const size_t candidateBytes = candidateSlots*4u*sizeof(uint32_t);
+  if(candidateBytes!=candidates.byteSize()) {
+    Resources::recycle(std::move(candidates));
+    if(candidateBytes!=0 && candidateBytes<=device.properties().ssbo.maxRange)
+      candidates = device.ssbo(Uninitialized,candidateBytes);
     }
   }
 
@@ -332,8 +356,8 @@ const ComputePipeline& TreeBoughRender::historyClassify() {
   return historyPipeline;
   }
 
-void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool lateHiZ) {
-  auto& view = owner.views[SceneGlobals::V_Main];
+void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool lateHiZ,
+                             const Texture2d* previousDepth, const Matrix4x4* previousViewProject) {
   const auto& scene = owner.scene;
   uint32_t flags = uint32_t(cpu);
   flags |= FrameProfile::enabled() ? 2u : 0u;
@@ -341,7 +365,26 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   flags |= lateHiZ ? 8u : 0u;
   expandedToken = token;
   expandedFlags = flags;
-  struct Push { uint32_t token, flags; float nearZ; uint32_t stage; };
+  dispatchExpand(enc, flags, previousDepth, previousViewProject, false);
+  }
+
+void TreeBoughRender::filter(Encoder<CommandBuffer>& enc, const Texture2d& depth, const Matrix4x4& viewProject) {
+  // The proof already expanded whole canopies into the main draw list.
+  dispatchExpand(enc, expandedFlags | 16u, &depth, &viewProject, false);
+  }
+
+void TreeBoughRender::recheck(Encoder<CommandBuffer>& enc, const Texture2d& depth) {
+  dispatchExpand(enc, expandedFlags, &depth, nullptr, true);
+  }
+
+void TreeBoughRender::dispatchExpand(Encoder<CommandBuffer>& enc, uint32_t flags, const Texture2d* depth,
+                                     const Matrix4x4* previousViewProject, bool recheck) {
+  auto& view = owner.views[SceneGlobals::V_Main];
+  const auto& scene = owner.scene;
+  struct Push { uint32_t token, flags; float nearZ; uint32_t stage; Matrix4x4 previousViewProject; };
+  Push push = {expandedToken, flags, scene.znear, 0, {}};
+  if(previousViewProject!=nullptr)
+    push.previousViewProject = *previousViewProject;
   enc.setBinding(0,scene.uboGlobal[SceneGlobals::V_Main]);
   enc.setBinding(1,view.visClusters);
   enc.setBinding(2,owner.owner.instanceSsbo());
@@ -352,22 +395,45 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   enc.setBinding(7,cpu ? referenceData : data);
   enc.setBinding(8,indirect);
   enc.setBinding(9,payload);
-  enc.setBinding(10,lateHiZ ? owner.history.status : data);
-  enc.setPipeline(expandPipeline);
-  enc.setPushData(Push{token,flags,scene.znear,1});
-  enc.dispatchThreads(std::max<size_t>(StatsCount,commands.size()));
-  enc.setPushData(Push{token,flags,scene.znear,0});
+  enc.setBinding(10,(flags & 8u)!=0u ? owner.history.status : data);
+  const auto pushSize = depth!=nullptr ? sizeof(Push) : offsetof(Push, previousViewProject);
+  if(depth!=nullptr) {
+    if(expandHiZPipeline.isEmpty())
+      expandHiZPipeline = compute("tree_bough_expand_hiz.comp.sprv");
+    enc.setBinding(11,*depth,Sampler::nearest());
+    enc.setBinding(12,candidates);
+    enc.setPipeline(expandHiZPipeline);
+    } else {
+    enc.setPipeline(expandPipeline);
+    }
+  push.stage = recheck ? 3u : 1u;
+  enc.setPushData(&push,pushSize);
+  const auto counters = depth!=nullptr ? StatsCount+HiZStatsCount : StatsCount;
+  enc.dispatchThreads(std::max<size_t>(counters,commands.size()));
+  push.stage = recheck ? 4u : 0u;
+  enc.setPushData(&push,pushSize);
   enc.dispatch(entries.size());
   if(Shaders::options().doMeshShading) {
-    enc.setPushData(Push{token,flags,scene.znear,2});
+    push.stage = 2u;
+    enc.setPushData(&push,pushSize);
     enc.dispatchThreads(commands.size());
     }
   }
 
 void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDraw history) {
   for(size_t i=0; i<commands.size(); ++i) {
-    const auto& c = commands[i].draw;
-    const auto pso = history==DrawCommands::HistoryDraw::Off ? c.pMain : c.pHistoryGBuffer;
+    auto& c = commands[i].draw;
+    auto pso = history==DrawCommands::HistoryDraw::Off ? c.pMain : c.pHistoryGBuffer;
+    if(owner.boughHiZVerify && history!=DrawCommands::HistoryDraw::Off) {
+      if(c.pHistoryVerify==nullptr) {
+        Material material;
+        material.alpha = c.alpha;
+        material.twoSided = commands[i].twoSided;
+        c.pHistoryVerify = Shaders::inst().materialPipeline(material, c.type, Shaders::T_HistoryGBuffer,
+                                                            c.isBindless(), Shaders::Bough::CardsVerify);
+        }
+      pso = c.pHistoryVerify;
+      }
     if(c.maxPayload==0 || pso==nullptr)
       continue;
     owner.setBindings(enc,c,SceneGlobals::V_Main);
@@ -383,25 +449,28 @@ void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDra
     }
   }
 
-void TreeBoughRender::readStats(Encoder<CommandBuffer>& enc, uint8_t frame, bool expanded) {
+void TreeBoughRender::readStats(Encoder<CommandBuffer>& enc, uint8_t frame, bool expanded, bool hizCull) {
   auto& device = Resources::device();
   constexpr FrameProfile::Amount names[] = {FrameProfile::Amount::TreeBoughNodes,FrameProfile::Amount::TreeBoughSourceCards,
     FrameProfile::Amount::TreeBoughParentCards,FrameProfile::Amount::TreeBoughTriangles,FrameProfile::Amount::TreeBoughActiveBands,
-    FrameProfile::Amount::TreeBoughVersionPairs,FrameProfile::Amount::TreeBoughBandTriangles,FrameProfile::Amount::TreeBoughHeightPx};
-  static_assert(std::size(names)==StatsCount);
+    FrameProfile::Amount::TreeBoughVersionPairs,FrameProfile::Amount::TreeBoughBandTriangles,FrameProfile::Amount::TreeBoughHeightPx,
+    FrameProfile::Amount::TreeBoughHiZCandidates,FrameProfile::Amount::TreeBoughHiZRejected,
+    FrameProfile::Amount::TreeBoughHiZRejectedTriangles};
+  static_assert(std::size(names)==StatsCount+HiZStatsCount);
   uint32_t values[std::size(names)] = {};
   if(readPending[frame]) {
-    device.readBytes(stats[frame],values,sizeof(values));
-    for(size_t i=0; i<std::size(names); ++i)
+    device.readBytes(stats[frame],values,readPending[frame]*sizeof(uint32_t));
+    for(size_t i=0; i<readPending[frame]; ++i)
       FrameProfile::add(names[i],values[i]);
-    readPending[frame] = false;
+    readPending[frame] = 0;
     }
   if(!expanded)
     return;
-  if(stats[frame].isEmpty())
-    stats[frame] = device.ssbo(BufferHeap::Readback,Uninitialized,sizeof(values));
-  copy(enc,state,stats[frame],0,uint32_t(std::size(names)),uint32_t(std::size(names)));
-  readPending[frame] = true;
+  const uint32_t count = hizCull ? StatsCount+HiZStatsCount : StatsCount;
+  if(stats[frame].byteSize()<count*sizeof(uint32_t))
+    stats[frame] = device.ssbo(BufferHeap::Readback,Uninitialized,count*sizeof(uint32_t));
+  copy(enc,state,stats[frame],0,count,count);
+  readPending[frame] = uint8_t(count);
   }
 
 uint32_t TreeBoughRender::copyCommands(Encoder<CommandBuffer>& enc, StorageBuffer& destination) {
@@ -514,15 +583,39 @@ void DrawCommands::setBoughTransform(uint32_t cluster, const Matrix4x4& transfor
     boughs->setTransform(cluster,transform);
   }
 
-void DrawCommands::finishBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fId, bool late) {
+bool DrawCommands::hasPendingBoughHiZ() const {
+  return hasPendingBoughExpansion() && boughs->hasHiZCandidates();
+  }
+
+void DrawCommands::finishBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fId, bool late,
+                                         const Texture2d* previousDepth, const Matrix4x4* previousViewProject,
+                                         bool recordStats) {
   if(boughHistoryToken==0u)
     return;
   enc.setDebugMarker("Bough-cut");
-  boughs->expand(enc,boughHistoryToken,late);
+  boughs->expand(enc,boughHistoryToken,late,previousDepth,previousViewProject);
   boughHistoryToken = 0;
   boughExpanded = true;
-  if(FrameProfile::enabled())
+  if(recordStats && previousDepth==nullptr && FrameProfile::enabled())
     boughs->readStats(enc,fId,true);
+  }
+
+void DrawCommands::filterBoughVisibility(Encoder<CommandBuffer>& enc, const Texture2d& depth,
+                                         const Matrix4x4& viewProject) {
+  enc.setDebugMarker("Bough-cut");
+  boughs->filter(enc,depth,viewProject);
+  }
+
+void DrawCommands::recheckBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fId, const Texture2d& depth) {
+  enc.setDebugMarker("Bough-HiZ-recheck");
+  boughs->recheck(enc,depth);
+  if(FrameProfile::enabled())
+    boughs->readStats(enc,fId,true,true);
+  }
+
+void DrawCommands::drawBoughVisibility(Encoder<CommandBuffer>& enc, HistoryDraw history) {
+  if(((hiddenTypes >> Static) & 1u)==0u)
+    boughs->draw(enc,history);
   }
 
 bool DrawCommands::diagnoseBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fId, const Texture2d& depth,

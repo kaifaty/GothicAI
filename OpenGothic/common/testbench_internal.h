@@ -1966,6 +1966,7 @@ struct Bench : OverlayBench, CameraBench {
     uint32_t    frames = 0, next = 0, total = 0;
     uint64_t    start = 0, duration = 0;
     bool        finish = false;
+    bool        bough = false;
 
     bool pending() const { return finish || next < frames; }
     } historyVerify;

@@ -15,12 +15,19 @@ layout(binding = 7, std430) readonly buffer Ref { uint reference[];     };
 layout(binding = 8, std430) buffer BoughDraws   { IndirectCmd cmd[];     };
 layout(binding = 9, std430) buffer BoughPayload { uvec4 payload[];       };
 layout(binding = 10, std430) readonly buffer HiZHistory { uint historyStatus[]; };
+#ifdef BOUGH_HIZ_CULL
+layout(binding = 11) uniform sampler2D boughHiZ;
+layout(binding = 12, std430) buffer BoughCandidates { uvec4 candidates[]; };
+#endif
 
 layout(push_constant, std430) uniform Push {
   uint token;
   uint flags; // bit 0: CPU reference, bit 1: counters, bit 2: HiZ probe, bit 3: late history HiZ
   float nearZ;
   uint stage; // 0: cut of each crown, 1: reset of the counters, 2: whole meshlets of the mesh path
+#ifdef BOUGH_HIZ_CULL
+  mat4 previousViewProject; // stage 3 resets draws only; stage 4 rechecks the candidates
+#endif
   } push;
 
 #include "materials/tree_bough_cut.glsl"
@@ -28,11 +35,24 @@ layout(push_constant, std430) uniform Push {
 // The state prefix matches TreeBoughRender::readStats. Height is a maximum; the other counters are sums.
 const uint BoughStatsSumCount = 7u;
 const uint BoughStatsCount = BoughStatsSumCount + 1u;
+#ifdef BOUGH_HIZ_CULL
+#include "materials/tree_bough_hiz.glsl"
+const uint BoughAccumCount = BoughStatsSumCount + 2u;
+const uint BoughStateCount = BoughStatsCount + 3u;
+shared uint candidateCount;
+uint candidateBase;
+float windPad;
+bool validBounds, rechecking;
+mat4 clipTransform, clipError;
+#else
+const uint BoughAccumCount = BoughStatsSumCount;
+const uint BoughStateCount = BoughStatsCount;
+#endif
 shared uint hasCompact;
 shared uint mainOffset;
-shared uint stats[BoughStatsSumCount];
+shared uint stats[BoughAccumCount];
 uint instanceId, nodeBase, rangeBase;
-uint countByLane[BoughStatsSumCount];
+uint countByLane[BoughAccumCount];
 
 vec3 readVec(uint offset) {
   return uintBitsToFloat(uvec3(data[offset], data[offset+1u], data[offset+2u]));
@@ -48,6 +68,25 @@ BoughNode boughGetNode(uint i) {
 
 void boughEmit(uint i, uint transition, float weight) {
   uint at = rangeBase+i*4u;
+#ifdef BOUGH_HIZ_CULL
+  if(validBounds) {
+    const BoughNode node = boughGetNode(i);
+    vec4 rect;
+    float nearest;
+    if(projectBounds(clipTransform, clipError, node.boxMin-windPad, node.boxMax+windPad,
+                     push.nearZ, rect, nearest)==BoundsProjected &&
+       coveredByDepth(boughHiZ, scene.screenRes, rect, nearest)) {
+      if(!rechecking) {
+        const uint slot = atomicAdd(candidateCount, 1u);
+        candidates[candidateBase+1u+slot] = uvec4(i, transition, floatBitsToUint(weight), 0u);
+        } else if((push.flags & 2u)!=0u) {
+        ++countByLane[7];
+        countByLane[8] += data[at+1u]/3u;
+        }
+      return;
+      }
+    }
+#endif
   uint firstIndex = data[at], indexCount = data[at+1u];
   uint key = data[at+2u], command = key & 0xffffu, bucket = key >> 16u;
   uint offset = cmd[command].writeOffset + atomicAdd(cmd[command].instanceCount, 1u);
@@ -73,13 +112,37 @@ vec3 transformColumn(uint offset) {
   return uintBitsToFloat(uvec3(instanceMem[offset], instanceMem[offset+1u], instanceMem[offset+2u]));
   }
 
+void initStats(uint lane) {
+  if((push.flags & 2u)==0u)
+    return;
+  if(lane<BoughAccumCount)
+    stats[lane] = 0u;
+  for(uint i=0u; i<BoughAccumCount; ++i)
+    countByLane[i] = 0u;
+  }
+
+void finishStats(uint lane) {
+  if((push.flags & 2u)==0u)
+    return;
+  for(uint i=0u; i<BoughAccumCount; ++i)
+    if(countByLane[i]>0u)
+      atomicAdd(stats[i], countByLane[i]);
+  barrier();
+  if(lane<BoughAccumCount && stats[lane]>0u)
+    atomicAdd(state[lane<BoughStatsSumCount ? lane : lane+2u], stats[lane]);
+  }
+
 void main() {
   const uint lane = gl_LocalInvocationIndex;
-  if(push.stage==1u) {
+  if(push.stage==1u
+#ifdef BOUGH_HIZ_CULL
+     || push.stage==3u
+#endif
+     ) {
     uint i = gl_GlobalInvocationID.x;
     if(i<cmd.length())
       cmd[i].instanceCount = 0u;
-    if(i<BoughStatsCount)
+    if(push.stage==1u && i<BoughStateCount)
       state[i] = 0u;
     return;
     }
@@ -101,6 +164,15 @@ void main() {
   const uint asset = data[entry+4u];
   const uint stateBase = data[entry+5u];
   const uint ref = data[entry+6u];
+#ifdef BOUGH_HIZ_CULL
+  rechecking = push.stage==4u;
+  candidateBase = data[entry+7u];
+  const uint pending = rechecking ? candidates[candidateBase].x : 0u;
+  if(rechecking && pending==0u)
+    return;
+  if(!rechecking && lane==0u)
+    candidates[candidateBase].x = 0u;
+#endif
   const uint status = state[stateBase];
   if((status & ~1u)!=push.token)
     return;
@@ -112,6 +184,28 @@ void main() {
   const uint transform = instanceId*16u;
   const vec3 x = transformColumn(transform), y = transformColumn(transform+3u);
   const vec3 z = transformColumn(transform+6u), origin = transformColumn(transform+9u);
+#ifdef BOUGH_HIZ_CULL
+  windPad = uintBitsToFloat(data[asset+18u]);
+  validBounds = boughBoundsValid(windPad, uintBitsToFloat(instanceMem[transform+12u]), x, z);
+  const mat4 object = mat4(vec4(x,0), vec4(y,0), vec4(z,0), vec4(origin,1));
+  const mat4 viewProject = rechecking ? scene.viewProject : push.previousViewProject;
+  clipTransform = viewProject * object;
+  clipError = absMatrix(viewProject) * (absMatrix(object) * (32.0 * Epsilon));
+  if(rechecking) {
+    nodeBase = data[asset+2u];
+    rangeBase = data[asset+4u];
+    initStats(lane);
+    barrier();
+    for(uint i=lane; i<pending; i+=gl_WorkGroupSize.x) {
+      const uvec4 candidate = candidates[candidateBase+1u+i];
+      boughEmit(candidate.x, candidate.y, uintBitsToFloat(candidate.z));
+      }
+    finishStats(lane);
+    return;
+    }
+  if(lane==0u)
+    candidateCount = 0u;
+#endif
   const float focal = 0.5*float(scene.screenRes.y)*abs(scene.project[1][1]);
   if(lane==0u && (push.flags & 2u)!=0u) {
     vec3 center = mat3(x, y, z)*readVec(asset+8u) + origin;
@@ -137,12 +231,7 @@ void main() {
   const bool useReference = (push.flags & 1u)!=0u;
   if(lane==0u)
     hasCompact = useReference ? reference[ref] : 0u;
-  if((push.flags & 2u)!=0u) {
-    if(lane<BoughStatsSumCount)
-      stats[lane] = 0u;
-    for(uint i=0u; i<BoughStatsSumCount; ++i)
-      countByLane[i] = 0u;
-    }
+  initStats(lane);
   barrier();
 
   if(!useReference) {
@@ -161,14 +250,25 @@ void main() {
     // No node has been merged and no band participates. The old full canopy is more compact.
     const uint command = data[entry+1u] & 0xffffu;
     const uint first = data[entry+2u], count = data[entry+3u];
+#ifdef BOUGH_HIZ_CULL
+    // A verification replay already expanded the unfiltered whole canopies.
+    const bool writeCanopy = (push.flags & 16u)==0u;
+#else
+    const bool writeCanopy = true;
+#endif
     if(lane==0u) {
-      mainOffset = mainCmd[command].writeOffset + atomicAdd(mainCmd[command].instanceCount, count);
+      if(writeCanopy)
+        mainOffset = mainCmd[command].writeOffset + atomicAdd(mainCmd[command].instanceCount, count);
       if((push.flags & 2u)!=0u) {
         atomicAdd(state[0], data[asset+5u]);
         atomicAdd(state[1], data[asset+5u]);
         atomicAdd(state[3], data[asset+6u]);
         }
       }
+#ifdef BOUGH_HIZ_CULL
+    if(!writeCanopy)
+      return;
+#endif
     barrier();
     const uint bucket = cluster.bucketId_commandId >> 16u;
     const uint probeId = (push.flags & 4u)!=0u ? clusterId : 0u;
@@ -188,12 +288,13 @@ void main() {
     boughWalkSlice(sliceFirst, sliceLast, projection);
     }
 
-  if((push.flags & 2u)!=0u) {
-    for(uint i=0u; i<BoughStatsSumCount; ++i)
-      if(countByLane[i]>0u)
-        atomicAdd(stats[i], countByLane[i]);
-    barrier();
-    if(lane<BoughStatsSumCount && stats[lane]>0u)
-      atomicAdd(state[lane], stats[lane]);
+  finishStats(lane);
+#ifdef BOUGH_HIZ_CULL
+  barrier();
+  if(lane==0u) {
+    candidates[candidateBase].x = candidateCount;
+    if(candidateCount>0u && (push.flags & 2u)!=0u)
+      atomicAdd(state[8], candidateCount);
     }
+#endif
   }

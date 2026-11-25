@@ -13,6 +13,7 @@ class Probe final : public BenchHooks {
       if(verify.finish) {
         HistoryVerifyRequest request;
         request.finish = true;
+        request.bough = verify.bough;
         return request;
         }
       if(verify.next==verify.frames)
@@ -20,15 +21,17 @@ class Probe final : public BenchHooks {
       const auto elapsed = bench.time - verify.start;
       if(verify.duration>0 && elapsed*(verify.frames-1) < verify.duration*verify.next)
         return {};
-      return {verify.segment, verify.total++, verify.next++, elapsed, false};
+      return {verify.segment, verify.total++, verify.next++, elapsed, false, verify.bough};
       }
     void historyVerifyComplete(bool passed) override {
       auto& verify = testbench_detail::bench.historyVerify;
       verify.finish = false;
-      testbench_detail::event("hiz_history_verify", "\"pairs\":"+std::to_string(verify.total)+
+      testbench_detail::event(verify.bough ? "bough_hiz_verify" : "hiz_history_verify", "\"pairs\":"+std::to_string(verify.total)+
                              ",\"passed\":"+(passed ? "true" : "false"));
       if(!passed)
-        testbench_detail::say("HiZ history verification failed. See tree-hidden-3b.csv.");
+        testbench_detail::say(verify.bough ? "Bough HiZ verification failed. See bough-hiz-verify.csv." :
+                                           "HiZ history verification failed. See tree-hidden-3b.csv.");
+      verify.total = 0;
       }
     int bodyBlockVariant(const Npc& npc, int fallback) const override {
       return TestBench::bodyBlockVariant(npc,fallback);

@@ -545,7 +545,10 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
 
   const auto alpha   = (mat.isGhost ? Material::Ghost : mat.alpha);
   const bool trivial = (!mat.hasUvAnimation() && alpha==Material::Solid && t==DrawCommands::Landscape);
-  if(bough==Bough::Cards && (t!=DrawCommands::Movable || alpha!=Material::AlphaTest || (pt!=T_Main && pt!=T_HistoryGBuffer)))
+  const bool boughCards = bough==Bough::Cards || bough==Bough::CardsVerify;
+  if(boughCards && (t!=DrawCommands::Movable || alpha!=Material::AlphaTest || (pt!=T_Main && pt!=T_HistoryGBuffer)))
+    return nullptr;
+  if(bough==Bough::CardsVerify && pt!=T_HistoryGBuffer)
     return nullptr;
 
   // materials.json "two_sided": an object's mesh without culling in every pass, the same shaders. The world mesh,
@@ -643,9 +646,9 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
       fsTok = "obj";
       break;
     }
-  if(bough==Bough::Cards) {
-    vsTok = "bough";
-    fsTok = "bough";
+  if(boughCards) {
+    vsTok = bough==Bough::CardsVerify ? "bough_verify" : "bough";
+    fsTok = vsTok;
     } else if(bough==Bough::Joint) {
     vsTok = "joint";
     fsTok = "joint";
@@ -736,7 +739,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     default: break;
     }
   const bool  history = historyFragment[0]!='\0';
-  const char* historyGeometry = history && t!=DrawCommands::Pfx && bough!=Bough::Cards ? "_hist" : "";
+  const char* historyGeometry = history && t!=DrawCommands::Pfx && !boughCards ? "_hist" : "";
   const bool mapsMain = (pt==T_Main || history) && (alpha==Material::Solid || alpha==Material::AlphaTest);
   const bool mapsDepth = (pt==T_Depth || pt==T_Shadow) && alpha==Material::AlphaTest;
   const char* materialMaps = opts.doMaterialMaps && (mapsMain || mapsDepth) ? "_orm" : "";

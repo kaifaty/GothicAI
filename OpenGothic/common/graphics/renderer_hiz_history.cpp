@@ -9,8 +9,39 @@
 
 #include "frameprofile.h"
 #include "renderer_internal.h"
+#include "treeboughrender.h"
 
 using namespace Tempest;
+
+void Renderer::seedBoughHiZReference(Encoder<CommandBuffer>& cmd, WorldView& view, bool reset) {
+  auto& reference = usesZBuffer(treeHistory.referenceDepth, zBufferFormat, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
+  std::swap(reference, zbuffer);
+  drawHiZ(cmd, view);
+  if(!reset) {
+    cmd.setFramebuffer({}, {zbuffer, Preserve, Preserve});
+    auto& commands = view.treeHistoryCommands();
+    constexpr auto draw = DrawCommands::HistoryDraw::Early;
+    commands.drawCommon(cmd, SceneGlobals::V_Main, Material::Solid, draw);
+    commands.drawCommon(cmd, SceneGlobals::V_Main, Material::AlphaTest, draw);
+    }
+  std::swap(reference, zbuffer);
+  }
+
+void Renderer::drawBoughHiZReference(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& view,
+                                    DrawCommands::HistoryDraw mode) {
+  auto& owners = usesAttachment(treeHistory.referenceOwners, TextureFormat::R32U, zbuffer.size());
+  std::swap(treeHistory.referenceDepth, zbuffer);
+  drawGBuffer(cmd, fId, view, mode, &owners);
+  std::swap(treeHistory.referenceDepth, zbuffer);
+  }
+
+void Renderer::compareBoughHiZ(Encoder<CommandBuffer>& cmd, const BenchProbe::HistoryVerifyRequest& request,
+                               bool reset, bool optimized) {
+  treeHistory.boughVerify.compare(cmd, request, textureCast<const Texture2d&>(treeHistory.referenceDepth),
+                                  textureCast<const Texture2d&>(treeHistory.referenceOwners),
+                                  textureCast<const Texture2d&>(zbuffer),
+                                  textureCast<const Texture2d&>(treeHistory.winners), reset, optimized);
+  }
 
 void Renderer::readBoughHiZDepth(uint8_t fId) {
   auto& diag = boughHiZDiag;
@@ -38,9 +69,14 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
   using Draw = DrawCommands::HistoryDraw;
   auto& commands = view.treeHistoryCommands();
   const bool reset = !treeHistory.valid || !camHistory.continuous || !commands.hasHistory();
+  const bool verifyCull = request && request.bough;
+  const bool verifyHistory = request && !request.bough;
+  const bool saveBoughHiZ = !verifyHistory && commands.hasPendingBoughHiZ();
   const float quantization = zBufferFormat==TextureFormat::Depth16 ? 1.f/65535.f :
                              zBufferFormat==TextureFormat::Depth24x8 ? 1.f/16777215.f : 0.f;
   static const uint32_t diagnosticEvery = [] {
+    if(TreeBoughRender::hiZCullEnabled())
+      return 0u;
     const auto* env = std::getenv("OPENGOTHIC_BOUGH_HIZ_DIAG_EVERY");
     if(env==nullptr)
       return 0u;
@@ -50,6 +86,8 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     return parsed.ec==std::errc() && parsed.ptr==end ? every : 0u;
     }();
   auto& diag = boughHiZDiag;
+  const auto* previousBoughHiZ = saveBoughHiZ && !reset && diag.valid ?
+                                 &textureCast<const Texture2d&>(diag.finalPyramid) : nullptr;
   const bool sampleBough = diagnosticEvery!=0 && !reset && diag.valid && commands.hasPendingBoughExpansion() &&
                            diag.frames++%diagnosticEvery==0;
   const bool verifyBough = sampleBough && !request && !diag.proved &&
@@ -59,16 +97,16 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
   if(!reset)
     commands.compactHistory(cmd, true);
 
-  if(request || !reset) {
+  if(verifyHistory || !reset) {
     cmd.setDebugMarker("HiZ-history-depth");
-    if(request) {
+    if(verifyHistory) {
       auto& owners = usesAttachment(treeHistory.earlyOwners, TextureFormat::R32U, zbuffer.size());
       cmd.setFramebuffer({{owners, Vec4(), Preserve}}, {zbuffer, Preserve, Preserve});
       } else {
       cmd.setFramebuffer({}, {zbuffer, Preserve, Preserve});
       }
     if(!reset) {
-      const auto draw = request ? Draw::EarlyVerify : Draw::Early;
+      const auto draw = verifyHistory ? Draw::EarlyVerify : Draw::Early;
       commands.drawCommon(cmd, SceneGlobals::V_Main, Material::Solid, draw);
       commands.drawCommon(cmd, SceneGlobals::V_Main, Material::AlphaTest, draw);
       }
@@ -85,7 +123,10 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     std::swap(reference, zbuffer);
     }
 
-  if(request) {
+  if(verifyCull)
+    seedBoughHiZReference(cmd, view, reset);
+
+  if(verifyHistory) {
     cmd.setFramebuffer({});
     cmd.setBinding(0, zbuffer, Sampler::nearest());
     cmd.setBinding(1, usesImage2d(treeHistory.earlyDepth, TextureFormat::R32F, zbuffer.size()));
@@ -106,13 +147,27 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     grassHiZ = &textureCast<const Texture2d&>(pyramid);
     commands.classifyHistory(cmd, *grassHiZ, quantization, true, false);
     }
-  commands.finishBoughVisibility(cmd, fId, !reset);
+  if(previousBoughHiZ==nullptr)
+    commands.finishBoughVisibility(cmd, fId, !reset);
+  else if(verifyCull)
+    commands.finishBoughVisibility(cmd, fId, !reset, nullptr, nullptr, false);
+  else
+    commands.finishBoughVisibility(cmd, fId, !reset, previousBoughHiZ, &diag.previousViewProject);
   if(!reset)
     commands.compactHistory(cmd, false);
 
   // The reference pass and the live pass draw the same prepared grass.
   view.prepareGrass(cmd, fId, *grassHiZ, reset ? 0.f : quantization);
-  if(request) {
+  const auto mode = reset ? Draw::Unfiltered : Draw::Filtered;
+  if(verifyCull) {
+    commands.setBoughHiZVerify(true);
+    drawBoughHiZReference(cmd, fId, view, mode);
+    if(previousBoughHiZ!=nullptr) {
+      cmd.setFramebuffer({});
+      commands.filterBoughVisibility(cmd, *previousBoughHiZ, diag.previousViewProject);
+      }
+    }
+  if(verifyHistory) {
     auto& reference = usesZBuffer(treeHistory.referenceDepth, zBufferFormat, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
     auto& owners = usesAttachment(treeHistory.referenceOwners, TextureFormat::R32U, zbuffer.size());
     auto& scene = view.sceneGlobals();
@@ -133,7 +188,6 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     Resources::recycle(std::move(probe));
     }
 
-  const auto mode = reset ? Draw::Unfiltered : Draw::Filtered;
   size_t proofStride = 0;
   if(verifyBough) {
     // Both GBuffer passes see the same camera, grass, early depth and final draw lists.
@@ -160,22 +214,34 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     }
 
   drawGBuffer(cmd, fId, view, mode, &treeHistory.winners);
+  if(previousBoughHiZ!=nullptr) {
+    // Only geometry in this frame's cut contributes to the pyramid that can reject a node.
+    buildHiZ(cmd, &diag.finalPyramid, true);
+    commands.recheckBoughVisibility(cmd, fId, *previousBoughHiZ);
+    drawGBuffer(cmd, fId, view, mode, &treeHistory.winners, true);
+    }
+  if(verifyCull) {
+    compareBoughHiZ(cmd, request, reset, previousBoughHiZ!=nullptr);
+    commands.setBoughHiZVerify(false);
+    }
   if(verifyBough && diag.proofStamp!=0) {
     cmd.setFramebuffer({});
     cmd.copy(textureCast<const Texture2d&>(zbuffer), 0, diag.proofDepth, proofStride);
     }
-  if(diagnosticEvery!=0) {
+  if(diagnosticEvery!=0 || saveBoughHiZ) {
     // hiz.hiZ is rebuilt from the early occluders each frame. Preserve the finished
     // opaque depth separately together with the jittered projection that produced it.
-    auto& pyramid = usesImage2d(diag.finalPyramid, TextureFormat::R32F, pyramidW, pyramidH, true);
-    buildHiZ(cmd, &pyramid);
+    auto& pyramid = usesImage2d(diag.finalPyramid, TextureFormat::R32F, pyramidW, pyramidH, !saveBoughHiZ);
+    buildHiZ(cmd, &pyramid, saveBoughHiZ);
     diag.previousViewProject = view.sceneGlobals().viewProject();
     diag.valid = true;
+    } else {
+    diag.valid = false;
     }
   const auto& winners = textureCast<const Texture2d&>(treeHistory.winners);
   commands.finishHistory(cmd, winners, fId);
   treeHistory.valid = true;
-  if(request) {
+  if(verifyHistory) {
     treeHistory.verify.compare(cmd, shaders.hizHistoryVerify, request,
                                textureCast<const Texture2d&>(treeHistory.earlyDepth),
                                textureCast<const Texture2d&>(treeHistory.earlyOwners),

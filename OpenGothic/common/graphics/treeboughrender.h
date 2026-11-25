@@ -22,14 +22,21 @@ class TreeBoughRender {
     const Tempest::ComputePipeline& cull(Tempest::Encoder<Tempest::CommandBuffer>& enc, bool hiZ, bool probe,
                                          bool history, bool ordered, uint32_t& token);
     const Tempest::ComputePipeline& historyClassify();
-    void expand(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint32_t token, bool lateHiZ);
+    static bool hiZCullEnabled();
+    bool hasHiZCandidates() const { return !candidates.isEmpty(); }
+    void expand(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint32_t token, bool lateHiZ,
+                const Tempest::Texture2d* previousDepth = nullptr, const Tempest::Matrix4x4* previousViewProject = nullptr);
+    void filter(Tempest::Encoder<Tempest::CommandBuffer>& enc, const Tempest::Texture2d& depth,
+                const Tempest::Matrix4x4& viewProject);
+    void recheck(Tempest::Encoder<Tempest::CommandBuffer>& enc, const Tempest::Texture2d& depth);
     void draw(Tempest::Encoder<Tempest::CommandBuffer>& enc, DrawCommands::HistoryDraw history);
-    void readStats(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, bool expanded);
+    void readStats(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, bool expanded, bool hizCull = false);
     bool diagnose(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, const Tempest::Texture2d& depth,
                   const Tempest::Matrix4x4& viewProject, bool verify, uint64_t stamp);
 
   private:
     static constexpr uint32_t StatsCount = 8;
+    static constexpr uint32_t HiZStatsCount = 3;
     static constexpr uint32_t DiagnosticCount = 7;
 
     struct DiagnosticRead {
@@ -57,12 +64,15 @@ class TreeBoughRender {
     struct Command {
       DrawCommands::DrawCmd draw;
       uint32_t unit = 0; // the vertex path: indices of a node's class; the mesh path: nodes of a workgroup
+      Material::TwoSided twoSided = Material::TwoSided::Off;
       };
 
     uint32_t command(const Material& material, uint16_t bucket, uint32_t unit);
     void registerAsset(const StaticMesh& mesh, Asset& asset);
     void uploadData();
     void uploadReference();
+    void dispatchExpand(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint32_t flags,
+                        const Tempest::Texture2d* depth, const Tempest::Matrix4x4* previousViewProject, bool recheck);
     void copy(Tempest::Encoder<Tempest::CommandBuffer>& enc, const Tempest::StorageBuffer& source,
               Tempest::StorageBuffer& destination, uint32_t offset, uint32_t count, uint32_t sourceCount);
     uint32_t copyCommands(Tempest::Encoder<Tempest::CommandBuffer>& enc, Tempest::StorageBuffer& destination);
@@ -78,10 +88,12 @@ class TreeBoughRender {
     bool dirty = true;
 
     Tempest::StorageBuffer data, state, referenceData, indirect, payload;
+    Tempest::StorageBuffer candidates;
     std::array<Tempest::StorageBuffer,Resources::MaxFramesInFlight> stats;
-    std::array<bool,Resources::MaxFramesInFlight> readPending = {};
+    std::array<uint8_t,Resources::MaxFramesInFlight> readPending = {};
     Tempest::ComputePipeline cullPipelines[4][2];
     Tempest::ComputePipeline expandPipeline, copyPipeline, historyPipeline;
+    Tempest::ComputePipeline expandHiZPipeline;
     Tempest::ComputePipeline diagnosticPipeline;
     Tempest::StorageBuffer diagnosticCounts;
     std::array<DiagnosticRead,Resources::MaxFramesInFlight> diagnosticRead;

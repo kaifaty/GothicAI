@@ -160,7 +160,7 @@ class Shaders {
     // Inventory
     Tempest::RenderPipeline  inventory;
 
-    enum class Bough : uint8_t { None, Cards, Joint };
+    enum class Bough : uint8_t { None, Cards, Joint, CardsVerify };
     const Tempest::RenderPipeline* materialPipeline(const Material& desc, DrawCommands::Type t, PipelineType pt,
                                                     bool bindless, Bough bough = Bough::None) const;
     const Tempest::RenderPipeline& impostorPipeline(bool history, bool joint) const;

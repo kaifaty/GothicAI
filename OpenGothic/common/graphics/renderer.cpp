@@ -1004,7 +1004,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   auto* bench = taa.shot || treeProbe!=nullptr || captureLandscapeDepth ? nullptr : BenchProbe::get();
   const auto verify = bench!=nullptr ? bench->historyVerifyRequest() : BenchProbe::HistoryVerifyRequest{};
   if(verify.finish)
-    bench->historyVerifyComplete(treeHistory.verify.finish());
+    bench->historyVerifyComplete(verify.bough ? treeHistory.boughVerify.finish() : treeHistory.verify.finish());
   const bool historyView = !taa.shot && treeProbe==nullptr && !captureLandscapeDepth;
   const bool history = historyView && DrawCommands::treeHistoryEnabled() &&
                        wview.treeHistoryCommands().prepareHistory(cmd, textureCast<const Texture2d&>(
@@ -1280,18 +1280,20 @@ void Renderer::drawHiZ(Encoder<CommandBuffer>& cmd, WorldView& view) {
   view.drawHiZ(cmd);
   }
 
-void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history) {
+void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history, bool boughBase) {
   auto& image = history!=nullptr ? *history : hiz.hiZ;
   const auto& potPipeline = history!=nullptr ? shaders.hizHistoryPot : shaders.hiZPot;
   const auto& mipPipeline = history!=nullptr ? shaders.hizHistoryMip : shaders.hiZMip;
   assert(image.w()<=128 && image.h()<=128); // shader limitation
 
-  cmd.setDebugMarker(history!=nullptr ? "HiZ-history-mip" : "HiZ-mip");
+  cmd.setDebugMarker(boughBase ? "Bough-HiZ-pyramid" : history!=nullptr ? "HiZ-history-mip" : "HiZ-mip");
   cmd.setFramebuffer({});
   cmd.setBinding(0, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(1, image);
   cmd.setPipeline(potPipeline);
   cmd.dispatch(size_t(image.w()), size_t(image.h()));
+  if(boughBase)
+    return;
 
   const uint32_t maxBind = 8, mip = image.mipCount();
   const auto     wgSz = mipPipeline.workGroupSize();
@@ -1319,8 +1321,21 @@ void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::
   }
 
 void Renderer::drawGBuffer(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& view,
-                            DrawCommands::HistoryDraw history, Attachment* winners) {
+                            DrawCommands::HistoryDraw history, Attachment* winners, bool boughOnly) {
   cmd.setDebugMarker("GBuffer");
+  if(boughOnly) {
+    if(Shaders::options().doMaterialMaps) {
+      cmd.setFramebuffer({{gbufDiffuse, Preserve, Preserve}, {gbufNormal, Preserve, Preserve},
+                          {gbufOrm, Preserve, Preserve}, {gbufMotion, Preserve, Preserve},
+                          {*winners, Preserve, Preserve}}, {zbuffer, Preserve, Preserve});
+      } else {
+      cmd.setFramebuffer({{gbufDiffuse, Preserve, Preserve}, {gbufNormal, Preserve, Preserve},
+                          {gbufMotion, Preserve, Preserve}, {*winners, Preserve, Preserve}},
+                         {zbuffer, Preserve, Preserve});
+      }
+    view.treeHistoryCommands().drawBoughVisibility(cmd, history);
+    return;
+    }
   if(winners!=nullptr && Shaders::options().doMaterialMaps) {
     cmd.setFramebuffer({{gbufDiffuse, Vec4(), Preserve}, {gbufNormal, Vec4(), Preserve},
                         {gbufOrm, Vec4(1,1,0,0), Preserve}, {gbufMotion, Vec4(), Preserve},

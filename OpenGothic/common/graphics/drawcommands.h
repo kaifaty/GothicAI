@@ -91,8 +91,16 @@ class DrawCommands {
                          float depthRoundoff, bool late, bool reset);
     void compactHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool early);
     void finishHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& winners, uint8_t fId);
-    void finishBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool late);
+    void finishBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool late,
+                               const Tempest::Texture2d* previousDepth = nullptr,
+                               const Tempest::Matrix4x4* previousViewProject = nullptr, bool recordStats = true);
+    void filterBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& depth,
+                               const Tempest::Matrix4x4& viewProject);
+    void recheckBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, const Tempest::Texture2d& depth);
+    void drawBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, HistoryDraw history);
     bool hasPendingBoughExpansion() const { return boughHistoryToken!=0; }
+    bool hasPendingBoughHiZ() const;
+    void setBoughHiZVerify(bool enabled) { boughHiZVerify = enabled; }
     bool diagnoseBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, const Tempest::Texture2d& depth,
                                   const Tempest::Matrix4x4& viewProject, bool verify, uint64_t stamp);
     const Tempest::StorageBuffer& historyStatus() const { return history.status; }
@@ -212,6 +220,7 @@ class DrawCommands {
     bool                     statsWritten[Resources::MaxFramesInFlight] = {};
     std::unique_ptr<TreeBoughRender> boughs;
     bool                     boughExpanded = false;
+    bool                     boughHiZVerify = false;
     uint32_t                 boughHistoryToken = 0;
     friend class TreeBoughRender;
   };
