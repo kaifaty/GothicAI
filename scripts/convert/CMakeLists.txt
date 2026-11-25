@@ -64,12 +64,17 @@ target_compile_definitions(content-convert PRIVATE CONTENT_CONVERT_PARTICLE_PROG
 target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
 
 target_link_libraries(content-convert PRIVATE gothic-npc-snapshot StoryGraph)
-add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
+set(native_definition_readers
   ../../OpenGothic/common/game/itemdefinitionruntime.cpp
   ../../OpenGothic/common/game/npcdefinitionruntime.cpp
   ../../OpenGothic/common/game/npchelperruntime.cpp
+  ../../OpenGothic/common/game/routinedefinitionruntime.cpp)
+target_sources(content-convert PRIVATE ${native_definition_readers})
+target_include_directories(content-convert PRIVATE "${NPC_SNAPSHOT_GENERATED_DIR}")
+add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
+  ${native_definition_readers}
+  ../../OpenGothic/common/game/definitions/nativebasecatalog.cpp
   ../../OpenGothic/common/game/placementdefinitionruntime.cpp
-  ../../OpenGothic/common/game/routinedefinitionruntime.cpp
   ../../OpenGothic/common/world/objects/npcroutinetable.cpp
   ../../OpenGothic/common/world/waypoint.cpp)
 target_include_directories(gothic-npc-snapshot-contract PRIVATE "${NPC_SNAPSHOT_GENERATED_DIR}")
