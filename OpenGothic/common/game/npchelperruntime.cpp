@@ -122,11 +122,11 @@ std::span<const NativeBaseCatalog::NpcConstructorType> arguments(const Definitio
   return std::visit([](const auto& helper)->std::span<const NativeBaseCatalog::NpcConstructorType> {
     using T=std::decay_t<decltype(helper)>;
     using Parameter = NativeBaseCatalog::NpcConstructorType;
-    using enum Parameter;
-    static constexpr std::array actor{Instance};
-    static constexpr std::array actorInt{Instance,Integer};
-    static constexpr std::array actorInts{Instance,Integer,Integer};
-    static constexpr std::array visual{Instance,Integer,String,Integer,Integer,Integer};
+    static constexpr std::array actor{Parameter::Instance};
+    static constexpr std::array actorInt{Parameter::Instance,Parameter::Integer};
+    static constexpr std::array actorInts{Parameter::Instance,Parameter::Integer,Parameter::Integer};
+    static constexpr std::array visual{Parameter::Instance,Parameter::Integer,Parameter::String,
+                                       Parameter::Integer,Parameter::Integer,Parameter::Integer};
     if constexpr(std::is_same_v<T,SetFightSkills> || std::is_same_v<T,AttributesToChapter>) return actorInt;
     if constexpr(std::is_same_v<T,SetNpcVisual>) return visual;
     if constexpr(std::is_same_v<T,AmbientInventory>) return actor;
