@@ -755,23 +755,26 @@ assert Path(sys.argv[0]).with_name('runtime.dat').read_text() == 'runtime'
 import os
 from pathlib import Path
 import sys
-assert sys.argv[1:] == [os.environ['GOTHIC_DIR'], '--ou-messages']
-fingerprint = os.environ['OPENGOTHIC_BASE_FINGERPRINT']
-(Path(os.environ['TEST_ROOT']) / 'selected-base').write_text(fingerprint)
+explicit = os.environ.get('OPENGOTHIC_BASE')
+assert sys.argv[1:] == [explicit or os.environ['GOTHIC_DIR'], '--ou-messages']
+selected = explicit or os.environ['OPENGOTHIC_BASE_FINGERPRINT']
+(Path(os.environ['TEST_ROOT']) / 'selected-base').write_text(selected)
 ''')
         selected = self.root / 'selected-base'
         (self.source / 'scripts/e2e.sh').write_text(
-            'test "$(cat "$TEST_ROOT/selected-base")" = "$OPENGOTHIC_BASE_FINGERPRINT"\n'
+            'test "$(cat "$TEST_ROOT/selected-base")" = "${OPENGOTHIC_BASE:-$OPENGOTHIC_BASE_FINGERPRINT}"\n'
             '"$GAME_BIN" --test\n')
-        # The pre-server selection must work with both a missing and a stale selection.
-        for previous in (None, 'd' * 64):
+        # A stale selection must not override the current fingerprint or an explicit base.
+        explicit = str(self.root / 'native v3')
+        for previous, pinned in ((None, ''), ('d' * 64, ''), ('d' * 64, explicit)):
+            self.env['OPENGOTHIC_BASE'] = pinned
             if previous is not None:
                 selected.write_text(previous)
             result = self.shell(r'''
 remote_probe e2e "$TEST_ROOT/worktree" run stages
 remote_run e2e "$TEST_ROOT/worktree" run
 ''')
-            self.assertEqual(selected.read_text(), 'c' * 64)
+            self.assertEqual(selected.read_text(), pinned or 'c' * 64)
         self.assertIn(f'engine from cache {self.engine_digest[:12]} (0s)', result.stdout)
         self.assertEqual((self.root / 'game-path').read_text(), str(cached / 'Gothic2Notr'))
         self.assertFalse((self.state / 'build').exists())
@@ -1159,23 +1162,28 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
 import os
 from pathlib import Path
 import sys
-assert sys.argv[1:] == [os.environ['GOTHIC_DIR'], '--ou-messages']
-(Path(os.environ['TEST_ROOT']) / 'selected-base').write_text(os.environ['OPENGOTHIC_BASE_FINGERPRINT'])
+explicit = os.environ.get('OPENGOTHIC_BASE')
+assert sys.argv[1:] == [explicit or os.environ['GOTHIC_DIR'], '--ou-messages']
+selected = explicit or os.environ['OPENGOTHIC_BASE_FINGERPRINT']
+(Path(os.environ['TEST_ROOT']) / 'selected-base').write_text(selected)
 ''')
         storygraph.chmod(0o755)
         self.env.pop('GOTHIC_DIR', None)
         commands = r'''
 build_storygraph() { export RYZEN_STORYGRAPH_BIN="$TEST_ROOT/bin/storygraph"; }
 uv() {
-  test "$(cat "$TEST_ROOT/selected-base")" = "$OPENGOTHIC_BASE_FINGERPRINT"
+  test "$(cat "$TEST_ROOT/selected-base")" = "${OPENGOTHIC_BASE:-$OPENGOTHIC_BASE_FINGERPRINT}"
   printf '%s\n' "$GOTHIC_DIR" "$@" >"$TEST_ROOT/pytest-env"
 }
 remote_run pytest "$TEST_ROOT/worktree" run -rs tests/test_storygraph.py
 '''
-        self.shell(commands)
-        self.assertEqual((self.root / 'pytest-env').read_text().splitlines(), [
-            str(self.home / 'gothic-ai/game-settings'), 'run', 'pytest', '-rs', 'tests/test_storygraph.py',
-        ])
+        for explicit in ('', str(self.root / 'native v3')):
+            self.env['OPENGOTHIC_BASE'] = explicit
+            self.shell(commands)
+            self.assertEqual((self.root / 'pytest-env').read_text().splitlines(), [
+                str(self.home / 'gothic-ai/game-settings'), 'run', 'pytest', '-rs', 'tests/test_storygraph.py',
+            ])
+            self.assertEqual((self.root / 'selected-base').read_text(), explicit or 'c' * 64)
         (self.root / 'pytest-env').unlink()
         (self.home / 'gothic-ai/game-base.json').unlink()
         shutil.rmtree(self.home / 'gothic-ai/game-settings')

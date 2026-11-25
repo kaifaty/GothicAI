@@ -595,8 +595,8 @@ remote_run() {
     game_settings
     digest="$(storygraph_digest)"
     build_storygraph "$state" "$digest"
-    # Select the base and refresh its pointer before the server tests read it.
-    "$RYZEN_STORYGRAPH_BIN" "$GOTHIC_DIR" --ou-messages >/dev/null
+    # A pinned base is already selected. Otherwise refresh the installation's pointer.
+    "$RYZEN_STORYGRAPH_BIN" "${OPENGOTHIC_BASE:-$GOTHIC_DIR}" --ou-messages >/dev/null
     cd "$ROOT/server"
     uv run pytest "$@" && rc=0 || rc=$?
     echo "Ryzen: pytest $((SECONDS - started))s, exit $rc"
@@ -621,8 +621,8 @@ remote_run() {
   e2e_window_position "$display_slot"
   echo "Ryzen: e2e slot $display_slot; ports $PORT/$ASR_PORT/$TTS_PORT; window $TEMPEST_WINDOW_SIZE at $TEMPEST_WINDOW_POS; screen $RYZEN_SCREEN_SIZE"
   require_prepared "$action" "$state" "$run" "${SCENARIO:-m0}"
-  # Select the base and refresh its pointer before the server and TTS read it.
-  "$RYZEN_STORYGRAPH_BIN" "$GOTHIC_DIR" --ou-messages >/dev/null
+  # Read a pinned base directly. Its path is inherited by the server and TTS.
+  "$RYZEN_STORYGRAPH_BIN" "${OPENGOTHIC_BASE:-$GOTHIC_DIR}" --ou-messages >/dev/null
   # Dependencies were synchronized without the display; uv run must not rebuild them here.
   export UV_NO_SYNC=1
   # Windowed on the logged-in desktop; never take it fullscreen or use a software display.
