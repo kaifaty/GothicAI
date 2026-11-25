@@ -4,6 +4,8 @@
 
 #include "game/definitions/basescripts.h"
 #include "game/definitions/nativebasecatalog.h"
+#include "game/definitions/stockstoryprograms.h"
+#include "resources.h"
 
 #include <algorithm>
 #include <array>
@@ -525,32 +527,8 @@ void runDragonIslandFirstEntry(daedalus::DaedalusVm& vm) {
 PlacementDefinitionRuntime::Definitions dragonIslandPlacement(daedalus::DaedalusScript& vm,
                       const std::vector<PlacementDefinitions::LiteralInsert>& placements) {
   using Value = PlacementDefinitions::Value;
-  struct Captain {
-    std::string_view flag, npc;
-    };
-  static constexpr Captain captains[] = {
-    {"JORGENISCAPTAIN", "VLK_4250_JORGEN_DI"},
-    {"TORLOFISCAPTAIN", "SLD_801_TORLOF_DI"},
-    {"JACKISCAPTAIN",   "VLK_444_JACK_DI"},
-    };
-  struct Crew {
-    std::string_view flag, npc, partner = {};
-    };
-  static constexpr Crew crew[] = {
-    {"LEE_ISONBOARD",      "SLD_800_LEE_DI"},
-    {"MILTENNW_ISONBOARD", "PC_MAGE_DI",        "LESTER_ISONBOARD"},
-    {"LESTER_ISONBOARD",   "PC_PSIONIC_DI",     "MILTENNW_ISONBOARD"},
-    {"MARIO_ISONBOARD",    "NONE_101_MARIO_DI"},
-    {"WOLF_ISONBOARD",     "SLD_811_WOLF_DI"},
-    {"VATRAS_ISONBOARD",   "VLK_439_VATRAS_DI"},
-    {"BENNET_ISONBOARD",   "SLD_809_BENNET_DI"},
-    {"DIEGO_ISONBOARD",    "PC_THIEF_DI",       "LARES_ISONBOARD"},
-    {"GORN_ISONBOARD",     "PC_FIGHTER_DI"},
-    {"LARES_ISONBOARD",    "VLK_449_LARES_DI",  "DIEGO_ISONBOARD"},
-    {"BIFF_ISONBOARD",     "DJG_713_BIFF_DI"},
-    {"ANGAR_ISONBOARD",    "DJG_705_ANGAR_DI"},
-    {"GIRION_ISONBOARD",   "PAL_207_GIRION_DI"},
-    };
+  using NativeWorldPlacement::captains;
+  using NativeWorldPlacement::crew;
   PlacementDefinitions::Library library;
   auto& steps = library.placements["STARTUP_DRAGONISLAND"].steps;
   const auto number = [&](std::string_view symbol) { return vm.find_symbol_by_name(symbol)->get_int(); };
@@ -831,6 +809,10 @@ bool runAddonNpcTrigger(daedalus::DaedalusVm& vm,const daedalus::DaedalusSymbol&
 }
 
 void GameScript::invokeWorldTrigger(std::string_view fn) {
+  if(nativeWorldPlacement) {
+    runNativeWorldTrigger(fn);
+    return;
+    }
   const auto* symbol = findSymbol(fn);
   if(symbol!=nullptr && nativeRoutineProgram && PlacementDefinitionRuntime::enabled()) {
     const auto found=placementDefinitions.triggerInserts.find(symbol->name());
@@ -895,6 +877,10 @@ void GameScript::runWorldFirstEntryTrigger(bool oldWorld) {
   }
 
 void GameScript::runStartup(std::string_view fn) {
+  if(nativeWorldPlacement) {
+    runNativeWorldStartup(fn);
+    return;
+    }
   const auto* function = vm.find_symbol_by_name(fn);
   const auto applyNativeInsert = [this,catalog=baseNativeCatalog()](const PlacementDefinitionRuntime::Call& call) {
     if(call.deferred || vm.has_legacy_dispatcher())
@@ -934,6 +920,10 @@ void GameScript::runStartup(std::string_view fn) {
   }
 
 void GameScript::runWorldInit(std::string_view fn) {
+  if(nativeWorldPlacement) {
+    runNativeWorldInit(fn);
+    return;
+    }
   const auto* function = vm.find_symbol_by_name(fn);
   const bool native = nativeRoutineProgram && PlacementDefinitionRuntime::enabled() && function;
   if(native && function->name()=="INIT_GLOBAL") {
@@ -1125,18 +1115,11 @@ void GameScript::loadNewWorldChapterEntries() {
   }
 
 void GameScript::loadNativeWorldEntry() {
-  if(!nativeRoutineProgram)
+  const auto* catalog = baseNativeCatalog();
+  if(catalog==nullptr && !nativeRoutineProgram)
     return;
 
   bindRuntimeVariable("CURRENTLEVEL",currentStoryWorld);
-  if(placementDefinitions.firstEntries) {
-    vm.override_function("ENTER_OLDWORLD_FIRSTTIME_TRIGGER",std::function<void()>{[this] {
-      runWorldFirstEntryTrigger(true);
-      }},PlacementDefinitionRuntime::enabled);
-    vm.override_function("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC",std::function<void()>{[this] {
-      runWorldFirstEntryTrigger(false);
-      }},PlacementDefinitionRuntime::enabled);
-    }
   static constexpr std::pair<std::string_view,int32_t GhostProgress::*> ghostFlags[]={
     {"GHOST_SCKNOWSHOW2GETINADANOSTEMPEL",&GhostProgress::knowsTempleEntrance},
     {"SC_SUMMONEDANCIENTGHOST",&GhostProgress::summonedAncientGhost},
@@ -1149,6 +1132,19 @@ void GameScript::loadNativeWorldEntry() {
     };
   for(const auto& [name,field]:ghostFlags)
     bindRuntimeVariable(name,ghostProgress.*field);
+  if(catalog!=nullptr) {
+    nativeWorldPlacement = NativeWorldPlacement::Definitions::load(Resources::baseDir(),
+                                                                   StockStoryPrograms::stockProgram,*catalog);
+    return;
+    }
+  if(placementDefinitions.firstEntries) {
+    vm.override_function("ENTER_OLDWORLD_FIRSTTIME_TRIGGER",std::function<void()>{[this] {
+      runWorldFirstEntryTrigger(true);
+      }},PlacementDefinitionRuntime::enabled);
+    vm.override_function("ENTER_ADDONWORLD_FIRSTTIME_TRIGGER_FUNC",std::function<void()>{[this] {
+      runWorldFirstEntryTrigger(false);
+      }},PlacementDefinitionRuntime::enabled);
+    }
 
   loadKhorinisChapter3();
   static constexpr std::pair<const char*,ChapterWorld> worlds[]={

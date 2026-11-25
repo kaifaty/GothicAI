@@ -26,7 +26,7 @@ if(MSVC)
 endif()
 endif()
 add_executable(content-convert convert.cpp stressbase.cpp stressmeshes.cpp worldcook.cpp clusterlodcensus.cpp ../../OpenGothic/common/basestore.cpp
-  ../../OpenGothic/tools/runtimebindingroots.cpp ../../OpenGothic/tools/nativebasecatalogimport.cpp
+  ../../OpenGothic/tools/runtimebindingroots.cpp ../../OpenGothic/tools/nativebasecatalogimport.cpp ../../OpenGothic/tools/nativeworldplacementimport.cpp
   ../../OpenGothic/common/game/definitions/nativebasecatalog.cpp
   ../../OpenGothic/common/gltfmeshcolor.cpp
   ../../OpenGothic/common/world/voblayer.cpp ../../OpenGothic/common/world/movablevobs.cpp
@@ -69,7 +69,8 @@ set(native_definition_readers
   ../../OpenGothic/common/game/npcdefinitionruntime.cpp
   ../../OpenGothic/common/game/npchelperruntime.cpp
   ../../OpenGothic/common/game/routinedefinitionruntime.cpp)
-target_sources(content-convert PRIVATE ${native_definition_readers})
+target_sources(content-convert PRIVATE ${native_definition_readers}
+  ../../OpenGothic/common/game/definitions/nativeworldplacement.cpp)
 target_include_directories(content-convert PRIVATE "${NPC_SNAPSHOT_GENERATED_DIR}")
 add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
   ${native_definition_readers}

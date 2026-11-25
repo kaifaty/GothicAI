@@ -98,6 +98,7 @@
 #include "game/definitions/menudefinitions.h"
 #include "game/definitions/musicdefinitiondata.h"
 #include "game/definitions/nativebasecatalog.h"
+#include "game/definitions/nativeworldplacement.h"
 #include "game/itemdefinitionruntime.h"
 #include "game/npcdefinitionruntime.h"
 #include "game/routinedefinitionruntime.h"
@@ -109,6 +110,7 @@
 #include "stressbase.h"
 #include "npcsnapshot.h"
 #include "nativebasecatalogimport.h"
+#include "nativeworldplacementimport.h"
 #include "worldcook.h"
 
 #include <zenkit/Archive.hh>
@@ -270,6 +272,7 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
   auto program=NpcSnapshot::load(base);
   require(program.sha256==game->recordSha256,"projection requires the stock runtime program selection");
   std::optional<NativeBaseCatalog::Selection> catalogs;
+  rapidjson::Document worldPlacement;
   if(v3) {
     bound(base/"outputunits"/"outputunits.json");
     bound(base/"definitions"/program.sha256/"routines.json");
@@ -286,6 +289,8 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     catalogs->itemCallbacks=NativeBaseCatalog::prepareItemCallbacks(script,base);
     catalogs->npcCallbacks=NativeBaseCatalog::prepareNpcCallbacks(script);
     catalogs->npcConstructor=NativeBaseCatalog::prepareNpcConstructor(script,base);
+    bound(base/"definitions"/program.sha256/"placement.json");
+    worldPlacement=NativeWorldPlacement::prepare(base,program.sha256,script);
     }
 
   const auto sourceSymbols=ProgramData::symbolMetadataPath(base,program.sha256);
@@ -332,6 +337,10 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
       const auto file=NativeBaseCatalog::section(out);
       kept.emplace(file.lexically_relative(out).generic_string(),BaseImport::sha256File(file));
       NativeBaseCatalog::verify(out,*catalogs);
+      const auto worldFile=NativeWorldPlacement::Definitions::section(out,program.sha256);
+      DefinitionJson::write(worldFile,worldPlacement);
+      kept.emplace(worldFile.lexically_relative(out).generic_string(),BaseImport::sha256File(worldFile));
+      (void)NativeWorldPlacement::Definitions::load(out,program.sha256,*catalogs);
       const auto items=ItemDefinitionRuntime::loadNative(out,*catalogs,program.sha256);
       const auto npcs=NpcDefinitionRuntime::load(out,*catalogs,program.sha256);
       const auto routines=RoutineDefinitionRuntime::load(out,*catalogs,program.sha256);

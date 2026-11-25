@@ -1,5 +1,6 @@
 #pragma once
 
+#include "game/definitions/nativeworldplacement.h"
 #include "daedalus/vm.h"
 #include "daedalus/classes.h"
 
@@ -461,6 +462,17 @@ class GameScript final : public GameRules {
     void loadNativeNpcGlobals();
     void loadNativeMonsterAttitudes();
     void loadNativeWorldEntry();
+    void runNativeWorldStartup(std::string_view name);
+    void runNativeWorldInit(std::string_view name);
+    void runNativeWorldTrigger(std::string_view name);
+    void runNativeWorldRooms(std::string_view name);
+    void runNativeAddonChapterEntry();
+    void nativeWorldExternal(std::string_view name,std::initializer_list<storygraph::NativeValue> args = {});
+    void nativeWorldFunction(std::string_view name,const std::vector<storygraph::StoryArgument>& args = {});
+    void nativeWorldSpawn(const NativeWorldPlacement::Spawn& row);
+    int32_t nativeWorldNumber(std::string_view name) const;
+    void nativeWorldFlag(std::string_view name,int32_t value);
+    int32_t nativeWorldActorId(std::string_view name,bool npc);
     void runWorldFirstEntryTrigger(bool oldWorld);
     void loadNewWorldChapterEntries();
     void loadKhorinisChapter3();
@@ -921,6 +933,7 @@ class GameScript final : public GameRules {
     RoutineDefinitionRuntime::Definitions                       routineDefinitions;
     NpcDefinitionRuntime::Definitions                           npcDefinitions;
     PlacementDefinitionRuntime::Definitions                     placementDefinitions;
+    std::optional<NativeWorldPlacement::Definitions>             nativeWorldPlacement;
     ActivityDefinitionRuntime::Definitions                      activityDefinitions;
     bool                                                        activityEvents = ActivityDefinitionRuntime::events();
     QuietSoundReaction                                          quietSound;
