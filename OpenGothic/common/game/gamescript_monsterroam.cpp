@@ -52,7 +52,7 @@ bool GameScript::runRoamingRoutine(Npc& npc, std::string_view name, int& result)
     else if(rollRandom(1000,&npc,true)<=5) {
       constexpr std::array animations = {"R_ROAM1","R_ROAM2","R_ROAM3"};
       const auto roll = rollRandom(3,&npc,true);
-      findSymbol("ZS_MM_RTN_ROAM_LOOP.RANDOMMOVE")->set_int(int32_t(roll));
+      setNpcRuleInt("ZS_MM_RTN_ROAM_LOOP.RANDOMMOVE",int32_t(roll));
       npc.aiPush(AiQueue::aiPlayAnim(animations[roll]));
       }
     return true;

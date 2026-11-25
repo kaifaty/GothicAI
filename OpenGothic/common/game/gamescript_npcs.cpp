@@ -146,6 +146,48 @@ int32_t GameScript::callNpcHelperOperation(const std::shared_ptr<daedalus::INpc>
   return external->second.call(std::span(values).first(arguments.size()),resolve,{}).value.i;
   }
 
+std::shared_ptr<daedalus::INpc> GameScript::nativeNpc(std::string_view name) {
+  return std::dynamic_pointer_cast<daedalus::INpc>(storyActorSlot(name));
+  }
+
+int32_t GameScript::npcRuleInt(std::string_view name,uint16_t index) {
+  if(index==0)
+    if(const auto value = globalIntSymbol(name))
+      return *value;
+  if(const auto* values = std::get_if<ScriptVars::Array<int32_t>>(runtimeState.find(name)))
+    if(index<values->values.size())
+      return values->values[index];
+  if(const auto* constant = NativeBaseCatalog::findConstant(*baseNativeCatalog(),name))
+    if(const auto* values = std::get_if<std::vector<int32_t>>(&constant->values); values && index<values->size())
+      return (*values)[index];
+  throw std::runtime_error("missing NPC rule value: "+std::string(name));
+  }
+
+void GameScript::setNpcRuleInt(std::string_view name,int32_t value,uint16_t index) {
+  if(auto* field = std::get_if<ScriptVars::Array<int32_t>>(runtimeState.find(name)); field && index<field->values.size()) {
+    field->values[index] = value;
+    return;
+    }
+  throw std::runtime_error("missing writable NPC rule value: "+std::string(name));
+  }
+
+std::string_view GameScript::npcRuleString(std::string_view name) const {
+  if(const auto* values = std::get_if<ScriptVars::Array<std::string>>(runtimeState.find(name)))
+    return values->values.front();
+  if(const auto* constant = NativeBaseCatalog::findConstant(*baseNativeCatalog(),name))
+    if(const auto* values = std::get_if<std::vector<std::string>>(&constant->values))
+      return values->front();
+  throw std::runtime_error("missing NPC rule string: "+std::string(name));
+  }
+
+void GameScript::setNpcRuleString(std::string_view name,std::string_view value) {
+  if(auto* field = std::get_if<ScriptVars::Array<std::string>>(runtimeState.find(name))) {
+    field->values.front() = value;
+    return;
+    }
+  throw std::runtime_error("missing writable NPC rule string: "+std::string(name));
+  }
+
 bool GameScript::invokeNpcHelper(const std::shared_ptr<daedalus::INpc>& npc,uint32_t function,
                                  std::span<const HelperValue> args) {
   if(baseNativeCatalog()!=nullptr) {

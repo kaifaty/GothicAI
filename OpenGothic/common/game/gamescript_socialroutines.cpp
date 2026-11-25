@@ -103,7 +103,7 @@ bool GameScript::runSocialRoutine(Npc& npc, std::string_view name, int& result) 
         }
       else if(seconds>=8) {
         const bool detected = wld_detectnpc(self,-1,id("ZS_SMALLTALK"),-1);
-        const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+        const auto other = nativeNpc("OTHER");
         if(detected && npc_getdisttonpc(self,other)<500) {
           npc_setstatetime(other,4);
           ai_turntonpc(self,other);
@@ -453,7 +453,7 @@ bool GameScript::runTalk(Npc& npc, std::string_view name, int& result) {
   constexpr size_t toughGuyNewsOverride = 25; // AIV_TOUGHGUYNEWSOVERRIDE
   constexpr size_t ambientNewsOverride = 58; // AIV_NEWSOVERRIDE
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
-  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto other = [&] { return nativeNpc("OTHER"); };
   const auto seated = [&](const std::shared_ptr<daedalus::INpc>& actor) {
     return ActivityDefinitions::bodyStateContains(npc_getbodystate(actor),BS_SIT);
     };
@@ -471,7 +471,7 @@ bool GameScript::runTalk(Npc& npc, std::string_view name, int& result) {
     if(self->guild<int32_t(GIL_SEPERATOR_HUM)) {
       if(seated(self)) {
         const auto target = npc_getlookattarget(self);
-        findSymbol("ZS_TALK.TARGET")->set_instance(target);
+        storyActorSlot("ZS_TALK.TARGET") = target;
         if(!hlp_isvalidnpc(target))
           ai_lookatnpc(self,other());
         } else {
@@ -489,7 +489,7 @@ bool GameScript::runTalk(Npc& npc, std::string_view name, int& result) {
 
     if(self->guild<int32_t(GIL_SEPERATOR_HUM)) {
       const auto assignInfo = [&](std::string_view formal, std::string_view topic) {
-        findSymbol(formal)->set_instance(self);
+        storyActorSlot(formal) = self;
         const auto owner = hlp_getinstanceid(self);
         if(auto* info = findInfo(findSymbolIndex(topic)))
           info->npc = owner;
@@ -511,7 +511,7 @@ bool GameScript::runTalk(Npc& npc, std::string_view name, int& result) {
       static constexpr std::string_view noPartyPotion[] = {"PARDOS_NW","PARDOS","BIFF_DI","BIFF_NW","BIFF"};
       const auto selfId = hlp_getinstanceid(self);
       const bool excluded = std::ranges::any_of(noPartyPotion,[&](std::string_view instance) {
-        return hlp_getinstanceid(findSymbol(instance)->get_instance())==selfId;
+        return hlp_getinstanceid(storyActorSlot(instance))==selfId;
         });
       if(!excluded && self->aivar[partyMember]==1)
         assignInfo("B_ADDON_GIVEPOTION.SLF","DIA_ADDON_GIVEPOTION");
@@ -519,9 +519,9 @@ bool GameScript::runTalk(Npc& npc, std::string_view name, int& result) {
       const bool toughGuy = isToughGuy(self);
       if(canOfferNews && toughGuy)
         assignInfo("B_ASSIGNTOUGHGUYNEWS.SLF","DIA_TOUGHGUY_NEWS");
-      findSymbol("C_NPCHASAMBIENTNEWS.SLF")->set_instance(self);
+      storyActorSlot("C_NPCHASAMBIENTNEWS.SLF") = self;
       if(self->aivar[ambientNewsOverride]!=1) {
-        const auto noCrime = findSymbol("CRIME_NONE")->get_int();
+        const auto noCrime = npcRuleInt("CRIME_NONE");
         if(playerCrime(self)!=noCrime)
           assignInfo("B_ASSIGNAMBIENTNEWS.SLF","DIA_AMBIENT_NEWS");
         }
@@ -571,22 +571,22 @@ bool GameScript::runTalk(Npc& npc, std::string_view name, int& result) {
 
 void GameScript::endProductionDialog() {
   constexpr size_t invincible = 4; // AIV_INVINCIBLE
-  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto self = nativeNpc("SELF");
   ai_stopprocessinfos(self);
   wld_stopeffect("DEMENTOR_FX");
   if(self)
     self->aivar[invincible] = 0;
-  findSymbol("PLAYER_MOBSI_PRODUCTION")->set_int(findSymbol("MOBSI_NONE")->get_int());
+  setNpcRuleInt("PLAYER_MOBSI_PRODUCTION",npcRuleInt("MOBSI_NONE"));
   }
 
 bool GameScript::canPickpocket(int32_t dexterity, int32_t gold) {
   constexpr size_t pickedPocket = 6; // AIV_PLAYERHASPICKEDMYPOCKET
-  findSymbol("C_BEKLAUEN.THEFTGOLD")->set_int(gold);
-  findSymbol("C_BEKLAUEN.THEFTDEX")->set_int(dexterity);
-  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
-  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
-  const bool possessed = findSymbol("NPCOBSESSEDBYDMT")->get_int()!=0;
-  const auto difference = findSymbol("THEFTDIFF")->get_int();
+  setNpcRuleInt("C_BEKLAUEN.THEFTGOLD",gold);
+  setNpcRuleInt("C_BEKLAUEN.THEFTDEX",dexterity);
+  const auto self = nativeNpc("SELF");
+  const auto other = nativeNpc("OTHER");
+  const bool possessed = npcRuleInt("NPCOBSESSEDBYDMT")!=0;
+  const auto difference = npcRuleInt("THEFTDIFF");
   const auto minimum = std::bit_cast<int32_t>(uint32_t(dexterity)-uint32_t(difference));
   const auto playerDexterity = other ? other->attribute[ATR_DEXTERITY] : 0;
   const bool robbed = self && self->aivar[pickedPocket]!=0;
@@ -594,19 +594,19 @@ bool GameScript::canPickpocket(int32_t dexterity, int32_t gold) {
   if(possessed || playerDexterity<minimum || robbed || !trained)
     return false;
   if(npc_isinstate(self,int(ZS_Talk))) {
-    findSymbol("THEFTDEXGLOB")->set_int(dexterity<=20 ? 10 : dexterity);
-    findSymbol("THEFTGOLDGLOB")->set_int(gold);
+    setNpcRuleInt("THEFTDEXGLOB",dexterity<=20 ? 10 : dexterity);
+    setNpcRuleInt("THEFTGOLDGLOB",gold);
     }
   return true;
   }
 
 void GameScript::attemptPickpocket() {
   constexpr size_t pickedPocket = 6; // AIV_PLAYERHASPICKEDMYPOCKET
-  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
-  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto self = nativeNpc("SELF");
+  const auto other = nativeNpc("OTHER");
   const auto playerDexterity = other ? other->attribute[ATR_DEXTERITY] : 0;
-  if(playerDexterity>=findSymbol("THEFTDEXGLOB")->get_int()) {
-    giveInventoryItems(self,other,int32_t(findSymbolIndex("ITMI_GOLD")),findSymbol("THEFTGOLDGLOB")->get_int());
+  if(playerDexterity>=npcRuleInt("THEFTDEXGLOB")) {
+    giveInventoryItems(self,other,int32_t(findSymbolIndex("ITMI_GOLD")),npcRuleInt("THEFTGOLDGLOB"));
     if(self)
       self->aivar[pickedPocket] = 1;
     givePickpocketXp();
@@ -616,7 +616,7 @@ void GameScript::attemptPickpocket() {
   decrementPickpocketVictimCount();
   ai_stopprocessinfos(self);
   if(self)
-    startNpcAttack(self,other,findSymbol("AR_THEFT")->get_int(),1);
+    startNpcAttack(self,other,npcRuleInt("AR_THEFT"),1);
   }
 
 void GameScript::givePickpocketXp() {
@@ -632,14 +632,14 @@ void GameScript::givePickpocketXp() {
     level.set_int(next);
     nextLevel.set_int(std::bit_cast<int32_t>(uint32_t(count)+uint32_t(next)));
     }
-  const auto amount = std::bit_cast<int32_t>(10u*uint32_t(level.get_int())+uint32_t(findSymbol("THIEFXP")->get_int()));
+  const auto amount = std::bit_cast<int32_t>(10u*uint32_t(level.get_int())+uint32_t(npcRuleInt("THIEFXP")));
   vm.push_int(amount);
   vm.unsafe_call_bl(findSymbol("B_GIVEPLAYERXP"));
   }
 
 void GameScript::decrementPickpocketVictimCount() {
   auto& victims = *findSymbol("VICTIMCOUNT");
-  if(victims.get_int()>findSymbol("THIEFLEVEL")->get_int())
+  if(victims.get_int()>npcRuleInt("THIEFLEVEL"))
     victims.set_int(victims.get_int()-1);
   }
 
@@ -655,8 +655,8 @@ bool GameScript::canRunNativeTalkReaction() {
   if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
      ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return false;
-  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
-  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto self = nativeNpc("SELF");
+  const auto other = nativeNpc("OTHER");
   const auto* source = findNpc(static_cast<NpcRecord*>(other.get()));
   if(!findNpc(static_cast<NpcRecord*>(self.get())) || !source || !source->isPlayer() ||
      other->symbol_index()!=findSymbolIndex("PC_HERO"))
@@ -685,8 +685,8 @@ bool GameScript::invokeNativeTalkPerception(std::string_view functionName, NpcAc
 bool GameScript::refusesTalk(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
   constexpr size_t guardPassageStatus = 12; // AIV_GUARDPASSAGE_STATUS in the verified program
   constexpr size_t talkedToPlayer = 5; // AIV_TALKEDTOPLAYER
-  findSymbol("C_REFUSETALK.OTH")->set_instance(other);
-  findSymbol("C_REFUSETALK.SLF")->set_instance(self);
+  storyActorSlot("C_REFUSETALK.OTH") = other;
+  storyActorSlot("C_REFUSETALK.SLF") = self;
 
   const bool noPass = !self || self->aivar[guardPassageStatus]==0;
   const bool guard = isGateGuard(self);
@@ -695,27 +695,27 @@ bool GameScript::refusesTalk(const std::shared_ptr<daedalus::INpc>& self, const 
     return true;
   const bool farFromPost = npc_getdisttowp(self,self ? std::string_view(self->wp) : std::string_view{})>500;
   const bool firstTalk = !self || self->aivar[talkedToPlayer]==0;
-  if(farFromPost && firstTalk && hlp_getinstanceid(self)==hlp_getinstanceid(findSymbol("LOTHAR")->get_instance()))
+  if(farFromPost && firstTalk && hlp_getinstanceid(self)==hlp_getinstanceid(storyActorSlot("LOTHAR")))
     return true;
 
-  const auto listener = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
-  const bool mortal = (!listener || int32_t(listener->flags)!=findSymbol("NPC_FLAG_IMMORTAL")->get_int());
+  const auto listener = nativeNpc("SELF");
+  const bool mortal = (!listener || int32_t(listener->flags)!=npcRuleInt("NPC_FLAG_IMMORTAL"));
   const bool fakeGuild = hasFakeGuild(self,other);
   return mortal && fakeGuild;
   }
 
 void GameScript::runAssessTalk() {
   constexpr size_t startedTalk = 3; // AIV_NPCSTARTEDTALK in the verified program
-  const auto self = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()); };
-  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()); };
+  const auto self = [&] { return nativeNpc("SELF"); };
+  const auto other = [&] { return nativeNpc("OTHER"); };
   const auto guild = [&] { const auto actor=self(); return actor ? actor->guild : int32_t(GIL_NONE); };
   const auto started = [&] { const auto actor=self(); return actor ? actor->aivar[startedTalk] : 0; };
   const auto attack = [&](std::string_view reason) {
-    startNpcAttack(self(),other(),findSymbol(reason)->get_int(),0);
+    startNpcAttack(self(),other(),npcRuleInt(reason),0);
     };
 
-  findSymbol("B_ASSESSTALK.PCL")->set_instance(hlp_getnpc(int(findSymbolIndex("PC_LEVELINSPEKTOR"))));
-  findSymbol("B_ASSESSTALK.PCR")->set_instance(hlp_getnpc(int(findSymbolIndex("PC_ROCKEFELLER"))));
+  storyActorSlot("B_ASSESSTALK.PCL") = hlp_getnpc(int(findSymbolIndex("PC_LEVELINSPEKTOR")));
+  storyActorSlot("B_ASSESSTALK.PCR") = hlp_getnpc(int(findSymbolIndex("PC_ROCKEFELLER")));
   vm.unsafe_set_gi(self());
 
   if(guild()>int32_t(GIL_SEPERATOR_HUM) && !npc_checkinfo(self(),1) && !npc_checkinfo(self(),0))
@@ -725,7 +725,7 @@ void GameScript::runAssessTalk() {
     if(vm.pop_int()!=0)
       return;
     const bool wantsAttack = wantsToAttackMurderer(self(),other());
-    const bool murder = playerCrime(self())==findSymbol("CRIME_MURDER")->get_int();
+    const bool murder = playerCrime(self())==npcRuleInt("CRIME_MURDER");
     if(wantsAttack && murder) {
       attack("AR_HUMANMURDEREDHUMAN");
       return;
@@ -754,7 +754,7 @@ void GameScript::runAssessTalk() {
       sayToNpc(other(),self(),"$SC_HEYWAITASECOND");
       } else if(!npc_canseenpc(self(),other())) {
       const auto roll = hlp_random(100);
-      findSymbol("B_ASSESSTALK.RND")->set_int(roll);
+      setNpcRuleInt("B_ASSESSTALK.RND",roll);
       static constexpr std::pair<int32_t,std::string_view> greetings[] = {
         {25,"$SC_HEYTURNAROUND"}, {50,"$SC_HEYTURNAROUND02"}, {75,"$SC_HEYTURNAROUND03"}, {99,"$SC_HEYTURNAROUND04"},
         };

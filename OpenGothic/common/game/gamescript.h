@@ -387,7 +387,7 @@ class GameScript final : public GameRules {
     bool runMonsterSheepFollow(Npc& npc, std::string_view name, int& result);
     bool runMonsterSummoned(Npc& npc, std::string_view name, int& result);
     int32_t detectWisp();
-    daedalus::DaedalusSymbol* detectWispItem();
+    int32_t detectWispItem();
     void approachWispItem();
     bool nativeMonsterPerceptionsEnabled();
     bool invokeNativeMonsterPerception(std::string_view name, NpcActivityProbe::Phase& probe);
@@ -406,7 +406,6 @@ class GameScript final : public GameRules {
     void runMonsterSummonedAssessTalk();
     void awakenStoneGuardian(const std::shared_ptr<daedalus::INpc>& actor);
     bool monsterWantsToEat(const std::shared_ptr<daedalus::INpc>& monster, const std::shared_ptr<daedalus::INpc>& body);
-    void pushMonsterWantsToEat();
     bool monsterPredatorFoundPrey(const std::shared_ptr<daedalus::INpc>& predator, const std::shared_ptr<daedalus::INpc>& prey);
     bool runRoamingRoutine(Npc& npc, std::string_view name, int& result);
     bool runShrinkState(Npc& npc, std::string_view name, int& result);
@@ -433,6 +432,11 @@ class GameScript final : public GameRules {
     void beginMonsterRoutine(Npc& npc, bool desynchronize = true, WalkBit mode = WalkBit::WM_Walk);
     bool endMonsterRoutine(Npc& npc, MonsterRoutine routine);
     void removeRavensStoneGuardians(Npc& npc);
+    std::shared_ptr<daedalus::INpc> nativeNpc(std::string_view name);
+    int32_t npcRuleInt(std::string_view name, uint16_t index = 0);
+    void setNpcRuleInt(std::string_view name, int32_t value, uint16_t index = 0);
+    std::string_view npcRuleString(std::string_view name) const;
+    void setNpcRuleString(std::string_view name, std::string_view value);
     void loadNativeRoutines();
     void loadNativeRoutineExchange();
     void runGregRoutineTransition(const daedalus::INpc& self);

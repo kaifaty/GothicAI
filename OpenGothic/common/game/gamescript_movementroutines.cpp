@@ -115,13 +115,13 @@ bool GameScript::runMovementRoutine(Npc& npc, std::string_view name, int& result
       npc.aiPush(AiQueue::aiUseMob(bed,1));
       return true;
       }
-    const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+    const auto hero = nativeNpc("HERO");
     const auto distance = npc_getdisttonpc(self,hero);
     const bool lyingHero = npcBodyStateContains(hero,BS_LIE);
     auto& complaint = *findSymbol("PLAYER_GETOUTOFMYBEDCOMMENT");
     if(distance<=500 && lyingHero && complaint.get_int()==0) {
       turnToNpc(self,hero);
-      sayToNpc(self,std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),"$GETOUTOFMYBED");
+      sayToNpc(self,nativeNpc("OTHER"),"$GETOUTOFMYBED");
       complaint.set_int(1);
       }
     return true;
@@ -130,7 +130,7 @@ bool GameScript::runMovementRoutine(Npc& npc, std::string_view name, int& result
   if(name=="ZS_FLEETOWP" || name=="ZS_RUNTOWP") {
     standardInit();
     if(name=="ZS_FLEETOWP") {
-      if(hlp_getinstanceid(findSymbol("CORNELIUS")->get_instance())==hlp_getinstanceid(self))
+      if(hlp_getinstanceid(storyActorSlot("CORNELIUS"))==hlp_getinstanceid(self))
         npc.setPerceptionDisable(PERC_ASSESSENTERROOM);
       }
     npc.aiPush(AiQueue::aiSetWalkMode(WalkBit::WM_Run));
@@ -146,7 +146,7 @@ bool GameScript::runMovementRoutine(Npc& npc, std::string_view name, int& result
   if(name=="ZS_FLEETOWP_LOOP" || name=="ZS_RUNTOWP_LOOP") {
     if(npc.stateTime()/1000>5) {
       const auto roll = int32_t(rollRandom(2,&npc,true));
-      findSymbol(std::string(name)+".RANDOM")->set_int(roll);
+      setNpcRuleInt(std::string(name)+".RANDOM",roll);
       if(roll==0)
         npc.aiPush(AiQueue::aiPlayAnim("T_HGUARD_LOOKAROUND"));
       npc.setStateTime(0);
@@ -182,7 +182,7 @@ bool GameScript::runMovementRoutine(Npc& npc, std::string_view name, int& result
     return true;
     }
   if(name=="ZS_FOLLOW_PLAYER_LOOP") {
-    auto* hero = findNpc(vm.global_hero());
+    auto* hero = findNpc(nativeNpc("HERO"));
     const auto heroRef = hero!=nullptr ? std::static_pointer_cast<daedalus::INpc>(hero->handlePtr()) : nullptr;
     const auto turnWhenDue = [&] {
       if(npc.stateTime()/1000>1) {
@@ -193,7 +193,7 @@ bool GameScript::runMovementRoutine(Npc& npc, std::string_view name, int& result
     if(npc_getdisttonpc(self,heroRef)<=properties.aivar[80]) {
       turnWhenDue();
       }
-    else if(hlp_getinstanceid(self)==hlp_getinstanceid(findSymbol("DIEGOOW")->get_instance()) &&
+    else if(hlp_getinstanceid(self)==hlp_getinstanceid(storyActorSlot("DIEGOOW")) &&
             diegoRouteBoundary(0)!=0) {
       // The quest's allowed route remains shared with its dialogue and perceptions.
       turnWhenDue();
@@ -208,7 +208,7 @@ bool GameScript::runMovementRoutine(Npc& npc, std::string_view name, int& result
     return true;
     }
   if(name=="ZS_GUIDE_PLAYER_LOOP") {
-    auto* hero = findNpc(vm.global_hero());
+    auto* hero = findNpc(nativeNpc("HERO"));
     const auto heroRef = hero!=nullptr ? std::static_pointer_cast<daedalus::INpc>(hero->handlePtr()) : nullptr;
     const auto selfDistance = NpcEngineCalls::distanceToWaypoint(world(),npc,properties.wp);
     const auto heroDistance = npc_getdisttowp(heroRef,properties.wp);
@@ -253,11 +253,11 @@ bool GameScript::runFearOrSleepSpell(Npc& npc, std::string_view name, int& resul
 
     npc.handle().aivar[12] = 0; // AIV_GUARDPOINT = GP_NONE
     npc_setrefusetalk(self,0);
-    const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+    const auto hero = nativeNpc("HERO");
     npc_settempattitude(self,npc_getpermattitude(self,hero));
-    findSymbol("B_STOPLOOKAT.SLF")->set_instance(self);
+    storyActorSlot("B_STOPLOOKAT.SLF") = self;
     const auto lookTarget = npc_getlookattarget(self);
-    findSymbol("B_STOPLOOKAT.TARGET")->set_instance(lookTarget);
+    storyActorSlot("B_STOPLOOKAT.TARGET") = lookTarget;
     if(hlp_isvalidnpc(lookTarget))
       ai_stoplookat(self);
     ai_stoppointat(self);
@@ -274,7 +274,7 @@ bool GameScript::runFearOrSleepSpell(Npc& npc, std::string_view name, int& resul
         "T_STAND_2_FEAR_VICTIM1", "T_STAND_2_FEAR_VICTIM2", "T_STAND_2_FEAR_VICTIM3",
         };
       const auto roll = rollRandom(3,&npc,true);
-      findSymbol("ZS_MAGICFLEE.RANDY")->set_int(int32_t(roll));
+      setNpcRuleInt("ZS_MAGICFLEE.RANDY",int32_t(roll));
       npc.aiPush(AiQueue::aiPlayAnimBs(gestures[roll],BS_STAND));
       }
     }
@@ -293,7 +293,7 @@ bool GameScript::runFearOrSleepSpell(Npc& npc, std::string_view name, int& resul
 void GameScript::stopMagicFear(Npc& npc) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   npc.setPerceptionDisable(PERC_ASSESSDAMAGE);
-  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto other = nativeNpc("OTHER");
   npc_settarget(self,other);
   ai_startstate(self,int(findFunction("ZS_FLEE").ptr),0,"");
   }
@@ -306,7 +306,7 @@ void GameScript::stopMagicSleep(Npc& npc) {
 
 void GameScript::sayMagicReaction(Npc& npc, std::string_view line, bool overlay) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
-  const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+  const auto other = nativeNpc("OTHER");
   sayToNpc(self,other,line,overlay);
   }
 
@@ -323,8 +323,8 @@ bool GameScript::runFreezeOrWhirlwindSpell(Npc& npc, std::string_view name, int&
       npc.clearAiQueue();
       npc.aiPush(AiQueue::aiStandup());
       }
-    findSymbol("C_BODYSTATECONTAINS.BODYSTATE")->set_int(int32_t(BS_UNCONSCIOUS));
-    findSymbol("C_BODYSTATECONTAINS.SLF")->set_instance(self);
+    setNpcRuleInt("C_BODYSTATECONTAINS.BODYSTATE",int32_t(BS_UNCONSCIOUS));
+    storyActorSlot("C_BODYSTATECONTAINS.SLF") = self;
     if(!inBodyState(npc,BS_UNCONSCIOUS)) {
       const auto pose = freeze ? "T_STAND_2_FREEZE_VICTIM" : "T_STAND_2_WHIRLWIND_VICTIM";
       npc.aiPush(AiQueue::aiPlayAnimBs(pose,BS_UNCONSCIOUS));
@@ -359,7 +359,7 @@ bool GameScript::runFreezeOrWhirlwindSpell(Npc& npc, std::string_view name, int&
       damage = hp-1;
       }
     // Whirlwind still invokes the damage helper when its damage is zero.
-    magicHurtNpc(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance()),self,damage);
+    magicHurtNpc(nativeNpc("OTHER"),self,damage);
     }
   return true;
   }
@@ -373,14 +373,14 @@ void GameScript::stopInterruptedSpell(Npc& npc, bool resumeRoutine) {
   else
     npc_settempattitude(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int32_t(ATT_HOSTILE));
   if(resumeRoutine)
-    ai_continueroutine(std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance()));
+    ai_continueroutine(nativeNpc("SELF"));
   }
 
 void GameScript::runFollowerPlayerAssessment() {
-  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto self = nativeNpc("SELF");
   if(self==nullptr)
     return;
-  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  const auto hero = nativeNpc("HERO");
   constexpr size_t positionStage = 19, followDistance = 80;
   auto& stage = self->aivar[positionStage];
   const auto stand = [&] {
@@ -392,12 +392,12 @@ void GameScript::runFollowerPlayerAssessment() {
     stand();
     return;
     }
-  if(hlp_getinstanceid(self)==hlp_getinstanceid(findSymbol("DIEGOOW")->get_instance())) {
+  if(hlp_getinstanceid(self)==hlp_getinstanceid(storyActorSlot("DIEGOOW"))) {
     const auto boundary = diegoRouteBoundary(0);
     if(stage==0 && boundary!=0) {
       stand();
-      if(npc_getdisttonpc(self,hero)>findSymbol("PERC_DIST_DIALOG")->get_int()) {
-        const auto other = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
+      if(npc_getdisttonpc(self,hero)>npcRuleInt("PERC_DIST_DIALOG")) {
+        const auto other = nativeNpc("OTHER");
         sayToNpc(self,other,"$SC_HEYWAITASECOND");
         }
       return;
@@ -407,10 +407,10 @@ void GameScript::runFollowerPlayerAssessment() {
   }
 
 void GameScript::runGuidePlayerAssessment() {
-  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto self = nativeNpc("SELF");
   if(self==nullptr)
     return;
-  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  const auto hero = nativeNpc("HERO");
   const auto distance = npc_getdisttonpc(self,hero);
   if(distance<=800) {
     runPlayerAssessment();
@@ -428,8 +428,8 @@ void GameScript::runGuidePlayerAssessment() {
 
 void GameScript::runCompanionFightSound(bool follower) {
   using Actor = std::shared_ptr<daedalus::INpc>;
-  const auto source = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
-  const auto victim = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_victim()->get_instance());
+  const auto source = nativeNpc("OTHER");
+  const auto victim = nativeNpc("VICTIM");
   constexpr size_t partyMember = 15; // AIV_PARTYMEMBER
   const auto inParty = [](const Actor& actor) { return actor!=nullptr && actor->aivar[partyMember]==1; };
   if(npc_isplayer(victim) || npc_isplayer(source) || (follower && (inParty(victim) || inParty(source))))
@@ -437,8 +437,8 @@ void GameScript::runCompanionFightSound(bool follower) {
   }
 
 int32_t GameScript::diegoRouteBoundary(int32_t tolerance) {
-  findSymbol("C_DIEGOTOOFAR.TOLERANCE")->set_int(tolerance);
-  const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+  setNpcRuleInt("C_DIEGOTOOFAR.TOLERANCE",tolerance);
+  const auto hero = nativeNpc("HERO");
   const auto near = [&](std::string_view point, int32_t radius) {
     return npc_getdisttowp(hero,point)<int64_t(radius)+tolerance;
     };
@@ -459,7 +459,7 @@ int32_t GameScript::diegoRouteBoundary(int32_t tolerance) {
     if(near(boundary.point,boundary.radius))
       return boundary.region;
 
-  const auto self = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_self()->get_instance());
+  const auto self = nativeNpc("SELF");
   if((npc_getheighttonpc(self,hero)>1000 && npc_getdisttowp(hero,"DT_E3_03")<1000) ||
      wld_getplayerportalguild()==int32_t(GIL_DMT) || near("DT_MAINGATE",500))
     return 6;
