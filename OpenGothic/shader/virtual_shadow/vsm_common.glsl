@@ -13,7 +13,7 @@ const int VSM_PAGE_MIPS     = 16;
 // set for fog-only marks and remains clear where the GBuffer marked a receiver before fog.
 const uint VSM_FOG_ONLY_DEPTH_BIT = 1u;
 bool vsmFogCasterMip(uint mip) {
-  return mip==5u || mip==6u;
+  return 4u<=mip && mip<=6u;
   }
 
 //const int VSM_FOG_MIP       = 6;

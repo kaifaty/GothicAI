@@ -122,7 +122,8 @@ void vsmPairCapRecords(Tempest::Device& device) {
   // the packing alone, from slots and counts set here; or a whole frame: the visibility pass, the meshlets' pass and
   // the packing, under cap pairs, with the classes drawn the frame before
   const auto run = [&](bool packOnly, uint32_t cap, const std::array<uint32_t,9>& admitPrev, uint32_t written,
-                       const std::vector<Cmd>& counts, const std::vector<uint32_t>& slots, VisualObjects* trees = nullptr) {
+                       const std::vector<Cmd>& counts, const std::vector<uint32_t>& slots, VisualObjects* trees = nullptr,
+                       bool fogOnly = false) {
     std::vector<uint8_t> pages(shaders.vsmClear.sizeofBuffer(0, 16), 0);
     Header header = {};
     header.pageCount    = uint32_t(entries.size());
@@ -133,6 +134,14 @@ void vsmPairCapRecords(Tempest::Device& device) {
     auto pageBuf    = device.ssbo(pages.data(), pages.size());
     auto cmdBuf     = device.ssbo(counts.data(), counts.size()*sizeof(Cmd));
     auto payloadSrc = device.ssbo(slots.data(), slots.size()*sizeof(uint32_t));
+    Tempest::StorageImage fogRay;
+    Tempest::StorageBuffer epipoles;
+    if(fogOnly) {
+      // One ray sample at a fixed sun position, marking (16, 16, mip 4) at depth zero.
+      const float ray[] = {0.75f, 0.75f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+      fogRay = device.image2d(Tempest::TextureFormat::R16, 1, 1);
+      epipoles = device.ssbo(ray, sizeof(ray));
+      }
 
     auto command = device.commandBuffer();
     {
@@ -142,10 +151,19 @@ void vsmPairCapRecords(Tempest::Device& device) {
         trees->prepareGlobals(enc, 0);
       // vsm_clear.comp zeroes its page table: here the receivers' depth of every page, so no cluster is behind them
       enc.setBinding(0, clearPages);
-      enc.setBinding(1, pageHiZ);
-      enc.setBinding(2, scratch);
+      enc.setBinding(1, fogOnly ? scratch : pageHiZ);
+      enc.setBinding(2, fogOnly ? pageHiZ : scratch);
       enc.setPipeline(shaders.vsmClear);
       enc.dispatchThreads(32, 32, 16);
+      if(fogOnly) {
+        enc.setBinding(0, fogRay);
+        enc.setBinding(1, sceneUbo);
+        enc.setBinding(2, epipoles);
+        enc.setBinding(3, scratch);
+        enc.setBinding(4, pageHiZ);
+        enc.setPipeline(shaders.vsmFogPages);
+        enc.dispatchThreads(1, 1);
+        }
 
       struct Push {
         uint32_t meshletCount, candidateCap, padding[2];
@@ -501,6 +519,18 @@ void vsmPairCapRecords(Tempest::Device& device) {
             whole.pVsm==shaders.materialPipeline(mat, DrawCommands::Static, Shaders::T_Vsm, Shaders::options().doBindless),
             "the reserved whole shadow command uses the material's unmasked alpha-tested VSM pipeline");
     checkTree(trees, item, 1000, 1, Mode::On,  {0,1},     true,  true,  true,  MidSun::Native);
+    const auto savedEntries = entries;
+    entries = {sunEntry(4)};
+    for(bool fogOnly : {false, true}) {
+      trees.preFrameUpdate();
+      const auto frame = run(false, Slots, {}, 0, zero, older, &trees, fogOnly);
+      const auto& draw = frame.draws[fogOnly ? 1 : 0];
+      const auto* pairs = frame.packed.data() + size_t(draw.writeOffset)*4;
+      require(frame.header.meshletCount==2 && draw.instanceCount==2 && frame.header.pairSpill==0 &&
+              std::minmax(pairs[1],pairs[5])==std::minmax(fogOnly ? 12u : 0u, fogOnly ? 13u : 1u),
+              "mip 4 keeps the full crown for a surface entry and uses the whole L4 for fog alone");
+      }
+    entries = savedEntries;
     checkTree(trees, item, 600, 1, Mode::On,   {3,4},     true,  true,  false, MidSun::Whole);
     checkTree(trees, item, 400, 1, Mode::On,   {3,4,6,7}, true,  true,  false, MidSun::Whole);
     checkTree(trees, item, 800, 1, Mode::On,   {0,1,3,4}, true,  true,  true,  MidSun::Masked);
