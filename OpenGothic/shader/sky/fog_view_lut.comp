@@ -42,7 +42,7 @@ float tStep(int i, int steps) {
   return t;
   }
 
-void raymarchScattering(vec3 pos, vec3 rayDir, vec3 sunDir, float tMax, int numScatteringSteps) {
+void raymarchScattering(vec3 pos, vec3 rayDir, vec3 sunDir, float tMax, float airEnd, int numScatteringSteps) {
   const float cosTheta      = dot(rayDir, sunDir);
   const float phaseMie      = miePhase(cosTheta);
   const float phaseRayleigh = rayleighPhase(-cosTheta);
@@ -56,10 +56,15 @@ void raymarchScattering(vec3 pos, vec3 rayDir, vec3 sunDir, float tMax, int numS
   vec3  scatteredLight  = vec3(0.0);
 #endif
 
+  // Keep each slice at the depth used by the fog pass. The slice crossing the ground integrates
+  // only its air, and every slice behind it stores the same accumulated light and transmittance.
+  float t0 = 0.0;
   for(int i=0; i<numScatteringSteps; ++i) {
-    float t      = (float(i+0.5)/numScatteringSteps)*tMax;
-    float dt     = tMax/numScatteringSteps;
+    float t1     = min((float(i+1)/numScatteringSteps)*tMax, airEnd);
+    float dt     = t1-t0;
+    float t      = (t0+t1)*0.5;
     vec3  newPos = pos + t*rayDir;
+    t0 = t1;
 
     const ScatteringValues sc = scatteringValues(newPos, clouds);
 
@@ -110,23 +115,23 @@ void main() {
     return;
 
   const int   numScatteringSteps = dstSz.z;
-  vec3        viewOrigin         = vec3(0.0, RPlanet + scene.plPosY, 0.0);
   const float viewDistanceScale  = 50;
 
   const vec2  inPos      = ((vec2(dstUV)+vec2(0.5))/vec2(dstSz.xy))*2.0-vec2(1.0);
-  const float dMin       = 0;
-  const float dMax       = 0.9999;
-  const vec3  pos0       = project(scene.viewProjectInv, vec3(inPos,dMin));
-  const vec3  pos1       = project(scene.viewProjectInv, vec3(inPos,dMax));
+  const vec3  pos0       = project(scene.viewProjectLwcInv, vec3(inPos,dFogMin));
+  const vec3  pos1       = project(scene.viewProjectLwcInv, vec3(inPos,dFogMax));
+  const vec3  nearCenter = project(scene.viewProjectLwcInv, vec3(0,0,dFogMin));
 
-  const vec3  viewPos    = viewOrigin + pos0*0.01;
+  // plPosY already measures the centre of the near plane above the world's lower bound.
+  const float height     = max(scene.plPosY + (pos0.y-nearCenter.y)*0.01, 0.0);
+  const vec3  viewPos    = vec3(0, RPlanet + height, 0);
   const vec3  rayDir     = normalize(pos1 - pos0);
   const vec3  sunDir     = scene.sunDir;
 
-  //const float planetDist = rayIntersect(viewPos, rayDir, RPlanet);
   const float atmoDist   = rayIntersect(viewPos, rayDir, RAtmos);
-  const float groundDist = length(pos1-pos0)*0.01;  // meters
-  const float tMax       = min(atmoDist, groundDist*viewDistanceScale);
+  const float tMax       = min(atmoDist, length(pos1-pos0)*0.01*viewDistanceScale);
+  const float planetDist = rayDir.y<0.0 ? rayIntersect(viewPos, rayDir, RPlanet) : -1.0;
+  const float airEnd     = planetDist>=0.0 ? planetDist : tMax;
 
-  raymarchScattering(viewPos, rayDir, sunDir, tMax, numScatteringSteps);
+  raymarchScattering(viewPos, rayDir, sunDir, tMax, airEnd, numScatteringSteps);
   }
