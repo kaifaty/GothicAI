@@ -67,6 +67,17 @@ class Renderer final {
       } treeHistory;
     void drawTreeHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
                          const BenchProbe::HistoryVerifyRequest& request);
+    struct {
+      Tempest::StorageImage finalPyramid;
+      Tempest::Matrix4x4 previousViewProject;
+      Tempest::ZBuffer referenceDepth;
+      Tempest::StorageBuffer proofDepth;
+      uint64_t frames = 0, proofStamp = 0;
+      size_t proofPixels = 0, proofPixelBytes = 0;
+      uint8_t proofSlot = 0;
+      bool valid = false, proved = false;
+      } boughHiZDiag;
+    void readBoughHiZDepth(uint8_t fId);
 
     enum Quality : uint8_t {
       None,

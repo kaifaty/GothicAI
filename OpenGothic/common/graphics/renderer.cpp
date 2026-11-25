@@ -530,6 +530,7 @@ void Renderer::onWorldChanged() {
   ssao.valid           = false;
   camHistory.hasCur    = false;
   treeHistory.valid   = false;
+  boughHiZDiag.valid  = false;
   gi.resetHistory      = true;
   resetSkyFog();
   }
@@ -552,6 +553,7 @@ void Renderer::resetViewHistory() {
   ssao.valid = false;
   camHistory.hasCur = false;
   treeHistory.valid = false;
+  boughHiZDiag.valid = false;
   taa.frame = 0;
   taa.cur   = 0;
   // the phase of the SSAO cycle picks each texel's quarter of the sample set: a history that starts at another
@@ -773,6 +775,7 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
 
   zbuffer = device.zbuffer(zBufferFormat,w,h);
   treeHistory.valid = false;
+  boughHiZDiag.valid = false;
   if(res!=fullRes)
     zbufferUi = device.zbuffer(zBufferFormat, fullRes); else
     zbufferUi = ZBuffer();
@@ -831,6 +834,7 @@ void Renderer::resetShadowmap() {
   }
 
 void Renderer::drawScene(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, bool sceneActive) {
+  readBoughHiZDepth(fId);
   auto wview  = GameServices::inst().worldView();
   auto camera = GameServices::inst().camera();
 
@@ -839,6 +843,7 @@ void Renderer::drawScene(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_
     cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
     } else {
     taa.valid = false; // a video or no world: the next world frame starts over
+    boughHiZDiag.valid = false;
     cmd.setFramebuffer({{result, Vec4(), Tempest::Preserve}});
     }
   }
@@ -963,6 +968,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   if(settings.pathTraceEnabled && !captureLandscapeDepth) {
     treeHistory.valid = false;
+    boughHiZDiag.valid = false;
     ssao.valid = false; // no SSAO in this frame: its history is not the frame before the next one
     drawPathtrace(cmd, wview, fId);
     mainTiming.finish();
@@ -1014,8 +1020,10 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     if(rebuiltTextureBank)
       cmd.setGraphicsDescriptorArrayReuse(false);
     } else {
-    if(historyView)
+    if(historyView) {
       treeHistory.valid = false;
+      boughHiZDiag.valid = false;
+      }
     if(verify)
       bench->historyVerifyComplete(false);
     if(!captureLandscapeDepth)
