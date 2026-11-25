@@ -4,9 +4,6 @@
 
 #include "basestore.h"
 #include "contentcensus.h"
-#include "game/definitions/baseprogram.h"
-#include "game/definitions/basescripts.h"
-#include "programdata.h"
 #include "ui/gamemenu.h"
 #include "gothic.h"
 #include "resources.h"
@@ -48,8 +45,6 @@ void MenuRoot::initSettings() {
     return;
 
   constexpr auto sha = MenuDefinitions::stockProgram;
-  if(baseNativeCatalog()==nullptr && selectBaseProgram(baseProgramIndex(),"MENU.DAT",lang).source.recordSha256!=sha)
-    throw BaseStore::Error("menus require the supported prepared catalog");
   const auto base = Resources::baseDir();
   const auto section = MenuDefinitions::section(base,sha);
   try {

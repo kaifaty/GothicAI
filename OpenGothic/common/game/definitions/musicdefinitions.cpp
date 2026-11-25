@@ -1,9 +1,7 @@
 #include "musicdefinitions.h"
 
-#include "basescripts.h"
 #include "basestore.h"
 #include "contentcensus.h"
-#include "programdata.h"
 #include "resources.h"
 
 #include <algorithm>
@@ -11,12 +9,6 @@
 
 MusicDefinitions::MusicDefinitions() {
   constexpr auto program = MusicDefinitionData::stockProgram;
-  if(baseNativeCatalog()==nullptr) {
-    const auto* source = ProgramData::musicProgram(baseProgramIndex());
-    if(source==nullptr || source->recordSha256!=program)
-      throw BaseStore::Error("music requires the supported prepared catalog");
-    }
-
   const auto base = Resources::baseDir();
   const auto section = MusicDefinitionData::section(base,program);
   try {

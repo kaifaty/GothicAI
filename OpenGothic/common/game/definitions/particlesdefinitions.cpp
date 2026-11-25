@@ -1,5 +1,4 @@
 #include "particlesdefinitions.h"
-#include "basescripts.h"
 #include "basestore.h"
 #include "contentcensus.h"
 
@@ -13,8 +12,7 @@ using namespace Tempest;
 
 ParticlesDefinitions::ParticlesDefinitions() {
   const auto base=Resources::baseDir();
-  catalog=baseNativeCatalog()!=nullptr ? ParticleContent::openStockCatalog(base)
-                                      : ParticleContent::openStockCatalog(baseProgramIndex());
+  catalog=ParticleContent::openStockCatalog(base);
   const auto section=EffectDefinitionData::particleSection(base,EffectDefinitionData::stockParticleProgram);
   if(!catalog)
     throw BaseStore::Error(section.string()+": particles require the supported prepared catalog");

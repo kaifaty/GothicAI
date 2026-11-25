@@ -4,12 +4,10 @@
 #include <algorithm>
 #include <cctype>
 
-#include "basescripts.h"
 #include "basestore.h"
 #include "contentcensus.h"
 #include "effectdefinitiondata.h"
 #include "graphics/visualfx.h"
-#include "programdata.h"
 #include "resources.h"
 #include "utils/string_frm.h"
 
@@ -27,12 +25,6 @@ std::string symbolName(std::string_view name) {
 
 VisualFxDefinitions::VisualFxDefinitions() {
   constexpr auto program = EffectDefinitionData::stockVisualProgram;
-  if(baseNativeCatalog()==nullptr) {
-    const auto* source = ProgramData::visualFxProgram(baseProgramIndex());
-    if(source==nullptr || source->recordSha256!=program)
-      throw BaseStore::Error("visual effects require the supported prepared catalog");
-    }
-
   const auto base = Resources::baseDir();
   const auto section = EffectDefinitionData::visualSection(base,program);
   try {

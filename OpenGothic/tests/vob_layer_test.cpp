@@ -16,7 +16,6 @@
 #include "graphics/pfx/pfxmotion.h"
 #include "graphics/lightsource.h"
 #include "graphics/visualfx.h"
-#include "programdata.h"
 #include "world/world.h"
 #include "world/movablevobs.h"
 #include "world/objects/vobbundle.h"
@@ -582,16 +581,14 @@ void particleSettings(const ParticleFx& actual, const ParticleFx& expected) {
           actual.effectPrefferedTime()==expected.effectPrefferedTime(),"derived lifetime and emission limits");
   }
 
-void preparedParticleToolChecks(const fs::path& contentRoot, const ProgramData::Index& index,
-                                const ProgramData::Source& stock) {
+void preparedParticleToolChecks(const fs::path& contentRoot, const fs::path& baseRoot) {
   const Fixture native;
-  const auto source=EffectDefinitionData::particleSection(index.dir.parent_path(),stock.recordSha256);
-  const auto target=EffectDefinitionData::particleSection(native.base,stock.recordSha256);
-  fs::create_directories(native.base/"programs");
-  fs::copy_file(index.dir/"programs.json",native.base/"programs/programs.json");
+  constexpr auto stock=EffectDefinitionData::stockParticleProgram;
+  const auto source=EffectDefinitionData::particleSection(baseRoot,stock);
+  const auto target=EffectDefinitionData::particleSection(native.base,stock);
   fs::create_directories(target.parent_path());
   fs::copy_file(source,target);
-  require(!fs::exists(native.base/"programs"/index.path(stock).filename()),"offline base has a particle catalog without packed bytecode");
+  require(!fs::exists(native.base/"programs"),"offline base has a particle catalog without a program index");
 
   const auto file=native.content/"emitters.json";
   textFile(file,"{\"format\":1,\"add\":["+emitter("base-flame","fire_medium.PfX")+","+
@@ -605,10 +602,8 @@ void preparedParticleToolChecks(const fs::path& contentRoot, const ProgramData::
   }
 
 void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
-  const auto index=ProgramData::readIndex(baseRoot/"programs");
-  const auto* selected=ProgramData::particleFxProgram(index);
-  const auto catalog=ParticleContent::openStockCatalog(index);
-  require(selected!=nullptr && catalog.has_value(),"particle fixture requires the prepared stock catalog");
+  const auto catalog=ParticleContent::openStockCatalog(baseRoot);
+  require(catalog.has_value(),"particle fixture requires the prepared stock catalog");
   const auto directory=f.content/"particles.d";
   textFile(directory/"10-smoke.json",R"({"format":1,"effects":[
     {"name":"OWN_TEST_COPY","base":"fire_smoke.pfx","set":{}},
@@ -676,7 +671,7 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
   particleFields(*loaded.effects.at("OWN_TEST_NEXT"),expected);
   require(subprocess({GOTHIC_CONTENT_CONVERT,"check-particles",baseRoot.string(),f.content.string()})==0,
           "converter CLI accepts own definitions and chains");
-  preparedParticleToolChecks(f.content,index,*selected);
+  preparedParticleToolChecks(f.content,baseRoot);
 
   const std::vector<std::pair<std::string,std::string>> invalid={
     {"unknown-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"unknownField":1}})"},
@@ -767,8 +762,7 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   require(original && copy && custom,"Gothic resolves base and custom names case-insensitively with suffix");
   require(custom==gothic.loadParticleFx("OWN_TEST_SMOKE"),"custom aliases reuse one cached ParticleFx");
   particleSettings(*copy,*original);
-  const auto index=ProgramData::readIndex(baseRoot/"programs");
-  const auto catalog=ParticleContent::openStockCatalog(index);
+  const auto catalog=ParticleContent::openStockCatalog(baseRoot);
   require(catalog.has_value(),"runtime particle fixture requires the prepared stock catalog");
   const auto definitions=ParticleContent::load(*catalog,f.content);
   ParticleFx expected(*definitions.effects.at("OWN_TEST_SMOKE"),"expected");
@@ -831,12 +825,7 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
     }
   }
 
-void runtimeVisualKeys(Gothic& gothic, const fs::path& baseRoot) {
-  const auto index=ProgramData::readIndex(baseRoot/"programs");
-  const auto* selected=ProgramData::visualFxProgram(index);
-  if(selected==nullptr || selected->recordSha256!=EffectDefinitionData::stockVisualProgram)
-    return;
-
+void runtimeVisualKeys(Gothic& gothic) {
   const auto* firebolt=gothic.loadVisualFx("spellfx_firebolt");
   require(firebolt && firebolt->key(SpellFxKey::Open) && firebolt->key(SpellFxKey::Init) &&
           firebolt->key(SpellFxKey::Collide) && !firebolt->key(SpellFxKey::Invest),
@@ -1297,7 +1286,7 @@ struct WorldDataContract {
       gothic.setupGlobalScripts();
       if(phase==0) {
         runtimeParticles(gothic,fixture,Resources::baseDir());
-        runtimeVisualKeys(gothic,Resources::baseDir());
+        runtimeVisualKeys(gothic);
         }
       if(phase==2)
         require(gothic.loadParticleFx("OWN_TEST_SMOKE")!=nullptr,"disabling vob layers retains custom particle definitions");

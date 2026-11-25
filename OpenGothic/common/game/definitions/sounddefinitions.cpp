@@ -1,19 +1,11 @@
 #include "sounddefinitions.h"
-#include "basescripts.h"
 #include "basestore.h"
 #include "contentcensus.h"
-#include "programdata.h"
 #include "resources.h"
 #include "sfxdefinitiondata.h"
 
 SoundDefinitions::SoundDefinitions() {
   constexpr auto program = SfxDefinitionData::stockProgram;
-  if(baseNativeCatalog()==nullptr) {
-    const auto* source = ProgramData::sfxProgram(baseProgramIndex());
-    if(source==nullptr || source->recordSha256!=program)
-      throw BaseStore::Error("sound effects require the supported prepared catalog");
-    }
-
   const auto base = Resources::baseDir();
   const auto section = SfxDefinitionData::section(base,program);
   try {
