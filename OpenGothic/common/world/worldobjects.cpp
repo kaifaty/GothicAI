@@ -947,7 +947,6 @@ void WorldObjects::updateAnimation(uint64_t dt) {
   AnimationLod::View view;
   const bool hasView = (lodCfg.enabled || animationProbe || societyAnim) && makeAnimationLodView(view);
   const bool lod     = lodCfg.enabled && hasView && !frozen;
-  const bool lodVisible = lod && lodCfg.visible;
   const bool societyLod = societyAnim && hasView;
   const uint32_t rate  = lodCfg.rate;
   const uint64_t gestureLead = 4*rate*dt;
@@ -968,7 +967,6 @@ void WorldObjects::updateAnimation(uint64_t dt) {
   AnimationLod::beginPass();
   const auto updateNpc = [&](std::unique_ptr<Npc>& i){
     auto& plan = tailPlan[size_t(&i-npcArr.data())];
-    i->setAnimLodFarVisible(false);
     if(animationPassSkips(*i,pl,skipFar,frozen)) {
       plan = i->animationTailPlan(true,keepShadow);
       return;
@@ -988,19 +986,6 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     const bool furniture = i->interactive()!=nullptr;
     const bool pauseFurniture = farLod && furniture && i->settledFurniturePose() && i->canPauseDistantPose(gestureLead);
     const bool pauseFar = pauseFurniture || (farLod && !deferNative && !furniture && i->canPauseDistantPose(gestureLead));
-    // N4: a visible distant NPC on its off-cadence slot keeps the last pose until its slot.
-    // Catch-up does not refresh it merely for visibility (the far-visible flag); only a near
-    // camera, an interaction, a bone read or its cadence slot does. Off by default.
-    if(lodVisible && deferNative && view.visible(*i) &&
-       view.farFromCamera(*i,lodCfg.visibleDist) && !mustUpdateAnimation(*i,view,false)) {
-      i->deferAnimation(dt);
-      i->setAnimLodFarVisible(true);
-      deferred.fetch_add(1,std::memory_order_relaxed);
-      FrameProfile::add(FrameProfile::Amount::NpcAnimVisibleFar,1);
-      i->prepareMeleeShadowBody();
-      plan = i->animationTailPlan(false,keepShadow);
-      return;
-      }
     if((society || deferNative || pauseFar) && !view.visible(*i) && !mustUpdateAnimation(*i,view,pauseFurniture)) {
       // Outside the frustum and its shadow: the next update applies this dt.
       if(society) {
@@ -1081,10 +1066,6 @@ void WorldObjects::catchUpAnimation() {
       return false;
     const bool societyWake = npc.hasSocietyAnimationDebt() &&
                              (npc.needsLayerPoseUpdate() || !owner.societyHoldsAnimation(npc) || mustUpdateAnimation(npc,view));
-    // N4: a visible distant NPC deferred by the temporal LOD refreshes on its cadence slot;
-    // visibility alone does not catch it up, only a near camera, a pin or Society wake.
-    if(npc.animLodFarVisible())
-      return societyWake || view.nearCamera(npc) || mustUpdateAnimation(npc,view);
     return societyWake || view.visible(npc) || view.nearCamera(npc);
     };
 #ifndef NDEBUG
