@@ -19,6 +19,7 @@
 #include "physics/physicsnoise.h"
 #include "physics/ragdoll.h"
 #include "resources.h"
+#include "world/animationlod.h"
 #include "world/fplock.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
@@ -69,6 +70,7 @@ struct NpcDefinitionContract {
   static auto& bennetTransferObserver(GameScript& script) { return script.bennetTransferObserver; }
   static const auto& aiState(const Npc& npc) { return npc.aiState; }
   static auto& aiState(Npc& npc) { return npc.aiState; }
+  static uint64_t waitDeadline(const Npc& npc) { return npc.waitTime; }
   static bool monsterRestSleeping(const Npc& npc) { return npc.monsterRestSleeping; }
   static void tickRoutine(Npc& npc) { npc.aiState.loopNextTime=npc.world().tickCount(); npc.tickRoutine(); }
   static void nextAiAction(Npc& npc) { npc.nextAiAction(npc.aiQueue,0); }
@@ -960,6 +962,111 @@ void farIdleMonster(Gothic& gothic) {
   NpcSimTick::setConfig(restore);
   }
 
+void distantRestBodies(Gothic& gothic) {
+  gothic.clearGame().reset();
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  auto& world=*gothic.world();
+  auto& camera=*gothic.camera();
+  auto* sleeper=liveNpc(world,"VLK_416_MATTEO");
+  const std::array group={sleeper,liveNpc(world,"MIL_313_BOLTAN"),liveNpc(world,"MIL_319_PABLO")};
+  const auto* bedPoint=world.findWayPoint("NW_CITY_BED_MATTEO");
+  const auto* far=world.findWayPoint("NW_BIGFARM_SHEEP2_02");
+  require(sleeper && group[1] && group[2] && bedPoint && far,"distant rest needs the authored actors and waypoints");
+  onlyBehaviorActors(world,sleeper);
+  const auto near=bedPoint->position()+Tempest::Vec3(150,0,0);
+  moveBehaviorHero(gothic,near);
+  sleeper->setPosition(bedPoint->position());
+  const auto bedtime=world.script().findFunction("ZS_GOTOBED");
+  require(sleeper->startState(bedtime,bedPoint->name),"Matteo starts his native bedtime routine");
+  stepBehaviorUntil(gothic,900,[&]{ return sleeper->settledFurniturePose(); },"Matteo settles in his occupied bed");
+  const auto* bed=sleeper->interactive();
+  const auto sleeptime=NpcDefinitionContract::aiState(*sleeper).eTime;
+
+  constexpr uint32_t shortWait=1500;
+  for(size_t i=1; i<group.size(); ++i) {
+    auto& npc=*group[i];
+    npc.clearRoutine();
+    npc.clearState(true);
+    npc.clearAiQueue();
+    npc.clearGoTo();
+    npc.setPosition(sleeper->position()+Tempest::Vec3(float(i)*220.f,0,0));
+    npc.closeWeapon(true);
+    npc.setAnim(Npc::Anim::Idle);
+    npc.aiPush(AiQueue::aiWait(i==1 ? shortWait : 30000));
+    npc.setExternalControl(false);
+    }
+  auto& waiter=*group[1];
+  stepBehaviorUntil(gothic,12,[&]{
+    return NpcDefinitionContract::waitDeadline(waiter)>world.tickCount() &&
+           NpcDefinitionContract::waitDeadline(*group[2])>world.tickCount();
+    },"both standing actors enter their native waits");
+  const auto deadline=NpcDefinitionContract::waitDeadline(waiter);
+  const auto rayHits=[&](const Npc& npc) {
+    const auto center=npc.collosionCenter();
+    return world.physic()->rayArrow(center,center+Tempest::Vec3(0,20,0),
+        [&](Npc& target,const Tempest::Vec3&,const Tempest::Vec3&,float& distance) {
+          distance=0;
+          return &target==&npc;
+          }).npcHit==&npc;
+    };
+  for(auto* npc:group)
+    require(rayHits(*npc),"the initial ray finds each native body");
+
+  std::array<Tempest::Vec3,3> positions;
+  std::array<BodyState,3> poses;
+  const auto suspend=[&] {
+    const auto away=far->position()-sleeper->position();
+    world.player()->setDirection(std::atan2(away.z,away.x)*180.f/float(std::acos(-1.0)));
+    moveBehaviorHero(gothic,far->position());
+    stepBehaviorUntil(gothic,12,[&] {
+      return std::all_of(group.begin(),group.end(),[](const Npc* npc) {
+        return npc->restingBodySuspended() && npc->hasDeferredAnimation();
+        });
+      },"the distant sleeper and both waiters suspend collision and animation");
+    for(size_t i=0; i<group.size(); ++i) {
+      require(!rayHits(*group[i]),"the collision ray misses a suspended NPC");
+      positions[i]=group[i]->position();
+      poses[i]=group[i]->bodyStateMasked();
+      }
+    };
+  const auto checkReturn=[&] {
+    for(size_t i=0; i<group.size(); ++i) {
+      const auto& npc=*group[i];
+      require(!npc.bodySuspended() && !npc.hasDeferredAnimation() && rayHits(npc) &&
+              npc.position()==positions[i] && npc.bodyStateMasked()==poses[i],
+              "resting actors regain collision and the same pose at the same position before drawing");
+      }
+    require(sleeper->interactive()==bed && bed->userCount()==1 && NpcDefinitionContract::aiState(*sleeper).eTime==sleeptime,
+            "Matteo retains the bed and sleep deadline");
+    require(NpcDefinitionContract::waitDeadline(waiter)==deadline,"returning to the waiter preserves its original deadline");
+    };
+  suspend();
+  moveBehaviorHero(gothic,near);
+  world.catchUpAnimation();
+  checkReturn();
+
+  camera.reset(sleeper);
+  const auto center=(positions[0]+positions[1]+positions[2])/3.f;
+  const auto direction=Tempest::Vec3::normalize(camera.originLwc()-camera.destTarget());
+  camera.setPosition(center+Tempest::Vec3(0,60,0)+direction*2500.f);
+  const auto reveal=camera.saveState();
+  suspend();
+  camera.setSaveState(reveal);
+  AnimationLod::View view;
+  view.make(camera.viewProj(),camera.originLwc(),nullptr);
+  for(auto* npc:group)
+    require(view.visible(*npc) && !view.nearCamera(*npc),"the distant camera sees the whole group");
+  world.catchUpAnimation();
+  checkReturn();
+
+  suspend();
+  stepBehaviorUntil(gothic,80,[&]{ return world.tickCount()>deadline && !waiter.bodySuspended(); },
+                    "the short wait restores the capsule on expiry with the hero still far");
+  require(rayHits(waiter) && group[2]->restingBodySuspended() && !rayHits(*group[2]),
+          "only the actor whose wait ended has returned to the collision world");
+  std::puts("Distant rest: native waits, collision, pose and bed ownership across hero return and camera reveal");
+  }
+
 void nativeNpcBehaviorContract(Gothic& gothic, const std::filesystem::path& caseDir) {
   using Contract=NpcDefinitionContract;
   constexpr std::string_view hilda="BAU_951_HILDA";
@@ -1253,6 +1360,7 @@ void nativeNpcBehaviorContract(Gothic& gothic, const std::filesystem::path& case
   std::puts("Native private-room reaction: exact escalation timer and v57 continuation on departure");
   savedHumanRoutines(gothic,caseDir/"routines.sav");
   farIdleMonster(gothic);
+  distantRestBodies(gothic);
   }
 
 void bennetOreContract(const std::filesystem::path& caseDir) {

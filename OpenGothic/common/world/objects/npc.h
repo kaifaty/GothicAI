@@ -200,9 +200,12 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     float      simplifiedMoveSpeed(WalkBit mode) const;
     bool       hasCampfireActivity() const;
     bool       canSuspendCampfireBody() const;
-    bool       campfireBodySuspended() const { return physic.bodySuspended(); }
-    bool       suspendCampfireBody();
-    void       resumeCampfireBody();
+    bool       hasRestingBodyActivity() const;
+    bool       canSuspendRestingBody() const;
+    bool       bodySuspended() const { return physic.bodySuspended(); }
+    bool       restingBodySuspended() const { return restingBody && bodySuspended(); }
+    bool       suspendDistantBody(bool resting);
+    void       resumeBody();
 
     void       tick(uint64_t dt);
     const NpcLogicalState& logicalBodyState() const { return logicalBody; }
@@ -1179,6 +1182,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     uint32_t                       animLodSeed = 0;
     NpcSimTick::State              simTickState;
     bool                           monsterRestSleeping = false;
+    bool                           restingBody = false;
     Tempest::Vec3                  characterVisualSamplePosition;
     Tempest::Vec3                  characterVisualSampleNormal;
     uint64_t                       characterVisualSampleTick = 0;
