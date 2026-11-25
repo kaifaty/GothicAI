@@ -18,7 +18,9 @@ inline constexpr std::array<std::string_view,@RUNTIME_BINDING_NAME_COUNT@> Runti
     @RUNTIME_BINDING_NAME_ROWS@
     };
 ]=] @ONLY)
-target_sources(gothic-base-runtime PRIVATE "${RUNTIME_BINDING_CODEC}")
+add_library(gothic-offline-bindings STATIC EXCLUDE_FROM_ALL "${RUNTIME_BINDING_CODEC}")
+target_include_directories(gothic-offline-bindings SYSTEM PRIVATE "${BASE_ROOT}/lib/rapidjson/include")
+target_link_libraries(gothic-offline-bindings PRIVATE gothic-base-runtime)
 target_include_directories(gothic-base-runtime PUBLIC "${RUNTIME_BINDING_GENERATED_DIR}")
 # Keep contraction off in the chunk reader's position and attribute calculations.
 set_property(SOURCE "${BASE_ROOT}/common/worldchunksruntime.cpp"

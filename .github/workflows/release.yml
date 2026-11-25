@@ -330,8 +330,8 @@ jobs:
       - name: Verify that the game and headless runner link without Daedalus
         run: |
           cmake --build OpenGothic/build --target gothic-body-runner
-          python3 scripts/engine_link_census.py OpenGothic/build --target Gothic2Notr --check-native-game --json
-          python3 scripts/engine_link_census.py OpenGothic/build --target gothic-body-runner --check-native-game --json
+          python3 scripts/engine_link_census.py OpenGothic/build --target Gothic2Notr --check-native-v3 --json
+          python3 scripts/engine_link_census.py OpenGothic/build --target gothic-body-runner --check-native-v3 --json
 
       - name: The converter passes its self-test and refuses a folder without Gothic II
         env:

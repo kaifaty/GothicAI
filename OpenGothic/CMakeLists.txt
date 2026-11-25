@@ -26,6 +26,8 @@ if(OPENGOTHIC_ENABLE_APP_CADENCE)
   target_compile_definitions(${PROJECT_NAME} PUBLIC OPENGOTHIC_ENABLE_APP_CADENCE=1)
 endif()
 add_executable(Gothic2Notr)
+target_compile_definitions(${PROJECT_NAME} PRIVATE GOTHIC_NATIVE_V3=1)
+target_compile_definitions(Gothic2Notr PRIVATE GOTHIC_NATIVE_V3=1)
 
 set(nativeCatalogHeader "${PROJECT_SOURCE_DIR}/common/game/definitions/nativebasecatalog.h")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${nativeCatalogHeader}")
@@ -122,6 +124,7 @@ list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/def
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/deathtrophydefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/symbolcatalog.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/runtimebindings.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/placementdefinitionruntime.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/stockstoryprograms.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/storygraph.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/meshclusterlod.cpp")
@@ -266,8 +269,8 @@ target_compile_definitions(gothic-cluster-lod-test PRIVATE
 if(NOT MSVC)
   target_compile_options(gothic-cluster-lod-test PRIVATE -Wall -Wconversion -Werror -ffp-contract=off)
 endif()
-add_subdirectory(common/daedalus)
-target_link_libraries(${PROJECT_NAME} gothic-script-state)
+# Only import tools and explicit comparison contracts link Daedalus.
+add_subdirectory(common/daedalus EXCLUDE_FROM_ALL)
 target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/convert/CMakeLists.txt")
   add_subdirectory(../scripts/convert content-convert)
@@ -376,6 +379,7 @@ target_link_libraries(Gothic2Notr PRIVATE AiBridge)
 # Uses the shared engine/CPU simulation without constructing a window or graphics/audio device.
 if(UNIX)
   add_executable(gothic-body-runner game/bodyrunner.cpp game/societyexport.cpp)
+  target_compile_definitions(gothic-body-runner PRIVATE GOTHIC_NATIVE_V3=1)
   target_link_libraries(gothic-body-runner PRIVATE OpenGothic AiBridge)
   # --society-export names the engine's commit: refreshed on every build of the runner, the header is
   # rewritten only when the commit changes ("unknown" in a copy without .git).
@@ -389,7 +393,7 @@ if(UNIX)
   # Pure production resolver/command gates: no assets, simulation or rendering device.
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
-  add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp)
+  add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp common/game/gamescript_daystats.cpp)
   target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge StoryGraph gothic-daedalus)
   target_include_directories(gothic-npc-day-contract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   # Real NPC/world fixture for growing and shrinking the live observation subscription.

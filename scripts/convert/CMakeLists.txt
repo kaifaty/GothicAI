@@ -61,7 +61,7 @@ endif()
 # Offline particle checks (check-particles) use the game's particlecontent loader and VM without writing base data.
 target_compile_definitions(content-convert PRIVATE CONTENT_CONVERT_PARTICLE_PROGRAMS=1)
 # Definitions import executes item constructors through the shared snapshot library.
-target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
+target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus gothic-offline-bindings)
 
 target_link_libraries(content-convert PRIVATE gothic-npc-snapshot StoryGraph)
 set(native_definition_readers

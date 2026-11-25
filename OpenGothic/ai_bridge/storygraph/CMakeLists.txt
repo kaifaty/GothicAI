@@ -71,7 +71,8 @@ option(STORYGRAPH_TOOL "build the storygraph command line tool" ${PROJECT_IS_TOP
 add_executable(storygraph main.cpp oumessages.cpp scan.cpp check.cpp check.h fuzz.cpp saveworld.cpp saveworld.h
                             effects.cpp effects.h execcheck.cpp execcheck.h snapshot.h
                             ../../common/basestore.cpp)
-target_link_libraries(storygraph PRIVATE StoryGraph gothic-base-import gothic-video-import gothic-daedalus)
+target_link_libraries(storygraph PRIVATE StoryGraph gothic-base-import gothic-video-import gothic-daedalus
+  gothic-offline-bindings)
 if(NOT STORYGRAPH_TOOL)
   set_target_properties(storygraph PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
