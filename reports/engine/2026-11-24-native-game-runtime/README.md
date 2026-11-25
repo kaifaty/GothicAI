@@ -53,3 +53,39 @@
 Два импорта по 15 минут, два контракта предметов по 12 минут, контракты базы и суток по 4 минуты. Один короткий безоконный сценарий героя до минуты и одни игровые сутки на seed 73106 до 20 минут с проверкой против архивного эталона. Оконные проверки: `programs`, `load_rewind`, `p18b-base` по 4 минуты и обычный старт меню до 2 минут. Сборка и ожидание очереди считаются отдельно.
 
 Результат принимается по двум независимым проверкам. Карты линковки показывают отсутствие объектов VM, а точные штатные бинарники загружаются с валидной базой без программ, проходят сюжетные проверки, смену миров и старое и новое сохранения.
+
+## Игровые проверки базы v3
+
+Сценарии используют проверенную базу v3 того же каталога, что и сборка. `day_base` и `ryzen_base` задают её абсолютный путь на dev-ubuntu и Ryzen. `day_cache` и `ryzen_cache` — отдельные кэши задачи на этих машинах. Для проверки ролика заранее положите готовую часть `videos/<отпечаток>` в `ryzen_cache` и укажите её отпечаток в `videos_fingerprint`. Оба стенда используют папку настроек с двумя INI. В ней нет `Data` и `_work`.
+
+Одни сутки Хориниса занимают до 20 минут без окна. Контроль `a5a3c16fe` лежит в `/mnt/shared/gothic-ai/native-game-runtime/day-73106-a5a3c16fe` (на Mac — `/Volumes/shared/gothic-ai/…`). Его таблицы совпадают с контролем `3d6ab7ced` из `npc-fight-tactics/day-final-verified`. Берём архивный сценарий с seed 73106 и `npcday 1440 5 shared probe`.
+
+```bash
+baseline=/Volumes/shared/gothic-ai/native-game-runtime/day-73106-a5a3c16fe
+out="$PWD/.bench-out/native-v3-checks"
+
+OPENGOTHIC_BASE="$day_base" OPENGOTHIC_BASE_CACHE="$day_cache" OPENGOTHIC_BASE_STORE= \
+  OPENGOTHIC_VIDEOS_FINGERPRINT= OPENGOTHIC_NPC_SIM_TIER=auto BENCH_HOST=dev-ubuntu \
+  RYZEN_BENCH_CLASS=batch TIMEOUT=1200 RYZEN_MAX=20m \
+  scripts/bench.sh "$baseline/npc-day-parity.bench" "$out/day"
+
+cmp "$baseline/npc-day.csv" "$out/day/npc-day.csv"
+cmp "$baseline/npc-day-events.csv" "$out/day/npc-day-events.csv"
+python3 scripts/npc_day_parity.py "$baseline" "$out/day" \
+  --tolerances scripts/bench/npc-day-parity.tolerances.json \
+  --out "$out/day/parity.md" --json "$out/day/parity.json"
+```
+
+Два оконных запуска на Ryzen занимают до четырёх минут каждый. `p18b-base` проверяет четыре перехода, пять проверок текущего мира, музыку и ролик `LOGO2`. `load_rewind` начинает новую игру, создаёт сейв v57 и проверяет откат часов и восстановление событий ИИ-моста. Сборки прогреваем до подачи оконных заявок, поскольку ограничение `RYZEN_MAX` действует и на подготовку.
+
+```bash
+OPENGOTHIC_BASE="$ryzen_base" OPENGOTHIC_BASE_CACHE="$ryzen_cache" OPENGOTHIC_BASE_STORE= \
+  OPENGOTHIC_VIDEOS_FINGERPRINT="$videos_fingerprint" WORLD=NEWWORLD.ZEN MUSIC=1 \
+  BENCH_HOST=ryzen TIMEOUT=225 RYZEN_MAX=4m scripts/bench.sh p18b-base "$out/p18b"
+
+OPENGOTHIC_BASE="$ryzen_base" OPENGOTHIC_BASE_CACHE="$ryzen_cache" OPENGOTHIC_BASE_STORE= \
+  OPENGOTHIC_VIDEOS_FINGERPRINT= SCENARIO=load_rewind SAVE= LLM=off ASR=fake TTS=fake \
+  LOG_DIR="$out/load_rewind" TIMEOUT=225 RYZEN_MAX=4m scripts/ryzen.sh e2e
+```
+
+Переходы и загрузка в предыдущем нативном профиле зафиксированы в `/mnt/shared/gothic-ai/native-game-runtime/p18b-base-cf8df3e53` и `load_rewind-cf8df3e53` рядом. Для нового результата записываем SHA сборки, отпечаток базы, коды выхода и журналы каждой проверки.
