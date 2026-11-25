@@ -304,7 +304,7 @@ def prepared_game_environment(
     game_bin: Path, game_dir: Path, env: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Keep the game and its services on the same prepared native base."""
-    with base.resolve(game_dir, native=True, environ=child_env({**base_cache_env(), **(env or {})})) as selected:
+    def verify(selected: base.Base) -> None:
         marker = selected.native_profile
         required = ("definitions/native-catalog.json", "storygraph/story.json", "outputunits/outputunits.json")
         if (
@@ -332,6 +332,8 @@ def prepared_game_environment(
         if (not isinstance(catalog, dict) or catalog.get("format") != "gothic-native-base-catalog"
                 or catalog.get("version") != version):
             raise RuntimeError(f"base {selected.path}: native catalog version differs")
+
+    with base.resolve(game_dir, verify_native=verify, environ=child_env({**base_cache_env(), **(env or {})})) as selected:
         return {"OPENGOTHIC_BASE": str(selected.path)}
 
 

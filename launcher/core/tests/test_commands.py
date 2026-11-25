@@ -361,6 +361,25 @@ def test_find_layout_lists_everything_missing(config, tmp_path, monkeypatch):
         find_layout(config)
 
 
+def test_pinned_native_base_can_use_store_when_cached_catalog_is_invalid(tmp_path, monkeypatch):
+    game_dir, fixture, _ = _ready_base(tmp_path, monkeypatch, native=True)
+    fingerprint = json.loads((fixture / "base.json").read_bytes())["fingerprint"]
+    cache = tmp_path / "cache" / fingerprint
+    store_root = tmp_path / "store"
+    stored = store_root / "base" / fingerprint
+    shutil.copytree(fixture, cache)
+    shutil.copytree(fixture, stored)
+    binary = tmp_path / "Gothic2Notr"
+    binary.with_name("native-catalog-version.txt").write_text("7\n")
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", fingerprint)
+    monkeypatch.setenv("OPENGOTHIC_BASE_STORE", str(store_root))
+
+    assert commands.prepared_game_environment(binary, game_dir)["OPENGOTHIC_BASE"] == str(cache)
+    catalog = cache / "definitions/native-catalog.json"
+    catalog.write_bytes(catalog.read_bytes().replace(b'"version":7', b'"version":8'))
+    assert commands.prepared_game_environment(binary, game_dir)["OPENGOTHIC_BASE"] == str(stored)
+
+
 @pytest.mark.parametrize("platform", ["linux", "darwin"])
 def test_platform_log_and_texture_paths(monkeypatch, platform):
     monkeypatch.setattr(commands.sys, "platform", platform)
