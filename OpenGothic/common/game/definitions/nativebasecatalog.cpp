@@ -3,6 +3,7 @@
 #include "definitionjson.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cctype>
 #include <cmath>
@@ -64,6 +65,60 @@ Json writeIdentities(const std::vector<NativeBaseCatalog::Identity>& names, Allo
     rows.PushBack(row,alloc);
     }
   return rows;
+  }
+
+constexpr std::array<std::string_view,5> npcConstructorTypes={"int","float","string","instance","function"};
+
+NativeBaseCatalog::NpcConstructorType readConstructorType(const Json& value) {
+  const auto name=string(value);
+  const auto entry=std::ranges::find(npcConstructorTypes,name);
+  require(entry!=npcConstructorTypes.end(),"unknown NPC constructor value type");
+  return NativeBaseCatalog::NpcConstructorType(entry-npcConstructorTypes.begin());
+  }
+
+NativeBaseCatalog::NpcConstructorBindings readNpcConstructor(const Json& value) {
+  object(value,{"members","calls"});
+  NativeBaseCatalog::NpcConstructorBindings result;
+  require(value["members"].IsArray() && value["calls"].IsArray(),"invalid NPC constructor bindings");
+  for(const auto& row : value["members"].GetArray()) {
+    require(row.IsArray() && row.Size()==4,"invalid NPC constructor member");
+    const auto count=number(row[2]);
+    require(count>0 && count<=UINT16_MAX,"invalid NPC constructor member size");
+    require(result.members.emplace(bytes(row[0]),NativeBaseCatalog::NpcConstructorMember{
+              number(row[1]),uint16_t(count),readConstructorType(row[3])}).second,
+            "duplicate NPC constructor member");
+    }
+  for(const auto& row : value["calls"].GetArray()) {
+    require(row.IsArray() && row.Size()==4 && row[2].IsBool() && row[3].IsArray(),"invalid NPC constructor call");
+    NativeBaseCatalog::NpcConstructorCall call{number(row[1]),row[2].GetBool(),{}};
+    for(const auto& type : row[3].GetArray())
+      call.parameters.push_back(readConstructorType(type));
+    require(result.calls.emplace(bytes(row[0]),std::move(call)).second,"duplicate NPC constructor call");
+    }
+  return result;
+  }
+
+Json writeNpcConstructor(const NativeBaseCatalog::NpcConstructorBindings& bindings, Allocator& alloc) {
+  const auto typeName=[&](auto type) { return text(npcConstructorTypes.at(size_t(type)),alloc); };
+  Json members(rapidjson::kArrayType),calls(rapidjson::kArrayType);
+  for(const auto& [name,member] : bindings.members) {
+    Json row(rapidjson::kArrayType);
+    row.PushBack(text(encode(name),alloc),alloc).PushBack(member.id,alloc).PushBack(uint32_t(member.count),alloc)
+       .PushBack(typeName(member.type),alloc);
+    members.PushBack(row,alloc);
+    }
+  for(const auto& [name,call] : bindings.calls) {
+    Json row(rapidjson::kArrayType),parameters(rapidjson::kArrayType);
+    for(auto type : call.parameters)
+      parameters.PushBack(typeName(type),alloc);
+    row.PushBack(text(encode(name),alloc),alloc).PushBack(call.id,alloc).PushBack(call.deferred,alloc)
+       .PushBack(std::move(parameters),alloc);
+    calls.PushBack(row,alloc);
+    }
+  Json result(rapidjson::kObjectType);
+  put(result,"members",std::move(members),alloc);
+  put(result,"calls",std::move(calls),alloc);
+  return result;
   }
 
 void validateValues(const NativeBaseCatalog::InitialValue& values,bool allowAlias) {
@@ -135,6 +190,16 @@ void validate(const NativeBaseCatalog::Selection& selection) {
             "invalid or duplicate constant identity "+name);
     validateValues(constant.values,false);
     }
+  require(!selection.npcConstructor.members.empty() && !selection.npcConstructor.calls.empty(),
+          "missing NPC constructor bindings");
+  for(const auto& [name,member] : selection.npcConstructor.members)
+    require(name.starts_with("C_NPC.") && member.count>0 && size_t(member.type)<npcConstructorTypes.size() &&
+            ids.insert(member.id).second && names.emplace(name,member.id).second,
+            "invalid or duplicate NPC constructor member "+name);
+  for(const auto& [name,call] : selection.npcConstructor.calls)
+    require(!name.empty() && ids.insert(call.id).second && names.emplace(name,call.id).second &&
+            std::ranges::all_of(call.parameters,[](auto type) { return size_t(type)<npcConstructorTypes.size(); }),
+            "invalid or duplicate NPC constructor call "+name);
   require(selection.directorFirstId>1 && selection.directorFirstId<=uint32_t(INT32_MAX)-NativeBaseCatalog::directorCapacity &&
           *ids.rbegin()<selection.directorFirstId-1,"invalid first director ID");
   require(std::ranges::none_of(names,[](const auto& row) { return row.first.starts_with("DIR_"); }),
@@ -195,9 +260,12 @@ NativeBaseCatalog::Selection NativeBaseCatalog::read(const std::filesystem::path
   try {
     const auto doc = DefinitionJson::read(file);
     object(doc,{"format","version","fight_catalog","language","director_first_id","npc_states","initial_session_state",
-                "npc_archetypes","item_archetypes","dialog_infos","named_constants","routines","item_callbacks"});
+                "npc_archetypes","item_archetypes","dialog_infos","named_constants","routines","item_callbacks","npc_constructor"});
     require(string(doc["format"])==format && integer(doc["version"])==catalogVersion,"unsupported native base catalog");
-    Selection selection{string(doc["fight_catalog"]),integer(doc["language"]),number(doc["director_first_id"]),{}, {}, {}, {}, {}, {}};
+    Selection selection;
+    selection.fight=string(doc["fight_catalog"]);
+    selection.language=integer(doc["language"]);
+    selection.directorFirstId=number(doc["director_first_id"]);
     const auto& states = doc["npc_states"];
     require(states.IsArray(),"invalid NPC state catalog");
     selection.states.reserve(states.Size());
@@ -227,6 +295,7 @@ NativeBaseCatalog::Selection NativeBaseCatalog::read(const std::filesystem::path
       }
     selection.routines=readIdentities(doc["routines"]);
     selection.itemCallbacks=readIdentities(doc["item_callbacks"]);
+    selection.npcConstructor=readNpcConstructor(doc["npc_constructor"]);
     validate(selection);
     return selection;
     }
@@ -279,6 +348,7 @@ void NativeBaseCatalog::write(const std::filesystem::path& base, const Selection
   put(doc,"named_constants",std::move(constants),alloc);
   put(doc,"routines",writeIdentities(selection.routines,alloc),alloc);
   put(doc,"item_callbacks",writeIdentities(selection.itemCallbacks,alloc),alloc);
+  put(doc,"npc_constructor",writeNpcConstructor(selection.npcConstructor,alloc),alloc);
   const auto file = section(base);
   std::filesystem::create_directories(file.parent_path());
   DefinitionJson::write(file,doc);

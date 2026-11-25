@@ -1,5 +1,6 @@
 #include "npcdefinitionruntime.h"
 
+#include "game/definitions/nativebasecatalog.h"
 #include "npcloadprobe.h"
 
 #include <cstdlib>
@@ -12,14 +13,27 @@ using Type = daedalus::DaedalusDataType;
 using Value = NpcDefinitions::Value;
 using Kind = Value::Kind;
 
-Value resolveValue(Value value, const daedalus::DaedalusScript& script) {
+template<class Find>
+Value resolveValue(Value value, const Find& find) {
   if(value.kind==Kind::Symbol) {
-    const auto* symbol=script.find_symbol_by_name(value.text);
-    if(symbol==nullptr) throw std::runtime_error("unknown symbol "+value.text);
-    value.integer=int32_t(symbol->index());
+    const auto id=find(value.text);
+    if(!id) throw std::runtime_error("unknown symbol "+value.text);
+    value.integer=int32_t(*id);
     value.text.clear();
     }
   return value;
+  }
+
+Type argumentType(NativeBaseCatalog::NpcConstructorType type) {
+  using Prepared = NativeBaseCatalog::NpcConstructorType;
+  switch(type) {
+    case Prepared::Integer:  return Type::INT;
+    case Prepared::Float:    return Type::FLOAT;
+    case Prepared::String:   return Type::STRING;
+    case Prepared::Instance: return Type::INSTANCE;
+    case Prepared::Function: return Type::FUNCTION;
+    }
+  throw std::runtime_error("invalid NPC constructor type");
   }
 
 void checkValue(const Value& value, Type type) {
@@ -88,6 +102,10 @@ bool NpcDefinitionRuntime::enabled() {
 NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinitions::Library& library,
                                                                const daedalus::DaedalusScript& script) {
   Definitions definitions;
+  const auto symbolId=[&](std::string_view name) -> std::optional<uint32_t> {
+    const auto* symbol=script.find_symbol_by_name(name);
+    return symbol ? std::optional(symbol->index()) : std::nullopt;
+    };
   // Retain original constant references for VM comparisons when the input has them.
   std::map<std::string,std::pair<uint32_t,uint8_t>> literals;
   for(const auto& symbol:script.symbols())
@@ -106,7 +124,7 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinit
              field->index>=binding->count())
             throw std::runtime_error("invalid NPC field "+field->binding+"["+std::to_string(field->index)+"]");
           checkValue(field->value,binding->type());
-          steps.emplace_back(Field{binding->index(),binding->name(),field->index,resolveValue(field->value,script)});
+          steps.emplace_back(Field{binding->index(),binding->name(),field->index,resolveValue(field->value,symbolId)});
           }
         else if(const auto* write=std::get_if<NpcDefinitions::GlobalIntWrite>(&step)) {
           const auto* binding=script.find_symbol_by_name(write->binding);
@@ -124,10 +142,10 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinit
           auto parameters=script.find_parameters_for_function(function);
           if(parameters.size()!=call.args.size()) throw std::runtime_error("argument count differs for "+call.function);
           Call resolved;
-          resolved.function=function->index(); resolved.deferred=call.deferred;
+          resolved.function=function->index(); resolved.name=function->name(); resolved.deferred=call.deferred;
           for(size_t i=0;i<parameters.size();++i) {
             checkValue(call.args[i],parameters[i].type());
-            Argument argument{resolveValue(call.args[i],script),parameters[i].type(),{}};
+            Argument argument{resolveValue(call.args[i],symbolId),parameters[i].type(),{}};
             if(argument.value.kind==Kind::String) {
               const auto literal=literals.find(argument.value.text);
               if(literal!=literals.end())
@@ -139,6 +157,78 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinit
           }
         }
       definitions.npcs.emplace(symbol->index(),std::move(steps));
+      }
+    catch(const std::exception& e) { throw std::runtime_error("NPC definitions: "+name+": "+e.what()); }
+    }
+  return definitions;
+  }
+
+NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::load(const std::filesystem::path& base,
+                                                            const NativeBaseCatalog::Selection& catalog,
+                                                            std::string_view sha256) {
+  const auto library=NpcDefinitions::read(base,sha256);
+  std::map<std::string_view,uint32_t,std::less<>> npcs,refs;
+  for(const auto& npc : catalog.identities.npcs)
+    npcs.emplace(npc.name,npc.id);
+  for(const auto& item : catalog.identities.items)
+    refs.emplace(item.name,item.id);
+  for(const auto& state : catalog.states)
+    refs.emplace(state.name,state.id);
+  for(const auto& routine : catalog.routines)
+    refs.emplace(routine.name,routine.id);
+  std::map<std::string_view,const NativeBaseCatalog::InitialRow*,std::less<>> globals;
+  for(const auto& row : catalog.initialState)
+    if(NpcDefinitions::isPlayerTalentArray(row.name))
+      globals.emplace(row.name,&row);
+  const auto symbolId=[&](std::string_view name) -> std::optional<uint32_t> {
+    const auto entry=refs.find(name);
+    return entry!=refs.end() ? std::optional(entry->second) : std::nullopt;
+    };
+
+  Definitions definitions;
+  for(const auto& [name,record] : library.npcs) {
+    try {
+      const auto npc=npcs.find(name);
+      if(npc==npcs.end())
+        throw std::runtime_error("unknown NPC identity");
+      std::vector<Step> steps;
+      steps.reserve(record.steps.size());
+      for(const auto& step : record.steps) {
+        if(const auto* field=std::get_if<NpcDefinitions::Field>(&step)) {
+          const auto entry=catalog.npcConstructor.members.find(field->binding);
+          if(entry==catalog.npcConstructor.members.end() || field->index>=entry->second.count)
+            throw std::runtime_error("invalid NPC field "+field->binding+"["+std::to_string(field->index)+"]");
+          checkValue(field->value,argumentType(entry->second.type));
+          steps.emplace_back(Field{entry->second.id,field->binding,field->index,resolveValue(field->value,symbolId)});
+          }
+        else if(const auto* write=std::get_if<NpcDefinitions::GlobalIntWrite>(&step)) {
+          const auto entry=globals.find(write->binding);
+          const auto* values=entry==globals.end() ? nullptr : std::get_if<std::vector<int32_t>>(&entry->second->value);
+          if(sha256!=NpcDefinitions::TalentWriteProgram || !NpcDefinitions::writesPlayerTalents(name) ||
+             !values || write->index>=values->size())
+            throw std::runtime_error("invalid NPC global write "+write->binding+"["+std::to_string(write->index)+"]");
+          steps.emplace_back(GlobalIntWrite{entry->second->id,write->index,write->value});
+          }
+        else {
+          const auto& call=std::get<NpcDefinitions::Call>(step);
+          const auto entry=catalog.npcConstructor.calls.find(call.function);
+          if(entry==catalog.npcConstructor.calls.end() || entry->second.deferred!=call.deferred ||
+             entry->second.parameters.size()!=call.args.size())
+            throw std::runtime_error("invalid NPC constructor call "+call.function);
+          Call resolved;
+          resolved.function=entry->second.id;
+          resolved.name=call.function;
+          resolved.deferred=call.deferred;
+          resolved.args.reserve(call.args.size());
+          for(size_t i=0;i<call.args.size();++i) {
+            const auto type=argumentType(entry->second.parameters[i]);
+            checkValue(call.args[i],type);
+            resolved.args.push_back({resolveValue(call.args[i],symbolId),type,{}});
+            }
+          steps.emplace_back(std::move(resolved));
+          }
+        }
+      definitions.npcs.emplace(npc->second,std::move(steps));
       }
     catch(const std::exception& e) { throw std::runtime_error("NPC definitions: "+name+": "+e.what()); }
     }

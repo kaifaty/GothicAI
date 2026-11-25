@@ -80,7 +80,10 @@ NativeBaseCatalog::Selection NativeBaseCatalog::prepare(const ProgramData::Index
           "native base needs the stock menu catalog for the selected language");
   const auto* fight = ProgramData::fightProgram(programs);
   require(fight!=nullptr,"native base needs a fight catalog");
-  return {fight->recordSha256,language,0,{}, {}, {}, {}, {}, {}};
+  Selection selection;
+  selection.fight=fight->recordSha256;
+  selection.language=language;
+  return selection;
   }
 
 uint32_t NativeBaseCatalog::prepareDirectorFirstId(const daedalus::DaedalusScript& program) {
@@ -239,6 +242,49 @@ std::vector<NativeBaseCatalog::Identity> NativeBaseCatalog::prepareItemCallbacks
   return result;
   }
 
+NativeBaseCatalog::NpcConstructorBindings NativeBaseCatalog::prepareNpcConstructor(const daedalus::DaedalusScript& program,
+                                                                                    const std::filesystem::path& base) {
+  using DefinitionJson::require;
+  using Type = daedalus::DaedalusDataType;
+  const auto tagged=[](Type type) {
+    switch(type) {
+      case Type::INT:      return NpcConstructorType::Integer;
+      case Type::FLOAT:    return NpcConstructorType::Float;
+      case Type::STRING:   return NpcConstructorType::String;
+      case Type::INSTANCE: return NpcConstructorType::Instance;
+      case Type::FUNCTION: return NpcConstructorType::Function;
+      default: throw std::runtime_error("unsupported NPC constructor binding type");
+      }
+    };
+  const auto library=NpcDefinitions::read(base,StockStoryPrograms::stockProgram);
+  NpcConstructorBindings result;
+  for(const auto& [name,npc] : library.npcs) {
+    for(const auto& step : npc.steps) {
+      if(const auto* field=std::get_if<NpcDefinitions::Field>(&step)) {
+        if(result.members.contains(field->binding))
+          continue;
+        const auto* binding=program.find_symbol_by_name(field->binding);
+        require(binding && binding->is_member() && binding->name().starts_with("C_NPC.") &&
+                binding->count()>0 && binding->count()<=UINT16_MAX,
+                "invalid NPC constructor member "+field->binding);
+        result.members.emplace(field->binding,NpcConstructorMember{binding->index(),uint16_t(binding->count()),tagged(binding->type())});
+        }
+      else if(const auto* call=std::get_if<NpcDefinitions::Call>(&step)) {
+        if(result.calls.contains(call->function))
+          continue;
+        const auto* function=program.find_symbol_by_name(call->function);
+        require(function && function->type()==Type::FUNCTION && function->is_external()!=call->deferred &&
+                !function->has_return(),"invalid NPC constructor call "+call->function);
+        NpcConstructorCall value{function->index(),call->deferred,{}};
+        for(const auto& parameter : program.find_parameters_for_function(function))
+          value.parameters.push_back(tagged(parameter.type()));
+        result.calls.emplace(call->function,std::move(value));
+        }
+      }
+    }
+  return result;
+  }
+
 void NativeBaseCatalog::verify(const std::filesystem::path& base, const Selection& expected) {
   using DefinitionJson::require;
   require(!std::filesystem::exists(base/"programs"),"native catalog base contains the program directory");
@@ -247,7 +293,8 @@ void NativeBaseCatalog::verify(const std::filesystem::path& base, const Selectio
           selected.directorFirstId==expected.directorFirstId && selected.states==expected.states &&
           selected.initialState==expected.initialState && selected.identities==expected.identities &&
           selected.constants==expected.constants && selected.routines==expected.routines &&
-          selected.itemCallbacks==expected.itemCallbacks,
+          selected.itemCallbacks==expected.itemCallbacks &&
+          selected.npcConstructor==expected.npcConstructor,
           "native catalog selection differs from its source");
   verifyIdentities(base,selected.identities);
   require(!FightDefinitions::read(base,selected.fight).empty(),"native catalog base has no fight tactics");

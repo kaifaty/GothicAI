@@ -98,6 +98,9 @@
 #include "game/definitions/menudefinitions.h"
 #include "game/definitions/musicdefinitiondata.h"
 #include "game/definitions/nativebasecatalog.h"
+#include "game/itemdefinitionruntime.h"
+#include "game/npcdefinitionruntime.h"
+#include "game/routinedefinitionruntime.h"
 #include "game/definitions/particlecontent.h"
 #include "game/definitions/sfxdefinitiondata.h"
 #include "game/definitions/stockstoryprograms.h"
@@ -272,6 +275,7 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     bound(base/"outputunits"/"outputunits.json");
     bound(base/"definitions"/program.sha256/"routines.json");
     bound(base/"definitions"/program.sha256/"items.json");
+    bound(base/"definitions"/program.sha256/"npcs.json");
     catalogs=NativeBaseCatalog::prepare(index,OutputUnits::readIndex(base/"outputunits"));
     auto script=daedalus::DaedalusScript::from_program(std::move(program.data));
     catalogs->directorFirstId=NativeBaseCatalog::prepareDirectorFirstId(script);
@@ -281,6 +285,7 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     catalogs->identities=NativeBaseCatalog::prepareIdentities(script,base);
     catalogs->routines=NativeBaseCatalog::prepareRoutines(script,base);
     catalogs->itemCallbacks=NativeBaseCatalog::prepareItemCallbacks(script,base);
+    catalogs->npcConstructor=NativeBaseCatalog::prepareNpcConstructor(script,base);
     }
 
   const auto sourceSymbols=ProgramData::symbolMetadataPath(base,program.sha256);
@@ -333,6 +338,11 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
       const auto file=NativeBaseCatalog::section(out);
       kept.emplace(file.lexically_relative(out).generic_string(),BaseImport::sha256File(file));
       NativeBaseCatalog::verify(out,*catalogs);
+      const auto items=ItemDefinitionRuntime::loadNative(out,*catalogs,program.sha256);
+      const auto npcs=NpcDefinitionRuntime::load(out,*catalogs,program.sha256);
+      const auto routines=RoutineDefinitionRuntime::load(out,*catalogs,program.sha256);
+      require(!items.items.empty() && !items.documents.empty() && !npcs.npcs.empty() && !routines.routines.empty(),
+              "native base has missing gameplay definitions");
       } else if(native) {
       RuntimeBindings::write(out,program.sha256,program.data,RuntimeBindings::collect(out,program.data));
       const auto file=RuntimeBindings::path(out,program.sha256);
@@ -1136,6 +1146,9 @@ int selfTest() {
   expectedCatalog.identities={{{100,"NPC_TEST"}},{{200,"IT_TEST"}},{{300,"DIA_TEST"}}};
   expectedCatalog.routines={{400,"RTN_START_100"}};
   expectedCatalog.itemCallbacks={{500,"EQUIP_TEST"}};
+  using ConstructorType = NativeBaseCatalog::NpcConstructorType;
+  expectedCatalog.npcConstructor.members={{"C_NPC.ID",{450,1,ConstructorType::Integer}}};
+  expectedCatalog.npcConstructor.calls={{"CREATEINVITEM",{451,false,{ConstructorType::Instance,ConstructorType::Integer}}}};
   const auto output=dir/"native-catalog";
   NativeBaseCatalog::write(output,expectedCatalog);
   const auto catalog=NativeBaseCatalog::read(output);
@@ -1143,9 +1156,9 @@ int selfTest() {
           catalog.directorFirstId==expectedCatalog.directorFirstId &&
           catalog.initialState==expectedCatalog.initialState && catalog.identities==expectedCatalog.identities &&
           catalog.constants==expectedCatalog.constants && catalog.routines==expectedCatalog.routines &&
-          catalog.itemCallbacks==expectedCatalog.itemCallbacks &&
+          catalog.itemCallbacks==expectedCatalog.itemCallbacks && catalog.npcConstructor==expectedCatalog.npcConstructor &&
           std::signbit(std::get<std::vector<float>>(catalog.initialState[1].value)[0]),
-          "native catalog identities, language, NPC phases, constants, routines, item callbacks and initial state round trip");
+          "native catalog identities, language, NPC phases, constants, routines, callbacks, constructors and initial state round trip");
   const auto stateFile=NativeBaseCatalog::section(output);
   auto invalid=DefinitionJson::read(stateFile);
   invalid["npc_states"][0][2].SetNull();

@@ -54,6 +54,28 @@ struct Constant {
 
 using Constants = std::map<std::string,Constant,std::less<>>;
 
+enum class NpcConstructorType : uint8_t { Integer, Float, String, Instance, Function };
+
+struct NpcConstructorMember {
+  uint32_t id = 0;
+  uint16_t count = 0;
+  NpcConstructorType type = NpcConstructorType::Integer;
+  bool operator==(const NpcConstructorMember&) const = default;
+  };
+
+struct NpcConstructorCall {
+  uint32_t id = 0;
+  bool deferred = false;
+  std::vector<NpcConstructorType> parameters;
+  bool operator==(const NpcConstructorCall&) const = default;
+  };
+
+struct NpcConstructorBindings {
+  std::map<std::string,NpcConstructorMember,std::less<>> members;
+  std::map<std::string,NpcConstructorCall,std::less<>> calls;
+  bool operator==(const NpcConstructorBindings&) const = default;
+  };
+
 struct Selection {
   std::string fight;
   int language = -1;
@@ -64,6 +86,7 @@ struct Selection {
   Constants constants;
   std::vector<Identity> routines;
   std::vector<Identity> itemCallbacks;
+  NpcConstructorBindings npcConstructor;
   };
 
 const Identity* findIdentity(std::span<const Identity> rows, uint32_t id);
