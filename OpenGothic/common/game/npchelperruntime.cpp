@@ -1,7 +1,9 @@
 #include "npchelperruntime.h"
 
 #include "npchelperdefinitions.h"
+#include "game/definitions/nativebasecatalog.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -114,14 +116,20 @@ class RuntimeHost final : public Host {
     const NpcHelperRuntime::InvokeExternal* invoke;
   };
 
-size_t arguments(const Definition& definition) {
-  return std::visit([](const auto& helper)->size_t {
+std::span<const NativeBaseCatalog::NpcConstructorType> arguments(const Definition& definition) {
+  return std::visit([](const auto& helper)->std::span<const NativeBaseCatalog::NpcConstructorType> {
     using T=std::decay_t<decltype(helper)>;
-    if constexpr(std::is_same_v<T,SetFightSkills> || std::is_same_v<T,AttributesToChapter>) return 2;
-    if constexpr(std::is_same_v<T,SetNpcVisual>) return 6;
-    if constexpr(std::is_same_v<T,AmbientInventory>) return 1;
-    if constexpr(std::is_same_v<T,AddFightSkill>) return 3;
-    return 0;
+    using Parameter = NativeBaseCatalog::NpcConstructorType;
+    using enum Parameter;
+    static constexpr std::array actor{Instance};
+    static constexpr std::array actorInt{Instance,Integer};
+    static constexpr std::array actorInts{Instance,Integer,Integer};
+    static constexpr std::array visual{Instance,Integer,String,Integer,Integer,Integer};
+    if constexpr(std::is_same_v<T,SetFightSkills> || std::is_same_v<T,AttributesToChapter>) return actorInt;
+    if constexpr(std::is_same_v<T,SetNpcVisual>) return visual;
+    if constexpr(std::is_same_v<T,AmbientInventory>) return actor;
+    if constexpr(std::is_same_v<T,AddFightSkill>) return actorInts;
+    return {};
     },definition);
   }
 }
@@ -140,7 +148,7 @@ NpcHelperRuntime::Definitions NpcHelperRuntime::resolve(const Library& library,c
   for(const auto& [name,definition]:library.helpers) {
     const auto* function=script.find_symbol_by_name(name);
     if(function==nullptr || function->type()!=Type::FUNCTION || function->is_external() ||
-       function->has_return() || function->count()!=arguments(definition))
+       function->has_return() || function->count()!=arguments(definition).size())
       throw std::runtime_error("NPC helper definitions: invalid helper signature "+name);
     definitions.helpers.emplace(function->index(),definition);
     }
@@ -151,6 +159,24 @@ NpcHelperRuntime::Definitions NpcHelperRuntime::load(const std::filesystem::path
                                                     const DaedalusScript& script,std::string_view sha256) {
   // Keep the library while disabled too: contracts and a running process can toggle the fallback.
   return resolve(NpcHelperDefinitions::read(base,sha256),script);
+  }
+
+NpcHelperRuntime::Definitions NpcHelperRuntime::resolve(const Library& library,const NativeBaseCatalog::Selection& catalog) {
+  Definitions definitions;
+  for(const auto& [name,definition]:library.helpers) {
+    const auto function=catalog.npcConstructor.calls.find(name);
+    if(function==catalog.npcConstructor.calls.end() || !function->second.deferred ||
+       !std::ranges::equal(function->second.parameters,arguments(definition)))
+      throw std::runtime_error("NPC helper definitions: invalid prepared signature "+name);
+    if(!definitions.helpers.emplace(function->second.id,definition).second)
+      throw std::runtime_error("NPC helper definitions: duplicate prepared function "+name);
+    }
+  return definitions;
+  }
+
+NpcHelperRuntime::Definitions NpcHelperRuntime::load(const std::filesystem::path& base,
+                                                    const NativeBaseCatalog::Selection& catalog,std::string_view sha256) {
+  return resolve(NpcHelperDefinitions::read(base,sha256),catalog);
   }
 
 bool NpcHelperRuntime::invoke(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,
@@ -184,19 +210,33 @@ bool NpcHelperRuntime::invoke(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,
 bool NpcHelperRuntime::invokePrepared(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,
                                      uint32_t function,const Definitions& definitions,
                                      std::span<const Value> args,const InvokeExternal& invokeExternal) {
-  if(!enabled())
+  if(!enabled() || !definitions.helpers.contains(function))
     return false;
-  const auto found=definitions.helpers.find(function);
-  if(found==definitions.helpers.end())
-    return false;
-  if(npc==nullptr || args.size()!=arguments(found->second) || (!args.empty() && args.front().kind!=Kind::Self))
-    throw std::runtime_error("NPC helper definitions: invalid prepared helper arguments");
+  if(npc==nullptr)
+    throw std::runtime_error("NPC helper definitions: missing prepared actor");
   struct RestoreContext {
     DaedalusVm& vm;
     std::shared_ptr<DaedalusInstance> previous;
     ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
     } restore{vm,vm.unsafe_get_gi()};
   RuntimeHost host(vm,npc,definitions,invokeExternal ? &invokeExternal : nullptr);
+  return invokePrepared(function,definitions,args,host);
+  }
+
+bool NpcHelperRuntime::invokePrepared(uint32_t function,const Definitions& definitions,
+                                     std::span<const Value> args,Host& host) {
+  const auto found=definitions.helpers.find(function);
+  if(found==definitions.helpers.end())
+    return false;
+  const auto parameters=arguments(found->second);
+  if(args.size()!=parameters.size() || (!args.empty() && args.front().kind!=Kind::Self))
+    throw std::runtime_error("NPC helper definitions: invalid prepared helper arguments");
+  for(size_t i=1;i<parameters.size();++i) {
+    const auto kind=args[i].kind;
+    if(parameters[i]==NativeBaseCatalog::NpcConstructorType::String ? kind!=Kind::String :
+       kind!=Kind::Int && kind!=Kind::Symbol && kind!=Kind::Null)
+      throw std::runtime_error("NPC helper definitions: invalid prepared helper value");
+    }
   run(found->second,args,host);
   return true;
   }

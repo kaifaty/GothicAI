@@ -467,6 +467,11 @@ class GameScript final : public GameRules {
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, uint32_t templateId);
     static void applyNpcConstructorField(NpcRecord& npc, const NpcDefinitionRuntime::Field& field);
+    bool applyNpcConstructorCall(const std::shared_ptr<daedalus::INpc>& npc,const NpcDefinitionRuntime::Call& call,
+                                const std::function<void()>& observe={});
+    int32_t callNpcHelperOperation(const std::shared_ptr<daedalus::INpc>& npc,std::string_view name,
+                                   std::span<const NpcHelperDefinitions::Value> arguments,bool returns,
+                                   const std::function<void()>& observe={});
     bool invokeNpcHelper(const std::shared_ptr<daedalus::INpc>& npc,uint32_t function,
                          std::span<const NpcHelperDefinitions::Value> args);
     bool startHotkeyPotion(Npc& pl, bool mana);
