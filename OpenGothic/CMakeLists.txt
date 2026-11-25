@@ -136,8 +136,9 @@ endif()
 if(NOT OPENGOTHIC_ENABLE_APP_CADENCE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/appcadence.cpp")
 endif()
-# The society stand's core is its own library (society-core below), not part of the engine yet.
+# The runner and the game use the same independent simulation library.
 list(FILTER OPENGOTHIC_SOURCES EXCLUDE REGEX "/common/society/")
+add_subdirectory(common/society)
 
 target_sources(${PROJECT_NAME} PRIVATE ${OPENGOTHIC_SOURCES} ${ObjCSOURCES})
 
@@ -471,16 +472,6 @@ if(UNIX)
   target_compile_options(gothic-platform-draw-test PRIVATE -Wall -Wconversion -Werror)
 endif()
 
-# The society stand's core (common/society/README.md): the standard library and rapidjson only. Its include path
-# is set alone, without the engine's directories, so an engine header does not compile there.
-  file(GLOB SOCIETY_CORE_SOURCES common/society/*.cpp)
-  add_library(society-core STATIC ${SOCIETY_CORE_SOURCES})
-  set_property(TARGET society-core PROPERTY INCLUDE_DIRECTORIES "")
-  target_include_directories(society-core SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/rapidjson/include)
-  target_include_directories(society-core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/common)
-  if(NOT MSVC)
-    target_compile_options(society-core PRIVATE -Wall -Wconversion -Werror)
-  endif()
   # Plays N days of an export by the routine: the journal, the 5-minute marks and the time.
   add_executable(gothic-society-day game/societyday.cpp)
   target_link_libraries(gothic-society-day PRIVATE society-core)
@@ -952,4 +943,6 @@ install(FILES "$<TARGET_FILE_DIR:Gothic2Notr>/native-catalog-version.txt" DESTIN
 include(cmake/ZenKitGuard.cmake)
 include(cmake/EngineLayerGuard.cmake)
 include(cmake/EnginePlatform.cmake)
+# Society belongs to the RPG layer and the platform must not inherit it.
+target_link_libraries(OpenGothic society-core)
 include(cmake/Island.cmake)

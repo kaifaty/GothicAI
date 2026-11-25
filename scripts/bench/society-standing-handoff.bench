@@ -1,0 +1,35 @@
+# @headless
+# Cross the distant waiting pilot's boundary twice from the prepared night save.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 24546 1200 -10265
+wait 350
+mark far_before
+npccharacter probe PAL_238_RITTER far_before
+npccharacter trace PAL_238_RITTER
+wait 22000
+npccharacter probe PAL_238_RITTER far_before_end
+mark near_approach
+near PAL_238_RITTER 180
+cam game
+wait 350
+npccharacter probe PAL_238_RITTER near_enter
+wait 26000
+npccharacter probe PAL_238_RITTER near_end
+mark near_contact
+npccharacter trace PAL_238_RITTER player
+hold forward 1300
+wait 1500
+release all
+npccharacter probe PAL_238_RITTER near_after_contact
+mark far_return
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 24546 1200 -10265
+wait 350
+npccharacter probe PAL_238_RITTER far_enter
+wait 22000
+npccharacter probe PAL_238_RITTER far_end
+mark end
+npccharacter trace off

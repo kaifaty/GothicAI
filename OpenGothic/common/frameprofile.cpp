@@ -30,7 +30,8 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "encode_shadows","encode_main","encode_water","encode_post","encode_ui",
   "animation_npc_pass","melee_shadow","melee_contacts","interactive_animation","logical_body_sync",
   "pfx_prepare","upload_wait","rt_scene",
-  "npc_pre_tick","npc_sort","npc_policy","collision_zones","interactive_tick","triggers_tick","npc_tick_near","npc_perception"};
+  "npc_pre_tick","npc_sort","npc_policy","collision_zones","interactive_tick","triggers_tick","npc_tick_near","npc_perception",
+  "npc_animation_catchup"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
   "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls",
   "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots",
@@ -46,7 +47,10 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "hiz_history_rejected_clusters","hiz_history_rejected_meshlets",
   "tree_bough_nodes","tree_bough_source_cards","tree_bough_parent_cards","tree_bough_triangles","tree_bough_height_mpx",
   "tree_bough_active_bands","tree_bough_version_pairs","tree_bough_band_triangles","tree_level_bands","tree_shadow_bands",
-  "npc_simplified_ticked","npc_simplified_deferred","npc_simplified_native"};
+  "npc_simplified_ticked","npc_simplified_deferred","npc_simplified_native",
+  "society_anim_deferred","society_anim_catchup","society_npc_tick_skipped","npc_late_pose_candidates",
+  "npc_idle_wheel_deferred","npc_tier_candidates","npc_policy_candidates",
+  "npc_rest_routine_deferred","npc_rest_routine_deadline"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }

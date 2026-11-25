@@ -194,8 +194,7 @@ bool Npc::recoverRagdoll(bool force) {
     angle = ragdollQuestReturn.angle;
   else if(fx*fx+fz*fz>1e-6f)
     angle = 90.f-std::atan2(fx,fz)*180.f/float(M_PI);
-  x = at.x; y = at.y; z = at.z;
-  visual.setTextureOwner(at,!isPlayer());
+  setViewPosition(at);
   physic.setPosition(at);
   ragdollObjectMatrix.identity();
   ragdollObjectMatrix.translate(x,y,z);
@@ -290,8 +289,7 @@ bool Npc::recoverSpellThrow() {
   ++ragdollQuestReturns;
   angle = ragdollQuestReturn.angle;
   const auto at = ragdollQuestReturn.anchor;
-  x = at.x; y = at.y; z = at.z;
-  visual.setTextureOwner(at,!isPlayer());
+  setViewPosition(at);
   physic.setPosition(at);
   living.reset();
   arrowImpacts.clear();
@@ -323,11 +321,9 @@ void Npc::prepareRagdoll() {
       // Finish at the dry point too: get-up root motion must not carry a quest
       // NPC straight over the same edge again. 'armed' also survives a mid-rise save.
       const auto at = ragdollQuestReturn.anchor;
-      x = at.x; y = at.y; z = at.z;
-      visual.setTextureOwner(at,!isPlayer());
+      setViewPosition(at);
       physic.setPosition(at);
       mvAlgo.clearSpeed();
-      durtyTranform |= TR_Pos;
       ragdollQuestReturn.armed = false;
       }
     }
@@ -350,7 +346,7 @@ void Npc::prepareRagdoll() {
       const Vec3 at(x,pelvis.at(3,1),z);
       const auto floor = owner.physic()->landRay(at+Vec3(0,80,0),380.f);
       if(floor.hasCol && floor.n.y>0.25f)
-        y = floor.v.y;
+        setViewPosition({x,floor.v.y,z});
       ragdoll.reset();
       physic.setPosition(position());
       visual.setObjMatrix(mkPositionMatrix(),false);
@@ -567,10 +563,7 @@ void Npc::syncRagdoll() {
   if(!hasPose)
     return;
   ragdollObjectMatrix = ragdoll->rootTransform();
-  x = ragdollObjectMatrix.at(3,0);
-  y = ragdollObjectMatrix.at(3,1);
-  z = ragdollObjectMatrix.at(3,2);
-  visual.setTextureOwner(position(),!isPlayer());
+  setViewPosition({ragdollObjectMatrix.at(3,0),ragdollObjectMatrix.at(3,1),ragdollObjectMatrix.at(3,2)});
   checkRagdollQuestHazard();
   physic.setPosition(position());
   visual.pose().setRagdollPose(visual.visualSkeleton(),ragdollPose,ragdoll->poseIndices());

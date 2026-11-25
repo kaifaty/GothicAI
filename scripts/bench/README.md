@@ -1365,6 +1365,43 @@ the syllables) and `key.txt` (nods, the largest step of a frame, the first frame
 
 ### Как работает сейчас
 
+`npcfight-record begin <label> <actor> ...` and `npcfight-record end` wrap an existing bench fight with a diagnostic
+trace. Select two to four distinct actors by a unique script instance, `id:<world NPC index>`, `player`, or `crew`
+(all actors from the last `arc`). The window leaves actor setup and combat to ordinary bench commands such as
+`arc`, `fight`, `wait` and `waitdown`. For the single native archer in
+[`archery-smoke.bench`](archery-smoke.bench), open the trace with `npcfight-record begin archer crew player` after
+the archer and hero are ready, then close it after `waitdown`.
+
+`events.jsonl` has `npc_fight_record_begin` with the seed, initial stats, weapons, mana and positions,
+`npc_fight_record_hit` with native positive HP loss typed `melee`, `ranged` or `spell`, and
+`npc_fight_record_end` with elapsed simulation time, final HP, position, down and dead flags. Creation IDs identify
+actors within the trace even if two have the same instance. Hits involving a participant and a bystander have
+`external:true`. A removed or reloaded actor has `present:false` at the end. A missing end produces
+`npc_fight_record_error`. The trace captures the chosen window. An oracle for a combat model also needs scenarios
+with verified starting conditions and an episode-level outcome rule.
+
+`npcfight-handoff arm <archer A> <archer B>` exercises one bench-only transfer between the native game and the Society
+combat queue. Equip the two existing NPCs with bows and at least 20 arrows each. Start their native fight and use
+`npcfight-handoff wait native_hit` to wait for a native hit from each archer. Move the hero at least 60 m away from both
+and use `npcfight-handoff wait far_release` to wait for two hits and another release. Return the hero to the fight,
+use `npcfight-handoff wait returned_hit` to check that a new native shot landed, and close with `npcfight-handoff end`.
+The `npc_combat_handoff_*` rows show actual HP and inventory, the controller switches, and one shot ID per paired
+Society release and impact. The fixture uses damage observed in the initial native exchange and fixed timing. An arrow
+already in flight resolves before the native actor ticks resume.
+
+For one-handed melee use `npcfight-handoff arm_melee <actor A> <actor B>` with two humans and physical blade contacts.
+After `wait native_hit`, `wait native_swing` waits for a single swing before contact. Move the hero away on that tick.
+The native animation and its blade contacts finish the existing swing while the bench holds combat decisions.
+Use `wait far_hits` before returning the hero and the same `wait returned_hit` and `end` milestones as for archers.
+The native swing number is logged at start, contact and end. `OPENGOTHIC_BODY_TRACE=1` also records the physical
+contact in `melee-blade-shadow.jsonl`.
+
+`npcfight-handoff arm_magic <caster> <target> <rune symbol> <mana cost symbol>` exercises a single caster with a
+reusable projectile rune. Start the native fight, then use `wait native_hit` and `wait native_projectile` before moving
+the hero away. `wait far_release` and `wait returned_hit` check the round trip. The handoff journal records mana at
+release, HP at impact, and the inherited state of both NPCs. `OPENGOTHIC_ARROW_TRACE=<absolute CSV path>` records native
+spell projectile IDs and contacts.
+
 `npcduel <attacker instance> <defender instance> <seed> [timeout_ms]` creates two fresh
 script NPCs, 3 m apart and 12 m in front of the stationary immortal observer, as in
 `bodyduel`. Only these two copies retain `AiNormal`, the near-hero contact rig and
@@ -1510,6 +1547,154 @@ are retained. `gamedata/far_fight.json` stays `uncalibrated`.
   timeouts in the data rather than treating them as invalid records.
 - 2026-11-01: added the native nonlethal calibration bench and plan/run/smoke/report
   tools for user decision Б3 in [Дальний бой NPC](../../reports/Дальний%20бой%20NPC.md).
+
+### Society handoff scenarios
+
+Use the Mac headless runner with a fresh matching game base. Export `NEWWORLD.ZEN` once and use the same
+file for preparation and replay. Set `GOTHIC_DIR` to your game directory and `RUNNER_BIN` to the built
+`gothic-body-runner` before running these commands from the repository root. The scenarios use lockstep and
+seed 73106.
+
+```bash
+out="$PWD/.bench-out/society-handoff"
+mkdir -p "$out"
+export GOTHIC_DIR RUNNER_BIN
+export BENCH_HOST=local NO_BUILD=1 GOTHIC_AI=0
+export OPENGOTHIC_SOCIETY_CONFIG= OPENGOTHIC_SOCIETY_PILOT_NPC=
+export OPENGOTHIC_SOCIETY_PILOT_ROUTE= OPENGOTHIC_SOCIETY_PILOT_POST=
+export OPENGOTHIC_SOCIETY_PILOT_GROUP= OPENGOTHIC_SOCIETY_PILOT_CSV=
+"$RUNNER_BIN" -g "$GOTHIC_DIR" --world NEWWORLD.ZEN --society-export "$out/world.json"
+export OPENGOTHIC_SOCIETY_WORLD="$out/world.json"
+```
+
+#### Combat
+
+Each case starts from a fresh world. In `events.jsonl`, the `npc_combat_handoff_*` rows must show native
+departure, Society acquisition, return and a new native hit on the same participants. All native damage must
+agree with the separate `npc_fight_record_hit` rows.
+
+| Scenario | Evidence to check |
+| --- | --- |
+| [Ranged](society-ranged-handoff.bench) | One native arrow is still in flight when the hero leaves. Its hit resolves once before Society acquires the actors. Both archers hit while far. One Society arrow resolves as the hero returns. Both drains preserve the debit already made at release. |
+| [Melee](society-melee-handoff.bench) | One native swing opens before departure and deals one physical hit before Society acquires the actors. Both fighters hit while far. The melee blade trace joins the departing swing to its physical contact. |
+| [Magic](society-magic-handoff.bench) | Xardas commits a Fireball before departure. Its native hit spends no additional mana. Society inherits the live HP and mana, resolves its last committed hit during return, and Xardas lands a new native projectile. |
+
+```bash
+WORLD=NEWWORLD.ZEN OPENGOTHIC_ARROW_TRACE="$out/ranged-flight.csv" \
+  scripts/bench.sh society-ranged-handoff "$out/ranged"
+WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 \
+  scripts/bench.sh society-melee-handoff "$out/melee"
+WORLD=NEWWORLD.ZEN OPENGOTHIC_ARROW_TRACE="$out/magic-flight.csv" \
+  scripts/bench.sh society-magic-handoff "$out/magic"
+```
+
+#### Standing and route
+
+Generate the two saves with the matching Society export active and the pilot off. The [standing preparation](society-standing-handoff-prep.bench)
+saves after the night guard settles. The [route preparation](society-route-handoff-prep.bench) saves just before his
+23:00 route. Run each scenario from the corresponding save. For a native control, replay that same save and
+scenario into a separate output directory with `OPENGOTHIC_SOCIETY_PILOT_NPC=`.
+
+```bash
+WORLD=NEWWORLD.ZEN \
+  scripts/bench.sh society-standing-handoff-prep "$out/standing-prep"
+WORLD= SAVE="$out/standing-prep/session-pilot-night.sav" OPENGOTHIC_SOCIETY_PILOT_NPC='PAL_238_RITTER#0' \
+  scripts/bench.sh society-standing-handoff "$out/standing"
+
+WORLD=NEWWORLD.ZEN \
+  scripts/bench.sh society-route-handoff-prep "$out/route-prep"
+WORLD= SAVE="$out/route-prep/session-route-start.sav" OPENGOTHIC_SOCIETY_PILOT_NPC='PAL_238_RITTER#0' \
+  OPENGOTHIC_SOCIETY_PILOT_ROUTE=1 \
+  scripts/bench.sh society-route-handoff "$out/route"
+```
+
+For [standing](society-standing-handoff.bench), look for `Society pilot tick` skips while far, native activity
+and contact near the hero, and resumed skips after departure. For [route](society-route-handoff.bench), look
+for `Society route` movement steps in both far phases and none near the hero. Compare the position, destination,
+animation and collision ray samples with the native control.
+
+#### Guarded post
+
+The [guard scenario](society-guard-handoff.bench) starts from a fresh world and ends after the 09:00 shift
+change. In `npc_character_place_probe`, the original guard holds the sole lock across all three attempts
+by Pablo to reach the point. After the guard leaves, Pablo reaches the post and acquires it.
+
+```bash
+WORLD=NEWWORLD.ZEN OPENGOTHIC_SOCIETY_PILOT_NPC='MIL_322_MILIZ#0' OPENGOTHIC_SOCIETY_PILOT_POST=1 \
+  scripts/bench.sh society-guard-handoff "$out/guard"
+```
+
+### Society NPC CPU
+
+Use a `gothic-body-runner` built with `-DOPENGOTHIC_ENABLE_FRAME_PROFILE=ON`, a prepared `GOTHIC_DIR` and an absolute
+`RUNNER_BIN`. The [city](society-npc-city.bench) and [forest](society-npc-forest.bench) routes use fresh Khorinis,
+the same seed, and an 8 ms fixed step. Compare native execution, Society in observation mode, and its routine pilot
+with a limit of 24 NPCs. The settled, approach and arrived windows are marked in `events.jsonl`.
+
+```bash
+root="$PWD"
+out="$root/.bench-out/society-npc-cpu"
+mkdir -p "$out"
+export GOTHIC_AI=0 OPENGOTHIC_SOCIETY_CONFIG= OPENGOTHIC_SOCIETY_WEIGHTS=
+export OPENGOTHIC_SOCIETY_PILOT_NPC= OPENGOTHIC_SOCIETY_PILOT_ROUTE= OPENGOTHIC_SOCIETY_PILOT_POST=
+export OPENGOTHIC_SOCIETY_PILOT_ANIM=0 OPENGOTHIC_SOCIETY_PILOT_EARLY=0 OPENGOTHIC_SOCIETY_PILOT_WIDE=0 OPENGOTHIC_SOCIETY_POSE_TRACE=0
+"$RUNNER_BIN" -g "$GOTHIC_DIR" --world NEWWORLD.ZEN --society-export "$out/world.json"
+for scene in city forest; do
+  for mode in stock shadow group; do
+    run="$out/$scene/$mode"
+    mkdir -p "$run"
+    case "$mode" in
+      stock) world=; count=; society_csv= ;;
+      shadow) world="$out/world.json"; count=; society_csv="$run/society.csv" ;;
+      group) world="$out/world.json"; count=24; society_csv="$run/society.csv" ;;
+    esac
+    (cd "$run" && OPENGOTHIC_FRAME_PROFILE="$run/frameprofile.csv" \
+      OPENGOTHIC_SOCIETY_WORLD="$world" OPENGOTHIC_SOCIETY_PILOT_GROUP="$count" \
+      OPENGOTHIC_SOCIETY_PILOT_CSV="$society_csv" "$RUNNER_BIN" -g "$GOTHIC_DIR" --game-parity \
+      --world NEWWORLD.ZEN --scenario "$root/scripts/bench/society-npc-$scene.bench" \
+      --output "$run" --mode lockstep --step-ms 8 > game.log 2>&1)
+  done
+  base="$out/$scene"
+  python3 scripts/society_npc_cpu_report.py stock="$base/stock" shadow="$base/shadow" group="$base/group" \
+    --phase steady:steady:return --phase return:return:arrived --phase arrived:arrived:end \
+    --release-phase return --json "$base/summary.json"
+done
+```
+
+Start with an empty output directory on each comparison. The cohort CSV distinguishes selected NPCs from actual
+routine holds. The report joins it to the frame profile by world tick, checks the transition journal against the
+individual NPC IDs, and reports animation worker elapsed time separately from the main-thread pass.
+
+For the animation A/B, keep `OPENGOTHIC_SOCIETY_PILOT_GROUP=24` in both takes and toggle
+`OPENGOTHIC_SOCIETY_PILOT_ANIM=0/1`. Use the same city and forest routes and keep the pose trace off.
+The report includes the parallel animation pass, its serial tail and the late catch-up after camera movement.
+Use the animation worker update count to compare actual calls. The Society deferral counter also includes
+ticks that the normal animation LOD would have skipped.
+
+To measure early ownership, keep the group at 24 and `OPENGOTHIC_SOCIETY_PILOT_ANIM=1` in both takes.
+Toggle `OPENGOTHIC_SOCIETY_PILOT_EARLY=0/1`. Compare the marked `steady..return` window on each route.
+The `society_npc_tick_skipped` counter records calls to `Npc::tick` avoided after the ordinary cadence check.
+
+For the world-wide standing and waiting cohort, keep `OPENGOTHIC_SOCIETY_PILOT_EARLY=1` in both takes and
+toggle `OPENGOTHIC_SOCIETY_PILOT_WIDE=0/1`. The wide take uses the eligible population across the world.
+Count `Society group early tick` records for distinct actors that actually skipped a native tick, and keep the
+frame profile skip counter for the timed window. For a pose comparison, enable wide selection in both takes
+so the native reference tracks the newly eligible actors, then toggle early ownership and pose deferral together.
+
+To measure persistent ownership, freeze the previous runner as the control. Use `WIDE=1`, `EARLY=1`, and
+the same group limit for both runners. Keep pose tracing off for the timed runs. Compare both run orders
+at a fixed 8 ms step and join `society.csv` by the world tick. `bridge_ns` covers the admission checks,
+ownership queues, camera interest and sampling. `bridge_outside_tick_ns` marks the portion to add to the
+existing NPC subtotal. `wake_ns`, `wake_count` and `sleeping` report native return preparation, wake events
+and maintained ownership. The native tick skip counter records admissions that avoided a scheduled
+native tick. Once admitted, a dormant NPC is absent from the dispatch mask. To verify the first exposed
+pose, use the animation-on control and enable the pose trace in both runs.
+
+For a separate pose check, run [mid-gesture return](society-pose-midgesture.bench) with
+`OPENGOTHIC_SOCIETY_POSE_TRACE=1` under both animation modes. Compare the two output directories with
+`python3 scripts/society_pose_report.py <control> <paused> --min-wakes 8 --require-active-gesture --require-live-debt`.
+The comparison checks the root, six rendered bones, gesture name and phase, and collider rays on the first exposed
+tick and the next four ticks. It requires both a real first-exposure catch-up and a return during a guard gesture.
 
 ## Live P30 capture on Mac
 

@@ -51,6 +51,7 @@
 #include <unistd.h>
 
 struct NpcDefinitionContract {
+  static bool mobGestureDue(const Npc& npc) { return npc.mobGestureDue(); }
   // the views of items (graphics/itemview): the sword and the bow on a body, a lying item's
   static const ItemView& sword(const Npc& npc) { return npc.visual.sword.view; }
   static const ItemView& bow(const Npc& npc) { return npc.visual.bow.view; }
@@ -1490,6 +1491,52 @@ void arrowEffects(Gothic& gothic) {
               worldPins,bodyPins);
   }
 
+void furniturePoseAdmission(Gothic& gothic) {
+  gothic.clearGame().reset();
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  auto& world=*gothic.world();
+  auto* session=gothic.gameSession();
+  auto* sitter=activityNpc(world,"MIL_313_BOLTAN");
+  auto* rival=activityNpc(world,"MIL_319_PABLO");
+  auto* sleeper=activityNpc(world,"VLK_416_MATTEO");
+  const auto* bedPoint=world.findWayPoint("NW_CITY_BED_MATTEO");
+  require(sitter && rival && sleeper && bedPoint,"furniture pose test needs the authored chair, bed and their actors");
+
+  const auto advanceUntil=[&](const auto& ready) {
+    for(int i=0; i<900 && !ready(); ++i) {
+      session->tick(33);
+      session->updateAnimation(33);
+      }
+    return ready();
+    };
+  for(uint32_t i=0; i<world.npcCount(); ++i) {
+    auto& npc=*world.npcById(i);
+    if(!npc.isPlayer() && &npc!=sitter)
+      npc.setExternalControl(true);
+    }
+  require(advanceUntil([&]{ return sitter->settledFurniturePose() && sitter->societyFurnitureHold(); }),
+          "the native chair routine must reach a settled pose eligible for Society");
+  auto& chair=*sitter->interactive();
+  require(!rival->setInteraction(&chair) && chair.isAttached(*sitter) && chair.userCount()==1,
+          "a settled chair stays occupied by its original sitter");
+  sitter->setStateTime(5999);
+  require(!NpcDefinitionContract::mobGestureDue(*sitter),"the chair timer waits until six whole seconds");
+  sitter->setStateTime(6000);
+  require(NpcDefinitionContract::mobGestureDue(*sitter),"the chair timer is due at six whole seconds");
+  sitter->setExternalControl(true);
+  sitter->aiPush(AiQueue::aiUseMob("CHAIR",-1));
+  require(advanceUntil([&]{ return !sitter->settledFurniturePose() && chair.isAvailable(); }) &&
+          !sitter->societyFurnitureHold(),"leaving the chair releases its place and both eligibility checks");
+
+  sleeper->setPosition(bedPoint->position());
+  const auto bedtime=world.script().findFunction("ZS_GOTOBED");
+  require(bedtime.isValid() && sleeper->startState(bedtime,bedPoint->name),"the native sleep routine must start");
+  sleeper->setExternalControl(false);
+  require(advanceUntil([&]{ return sleeper->settledFurniturePose(); }) && !sleeper->societyFurnitureHold(),
+          "the occupied bed is eligible for pose LOD while native sleep continues");
+  std::puts("Furniture poses: chair ownership, gesture deadline and native sleep admission passed");
+  }
+
 void moverChildSave() {
   itemEffectsDefault();
   const auto* game=std::getenv("GOTHIC_DIR");
@@ -1587,6 +1634,7 @@ void moverChildSave() {
   std::printf("Mover child 2838 -> 2839: catalogue %zu, items %u, identity and saved pose restored\n",catalogueSize,itemCount);
   itemEffects(*gothic.world());
   arrowEffects(gothic);
+  furniturePoseAdmission(gothic);
   animationEffects(gothic);
   gothic.clearGame().reset();
   }

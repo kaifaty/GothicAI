@@ -13,6 +13,8 @@ class PlayerControl;
 class World;
 struct PhysicsNoise;
 
+enum class BenchNpcTick : uint8_t { Normal, Paused, MeleeDrain };
+
 class BenchHooks : public BenchProbe {
   public:
     static void install(BenchHooks* hooks) { BenchProbe::install(hooks); }
@@ -30,8 +32,9 @@ class BenchHooks : public BenchProbe {
     virtual bool simulationFrozen() = 0;
     virtual bool takeRenderReset() = 0;
     virtual void beforeWorldTick(uint64_t dt) = 0;
-    virtual void beforeNpcTick(Npc& npc) = 0;
+    virtual BenchNpcTick beforeNpcTick(Npc& npc) = 0;
     virtual bool tick(uint64_t dt, PlayerControl& player) = 0;
+    virtual void sampleSocietyPose(World& world) = 0;
     virtual void sampleStreaming(const World& world) = 0;
     virtual void capture(Tempest::Pixmap& frame, float uiScale) = 0;
     virtual void note(const char* text) = 0;
@@ -139,9 +142,10 @@ namespace Bench {
       hooks->beforeWorldTick(dt);
     }
 
-  inline void beforeNpcTick(Npc& npc) {
+  inline BenchNpcTick beforeNpcTick(Npc& npc) {
     if(auto* hooks = BenchHooks::get())
-      hooks->beforeNpcTick(npc);
+      return hooks->beforeNpcTick(npc);
+    return BenchNpcTick::Normal;
     }
 
   inline bool tick(uint64_t dt, PlayerControl& player) {
@@ -149,6 +153,11 @@ namespace Bench {
       return hooks->tick(dt,player);
     return false;
     }
+
+  inline void sampleSocietyPose(World& world) {
+    if(auto* hooks = BenchHooks::get())
+      hooks->sampleSocietyPose(world);
+  }
 
   inline void sampleStreaming(const World& world) {
     if(auto* hooks = BenchHooks::get())

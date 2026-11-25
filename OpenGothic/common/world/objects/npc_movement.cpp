@@ -52,7 +52,11 @@ bool Npc::nativeMobsiTransition() const {
 bool Npc::nativeCombatMovement() const {
   // Routine locomotion is 6c; combat, pursuit and escape keep their native
   // body and physics executor until 6e. Keep every admission rule here.
-  if(weaponState()!=WeaponState::NoWeapon || currentTarget!=nullptr || go2.nativeCombatTarget!=nullptr ||
+  return weaponState()!=WeaponState::NoWeapon || hasNativeCombatActivity();
+  }
+
+bool Npc::hasNativeCombatActivity() const {
+  if(currentTarget!=nullptr || go2.nativeCombatTarget!=nullptr ||
      fghAlgo.hasInstructions() || go2.flag==GT_Flee || go2.flag==GT_Enemy || go2.flag==GT_EnemyG ||
      meleeKnockdown || isMeleeStunned() || visual.pose().isAttackAnim())
     return true;
@@ -60,6 +64,24 @@ bool Npc::nativeCombatMovement() const {
   return state=="ZS_ATTACK" || state=="ZS_MM_ATTACK" || state=="ZS_FLEE" ||
          state=="ZS_FLEETOWP" || state=="ZS_MAGICFLEE" || state=="ZS_MM_FLEE" ||
          state=="ZS_MM_THREATENENEMY" || state=="ZS_MM_EATBODY" || state=="ZS_WATCHFIGHT";
+  }
+
+bool Npc::canDeferIdleMonsterTick() const {
+  return weaponState()==WeaponState::Fist && canDeferIdleMonsterBody();
+  }
+
+bool Npc::canDeferIdleMonsterBody() const {
+  const auto weapon = weaponState();
+  const bool idleStance = weapon==WeaponState::Fist || weapon==WeaponState::W1H || weapon==WeaponState::W2H;
+  if(aiPolicy!=NpcProcessPolicy::AiFar2 || !idleStance || !isMonster() ||
+     externalCtrl || isDown() || currentInteract!=nullptr || mvAlgo.state()!=MoveAlgo::Run ||
+     !go2.empty() || aiQueue.size()!=0 || aiQueueOverlay.size()!=0 || !isStanding() ||
+     hasNativeCombatActivity())
+    return false;
+  const auto now = owner.tickCount();
+  // Damage can arrive before a target or a hit reaction has been queued.
+  return physicsNoiseUntil<=now &&
+         (meleeRecentHits.empty() || now-meleeRecentHits.back().second>NpcSimTick::MaxPeriodMs);
   }
 
 auto Npc::simplifiedBodyState() const -> std::optional<BodyState> {
@@ -396,7 +418,38 @@ bool Npc::implGoTo(uint64_t dt) {
     }
   if(go2.flag==GT_Point && go2.pointDistance>0.f)
     dist = go2.pointDistance;
+  static const bool routePilot = [] {
+    const auto* value = std::getenv("OPENGOTHIC_SOCIETY_PILOT_ROUTE");
+    return value!=nullptr && std::string_view(value)=="1";
+    }();
+  if(routePilot) {
+    if(const auto society=owner.stepSocietyRoute(*this,societyRouteDestination(),dt,dist))
+      return *society;
+    }
   return implGoTo(dt,dist);
+  }
+
+const WayPoint* Npc::societyRouteDestination() const {
+  if(go2.flag!=GT_Way || !go2.activity || go2.wp==nullptr || currentFp!=go2.wp || currentFpLock.point()!=go2.wp ||
+     !aiState.started || std::string_view(aiState.hint)!="ZS_STAND_WP" || aiState.eTime<=owner.time() ||
+     activityEvents.stage!=ActivityEvents::Stage::Approach || activityEvents.restart || activityEvents.retry ||
+     isExternalControl() || isInAir() || !usesSimplifiedMovement() || nativeBodyAction() || pendingSimpleGoTo()!=nullptr)
+    return nullptr;
+
+  const auto ordinary = [](const WayPoint* point) {
+    return point!=nullptr && point->isConnected() && !point->isFreePoint() && !point->isGuarded() && point->ladder==nullptr;
+    };
+  const auto* next = wayPath.first();
+  const auto* destination = next!=nullptr ? wayPath.last() : go2.wp;
+  if(!ordinary(go2.wp) || (next!=nullptr && !ordinary(next)) || !ordinary(destination) || destination!=currentTaPoint())
+    return nullptr;
+  return destination;
+  }
+
+bool Npc::stepSocietyWaypoint(uint64_t dt, float destDist) {
+  // Society owns the decision to advance this route. Native movement still owns
+  // the path, position, animation, support, waypoint locks and arrival.
+  return implSimpleGoTo(dt,destDist);
   }
 
 bool Npc::implGoTo(uint64_t dt, float destDist) {
@@ -756,6 +809,8 @@ void Npc::attachToPoint(const WayPoint *p) {
      (pending->act==AI_GoToNextFp || pending->act==AI_GoToPoint) &&
      currentFp==pending->point && go2.flag==GT_Way && p==go2.wp && p!=pending->point)
     return;
+  if(currentFp!=p)
+    wakeSociety();
   if(currentFp!=p && campfireBodySuspended())
     resumeCampfireBody();
   if(currentFp!=p && activityEvents.activity && activityEvents.activity->point &&

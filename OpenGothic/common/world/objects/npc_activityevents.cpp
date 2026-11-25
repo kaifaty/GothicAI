@@ -20,6 +20,11 @@ gtime after(gtime now, uint64_t ms) {
   }
 }
 
+bool Npc::hasCampfireActivity() const {
+  const auto* point = activityEvents.activity ? activityEvents.activity->point : nullptr;
+  return point!=nullptr && point->form==ActivityDefinitions::PointActivity::Form::Campfire;
+  }
+
 bool Npc::canSuspendCampfireBody() const {
   using ActivityEvents::Stage;
   const auto& state = activityEvents;
@@ -65,14 +70,24 @@ bool Npc::suspendCampfireBody() {
   return true;
   }
 
+void Npc::resumeCampfireBody() {
+  if(!physic.bodySuspended())
+    return;
+  physic.resumeBody();
+  owner.noteNpcCellChange(*this);
+  }
+
 void Npc::wakeActivity(uint16_t wakes) {
-  if(activityEvents.activity!=nullptr)
+  if(activityEvents.activity!=nullptr && wakes!=0) {
+    wakeSociety();
     activityEvents.pending |= wakes;
+    }
   }
 
 void Npc::stopActivityEvents(uint16_t why) {
   if(activityEvents.init==size_t(-1))
     return; // nothing set up: no reservation, no wait
+  wakeSociety();
   const auto* record=activityEvents.activity;
   const bool atPoint=record && record->point;
   const auto before=activityEvents.stage;
@@ -108,6 +123,8 @@ void Npc::stopActivityEvents(uint16_t why) {
     places.unwait(*this);
     }
   activityEvents = ActivityEvents::State();
+  if(atPoint && record->point->form==ActivityDefinitions::PointActivity::Form::Campfire)
+    owner.noteNpcCellChange(*this);
   if(probe) probe->activityTransition(*this,why,before);
   }
 
@@ -118,6 +135,8 @@ void Npc::startActivityEvents(const ActivityEvents::Record* activity) {
   activityEvents.activity = activity;
   if(activityEvents.activity==nullptr)
     return;
+  if(hasCampfireActivity())
+    owner.noteNpcCellChange(*this);
   activityEvents.stage      = ActivityEvents::Stage::Approach;
   activityEvents.awaitQueue = true;
   activityEvents.deadline   = after(owner.time(),ActivityEvents::WatchdogMs);
@@ -131,6 +150,8 @@ void Npc::restoreActivityEvents(const ActivityEvents::Record* activity) {
   activityEvents.init     = aiState.funcIni.ptr;
   activityEvents.activity = activity;
   activityEvents.pending  = ActivityEvents::Loaded;
+  if(hasCampfireActivity())
+    owner.noteNpcCellChange(*this);
   }
 
 void Npc::tickActivityEvents(bool runLoop) {
@@ -421,21 +442,43 @@ void Npc::seekActivityPoint(uint16_t wakes) {
     }
   }
 
-void Npc::tickPointGesture() {
+bool Npc::pointGestureDue(uint64_t leadMs) const {
   using namespace ActivityEvents;
   const auto& s = activityEvents;
   if(s.stage!=Stage::Hold && s.stage!=Stage::Wait)
-    return;
+    return false;
   const auto& a = *s.activity->point;
-  if(int32_t(stateTime()/1000)<=a.timerSeconds || hnpc->aivar[19]!=a.poseStage)
-    return;
-  playActivityGesture();
+  return int32_t((stateTime()+leadMs)/1000)>a.timerSeconds && hnpc->aivar[19]==a.poseStage;
+  }
+
+bool Npc::societyGestureNeedsPose(uint64_t leadMs) const {
+  using Form = ActivityDefinitions::PointActivity::Form;
+  const auto* activity = activityEvents.activity;
+  const auto* point = activity!=nullptr ? activity->point : nullptr;
+  if(point==nullptr)
+    return currentInteract!=nullptr && aiState.loopNextTime<=owner.tickCount()+leadMs && mobGestureDue(leadMs);
+  if(!point->timed())
+    return false;
+  // A gesture blend needs recent samples of its outgoing stance and velocity.
+  if(point->form!=Form::Guard && aiState.loopNextTime>owner.tickCount()+leadMs)
+    return false;
+  return pointGestureDue(leadMs);
+  }
+
+void Npc::tickPointGesture() {
+  if(pointGestureDue())
+    playActivityGesture();
+  }
+
+bool Npc::mobGestureDue(uint64_t leadMs) const {
+  const auto* activity = activityEvents.activity;
+  const auto* mob = activity!=nullptr ? activity->mob : nullptr;
+  return mob!=nullptr && mob->timer && int32_t((stateTime()+leadMs)/1000)>mob->timer->timerSeconds &&
+         ActivityDefinitions::bodyStateContains(int32_t(bodyState()),mob->busyBodyState);
   }
 
 void Npc::tickMobTimer() {
-  const auto& mob=*activityEvents.activity->mob;
-  if(mob.timer && int32_t(stateTime()/1000)>mob.timer->timerSeconds &&
-     ActivityDefinitions::bodyStateContains(int32_t(bodyState()),mob.busyBodyState))
+  if(mobGestureDue())
     playActivityGesture();
   }
 

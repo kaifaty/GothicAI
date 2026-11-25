@@ -19,6 +19,8 @@
 using namespace Tempest;
 
 void Npc::setPerceptionTime(uint64_t time) {
+  if(perceptionTime!=time)
+    wakeSociety();
   perceptionTime = time;
   }
 
@@ -315,6 +317,7 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
   const uint64_t now = owner.tickCount();
   if(noise.culprit==this || !canHearPhysicsNoise() || isPhysicsInvestigating() || now<physicsNoiseNextTime)
     return false;
+  wakeSociety();
   // The observer checks sight now, before either the native turn or a script callback.
   GameHost::inst().emitPhysicsNoiseHeard(*this,noise);
   physicsNoiseNextTime = now+2001;
@@ -348,6 +351,7 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
 bool Npc::startPhysicsInvestigation(const Tempest::Vec3& at, uint64_t scanMs) {
   if(!canHearPhysicsNoise() || !isHuman() || weaponState()!=WeaponState::NoWeapon)
     return false;
+  wakeSociety();
   clearAiQueue();
   physicsInvestigationPosition = at;
   physicsInvestigationUntil = owner.tickCount()+45000;

@@ -154,6 +154,7 @@ GameSession::GameSession(std::string file) {
                     "npcs="+std::to_string(wrld->npcCount()));
   probeT = LoadProbe::now();
   wrld->triggerOnStart(true);
+  wrld->startSocietyProjection(clockRate());
   if(LoadProbe::enabled())
     LoadProbe::mark("trigger_start",LoadProbe::msSince(probeT));
   cam->reset(wrld->player());
@@ -246,6 +247,7 @@ GameSession::GameSession(Serialize &fin) {
 
   fin.setEntry("game/camera");
   loadCamera(fin,*cam,wrld->player());
+  wrld->restoreSocietyProjection(clockRate(),fin);
   wrld->updateLandscape(*cam);
   wrld->updateNpcSimTiers();
   Gothic::inst().setLoadingProgress(96);
@@ -300,6 +302,7 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
   Gothic::inst().setLoadingProgress(25);
 
   wrld->save(fout);
+  wrld->saveSocietyProjection(fout);
   Gothic::inst().setLoadingProgress(60);
 
   fout.setEntry("game/perc");

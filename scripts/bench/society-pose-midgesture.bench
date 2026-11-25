@@ -1,0 +1,19 @@
+# @headless
+# Diagnostic only. Use --game-parity --step-ms 8 and OPENGOTHIC_SOCIETY_POSE_TRACE=1.
+# Keep the cohort on for both takes; toggle only OPENGOTHIC_SOCIETY_PILOT_ANIM.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_CITY_HABOUR_POOR_AREA_PATH_13
+watch player
+cam at 4499 183 -5427 5203 183 -6751
+mark warm
+wait 6000
+mark steady
+# The first native guard gesture pass is near 6 seconds on the fixed-step city run.
+wait 400
+mark return
+near MIL_322_MILIZ 180
+cam game
+wait 2000
+mark end

@@ -3,7 +3,11 @@
 #include <algorithm>
 #include <limits>
 
+#include "asset/activitydefinitions.h"
 #include "game/bodycontroller.h"
+#include "game/npckeys.h"
+#include "world/objects/interactive.h"
+#include "world/waymatrix.h"
 #include "world/world.h"
 
 bool Npc::startQueuedState(const AiQueue::AiAction& act) {
@@ -30,6 +34,7 @@ bool Npc::startState(ScriptFn id, std::string_view wp, gtime endTime, bool noFin
     return true;
     }
 
+  wakeSociety();
   if(aiState.funcIni==id) {
     if(!noFinalize) {
       // NOTE: B_AssessQuietSound can cause soft-lock on npc without this
@@ -93,6 +98,7 @@ void Npc::clearState(bool noFinalize) {
 
 void Npc::finishState(bool noFinalize, uint16_t reason) {
   if(BodyController::deferNative(*this,[this,noFinalize,reason] { finishState(noFinalize,reason); })) return;
+  monsterRestSleeping = false;
   resumeCampfireBody();
   stopActivityEvents(reason);
   if(aiState.funcIni.isValid() && aiState.started) {
@@ -153,6 +159,151 @@ void Npc::runStateInit() {
   startActivityEvents(activity);
   }
 
+bool Npc::supportsSocietyActivity(const ActivityEvents::Record& activity) {
+  using Form = ActivityDefinitions::PointActivity::Form;
+  if(const auto* point = activity.point)
+    return point->timed() || point->form==Form::Campfire;
+  return activity.mob!=nullptr && (!activity.mob->timer || activity.mob->skipApproachWhenBusy);
+  }
+
+bool Npc::societyFurnitureHold() const {
+  const auto* record = activityEvents.activity;
+  const auto* mob = record!=nullptr ? record->mob : nullptr;
+  return mob!=nullptr && activityEvents.stage==ActivityEvents::Stage::Hold &&
+         ActivityDefinitions::mobInitChecksBody(aiState.hint) && mob->loopResult==LOOP_CONTINUE &&
+         currentInteract!=nullptr && currentInteract->checkMobName(mob->scheme) &&
+         currentInteract->stateId()==mob->useState && settledFurniturePose();
+  }
+
+const WayPoint* Npc::societyWaitingPoint() const {
+  return currentRoutine().point;
+  }
+
+std::string_view Npc::societyRoutineBlocker(std::string_view state, bool groupPilot, bool wide) const {
+  using Stage = ActivityEvents::Stage;
+  using Form = ActivityDefinitions::PointActivity::Form;
+  const auto now = owner.time();
+  if(state.empty() || std::string_view(aiState.hint)!=state)
+    return "native_state_name";
+  const auto* record = activityEvents.activity;
+  const auto* point = record!=nullptr ? record->point : nullptr;
+  const bool guardedPost = state=="ZS_STAND_GUARDING";
+  const bool waiting = activityEvents.stage==Stage::Wait && (wide || (groupPilot && guardedPost));
+  if(activityEvents.stage!=Stage::Hold && !waiting)
+    return "native_activity_stage";
+  const bool furniture = wide && owner.persistentSocietyEnabled() && societyFurnitureHold();
+  if(wide && (record==nullptr || !supportsSocietyActivity(*record) || campfireBodySuspended()))
+    return "native_activity_type";
+  if(wide && !furniture && (waiting ? record->mob!=nullptr && record->mob->timer : point==nullptr || !point->timed()))
+    return "native_activity_type";
+  if(!aiState.started || activityEvents.init!=aiState.funcIni.ptr ||
+     activityEvents.pending!=0 || activityEvents.awaitQueue || activityEvents.retry || activityEvents.restart)
+    return "native_activity_pending";
+  if(!(now<activityEvents.deadline) || !(now<aiState.eTime))
+    return "native_deadline";
+  if((hnpc->type!=NpcType::AMBIENT && !((wide || (groupPilot && guardedPost)) && hnpc->type==NpcType::MAIN)) ||
+     !isHuman() || isDead())
+    return "native_actor_type";
+  if(isExternalControl())
+    return "native_external_control";
+  const auto body = bodyStateMasked();
+  // The stock standing poses can carry no body-state tag.
+  const bool idle = body==BS_NONE && !isFalling() && visual.pose().isInAnim(guardedPost ? "S_HGUARD" : "S_LGUARD");
+  if(isInAir() || (!furniture && body!=BS_STAND && !idle))
+    return "native_body_state";
+  if(weaponState()!=WeaponState::NoWeapon)
+    return "native_weapon";
+  if(animationLodPinned(furniture) || (furniture && !canPauseDistantPose(0)))
+    return "native_pose_pinned";
+  if(furniture) {
+    if(!usesSimplifiedMovement() || societyWaitingPoint()==nullptr ||
+       qDistTo(*currentInteract)>MAX_AI_USE_DISTANCE*MAX_AI_USE_DISTANCE)
+      return "native_furniture_anchor";
+    } else if(wide && waiting) {
+    // Place-release events still arrive through the native wait registration.
+    const auto* anchor = societyWaitingPoint();
+    constexpr auto reach = WayMatrix::distanceThreshold;
+    if(anchor==nullptr || qDistTo(anchor)>reach*reach)
+      return "native_wait_anchor";
+    } else {
+    const bool needsFreePoint = !waiting && (guardedPost || (wide && point!=nullptr && point->form==Form::ArmsCrossed));
+    if(currentFp==nullptr || currentFpLock.point()!=currentFp || currentFp->isFreePoint()!=needsFreePoint)
+      return "native_waypoint_lock";
+    if(needsFreePoint && (!currentFp->isGuarded() || currentFp->useCounter()!=1 ||
+                         (wide && (point==nullptr || !isOnFreePoint(point->point)))))
+      return "native_guard_lock";
+    }
+  if(currentTarget!=nullptr)
+    return "native_target";
+  if(!go2.empty())
+    return "native_navigation";
+  if(isAiBusy() || aiQueueOverlay.size()!=0)
+    return "native_ai_busy";
+  if(!outputPipe->isFinished())
+    return "native_output";
+  return {};
+  }
+
+bool Npc::trySocietyEarlyTick() {
+  const auto* activity = activityEvents.activity;
+  if(activity==nullptr)
+    return false;
+  const auto now = owner.tickCount();
+  const bool loopDue = aiState.loopNextTime<=now;
+  const auto* point = activity->point;
+  if(point!=nullptr && point->timed() &&
+     (loopDue || point->form==ActivityDefinitions::PointActivity::Form::Guard) && pointGestureDue())
+    return false;
+
+  // Let the native tick finish any work that precedes an otherwise idle routine.
+  if(waitTime>=now || BodyController::owns(*this) || NpcKeys::enabled(*this) ||
+     simpleMovement.active!=usesSimplifiedMovement() || mvAlgo.state()!=MoveAlgo::Run ||
+     needsLayerPoseUpdate() || visual.pose().hasLayerTickWork() ||
+     currentLookAt!=nullptr || currentLookAtNpc!=nullptr ||
+     itemUse.item!=0 || foodPool.remaining!=0 || castLevel!=CS_NoCast || peeStream ||
+     physicsNoiseUntil!=0 || physicsInvestigationUntil!=0 ||
+     bodyImpactWindow.speed!=0.f || bodyImpactSpellFlight || meleeKnockdown ||
+     meleePosture.value!=0.f || isMeleeStunned() || meleeChargePhase!=ChargePhase::None ||
+     meleeAiSpecial!=MeleeAi::Special::None)
+    return false;
+
+  const auto& attributes = hnpc->attribute;
+  if(attributes[ATR_REGENERATEHP]<0 || attributes[ATR_REGENERATEMANA]<0 ||
+     (attributes[ATR_REGENERATEHP]>0 && attributes[ATR_HITPOINTS]<attributes[ATR_HITPOINTSMAX]) ||
+     (attributes[ATR_REGENERATEMANA]>0 && attributes[ATR_MANA]<attributes[ATR_MANAMAX]) ||
+     (hasStamina() && (meleeStamina.exhausted || stamina()<staminaMax())))
+    return false;
+
+  if(currentInteract!=nullptr) {
+    const auto& pose = visual.pose();
+    for(size_t i=0; i<pose.logicalLayerCount(); ++i)
+      if(!pose.logicalLayer(i).sequence->data->sfx.empty())
+        return false;
+    }
+
+  if(!owner.societyHoldsRoutine(*this,{}))
+    return false;
+  if(loopDue)
+    aiState.loopNextTime = now + perceptionTimeClampt();
+  // These cursors normally advance even when there are no events or healing.
+  lastEventTime = now;
+  foodPoolTick = now;
+  headInput.reset();
+  owner.recordSocietyEarlyTick(*this);
+  return true;
+  }
+
+bool Npc::canSleepMonsterRest() const {
+  // The stock Loop and row end share the perception deadline. Keep the
+  // original callback, including its random draws, on that native beat.
+  constexpr float maxPointDistance = 300.f;
+  return aiState.started && std::string_view(aiState.hint)=="ZS_MM_RTN_REST" &&
+         activityEvents.init==aiState.funcIni.ptr && activityEvents.activity==nullptr &&
+         aiState.loopNextTime>owner.tickCount() && currentFp!=nullptr && currentFpLock.point()==currentFp &&
+         qDistTo(currentFp)<maxPointDistance*maxPointDistance && outputPipe->isFinished() &&
+         canDeferIdleMonsterBody() && !animationLodPinned();
+  }
+
 void Npc::tickRoutine() {
   if(!aiState.funcIni.isValid() && !isPlayer()) {
     auto r = currentRoutine();
@@ -167,10 +318,13 @@ void Npc::tickRoutine() {
       }
     }
 
-  if(!aiState.funcIni.isValid())
+  if(!aiState.funcIni.isValid()) {
+    owner.societyHoldsRoutine(*this,"no_state");
     return;
+    }
 
   if(!aiState.started) {
+    owner.societyHoldsRoutine(*this,"state_init");
     runStateInit();
     return;
     }
@@ -180,8 +334,22 @@ void Npc::tickRoutine() {
   if(activityEvents.init!=aiState.funcIni.ptr)
     restoreActivityEvents(owner.rules().eventActivity(aiState.funcIni));
   const bool events = activityEvents.activity!=nullptr;
-  const bool atPoint = events && activityEvents.activity->point;
+  const auto* pointActivity = events ? activityEvents.activity->point : nullptr;
+  const bool atPoint = pointActivity!=nullptr;
   const bool loopDue = aiState.loopNextTime<=owner.tickCount();
+  // Native perception, physics, pose and the waypoint lock stay live. A guard
+  // can draw a gesture on a tick outside its perception cadence.
+  if(owner.societyHoldsRoutine(*this,events ? std::string_view{} : "no_event_activity")) {
+    const bool guard = pointActivity!=nullptr && pointActivity->form==ActivityDefinitions::PointActivity::Form::Guard;
+    const bool skip = pointActivity==nullptr || !pointActivity->timed() ||
+                      (!loopDue && !guard) || !pointGestureDue();
+    owner.recordSocietyRoutineExecution(skip);
+    if(skip) {
+      if(loopDue)
+        aiState.loopNextTime = owner.tickCount() + perceptionTimeClampt();
+      return;
+      }
+    }
   bool runLoop = false;
   if(loopDue) {
     aiState.loopNextTime = owner.tickCount() + perceptionTimeClampt();
@@ -330,14 +498,17 @@ uint64_t Npc::stateTime() const {
   }
 
 void Npc::setStateTime(int64_t time) {
+  wakeSociety();
   aiState.sTime = owner.tickCount()-uint64_t(time);
   }
 
 void Npc::addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point) {
+  wakeSociety();
   auto wp = world().findPoint(point,false);
   NpcRoutineTable::add(routines,s,e,callback,wp,point);
   }
 
 void Npc::clearRoutine() {
+  wakeSociety();
   routines.clear();
   }

@@ -1,0 +1,35 @@
+# @headless
+# One native caster hands off a live Fireball projectile and resumes after the hero returns.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 150
+cam game
+wait 500
+
+put NONE_100_XARDAS 1200 -32
+put KDF_511_DARON 1200 32
+immortal NONE_100_XARDAS off
+stats npc NONE_100_XARDAS mana 400 circle 6 hpmax 2400 hp 2400
+stats npc KDF_511_DARON mana 400 circle 6 hpmax 2400 hp 2400
+
+npcfight-record begin exchange NONE_100_XARDAS KDF_511_DARON
+npcfight-handoff arm_magic NONE_100_XARDAS KDF_511_DARON ITRU_INSTANTFIREBALL SPL_COST_INSTANTFIREBALL
+fight NONE_100_XARDAS KDF_511_DARON
+fight KDF_511_DARON NONE_100_XARDAS
+npcfight-handoff wait native_hit
+npcfight-handoff wait native_projectile
+wait 100
+mark leave_combat
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 22546 1200 -10265
+npcfight-handoff wait far_release
+mark return_combat
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 150
+cam game
+npcfight-handoff wait returned_hit
+npcfight-handoff end
+npcfight-record end
+mark combat_end
