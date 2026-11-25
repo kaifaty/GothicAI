@@ -1,5 +1,7 @@
 #include "gamescript.h"
 
+#include <stdexcept>
+
 #include <array>
 
 #include "game/npcactivityhost.h"
@@ -95,7 +97,7 @@ bool GameScript::runPointRoutine(Npc& npc, std::string_view name, int& result) {
       npc.aiPush(AiQueue::aiUseMob("IDOL",-1));
       }
     else if(kind==PointRoutine::Study) {
-      const auto scroll = findSymbol("FAKESCROLL_ADDON")->index();
+      const auto scroll = findItemInstance("FAKESCROLL_ADDON").value();
       // The old End removes from Self the number of scrolls held by Other.
       if(auto* other = findNpc(nativeNpc("OTHER"))) {
         const auto count = other->itemCount(scroll);
@@ -177,7 +179,7 @@ bool GameScript::runPointRoutine(Npc& npc, std::string_view name, int& result) {
     case PointRoutine::PracticeSword:
       if(stage==NeedsPose) {
         if(npc.currentMeleeWeapon()==nullptr) {
-          storeItem(npc.addItem(findSymbol("ITMW_1H_BAU_MACE")->index(),1));
+          storeItem(npc.addItem(findItemInstance("ITMW_1H_BAU_MACE").value(),1));
           npc.aiPush(AiQueue::aiEquipBestMeleeWeapon());
           }
         npc.aiPush(AiQueue::aiReadyMeleeWeapon());
@@ -211,16 +213,18 @@ bool GameScript::runPointRoutine(Npc& npc, std::string_view name, int& result) {
     case PointRoutine::Study: {
       // The previous roll supplies the threshold. The VM locals are shared across the
       // NPCs in this state and persist in the save along with the queued commands.
-      auto* random = findSymbol("ZS_STUDY_WP_LOOP.RANDY");
-      const auto deadline = 25 + random->get_int();
+      const auto deadline = 25 + npcRuleInt("ZS_STUDY_WP_LOOP.RANDY");
       setNpcRuleInt("ZS_STUDY_WP_LOOP.RANDYSTATETIME",deadline);
       const auto roll = int32_t(rollRandom(10,&npc,true));
-      random->set_int(roll);
+      setNpcRuleInt("ZS_STUDY_WP_LOOP.RANDY",roll);
       const auto eventRoll = int32_t(rollRandom(100,&npc,true));
       setNpcRuleInt("ZS_STUDY_WP_LOOP.EVENTRANDY",eventRoll);
       const auto wait = 5 + roll;
       setNpcRuleInt("ZS_STUDY_WP_LOOP.WAIT",wait);
-      findSymbol("ZS_STUDY_WP_LOOP.WAITTIME")->set_float(float(wait));
+      auto* waitTime=std::get_if<ScriptVars::Array<float>>(runtimeState.find("ZS_STUDY_WP_LOOP.WAITTIME"));
+      if(waitTime==nullptr)
+        throw std::runtime_error("missing saved study routine wait time");
+      waitTime->values.front()=float(wait);
       if(awayFromWaypoint()) {
         gotoWaypoint();
         npc.aiPush(AiQueue::aiAlignToWp());
@@ -239,7 +243,7 @@ bool GameScript::runPointRoutine(Npc& npc, std::string_view name, int& result) {
         else if(roll>3) {
           npc.aiPush(AiQueue::aiPlayAnim("T_LGUARD_2_STAND"));
           stage = NeedsPose;
-          const auto scroll = findSymbol("FAKESCROLL_ADDON")->index();
+          const auto scroll = findItemInstance("FAKESCROLL_ADDON").value();
           if(npc.itemCount(scroll)==0)
             storeItem(npc.addItem(scroll,1));
           stopLookAt();

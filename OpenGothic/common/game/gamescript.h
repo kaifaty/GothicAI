@@ -366,6 +366,7 @@ class GameScript final : public GameRules {
     bool runControlSpell(Npc& npc, std::string_view name, int& result);
     void stopControlSpell(const std::shared_ptr<daedalus::INpc>& self, bool continueRoutine);
     void validateCombatTarget(const std::shared_ptr<daedalus::INpc>& self);
+    void settleNpcInventory(Npc& npc,bool death);
     bool runDeadState(Npc& npc, std::string_view name, int& result);
     bool isCanyonRazor(const std::shared_ptr<daedalus::INpc>& actor);
     bool dropsUnconsciousNpc();

@@ -118,11 +118,10 @@ bool GameScript::runMovementRoutine(Npc& npc, std::string_view name, int& result
     const auto hero = nativeNpc("HERO");
     const auto distance = npc_getdisttonpc(self,hero);
     const bool lyingHero = npcBodyStateContains(hero,BS_LIE);
-    auto& complaint = *findSymbol("PLAYER_GETOUTOFMYBEDCOMMENT");
-    if(distance<=500 && lyingHero && complaint.get_int()==0) {
+    if(distance<=500 && lyingHero && npcRuleInt("PLAYER_GETOUTOFMYBEDCOMMENT")==0) {
       turnToNpc(self,hero);
       sayToNpc(self,nativeNpc("OTHER"),"$GETOUTOFMYBED");
-      complaint.set_int(1);
+      setNpcRuleInt("PLAYER_GETOUTOFMYBEDCOMMENT",1);
       }
     return true;
     }
@@ -369,7 +368,7 @@ void GameScript::stopInterruptedSpell(Npc& npc, bool resumeRoutine) {
   npc.clearAiQueue();
   npc.aiPush(AiQueue::aiStandup());
   if(npc.handle().guild<int32_t(GIL_SEPERATOR_HUM))
-    vm.unsafe_call_bl(findSymbol("B_ASSESSDAMAGE"));
+    runDamageReaction();
   else
     npc_settempattitude(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),int32_t(ATT_HOSTILE));
   if(resumeRoutine)

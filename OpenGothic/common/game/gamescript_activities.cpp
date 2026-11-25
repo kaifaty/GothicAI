@@ -208,7 +208,7 @@ bool GameScript::endMonsterRoutine(Npc& npc, MonsterRoutine routine) {
 void GameScript::removeRavensStoneGuardians(Npc& npc) {
   // The stock rule resolves the live guardian through the SELF alias.
   if(npc.handle().guild==GIL_Stoneguardian && deathProgress.ravenDead==1)
-    invokeKillNpc(hlp_getinstanceid(nativeNpc("SELF")));
+    invokeKillNpc(int32_t(runtimeState.id("SELF").value()));
   }
 
 bool GameScript::invokeNativeRoutine(Npc& npc, uint32_t function, std::string_view name, NpcActivityProbe::Phase& probe) {

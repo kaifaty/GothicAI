@@ -46,26 +46,12 @@ enum class AttackAnnouncementReason : int32_t {
 }
 
 std::string_view GameScript::symbolName(size_t id) {
-  if(stockPrograms && id<=UINT32_MAX)
-    if(const auto name = storySymbolName(uint32_t(id)); !name.empty())
-      return name;
-  if(id<=UINT32_MAX)
-    if(const auto* entry = own.find(uint32_t(id)))
-      return entry->name;
-  if(auto* symbol = findSymbol(id))
-    return symbol->name();
-  return "";
+  return id<=UINT32_MAX ? storySymbolName(uint32_t(id)) : std::string_view{};
   }
 
 ScriptFn GameScript::findFunction(std::string_view name) {
-  if(baseNativeCatalog()!=nullptr) {
-    const auto id = storyScriptFunctionId(name);
-    return id ? ScriptFn(*id) : ScriptFn{};
-    }
-  auto* symbol = findSymbol(name);
-  if(symbol==nullptr || symbol->type()!=daedalus::DaedalusDataType::FUNCTION)
-    return {};
-  return ScriptFn(symbol->index());
+  const auto id = storyScriptFunctionId(name);
+  return id ? ScriptFn(*id) : ScriptFn{};
   }
 
 bool GameScript::usesNativeQuietSound(ScriptFn callback) const {
@@ -213,8 +199,7 @@ bool GameScript::hasFakeGuild(const std::shared_ptr<daedalus::INpc>& self, const
   storyActorSlot("C_PLAYERHASFAKEGUILD.SLF") = self;
   const auto armor = npc_getequippedarmor(other);
   storyActorSlot("C_PLAYERHASFAKEGUILD.ITM") = armor;
-  auto& rangerComment = *findSymbol("C_PLAYERHASFAKEGUILD.NSC_COMMENTRANGERARMOR");
-  rangerComment.set_int(1);
+  setNpcRuleInt("C_PLAYERHASFAKEGUILD.NSC_COMMENTRANGERARMOR",1);
   constexpr size_t ignoresArmor = 73; // AIV_IGNORESARMOR
   constexpr size_t ignoresFakeGuild = 70; // AIV_IGNORESFAKEGUILD
   if(self && (self->aivar[ignoresArmor]==1 || self->aivar[ignoresFakeGuild]==1))
@@ -230,7 +215,7 @@ bool GameScript::hasFakeGuild(const std::shared_ptr<daedalus::INpc>& self, const
   if(!hasArmor || other->guild!=listenerGuild)
     return false;
   if(hlp_isitem(armor,int(findSymbolIndex("ITAR_RANGER_ADDON"))))
-    return rangerComment.get_int()==1;
+    return npcRuleInt("C_PLAYERHASFAKEGUILD.NSC_COMMENTRANGERARMOR")==1;
 
   const auto wears = [&](std::initializer_list<std::string_view> items) {
     return std::ranges::any_of(items,[&](std::string_view item) {
@@ -332,12 +317,10 @@ int32_t GameScript::runEnterRoomReaction() {
     return ActivityDefinitions::bodyStateContains(npc_getbodystate(actor),state);
     };
 
-  auto& portalGuild = *findSymbol("B_ASSESSENTERROOM.PORTALGUILD");
   const auto guild = wld_getplayerportalguild();
-  portalGuild.set_int(guild);
-  auto& comment = *findSymbol("PLAYER_LEFTROOMCOMMENT");
-  if(guild!=int32_t(GIL_PUBLIC) && guild>int32_t(GIL_NONE) && comment.get_int()==1 && npc_isplayer(other()))
-    comment.set_int(0);
+  setNpcRuleInt("B_ASSESSENTERROOM.PORTALGUILD",guild);
+  if(guild!=int32_t(GIL_PUBLIC) && guild>int32_t(GIL_NONE) && npcRuleInt("PLAYER_LEFTROOMCOMMENT")==1 && npc_isplayer(other()))
+    setNpcRuleInt("PLAYER_LEFTROOMCOMMENT",0);
 
   if(npc_getdisttonpc(self,other())>1000)
     return 0;
@@ -363,7 +346,7 @@ int32_t GameScript::runEnterRoomReaction() {
   if(sleeping && !sameRoom)
     return 0;
 
-  const bool publicRoom = sameRoom && portalGuild.get_int()==int32_t(GIL_PUBLIC);
+  const bool publicRoom = sameRoom && npcRuleInt("B_ASSESSENTERROOM.PORTALGUILD")==int32_t(GIL_PUBLIC);
   if(publicRoom) {
     if(inState("ZS_OBSERVEPLAYER"))
       return 0;
@@ -391,8 +374,7 @@ int32_t GameScript::runEnterRoomReaction() {
   }
 
 void GameScript::runPortalCollisionReaction() {
-  auto& former = *findSymbol("B_ASSESSPORTALCOLLISION.FORMERPORTALGUILD");
-  former.set_int(wld_getformerplayerportalguild());
+  setNpcRuleInt("B_ASSESSPORTALCOLLISION.FORMERPORTALGUILD",wld_getformerplayerportalguild());
   if(runEnterRoomReaction()!=0)
     return;
 
@@ -411,7 +393,7 @@ void GameScript::runPortalCollisionReaction() {
     return;
 
   const int32_t guild = int32_t(self->guild);
-  const int32_t formerGuild = former.get_int();
+  const int32_t formerGuild = npcRuleInt("B_ASSESSPORTALCOLLISION.FORMERPORTALGUILD");
   const bool alliedToFormerRoom = wld_getguildattitude(guild,formerGuild)==ATT_FRIENDLY;
   if(!alliedToFormerRoom && guild!=formerGuild)
     return;
@@ -1381,7 +1363,7 @@ void GameScript::runPlayerAssessment() {
   const auto fakeGuild = [&] { return hasFakeGuild(self,other()); };
   const auto assessTalk = [&] {
     self->aivar[startedTalk] = 1;
-    vm.unsafe_call_bl(findSymbol("B_ASSESSTALK"));
+    runAssessTalk();
     };
 
   const auto inspector = hlp_getnpc(int(findSymbolIndex("PC_LEVELINSPEKTOR")));
@@ -1575,15 +1557,14 @@ void GameScript::validateCombatTarget(const std::shared_ptr<daedalus::INpc>& sel
   constexpr size_t loadedGame = 65; // AIV_LOADGAME
   if(self==nullptr)
     return;
-  auto& other = *vm.global_other();
-  if(!hlp_isvalidnpc(std::dynamic_pointer_cast<daedalus::INpc>(other.get_instance()))) {
+  if(!hlp_isvalidnpc(nativeNpc("OTHER"))) {
     const auto savedTarget = hlp_getnpc(self->aivar[lastTarget]);
-    other.set_instance(savedTarget);
+    storyActorSlot("OTHER") = savedTarget;
     npc_settarget(self,savedTarget);
     self->aivar[loadedGame] = 1;
     } else {
     npc_gettarget(self);
-    self->aivar[lastTarget] = hlp_getinstanceid(other.get_instance());
+    self->aivar[lastTarget] = hlp_getinstanceid(storyActorSlot("OTHER"));
     self->aivar[loadedGame] = 0;
     }
   }
@@ -2268,14 +2249,13 @@ bool GameScript::runHumanReaction(Npc& npc, std::string_view name, int& result) 
     selectWeapon(self,otherNpc());
     turnToOther();
     if(weapon) {
-      auto& comment = *findSymbol("PLAYER_DRAWWEAPONCOMMENT");
       if(npc_isplayer(otherNpc()) && aivar[lastPlayerAttackReason]!=npcRuleInt("AR_NONE") &&
          aivar[lastFightAgainstPlayer]==npcRuleInt("FIGHT_WON")) {
         say("$LOOKINGFORTROUBLEAGAIN");
         }
-      else if(comment.get_int()==0) {
+      else if(npcRuleInt("PLAYER_DRAWWEAPONCOMMENT")==0) {
         say(inFightMode(FightMode::FMODE_MAGIC) ? "$STOPMAGIC" : "$WEAPONDOWN");
-        comment.set_int(1);
+        setNpcRuleInt("PLAYER_DRAWWEAPONCOMMENT",1);
         }
       npc_sendpassiveperc(self,PERC_ASSESSWARN,self,otherNpc());
       aivar[repeatedWarning] = 0;
@@ -2364,10 +2344,9 @@ bool GameScript::runObservePlayer(Npc& npc, std::string_view name, int& result) 
     const bool sawExit = self->aivar[seenLeftRoom]==1;
     if(watchingPlayer && sawExit) {
       self->aivar[seenLeftRoom] = 0;
-      auto& comment = *findSymbol("PLAYER_LEFTROOMCOMMENT");
-      if(comment.get_int()==0) {
+      if(npcRuleInt("PLAYER_LEFTROOMCOMMENT")==0) {
         say("$WHATDIDYOUDOINTHERE");
-        comment.set_int(1);
+        setNpcRuleInt("PLAYER_LEFTROOMCOMMENT",1);
         }
       }
     self->aivar[turnInterval] = 1+hlp_random(2);
@@ -2376,11 +2355,10 @@ bool GameScript::runObservePlayer(Npc& npc, std::string_view name, int& result) 
     }
 
   if(name=="ZS_OBSERVEPLAYER_LOOP") {
-    auto& comment = *findSymbol("PLAYER_SNEAKERCOMMENT");
-    const bool commentPending = comment.get_int()==0;
+    const bool commentPending = npcRuleInt("PLAYER_SNEAKERCOMMENT")==0;
     const bool sneaking = hasBodyState(otherNpc(),BS_SNEAK);
     if(commentPending && sneaking) {
-      comment.set_int(1);
+      setNpcRuleInt("PLAYER_SNEAKERCOMMENT",1);
       ai_pointatnpc(self,otherNpc());
       say("$WHATSTHISSUPPOSEDTOBE");
       ai_stoppointat(self);
@@ -2813,30 +2791,30 @@ void GameScript::loadNativeEquipment() {
   if(!nativeRoutineProgram)
     return;
   using NpcRef = std::shared_ptr<daedalus::INpc>;
-  const auto enabled = [this] {
-    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  const auto bind = [this]<class R,class... P>(std::string_view name,const std::function<R(P...)>& callback) {
+    nativeExternals.insert_or_assign(std::string(name),storygraph::makeNativeInternal(callback));
     };
-  vm.override_function("B_CREATEAMMO",std::function<void(NpcRef)>{[this](NpcRef self) {
+  bind("B_CREATEAMMO",std::function<void(NpcRef)>{[this](NpcRef self) {
     createAmmo(self);
-    }},enabled);
-  vm.override_function("B_SELECTWEAPON",std::function<void(NpcRef,NpcRef)>{[this](NpcRef self,NpcRef other) {
+    }});
+  bind("B_SELECTWEAPON",std::function<void(NpcRef,NpcRef)>{[this](NpcRef self,NpcRef other) {
     selectWeapon(self,other);
-    }},enabled);
-  vm.override_function("B_SELECTSPELL",std::function<bool(NpcRef,NpcRef)>{[this](NpcRef self,NpcRef other) {
+    }});
+  bind("B_SELECTSPELL",std::function<bool(NpcRef,NpcRef)>{[this](NpcRef self,NpcRef other) {
     return chooseCombatSpell(self,other);
-    }},enabled);
-  vm.override_function("B_READYSPELL",std::function<void(NpcRef,int32_t,int32_t)>{[this](NpcRef self,int32_t spell,int32_t mana) {
+    }});
+  bind("B_READYSPELL",std::function<void(NpcRef,int32_t,int32_t)>{[this](NpcRef self,int32_t spell,int32_t mana) {
     readySpell(self,spell,mana);
-    }},enabled);
-  vm.override_function("C_NPCHASATTACKREASONTOKILL",std::function<bool(NpcRef)>{[this](NpcRef self) {
+    }});
+  bind("C_NPCHASATTACKREASONTOKILL",std::function<bool(NpcRef)>{[this](NpcRef self) {
     return hasAttackReasonToKill(self);
-    }},enabled);
-  vm.override_function("C_NPCISUNDEAD",std::function<bool(NpcRef)>{[this](NpcRef npc) {
+    }});
+  bind("C_NPCISUNDEAD",std::function<bool(NpcRef)>{[this](NpcRef npc) {
     return isUndeadNpc(npc);
-    }},enabled);
-  vm.override_function("C_NPCISEVIL",std::function<bool(NpcRef)>{[this](NpcRef npc) {
+    }});
+  bind("C_NPCISEVIL",std::function<bool(NpcRef)>{[this](NpcRef npc) {
     return isEvilNpc(npc);
-    }},enabled);
+    }});
   }
 
 void GameScript::createAmmo(const std::shared_ptr<daedalus::INpc>& self) {
@@ -2977,14 +2955,14 @@ bool GameScript::chooseCombatSpell(const std::shared_ptr<daedalus::INpc>& self, 
   if(magic || guild==GIL_KDF) {
     grant({"ITRU_CONCUSSIONBOLT","ITRU_INSTANTFIREBALL","ITRU_DEATHBALL","ITRU_FULLHEAL"});
     // Some stock checks intentionally read the invocation's SELF and OTHER.
-    const auto current = storyActorSlot("SELF");
-    if(vm.get_int(current,findSymbol("C_NPC.ATTRIBUTE"),ATR_HITPOINTS)<100)
+    const auto current = nativeNpc("SELF");
+    if((current ? current->attribute[ATR_HITPOINTS] : 0)<100)
       return ready("SPL_FULLHEAL","SPL_COST_FULLHEAL");
-    if(!hasAttackReasonToKill(std::dynamic_pointer_cast<daedalus::INpc>(current)))
+    if(!hasAttackReasonToKill(current))
       return ready("SPL_CONCUSSIONBOLT","SPL_COST_CONCUSSIONBOLT");
     const auto raven = hlp_getinstanceid(storyActorSlot("RAVEN"));
     const auto currentTarget = hlp_getinstanceid(storyActorSlot("OTHER"));
-    const auto immortal = vm.get_int(current,findSymbol("C_NPC.FLAGS"),0)==number("NPC_FLAG_IMMORTAL");
+    const auto immortal = current && int32_t(current->flags)==number("NPC_FLAG_IMMORTAL");
     if(raven==currentTarget || immortal)
       return ready("SPL_DEATHBALL","SPL_COST_DEATHBALL");
     return ready("SPL_INSTANTFIREBALL","SPL_COST_INSTANTFIREBALL");
@@ -3086,17 +3064,23 @@ bool GameScript::dropsUnconsciousNpc() {
   }
 
 void GameScript::showRemainingCanyonRazors() {
-  auto* left=findSymbol("B_COUNTCANYONRAZOR.CANYONRAZORLEFT");
-  auto* text=findSymbol("B_COUNTCANYONRAZOR.CANYONRAZORTEXT");
-  vm.push_int(std::bit_cast<int32_t>(10u-uint32_t(deathProgress.canyonRazors)));
-  vm.unsafe_call_external(findSymbol("INTTOSTRING"));
-  left->set_string(vm.pop_string());
-  vm.push_reference(left);
-  vm.push_reference(findSymbol("PRINT_ADDON_CANYONRAZORSLEFT"));
-  vm.unsafe_call_external(findSymbol("CONCATSTRINGS"));
-  text->set_string(vm.pop_string());
-  ai_printscreen(text->get_string(),-1,npcRuleInt("YPOS_GOLDGIVEN"),
-                 npcRuleString("FONT_SCREENSMALL"),2);
+  const auto left = std::to_string(std::bit_cast<int32_t>(10u-uint32_t(deathProgress.canyonRazors)));
+  setNpcRuleString("B_COUNTCANYONRAZOR.CANYONRAZORLEFT",left);
+  const auto text = left+std::string(npcRuleString("PRINT_ADDON_CANYONRAZORSLEFT"));
+  setNpcRuleString("B_COUNTCANYONRAZOR.CANYONRAZORTEXT",text);
+  ai_printscreen(text,-1,npcRuleInt("YPOS_GOLDGIVEN"),npcRuleString("FONT_SCREENSMALL"),2);
+  }
+
+void GameScript::settleNpcInventory(Npc& npc,bool death) {
+  const auto run = [&](std::string_view name) {
+    const auto result = callStoryFunction(name,&npc,findNpc(nativeNpc("OTHER")),{&npc});
+    if(!result.ok)
+      throw std::runtime_error(std::string(name)+": "+result.error);
+    };
+  run("B_GIVETRADEINV");
+  if(death)
+    giveDeathTrophies(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+  run("B_CLEARRUNEINV");
   }
 
 bool GameScript::runDeadState(Npc& npc, std::string_view functionName, int& result) {
@@ -3112,9 +3096,7 @@ bool GameScript::runDeadState(Npc& npc, std::string_view functionName, int& resu
 
   if(functionName=="ZS_DEAD_LOOP") {
     if(self->aivar[deathHandled]==0) {
-      vm.push_reference(vm.global_self());
-      vm.unsafe_call_bl(findSymbol("B_DRAGONKILLCOUNTER"));
-      (void)vm.pop_int(); // The stock Loop ignores the helper's result.
+      countDragonDeaths(self);
       self->aivar[deathHandled] = 1;
       }
     result = LOOP_CONTINUE;
@@ -3183,9 +3165,7 @@ bool GameScript::runDeadState(Npc& npc, std::string_view functionName, int& resu
   if(matches("GOLDMINECRAWLER")) {
     if(deathProgress.bloodwynSpawned==0 && deathProgress.minecrawlers>=9) {
       ai_teleport(namedNpc("BLOODWYN"),"ADW_MINE_TO_MC_03");
-      vm.push_instance(namedNpc("BLOODWYN"));
-      vm.push_string("MINE");
-      vm.unsafe_call_bl(findSymbol("B_STARTOTHERROUTINE"));
+      startOtherRoutine(namedNpc("BLOODWYN"),"MINE");
       givePlayerXp(number("XP_ADDON_BLOODYWYN"));
       deathProgress.bloodwynSpawned=1;
       } else {
@@ -3193,10 +3173,7 @@ bool GameScript::runDeadState(Npc& npc, std::string_view functionName, int& resu
       }
     }
 
-  for(auto name : {"B_GIVETRADEINV","B_GIVEDEATHINV","B_CLEARRUNEINV"}) {
-    vm.push_reference(vm.global_self());
-    vm.unsafe_call_bl(findSymbol(name));
-    }
+  settleNpcInventory(npc,true);
   adjustPetzCrime(self,std::nullopt);
   self->aivar[sawCrime] = number("CRIME_NONE");
   ai_unequipweapons(self);
@@ -3254,8 +3231,7 @@ bool GameScript::runUnconsciousState(Npc& npc, std::string_view functionName, in
       self->aivar[defeatedByPlayer] = 1;
       self->aivar[fightResult] = number("FIGHT_LOST");
       if(self->guild==GIL_SLD && self->aivar[duelCounted]==0 && self->aivar[attackReason]==number("AR_NONE")) {
-        auto& duels = *findSymbol("SLD_DUELLE_GEWONNEN");
-        duels.set_int(duels.get_int()+1);
+        setNpcRuleInt("SLD_DUELLE_GEWONNEN",npcRuleInt("SLD_DUELLE_GEWONNEN")+1);
         self->aivar[duelCounted] = 1;
         }
       if(self->aivar[arenaFight]==number("AF_RUNNING"))
@@ -3267,10 +3243,7 @@ bool GameScript::runUnconsciousState(Npc& npc, std::string_view functionName, in
         winner->aivar[arenaFight] = number("AF_AFTER");
       }
 
-    for(auto name : {"B_GIVETRADEINV","B_CLEARRUNEINV"}) {
-      vm.push_reference(vm.global_self());
-      vm.unsafe_call_bl(findSymbol(name));
-      }
+    settleNpcInventory(npc,false);
     const auto winner = other();
     if(self->aivar[victoryXpGiven]==0 && ((winner && winner->aivar[partyMember]==1) || npc_isplayer(winner))) {
       givePlayerXp(self->level*number("XP_PER_VICTORY"));
@@ -3340,7 +3313,7 @@ bool GameScript::runHealSelf(Npc& npc, std::string_view functionName, int& resul
   if(npc.attribute(ATR_HITPOINTS)!=npc.attribute(ATR_HITPOINTSMAX)) {
     static constexpr std::string_view potions[] = {"ITPO_HEALTH_03", "ITPO_HEALTH_02", "ITPO_HEALTH_01"};
     for(const auto potion : potions) {
-      const auto item = findSymbol(potion)->index();
+      const auto item = findItemInstance(potion).value();
       if(int(npc.itemCount(item))>0) {
         npc.aiPush(AiQueue::aiUseItem(int32_t(item)));
         result = LOOP_CONTINUE;
@@ -3425,7 +3398,7 @@ bool GameScript::runSpellVictimState(Npc& npc, std::string_view name, int& resul
     npc_clearaiqueue(self);
     ai_standup(self);
     if(self->guild<int32_t(GIL_SEPERATOR_HUM))
-      vm.unsafe_call_bl(findSymbol("B_ASSESSDAMAGE"));
+      runDamageReaction();
     else
       npc_settempattitude(self,ATT_HOSTILE);
     result = LOOP_END;

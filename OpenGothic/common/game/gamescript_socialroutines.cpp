@@ -1,5 +1,7 @@
 #include "gamescript.h"
 
+#include <stdexcept>
+
 #include "world/objects/npc.h"
 
 #include <algorithm>
@@ -14,10 +16,8 @@ std::string numberedLine(std::string_view prefix, int number) {
 
 void GameScript::removeFinishedGhosts() {
   const auto remove = [&](std::string_view name) {
-    auto* symbol = findSymbol(name);
-    ai_teleport(std::dynamic_pointer_cast<daedalus::INpc>(symbol->get_instance()),"TOT");
-    vm.push_int(int32_t(symbol->index()));
-    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
+    ai_teleport(nativeNpc(name),"TOT");
+    removeNpc(int32_t(findSymbolIndex(name)));
     };
   const auto playRemoval = [&] {
     snd_play("MFX_GhostVoice");
@@ -49,16 +49,16 @@ bool GameScript::runSocialRoutine(Npc& npc, std::string_view name, int& result) 
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
 
   auto read = [&](std::string_view field) {
-    return vm.find_symbol_by_name(field)->get_int();
+    return npcRuleInt(field);
     };
   auto write = [&](std::string_view field, int value) {
-    vm.find_symbol_by_name(field)->set_int(value);
+    setNpcRuleInt(field,value);
     };
   auto id = [&](std::string_view field) {
-    return int(vm.find_symbol_by_name(field)->index());
+    return int(findSymbolIndex(field));
     };
   auto instance = [&](std::string_view field) {
-    return vm.find_symbol_by_name(field)->get_instance();
+    return storyActorSlot(field);
     };
   auto matches = [&](std::string_view field) {
     return hlp_getinstanceid(instance(field))==int(npc.instanceSymbol());
@@ -245,7 +245,7 @@ bool GameScript::runSocialRoutine(Npc& npc, std::string_view name, int& result) 
   else if(state=="ZS_GHOST") {
     if(init) {
       const auto spirit = hlp_getnpc(id("NONE_ADDON_111_QUARHODRON"));
-      vm.find_symbol_by_name("ZS_GHOST.QUARHO")->set_instance(spirit);
+      storyActorSlot("ZS_GHOST.QUARHO") = spirit;
       if(hlp_getinstanceid(spirit)==int(npc.instanceSymbol())) {
         if(ghostProgress.knowsTempleEntrance==0)
           perception(PERC_ASSESSTALK,"B_ASSESSTALK");
@@ -457,7 +457,6 @@ bool GameScript::runTalk(Npc& npc, std::string_view name, int& result) {
   const auto seated = [&](const std::shared_ptr<daedalus::INpc>& actor) {
     return ActivityDefinitions::bodyStateContains(npc_getbodystate(actor),BS_SIT);
     };
-  auto& talkFix = *findSymbol("ZSTALKBUGFIX");
 
   if(name=="ZS_TALK") {
     const auto player = other();
@@ -503,8 +502,9 @@ bool GameScript::runTalk(Npc& npc, std::string_view name, int& result) {
         }
       if(self->type==NpcType::G2_TAL_AMBIENT || self->type==NpcType::G2_BL_AMBIENT ||
          self->type==NpcType::G2_OC_AMBIENT || self->type==NpcType::G2_AMBIENT) {
-        vm.push_instance(self);
-        vm.unsafe_call_bl(findSymbol("B_ASSIGNAMBIENTINFOS"));
+        const auto ambient = callStoryFunction("B_ASSIGNAMBIENTINFOS",&npc,findNpc(other()),{&npc});
+        if(!ambient.ok)
+          throw std::runtime_error("B_ASSIGNAMBIENTINFOS: "+ambient.error);
         if(belongsToCity(self))
           assignInfo("B_ASSIGNCITYGUIDE.SLF","DIA_CITYGUIDE");
         }
@@ -529,15 +529,15 @@ bool GameScript::runTalk(Npc& npc, std::string_view name, int& result) {
     if(self->guild==GIL_DRAGON)
       ai_playani(self,"T_STAND_2_TALK");
     ai_processinfos(self);
-    talkFix.set_int(0);
+    setNpcRuleInt("ZSTALKBUGFIX",0);
     return true;
     }
 
   if(name=="ZS_TALK_LOOP") {
-    const bool hasWaited = talkFix.get_int()==1;
+    const bool hasWaited = npcRuleInt("ZSTALKBUGFIX")==1;
     const bool finished = infomanager_hasfinished();
     if(!hasWaited || !finished) {
-      talkFix.set_int(1);
+      setNpcRuleInt("ZSTALKBUGFIX",1);
       result = LOOP_CONTINUE;
       return true;
       }
@@ -620,26 +620,22 @@ void GameScript::attemptPickpocket() {
   }
 
 void GameScript::givePickpocketXp() {
-  auto& victims = *findSymbol("VICTIMCOUNT");
-  auto& nextLevel = *findSymbol("VICTIMLEVEL");
-  auto& level = *findSymbol("THIEFLEVEL");
-  const auto count = std::bit_cast<int32_t>(uint32_t(victims.get_int())+1u);
-  victims.set_int(count);
-  if(nextLevel.get_int()==0)
-    nextLevel.set_int(2);
-  if(count>=nextLevel.get_int()) {
-    const auto next = std::bit_cast<int32_t>(uint32_t(level.get_int())+1u);
-    level.set_int(next);
-    nextLevel.set_int(std::bit_cast<int32_t>(uint32_t(count)+uint32_t(next)));
+  const auto count = std::bit_cast<int32_t>(uint32_t(npcRuleInt("VICTIMCOUNT"))+1u);
+  setNpcRuleInt("VICTIMCOUNT",count);
+  if(npcRuleInt("VICTIMLEVEL")==0)
+    setNpcRuleInt("VICTIMLEVEL",2);
+  if(count>=npcRuleInt("VICTIMLEVEL")) {
+    const auto next = std::bit_cast<int32_t>(uint32_t(npcRuleInt("THIEFLEVEL"))+1u);
+    setNpcRuleInt("THIEFLEVEL",next);
+    setNpcRuleInt("VICTIMLEVEL",std::bit_cast<int32_t>(uint32_t(count)+uint32_t(next)));
     }
-  const auto amount = std::bit_cast<int32_t>(10u*uint32_t(level.get_int())+uint32_t(npcRuleInt("THIEFXP")));
+  const auto amount = std::bit_cast<int32_t>(10u*uint32_t(npcRuleInt("THIEFLEVEL"))+uint32_t(npcRuleInt("THIEFXP")));
   givePlayerXp(amount);
   }
 
 void GameScript::decrementPickpocketVictimCount() {
-  auto& victims = *findSymbol("VICTIMCOUNT");
-  if(victims.get_int()>npcRuleInt("THIEFLEVEL"))
-    victims.set_int(victims.get_int()-1);
+  if(npcRuleInt("VICTIMCOUNT")>npcRuleInt("THIEFLEVEL"))
+    setNpcRuleInt("VICTIMCOUNT",npcRuleInt("VICTIMCOUNT")-1);
   }
 
 void GameScript::loadNativeTalkReaction() {

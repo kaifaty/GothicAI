@@ -183,6 +183,7 @@ NativeBaseCatalog::Constants NativeBaseCatalog::prepareConstants(const daedalus:
     }
   // These stock literals have native consumers outside the prepared story programs.
   static constexpr std::pair<std::string_view,std::string_view> literals[] = {
+    {"AWAKENED_STONE_GOLEM_NAME", "$27152"},
     {"ITEM_BROKEN_EYE_NAME", "$15687"},
     {"ITEM_BROKEN_EYE_VISUAL", "$15688"},
     {"HERO_MANA_POTION_MISSING", "$18825"},
