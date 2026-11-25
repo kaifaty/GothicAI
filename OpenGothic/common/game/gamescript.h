@@ -463,7 +463,9 @@ class GameScript final : public GameRules {
     void removeNpc(int32_t symbol);
     int32_t countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords=true);
+    std::optional<uint32_t> npcTemplateId(uint32_t instance) const;
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
+    void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, uint32_t templateId);
     static void applyNpcConstructorField(NpcRecord& npc, const NpcDefinitionRuntime::Field& field);
     bool invokeNpcHelper(const std::shared_ptr<daedalus::INpc>& npc,uint32_t function,
                          std::span<const NpcHelperDefinitions::Value> args);
@@ -882,6 +884,8 @@ class GameScript final : public GameRules {
     bool bennetExecute(const BennetOreDialog& dialog, Npc& player, Npc& npc);
 
     void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
+    ScriptVars::Object* ownedInstance(uint32_t id);
+    ScriptVars::Object* storyOwnedInstance(std::string_view name);
     ScriptVars::Object& storyActorSlot(std::string_view name);
     ScriptVars::Value stateValue(const ScriptVars::Slot& slot);
     ScriptVars::Reference stateReference(const ScriptVars::Object& object);

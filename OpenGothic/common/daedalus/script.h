@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "asset/program.h"
+#include "world/records/recordinstance.h"
 
 namespace daedalus {
 	class Error : public std::exception {
@@ -286,44 +287,6 @@ namespace daedalus {
 	};
 
 	class DaedalusSymbol;
-
-	/// \brief Represents an object associated with an instance in the script.
-	///
-	/// Every class defined in C++ that can be used as an instance has to inherit from this class.
-	class DaedalusInstance {
-	public:
-		virtual ~DaedalusInstance() = default;
-
-		/// \return The index of the symbol this instance is bound to.
-		[[nodiscard]] uint32_t symbol_index() const {
-			return _m_symbol_index;
-		}
-
-		[[nodiscard]] std::type_info const* instance_type() const {
-			return _m_type;
-		}
-
-		/// \brief A pointer which may be used by the user of this API
-		void* user_ptr = nullptr;
-
-	protected:
-		virtual std::uint8_t* data() {
-			return reinterpret_cast<std::uint8_t*>(this);
-		}
-
-		[[nodiscard]] virtual std::uint8_t const* data() const {
-			return reinterpret_cast<std::uint8_t const*>(this);
-		}
-
-	private:
-		friend class DaedalusTransientInstance;
-		friend class DaedalusSymbol;
-		friend class DaedalusScript;
-		friend class DaedalusVm;
-
-		uint32_t _m_symbol_index {static_cast<uint32_t>(-1)};
-		std::type_info const* _m_type {nullptr};
-	};
 
 	/// \brief Represents an object associated with an instance in the script.
 	///

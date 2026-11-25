@@ -8,6 +8,7 @@
 #include "game/definitions/menurecord.h"
 #include "world/records/npcrecord.h"
 #include "world/records/itemrecord.h"
+#include "world/records/liveinstances.h"
 #include "world/records/guildrecord.h"
 #include "world/records/spellrecord.h"
 #include "world/records/focusrecord.h"
@@ -36,10 +37,6 @@ namespace daedalus {
 	using NpcType = ::NpcType;
 	using NpcFlag = ::NpcFlag;
 
-	struct INpc : DaedalusInstance, NpcRecord {
-		static void register_(DaedalusScript& s);
-	};
-
 	struct IMission : DaedalusInstance {
 		var string name;
 		var string description;
@@ -60,32 +57,7 @@ namespace daedalus {
 
 	using ItemFlag = ::ItemFlag;
 
-	struct IItem : DaedalusInstance, ItemRecord {
-		static void register_(DaedalusScript& s);
-	};
 	struct IFocus : DaedalusInstance, FocusRecord {
-		static void register_(DaedalusScript& s);
-	};
-	struct IInfoChoice {
-		var string text;
-		var int32_t function = 0;
-	};
-
-	struct IInfo : DaedalusInstance {
-		var int32_t npc;
-		var int32_t nr;
-		var int32_t important;
-		var func condition;
-		var func information;
-		var string description;
-		var int32_t trade;
-		var int32_t permanent;
-
-		std::vector<IInfoChoice> choices {};
-
-		void add_choice(IInfoChoice const& ch);
-		void remove_choice(std::size_t index);
-
 		static void register_(DaedalusScript& s);
 	};
 

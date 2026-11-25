@@ -1,12 +1,13 @@
 #pragma once
 
+#include "world/records/recordinstance.h"
+
 #include <memory>
 #include <string_view>
 #include <vector>
 
 namespace daedalus {
 class DaedalusVm;
-class DaedalusInstance;
 }
 class GameplayDefinitions;
 

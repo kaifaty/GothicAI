@@ -120,6 +120,15 @@ void ScriptVars::State::loadInitial(std::span<const NativeBaseCatalog::InitialRo
     }
   }
 
+void ScriptVars::State::declareArchetypes(std::span<const NativeBaseCatalog::Identity> rows) {
+  for(const auto& [id,name] : rows) {
+    if(values.contains(id) || names.contains(name))
+      throw std::runtime_error("Duplicate runtime object identity "+name);
+    values.emplace(id,Object{});
+    names.emplace(name,id);
+    }
+  }
+
 bool ScriptVars::State::declareDirector(const SymbolDefinition& definition) {
   if(values.contains(definition.index) || names.contains(definition.name))
     return false;

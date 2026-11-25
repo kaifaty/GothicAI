@@ -14,7 +14,6 @@
 namespace daedalus {
   class DaedalusVm;
   class DaedalusSymbol;
-  struct INpc;
   }
 
 namespace storygraph {

@@ -11,8 +11,9 @@
 #include <vector>
 
 class SaveArchive;
-namespace daedalus { class DaedalusInstance; class DaedalusSymbol; }
-namespace NativeBaseCatalog { struct InitialRow; }
+class RecordInstance;
+namespace daedalus { class DaedalusSymbol; }
+namespace NativeBaseCatalog { struct InitialRow; struct Identity; }
 
 namespace ScriptVars {
 
@@ -42,7 +43,7 @@ struct Row {
 Row  readRow(SaveArchive& in);
 void writeRow(SaveArchive& out, const Row& row);
 
-using Object = std::shared_ptr<daedalus::DaedalusInstance>;
+using Object = std::shared_ptr<RecordInstance>;
 template<class T>
 struct Array {
   std::unique_ptr<T[]> storage;
@@ -54,6 +55,7 @@ struct SymbolDefinition;
 class State final {
   public:
     void loadInitial(std::span<const NativeBaseCatalog::InitialRow> rows);
+    void declareArchetypes(std::span<const NativeBaseCatalog::Identity> rows);
     bool declareDirector(const SymbolDefinition& definition);
     void bind(daedalus::DaedalusSymbol& symbol);
     void bind(std::string_view name, int32_t& value);

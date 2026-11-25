@@ -241,6 +241,10 @@ auto GameScript::createNpc(Npc& owner, size_t instance, std::string_view waypoin
 
 uint32_t GameScript::initializeInstanceNpc(const std::shared_ptr<NpcRecord>& record, size_t instance) {
   auto npc = std::static_pointer_cast<daedalus::INpc>(record);
+  if(baseNativeCatalog()!=nullptr) {
+    initializeInstanceNpc(npc,instance);
+    return npc->symbol_index();
+    }
   // These stock spell forms and the necromancy skeleton can overlay a live
   // record. Their constructors and helpers do not read the existing fields.
   static constexpr std::array<std::string_view,13> forms={
@@ -262,7 +266,13 @@ auto GameScript::loadNpc(Serialize& fin, Npc* owner, uint32_t& kind) -> std::sha
   npc->user_ptr = owner;
   uint32_t symbol = 0;
   fin.read(symbol);
-  if(auto* sym = vm.find_symbol_by_index(symbol)) {
+  if(baseNativeCatalog()!=nullptr) {
+    if(!npcTemplateId(symbol))
+      throw std::runtime_error("Unknown NPC identity in save: "+std::to_string(symbol));
+    npc->setRecordIdentity(symbol);
+    *ownedInstance(symbol) = npc;
+    }
+  else if(auto* sym = vm.find_symbol_by_index(symbol)) {
     vm.allocate_instance(npc,sym);
     } else {
     Tempest::Log::e("Cannot load serialized NPC ",symbol,": Symbol not found.");
@@ -274,6 +284,11 @@ auto GameScript::loadNpc(Serialize& fin, Npc* owner, uint32_t& kind) -> std::sha
 
 void GameScript::bindNpc(const std::shared_ptr<NpcRecord>& record) {
   auto npc = std::static_pointer_cast<daedalus::INpc>(record);
+  if(baseNativeCatalog()!=nullptr) {
+    if(auto* alias = ownedInstance(npc->symbol_index()))
+      *alias = npc;
+    return;
+    }
   if(auto* sym = vm.find_symbol_by_index(npc->symbol_index()))
     sym->set_instance(npc);
   }

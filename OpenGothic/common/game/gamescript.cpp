@@ -110,6 +110,9 @@ GameScript::GameScript(GameSession &owner)
   const auto* catalog = baseNativeCatalog();
   if(catalog!=nullptr) {
     runtimeState.loadInitial(catalog->initialState);
+    runtimeState.declareArchetypes(catalog->identities.npcs);
+    runtimeState.declareArchetypes(catalog->identities.items);
+    runtimeState.declareArchetypes(catalog->identities.dialogs);
     own.useNativeCatalog(*catalog);
     }
   vmLang = Settings::getI("GAME", "language");
@@ -151,6 +154,18 @@ GameScript::~GameScript() {
 
 bool GameScript::loadDirectorState(Serialize& fin) {
   return baseNativeCatalog()!=nullptr ? own.load(fin) : own.load(vm,fin);
+  }
+
+ScriptVars::Object* GameScript::ownedInstance(uint32_t id) {
+  return std::get_if<ScriptVars::Object>(runtimeState.find(id));
+  }
+
+ScriptVars::Object* GameScript::storyOwnedInstance(std::string_view name) {
+  if(baseNativeCatalog()!=nullptr)
+    return std::get_if<ScriptVars::Object>(runtimeState.find(name));
+  if(const auto* symbol = storySlot(name))
+    return ownedInstance(symbol->index());
+  return nullptr;
   }
 
 void GameScript::bindRuntimeVariable(std::string_view name, int32_t& value) {
@@ -534,7 +549,50 @@ void GameScript::loadDialogOU() {
   Log::e("none of Zen-files for OU could be loaded");
   }
 
+std::optional<uint32_t> GameScript::npcTemplateId(uint32_t instance) const {
+  const auto* catalog = baseNativeCatalog();
+  if(catalog==nullptr)
+    return std::nullopt;
+  if(const auto* director = own.find(instance); director!=nullptr && director->kind==OwnSymbols::Kind::Npc) {
+    if(const auto* model = NativeBaseCatalog::findIdentity(catalog->identities.npcs,director->like))
+      return model->id;
+    return std::nullopt;
+    }
+  if(NativeBaseCatalog::findIdentity(catalog->identities.npcs,instance)!=nullptr)
+    return instance;
+  return std::nullopt;
+  }
+
 void GameScript::initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance, bool useRecords) {
+  if(baseNativeCatalog()!=nullptr) {
+    if(instance>UINT32_MAX)
+      throw std::runtime_error("Invalid NPC identity");
+    const auto id = uint32_t(instance);
+    const auto model = npcTemplateId(id);
+    auto* alias = ownedInstance(id);
+    if(!model || alias==nullptr)
+      throw std::runtime_error("Unknown NPC identity "+std::to_string(id));
+
+    struct ScopeAlias {
+      ScriptVars::Object& slot;
+      ScriptVars::Object previous;
+      ~ScopeAlias() { slot = std::move(previous); }
+      };
+    npc->setRecordIdentity(id);
+    *alias = npc;
+    auto& self = storyActorSlot("SELF");
+    ScopeAlias context{self,std::exchange(self,npc)};
+    auto& modelAlias = *ownedInstance(*model);
+    ScopeAlias constructor{modelAlias,std::exchange(modelAlias,npc)};
+    initializeNpcDefinition(npc,*model);
+    if(npc->daily_routine!=0) {
+      const auto routine = routineDefinitions.routines.find(uint32_t(npc->daily_routine));
+      if(routine==routineDefinitions.routines.end())
+        throw std::runtime_error("Missing prepared daily routine ID "+std::to_string(npc->daily_routine));
+      addPreparedRoutine(findNpc(npc),routine->second);
+      }
+    return;
+    }
   LoadProbe::Startup::Detail::Scope detail("npc_init",[&]{
     const auto* symbol=vm.find_symbol_by_index(uint32_t(instance));
     return symbol!=nullptr ? symbol->name() : std::to_string(instance);
@@ -614,8 +672,11 @@ void GameScript::loadVar(Serialize &fin) {
   for(uint32_t i=0; i<count; ++i) {
     const auto row = ScriptVars::readRow(fin);
     auto* slot = runtimeState.find(row.id);
-    if(slot==nullptr)
+    if(slot==nullptr) {
+      if(baseNativeCatalog()!=nullptr)
+        throw std::runtime_error("Unknown runtime field ID in save: "+std::to_string(row.id));
       continue;
+      }
     std::visit([&](auto& value) {
       using T = std::decay_t<decltype(value)>;
       if constexpr(std::is_same_v<T,ScriptVars::Object>) {
@@ -1637,15 +1698,26 @@ void GameScript::onWldItemRemoved(const Item& itm) {
   }
 
 void GameScript::onWldInstanceRemoved(const daedalus::DaedalusInstance* obj) {
+  if(baseNativeCatalog()!=nullptr) {
+    if(auto* alias = ownedInstance(obj->symbol_index()); alias!=nullptr && alias->get()==obj)
+      alias->reset();
+    return;
+    }
   vm.find_symbol_by_instance(*obj)->set_instance(nullptr);
   }
 
 void GameScript::makeCurrent(Item* w) {
   if(w==nullptr)
     return;
+  const auto item = std::static_pointer_cast<daedalus::IItem>(w->handlePtr());
+  if(baseNativeCatalog()!=nullptr) {
+    if(auto* alias = ownedInstance(uint32_t(w->clsId())))
+      *alias = item;
+    return;
+    }
   auto* s = vm.find_symbol_by_index(uint32_t(w->clsId()));
   if(s != nullptr)
-    s->set_instance(std::static_pointer_cast<daedalus::IItem>(w->handlePtr()));
+    s->set_instance(item);
   }
 
 bool GameScript::searchScheme(std::string_view sc, std::string_view listName) {
@@ -1788,6 +1860,10 @@ void GameScript::removeItem(Item &it) {
   }
 
 void GameScript::setInstanceNPC(std::string_view name, Npc &npc) {
+  if(baseNativeCatalog()!=nullptr) {
+    storyActorSlot(name) = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+    return;
+    }
   auto sym = vm.find_symbol_by_name(name);
   if(sym == nullptr) {
     Tempest::Log::e("Cannot set NPC instance ", name, ": Symbol not found.");
