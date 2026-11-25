@@ -3,6 +3,8 @@
 #include <Tempest/Matrix4x4>
 #include "asset/worldtypes.h"
 
+#include <atomic>
+
 #include "graphics/mesh/animationsolver.h"
 #include "graphics/mesh/animationinteractive.h"
 #include "graphics/objvisual.h"
@@ -49,6 +51,8 @@ class Interactive : public Vob, public AnimationSound, public AnimationInteracti
     auto                bBox() const -> const Tempest::Vec3*;
 
     int32_t             stateId() const { return state; }
+    // Parked by the idle state machine: the world's tick walk skips it until a mutator wakes it.
+    bool                isParked() const { return parked.load(std::memory_order_relaxed); }
     uint32_t            zenId() const { return vobObjectID; }
     const ObjVisual&    objVisual() const { return visual; }
     int32_t             stateCount() const { return stateNum; }
@@ -135,6 +139,7 @@ class Interactive : public Vob, public AnimationSound, public AnimationInteracti
     void                autoDetachNpc();
     void                implChState(bool next);
     bool                checkUseConditions(Npc& npc);
+    void                wake() { parked.store(false,std::memory_order_relaxed); }
 
     auto                setAnim(Anim t) -> const Animation::Sequence*;
     bool                setAnim(Npc* npc, Anim dir);
@@ -182,6 +187,9 @@ class Interactive : public Vob, public AnimationSound, public AnimationInteracti
 
     uint64_t            waitAnim      = 0;
     bool                animChanged   = false;
+    // Idle parking (OPENGOTHIC_INTERACTIVE_LOD): set by tick at rest, cleared by every mutator. A worker may
+    // wake it from an animation event while the main thread walks the tick list, hence atomic.
+    std::atomic<bool>   parked{false};
 
     std::vector<Pos>    attPos;
     ObjVisual           visual;

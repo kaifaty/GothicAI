@@ -77,7 +77,12 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   // Explicit Society worker deferrals and the pose updates that consume them.
   SocietyAnimDeferred, SocietyAnimCatchUp, SocietyNpcTickSkipped, NpcLatePoseCandidates,
   NpcIdleWheelDeferred, NpcTierCandidates, NpcPolicyCandidates,
-  NpcRestRoutineDeferred, NpcRestRoutineDeadline, Count };
+  NpcRestRoutineDeferred, NpcRestRoutineDeadline,
+  // VisualObjects::preFrameUpdateWind: legacy wind objects computed this frame and skipped outside every view
+  WindComputed, WindSkipped,
+  // WorldObjects interactive tick: objects parked at rest and skipped this frame
+  InteractiveParked,
+  Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error, Simulation };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };

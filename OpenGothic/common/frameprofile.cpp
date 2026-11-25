@@ -50,7 +50,9 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "npc_simplified_ticked","npc_simplified_deferred","npc_simplified_native",
   "society_anim_deferred","society_anim_catchup","society_npc_tick_skipped","npc_late_pose_candidates",
   "npc_idle_wheel_deferred","npc_tier_candidates","npc_policy_candidates",
-  "npc_rest_routine_deferred","npc_rest_routine_deadline"};
+  "npc_rest_routine_deferred","npc_rest_routine_deadline",
+  "wind_computed","wind_skipped",
+  "interactive_parked"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }

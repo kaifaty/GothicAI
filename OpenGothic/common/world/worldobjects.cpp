@@ -593,9 +593,17 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
 
   {
   FrameProfile::Scope timing(FrameProfile::Zone::InteractiveTick);
-  if(!frozen)
-    for(auto& i:interactiveObj)
+  if(!frozen) {
+    uint64_t parked = 0;
+    for(auto& i:interactiveObj) {
+      if(i->isParked()) {
+        ++parked;
+        continue;
+        }
       i->tick(dt);
+      }
+    FrameProfile::add(FrameProfile::Amount::InteractiveParked,parked);
+    }
   }
 
   {

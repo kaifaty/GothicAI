@@ -4,6 +4,8 @@
 #include <Tempest/Painter>
 #include <Tempest/Log>
 
+#include <cstdlib>
+
 #include "asset/worldtypes.h"
 
 #include "game/serialize.h"
@@ -222,6 +224,7 @@ void Interactive::drawVobRay(DbgPainter& p, const Npc& npc) const {
   }
 
 void Interactive::resetPositionToTA(int32_t state) {
+  wake();
   for(auto& i:attPos)
     if(i.user!=nullptr && i.user->isPlayer())
       return;
@@ -258,6 +261,20 @@ void Interactive::updateAnimation(uint64_t dt) {
   }
 
 void Interactive::tick(uint64_t dt) {
+  // Idle parking (cpu-batch1): an object fully at rest skips the state-machine walk until a mutator wakes it.
+  // The visual pass (updateAnimationTail) keeps drawing it. OPENGOTHIC_INTERACTIVE_LOD=0 ticks every object.
+  static const bool lod = []{
+    const char* e = std::getenv("OPENGOTHIC_INTERACTIVE_LOD");
+    return e==nullptr || e[0]!='0';
+    }();
+  if(parked.load(std::memory_order_relaxed)) {
+    // The visual pass keeps running; a moved idle pose still syncs its physics.
+    if(animChanged) {
+      visual.syncPhysics();
+      animChanged = false;
+      }
+    return;
+    }
   visual.processLayers(world);
 
   if(animChanged) {
@@ -292,6 +309,10 @@ void Interactive::tick(uint64_t dt) {
         i.started = NotStarted;
         }
       }
+    // At rest with nothing pending: state -1 leaves the rewind loop above a no-op, the looped effects were
+    // stopped this frame, and the visual holds only idle animation. Park until a mutator wakes it.
+    if(lod && state==-1 && !loopState && world.tickCount()>=waitAnim && visual.isAnimIdle())
+      parked.store(true,std::memory_order_relaxed);
     return;
     }
 
@@ -306,6 +327,7 @@ void Interactive::tick(uint64_t dt) {
   }
 
 void Interactive::onKeyInput(KeyCodec::Action act) {
+  wake();
   if(world.tickCount()<waitAnim)
     return;
 
@@ -493,6 +515,7 @@ const Tempest::Vec3* Interactive::bBox() const {
   }
 
 bool Interactive::setMobState(std::string_view scheme, int32_t st) {
+  wake();
   const bool ret = Vob::setMobState(scheme,st);
   if(state==st)
     return true;
@@ -530,6 +553,7 @@ void Interactive::emitTriggerEvent(TriggerEvent::Type type) const {
   }
 
 void Interactive::emitSoundEffect(std::string_view sound, float range, bool freeSlot) {
+  wake();
   auto sfx = ::Sound(world,::Sound::T_Regular,sound,position(),range,freeSlot);
   sfx.play();
   }
@@ -853,6 +877,7 @@ bool Interactive::attach(Npc& npc, Interactive::Pos& to) {
   }
 
 bool Interactive::attach(Npc &npc) {
+  wake();
   for(auto& i:attPos)
     if(i.user==&npc)
       return true;
@@ -873,6 +898,7 @@ bool Interactive::attach(Npc &npc) {
   }
 
 bool Interactive::detach(Npc &npc, bool quick) {
+  wake();
   for(auto& i:attPos) {
     if(i.user==&npc && (i.attachMode || (quick && Settings::physicsFlags().meleePosture))) {
       npc.wakeSociety();
@@ -1009,6 +1035,7 @@ Tempest::Matrix4x4 Interactive::mapBone(std::string_view nodeName) const {
   }
 
 const Animation::Sequence* Interactive::setAnim(Interactive::Anim t) {
+  wake();
   int  dir       = (t==Anim::Out || t==Anim::ToStand) ? -1 : 1;
   int  st[]      = {state,state+dir};
   char ss[2][12] = {};
@@ -1032,6 +1059,7 @@ const Animation::Sequence* Interactive::setAnim(Interactive::Anim t) {
   }
 
 bool Interactive::setAnim(Npc* npc, Anim dir) {
+  wake();
   const Npc::Anim            dest  = toNpcAnim(dir);
   const Animation::Sequence* sqNpc = nullptr;
   const Animation::Sequence* sqMob = nullptr;
@@ -1061,6 +1089,7 @@ bool Interactive::setAnim(Npc* npc, Anim dir) {
   }
 
 void Interactive::setState(int st) {
+  wake();
   if(st!=state)
     for(const auto& p:attPos)
       if(p.user!=nullptr)
@@ -1144,6 +1173,7 @@ void Interactive::marchInteractives(DbgPainter &p) const {
   }
 
 void Interactive::moveEvent() {
+  wake();
   for(const auto& p:attPos)
     if(p.user!=nullptr)
       p.user->wakeSociety();

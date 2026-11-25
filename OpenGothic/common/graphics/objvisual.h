@@ -46,6 +46,8 @@ class ObjVisual : public StreamedVisual {
     bool updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint64_t dt, bool force);
     void stopLoopedEffects(); // MdlVisual::stopLoopedEffects
     void processLayers(World& world);
+    // No skeletal animation but idle ones: the interactive state machine may park such an object.
+    bool isAnimIdle() const;
     void syncPhysics();
 
     const ProtoMesh* protoMesh() const;
