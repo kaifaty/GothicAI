@@ -11,6 +11,19 @@
 #include <algorithm>
 #include <cctype>
 
+namespace {
+storygraph::NativeFunction preparedSignature(const StockStoryPrograms::Entry& program) {
+  using daedalus::DaedalusDataType;
+  storygraph::NativeFunction fn;
+  fn.parameters.reserve(program.parameters.size());
+  for(const auto parameter : program.parameters)
+    fn.parameters.push_back(storygraph::nativeValueType(DaedalusDataType(parameter)));
+  if(program.returnType!=0)
+    fn.result=storygraph::nativeValueType(DaedalusDataType(program.returnType));
+  return fn;
+  }
+}
+
 GameScript::StockPrograms::StockPrograms(GameScript& script)
   : script(script), vm(script.getVm()) {
   try {
@@ -19,11 +32,15 @@ GameScript::StockPrograms::StockPrograms(GameScript& script)
       const auto section = StockStoryPrograms::section(base);
       if(std::filesystem::exists(section)) {
         prepared = StockStoryPrograms::read(base);
-        bindCatalog(*prepared);
         if(auto* census = Resources::contentCensus())
           census->replaced("GOTHIC.DAT:story-programs","base/"+section.lexically_relative(base).generic_string());
+        if(baseNativeCatalog()!=nullptr)
+          return;
+        bindCatalog(*prepared);
         }
       }
+    if(baseNativeCatalog()!=nullptr)
+      throw BaseStore::Error("missing prepared native StoryGraph programs");
 
     // Director references include definitions that no stock quest happens to name.
     using enum daedalus::DaedalusDataType;
@@ -139,7 +156,26 @@ const StockStoryPrograms::Entry* GameScript::StockPrograms::program(uint32_t id)
   return it!=prepared->programs.end() ? &it->second : nullptr;
   }
 
+const StockStoryPrograms::Entry* GameScript::StockPrograms::program(std::string_view name) const {
+  if(!prepared)
+    return nullptr;
+  const auto it = prepared->symbols.find(name);
+  return it!=prepared->symbols.end() ? program(it->second) : nullptr;
+  }
+
 std::optional<storygraph::NativeFunction> GameScript::StockPrograms::function(std::string_view name) const {
+  if(baseNativeCatalog()!=nullptr) {
+    const auto key = storygraph::nativeOperationName(name);
+    if(const auto direct = script.nativeExternals.find(key); direct!=script.nativeExternals.end())
+      return direct->second.signature;
+    if(const auto* entry = program(key)) {
+      auto fn = preparedSignature(*entry);
+      fn.program = &entry->program;
+      return fn;
+      }
+    return std::nullopt;
+    }
+
   const auto [slot,kind] = binding(name);
   if(slot==nullptr || kind!=SymbolKind::Function)
     return std::nullopt;
@@ -153,13 +189,7 @@ std::optional<storygraph::NativeFunction> GameScript::StockPrograms::function(st
     return call->second.signature();
     }
 
-  using daedalus::DaedalusDataType;
-  storygraph::NativeFunction fn;
-  fn.parameters.reserve(prepared->parameters.size());
-  for(const auto parameter : prepared->parameters)
-    fn.parameters.push_back(storygraph::nativeValueType(DaedalusDataType(parameter)));
-  if(prepared->returnType!=0)
-    fn.result=storygraph::nativeValueType(DaedalusDataType(prepared->returnType));
+  auto fn = preparedSignature(*prepared);
 
   // Run complete prepared operations directly. Some of their VM adapters still
   // serve other engine entry points until those callers migrate.

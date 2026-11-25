@@ -2,10 +2,18 @@
 
 #include "daedalus/vm.h"
 
+#include <algorithm>
+#include <cctype>
 #include <stdexcept>
 #include <utility>
 
 using namespace storygraph;
+
+std::string storygraph::nativeOperationName(std::string_view name) {
+  std::string key(name);
+  std::ranges::transform(key,key.begin(),[](unsigned char c) { return char(std::toupper(c)); });
+  return key;
+  }
 
 NativeValue::Type storygraph::nativeValueType(daedalus::DaedalusDataType type) {
   using enum daedalus::DaedalusDataType;

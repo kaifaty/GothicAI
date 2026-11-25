@@ -17,12 +17,13 @@ class GameScript::StockPrograms final {
     using Binding = std::pair<daedalus::DaedalusSymbol*,SymbolKind>;
 
     bool run(uint32_t id, int32_t& result, bool* failed, bool preparedOnly);
-    bool runPrepared(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed);
+    bool runPrepared(uint32_t id, std::string_view name, int32_t& result, bool* failed);
     const StockStoryPrograms::Catalog* preparedCatalog();
     void bindCatalog(const StockStoryPrograms::Catalog& catalog);
     void bindSymbol(daedalus::DaedalusSymbol& symbol, SymbolKind kind);
     Binding binding(std::string_view name) const;
     const StockStoryPrograms::Entry* program(uint32_t id) const;
+    const StockStoryPrograms::Entry* program(std::string_view name) const;
     std::optional<storygraph::NativeFunction> function(std::string_view name) const;
     std::unique_ptr<Host> host(bool effects);
 

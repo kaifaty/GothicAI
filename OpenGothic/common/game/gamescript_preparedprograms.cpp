@@ -351,16 +351,16 @@ bool GameScript::bennetExecute(const BennetOreDialog& dialog, Npc& player, Npc& 
   return result.started;
   }
 
-bool GameScript::StockPrograms::runPrepared(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed) {
-  if(fn.name()!="DIA_ADDON_LARES_PATCH_INFO" || !script.activityEvents || script.floorDefer.active() ||
+bool GameScript::StockPrograms::runPrepared(uint32_t id, std::string_view name, int32_t& result, bool* failed) {
+  if(name!="DIA_ADDON_LARES_PATCH_INFO" || !script.activityEvents || script.floorDefer.active() ||
      ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return false;
   const auto* catalog = preparedCatalog();
   if(catalog==nullptr)
     return false;
-  const auto entry = catalog->programs.find(fn.index());
+  const auto entry = catalog->programs.find(id);
   const auto transfer = catalog->symbols.find("B_GIVEINVITEMS");
-  if(entry==catalog->programs.end() || transfer==catalog->symbols.end() || entry->second.name!=fn.name() ||
+  if(entry==catalog->programs.end() || transfer==catalog->symbols.end() || entry->second.name!=name ||
      entry->second.returnType!=0 || !entry->second.parameters.empty() || entry->second.calls.size()!=1 ||
      entry->second.calls.front()!=transfer->second)
     throw std::runtime_error("prepared ornament dialog identity differs from game symbols");
@@ -385,7 +385,7 @@ bool GameScript::StockPrograms::runPrepared(const daedalus::DaedalusSymbol& fn, 
   if(failed!=nullptr)
     *failed = !run.ok;
   if(!run.ok)
-    Tempest::Log::e("[story] prepared program ",fn.name(),": ",run.error);
+    Tempest::Log::e("[story] prepared program ",name,": ",run.error);
   result = run.returned.type==NativeValue::Int ? run.returned.i : 0;
   return true;
   }

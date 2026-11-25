@@ -1,6 +1,7 @@
 #pragma once
 
 #include "daedalus/vm.h"
+#include "game/definitions/basescripts.h"
 #include "storygraph/nativeexec.h"
 
 #include <map>
@@ -14,6 +15,7 @@
 namespace storygraph {
 
 NativeValue::Type nativeValueType(daedalus::DaedalusDataType type);
+std::string nativeOperationName(std::string_view name);
 
 class BoundNativeCall final {
   public:
@@ -116,6 +118,10 @@ NativeExternal makeNativeExternal(const std::function<R(P...)>& callback,bool ob
 template<class R, class... P>
 void registerNativeExternal(daedalus::DaedalusVm& vm,NativeExternals* registry,std::string_view name,
                             const std::function<R(P...)>& callback,bool observe=true) {
+  if(registry!=nullptr && baseNativeCatalog()!=nullptr) {
+    registry->insert_or_assign(nativeOperationName(name),makeNativeExternal(callback,observe));
+    return;
+    }
   vm.register_external(name,callback);
   if(registry==nullptr)
     return;

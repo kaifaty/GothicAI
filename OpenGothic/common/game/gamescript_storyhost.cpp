@@ -209,6 +209,10 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
     bool acceptsCall(std::string_view name, bool external) const override {
+      if(baseNativeCatalog()!=nullptr) {
+        const auto key = nativeOperationName(name);
+        return external ? owner.script.nativeExternals.contains(key) : owner.program(key)!=nullptr;
+        }
       const auto* symbol = owner.binding(name).first;
       return symbol!=nullptr && symbol->is_external()==external;
       }
@@ -219,6 +223,11 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
           return int32_t(*id);
         if(const auto* constant = NativeBaseCatalog::findConstant(*catalog,name))
           return int32_t(constant->id);
+        if(owner.prepared) {
+          const auto found = owner.prepared->symbols.find(nativeOperationName(name));
+          if(found!=owner.prepared->symbols.end())
+            return int32_t(found->second);
+          }
         }
       const auto* slot = owner.binding(name).first;
       if(slot==nullptr)
@@ -340,9 +349,8 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
 
     std::optional<NativeFunction> findFunction(std::string_view name) const override {
       if(!effects) {
-        const auto* slot = owner.binding(name).first;
-        if(slot==nullptr || (!vocab::PredicateExternals.contains(slot->name()) &&
-                             !vocab::PureExternals.contains(slot->name())))
+        const auto key = nativeOperationName(name);
+        if(!vocab::PredicateExternals.contains(key) && !vocab::PureExternals.contains(key))
           return std::nullopt;
         }
       return owner.function(name);
@@ -359,15 +367,16 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
 
     std::optional<NativeCall> invokeBound(std::string_view name, const std::vector<NativeValue>& args,
                                           std::string& error) override {
-      auto* slot = owner.binding(name).first;
+      const bool nativeCatalog = baseNativeCatalog()!=nullptr;
+      auto* slot = nativeCatalog ? nullptr : owner.binding(name).first;
       const auto fn = findFunction(name);
-      if(slot==nullptr || !fn || fn->program!=nullptr ||
+      if((!nativeCatalog && slot==nullptr) || !fn || fn->program!=nullptr ||
          !std::equal(args.begin(),args.end(),fn->parameters.begin(),fn->parameters.end(),
                      [](const NativeValue& actual, NativeValue::Type expected) { return actual.type==expected; })) {
         error = "Unknown native story operation "+std::string(name);
         return std::nullopt;
         }
-      const auto& key = slot->name();
+      const auto key = nativeCatalog ? nativeOperationName(name) : slot->name();
       // Journal writes have a direct engine API shared with other native game systems.
       if(effects && key.starts_with("LOG_") && args.size()==2 && args[0].type==NativeValue::Str) {
         if(key=="LOG_CREATETOPIC" && args[1].type==NativeValue::Int) {
@@ -386,12 +395,14 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       if(const auto direct = owner.script.nativeExternals.find(key); direct!=owner.script.nativeExternals.end()) {
         const auto resolve = [this](NativeInstance id) { return resolveInstance(id); };
         const auto bindValue = [this](const auto& value) { return bind(value); };
-        struct RestoreContext {
-          daedalus::DaedalusVm& vm;
-          std::shared_ptr<DaedalusInstance> previous;
-          ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
-          } restore{owner.vm,owner.vm.unsafe_get_gi()};
         try {
+          if(nativeCatalog)
+            return direct->second.call(args,resolve,bindValue);
+          struct RestoreContext {
+            daedalus::DaedalusVm& vm;
+            std::shared_ptr<DaedalusInstance> previous;
+            ~RestoreContext() { vm.unsafe_set_gi(std::move(previous)); }
+            } restore{owner.vm,owner.vm.unsafe_get_gi()};
           if(direct->second.observe)
             BoundNativeCall::observeExternal(owner.vm,*slot,args,resolve);
           return direct->second.call(args,resolve,bindValue);
@@ -400,6 +411,10 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
           error = "Native function " + key + " failed: " + ex.what();
           return std::nullopt;
           }
+        }
+      if(slot==nullptr) {
+        error = "Missing native story operation "+key;
+        return std::nullopt;
         }
       const auto call = owner.calls.find(key);
       const auto& engineCall = call!=owner.calls.end() ? call->second : BoundNativeCall(owner.vm,*slot);
@@ -528,26 +543,34 @@ std::unique_ptr<GameScript::StockPrograms::Host> GameScript::StockPrograms::host
   }
 
 bool GameScript::StockPrograms::run(uint32_t id, int32_t& result, bool* failed, bool preparedOnly) {
-  const auto found = ids.find(id);
-  if(found==ids.end() || found->second->type()!=DaedalusDataType::FUNCTION)
-    return false;
-  const auto& symbol = *found->second;
   const auto* entry = program(id);
-  if(preparedOnly && entry==nullptr)
-    return false;
-  if(runPrepared(symbol,result,failed))
+  const bool nativeCatalog = baseNativeCatalog()!=nullptr;
+  std::string_view name;
+  if(nativeCatalog) {
+    if(entry==nullptr || !entry->parameters.empty())
+      return false;
+    name = entry->name;
+    } else {
+    const auto found = ids.find(id);
+    if(found==ids.end() || found->second->type()!=DaedalusDataType::FUNCTION || (preparedOnly && entry==nullptr))
+      return false;
+    name = found->second->name();
+    }
+  if(runPrepared(id,name,result,failed))
     return true;
-  const auto fn = function(symbol.name());
-  if(!fn || !fn->parameters.empty())
-    return false;
+  if(!nativeCatalog) {
+    const auto fn = function(name);
+    if(!fn || !fn->parameters.empty())
+      return false;
+    }
 
   Host execution(*this,true);
-  const auto run = preparedOnly ? NativeInterpreter(execution).run(entry->program) :
-                                 execution.run(symbol.name(),{});
+  const auto run = nativeCatalog || preparedOnly ? NativeInterpreter(execution).run(entry->program) :
+                                                   execution.run(name,{});
   if(failed!=nullptr)
     *failed = !run.ok;
   if(!run.ok)
-    Tempest::Log::e("[story] program ",symbol.name(),": ",run.error);
+    Tempest::Log::e("[story] program ",name,": ",run.error);
   result = run.returned.type==NativeValue::Int ? run.returned.i : 0;
   return run.started;
   }
