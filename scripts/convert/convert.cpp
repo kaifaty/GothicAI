@@ -1147,7 +1147,7 @@ int selfTest() {
   expectedCatalog.identities={{{100,"NPC_TEST"}},{{200,"IT_TEST"}},{{300,"DIA_TEST"}}};
   expectedCatalog.routines={{400,"RTN_START_100"}};
   expectedCatalog.itemCallbacks={{500,"EQUIP_TEST"}};
-  expectedCatalog.npcCallbacks={{501,"B_ASSESSDAMAGE"}};
+  expectedCatalog.npcCallbacks={{499,"B_ASSESSDAMAGE"}};
   using ConstructorType = NativeBaseCatalog::NpcConstructorType;
   expectedCatalog.npcConstructor.members={{"C_NPC.ID",{450,1,ConstructorType::Integer}}};
   expectedCatalog.npcConstructor.calls={{"CREATEINVITEM",{451,false,{ConstructorType::Instance,ConstructorType::Integer}}}};
