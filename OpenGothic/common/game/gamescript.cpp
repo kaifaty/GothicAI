@@ -1487,13 +1487,15 @@ Item* GameScript::findItemById(const std::shared_ptr<daedalus::DaedalusInstance>
   }
 
 Npc* GameScript::findNpcById(size_t id) {
-  if(id>UINT32_MAX || !npcTemplateId(uint32_t(id)))
+  if(id>UINT32_MAX)
     return nullptr;
   auto* alias = ownedInstance(uint32_t(id));
   if(alias==nullptr)
     return nullptr;
   if(auto* actor = dynamic_cast<NpcInstance*>(alias->get()); actor!=nullptr && actor->user_ptr!=nullptr)
     return findNpc(actor);
+  if(!npcTemplateId(uint32_t(id)))
+    return nullptr;
   auto* actor = world().findNpcByInstance(id);
   *alias = actor!=nullptr ? std::static_pointer_cast<NpcInstance>(actor->handlePtr()) : nullptr;
   return actor;

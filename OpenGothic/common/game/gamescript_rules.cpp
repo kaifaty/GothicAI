@@ -2,7 +2,7 @@
 
 #include "basestore.h"
 #include "game/definitions/basescripts.h"
-#include "programdata.h"
+#include "game/definitions/nativebasecatalog.h"
 
 #include "damagecalculator.h"
 #include "definitions/fightaidefinitions.h"
@@ -3996,8 +3996,23 @@ void GameScript::startupFloorBeforeKeep(Npc& npc) {
   floorDefer.beforeKeep(npc);
   }
 
-size_t GameScript::scriptVmMemorySize() const {
-  return sizeof(vm)+vm.symbols().capacity()*sizeof(vm.symbols()[0])+vm.size();
+size_t GameScript::scriptStatePayloadSize() const {
+  size_t bytes = 0;
+  for(const auto& [id,slot] : runtimeState.slots()) {
+    (void)id;
+    bytes += sizeof(slot);
+    std::visit([&](const auto& value) {
+      using Field = std::decay_t<decltype(value)>;
+      if constexpr(!std::is_same_v<Field,ScriptVars::Object>) {
+        using Element = typename decltype(value.values)::value_type;
+        bytes += value.values.size()*sizeof(Element);
+        if constexpr(std::is_same_v<Element,std::string>)
+          for(const auto& text : value.values)
+            bytes += text.size();
+        }
+      },slot);
+    }
+  return bytes;
   }
 
 DamageValue GameScript::damageValue(Npc& src, Npc& other, const Bullet* bullet, bool isSpell, const Damage& spellDamage, CollideMask mask) {
@@ -4029,12 +4044,13 @@ const FightTactic& GameScript::fightAi(size_t tactic) {
   }
 
 float GameScript::attackFinishDistance() {
-  float NPC_ATTACK_FINISH_DISTANCE = 180;
-  if(auto var = findSymbol("NPC_ATTACK_FINISH_DISTANCE")) {
-    if(var->type()==daedalus::DaedalusDataType::INT)
-      NPC_ATTACK_FINISH_DISTANCE = float(var->get_int());
-    else if(var->type()==daedalus::DaedalusDataType::FLOAT)
-      NPC_ATTACK_FINISH_DISTANCE = var->get_float();
-    }
-  return NPC_ATTACK_FINISH_DISTANCE;
+  constexpr std::string_view distance = "NPC_ATTACK_FINISH_DISTANCE";
+  if(const auto value = globalIntSymbol(distance))
+    return float(*value);
+  if(const auto* slot = std::get_if<ScriptVars::Array<float>>(runtimeState.find(distance)))
+    return slot->values.front();
+  if(const auto* constant = NativeBaseCatalog::findConstant(*baseNativeCatalog(),distance))
+    if(const auto* values = std::get_if<std::vector<float>>(&constant->values))
+      return values->front();
+  return 180.f;
   }

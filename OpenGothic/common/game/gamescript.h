@@ -88,7 +88,7 @@ class GameScript final : public GameRules {
     void             startupFloorBeforeResetMove(Npc& npc, const Tempest::Vec3& destination) override;
     void             startupFloorBeforeKeep(Npc& npc) override;
     std::array<int32_t,3> storyNpcTypes() override;
-    size_t           scriptVmMemorySize() const override;
+    size_t           scriptStatePayloadSize() const override;
 
     DamageValue damageValue(Npc& src, Npc& other, const Bullet* bullet, bool isSpell, const Damage& spellDamage, CollideMask mask) override;
     float meleeMultiplier(float speedCmS, float typicalCmS, float bladeFraction, float surfaceAngleDeg, size_t targetIndex) override;
