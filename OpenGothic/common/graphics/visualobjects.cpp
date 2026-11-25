@@ -1203,14 +1203,53 @@ void VisualObjects::logVsmShadowProbe(uint64_t frameNo) const {
     }
   }
 
+// Legacy wind (the original's WIND/WIND_ALT vegetation): the matrix is a pure function of the world clock and the
+// placement, so an object outside every view keeps its last matrix until a view reaches it again — there is no debt
+// to catch up. The test is the animation LOD's conservative one (world/animationlod.h): the main frustum, both
+// shadow cascades and a camera radius, the sphere grown by the wave amplitude and a margin. A cleared shadow
+// frustum rejects everything. OPENGOTHIC_WIND_LOD=0 computes every object every frame, as before.
 void VisualObjects::preFrameUpdateWind() {
+  if(objectsWind.empty())
+    return;
+  static const bool lod = []{
+    const char* e = std::getenv("OPENGOTHIC_WIND_LOD");
+    return e==nullptr || e[0]!='0';
+    }();
+  constexpr float Margin       = 100.f;   // cm, on top of the wave amplitude
+  constexpr float CameraRadius = 3000.f;  // cm, the animation LOD's shadow reach
+  const auto& main = scene.frustrum[SceneGlobals::V_Main];
+  const auto& sh0  = scene.frustrum[SceneGlobals::V_Shadow0];
+  const auto& sh1  = scene.frustrum[SceneGlobals::V_Shadow1];
+  const Vec3  cam  = scene.camPos();
+  uint64_t computed = 0, skipped = 0;
   for(auto id:objectsWind) {
     auto& object = objects[id];
+    if(lod) {
+      const auto* mesh = object.bucketId->staticMesh;
+      if(mesh!=nullptr) {
+        const auto& box = mesh->bbox.bbox;
+        Vec3 middle = (box[0]+box[1])*0.5f;
+        object.pos.project(middle);
+        const Vec3 x(object.pos.at(0,0),object.pos.at(0,1),object.pos.at(0,2));
+        const Vec3 y(object.pos.at(1,0),object.pos.at(1,1),object.pos.at(1,2));
+        const Vec3 z(object.pos.at(2,0),object.pos.at(2,1),object.pos.at(2,2));
+        const float scale = std::sqrt(Vec3::dotProduct(x,x)+Vec3::dotProduct(y,y)+Vec3::dotProduct(z,z));
+        const float r = mesh->bbox.rConservative*scale + object.bucketId->mat.waveMaxAmplitude + Margin;
+        const bool near = (middle-cam).quadLength() < CameraRadius*CameraRadius;
+        if(!near && !main.testPoint(middle,r) && !sh0.testPoint(middle,r) && !sh1.testPoint(middle,r)) {
+          ++skipped;
+          continue;
+          }
+        }
+      }
     auto position = WorldWind::shaderMatrix(object.pos, scene.tickCount, scene.windPeriod,
                                             scene.zWindEnabled, object.wind, object.windIntensity,
                                             scene.windScale, scene.legacyWind);
     updateInstance(id, &position);
+    ++computed;
     }
+  FrameProfile::add(FrameProfile::Amount::WindComputed,computed);
+  FrameProfile::add(FrameProfile::Amount::WindSkipped,skipped);
   }
 
 // Levels of detail of strands (reports/content/2026-11-npc-hair/lod.md). A hair is thinner than a pixel, so the

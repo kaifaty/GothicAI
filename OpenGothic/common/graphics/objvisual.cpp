@@ -649,6 +649,10 @@ void ObjVisual::processLayers(World& world) {
     }
   }
 
+bool ObjVisual::isAnimIdle() const {
+  return type!=M_Mdl || mdl.view.pose().isIdle();
+  }
+
 void ObjVisual::syncPhysics() {
   if(type==M_Mdl)
     mdl.physic.setPose(mdl.view.pose());
