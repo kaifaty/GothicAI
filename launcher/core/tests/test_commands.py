@@ -261,7 +261,7 @@ def test_content_without_materials_is_not_enabled(tmp_path, monkeypatch, exists)
 
 def test_latest_save(tmp_path):
     assert latest_save(tmp_path) is None
-    for i, (slot, version) in enumerate([("1", 56), ("0", 56), ("12", 56), ("13", 55), ("14", 57)]):
+    for i, (slot, version) in enumerate([("1", 57), ("0", 57), ("12", 57), ("13", 56), ("14", 58)]):
         p = tmp_path / f"save_slot_{slot}.sav"
         with ZipFile(p, "w") as archive:
             archive.writestr("header", b"OpenGothic/Save\0" + version.to_bytes(2, "little"))

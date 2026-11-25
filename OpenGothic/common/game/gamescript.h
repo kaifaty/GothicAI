@@ -881,7 +881,8 @@ class GameScript final : public GameRules {
     bool bennetExecute(const BennetOreDialog& dialog, Npc& player, Npc& npc);
 
     void saveSym(Serialize& fout, daedalus::DaedalusSymbol& s);
-    ScriptVars::Row stateRow(daedalus::DaedalusSymbol& symbol);
+    ScriptVars::Value stateValue(const ScriptVars::Slot& slot);
+    ScriptVars::Reference stateReference(const ScriptVars::Object& object);
 
     void onWldInstanceRemoved(const daedalus::DaedalusInstance* obj);
     void makeCurrent(Item* w);
@@ -947,7 +948,8 @@ class GameScript final : public GameRules {
     struct PointGestureRolls {
       int32_t guard = 0, crossedArms = 0, waypoint = 0, portal = 0, earthquake = 0;
       } pointGestureRolls;
-    OwnSymbols                                                  own;
+    ScriptVars::State                                           runtimeState;
+    OwnSymbols                                                  own{runtimeState};
     daedalus::DaedalusVm                                          vm;
     std::unique_ptr<StockPrograms>                                stockPrograms;
     std::map<std::string,storygraph::NativeExternal,std::less<>>    nativeExternals;

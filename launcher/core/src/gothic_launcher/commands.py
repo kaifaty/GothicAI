@@ -76,7 +76,7 @@ MANAGED_ENV = ("OPENAI_API_KEY", "INWORLD_API_KEY", "OPENGOTHIC_BODY_NET")
 FOREIGN_ENV = ("VIRTUAL_ENV",)  # the launcher's own venv: `uv run` of a service would warn and ignore it
 SAVE_RE = re.compile(r"save_slot_(\d+)\.sav")
 SAVE_TAG = b"OpenGothic/Save\0"
-SAVE_VERSION = 56  # SaveArchive::Current
+SAVE_VERSION = 57  # SaveArchive::Current
 
 
 class LaunchError(Exception):

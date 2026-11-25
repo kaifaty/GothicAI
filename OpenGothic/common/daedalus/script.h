@@ -562,6 +562,12 @@ namespace daedalus {
 		/// Preserve this mutable scalar in storage that outlives the symbol.
 		void bind_global_int(std::int32_t& value);
 		void bind_global_string(std::string& value);
+		void bind_global_instance(std::shared_ptr<DaedalusInstance>& value);
+		std::span<std::int32_t> bound_global_int();
+		std::span<std::string>  bound_global_string();
+		std::unique_ptr<std::int32_t[]> take_global_int();
+		std::unique_ptr<float[]>        take_global_float();
+		std::unique_ptr<std::string[]>  take_global_string();
 
 		/// \brief Validates that the symbol is an instance and sets it's value
 		/// \param inst The instance value to set
@@ -728,8 +734,11 @@ namespace daedalus {
 
 	private:
 		friend class DaedalusScript;
+		template<class T> std::unique_ptr<T[]> take_global_values(DaedalusDataType expected);
 		std::int32_t* int_data() const;
+		float* float_data() const;
 		std::string* string_data() const;
+		std::shared_ptr<DaedalusInstance>& instance_data();
 
 		std::string _m_name;
 		std::variant<std::unique_ptr<std::int32_t[]>,
@@ -737,7 +746,9 @@ namespace daedalus {
 		             std::unique_ptr<std::string[]>,
 		             std::shared_ptr<DaedalusInstance>,
 		             std::int32_t*,
-		             std::string*>
+		             float*,
+		             std::string*,
+		             std::shared_ptr<DaedalusInstance>*>
 		    _m_value;
 
 		std::int32_t _m_address {-1};

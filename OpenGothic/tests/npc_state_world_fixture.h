@@ -266,29 +266,29 @@ void bindNpcGlobals(World& world) {
     require(instructions==0 && ownedChapter==3 && chapter->get_int()==3,"native binding must preserve an established chapter");
 
     // Serialize the single entry through the same writer as a full save, and compare the encoded row.
-    const auto saveChapter=[&](std::optional<int32_t> legacy) {
+    const auto saveChapter=[&](std::optional<int32_t> expected) {
       std::vector<uint8_t> bytes;
       Tempest::MemWriter writer(bytes);
       {
         Serialize out(writer);
         out.setEntry(ScriptVars::StateEntry);
         out.write(uint32_t(1));
-        if(legacy)
-          out.write(uint32_t(daedalus::DaedalusDataType::INT),std::string("KAPITEL"),uint32_t(1),*legacy);
+        if(expected)
+          out.write(chapter->index(),uint8_t(1),uint32_t(1),*expected);
         else
           NpcDefinitionContract::saveChapter(script,out);
       }
       return bytes;
       };
     ownedChapter=5;
-    const auto legacy=saveChapter(5);
+    const auto expectedArchive=saveChapter(5);
     const auto current=saveChapter(std::nullopt);
-    require(archiveEntries(legacy)==archiveEntries(current),"chapter must keep its typed state row");
+    require(archiveEntries(expectedArchive)==archiveEntries(current),"chapter must keep its typed state row");
     require(vm.export_program().symbols[chapter->index()].int_values==std::vector<int32_t>{5},
             "program export must see the live bound integer value");
 
     ownedChapter=0;
-    Tempest::MemReader reader(legacy);
+    Tempest::MemReader reader(expectedArchive);
     Serialize in(reader);
     require(in.setEntry(ScriptVars::StateEntry),"save state must include a chapter value");
     script.loadVar(in);

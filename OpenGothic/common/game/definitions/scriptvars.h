@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -8,10 +10,11 @@
 #include <vector>
 
 class SaveArchive;
+namespace daedalus { class DaedalusInstance; class DaedalusSymbol; }
 
 namespace ScriptVars {
 
-inline constexpr std::string_view StateEntry = "game/state";
+inline constexpr std::string_view StateEntry = "game/runtime";
 
 // Values and object references for the prepared program state.
 enum class ReferenceKind : uint8_t {
@@ -30,12 +33,32 @@ struct Reference {
 using Value = std::variant<std::monostate,std::vector<int32_t>,std::vector<float>,std::vector<std::string>,Reference>;
 
 struct Row {
-  std::string name;
-  Value       value;
+  uint32_t id;
+  Value    value;
   };
 
 Row  readRow(SaveArchive& in);
 void writeRow(SaveArchive& out, const Row& row);
+
+using Object = std::shared_ptr<daedalus::DaedalusInstance>;
+template<class T>
+struct Array {
+  std::unique_ptr<T[]> storage;
+  std::span<T>         values;
+  };
+using Slot = std::variant<Array<int32_t>,Array<float>,Array<std::string>,Object>;
+
+class State final {
+  public:
+    void bind(daedalus::DaedalusSymbol& symbol);
+    Slot* find(uint32_t id);
+    auto& slots() { return values; }
+    const auto& slots() const { return values; }
+
+  private:
+    // The VM compatibility views may keep pointers to these cells for the session lifetime.
+    std::map<uint32_t,Slot> values;
+  };
 
 // Director declarations are loaded before the world creates their NPCs.
 inline constexpr std::string_view SymbolEntry = "game/director";
