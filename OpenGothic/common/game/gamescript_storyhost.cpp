@@ -185,7 +185,7 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
     bool hasVariable(std::string_view name, bool instanceOnly) const override {
-      if(name=="$INSTANCE_HELP" || owner.script.storyOwnedInstance(name)!=nullptr)
+      if(name=="$INSTANCE_HELP")
         return true;
       if(const auto* state = owner.script.runtimeState.find(name))
         return !instanceOnly || std::holds_alternative<ScriptVars::Object>(*state);
@@ -228,14 +228,17 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
         if(slot.index==0) {
           if(slot.name=="$INSTANCE_HELP")
             return NativeValue::instance(0);
-          if(const auto* actor = owner.script.storyOwnedInstance(slot.name))
-            return NativeValue::instance(bind(*actor));
           if(slot.kind!=NativeSlot::Instance)
             if(const auto* field = BennetOre::progressField(owner.script,slot.name))
               return NativeValue::integer(*field);
           }
         if(const auto* state = owner.script.runtimeState.find(slot.name)) {
-          if(slot.kind==NativeSlot::Instance || std::holds_alternative<ScriptVars::Object>(*state))
+          if(const auto* object = std::get_if<ScriptVars::Object>(state)) {
+            if(slot.index!=0)
+              throw std::runtime_error("Invalid runtime instance index");
+            return NativeValue::instance(bind(*object));
+            }
+          if(slot.kind==NativeSlot::Instance)
             throw std::runtime_error("Invalid runtime instance reference");
           return readState(*state,slot.index);
           }
@@ -448,7 +451,7 @@ std::unique_ptr<GameScript::StockPrograms::Host> GameScript::StockPrograms::host
   return std::make_unique<Host>(*this,effects);
   }
 
-bool GameScript::StockPrograms::run(uint32_t id, int32_t& result, bool* failed, bool preparedOnly) {
+bool GameScript::StockPrograms::run(uint32_t id, int32_t& result, bool* failed) {
   const auto* entry = program(id);
   if(entry==nullptr || !entry->parameters.empty())
     return false;
@@ -457,7 +460,7 @@ bool GameScript::StockPrograms::run(uint32_t id, int32_t& result, bool* failed, 
     return true;
 
   Host execution(*this,true);
-  const auto run = preparedOnly ? NativeInterpreter(execution).run(entry->program) : execution.run(name,{});
+  const auto run = execution.run(name,{});
   if(failed!=nullptr)
     *failed = !run.ok;
   if(!run.ok)

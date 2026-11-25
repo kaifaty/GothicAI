@@ -15,7 +15,7 @@ class GameScript::StockPrograms final {
 
     class Host;
 
-    bool run(uint32_t id, int32_t& result, bool* failed, bool preparedOnly);
+    bool run(uint32_t id, int32_t& result, bool* failed);
     bool runPrepared(uint32_t id, std::string_view name, int32_t& result, bool* failed);
     const StockStoryPrograms::Entry* program(uint32_t id) const;
     const StockStoryPrograms::Entry* program(std::string_view name) const;

@@ -93,15 +93,6 @@ const storygraph::Program* GameScript::preparedStockProgram(uint32_t id) {
   return nullptr;
   }
 
-const storygraph::Program* GameScript::preparedStockProgram(const daedalus::DaedalusSymbol& fn, bool requireDependencies) {
-  const auto* entry = storyPrograms().program(fn.index());
-  if(entry==nullptr || entry->name!=fn.name())
-    return nullptr;
-  if(requireDependencies && !checkStoryProgram(entry->program,entry->parameters.size()).empty())
-    return nullptr;
-  return &entry->program;
-  }
-
 std::string_view GameScript::storyProgramName(uint32_t id) {
   const auto& programs = storyPrograms();
   if(const auto* program = programs.program(id))
@@ -221,11 +212,7 @@ std::optional<storygraph::NativeFunction> GameScript::storyFunction(std::string_
   }
 
 bool GameScript::invokeStockProgram(uint32_t id, int32_t& result, bool* failed) {
-  return storyPrograms().run(id,result,failed,false);
-  }
-
-bool GameScript::invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed, bool preparedOnly) {
-  return storyPrograms().run(fn.index(),result,failed,preparedOnly);
+  return storyPrograms().run(id,result,failed);
   }
 
 int32_t GameScript::dialogFunction(uint32_t id) {

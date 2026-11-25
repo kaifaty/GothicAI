@@ -136,9 +136,6 @@ class GameScript final : public GameRules {
     bool         ownsNativeBennetProgram(uint32_t function) const;
     // The caller binds the ambient NPC context for stock dialogs.
     bool         invokeStockProgram(uint32_t id, int32_t& result, bool* failed = nullptr);
-    bool         invokeStockProgram(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed = nullptr,
-                                    bool preparedOnly = false);
-    const storygraph::Program* preparedStockProgram(const daedalus::DaedalusSymbol& fn, bool requireDependencies = false);
     const storygraph::Program* preparedStockProgram(uint32_t id);
     std::string_view storyProgramName(uint32_t id);
     std::string_view storySymbolName(uint32_t id);
