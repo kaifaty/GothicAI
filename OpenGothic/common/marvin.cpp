@@ -3,6 +3,7 @@
 #include <charconv>
 #include <cstdint>
 #include <cctype>
+#include <type_traits>
 
 #include "utils/string_frm.h"
 #include "world/objects/npc.h"
@@ -17,6 +18,9 @@
 #include "graphics/mesh/aim.h"
 #include "game/archery.h"
 #include "game/archerai.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
+#include "game/gamescript.h"
 #include "graphics/mesh/flinch.h"
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
@@ -65,8 +69,8 @@ bool Marvin::showChunks = false;
 
 Marvin::Marvin() {
   /* Legend:
-   %c - instance variable from script
-   %v - variable from script
+   %c - NPC or item instance
+   %v - game variable
    %s - any string
    %d - integer
    %f - floating point number
@@ -859,90 +863,56 @@ bool Marvin::exec(std::string_view v) {
   }
 
 bool Marvin::addItemOrNpcBySymbolName(World* world, std::string_view name, const Tempest::Vec3& at) {
-  auto&  sc  = world->script();
-  size_t id  = sc.findSymbolIndex(name);
-  if(id==size_t(-1))
-    return false;
-
-  auto*  sym = sc.findSymbol(id);
-  if(sym==nullptr || sym->parent()==uint32_t(-1))
-    return false;
-
-  if(sym->type()!=daedalus::DaedalusDataType::INSTANCE || sym->address()==0)
-    return false;
-
-  const auto* cls = sym;
-  while(cls!=nullptr && cls->parent()!=uint32_t(-1)) {
-    cls = sc.findSymbol(cls->parent());
-    }
-
-  if(cls==nullptr)
-    return false;
-
-  if(cls->name()=="C_NPC")
-    return (world->addNpc(id, at)!=nullptr);
-  if(cls->name()=="C_ITEM")
-    return (world->addItem(id, at)!=nullptr);
+  auto& script = world->script();
+  if(const auto npc = script.storyNpcId(name))
+    return world->addNpc(*npc,at)!=nullptr;
+  if(const auto item = script.findItemInstance(name))
+    return world->addItem(*item,at)!=nullptr;
   return false;
   }
 
 bool Marvin::printVariable(World* world, std::string_view name) {
-  string_frm buf;
-  auto&  sc  = world->script();
-  auto*  sym = sc.findSymbol(name);
-  if(sym==nullptr)
-    return false;
-  switch(sym->type()) {
-    case daedalus::DaedalusDataType::INT:
-      buf = string_frm(name," = ",sym->get_int(0));
-      break;
-    case daedalus::DaedalusDataType::FLOAT:
-      buf = string_frm(name," = ",sym->get_float(0));
-      break;
-    case daedalus::DaedalusDataType::STRING:
-      buf = string_frm(name," = ",sym->get_string(0));
-      break;
-    case daedalus::DaedalusDataType::INSTANCE:
-      buf = string_frm(name," = ",sym->get_instance().get());
-      break;
-    default:
-      break;
+  if(const auto* slot = world->script().runtimeState.find(name)) {
+    std::visit([&](const auto& value) {
+      if constexpr(std::is_same_v<std::decay_t<decltype(value)>,ScriptVars::Object>)
+        print(string_frm(name," = ",value.get()));
+      else
+        print(string_frm(name," = ",value.values.front()));
+      },*slot);
+    return true;
     }
-  print(buf);
-  return true;
+  if(const auto* catalog = baseNativeCatalog()) {
+    if(const auto* constant = NativeBaseCatalog::findConstant(*catalog,name)) {
+      return std::visit([&](const auto& values) {
+        if constexpr(std::is_same_v<std::decay_t<decltype(values)>,NativeBaseCatalog::Alias>) {
+          return false;
+          } else {
+          print(string_frm(name," = ",values.front()));
+          return true;
+          }
+        },constant->values);
+      }
+    }
+  return false;
   }
 
 bool Marvin::setVariable(World* world, std::string_view name, std::string_view value) {
-  auto&  sc  = world->script();
-  auto*  sym = sc.findSymbol(name);
-  if(sym==nullptr)
+  auto* slot = world->script().runtimeState.find(name);
+  if(slot==nullptr)
     return false;
-  switch(sym->type()) {
-    case daedalus::DaedalusDataType::INT: {
-      int32_t valueI = 0;
-      if(!fromString(value, valueI))
-        return false;
-      sym->set_int(valueI);
-      break;
-      }
-    case daedalus::DaedalusDataType::FLOAT: {
-      float valueF = 0;
-      if(!fromString(value, valueF))
-        return false;
-      sym->set_float(valueF);
-      break;
-      }
-    case daedalus::DaedalusDataType::STRING:
-      sym->set_string(value);
-      break;
-    case daedalus::DaedalusDataType::INSTANCE:
+  const bool applied = std::visit([&](auto& current) {
+    using Type = std::decay_t<decltype(current)>;
+    if constexpr(std::is_same_v<Type,ScriptVars::Object>) {
       print("unable to override instance variable");
-      break;
-    default:
-      return false;
-    }
-  printVariable(world, name);
-  return true;
+      return true;
+      } else if constexpr(std::is_same_v<Type,ScriptVars::Array<std::string>>) {
+      current.values.front() = value;
+      return true;
+      } else {
+      return fromString(value,current.values.front());
+      }
+    },*slot);
+  return applied && printVariable(world,name);
   }
 
 bool Marvin::setTime(World& world, std::string_view hh, std::string_view mm) {
@@ -965,44 +935,37 @@ bool Marvin::setTime(World& world, std::string_view hh, std::string_view mm) {
   }
 
 bool Marvin::goToVob(World& world, Npc& player, Camera& c, std::string_view name, size_t n) {
-  auto&  sc = world.script();
-  size_t id = sc.findSymbolIndex(name);
-  if(id==size_t(-1))
-    return false;
-
-  Tempest::Vec3 pos;
-  if(auto npc = world.findNpcByInstance(id,n))
-     pos = npc->position();
-  else if(auto it = world.findItemByInstance(id,n))
-     pos = it->position();
-  else
+  auto& script = world.script();
+  const auto npcId = script.storyNpcId(name);
+  const auto itemId = script.findItemInstance(name);
+  const auto* npc = npcId ? world.findNpcByInstance(*npcId,n) : nullptr;
+  const auto* item = itemId ? world.findItemByInstance(*itemId,n) : nullptr;
+  if(npc==nullptr && item==nullptr)
     return false;
 
   if(!player.setInteraction(nullptr))
     return false;
-  player.setPosition(pos);
+  player.setPosition(npc!=nullptr ? npc->position() : item->position());
   player.updateTransform();
   c.reset();
   return true;
   }
 
 std::string_view Marvin::completeInstanceName(std::string_view inp, bool& fullword) const {
-  World* world  = Gothic::inst().world();
-  if(world==nullptr || inp.size()==0)
+  const auto* catalog = baseNativeCatalog();
+  auto* world = Gothic::inst().world();
+  if(catalog==nullptr || world==nullptr || inp.empty())
     return "";
 
-  auto&            sc    = world->script();
-  std::string_view match = "";
-  for(size_t i=0; i<sc.symbolsCount(); ++i) {
-    auto*  sym  = sc.findSymbol(i);
-    auto   name = std::string_view(sym->name());
+  std::string_view match;
+  const auto consider = [&](std::string_view name) {
     if(!startsWith(name,inp))
-      continue;
+      return;
 
     if(match.empty()) {
-      match   = name;
+      match    = name;
       fullword = true;
-      continue;
+      return;
       }
     if(name.size()>match.size())
       name = name.substr(0,match.size());
@@ -1016,6 +979,12 @@ std::string_view Marvin::completeInstanceName(std::string_view inp, bool& fullwo
         }
       }
     match = name;
-    }
+    };
+  for(const auto& npc:catalog->identities.npcs) consider(npc.name);
+  for(const auto& item:catalog->identities.items) consider(item.name);
+  for(const auto& state:catalog->states) consider(state.name);
+  for(const auto& value:catalog->initialState) consider(value.name);
+  for(const auto& constant:catalog->constants) consider(constant.first);
+  for(const auto& entry:world->script().ownSymbols().entries()) consider(entry.name);
   return match;
   }

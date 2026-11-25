@@ -6,6 +6,8 @@
 #include <limits>
 
 #include "game/gamescript.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/playercontrol.h"
 #include "settings.h"
 #include "graphics/mesh/protomesh.h"
@@ -497,22 +499,23 @@ void prepareWaterFixture(Water& state,const WaterContext& context,World& world,N
     if(selected[i].className=="crate")state.crateZen=selected[i].zenId;
     }
   if(!perf && !harbourOnly) {
+    const auto* catalog=baseNativeCatalog();
+    if(!catalog) {arenaAbort("water fixture requires a native item catalog");return;}
     const char* symbols[]{"ITRW_ARROW","ITMW_1H_SLD_SWORD","ITMI_STONE","ITMI_LUTE"};
     const char* labels[]{"arrow","sword","stone","wood_item"};
     for(unsigned i=0;i<4;++i) {
-      auto symbol=world.script().findSymbolIndex(symbols[i]);
-      if(symbol==size_t(-1) && i==1)
-        for(size_t candidate=0;candidate<world.script().symbolsCount();++candidate) {
-          const auto* entry=world.script().findSymbol(candidate);
-          if(!entry || entry->type()!=daedalus::DaedalusDataType::INSTANCE)continue;
-          auto name=entry->name();for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
-          if(name.starts_with("ITMW_") && name.find("SWORD")!=std::string::npos) {symbol=candidate;break;}
-          }
-      if(symbol==size_t(-1) && i==2)symbol=world.script().findSymbolIndex("ITMI_NUGGET");
-      if(symbol==size_t(-1)) {arenaAbort("water fixture item script instance missing: "+std::string(symbols[i]));return;}
+      auto symbol=world.script().findItemInstance(symbols[i]);
+      if(!symbol && i==1) {
+        const auto sword=std::ranges::find_if(catalog->identities.items,[](const NativeBaseCatalog::Identity& item) {
+          return item.name.starts_with("ITMW_") && item.name.find("SWORD")!=std::string::npos;
+          });
+        if(sword!=catalog->identities.items.end())symbol=sword->id;
+        }
+      if(!symbol && i==2)symbol=world.script().findItemInstance("ITMI_NUGGET");
+      if(!symbol) {arenaAbort("water fixture item instance missing: "+std::string(symbols[i]));return;}
       const auto before=world.physic()->waterBodySnapshot();
       auto matrix=Matrix4x4::mkIdentity();matrix.translate(places[i+3]+Vec3(0,100,0));
-      auto* item=world.addItemDyn(symbol,matrix,world.npcId(&player));
+      auto* item=world.addItemDyn(*symbol,matrix,world.npcId(&player));
       if(!item) {arenaAbort("water fixture world Item insertion failed");return;}
       state.items.push_back(item);
       bool found=false;
@@ -1078,15 +1081,14 @@ void prepareWaterSpell(Water& state,const WaterContext& context,World& world,Npc
   npc->handle().attribute[ATR_HITPOINTS]=npc->handle().attribute[ATR_HITPOINTSMAX]=50000;
   npc->updateTransform();context.spellActors.insert(context.spellActors.begin(),{npc,"water_target"});
   int32_t spell=-1;
-  for(size_t i=0;i<world.script().symbolsCount();++i) {
-    const auto* symbol=world.script().findSymbol(i);
-    if(!symbol || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)continue;
-    auto name=symbol->name();for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
+  const auto* catalog=baseNativeCatalog();
+  if(!catalog) {arenaAbort("water spell fixture requires a native item catalog");return;}
+  for(const auto& [itemId,name]:catalog->identities.items) {
     if(!name.starts_with("ITRU_") && !name.starts_with("ITSC_"))continue;
-    auto item=std::make_unique<Item>(world,i,Item::T_Inventory);
-    const auto kind=world.script().physicalSpell(item->spellId());
+    Item item(world,itemId,Item::T_Inventory);
+    const auto kind=world.script().physicalSpell(item.spellId());
     if(kind!=(wind?GameScript::PhysicalSpell::WindFist:GameScript::PhysicalSpell::Fireball))continue;
-    spell=item->spellId();context.spellRunes[spell]=i;player.addItem(i,item->isRune()?1:5);break;
+    spell=item.spellId();context.spellRunes[spell]=itemId;player.addItem(itemId,item.isRune()?1:5);break;
     }
   if(spell<0) {arenaAbort("water fixture real spell rune is missing");return;}
   player.closeWeapon(true);player.setPosition(caster);player.setDirection(direction);player.updateTransform();

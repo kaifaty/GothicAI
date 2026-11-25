@@ -315,6 +315,7 @@ class GameScript final : public GameRules {
   private:
     enum MonsterRoutine { MonsterSleep, MonsterRest, MonsterRoam, MonsterEatGround, MonsterWusel, MonsterOrcSit };
     friend struct NpcDefinitionContract;
+    friend class Marvin;
     friend class StoryRuntime;
     friend class GameStoryExternals;
     class StockPrograms;
