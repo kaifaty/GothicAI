@@ -134,10 +134,10 @@ void npcFightTraceCommand(NpcFightTrace& trace,const std::vector<std::string>& a
     if(rows.size()>1)
       rows += ',';
     const auto* ranged = npc->currentRangedWeapon();
-    const auto* symbol = ranged ? world.script().findSymbol(ranged->clsId()) : nullptr;
+    const auto weaponName = ranged ? world.script().symbolName(ranged->clsId()) : std::string_view{};
     rows += "{\"id\":"+std::to_string(id)+",\"npc_id\":"+std::to_string(world.npcId(npc))+
             ",\"position_cm\":"+ragdollVector(npc->position())+",\"mana\":"+std::to_string(npc->attribute(ATR_MANA))+
-            ",\"ranged_weapon\":"+jsonStr(symbol ? symbol->name() : std::string_view{})+","+npcDuelSnapshot(world,*npc)+"}";
+            ",\"ranged_weapon\":"+jsonStr(weaponName)+","+npcDuelSnapshot(world,*npc)+"}";
     };
   for(size_t i=3; i<args.size(); ++i) {
     const auto& selector = args[i];
