@@ -22,6 +22,11 @@ namespace AnimationLod {
 struct Config {
   bool     enabled = true;
   uint32_t rate    = 4;
+  // N4: also defer VISIBLE distant NPCs on their off-cadence slot (temporal pose LOD).
+  // Off by default; a visible NPC farther than visibleDist from the camera updates every
+  // `rate` frames instead of every frame. OPENGOTHIC_ANIM_LOD_VISIBLE=1 enables it.
+  bool     visible    = false;
+  float    visibleDist = 4000.f;
   };
 const Config& config();  // read from the environment once per process
 
@@ -44,6 +49,8 @@ class View final {
     bool sameView(const View& other) const;
     static void bodyBounds(const Npc& npc, Tempest::Vec3& lo, Tempest::Vec3& hi);
     bool nearCamera(const Npc& npc) const;
+    // N4: the NPC is farther than `dist` (cm) from the camera — a candidate for visible pose LOD.
+    bool farFromCamera(const Npc& npc, float dist) const;
     // The old probe's sphere test against the frustum only, for the
     // tier/policy/frustum split of the frame profile.
     bool probeVisible(const Npc& npc) const;
