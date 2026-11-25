@@ -1147,6 +1147,7 @@ int selfTest() {
   expectedCatalog.identities={{{100,"NPC_TEST"}},{{200,"IT_TEST"}},{{300,"DIA_TEST"}}};
   expectedCatalog.routines={{400,"RTN_START_100"}};
   expectedCatalog.itemCallbacks={{500,"EQUIP_TEST"}};
+  expectedCatalog.npcCallbacks={{501,"B_ASSESSDAMAGE"}};
   using ConstructorType = NativeBaseCatalog::NpcConstructorType;
   expectedCatalog.npcConstructor.members={{"C_NPC.ID",{450,1,ConstructorType::Integer}}};
   expectedCatalog.npcConstructor.calls={{"CREATEINVITEM",{451,false,{ConstructorType::Instance,ConstructorType::Integer}}}};
@@ -1157,7 +1158,8 @@ int selfTest() {
           catalog.directorFirstId==expectedCatalog.directorFirstId &&
           catalog.initialState==expectedCatalog.initialState && catalog.identities==expectedCatalog.identities &&
           catalog.constants==expectedCatalog.constants && catalog.routines==expectedCatalog.routines &&
-          catalog.itemCallbacks==expectedCatalog.itemCallbacks && catalog.npcConstructor==expectedCatalog.npcConstructor &&
+          catalog.itemCallbacks==expectedCatalog.itemCallbacks && catalog.npcCallbacks==expectedCatalog.npcCallbacks &&
+          catalog.npcConstructor==expectedCatalog.npcConstructor &&
           std::signbit(std::get<std::vector<float>>(catalog.initialState[1].value)[0]),
           "native catalog identities, language, NPC phases, constants, routines, callbacks, constructors and initial state round trip");
   const auto stateFile=NativeBaseCatalog::section(output);
