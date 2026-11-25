@@ -97,6 +97,7 @@ foreach ($project in $PythonProjects) {
 # the game and native dialogue reader, with the DLLs of their build folders
 $gameDir = Join-Path $Root $Game
 Copy-FromRepo "$Game\Gothic2Notr.exe"
+Copy-FromRepo "$Game\native-catalog-version.txt"
 Get-ChildItem -LiteralPath $gameDir -Filter '*.dll' -File | ForEach-Object { Copy-FromRepo "$Game\$($_.Name)" }
 Copy-Into (Join-Path $Root "$Storygraph\storygraph-ou.exe") "$Storygraph\storygraph.exe"
 Get-ChildItem -LiteralPath (Join-Path $Root $Storygraph) -Filter '*.dll' -File |
@@ -270,6 +271,7 @@ function Write-Archive([string]$ArchiveName, [string[]]$RequiredBinaries, [strin
 $gameBinaries = @('OpenGothic/build/opengothic/Gothic2Notr.exe', 'OpenGothic/ai_bridge/storygraph/build/storygraph.exe',
                   'tools/uv/uv.exe')
 $gameFiles = @('Start-GothicAI.cmd', 'Setup-GothicAI.cmd', 'Prepare-GothicAI-Game.cmd', 'Check-Microphone.cmd',
+               'OpenGothic/build/opengothic/native-catalog-version.txt',
                'scripts/windows/game_profile.py', 'scripts/windows/microphone-check.ps1', 'server/uv.lock')
 $toolBinaries = @('OpenGothic/build/opengothic/content-convert.exe', 'OpenGothic/ai_bridge/storygraph/build/storygraph.exe')
 try {

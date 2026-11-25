@@ -195,7 +195,7 @@ def find_layout(config: Config) -> Layout:
         can_prepare = converter.is_file() and os.access(converter, os.X_OK)
         explicit = game_env.get("OPENGOTHIC_BASE") or os.environ.get("OPENGOTHIC_BASE")
         try:
-            game_env.update(prepared_game_environment(game_dir, game_env))
+            game_env.update(prepared_game_environment(game_bin, game_dir, game_env))
         except RuntimeError as error:
             if explicit or not can_prepare:
                 problems.append(str(error))
@@ -298,7 +298,9 @@ def content_converter(game_bin: Path) -> Path:
     return game_bin.parent / ("content-convert.exe" if sys.platform == "win32" else "content-convert")
 
 
-def prepared_game_environment(game_dir: Path, env: dict[str, str] | None = None) -> dict[str, str]:
+def prepared_game_environment(
+    game_bin: Path, game_dir: Path, env: dict[str, str] | None = None,
+) -> dict[str, str]:
     """Keep the game and its services on the same prepared native base."""
     with base.resolve(game_dir, native=True, environ=child_env({**base_cache_env(), **(env or {})})) as selected:
         marker = selected.native_profile
@@ -314,6 +316,13 @@ def prepared_game_environment(game_dir: Path, env: dict[str, str] | None = None)
         ):
             raise RuntimeError(f"base {selected.path} needs a prepared native v3 profile")
         version = marker["catalog_version"]
+        version_file = game_bin.resolve().with_name("native-catalog-version.txt")
+        try:
+            expected = int(version_file.read_text(encoding="ascii"))
+        except (OSError, ValueError) as error:
+            raise RuntimeError(f"missing game catalog version in {version_file}") from error
+        if version != expected:
+            raise RuntimeError(f"base {selected.path}: native catalog version is {version}, game requires {expected}")
         source = f"native-script-base-v3\ncatalog-v{version}\n{marker['source_fingerprint']}\n{marker['source_manifest_sha256']}"
         if hashlib.sha256(source.encode()).hexdigest() != selected.fingerprint:
             raise RuntimeError(f"base {selected.path}: native profile fingerprint differs")
@@ -446,7 +455,7 @@ def preparation(
     converter = content_converter(game_bin)
     if not converter.is_file() or not os.access(converter, os.X_OK):
         try:
-            prepared_game_environment(game_dir, env)
+            prepared_game_environment(game_bin, game_dir, env)
         except RuntimeError as error:
             build = "scripts/build-engine.ps1" if sys.platform == "win32" else "scripts/build-engine.sh"
             raise LaunchError(

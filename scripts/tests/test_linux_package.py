@@ -74,6 +74,7 @@ def tree(tmp_path):
         write(root, f"{project}/tests/test_x.py")  # not packed
     write(root, "server/src/pkg/__pycache__/x.pyc")  # not packed
     elf(root / "OpenGothic/build/opengothic/Gothic2Notr")
+    write(root, "OpenGothic/build/opengothic/native-catalog-version.txt", "7\n")
     elf(root / "OpenGothic/build/opengothic/content-convert")
     elf(root / "OpenGothic/build/opengothic/engine-platform-link")
     elf(root / "OpenGothic/build/opengothic/engine-island")
@@ -111,8 +112,11 @@ def test_packs_the_game_with_its_manifest_and_checksums(tree):
         members = {m.name: m for m in archive.getmembers() if m.isfile()}
         graph_reader = "GothicAI-test/OpenGothic/ai_bridge/storygraph/build/storygraph"
         assert json.loads(archive.extractfile(graph_reader).read()[4:])["native_ou"] is True
-    engine = "GothicAI-test/OpenGothic/build/opengothic/"
-    assert {name for name in members if name.startswith(engine)} == {engine + "Gothic2Notr"}
+        engine = "GothicAI-test/OpenGothic/build/opengothic/"
+        assert archive.extractfile(engine + "native-catalog-version.txt").read() == b"7\n"
+    assert {name.removeprefix(engine) for name in members if name.startswith(engine)} == {
+        "Gothic2Notr", "native-catalog-version.txt",
+    }
     assert members[engine + "Gothic2Notr"].mode & 0o111
     assert members["GothicAI-test/tools/uv/uv"].mode & 0o111
     assert "GothicAI-test/licenses/ixwebsocket/LICENSE.txt" in members

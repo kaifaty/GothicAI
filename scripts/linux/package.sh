@@ -122,6 +122,7 @@ while IFS= read -r -d '' file; do
   if forbidden "$relative"; then fail "not for the archive: $relative"; fi
 done < <(find "$ROOT/$GAME" -maxdepth 1 -type f -print0)
 copy_from_repo "$GAME/Gothic2Notr"
+copy_from_repo "$GAME/native-catalog-version.txt"
 copy_into "$ROOT/$STORYGRAPH/storygraph-ou" "$STORYGRAPH/storygraph"
 
 # uv, pinned and checked by the caller

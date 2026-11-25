@@ -332,6 +332,8 @@ def test_find_layout_lists_everything_missing(config, tmp_path, monkeypatch):
     monkeypatch.setattr(commands.sys, "platform", "linux")
     assert default_game_bin(repo) == binary  # Linux never chooses a stray macOS bundle
     converter.unlink()
+    version_file = binary.with_name("native-catalog-version.txt")
+    version_file.write_text("7\n")
     monkeypatch.setenv("HOME", str(tmp_path))
     settings, native, _ = _ready_base(tmp_path / "gothic-ai", monkeypatch, native=True)
     config.set("game.dir", str(settings))
@@ -343,6 +345,9 @@ def test_find_layout_lists_everything_missing(config, tmp_path, monkeypatch):
     config.set("tts.provider", "inworld")
     for name in ("server", "tts"):
         assert by_name(services(config, layout, PORTS, tmp_path))[name].env["OPENGOTHIC_BASE"] == str(native)
+    version_file.write_text("8\n")
+    with pytest.raises(LaunchError, match="native catalog version is 7, game requires 8"):
+        find_layout(config)
     metadata = json.loads((native / "base.json").read_bytes())
     metadata["native_script_base"]["version"] = 2
     (native / "base.json").write_text(json.dumps(metadata))

@@ -345,7 +345,7 @@ def _preflight(config: Config) -> int:
             missing.append(f"Игра ещё не собрана. Запустите {hint}.")
         elif s.game.dir is not None and not content_converter(game_bin).is_file():
             try:
-                prepared_game_environment(s.game.dir)
+                prepared_game_environment(game_bin, s.game.dir)
             except RuntimeError:
                 missing.append("Подготовьте игровую базу отдельным content-convert resolve "
                                "и задайте OPENGOTHIC_BASE.")
