@@ -958,6 +958,7 @@ endif()
 
 # installation
 install(TARGETS Gothic2Notr DESTINATION bin)
+install(FILES "$<TARGET_FILE_DIR:Gothic2Notr>/native-catalog-version.txt" DESTINATION bin)
 
 include(cmake/ZenKitGuard.cmake)
 include(cmake/EngineLayerGuard.cmake)
