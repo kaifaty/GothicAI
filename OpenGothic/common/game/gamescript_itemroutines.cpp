@@ -463,6 +463,7 @@ int32_t GameScript::giveInventoryItems(const std::shared_ptr<daedalus::INpc>& gi
 bool GameScript::runItemRoutine(Npc& npc, std::string_view name, int& result) {
   using Phase=ActivityDefinitions::Phase;
   auto phase=Phase::Init;
+  const auto callback=name;
   if(name.ends_with("_LOOP")) {
     phase=Phase::Loop;
     name.remove_suffix(5);
@@ -489,19 +490,18 @@ bool GameScript::runItemRoutine(Npc& npc, std::string_view name, int& result) {
     };
   const auto roll=[&](uint32_t bound) {
     const auto value=rollRandom(bound,&npc,true);
-    if(auto* local=findSymbol(std::string(name)+".RANDOM"))
-      local->set_int(int32_t(value));
+    setItemRuntimeInt(std::string(callback)+".RANDOM",int32_t(value));
     return value;
     };
   const auto animate=[&](std::string_view animation) {
     npc.aiPush(AiQueue::aiPlayAnimBs(animation,BS_ITEMINTERACT));
     };
   const auto use=[&](std::string_view item, int32_t state) {
-    npc.aiPush(AiQueue::aiUseItemToState(int32_t(findSymbolIndex(item)),state));
+    npc.aiPush(AiQueue::aiUseItemToState(int32_t(findItemInstance(item).value()),state));
     };
   if(phase==Phase::Init) {
     const auto ensureItem=[&](std::string_view item) {
-      const auto id=uint32_t(findSymbolIndex(item));
+      const auto id=uint32_t(findItemInstance(item).value());
       if(npc.itemCount(id)==0)
         storeItem(npc.addItem(id,1));
       };
@@ -581,7 +581,7 @@ bool GameScript::runItemRoutine(Npc& npc, std::string_view name, int& result) {
       }
     }
   if(a.kind==Kind::Hammer && NpcEngineCalls::distanceToWaypoint(world(),npc,"NW_MONASTERY_SANCTUM_01")<=500) {
-    const auto hammer=int32_t(findSymbolIndex("HOLY_HAMMER_MIS"));
+    const auto hammer=int32_t(findItemInstance("HOLY_HAMMER_MIS").value());
     if(npc.itemCount(uint32_t(hammer))==1) {
       npc.delItem(uint32_t(hammer),1);
       wld_insertitem(hammer,"FP_HAMMER");
