@@ -24,6 +24,8 @@ void Renderer::seedBoughHiZReference(Encoder<CommandBuffer>& cmd, WorldView& vie
     commands.drawCommon(cmd, SceneGlobals::V_Main, Material::Solid, draw);
     commands.drawCommon(cmd, SceneGlobals::V_Main, Material::AlphaTest, draw);
     }
+  // Reset frames expand the boughs before any HiZ dispatch closes this pass.
+  cmd.setFramebuffer({});
   std::swap(reference, zbuffer);
   }
 
