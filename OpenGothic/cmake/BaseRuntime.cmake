@@ -21,7 +21,7 @@ inline constexpr std::array<std::string_view,@RUNTIME_BINDING_NAME_COUNT@> Runti
 add_library(gothic-offline-bindings STATIC EXCLUDE_FROM_ALL "${RUNTIME_BINDING_CODEC}"
   "${BASE_ROOT}/common/game/definitions/definitiontypes.cpp")
 target_include_directories(gothic-offline-bindings SYSTEM PRIVATE "${BASE_ROOT}/lib/rapidjson/include")
-target_link_libraries(gothic-offline-bindings PRIVATE gothic-base-runtime gothic-script-data)
+target_link_libraries(gothic-offline-bindings PRIVATE gothic-program-codec gothic-script-data)
 if(NOT MSVC)
   target_compile_options(gothic-offline-bindings PRIVATE -Wall -Wconversion)
 endif()

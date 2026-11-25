@@ -124,6 +124,7 @@ list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/def
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/deathtrophydefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/symbolcatalog.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/runtimebindings.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/baseprogram.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/definitiontypes.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/placementdefinitionruntime.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/stockstoryprograms.cpp"
@@ -457,7 +458,7 @@ if(UNIX)
   target_link_libraries(gothic-render-rig-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-render-rig-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
-  add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
+  add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp common/game/definitions/baseprogram.cpp)
   target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)
   target_include_directories(gothic-mesh-gltf-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_definitions(gothic-mesh-gltf-test PRIVATE
@@ -850,7 +851,7 @@ endif()
       target_compile_options(gothic-vob-layer-test PRIVATE -Wall -Wconversion -Werror)
     endif()
   endif()
-  add_executable(gothic-basecontent-contract EXCLUDE_FROM_ALL tests/basecontent_contract.cpp)
+  add_executable(gothic-basecontent-contract EXCLUDE_FROM_ALL tests/basecontent_contract.cpp common/game/definitions/baseprogram.cpp)
   target_link_libraries(gothic-basecontent-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import
     gothic-offline-bindings)
   target_include_directories(gothic-basecontent-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
