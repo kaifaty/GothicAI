@@ -216,10 +216,10 @@ void GameScript::loadNativeNpcDeath() {
     {"DJG_BIFFSURVIVEDLASTDRAGON",&DeathProgress::biffSurvived},
     };
   for(const auto& [name,field]:state)
-    findSymbol(name)->bind_global_int(deathProgress.*field);
+    bindRuntimeVariable(name,deathProgress.*field);
   const std::array flags={"SWAPDRAGNISDEAD","RCKDRAGNISDEAD","FREDRAGNISDEAD","ICDRAGNISDEAD"};
   for(size_t i=0;i<flags.size();++i)
-    findSymbol(flags[i])->bind_global_int(deathProgress.dragonDeaths[i]);
+    bindRuntimeVariable(flags[i],deathProgress.dragonDeaths[i]);
   using NpcRef = std::shared_ptr<daedalus::INpc>;
   vm.override_function("B_KILLNPC",std::function<void(int32_t)>{[this](int32_t symbol) { killNpc(symbol); }},
                        NpcDefinitionRuntime::enabled);
@@ -434,7 +434,7 @@ void GameScript::loadNativeNpcGlobals() {
   if(!nativeRoutineProgram)
     return;
 
-  findSymbol("KAPITEL")->bind_global_int(storyChapter);
+  bindRuntimeVariable("KAPITEL",storyChapter);
   auto globals = NpcWorldData::loadGlobals(Resources::baseDir());
   if(!globals)
     return;

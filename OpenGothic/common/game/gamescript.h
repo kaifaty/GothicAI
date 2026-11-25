@@ -504,6 +504,8 @@ class GameScript final : public GameRules {
     void  loadNativeAmbientInfos();
     void  loadNativeTrainingHelpers();
     void  loadNativeAiStates();
+    void  bindRuntimeVariable(std::string_view name, int32_t& value);
+    void  bindRuntimeVariable(std::string_view name, std::string& value);
     auto  buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol&;
     bool  readDialogInfos();
 

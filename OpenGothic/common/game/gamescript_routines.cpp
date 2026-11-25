@@ -1,5 +1,8 @@
 #include "gamescript.h"
 
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
+
 #include <stdexcept>
 
 int GameScript::initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc,
@@ -75,6 +78,12 @@ void GameScript::loadNativeRoutineExchange() {
   }
 
 void GameScript::loadNativeAiStates() {
+  if(const auto* catalog = baseNativeCatalog()) {
+    const auto phase = [](std::optional<uint32_t> id) { return id ? size_t(*id) : size_t(-1); };
+    for(const auto& state : catalog->states)
+      aiStates.emplace(state.id,AiState{state.id,phase(state.loop),phase(state.end),state.name});
+    return;
+    }
   using Type = daedalus::DaedalusDataType;
   for(const auto& fn : vm.symbols()) {
     if(fn.type()==Type::FUNCTION && fn.is_const() && !fn.is_external())

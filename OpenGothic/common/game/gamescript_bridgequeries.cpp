@@ -38,6 +38,10 @@ std::optional<int32_t> GameScript::intConstant(std::string_view name) const {
   }
 
 std::optional<uint32_t> GameScript::findItemInstance(std::string_view name) const {
+  if(const auto* catalog = baseNativeCatalog()) {
+    const auto* item = NativeBaseCatalog::findIdentity(catalog->identities.items,name);
+    return item!=nullptr ? std::optional(item->id) : std::nullopt;
+    }
   using Type = daedalus::DaedalusDataType;
   if(nativeRoutineProgram) {
     SymbolKind kind = SymbolKind::Other;
@@ -58,6 +62,12 @@ std::optional<uint32_t> GameScript::findItemInstance(std::string_view name) cons
   }
 
 std::optional<uint32_t> GameScript::storyNpcId(std::string_view name) {
+  if(const auto* catalog = baseNativeCatalog()) {
+    if(const auto* npc = NativeBaseCatalog::findIdentity(catalog->identities.npcs,name))
+      return npc->id;
+    const auto* generated = own.find(name);
+    return generated!=nullptr && generated->kind==OwnSymbols::Kind::Npc ? std::optional(generated->index) : std::nullopt;
+    }
   if(storySymbolKind(name)==SymbolKind::Npc)
     if(const auto id = storySymbolIndex(name))
       return uint32_t(*id);
@@ -65,11 +75,21 @@ std::optional<uint32_t> GameScript::storyNpcId(std::string_view name) {
   }
 
 std::string_view GameScript::storyNpcName(uint32_t id) {
+  if(const auto* catalog = baseNativeCatalog()) {
+    if(const auto* npc = NativeBaseCatalog::findIdentity(catalog->identities.npcs,id))
+      return npc->name;
+    const auto* generated = own.find(id);
+    return generated!=nullptr && generated->kind==OwnSymbols::Kind::Npc ? std::string_view(generated->name) : std::string_view{};
+    }
   const auto name = storySymbolName(id);
   return storySymbolKind(name)==SymbolKind::Npc ? name : std::string_view{};
   }
 
 std::string_view GameScript::storyItemName(uint32_t id) {
+  if(const auto* catalog = baseNativeCatalog()) {
+    const auto* item = NativeBaseCatalog::findIdentity(catalog->identities.items,id);
+    return item!=nullptr ? std::string_view(item->name) : std::string_view{};
+    }
   const auto name = storySymbolName(id);
   return storySymbolKind(name)==SymbolKind::Item ? name : std::string_view{};
   }

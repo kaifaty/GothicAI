@@ -10,7 +10,9 @@
 #include <Tempest/Log>
 
 #include "basestore.h"
+#include "game/definitions/basescripts.h"
 #include "game/definitions/dialoginfodata.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/serialize.h"
 #include "resources.h"
 #include "world/objects/item.h"
@@ -617,6 +619,13 @@ void GameScript::rememberStoryDialog(std::string_view name, daedalus::IInfo& inf
   }
 
 const daedalus::IInfo* GameScript::storyDialog(std::string_view name) const {
+  if(const auto* catalog = baseNativeCatalog()) {
+    const auto* dialog = NativeBaseCatalog::findIdentity(catalog->identities.dialogs,name);
+    if(dialog==nullptr)
+      return nullptr;
+    const auto entry = storyDialogsById.find(dialog->id);
+    return entry!=storyDialogsById.end() ? entry->second.second : nullptr;
+    }
   if(const auto entry=storyDialogs.find(name); entry!=storyDialogs.end())
     return entry->second;
   std::string upper(name);
@@ -627,6 +636,10 @@ const daedalus::IInfo* GameScript::storyDialog(std::string_view name) const {
   }
 
 std::string_view GameScript::storyDialogName(uint32_t id) const {
+  if(const auto* catalog = baseNativeCatalog()) {
+    const auto* dialog = NativeBaseCatalog::findIdentity(catalog->identities.dialogs,id);
+    return dialog!=nullptr ? std::string_view(dialog->name) : std::string_view{};
+    }
   const auto entry = storyDialogsById.find(id);
   return entry!=storyDialogsById.end() ? entry->second.first : std::string_view{};
   }

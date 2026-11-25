@@ -1111,7 +1111,7 @@ void GameScript::loadNativeWorldEntry() {
   if(!nativeRoutineProgram)
     return;
 
-  findSymbol("CURRENTLEVEL")->bind_global_int(currentStoryWorld);
+  bindRuntimeVariable("CURRENTLEVEL",currentStoryWorld);
   if(placementDefinitions.firstEntries) {
     vm.override_function("ENTER_OLDWORLD_FIRSTTIME_TRIGGER",std::function<void()>{[this] {
       runWorldFirstEntryTrigger(true);
@@ -1131,7 +1131,7 @@ void GameScript::loadNativeWorldEntry() {
     {"GHOSTATTACKWARN",&GhostProgress::attackWarn},
     };
   for(const auto& [name,field]:ghostFlags)
-    findSymbol(name)->bind_global_int(ghostProgress.*field);
+    bindRuntimeVariable(name,ghostProgress.*field);
 
   loadKhorinisChapter3();
   static constexpr std::pair<const char*,ChapterWorld> worlds[]={
@@ -1156,7 +1156,7 @@ void GameScript::loadNativeWorldEntry() {
   static_assert(std::size(latches)==std::tuple_size_v<decltype(worldEntryLatches)>);
   for(size_t i=0;i<std::size(latches);++i) {
     const auto& [name,flag]=latches[i];
-    findSymbol(flag)->bind_global_int(worldEntryLatches[i]);
+    bindRuntimeVariable(flag,worldEntryLatches[i]);
     vm.override_function(name,std::function<void()>{[this,i] {
       if(worldEntryLatches[i]==findSymbol("FALSE")->get_int())
         worldEntryLatches[i]=findSymbol("TRUE")->get_int();

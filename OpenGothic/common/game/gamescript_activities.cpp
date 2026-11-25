@@ -17,7 +17,7 @@ void GameScript::loadNativeRoutines() {
     {"B_EVENT_PORTAL_EARTHQUAKE.RANDY",     &PointGestureRolls::earthquake},
     };
   for(const auto& [name,field] : pointRolls)
-    findSymbol(name)->bind_global_int(pointGestureRolls.*field);
+    bindRuntimeVariable(name,pointGestureRolls.*field);
 
   if(!activityEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return;

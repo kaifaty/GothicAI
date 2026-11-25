@@ -12,6 +12,7 @@
 
 #include "game/definitions/basescripts.h"
 #include "game/definitions/gameplaydefinitions.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/definitions/spelldefinitions.h"
 #include "game/serialize.h"
 #include "game/definitions/scriptvars.h"
@@ -106,6 +107,9 @@ GameScript::GameScript(GameSession &owner)
       vm.global_victim() == nullptr || vm.global_hero() == nullptr)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
 
+  const auto* catalog = baseNativeCatalog();
+  if(catalog!=nullptr)
+    runtimeState.loadInitial(catalog->initialState);
   vmLang = Settings::getI("GAME", "language");
   Gothic::inst().setupCommonScriptClasses(vm);
   Gothic::inst().setupVmCommonApi(vm,&nativeExternals);
@@ -128,10 +132,12 @@ GameScript::GameScript(GameSession &owner)
   loadNativeAmbientInfos();
   loadNativeTrainingHelpers();
   initBennetOre();
-  for(uint32_t id=0; id<vm.symbols().size(); ++id) {
-    auto& symbol = *vm.find_symbol_by_index(id);
-    if(!isBennetProgressSymbol(id) && symbol.name()!="$PHOENIX_FAKE_STRINGS")
-      runtimeState.bind(symbol);
+  if(catalog==nullptr) {
+    for(uint32_t id=0; id<vm.symbols().size(); ++id) {
+      auto& symbol = *vm.find_symbol_by_index(id);
+      if(!isBennetProgressSymbol(id) && symbol.name()!="$PHOENIX_FAKE_STRINGS")
+        runtimeState.bind(symbol);
+      }
     }
   initSettings();
   Settings::inst().onSettingsChanged.bind(this,&GameScript::initSettings);
@@ -139,6 +145,20 @@ GameScript::GameScript(GameSession &owner)
 
 GameScript::~GameScript() {
   Settings::inst().onSettingsChanged.ubind(this,&GameScript::initSettings);
+  }
+
+void GameScript::bindRuntimeVariable(std::string_view name, int32_t& value) {
+  if(baseNativeCatalog()!=nullptr)
+    runtimeState.bind(name,value);
+  else
+    findSymbol(name)->bind_global_int(value);
+  }
+
+void GameScript::bindRuntimeVariable(std::string_view name, std::string& value) {
+  if(baseNativeCatalog()!=nullptr)
+    runtimeState.bind(name,value);
+  else
+    findSymbol(name)->bind_global_string(value);
   }
 
 template<class R, class... P>

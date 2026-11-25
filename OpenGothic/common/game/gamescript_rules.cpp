@@ -2630,10 +2630,10 @@ void GameScript::loadNativeCrimeReports(const std::function<bool()>& enabled) {
 void GameScript::bindCrimeGlobals() {
   for(size_t i=0; i<std::size(crimeJurisdictions); ++i) {
     const auto& jurisdiction = crimeJurisdictions[i];
-    findSymbol(jurisdiction.absolution)->bind_global_int(crimeAbsolutionLevels[i]);
+    bindRuntimeVariable(jurisdiction.absolution,crimeAbsolutionLevels[i]);
     for(size_t j=0; j<jurisdiction.counters.size(); ++j) {
       if(!jurisdiction.counters[j].empty())
-        findSymbol(jurisdiction.counters[j])->bind_global_int(petzCrimeCounters[i*jurisdiction.counters.size()+j]);
+        bindRuntimeVariable(jurisdiction.counters[j],petzCrimeCounters[i*jurisdiction.counters.size()+j]);
       }
     }
   }

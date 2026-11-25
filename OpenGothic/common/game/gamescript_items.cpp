@@ -136,10 +136,10 @@ void GameScript::bindPreparedInventory() {
     brokenEyeGem = findSymbol("TEXT_INNOSEYE_GEM");
     }
 
-  findSymbol("B_GIVEINVITEMS.AMOUNT")->bind_global_int(inventoryTransferVariables.amount);
-  findSymbol("B_GIVEINVITEMS.ITEMINSTANCE")->bind_global_int(inventoryTransferVariables.item);
-  findSymbol("B_GIVEINVITEMS.ITEMNAME")->bind_global_string(inventoryTransferVariables.itemName);
-  findSymbol("B_GIVEINVITEMS.CONCATTEXT")->bind_global_string(inventoryTransferVariables.notice);
+  bindRuntimeVariable("B_GIVEINVITEMS.AMOUNT",inventoryTransferVariables.amount);
+  bindRuntimeVariable("B_GIVEINVITEMS.ITEMINSTANCE",inventoryTransferVariables.item);
+  bindRuntimeVariable("B_GIVEINVITEMS.ITEMNAME",inventoryTransferVariables.itemName);
+  bindRuntimeVariable("B_GIVEINVITEMS.CONCATTEXT",inventoryTransferVariables.notice);
   inventoryGiver = findSymbol("B_GIVEINVITEMS.GIVER");
   inventoryTaker = findSymbol("B_GIVEINVITEMS.TAKER");
   directorVisual = findSymbol("B_SETNPCVISUAL");

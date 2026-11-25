@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 
+#include "game/definitions/basescripts.h"
 #include "storygraph/vocab.h"
 #include "world/objects/npc.h"
 
@@ -505,10 +506,14 @@ bool GameScript::StockPrograms::run(uint32_t id, int32_t& result, bool* failed, 
   }
 
 ScriptVars::Object& GameScript::storyActorSlot(std::string_view name) {
-  const auto* binding = storySlot(name);
-  if(binding!=nullptr)
-    if(auto* object = std::get_if<ScriptVars::Object>(runtimeState.find(binding->index())))
-      return *object;
+  ScriptVars::Slot* state = nullptr;
+  if(baseNativeCatalog()!=nullptr)
+    state = runtimeState.find(name);
+  else
+    if(const auto* binding = storySlot(name))
+      state = runtimeState.find(binding->index());
+  if(auto* object = std::get_if<ScriptVars::Object>(state))
+    return *object;
   throw std::runtime_error("Missing runtime story actor "+std::string(name));
   }
 
