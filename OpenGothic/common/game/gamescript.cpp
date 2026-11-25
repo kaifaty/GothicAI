@@ -108,8 +108,10 @@ GameScript::GameScript(GameSession &owner)
     throw std::runtime_error("Cannot find script symbol SELF, OTHER, ITEM, VICTIM, or HERO! Cannot proceed!");
 
   const auto* catalog = baseNativeCatalog();
-  if(catalog!=nullptr)
+  if(catalog!=nullptr) {
     runtimeState.loadInitial(catalog->initialState);
+    own.useNativeCatalog(*catalog);
+    }
   vmLang = Settings::getI("GAME", "language");
   Gothic::inst().setupCommonScriptClasses(vm);
   Gothic::inst().setupVmCommonApi(vm,&nativeExternals);
@@ -145,6 +147,10 @@ GameScript::GameScript(GameSession &owner)
 
 GameScript::~GameScript() {
   Settings::inst().onSettingsChanged.ubind(this,&GameScript::initSettings);
+  }
+
+bool GameScript::loadDirectorState(Serialize& fin) {
+  return baseNativeCatalog()!=nullptr ? own.load(fin) : own.load(vm,fin);
   }
 
 void GameScript::bindRuntimeVariable(std::string_view name, int32_t& value) {
@@ -1741,6 +1747,15 @@ Item* GameScript::findItemById(const std::shared_ptr<daedalus::DaedalusInstance>
   }
 
 Npc* GameScript::findNpcById(size_t id) {
+  if(id<=UINT32_MAX) {
+    if(auto* alias = own.nativeNpc(uint32_t(id))) {
+      if(auto* npc = findNpc(dynamic_cast<daedalus::INpc*>(alias->get())))
+        return npc;
+      auto* npc = world().findNpcByInstance(id);
+      *alias = npc ? std::static_pointer_cast<daedalus::INpc>(npc->handlePtr()) : nullptr;
+      return npc;
+      }
+    }
   auto* handle = nativeRoutineProgram ? storySlot(uint32_t(id)) : vm.find_symbol_by_index(uint32_t(id));
   if(handle==nullptr || !handle->is_instance_of<daedalus::INpc>())
     return nullptr;

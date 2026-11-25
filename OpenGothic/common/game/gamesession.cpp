@@ -214,7 +214,7 @@ GameSession::GameSession(Serialize &fin) {
   vm.reset(new GameScript(*this));
   vm->initDialogs();
   // The world resolves director NPCs by their declared IDs.
-  if(!fin.setEntry(OwnSymbols::SaveEntry) || !vm->ownSymbols().load(vm->getVm(),fin))
+  if(!fin.setEntry(OwnSymbols::SaveEntry) || !vm->loadDirectorState(fin))
     throw std::runtime_error("Invalid director state in save");
 
   if(true) {

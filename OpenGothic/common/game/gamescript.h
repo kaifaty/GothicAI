@@ -164,6 +164,7 @@ class GameScript final : public GameRules {
       const std::vector<storygraph::StoryArgument>& args = {});
     // symbols of ours: the AI director's story variables and npc's
     inline auto& ownSymbols() { return own; }
+    bool loadDirectorState(Serialize& fin);
     std::optional<uint32_t> addDirectorNpcSymbol(std::string_view name, std::string_view like, std::string& why);
 
     struct DirectorNpcLook {

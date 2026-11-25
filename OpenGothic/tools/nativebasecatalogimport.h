@@ -10,6 +10,7 @@ namespace NativeBaseCatalog {
 
 // Prepare only stock catalog choices whose old source selection can be verified.
 Selection prepare(const ProgramData::Index& programs, const OutputUnits::Index& outputUnits);
+uint32_t prepareDirectorFirstId(const daedalus::DaedalusScript& program);
 std::vector<State> prepareStates(const daedalus::DaedalusScript& program);
 std::vector<InitialRow> prepareInitialState(const daedalus::DaedalusScript& program);
 Constants prepareConstants(const daedalus::DaedalusScript& program);

@@ -274,6 +274,7 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     bound(base/"definitions"/program.sha256/"items.json");
     catalogs=NativeBaseCatalog::prepare(index,OutputUnits::readIndex(base/"outputunits"));
     auto script=daedalus::DaedalusScript::from_program(std::move(program.data));
+    catalogs->directorFirstId=NativeBaseCatalog::prepareDirectorFirstId(script);
     catalogs->states=NativeBaseCatalog::prepareStates(script);
     catalogs->initialState=NativeBaseCatalog::prepareInitialState(script);
     catalogs->constants=NativeBaseCatalog::prepareConstants(script);
@@ -1112,6 +1113,7 @@ int selfTest() {
   units.sources.resize(1);
   units.selections.push_back({3,{}, {}, {},0});
   auto expectedCatalog=NativeBaseCatalog::prepare(programs,units);
+  expectedCatalog.directorFirstId=502;
   expectedCatalog.states={
     {7,"ZS_TEST",8,9},
     {8,"ZS_TEST_LOOP",std::nullopt,std::nullopt},
@@ -1138,6 +1140,7 @@ int selfTest() {
   NativeBaseCatalog::write(output,expectedCatalog);
   const auto catalog=NativeBaseCatalog::read(output);
   require(catalog.fight==programs.sources[2].recordSha256 && catalog.language==3 && catalog.states==expectedCatalog.states &&
+          catalog.directorFirstId==expectedCatalog.directorFirstId &&
           catalog.initialState==expectedCatalog.initialState && catalog.identities==expectedCatalog.identities &&
           catalog.constants==expectedCatalog.constants && catalog.routines==expectedCatalog.routines &&
           catalog.itemCallbacks==expectedCatalog.itemCallbacks &&

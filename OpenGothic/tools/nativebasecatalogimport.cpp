@@ -80,7 +80,18 @@ NativeBaseCatalog::Selection NativeBaseCatalog::prepare(const ProgramData::Index
           "native base needs the stock menu catalog for the selected language");
   const auto* fight = ProgramData::fightProgram(programs);
   require(fight!=nullptr,"native base needs a fight catalog");
-  return {fight->recordSha256,language,{}, {}, {}, {}, {}, {}};
+  return {fight->recordSha256,language,0,{}, {}, {}, {}, {}, {}};
+  }
+
+uint32_t NativeBaseCatalog::prepareDirectorFirstId(const daedalus::DaedalusScript& program) {
+  static_assert(daedalus::DaedalusScript::MAX_ADDED_SYMBOLS==directorCapacity);
+  const auto& symbols = program.symbols();
+  DefinitionJson::require(symbols.size()<uint32_t(INT32_MAX)-directorCapacity,
+                          "stock program does not leave room for director IDs");
+  DefinitionJson::require(std::ranges::none_of(symbols,[](const auto& symbol) { return symbol.name().starts_with("DIR_"); }),
+                          "stock program uses reserved director names");
+  // v57 allocates one scratch slot immediately after the authored program.
+  return uint32_t(symbols.size())+1;
   }
 
 std::vector<NativeBaseCatalog::State> NativeBaseCatalog::prepareStates(const daedalus::DaedalusScript& program) {
@@ -232,7 +243,8 @@ void NativeBaseCatalog::verify(const std::filesystem::path& base, const Selectio
   using DefinitionJson::require;
   require(!std::filesystem::exists(base/"programs"),"native catalog base contains the program directory");
   const auto selected = read(base);
-  require(selected.fight==expected.fight && selected.language==expected.language && selected.states==expected.states &&
+  require(selected.fight==expected.fight && selected.language==expected.language &&
+          selected.directorFirstId==expected.directorFirstId && selected.states==expected.states &&
           selected.initialState==expected.initialState && selected.identities==expected.identities &&
           selected.constants==expected.constants && selected.routines==expected.routines &&
           selected.itemCallbacks==expected.itemCallbacks,

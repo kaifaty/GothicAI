@@ -98,12 +98,15 @@ std::string GameScript::addStoryVariable(std::string_view name, int32_t first) {
   if(const auto* entry = own.find(name))
     return entry->kind==OwnSymbols::Kind::Int ? std::string() : std::string(name) + " is taken";
   std::string error;
-  if(own.addInt(vm,name,error))
+  const bool added = baseNativeCatalog()!=nullptr ? own.addInt(name,error) : own.addInt(vm,name,error)!=nullptr;
+  if(added)
     own.setInt(name,first);
   return error;
   }
 
 std::optional<uint32_t> GameScript::addDirectorNpcSymbol(std::string_view name, std::string_view like, std::string& why) {
+  if(baseNativeCatalog()!=nullptr)
+    return own.addNpc(name,like,why);
   SymbolKind kind = SymbolKind::Other;
   const auto* prototype = storySlot(like,&kind);
   if(prototype==nullptr || prototype->type()!=daedalus::DaedalusDataType::INSTANCE || prototype->is_generated()) {

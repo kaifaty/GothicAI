@@ -135,6 +135,10 @@ void validate(const NativeBaseCatalog::Selection& selection) {
             "invalid or duplicate constant identity "+name);
     validateValues(constant.values,false);
     }
+  require(selection.directorFirstId>1 && selection.directorFirstId<=uint32_t(INT32_MAX)-NativeBaseCatalog::directorCapacity &&
+          *ids.rbegin()<selection.directorFirstId-1,"invalid first director ID");
+  require(std::ranges::none_of(names,[](const auto& row) { return row.first.starts_with("DIR_"); }),
+          "stock content uses reserved director names");
   }
 
 Json writeValueRow(uint32_t id,std::string_view name,const NativeBaseCatalog::InitialValue& data,Allocator& alloc) {
@@ -190,10 +194,10 @@ NativeBaseCatalog::Selection NativeBaseCatalog::read(const std::filesystem::path
   const auto file = section(base);
   try {
     const auto doc = DefinitionJson::read(file);
-    object(doc,{"format","version","fight_catalog","language","npc_states","initial_session_state",
+    object(doc,{"format","version","fight_catalog","language","director_first_id","npc_states","initial_session_state",
                 "npc_archetypes","item_archetypes","dialog_infos","named_constants","routines","item_callbacks"});
     require(string(doc["format"])==format && integer(doc["version"])==catalogVersion,"unsupported native base catalog");
-    Selection selection{string(doc["fight_catalog"]),integer(doc["language"]),{}, {}, {}, {}, {}, {}};
+    Selection selection{string(doc["fight_catalog"]),integer(doc["language"]),number(doc["director_first_id"]),{}, {}, {}, {}, {}, {}};
     const auto& states = doc["npc_states"];
     require(states.IsArray(),"invalid NPC state catalog");
     selection.states.reserve(states.Size());
@@ -249,6 +253,7 @@ void NativeBaseCatalog::write(const std::filesystem::path& base, const Selection
   put(doc,"version",Json(catalogVersion),alloc);
   put(doc,"fight_catalog",text(selection.fight,alloc),alloc);
   put(doc,"language",Json(selection.language),alloc);
+  put(doc,"director_first_id",Json(selection.directorFirstId),alloc);
   Json states(rapidjson::kArrayType);
   states.Reserve(rapidjson::SizeType(selection.states.size()),alloc);
   for(const auto& state : selection.states) {

@@ -13,7 +13,8 @@
 namespace NativeBaseCatalog {
 
 inline constexpr int projectionVersion = 3;
-inline constexpr int catalogVersion = 6;
+inline constexpr int catalogVersion = 7;
+inline constexpr uint32_t directorCapacity = 1024;
 
 struct State {
   uint32_t id = 0;
@@ -56,6 +57,7 @@ using Constants = std::map<std::string,Constant,std::less<>>;
 struct Selection {
   std::string fight;
   int language = -1;
+  uint32_t directorFirstId = 0;
   std::vector<State> states;
   std::vector<InitialRow> initialState;
   Identities identities;

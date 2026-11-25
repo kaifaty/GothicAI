@@ -4,6 +4,7 @@
 
 #include "basestore.h"
 #include "contentcensus.h"
+#include "game/definitions/basescripts.h"
 #include "game/definitions/nativebasecatalog.h"
 #include "gothic.h"
 #include "resources.h"
@@ -370,6 +371,15 @@ bool GameScript::storySlotWritable(std::string_view name) {
   }
 
 Npc* GameScript::directorNpc(std::string_view name) {
+  if(baseNativeCatalog()!=nullptr) {
+    if(const auto* entry = own.find(name))
+      return entry->kind==OwnSymbols::Kind::Npc ? findNpcById(entry->index) : nullptr;
+    if(const auto* alias = std::get_if<ScriptVars::Object>(runtimeState.find(name)))
+      return findNpc(dynamic_cast<daedalus::INpc*>(alias->get()));
+    if(const auto id = storyNpcId(name))
+      return world().findNpcByInstance(*id);
+    return nullptr;
+    }
   const auto [slot,kind] = storyPrograms().binding(name);
   if(slot==nullptr || slot->type()!=daedalus::DaedalusDataType::INSTANCE)
     return nullptr;

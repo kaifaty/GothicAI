@@ -49,10 +49,12 @@ struct Array {
   std::span<T>         values;
   };
 using Slot = std::variant<Array<int32_t>,Array<float>,Array<std::string>,Object>;
+struct SymbolDefinition;
 
 class State final {
   public:
     void loadInitial(std::span<const NativeBaseCatalog::InitialRow> rows);
+    bool declareDirector(const SymbolDefinition& definition);
     void bind(daedalus::DaedalusSymbol& symbol);
     void bind(std::string_view name, int32_t& value);
     void bind(std::string_view name, std::string& value);

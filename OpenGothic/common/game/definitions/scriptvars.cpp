@@ -120,6 +120,25 @@ void ScriptVars::State::loadInitial(std::span<const NativeBaseCatalog::InitialRo
     }
   }
 
+bool ScriptVars::State::declareDirector(const SymbolDefinition& definition) {
+  if(values.contains(definition.index) || names.contains(definition.name))
+    return false;
+  if(definition.kind==SymbolKind::Int) {
+    Array<int32_t> array;
+    array.storage = std::make_unique<int32_t[]>(1);
+    array.values = {array.storage.get(),1};
+    values.emplace(definition.index,std::move(array));
+    }
+  else if(definition.kind==SymbolKind::Npc) {
+    values.emplace(definition.index,Object{});
+    }
+  else {
+    return false;
+    }
+  names.emplace(definition.name,definition.index);
+  return true;
+  }
+
 void ScriptVars::State::bind(daedalus::DaedalusSymbol& symbol) {
   using Type = daedalus::DaedalusDataType;
   if(symbol.is_member())
