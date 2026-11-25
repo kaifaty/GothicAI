@@ -7,7 +7,7 @@
 
 using namespace storygraph;
 
-static NativeValue::Type valueType(daedalus::DaedalusDataType type) {
+NativeValue::Type storygraph::nativeValueType(daedalus::DaedalusDataType type) {
   using enum daedalus::DaedalusDataType;
   switch(type) {
     case FUNCTION:
@@ -48,9 +48,9 @@ BoundNativeCall::BoundNativeCall(daedalus::DaedalusVm& vm, daedalus::DaedalusSym
   if(symbol.type()!=daedalus::DaedalusDataType::FUNCTION)
     throw std::runtime_error("Cannot bind non-function " + symbol.name());
   for(const auto& parameter : vm.find_parameters_for_function(&symbol))
-    function.parameters.push_back(valueType(parameter.type()));
+    function.parameters.push_back(nativeValueType(parameter.type()));
   if(symbol.has_return())
-    function.result = valueType(symbol.rtype());
+    function.result = nativeValueType(symbol.rtype());
   }
 
 bool BoundNativeCall::active() const {

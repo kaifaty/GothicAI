@@ -315,7 +315,7 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
 
     std::optional<NativeCall> invokeBound(std::string_view name, const std::vector<NativeValue>& args,
                                           std::string& error) override {
-      const auto* slot = owner.binding(name).first;
+      auto* slot = owner.binding(name).first;
       const auto fn = findFunction(name);
       if(slot==nullptr || !fn || fn->program!=nullptr ||
          !std::equal(args.begin(),args.end(),fn->parameters.begin(),fn->parameters.end(),
@@ -357,7 +357,9 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
           return std::nullopt;
           }
         }
-      return owner.calls.at(slot->name()).invoke(args,
+      const auto call = owner.calls.find(key);
+      const auto& engineCall = call!=owner.calls.end() ? call->second : BoundNativeCall(owner.vm,*slot);
+      return engineCall.invoke(args,
         [this](NativeInstance id) { return resolveInstance(id); },
         [this](const auto& value) { return bind(value); },
         [this](const auto& symbol,uint16_t index,const auto& context) { return reference(symbol,index,context); },

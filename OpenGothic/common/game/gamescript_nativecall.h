@@ -13,6 +13,8 @@
 
 namespace storygraph {
 
+NativeValue::Type nativeValueType(daedalus::DaedalusDataType type);
+
 class BoundNativeCall final {
   public:
     using Instance = std::shared_ptr<daedalus::DaedalusInstance>;

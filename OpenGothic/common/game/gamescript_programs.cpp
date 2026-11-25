@@ -90,7 +90,8 @@ void GameScript::StockPrograms::bindCatalog(const StockStoryPrograms::Catalog& c
         break;
       }
     bindSymbol(*symbol,kind);
-    if(symbol->type()==FUNCTION && (symbol->is_external() || symbol->is_const()) && !script.nativeExternals.contains(name))
+    if(symbol->type()==FUNCTION && (symbol->is_external() || symbol->is_const()) &&
+       !catalog.programs.contains(id) && !script.nativeExternals.contains(name))
       calls.try_emplace(name,vm,*symbol);
     }
 
@@ -110,7 +111,6 @@ void GameScript::StockPrograms::bindCatalog(const StockStoryPrograms::Catalog& c
     for(auto child : record.calls)
       if(!catalog.programs.contains(child))
         throw BaseStore::Error("prepared story function dependency is missing: "+record.name);
-    calls.try_emplace(record.name,vm,*found->second);
     }
   }
 
@@ -145,11 +145,22 @@ std::optional<storygraph::NativeFunction> GameScript::StockPrograms::function(st
     return std::nullopt;
   if(const auto direct = script.nativeExternals.find(slot->name()); direct!=script.nativeExternals.end())
     return direct->second.signature;
-  const auto call = calls.find(slot->name());
-  if(call==calls.end())
-    return std::nullopt;
-  auto fn = call->second.signature();
   const auto* prepared = program(slot->index());
+  if(prepared==nullptr) {
+    const auto call = calls.find(slot->name());
+    if(call==calls.end() || !call->second.active())
+      return std::nullopt;
+    return call->second.signature();
+    }
+
+  using daedalus::DaedalusDataType;
+  storygraph::NativeFunction fn;
+  fn.parameters.reserve(prepared->parameters.size());
+  for(const auto parameter : prepared->parameters)
+    fn.parameters.push_back(storygraph::nativeValueType(DaedalusDataType(parameter)));
+  if(prepared->returnType!=0)
+    fn.result=storygraph::nativeValueType(DaedalusDataType(prepared->returnType));
+
   // Run complete prepared operations directly. Some of their VM adapters still
   // serve other engine entry points until those callers migrate.
   static constexpr std::string_view preparedOperations[] = {
@@ -158,15 +169,8 @@ std::optional<storygraph::NativeFunction> GameScript::StockPrograms::function(st
     "B_RAISEATTRIBUTE", "B_RAISEREALATTRIBUTELEARNCOUNTER", "B_RAISEFIGHTTALENT",
     "B_RAISEREALFIGHTTALENTPERCENT", "B_ADDFIGHTSKILL", "B_LOGENTRY", "B_SAY"
     };
-  if(prepared!=nullptr && std::ranges::find(preparedOperations,slot->name())!=std::end(preparedOperations)) {
+  if(!vm.has_bound_native(*slot) || std::ranges::find(preparedOperations,slot->name())!=std::end(preparedOperations))
     fn.program = &prepared->program;
-    return fn;
-    }
-  if(call->second.active())
-    return fn;
-  if(prepared==nullptr)
-    return std::nullopt;
-  fn.program = &prepared->program;
   return fn;
   }
 
