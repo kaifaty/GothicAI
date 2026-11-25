@@ -238,9 +238,7 @@ class Gothic final : public GameServices, public GameHost {
     uint32_t                              messageTime   (std::string_view id) const;
 
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
-    static void                            enableScriptAudit(daedalus::DaedalusVm& vm, std::string_view datFile);
-    static void                            setupCommonScriptClasses(daedalus::DaedalusScript &sc);
-    void                                  setupVmCommonApi(daedalus::DaedalusVm& vm,storygraph::NativeExternals* natives=nullptr);
+    void                                  bindNativeGameApi(storygraph::NativeExternals& operations);
 
     static const FightAi&                 fai();
     static const SoundDefinitions&        sfx();
@@ -335,7 +333,6 @@ class Gothic final : public GameServices, public GameHost {
     auto                                    getDocument(int id) -> std::unique_ptr<DocumentMenu::Show>&;
 
     friend class MenuRoot;
-    static void                             notImplementedRoutine(std::string_view fn);
 
     static std::string                      concatstrings     (std::string_view a, std::string_view b);
     static std::string                      inttostring       (int i);

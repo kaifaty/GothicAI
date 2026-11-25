@@ -85,7 +85,8 @@ Keep these when updating a library from upstream.
   material hint bits (`shader/blood/blood_decal.frag`).
 - `rapidjson/include/rapidjson/document.h`: `GenericStringRef::operator=` deleted (GCC 15 diagnoses the
   old one), and `memcpy` into `GenericValue`/`Member` storage goes through `void*`, as upstream does now
-  (clang's `-Wnontrivial-memcall`; the engine builds with `-Werror`).
+  (clang's `-Wnontrivial-memcall`; the engine builds with `-Werror`). The symmetric comparison operators
+  call the member explicitly to prevent recursive overload resolution under GCC 13 in C++20.
 - `common/daedalus/` (our VM, a copy of ZenKit's; not in `lib/`) `DaedalusVm::unsafe_call_external`
   (`vm.h`, `vm.cpp`): calls an engine function the way the `BE` instruction does. The story graph (`ai_bridge/storygraph`) computes the AI
   director's conditions with the engine's own functions through it.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "world/records/recordinstance.h"
+
 #include "expr.h"
 
 #include <cstdint>
@@ -12,7 +14,6 @@
 namespace daedalus {
   class DaedalusVm;
   class DaedalusSymbol;
-  class DaedalusInstance;
   }
 
 namespace storygraph {

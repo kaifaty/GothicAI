@@ -22,6 +22,7 @@
 #include "testbench.h"
 #include "utils/workers.h"
 #include "world/objects/npc.h"
+#include "world/records/liveinstances.h"
 #include "world/objects/item.h"
 #include "world/bullet.h"
 #include "world/waypoint.h"
@@ -55,6 +56,17 @@
 #include <vector>
 #include <unistd.h>
 #include <sys/wait.h>
+
+struct NpcDefinitionContract {
+  static bool checkInfo(GameScript& script, const std::shared_ptr<NpcRecord>& npc, Npc& other) {
+    auto& slot=script.storyActorSlot("OTHER");
+    const auto previous=slot;
+    slot=std::static_pointer_cast<NpcInstance>(other.handlePtr());
+    const auto result=script.npc_checkinfo(std::static_pointer_cast<NpcInstance>(npc),1);
+    slot=previous;
+    return result;
+    }
+  };
 
 namespace {
 using Json = rapidjson::Document;
@@ -2291,24 +2303,18 @@ int main(int argc,const char** argv) {
     if(!missingNetwork) {
       ++cases;
       auto& script=gothic.world()->script();
-      auto& vm=script.getVm();
-      const auto current=std::static_pointer_cast<daedalus::INpc>(gothic.player()->handlePtr());
-      const auto copied=std::static_pointer_cast<daedalus::INpc>(script.copyNpc(gothic.player()->handlePtr()));
+      auto& hero=*gothic.player();
+      const auto current=hero.handlePtr();
+      const auto copied=script.copyNpc(current);
       expect(copied!=current,"dialog fixture uses a copied NPC instance");
-      const auto previousOther=vm.global_other()->get_instance();
       auto previousExtra=std::move(gothic.dialogExtraFn);
       bool receivedCurrent=false;
-      vm.global_other()->set_instance(current);
-      gothic.dialogExtraFn=[&](const daedalus::INpc& npc,bool,std::vector<GameScript::DlgChoice>&) {
+      gothic.dialogExtraFn=[&](const auto& npc,bool,std::vector<GameScript::DlgChoice>&) {
         receivedCurrent=&npc==current.get();
         };
-      vm.push_instance(copied);
-      vm.push_int(1);
-      expect(vm.unsafe_call_external(vm.find_symbol_by_name("NPC_CHECKINFO")),"NPC_CHECKINFO external is registered");
-      const auto offered=vm.pop_int();
-      vm.global_other()->set_instance(previousOther);
+      const bool offered=NpcDefinitionContract::checkInfo(script,copied,hero);
       gothic.dialogExtraFn=std::move(previousExtra);
-      expect(receivedCurrent && offered==0,"NPC_CHECKINFO extra dialogs receive the current NPC instance");
+      expect(receivedCurrent && !offered,"NPC_CHECKINFO extra dialogs receive the current NPC instance");
       }
     if(!missingNetwork) NpcLogicalStateContract::preTickOrder(b);
     if(!missingNetwork) NpcLogicalStateContract::farTick(b);
@@ -2364,11 +2370,8 @@ int main(int argc,const char** argv) {
 #endif
     {
       auto& script=gothic.world()->script();
-      auto& vm=script.getVm();
       GameRules& rules=script;
-      auto* integer=vm.add_int_symbol("RULES_INT_CONTRACT");
-      expect(integer!=nullptr,"rules fixture adds an integer symbol");
-      integer->set_int(314);
+      expect(script.addStoryVariable("RULES_INT_CONTRACT",314).empty(),"rules fixture adds an integer field");
       expect(rules.intSymbol("RULES_INT_CONTRACT",19)==314,"rules read the integer value rather than its index");
       expect(rules.intSymbol("RULES_MISSING_CONTRACT",19)==19 && rules.intSymbol("ZS_DEAD",23)==23,
              "rules preserve missing and non-integer fallbacks");
@@ -2388,39 +2391,9 @@ int main(int argc,const char** argv) {
              "rules distinguish the NPC class from item and missing symbols");
       expect(rules.npcRecord(npcId).get()==gothic.player()->handlePtr().get(),
              "rules expose the current NPC instance rather than a copy");
-      bool foundString=false;
-      for(const auto& symbol:vm.symbols()) {
-        if(symbol.type()!=daedalus::DaedalusDataType::STRING || symbol.is_member() || symbol.count()==0)
-          continue;
-        auto* text=vm.find_symbol_by_index(symbol.index());
-        const auto saved=text->get_string();
-        text->set_string("Rules string contract");
-        const auto actual=std::string(rules.stringSymbol(symbol.name()));
-        text->set_string(saved);
-        expect(actual=="Rules string contract","rules read the requested string value");
-        foundString=true;
-        break;
-        }
-      expect(foundString,"rules fixture exercises a string symbol");
-      const char* names[]={"NPCTYPE_MAIN","NPCTYPE_OCMAIN","NPCTYPE_BL_MAIN"};
-      const int32_t values[]={31,43,59};
-      for(size_t i=0;i<3;++i) {
-        auto* symbol=vm.find_symbol_by_name(names[i]);
-        if(symbol==nullptr) symbol=vm.add_int_symbol(names[i]);
-        expect(symbol!=nullptr,"rules fixture has a story type integer");
-        symbol->set_int(values[i]);
-        }
-      expect(rules.storyNpcTypes()==std::array<int32_t,3>{31,43,59},"rules read all three story types from the VM");
-      auto* duration=vm.find_symbol_by_name("SPL_TIME_WHIRLWIND");
-      if(duration==nullptr) duration=vm.add_int_symbol("SPL_TIME_WHIRLWIND");
-      expect(duration!=nullptr,"rules fixture has the whirlwind duration");
-      duration->set_int(17);
-      expect(rules.whirlwindDuration()==17,"rules use the scripted whirlwind duration");
-      duration->set_int(-4);
-      expect(rules.whirlwindDuration()==1,"rules preserve the lower whirlwind duration clamp");
-      duration->set_int(91);
-      expect(rules.whirlwindDuration()==60,"rules preserve the upper whirlwind duration clamp");
-      expect(rules.scriptVmMemorySize()>10000000,"rules include the symbol table in the VM memory probe");
+      expect(rules.stringSymbol("PRINT_LP")==" LP","rules read the stock text constant");
+      expect(rules.storyNpcTypes()==std::array<int32_t,3>{1,4,7},"rules read the three stock story types");
+      expect(rules.whirlwindDuration()==10,"rules use the catalog's whirlwind duration");
       ++cases;
       auto& source=*gothic.player();
       auto* target=gothic.world()->addNpc(rules.findSymbolIndex("BDT_1003_BANDIT_M"),source.position()+Tempest::Vec3(150,0,0));
@@ -2497,22 +2470,7 @@ int main(int argc,const char** argv) {
       tacticOne.my_w_focus.move[0]=savedOne;
       tacticTwo.my_w_focus.move[0]=savedTwo;
       expect(actualOne==7 && actualTwo==11,"fight rules select the requested tactic table");
-      auto* finishDistance=vm.find_symbol_by_name("NPC_ATTACK_FINISH_DISTANCE");
-      expect(finishDistance!=nullptr,"fight rules fixture has the finishing distance");
-      if(finishDistance->type()==daedalus::DaedalusDataType::FLOAT) {
-        const auto saved=finishDistance->get_float();
-        finishDistance->set_float(247.5f);
-        const auto actual=rules.attackFinishDistance();
-        finishDistance->set_float(saved);
-        expect(actual==247.5f,"fight rules retain a fractional scripted finishing distance");
-        } else {
-        expect(finishDistance->type()==daedalus::DaedalusDataType::INT,"fight rules fixture has a numeric finishing distance");
-        const auto saved=finishDistance->get_int();
-        finishDistance->set_int(247);
-        const auto actual=rules.attackFinishDistance();
-        finishDistance->set_int(saved);
-        expect(actual==247.f,"fight rules retain an integer scripted finishing distance");
-        }
+      expect(rules.attackFinishDistance()==180.f,"fight rules use the stock finishing distance");
       }
     {
       ++cases;

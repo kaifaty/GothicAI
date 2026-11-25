@@ -60,9 +60,8 @@ std::string ragdollInventory(const Npc& npc, World& world, Inventory::IteratorTy
   std::string result="[";
   for(const auto& [id,count]:counts) {
     if(result.size()>1) result+=',';
-    const auto* symbol=world.script().findSymbol(id);
     result+="{\"class_id\":"+std::to_string(id)+",\"class_name\":"+
-      jsonStr(symbol!=nullptr ? symbol->name() : std::string_view{})+",\"count\":"+std::to_string(count)+"}";
+      jsonStr(world.script().storyItemName(uint32_t(id)))+",\"count\":"+std::to_string(count)+"}";
     }
   return result+"]";
   }

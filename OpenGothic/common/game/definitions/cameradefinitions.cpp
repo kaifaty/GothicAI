@@ -1,12 +1,10 @@
 #include "cameradefinitions.h"
 #include "cameradefinitiondata.h"
-#include "basescripts.h"
 #include <Tempest/Log>
 #include "asset/worldtypes.h"
 
 #include "basestore.h"
 #include "contentcensus.h"
-#include "programdata.h"
 #include "resources.h"
 #include "worlddata.h"
 #include "utils/string_frm.h"
@@ -14,15 +12,11 @@
 using namespace Tempest;
 
 CameraDefinitions::CameraDefinitions() {
-  const auto& index = baseProgramIndex();
-  const auto* source = ProgramData::cameraProgram(index);
-  if(source==nullptr || source->recordSha256!=CameraDefinitionData::stockProgram)
-    throw BaseStore::Error("camera presets require the supported prepared catalog");
-
+  constexpr auto program = CameraDefinitionData::stockProgram;
   const auto base = Resources::baseDir();
-  const auto section = CameraDefinitionData::section(base,source->recordSha256);
+  const auto section = CameraDefinitionData::section(base,program);
   try {
-    cameras = CameraDefinitionData::read(base,source->recordSha256);
+    cameras = CameraDefinitionData::read(base,program);
     }
   catch(const std::runtime_error& error) {
     throw BaseStore::Error(section.string()+": "+error.what());

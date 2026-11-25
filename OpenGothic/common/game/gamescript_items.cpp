@@ -1,58 +1,73 @@
 #include "gamescript.h"
 
 #include "basestore.h"
-#include "game/definitions/baseprogram.h"
 #include "game/definitions/gameplaydefinitions.h"
-#include "game/definitions/runtimebindings.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/definitions/basescripts.h"
 #include "gothic.h"
 #include "loadprobe.h"
-#include "programdata.h"
+#include "resources.h"
 #include "settings.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 
-daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
-                                         RoutineDefinitionRuntime::Definitions& routines,
-                                         NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
-                                         ActivityDefinitionRuntime::Definitions& activities, QuietSoundReaction& quietSound,
-                                         bool& nativeRoutineProgram) {
-  const auto lang=Settings::getI("GAME", "language");
-  const auto& index=baseProgramIndex();
-  const auto base=index.dir.parent_path();
-  const auto selected=selectBaseProgram(index,gothic.defaultGameDatFile(),lang);
-  const auto& sha256=selected.source.recordSha256;
-  if(sha256!=GameplayDefinitions::stockProgram)
-    throw BaseStore::Error("native game requires the prepared catalog for the verified stock program");
-  auto script=daedalus::DaedalusScript::from_program(RuntimeBindings::read(base,sha256));
-  items=ItemDefinitionRuntime::load(base,script,sha256);
-  routines=RoutineDefinitionRuntime::load(base,script,sha256);
-  npcs=NpcDefinitionRuntime::load(base,script,sha256);
-  placements=PlacementDefinitionRuntime::load(base,script,sha256);
-  activities=ActivityDefinitionRuntime::load(base,script,sha256);
-  // Native behavior is verified against this particular stock Night of the Raven program.
-  nativeRoutineProgram=true;
-  if(!items.items.empty())
-    items.brokenEye=script.find_symbol_by_name("ITMI_INNOSEYE_BROKEN_MIS")->index();
-  ItemDefinitionRuntime::registerStockRestoreEffects(items,script);
-  ItemDefinitionRuntime::registerStockArmorSetEffects(items,script);
-  ItemDefinitionRuntime::registerStockFightSkillEffects(items,script);
-  ItemDefinitionRuntime::registerStockEquipmentStatEffects(items,script);
-  const auto* callback=script.find_symbol_by_name("B_ASSESSQUIETSOUND");
-  const auto* height=script.find_symbol_by_name("PERC_DIST_HEIGHT");
-  const auto* indoorHeight=script.find_symbol_by_name("PERC_DIST_INDOOR_HEIGHT");
-  quietSound={ScriptFn(callback->index()),height->get_int(0),indoorHeight->get_int(0)};
-  const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
-  auto vm=daedalus::DaedalusVm::without_legacy_dispatcher(std::move(script),flags);
-  Gothic::enableScriptAudit(vm,gothic.defaultGameDatFile());
-  NpcDefinitionRuntime::observeCalls(vm,npcs,base,sha256);
-  PlacementDefinitionRuntime::observeCalls(vm,base,sha256);
-  return vm;
+void GameScript::loadNativeDefinitions(const NativeBaseCatalog::Selection& catalog) {
+  const auto& base = Resources::baseDir();
+  const auto sha = GameplayDefinitions::stockProgram;
+  itemDefinitions = ItemDefinitionRuntime::loadNative(base,catalog,sha);
+  routineDefinitions = RoutineDefinitionRuntime::load(base,catalog,sha);
+  npcDefinitions = NpcDefinitionRuntime::load(base,catalog,sha);
+  npcDefinitions.helpers = NpcHelperRuntime::load(base,catalog,sha);
+  activityDefinitions = ActivityDefinitionRuntime::load(base,catalog,sha);
+  const auto* callback = NativeBaseCatalog::findIdentity(catalog.npcCallbacks,"B_ASSESSQUIETSOUND");
+  if(callback==nullptr)
+    throw BaseStore::Error("missing native quiet sound callback");
+  quietSound = {ScriptFn(callback->id),intConstant("PERC_DIST_HEIGHT").value(),intConstant("PERC_DIST_INDOOR_HEIGHT").value()};
+  nativeRoutineProgram = true;
+  }
+
+int32_t GameScript::itemRuntimeInt(std::string_view name) const {
+  const auto value=globalIntSymbol(name);
+  if(!value)
+    throw std::runtime_error("missing item runtime integer "+std::string(name));
+  return *value;
+  }
+
+void GameScript::setItemRuntimeInt(std::string_view name, int32_t value) {
+  if(!setGlobalIntSymbol(name,value))
+    throw std::runtime_error("missing mutable item runtime integer "+std::string(name));
+  }
+
+std::string_view GameScript::itemRuntimeText(std::string_view name) const {
+  if(const auto* field=std::get_if<ScriptVars::Array<std::string>>(runtimeState.find(name)))
+    return field->values.front();
+  if(const auto* constant=NativeBaseCatalog::findConstant(*baseNativeCatalog(),name))
+    if(const auto* values=std::get_if<std::vector<std::string>>(&constant->values))
+      return values->front();
+  throw std::runtime_error("missing item runtime text "+std::string(name));
+  }
+
+void GameScript::setItemRuntimeText(std::string_view name, std::string_view value) {
+  if(auto* field=std::get_if<ScriptVars::Array<std::string>>(runtimeState.find(name))) {
+    field->values.front()=value;
+    return;
+    }
+  throw std::runtime_error("missing mutable item runtime text "+std::string(name));
   }
 
 auto GameScript::createItemForQuery(size_t instance) -> std::shared_ptr<ItemRecord> {
   auto item=std::make_shared<daedalus::IItem>();
-  ItemDefinitionRuntime::initialize(vm,item,vm.find_symbol_by_index(uint32_t(instance)),itemDefinitions);
+  if(instance>UINT32_MAX)
+    throw std::runtime_error("item archetype is out of range");
+  const auto id=uint32_t(instance);
+  if(id==itemDefinitions.brokenEye) {
+    static_cast<ItemRecord&>(*item)=brokenEyePrepared;
+    item->text[0]=itemRuntimeText("TEXT_INNOSEYE_SETTING");
+    item->text[1]=itemRuntimeText("TEXT_INNOSEYE_GEM");
+    } else {
+    static_cast<ItemRecord&>(*item)=itemDefinitions.items.at(id);
+    }
+  item->setRecordIdentity(id);
   return item;
   }
 
@@ -68,20 +83,22 @@ std::optional<std::string> GameScript::itemNameForQuery(size_t instance) {
   }
 
 bool GameScript::hasDirectorNpcVisual() const {
-  return directorVisual!=nullptr && NpcHelperRuntime::enabled() &&
-         npcDefinitions.helpers.helpers.contains(directorVisual->index());
+  const auto& calls=baseNativeCatalog()->npcConstructor.calls;
+  const auto visual=calls.find("B_SETNPCVISUAL");
+  return visual!=calls.end() && npcDefinitions.helpers.helpers.contains(visual->second.id);
   }
 
 void GameScript::setupDirectorNpcEquipment(Npc& npc, const DirectorNpcLook* look,
                                           std::span<const std::pair<uint32_t,int32_t>> items) {
   struct RestoreSelf {
-    daedalus::DaedalusSymbol& self;
-    std::shared_ptr<daedalus::DaedalusInstance> previous;
-    ~RestoreSelf() { self.set_instance(previous); }
-    } restore{*vm.global_self(),vm.global_self()->get_instance()};
-
-  const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
-  restore.self.set_instance(actor);
+    ScriptVars::Object& slot;
+    ScriptVars::Object previous;
+    ~RestoreSelf() { slot=std::move(previous); }
+    };
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  auto& slot=storyActorSlot("SELF");
+  const RestoreSelf restore{slot,slot};
+  slot=actor;
 
   if(look!=nullptr) {
     if(!hasDirectorNpcVisual()) {
@@ -103,94 +120,111 @@ void GameScript::setupDirectorNpcEquipment(Npc& npc, const DirectorNpcLook* look
       Value{.integer=look->skin},
       Value{.integer=look->armor},
       };
-    invokeNpcHelper(actor,directorVisual->index(),arguments);
+    const auto id=baseNativeCatalog()->npcConstructor.calls.at("B_SETNPCVISUAL").id;
+    invokeNpcHelper(actor,id,arguments);
     }
   for(const auto& [item,count] : items)
     createinvitems(actor,int32_t(item),count);
   }
 
 void GameScript::bindPreparedInventory() {
-  if(!nativeRoutineProgram)
-    return;
-
-  // Keep the native item type and its alias ready for new inventory stacks.
-  preparedItems.reserve(itemDefinitions.items.size()+1);
-  const auto bind = [&](uint32_t id, const auto& prepare) {
-    auto* symbol = vm.find_symbol_by_index(id);
-    const auto previous = symbol->get_instance();
-    auto item = std::make_shared<daedalus::IItem>();
-    prepare(item,symbol);
-    symbol->set_instance(previous);
-    preparedItems.emplace(id,PreparedItem{*item,symbol});
-    };
-  for(const auto& [id,fields] : itemDefinitions.items) {
-    (void)fields;
-    bind(id,[&](const auto& item, auto* symbol) { vm.allocate_instance(item,symbol); });
+  bindRuntimeVariable("B_GIVEINVITEMS.AMOUNT",inventoryTransferVariables.amount);
+  bindRuntimeVariable("B_GIVEINVITEMS.ITEMINSTANCE",inventoryTransferVariables.item);
+  bindRuntimeVariable("B_GIVEINVITEMS.ITEMNAME",inventoryTransferVariables.itemName);
+  bindRuntimeVariable("B_GIVEINVITEMS.CONCATTEXT",inventoryTransferVariables.notice);
+  const auto* catalog=baseNativeCatalog();
+  if(itemDefinitions.brokenEye) {
+    ItemRecord eye{};
+    eye.name=itemRuntimeText("ITEM_BROKEN_EYE_NAME");
+    eye.main_flag=itemRuntimeInt("ITEM_KAT_MAGIC");
+    eye.flags=ItemFlag::AMULET | ItemFlag::MISSION;
+    eye.visual=itemRuntimeText("ITEM_BROKEN_EYE_VISUAL");
+    eye.material=itemRuntimeInt("MAT_STONE");
+    eye.description=eye.name;
+    const auto* equip=NativeBaseCatalog::findIdentity(catalog->itemCallbacks,"EQUIP_ITMI_INNOSEYE_BROKEN_MIS");
+    if(equip==nullptr)
+      throw std::runtime_error("missing broken Eye of Innos equipment effect");
+    eye.on_equip=int32_t(equip->id);
+    eye.inv_zbias=itemRuntimeInt("INVCAM_ENTF_AMULETTE_STANDARD");
+    brokenEyePrepared=std::move(eye);
     }
-  if(const auto id = itemDefinitions.brokenEye) {
-    bind(*id,[&](const auto& item, auto* symbol) {
-      ItemDefinitionRuntime::initialize(vm,item,symbol,itemDefinitions);
-      brokenEyePrepared = *item;
-      });
-    brokenEyeSetting = findSymbol("TEXT_INNOSEYE_SETTING");
-    brokenEyeGem = findSymbol("TEXT_INNOSEYE_GEM");
-    }
-
-  findSymbol("B_GIVEINVITEMS.AMOUNT")->bind_global_int(inventoryTransferVariables.amount);
-  findSymbol("B_GIVEINVITEMS.ITEMINSTANCE")->bind_global_int(inventoryTransferVariables.item);
-  findSymbol("B_GIVEINVITEMS.ITEMNAME")->bind_global_string(inventoryTransferVariables.itemName);
-  findSymbol("B_GIVEINVITEMS.CONCATTEXT")->bind_global_string(inventoryTransferVariables.notice);
-  inventoryGiver = findSymbol("B_GIVEINVITEMS.GIVER");
-  inventoryTaker = findSymbol("B_GIVEINVITEMS.TAKER");
-  directorVisual = findSymbol("B_SETNPCVISUAL");
-  const auto string = [this](const char* name) -> std::string_view { return findSymbol(name)->get_string(); };
-  const auto integer = [this](const char* name) { return findSymbol(name)->get_int(); };
   inventoryTransferText = {
-    findSymbol("ITMI_GOLD")->index(),
-    string("PRINT_GOLDGEGEBEN"),string("PRINT_GOLDERHALTEN"),
-    string("PRINT_ADDON_GEGEBEN"),string("PRINT_ADDON_ERHALTEN"),
-    string("PRINT_ITEMSGEGEBEN"),string("PRINT_ITEMSERHALTEN"),
-    integer("YPOS_GOLDGIVEN"),integer("YPOS_GOLDTAKEN"),
-    integer("YPOS_ITEMGIVEN"),integer("YPOS_ITEMTAKEN")
+    findItemInstance("ITMI_GOLD").value(),
+    itemRuntimeText("PRINT_GOLDGEGEBEN"),itemRuntimeText("PRINT_GOLDERHALTEN"),
+    itemRuntimeText("PRINT_ADDON_GEGEBEN"),itemRuntimeText("PRINT_ADDON_ERHALTEN"),
+    itemRuntimeText("PRINT_ITEMSGEGEBEN"),itemRuntimeText("PRINT_ITEMSERHALTEN"),
+    itemRuntimeInt("YPOS_GOLDGIVEN"),itemRuntimeInt("YPOS_GOLDTAKEN"),
+    itemRuntimeInt("YPOS_ITEMGIVEN"),itemRuntimeInt("YPOS_ITEMTAKEN")
     };
-  inventoryTransferFont = string("FONT_SCREENSMALL");
+  inventoryTransferFont=itemRuntimeText("FONT_SCREENSMALL");
+
   }
 
 bool GameScript::bindPreparedItem(const std::shared_ptr<daedalus::IItem>& item, uint32_t instance) {
-  const auto found = preparedItems.find(instance);
-  if(found==preparedItems.end())
-    return false;
-  const auto owner = item->user_ptr;
-  static_cast<daedalus::DaedalusInstance&>(*item) = found->second.identity;
-  item->user_ptr = owner;
-  found->second.alias->set_instance(item);
+  auto* alias=ownedInstance(instance);
+  if(alias==nullptr || (!itemDefinitions.items.contains(instance) && itemDefinitions.brokenEye!=instance))
+    throw std::runtime_error("missing prepared item archetype "+std::to_string(instance));
+  item->setRecordIdentity(instance);
+  *alias=item;
   return true;
   }
 
 void GameScript::initializeInstanceItem(const std::shared_ptr<daedalus::IItem>& item, size_t instance) {
   LoadProbe::Vobs::Scope probe("script_item");
   LoadProbe::Startup::Scope itemProbe(LoadProbe::Startup::Script,false,"placed-items");
-  if(instance<=UINT32_MAX && bindPreparedItem(item,uint32_t(instance))) {
-    if(itemDefinitions.brokenEye==instance) {
-      static_cast<ItemRecord&>(*item) = brokenEyePrepared;
-      item->text[0] = brokenEyeSetting->get_string();
-      item->text[1] = brokenEyeGem->get_string();
-      } else {
-      static_cast<ItemRecord&>(*item) = itemDefinitions.items.at(uint32_t(instance));
-      }
-    return;
+  if(instance>UINT32_MAX)
+    throw std::runtime_error("item archetype is out of range");
+  const auto id=uint32_t(instance);
+  bindPreparedItem(item,id);
+  if(itemDefinitions.brokenEye==id) {
+    static_cast<ItemRecord&>(*item)=brokenEyePrepared;
+    item->text[0]=itemRuntimeText("TEXT_INNOSEYE_SETTING");
+    item->text[1]=itemRuntimeText("TEXT_INNOSEYE_GEM");
+    } else {
+    static_cast<ItemRecord&>(*item)=itemDefinitions.items.at(id);
     }
-  auto* symbol=vm.find_symbol_by_index(uint32_t(instance));
-  if(symbol==nullptr) {
-    Tempest::Log::e("Cannot initialize item ",instance,": Symbol not found.");
-    return;
-    }
-  ItemDefinitionRuntime::initialize(vm,item,symbol,itemDefinitions);
   }
 
-bool GameScript::invokeStockItemProgram(const daedalus::DaedalusSymbol& function) {
-  if(!itemDefinitions.itemUsePrograms.contains(function.index()))
+bool GameScript::invokeStockItemProgram(uint32_t function) {
+  if(!itemDefinitions.itemUsePrograms.contains(function))
     return false;
+
+  if(const auto it=itemDefinitions.documents.find(function); it!=itemDefinitions.documents.end()) {
+    using storygraph::NativeValue;
+    const auto& document=it->second;
+    auto* slot=runtimeState.find(document.handle);
+    auto* handle=slot ? std::get_if<ScriptVars::Array<int32_t>>(slot) : nullptr;
+    if(handle==nullptr || handle->values.size()!=1)
+      throw std::runtime_error("missing runtime handle for an item document");
+
+    const auto invoke=[&](std::string_view name,std::span<const NativeValue> arguments) {
+      const auto action=nativeExternals.find(name);
+      if(action==nativeExternals.end())
+        throw std::runtime_error("missing engine action for an item document: "+std::string(name));
+      return action->second.call(arguments,{},{});
+      };
+    const auto id=invoke(document.map ? "DOC_CREATEMAP" : "DOC_CREATE",{}).value.i;
+    handle->values[0]=id;
+    std::vector<NativeValue> arguments{NativeValue::integer(id)};
+    for(const auto& call:document.calls) {
+      arguments.resize(1);
+      for(const auto& arg:call.arguments) {
+        if(const auto* str=std::get_if<std::string>(&arg))
+          arguments.push_back(NativeValue::str(*str));
+        else
+          arguments.push_back(NativeValue::integer(std::get<int32_t>(arg)));
+        }
+      invoke(call.function,arguments);
+      }
+    arguments.resize(1);
+    invoke("DOC_SHOW",arguments);
+    return true;
+    }
+
   int32_t result=0;
-  return ItemDefinitionRuntime::showDocument(vm,function.index(),itemDefinitions) || invokeStockProgram(function,result);
+  bool failed=false;
+  const auto ran=invokeStockProgram(function,result,&failed);
+  if(failed)
+    throw std::runtime_error("prepared item effect failed "+std::to_string(function));
+  return ran;
   }

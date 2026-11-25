@@ -20,7 +20,7 @@ endif()
 # The game links the whole Tempest target; the converter builds only these sources.
 set(BASE_RUNTIME_SOURCES
   common/baseidentity.cpp common/sha256.cpp common/worldchunks.cpp common/worlddata.cpp common/modeldata.cpp
-  common/fontdata.cpp common/programdata.cpp common/outputunits.cpp common/audiodata.cpp common/basemesh.cpp
+  common/fontdata.cpp common/outputunits.cpp common/audiodata.cpp common/basemesh.cpp
   common/itemdefinitions.cpp common/routinedefinitions.cpp common/npcdefinitions.cpp common/placementdefinitions.cpp common/activitydefinitions.cpp
   common/npchelperdefinitions.cpp common/asset/npchelperdefinitions.cpp
   common/game/definitions/fightdefinitiondata.cpp common/game/definitions/menudefinitions.cpp
@@ -36,7 +36,7 @@ set(BASE_RUNTIME_SOURCES
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/baseimport-generated/baseformat.h"
   CONTENT "#pragma once\ninline constexpr char BaseFormatSha256[] = \"@BASE_FORMAT_SHA256@\";\n" @ONLY)
 set(BASE_IMPORT_SOURCES ${BASE_SOURCES})
-list(REMOVE_ITEM BASE_IMPORT_SOURCES ${BASE_RUNTIME_SOURCES})
+list(REMOVE_ITEM BASE_IMPORT_SOURCES ${BASE_RUNTIME_SOURCES} common/programdata.cpp)
 list(TRANSFORM BASE_IMPORT_SOURCES PREPEND "${BASE_ROOT}/")
 list(TRANSFORM BASE_RUNTIME_SOURCES PREPEND "${BASE_ROOT}/")
 add_library(gothic-base-runtime STATIC ${BASE_RUNTIME_SOURCES})
@@ -48,7 +48,8 @@ target_include_directories(gothic-base-runtime SYSTEM PRIVATE "${BASE_ROOT}/lib/
   "${BASE_ROOT}/lib/dmusic/src" "${BASE_ROOT}/lib/dmusic/vendor/TinySoundFont")
 set_target_properties(gothic-base-runtime PROPERTIES C_STANDARD 11)
 target_link_libraries(gothic-base-runtime PUBLIC miniz dmusic)
-add_library(gothic-program-codec STATIC "${BASE_ROOT}/common/import/programcodec.cpp")
+add_library(gothic-program-codec STATIC "${BASE_ROOT}/common/programdata.cpp"
+  "${BASE_ROOT}/common/import/programcodec.cpp")
 target_include_directories(gothic-program-codec SYSTEM PRIVATE "${BASE_ROOT}/lib/rapidjson/include")
 target_link_libraries(gothic-program-codec PUBLIC gothic-base-runtime)
 target_link_libraries(gothic-base-import PUBLIC gothic-base-runtime)

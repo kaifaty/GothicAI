@@ -273,6 +273,21 @@ std::string_view nativeProjectionSource(const BaseImport::Identity& identity, co
   return source;
   }
 
+constexpr int catalogProjectionVersion=3;
+
+std::string nativeCatalogSalt(int catalogVersion) {
+  return "native-script-base-v"+std::to_string(catalogProjectionVersion)+"\ncatalog-v"+std::to_string(catalogVersion);
+  }
+
+std::string_view nativeCatalogSource(const BaseImport::Identity& identity, const rapidjson::Value& binding,
+                                     int catalogVersion=0) {
+  if(!binding.IsObject() || !binding.HasMember("catalog_version") || !binding["catalog_version"].IsInt() ||
+     binding["catalog_version"].GetInt()<=0 ||
+     (catalogVersion>0 && binding["catalog_version"].GetInt()!=catalogVersion))
+    throw std::runtime_error("invalid projected base catalog version");
+  return projectionSource(identity,binding,catalogProjectionVersion,nativeCatalogSalt(binding["catalog_version"].GetInt()));
+  }
+
 bool requireRunnableBase(const BaseImport::Identity& identity, BaseStore::Profile profile) {
   rapidjson::Document doc;
   doc.Parse(identity.json.c_str());
@@ -282,6 +297,10 @@ bool requireRunnableBase(const BaseImport::Identity& identity, BaseStore::Profil
     if(profile.projectedOnly)
       throw std::runtime_error("expected a production native base without executable programs");
     return false;
+    }
+  if(profile.catalogVersion>0) {
+    nativeCatalogSource(identity,doc["native_script_base"],profile.catalogVersion);
+    return true;
     }
   if(profile.stockProgram.empty())
     throw std::runtime_error("this prepared base has no executable program records required by this offline operation");
@@ -299,7 +318,9 @@ rapidjson::Document sourceIdentity(const BaseImport::Identity& identity) {
   rapidjson::Document doc;
   doc.Parse(identity.json.data(),identity.json.size());
   if(doc.IsObject() && doc.HasMember("native_script_base")) {
-    const auto fingerprint = nativeProjectionSource(identity,doc["native_script_base"]);
+    const auto& binding=doc["native_script_base"];
+    const auto fingerprint = binding.IsObject() && binding.HasMember("version") && binding["version"]==catalogProjectionVersion ?
+                             nativeCatalogSource(identity,binding) : nativeProjectionSource(identity,binding);
     doc["fingerprint"].SetString(fingerprint.data(),rapidjson::SizeType(fingerprint.size()),doc.GetAllocator());
     doc.RemoveMember("native_script_base");
     }
@@ -314,12 +335,50 @@ void requireNoProgramPayloads(const fs::path& base) {
       throw std::runtime_error("projected base contains a program payload: "+entry.path().string());
   }
 
+void requireNativeCatalogFiles(const fs::path& base, int catalogVersion) {
+  // BaseImport::matches has already validated the manifest and verified the JSON bytes.
+  std::ifstream input(base/"base-files.json",std::ios::binary);
+  const std::string bytes{std::istreambuf_iterator<char>(input),{}};
+  rapidjson::Document manifest;
+  manifest.Parse(bytes.data(),bytes.size());
+  if(manifest.HasParseError() || !manifest.IsObject() || !manifest.HasMember("files") || !manifest["files"].IsArray())
+    throw std::runtime_error("invalid native base file manifest");
+  for(const char* name:{"definitions/native-catalog.json","storygraph/story.json","outputunits/outputunits.json"}) {
+    if(!std::ranges::any_of(manifest["files"].GetArray(),[&](const auto& entry) {
+      return entry.IsObject() && entry.HasMember("path") && entry["path"]==name;
+      }))
+      throw std::runtime_error(std::string("native base manifest omits ")+name);
+    }
+
+  std::ifstream catalogInput(base/"definitions/native-catalog.json",std::ios::binary);
+  const std::string catalogBytes{std::istreambuf_iterator<char>(catalogInput),{}};
+  rapidjson::Document catalog;
+  catalog.Parse(catalogBytes.data(),catalogBytes.size());
+  if(catalog.HasParseError() || !catalog.IsObject() || !catalog.HasMember("format") ||
+     catalog["format"]!="gothic-native-base-catalog" || !catalog.HasMember("version") ||
+     catalog["version"]!=catalogVersion)
+    throw std::runtime_error("native base catalog version differs from the projection");
+
+  for(const auto& entry:fs::recursive_directory_iterator(base)) {
+    const auto path=entry.path().lexically_relative(base);
+    if(BaseStore::isLegacyScriptFile(path))
+      throw std::runtime_error("native base contains a legacy script artifact: "+path.generic_string());
+    if(entry.is_symlink())
+      throw std::runtime_error("native base contains a symbolic link: "+path.generic_string());
+    }
+  }
+
 bool matchesBase(const fs::path& base, const BaseImport::Identity& identity, BaseStore::Profile profile, std::string& reason) {
   if(!BaseImport::matches(base,identity,false,&reason))
     return false;
-  if(profile.stockProgram.empty())
+  if(profile.stockProgram.empty() && profile.catalogVersion==0)
     return true;
   try {
+    if(profile.catalogVersion>0) {
+      requireRunnableBase(identity,profile);
+      requireNativeCatalogFiles(base,profile.catalogVersion);
+      return true;
+      }
     if(requireRunnableBase(identity,profile)) {
       requireNoProgramPayloads(base);
       for(const auto& entry : fs::recursive_directory_iterator(base/"definitions"))
@@ -528,6 +587,43 @@ bool BaseStore::isNativeProjection(const fs::path& base) {
   return true;
   }
 
+BaseStore::Selection BaseStore::openPreparedBase(const fs::path& base, BaseImport::Identity& identity) {
+  Selection selected{fs::canonical(base),{},{}};
+  identity=BaseImport::readIdentity(selected.path);
+  const auto cache=cacheRoot();
+  if(selected.path.parent_path()==cache)
+    selected.lease=std::make_shared<Lock>(cache/(identity.fingerprint+".use"),Lock::Shared);
+
+  rapidjson::Document doc;
+  doc.Parse(identity.json.data(),identity.json.size());
+  if(doc.HasMember("no_programs_fixture"))
+    throw std::runtime_error("expected a prepared base, found a metadata test fixture");
+  if(const auto marker=doc.FindMember("native_script_base"); marker!=doc.MemberEnd()) {
+    const auto& binding=marker->value;
+    if(!binding.IsObject() || !binding.HasMember("version") || !binding["version"].IsInt())
+      throw std::runtime_error("invalid projected base identity version");
+    const auto version=binding["version"].GetInt();
+    if(version==2) {
+      if(!binding.HasMember("runtime_recipe") || !binding["runtime_recipe"].IsString())
+        throw std::runtime_error("invalid projected base runtime bindings recipe");
+      const std::string_view recipe(binding["runtime_recipe"].GetString(),binding["runtime_recipe"].GetStringLength());
+      if(!fingerprintName(recipe))
+        throw std::runtime_error("invalid projected base runtime bindings recipe");
+      projectionSource(identity,binding,version,"native-script-base-v2\n"+std::string(recipe));
+      }
+    else if(version==catalogProjectionVersion) {
+      nativeCatalogSource(identity,binding);
+      }
+    else {
+      throw std::runtime_error("invalid projected base identity version");
+      }
+    }
+  std::string reason;
+  if(!BaseImport::matches(selected.path,identity,false,&reason))
+    throw std::runtime_error("invalid prepared base: "+reason);
+  return selected;
+  }
+
 bool BaseStore::isFullSymbolFile(const fs::path& relative) {
   const auto part=relative.begin();
   if(part==relative.end() || *part!="definitions")
@@ -536,26 +632,42 @@ bool BaseStore::isFullSymbolFile(const fs::path& relative) {
   return name=="symbols.json" || name.starts_with("program-symbols.");
   }
 
-BaseImport::Identity BaseStore::nativeProjectionIdentity(const fs::path& combined) {
-  return nativeProjectionIdentity(BaseImport::readIdentity(combined),BaseImport::sha256File(combined/"base-files.json"));
+bool BaseStore::isLegacyScriptFile(const fs::path& relative) {
+  const auto lowercase=[](std::string name) {
+    std::ranges::transform(name,name.begin(),[](unsigned char ch) { return ch>='A' && ch<='Z' ? char(ch+'a'-'A') : char(ch); });
+    return name;
+    };
+  const auto first=relative.begin();
+  if(first!=relative.end() && lowercase(first->generic_string())=="programs")
+    return true;
+  const auto name=lowercase(relative.filename().generic_string());
+  return name=="game-bindings.json" || name=="symbols.json" || name.starts_with("program-symbols.") || name.ends_with(".dat");
   }
 
-BaseImport::Identity BaseStore::nativeProjectionIdentity(const BaseImport::Identity& source, std::string_view sourceManifest) {
+namespace {
+BaseImport::Identity projectedIdentity(const BaseImport::Identity& source, std::string_view sourceManifest,
+                                      int catalogVersion) {
   requireRunnableBase(source,{});
   if(!fingerprintName(sourceManifest))
     throw std::runtime_error("invalid combined base manifest checksum");
   BaseImport::Identity result;
-  result.fingerprint=projectionFingerprint(nativeProjectionSalt(),source.fingerprint,sourceManifest);
+  const bool catalog=catalogVersion>0;
+  const std::string salt=catalog ? nativeCatalogSalt(catalogVersion) : std::string(nativeProjectionSalt());
+  result.fingerprint=projectionFingerprint(salt,source.fingerprint,sourceManifest);
 
   rapidjson::Document doc;
   doc.Parse(source.json.data(),source.json.size());
   auto& alloc=doc.GetAllocator();
   rapidjson::Value binding(rapidjson::kObjectType);
-  binding.AddMember("version",nativeProjectionVersion,alloc);
-  const auto recipe=RuntimeBindingRootsSha256;
-  binding.AddMember("runtime_recipe",rapidjson::Value(recipe.data(),rapidjson::SizeType(recipe.size()),alloc),alloc);
+  binding.AddMember("version",catalog ? catalogProjectionVersion : BaseStore::nativeProjectionVersion,alloc);
+  if(!catalog) {
+    const auto recipe=RuntimeBindingRootsSha256;
+    binding.AddMember("runtime_recipe",rapidjson::Value(recipe.data(),rapidjson::SizeType(recipe.size()),alloc),alloc);
+    }
   binding.AddMember("source_fingerprint",rapidjson::Value(source.fingerprint.c_str(),alloc),alloc);
   binding.AddMember("source_manifest_sha256",rapidjson::Value(sourceManifest.data(),rapidjson::SizeType(sourceManifest.size()),alloc),alloc);
+  if(catalog)
+    binding.AddMember("catalog_version",catalogVersion,alloc);
   doc.AddMember("native_script_base",binding,alloc);
   doc["fingerprint"].SetString(result.fingerprint.c_str(),alloc);
   rapidjson::StringBuffer json;
@@ -563,6 +675,26 @@ BaseImport::Identity BaseStore::nativeProjectionIdentity(const BaseImport::Ident
   doc.Accept(writer);
   result.json.assign(json.GetString(),json.GetSize());
   return result;
+  }
+}
+
+BaseImport::Identity BaseStore::nativeProjectionIdentity(const fs::path& combined) {
+  return nativeProjectionIdentity(BaseImport::readIdentity(combined),BaseImport::sha256File(combined/"base-files.json"));
+  }
+
+BaseImport::Identity BaseStore::nativeProjectionIdentity(const BaseImport::Identity& source, std::string_view sourceManifest) {
+  return projectedIdentity(source,sourceManifest,0);
+  }
+
+BaseImport::Identity BaseStore::nativeCatalogIdentity(const fs::path& combined, int catalogVersion) {
+  return nativeCatalogIdentity(BaseImport::readIdentity(combined),BaseImport::sha256File(combined/"base-files.json"),catalogVersion);
+  }
+
+BaseImport::Identity BaseStore::nativeCatalogIdentity(const BaseImport::Identity& source, std::string_view sourceManifest,
+                                                     int catalogVersion) {
+  if(catalogVersion<=0)
+    throw std::runtime_error("invalid projected base catalog version");
+  return projectedIdentity(source,sourceManifest,catalogVersion);
   }
 
 fs::path BaseStore::cacheRoot() {
@@ -580,13 +712,15 @@ fs::path BaseStore::cacheRoot() {
   }
 
 BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport::Files& mounted, const BaseImport::Progress& log,
-                                       const Import& import, Profile profile, const BaseImport::Identity* projected) {
+                                       const Import& import, Profile profile, const BaseImport::Identity* projected,
+                                       const fs::path& explicitSelection) {
 #ifdef _WIN32
   const auto* explicitName=_wgetenv(L"OPENGOTHIC_BASE");
 #else
   const auto* explicitName=std::getenv("OPENGOTHIC_BASE");
 #endif
-  const auto explicitBase=explicitName!=nullptr ? fs::path(explicitName) : fs::path();
+  const auto explicitBase=!explicitSelection.empty() ? explicitSelection :
+                          explicitName!=nullptr ? fs::path(explicitName) : fs::path();
   if(!profile.projectedOnly && metadataAuditEnabled())
     return metadataAuditBase(explicitBase,log,profile);
   if(projected && !requireRunnableBase(*projected,profile))
@@ -594,7 +728,8 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   const auto start=std::chrono::steady_clock::now();
   const auto cache=cacheRoot();
   fs::create_directories(cache);
-  const auto* pointerPart=profile.stockProgram.empty() ? "base" : "native_base";
+  const bool native=!profile.stockProgram.empty() || profile.catalogVersion>0;
+  const auto* pointerPart=native ? "native_base" : "base";
   const auto explicitIdentity=!explicitBase.empty()
                              ? std::optional(readRunnableBase(explicitBase,profile)) : std::nullopt;
   if(projected && explicitIdentity && explicitIdentity->fingerprint!=projected->fingerprint)
@@ -637,7 +772,8 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
   const bool directBase=!explicitBase.empty() && fs::weakly_canonical(explicitBase)==fs::weakly_canonical(gothic);
   std::unique_ptr<Current> current;
   if(!directBase) current=std::make_unique<Current>(cache,gothic);
-  const bool installed=!directBase && hasInstallation(gothic);
+  // A ready catalog is self-contained. Only the converter building a projection has source files to identify.
+  const bool installed=!directBase && (profile.catalogVersion==0 || projected!=nullptr) && hasInstallation(gothic);
   const auto snapshot=installed ? BaseImport::snapshot(gothic,mounted) : std::string();
   BaseImport::Identity identity;
   fs::path pointed;
@@ -646,7 +782,9 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     if(!current || !current->part(part,pointed,identity,expectedSnapshot))
       return false;
     try {
-      requireRunnableBase(identity,{profile.stockProgram});
+      auto pointerProfile=profile;
+      pointerProfile.projectedOnly=false;
+      requireRunnableBase(identity,pointerProfile);
       return true;
       }
     catch(const std::exception& error) {
@@ -655,7 +793,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
       }
     };
   bool reused=readPointer(pointerPart);
-  if(!reused && !profile.stockProgram.empty() && (!profile.projectedOnly || projected))
+  if(!reused && native && (!profile.projectedOnly || projected))
     reused=readPointer("base");
   const auto identify=[&] {
     log("base: identifying installation");
@@ -685,7 +823,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
     if(!installed) {
       identity=*explicitIdentity;
       }
-    else if(!profile.stockProgram.empty()) {
+    else if(native) {
       if(!matchesInstalledSource(*explicitIdentity))
         throw std::runtime_error("OPENGOTHIC_BASE was prepared from a different installation: "+displayBase());
       identity=*explicitIdentity;
@@ -748,7 +886,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
       // The worker owns a lease too: pruning cannot remove its source while copying.
       std::packaged_task<void()> publication([store,destination,identity,lease=selected.lease,
                                             stockProgram=std::string(profile.stockProgram),projectedOnly=profile.projectedOnly,
-                                            validateProgramMetadata=profile.validateProgramMetadata] {
+                                            validateProgramMetadata=profile.validateProgramMetadata,catalogVersion=profile.catalogVersion] {
         const auto started=std::chrono::steady_clock::now();
         try {
           const auto root=store/"base";
@@ -757,7 +895,7 @@ BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport
           removeInterrupted(root,identity.fingerprint);
           const auto stored=root/identity.fingerprint;
           std::string reason;
-          if(matchesBase(stored,identity,{stockProgram,projectedOnly,validateProgramMetadata},reason)) return;
+          if(matchesBase(stored,identity,{stockProgram,projectedOnly,validateProgramMetadata,catalogVersion},reason)) return;
           copy(destination,stored,identity);
           const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
           // The worker may outlive Resources and Tempest's logging callback.

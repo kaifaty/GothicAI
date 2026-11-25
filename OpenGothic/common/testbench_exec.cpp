@@ -664,9 +664,11 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     ArcherAi::subjectProbe = ArcherAi::Probe();
     Flinch::probeNpc = bench.subject;
     char buf[160] = "watch nobody";
-    if(n!=nullptr)
-      if(auto sym = w.script().findSymbol(size_t(n->instanceSymbol())))
-        std::snprintf(buf,sizeof(buf),"watch %s dist=%.0f",sym->name().c_str(),double((n->position()-pl.position()).length()));
+    if(n!=nullptr) {
+      const auto name = w.script().storyNpcName(uint32_t(n->instanceSymbol()));
+      if(!name.empty())
+        std::snprintf(buf,sizeof(buf),"watch %.*s dist=%.0f",int(name.size()),name.data(),double((n->position()-pl.position()).length()));
+      }
     say(buf);
     }
   else if(c=="gazeinfo") {

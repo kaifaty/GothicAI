@@ -1,13 +1,12 @@
 #include "npcdaymeasurement.h"
 #include "npcdayjournal.h"
 
-#include "game/gamescript.h"
+#include "game/gamerules.h"
 #include "game/gamescript_daystats.h"
-#include "game/definitions/baseprogram.h"
 #include "game/definitions/basescripts.h"
-#include "gothic.h"
-#include "programdata.h"
-#include "settings.h"
+#include "game/definitions/gameplaydefinitions.h"
+#include "game/definitions/nativebasecatalog.h"
+#include "resources.h"
 #include "utils/jsonescape.h"
 #include "world/mobreservations.h"
 #include "world/npcactivityprobe.h"
@@ -16,6 +15,14 @@
 #include "world/objects/npc.h"
 #include "world/waypoint.h"
 #include "world/world.h"
+
+#ifndef GOTHIC_NATIVE_V3
+#include "game/definitions/baseprogram.h"
+#include "game/gamescript.h"
+#include "gothic.h"
+#include "programdata.h"
+#include "settings.h"
+#endif
 
 #include <cstdio>
 #include <memory>
@@ -41,6 +48,9 @@ class Measurement final : public NpcActivityProbe {
     std::FILE* output=nullptr;
     std::FILE* trace=nullptr;
     std::shared_ptr<DayScriptStats> stats;
+#ifndef GOTHIC_NATIVE_V3
+    daedalus::DaedalusVm* observedVm=nullptr;
+#endif
     std::vector<std::string> selected;
     std::string header;
     struct Context { const Npc* npc; std::string symbol; };
@@ -172,11 +182,23 @@ bool NpcDayMeasurement::start(World& w, const NpcDayJournal::Options& options, s
     m->header="\"seed\":"+std::to_string(options.seed)+",\"stream\":"+jsonEscape(options.isolate ? "npc" : "shared")+
               ",\"start_world_ms\":"+std::to_string(w.time().toInt());
     if(options.scriptProbe) {
-      // Use the same program selection as GameScript, regardless of the routine playback switch.
-      const auto& index=baseProgramIndex();
-      const auto selected=selectBaseProgram(index,Gothic::inst().defaultGameDatFile(),Settings::getI("GAME","language"));
-      const auto routines=RoutineDefinitions::read(index.dir.parent_path(),selected.source.recordSha256);
-      m->stats=DayScriptStats::attach(w.script().getVm(),routines);
+      if(const auto* catalog=baseNativeCatalog()) {
+        const auto routines=RoutineDefinitions::read(Resources::baseDir(),GameplayDefinitions::stockProgram);
+        m->stats=std::make_shared<DayScriptStats>(routines,DayScriptStats::Metric::NativePhases);
+        for(const auto& state:catalog->states)
+          m->stats->registerBeastState(state.name);
+        } else {
+#ifndef GOTHIC_NATIVE_V3
+        // Use the same program selection as GameScript, regardless of the routine playback switch.
+        const auto program=selectBaseProgram(baseProgramIndex(),Gothic::inst().defaultGameDatFile(),
+                                             Settings::getI("GAME","language")).source.recordSha256;
+        const auto routines=RoutineDefinitions::read(Resources::baseDir(),program);
+        m->observedVm=&w.script().getVm();
+        m->stats=DayScriptStats::attach(*m->observedVm,routines);
+#else
+        throw std::runtime_error("NPC day measurements require a native game catalog");
+#endif
+        }
       }
     if(m->trace) std::fprintf(m->trace,"{\"kind\":\"header\",\"trace_version\":2,%s}\n",m->header.c_str());
     measurement=std::move(m);
@@ -197,7 +219,9 @@ void NpcDayMeasurement::stop(World& w) {
   if(!measurement) return;
   NpcActivityProbe::instance=nullptr;
   if(measurement->stats) {
-    measurement->stats->stop(w.script().getVm());
+#ifndef GOTHIC_NATIVE_V3
+    if(auto* vm=measurement->observedVm) measurement->stats->stop(*vm);
+#endif
     std::fprintf(measurement->output,"{%s,\"end_world_ms\":%lld,\"stats\":%s}\n",measurement->header.c_str(),
                  (long long)w.time().toInt(),measurement->stats->json().c_str());
     }

@@ -67,9 +67,8 @@ Npc* findNpc(World& world, std::string_view name, const Npc* near = nullptr) {
 std::string npcId(World& world, Npc& npc) {
   if(npc.isPlayer())
     return "PLAYER";
-  if(auto sym = world.script().findSymbol(npc.instanceSymbol()))
-    return sym->name();
-  return "?";
+  const auto name = world.script().storyNpcName(npc.instanceSymbol());
+  return name.empty() ? "?" : std::string(name);
   }
 
 std::string_view percName(PercType p) {
@@ -89,9 +88,8 @@ std::string_view percName(PercType p) {
   }
 
 std::string itemSymbol(World& world, size_t cls) {
-  if(auto sym = world.script().findSymbol(cls))
-    return sym->name();
-  return "?";
+  const auto name = world.script().storyItemName(uint32_t(cls));
+  return name.empty() ? "?" : std::string(name);
   }
 
 std::string itemName(const Inventory& inv, size_t cls) {
@@ -102,10 +100,7 @@ std::string itemName(const Inventory& inv, size_t cls) {
   }
 
 std::string scriptString(World& world, std::string_view name, std::string_view fallback) {
-  auto sym = world.script().findSymbol(name);
-  if(sym!=nullptr && sym->type()==daedalus::DaedalusDataType::STRING)
-    return sym->get_string();
-  return std::string(fallback);
+  return std::string(world.script().stringSymbol(name,fallback));
   }
 
 // "pos": [x,y,z], "points": [names]: the waypoint nearest to pos, of these points if given (a place: its
@@ -182,8 +177,8 @@ bool NpcController::attach(World& world, std::string_view symbolName, std::strin
   if(find(symbol)!=nullptr)
     return true;
 
-  const size_t id  = world.script().findSymbolIndex(symbol);
-  Npc*         npc = (id==size_t(-1)) ? nullptr : world.findNpcByInstance(id);
+  const auto id = world.script().storyNpcId(symbol);
+  Npc*       npc = id ? world.findNpcByInstance(*id) : nullptr;
   if(npc==nullptr) {
     err = "npc not found in current world: " + symbol;
     return false;
@@ -211,7 +206,7 @@ bool NpcController::attach(World& world, std::string_view symbolName, std::strin
   npc->setExternalControl(true);
 
   Controlled c;
-  c.instance = id;
+  c.instance = npc->instanceSymbol();
   c.symbol   = symbol;
   c.npc      = npc;
   npcs.push_back(std::move(c));
@@ -318,13 +313,12 @@ void NpcController::action(World& world, const rapidjson::Value& msg) {
 
   if(type=="debug_add_item") {
     // test helper: put an item into the npc's inventory (only with -devmode)
-    const auto   name = upper(str(args,"item"));
-    const size_t cls  = world.script().findSymbolIndex(name);
-    if(!CommandLine::inst().isDevMode() || cls==size_t(-1)) {
-      emitActionResult(id,symbol,"rejected",cls==size_t(-1) ? "unknown item" : "needs -devmode",-1);
+    const auto cls = world.script().findItemInstance(str(args,"item"));
+    if(!CommandLine::inst().isDevMode() || !cls) {
+      emitActionResult(id,symbol,"rejected",!cls ? "unknown item" : "needs -devmode",-1);
       return;
       }
-    c->npc->addItem(cls,size_t(std::max<int64_t>(1,integer(args,"count",1))));
+    c->npc->addItem(*cls,size_t(std::max<int64_t>(1,integer(args,"count",1))));
     c->nextSnapshot = 0;
     emitActionResult(id,symbol,"done","",-1);
     return;
@@ -450,8 +444,8 @@ bool NpcController::startAction(World& world, Controlled& c, Action& a, const ra
 
   if(a.type=="give_item") {
     const auto   name = upper(str(args,"item"));
-    const size_t cls  = world.script().findSymbolIndex(name);
-    const size_t have = cls==size_t(-1) ? 0 : npc.inventory().itemCount(cls);
+    const auto   cls  = world.script().findItemInstance(name);
+    const size_t have = cls ? npc.inventory().itemCount(*cls) : 0;
     if(have==0) {
       err = "npc has no item " + name;
       return false;
@@ -461,7 +455,7 @@ bool NpcController::startAction(World& world, Controlled& c, Action& a, const ra
       err = "unknown target npc";
       return false;
       }
-    a.item     = cls;
+    a.item     = *cls;
     a.count    = std::min(have,size_t(std::max<int64_t>(1,integer(args,"count",1))));
     a.toPlayer = target->isPlayer();
     a.target   = target->instanceSymbol();
@@ -478,13 +472,13 @@ bool NpcController::startAction(World& world, Controlled& c, Action& a, const ra
     // a thing lying about (v22): it walks up to the nearest of that kind and picks it up, as the scripts'
     // AI_GotoItem and AI_TakeItem do
     const auto   name = upper(str(args,"item"));
-    const size_t cls  = world.script().findSymbolIndex(name);
+    const auto   cls  = world.script().findItemInstance(name);
     Item*        it   = nullptr;
     float        best = TakeRange*TakeRange;
-    if(cls!=size_t(-1)) {
+    if(cls) {
       world.detectItem(npc.position(),TakeRange,[&](Item& i) {
         const float d = (i.position()-npc.position()).quadLength();
-        if(i.clsId()==cls && d<best) {
+        if(i.clsId()==*cls && d<best) {
           it   = &i;
           best = d;
           }
@@ -494,8 +488,8 @@ bool NpcController::startAction(World& world, Controlled& c, Action& a, const ra
       err = "no " + name + " lying nearby";
       return false;
       }
-    a.item     = cls;
-    a.count    = npc.inventory().itemCount(cls);  // what it had: it took the thing once it has more
+    a.item     = *cls;
+    a.count    = npc.inventory().itemCount(*cls);  // what it had: it took the thing once it has more
     a.deadline = 30000;
     npc.aiPush(AiQueue::aiGotoItem(*it));
     npc.aiPush(AiQueue::aiTakeItem(*it));
@@ -518,12 +512,12 @@ bool NpcController::startAction(World& world, Controlled& c, Action& a, const ra
         return true;
       for(auto& m:args[key.data()].GetArray()) {
         const auto   name = upper(str(m,"item"));
-        const size_t cls  = world.script().findSymbolIndex(name);
-        if(cls==size_t(-1)) {
+        const auto   cls  = world.script().findItemInstance(name);
+        if(!cls) {
           err = "unknown item " + name;
           return false;
           }
-        out.emplace_back(cls,size_t(std::max<int64_t>(1,integer(m,"count",1))));
+        out.emplace_back(*cls,size_t(std::max<int64_t>(1,integer(m,"count",1))));
         }
       return true;
       };

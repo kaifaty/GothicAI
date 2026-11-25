@@ -11,7 +11,8 @@
 #include "activitydefinitions.h"
 #include "game/npcdefinitionruntime.h"
 #include "game/placementdefinitionruntime.h"
-#include "game/itemdefinitionruntime.h"
+#include "../tools/itemdefinitionimport.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "routinedefinitions.h"
 #include "game/routinedefinitionruntime.h"
 #include "world/objects/npcroutinetable.h"
@@ -270,12 +271,22 @@ void routineDefinitions(const fs::path& dir) {
 
   WayPoint known;
   known.name="TEST_WP";
-  std::vector<NpcRoutineTable::Row> actual,expected;
+  std::vector<NpcRoutineTable::Row> actual,expected,prepared;
   auto append=[&](auto& table,int sh,int sm,int eh,int em,uint32_t state,std::string_view point) {
     NpcRoutineTable::add(table,gtime(sh,sm),gtime(eh,em),state,point==known.name ? &known : nullptr,point);
     };
   auto script=DaedalusScript::from_program(p.data);
   INpc::register_(script);
+  const auto routineId=script.find_symbol_by_name("RTN_START_123")->index();
+  const auto stateId=script.find_symbol_by_name("ZS_ROUTINE")->index();
+  NativeBaseCatalog::Selection catalog;
+  catalog.routines={{routineId,"RTN_START_123"}};
+  catalog.states={{stateId,"ZS_ROUTINE",std::nullopt,std::nullopt}};
+  const auto native=RoutineDefinitionRuntime::load(base,catalog,p.sha256);
+  check(native.preparedOnly && native.names.at("RTN_START_123")==routineId,"native routine keeps its prepared ID");
+  for(const auto& row : native.routines.at(routineId).rows)
+    append(prepared,row.startHour,row.startMinute,row.endHour,row.endMinute,row.state,row.waypoint);
+
   auto definitions=RoutineDefinitionRuntime::load(base,script,p.sha256);
   DaedalusVm vm(std::move(script));
   auto self=vm.allocate_instance<INpc>(vm.global_self());
@@ -294,16 +305,21 @@ void routineDefinitions(const fs::path& dir) {
     });
   check(expected.empty(),"captured routine does not execute TA_Min in the VM");
   vm.call_function<void>(function);
-  check(actual.size()==48 && actual.size()==expected.size(),"record and VM tables have every row");
+  check(actual.size()==48 && actual.size()==expected.size() && prepared.size()==actual.size(),
+        "native, v2 and VM tables have every row");
   for(size_t index=0;index<actual.size();++index) {
     const auto& row=actual[index];
     const auto& original=expected[index];
+    const auto& nativeRow=prepared[index];
     const auto call=unsigned(index<24 ? (index/2)*4+2+index%2 : ((index-24)/2)*4+(index-24)%2);
     check(row.start==gtime(call%4<2 ? 20 : 8,5) && row.end==gtime(23,int(call)),
           "tied rows retain their original TA_Min call order");
     check(row.start==original.start && row.end==original.end && row.callback==original.callback &&
           row.point==original.point && row.fallbackName==original.fallbackName && row.wayPointName()==original.wayPointName(),
           "record and VM tables have identical times, state, point identity and fallback name");
+    check(row.start==nativeRow.start && row.end==nativeRow.end && row.callback==nativeRow.callback &&
+          row.point==nativeRow.point && row.fallbackName==nativeRow.fallbackName,
+          "native catalog IDs build the same rows without a VM");
     check(row.point==(call%3==0 ? nullptr : &known),"known points resolve to their original pointer");
     check(row.fallbackName==(call%3==0 ? std::string("UNKNOWN_WP\x80\xff",12) : ""),
           "unknown points retain every fallback byte");
@@ -327,7 +343,7 @@ void routineDefinitions(const fs::path& dir) {
   std::ifstream first(file,std::ios::binary),second(otherFile,std::ios::binary);
   check(std::string(std::istreambuf_iterator<char>(first),{})==std::string(std::istreambuf_iterator<char>(second),{}),
         "routine sections are byte-identical across repeated captures");
-  std::cout<<"Routine runtime equality: 48 rows, adjacent equal starts, 24 tied rows per start, known and unknown points; VM state preserved\n";
+  std::cout<<"Routine runtime equality: native IDs and v2 agree with the VM for 48 ordered rows and their waypoints; VM state preserved\n";
   }
 
 void routineSelection(const fs::path& dir) {
@@ -355,7 +371,7 @@ void routineSelection(const fs::path& dir) {
     };
   try {
     environment(nullptr);
-    check(RoutineDefinitionRuntime::load(base,program,selected.sha256).routines.at(symbol)[1].waypoint=="TEST_WP",
+    check(RoutineDefinitionRuntime::load(base,program,selected.sha256).routines.at(symbol).rows[1].waypoint=="TEST_WP",
           "routine records are enabled by default and use the loaded program section");
     environment("0");
     check(RoutineDefinitionRuntime::load(base/"absent",program,selected.sha256).routines.empty(),
@@ -363,7 +379,7 @@ void routineSelection(const fs::path& dir) {
     environment("1");
     check(RoutineDefinitionRuntime::load(base,program,selected.sha256).routines.contains(symbol),
           "nonzero enables routine records");
-    check(RoutineDefinitionRuntime::load(base,another,other.sha256).routines.at(symbol)[1].waypoint=="OTHER_WP",
+    check(RoutineDefinitionRuntime::load(base,another,other.sha256).routines.at(symbol).rows[1].waypoint=="OTHER_WP",
           "changing the loaded program changes the routine section");
     }
   catch(...) { environment(hadPrevious ? saved.c_str() : nullptr); throw; }
@@ -494,11 +510,22 @@ void npcDefinitions(const fs::path& dir) {
 
     auto* captured=vm.find_symbol_by_name("NPC_NO_ID");
     auto& calls=definitions.npcs.at(captured->index());
+    const auto fieldStep=std::ranges::find_if(calls,[](const auto& step) {
+      const auto* field=std::get_if<NpcDefinitionRuntime::Field>(&step);
+      return field!=nullptr && field->name=="C_NPC.ATTRIBUTE" && field->index==0 && field->value.integer==10;
+      });
+    check(fieldStep!=calls.end(),"prepared constructor retains the authored attribute field name and value");
+    auto before=std::get<NpcDefinitionRuntime::Field>(*fieldStep);
+    before.binding=uint32_t(-1); // Only the native member name is usable on this route.
+    auto after=before;
+    after.value.integer=53;
     std::erase_if(calls,[&](const auto& step) {
       const auto* call=std::get_if<NpcDefinitionRuntime::Call>(&step);
       return call==nullptr || call->function!=vm.find_symbol_by_name("TA_MIN")->index();
       });
     check(calls.size()==1,"constructor fixture contains one TA_MIN");
+    calls.insert(calls.begin(),std::move(before));
+    calls.emplace_back(std::move(after));
     auto actor=std::make_shared<INpc>();
     vm.global_self()->set_instance(npc);
     vm.unsafe_set_gi(npc);
@@ -514,6 +541,7 @@ void npcDefinitions(const fs::path& dir) {
     const auto apply=[&](const auto& function,const auto& call,const auto& observe) {
       check(function.name()=="TA_MIN" && call.args.size()==7 && vm.global_self()->get_instance()==actor &&
             vm.unsafe_get_gi()==actor,"typed replay receives the recorded call within the constructor context");
+      check(actor->attribute[0]==10,"the first native assignment precedes the recorded engine call");
       check(vm.pop_int()==73106,"typed replay starts with the caller's stack untouched");
       vm.push_int(73106);
       observe();
@@ -521,12 +549,53 @@ void npcDefinitions(const fs::path& dir) {
       ++dispatched;
       return true;
       };
-    check(NpcDefinitionRuntime::initialize(vm,actor,captured,definitions,nullptr,apply),
+    const auto applyField=[](NpcRecord& record, const NpcDefinitionRuntime::Field& field) {
+      check(field.name=="C_NPC.ATTRIBUTE" && field.index==0 && field.value.kind==NpcDefinitions::Value::Kind::Int,
+            "native constructor callback receives the authored typed assignment");
+      if(field.value.integer==53)
+        check(record.attribute[0]==41,"the final assignment sees the engine call's mutation");
+      record.attribute[0]=field.value.integer;
+      };
+    check(NpcDefinitionRuntime::initialize(vm,actor,captured,definitions,nullptr,apply,applyField),
           "typed engine call completes captured constructor without a registered external");
-    check(dispatched==1 && observed==1 && actor->attribute[0]==41 && vm.pop_int()==73106 &&
+    check(dispatched==1 && observed==1 && actor->attribute[0]==53 && vm.pop_int()==73106 &&
           vm.unsafe_get_gi()==npc && vm.global_self()->get_instance()==npc,
           "constructor replay preserves the existing stack, probe order and caller context");
     vm.observe_externals({});
+    }
+  {
+    auto metadata=program.data;
+    metadata.bytecode.clear();
+    for(auto& symbol:metadata.symbols)
+      for(auto& text:symbol.string_values)
+        if(text=="TEST_WP")
+          text.clear();
+    auto script=DaedalusScript::from_program(std::move(metadata));
+    INpc::register_(script);
+    auto vm=DaedalusVm::without_legacy_dispatcher(std::move(script));
+    auto definitions=NpcDefinitionRuntime::resolve(library,vm);
+    auto* captured=vm.find_symbol_by_name("NPC_NO_ID");
+    const auto taMin=vm.find_symbol_by_name("TA_MIN")->index();
+    auto& steps=definitions.npcs.at(captured->index());
+    std::erase_if(steps,[taMin](const auto& step) {
+      const auto* call=std::get_if<NpcDefinitionRuntime::Call>(&step);
+      return call==nullptr || call->function!=taMin;
+      });
+    check(steps.size()==1,"native literal fixture selects the captured routine call");
+    int observed=0;
+    vm.observe_externals([&](const auto& function) {
+      check(function.index()==taMin && vm.pop_string()=="TEST_WP","native probe receives the authored text without a VM literal");
+      ++observed;
+      });
+    const auto apply=[&](const auto&,const auto& call,const auto& observe) {
+      const auto& waypoint=call.args.back();
+      check(waypoint.value.text=="TEST_WP" && !waypoint.oracleLiteral,
+            "native constructor retains the authored waypoint when the compatibility literal is absent");
+      observe();
+      return true;
+      };
+    check(NpcDefinitionRuntime::initialize(vm,std::make_shared<INpc>(),captured,definitions,nullptr,apply) && observed==1,
+          "captured construction and its observer work without bytecode or string slots for constructor arguments");
     }
   auto changed=read(file);
   for(auto& record:changed["records"].GetArray()) {
@@ -860,9 +929,14 @@ void placementDefinitions(const fs::path& dir) {
     const auto otherScript=DaedalusScript::from_program(other.data);
     const auto selected=PlacementDefinitionRuntime::load(base,otherScript,other.sha256);
     const auto startup=otherScript.find_symbol_by_name("STARTUP_TEST")->index();
-    const auto& argument=std::get<PlacementDefinitionRuntime::Call>(selected.placements.at(startup).front()).args[1];
-    check(otherScript.find_symbol_by_index(argument.literal)->get_string(argument.literalIndex)=="OTHER_WP",
-          "placement selection follows the loaded program SHA");
+    const auto& arguments=std::get<PlacementDefinitionRuntime::Call>(selected.placements.at(startup).front()).args;
+    const auto& instance=arguments[0].value;
+    const auto& point=arguments[1];
+    check(instance.kind==PlacementDefinitions::Value::Kind::Symbol &&
+          instance.text==otherScript.find_symbol_by_index(uint32_t(instance.integer))->name() &&
+          point.value.text=="OTHER_WP" &&
+          otherScript.find_symbol_by_index(point.literal)->get_string(point.literalIndex)==point.value.text,
+          "placement selection keeps the captured instance and waypoint alongside their compatibility IDs");
     }
   catch(...) { environment(present ? previous.c_str() : nullptr); throw; }
   environment(present ? previous.c_str() : nullptr);
@@ -892,6 +966,47 @@ void itemDefinitions(const fs::path& dir) {
   const auto library=ItemDefinitions::read(base,p.sha256);
   auto vm=itemVm(p);
   auto definitions=ItemDefinitionRuntime::resolve(library,*vm);
+  auto nativeLibrary=library;
+  nativeLibrary.uncaptured={{"ITMI_INNOSEYE_BROKEN_MIS","game_state"}};
+  NativeBaseCatalog::Selection catalog;
+  for(const auto& [name,item] : library.items)
+    catalog.identities.items.push_back({vm->find_symbol_by_name(name)->index(),name});
+  catalog.identities.items.push_back({50000,"ITMI_INNOSEYE_BROKEN_MIS"});
+  catalog.identities.npcs.push_back({vm->find_symbol_by_name("ITEM_OWNER")->index(),"ITEM_OWNER"});
+  for(unsigned i=0;i<7;++i) {
+    const auto name="ITEM_CALLBACK_"+std::to_string(i);
+    catalog.itemCallbacks.push_back({vm->find_symbol_by_name(name)->index(),name});
+    }
+  catalog.itemCallbacks.push_back({50001,"EQUIP_ITMI_INNOSEYE_BROKEN_MIS"});
+  const auto itemId=vm->find_symbol_by_name("IT_RECORD_TEST")->index();
+  const auto documentId=uint32_t(definitions.items.at(itemId).on_state[0]);
+  const auto documentName=vm->find_symbol_by_index(documentId)->name();
+  const auto documentHandle=documentName+".NDOCID";
+  catalog.initialState.push_back({50002,documentHandle,std::vector<int32_t>{0}});
+  nativeLibrary.documents.emplace(documentName,ItemDefinitions::Document{documentHandle,false,
+    {{"DOC_SETPAGES",{int32_t(1)}},{"DOC_PRINTLINE",{int32_t(0),std::string("Native item document")}}}});
+  const auto native=ItemDefinitionRuntime::resolveNative(nativeLibrary,catalog);
+  check(native.brokenEye==50000 && native.items.size()==definitions.items.size() &&
+        native.itemUsePrograms==definitions.itemUsePrograms,
+        "native items keep their archetype IDs, item-use roots and the dynamic broken Eye identity");
+  const auto& document=native.documents.at(documentId);
+  check(document.handle==50002 && document.calls.size()==2 && document.calls[1].function=="DOC_PRINTLINE" &&
+        std::get<std::string>(document.calls[1].arguments[1])=="Native item document",
+        "native item documents retain the session handle and ordered typed actions");
+  for(const auto& [name,item] : library.items) {
+    const auto id=vm->find_symbol_by_name(name)->index();
+    IItem expected{},actual{};
+    static_cast<ItemRecord&>(expected)=definitions.items.at(id);
+    static_cast<ItemRecord&>(actual)=native.items.at(id);
+    sameItem(expected,actual,name);
+    }
+  catalog.itemCallbacks.erase(catalog.itemCallbacks.begin());
+  bool missingCallback=false;
+  try { (void)ItemDefinitionRuntime::resolveNative(nativeLibrary,catalog); }
+  catch(const std::runtime_error& error) {
+    missingCallback=std::string_view(error.what()).find("ITEM_CALLBACK_0")!=std::string_view::npos;
+    }
+  check(missingCallback,"native item resolver explicitly rejects a missing callback identity");
   check(!ItemDefinitionRuntime::initialize(*vm,std::make_shared<IItem>(),vm->find_symbol_by_name("IT_RECORD_WRITE"),definitions),
         "global-writing item uses the VM constructor");
   check(vm->find_symbol_by_name("CHAPTER")->get_int()==7,"VM fallback preserves the constructor's global write");

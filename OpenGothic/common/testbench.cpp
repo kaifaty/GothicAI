@@ -595,9 +595,8 @@ namespace testbench_detail {
 std::string symName(World& w, const Npc* n) {
   if(n==nullptr)
     return "-";
-  if(auto sym = w.script().findSymbol(size_t(n->instanceSymbol())))
-    return sym->name();
-  return nameUtf8(*n);
+  const auto name = w.script().storyNpcName(uint32_t(n->instanceSymbol()));
+  return name.empty() ? nameUtf8(*n) : std::string(name);
   }
 
 }
@@ -623,8 +622,8 @@ namespace testbench_detail {
 // the script state it is in (ZS_SMALLTALK), "-" for none
 std::string stateName(World& w, const Npc& n) {
   const ScriptFn fn  = n.currentState();
-  auto           sym = fn.isValid() ? w.script().findSymbol(fn.ptr) : nullptr;
-  return sym!=nullptr ? sym->name() : "-";
+  const auto name = fn.isValid() ? w.script().storyProgramName(uint32_t(fn.ptr)) : std::string_view{};
+  return name.empty() ? "-" : std::string(name);
   }
 
 // a point is hidden if something is between it and the camera (not counting the ground right at the point)

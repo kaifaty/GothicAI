@@ -9,6 +9,7 @@ argv, so they stay out of logs and `ps`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -177,9 +178,11 @@ def find_layout(config: Config) -> Layout:
         problems.append("game folder is not set: gothic-launcher config set game.dir '/path/to/Gothic II'")
         game_dir = Path()
     else:
-        if sys.platform == "linux" and game_dir == Path.home() / "gothic-ai/game-settings":
-            argv = [sys.executable, str(repo / "scripts/ryzen_game.py"), "--json", f"--assets={game_dir}"]
-            converter = content_converter(game_bin)
+        converter = content_converter(game_bin)
+        ryzen_helper = repo / "scripts/ryzen_game.py"
+        ryzen_settings = sys.platform == "linux" and game_dir == Path.home() / "gothic-ai/game-settings"
+        if ryzen_settings and ryzen_helper.is_file():
+            argv = [sys.executable, str(ryzen_helper), "--json", f"--assets={game_dir}"]
             if converter.is_file() and os.access(converter, os.X_OK):
                 argv.extend(["--converter", str(converter)])
             try:
@@ -190,11 +193,15 @@ def find_layout(config: Config) -> Layout:
                 game_env = json.loads(result.stdout)
             except subprocess.CalledProcessError as error:
                 raise LaunchError(error.stderr.strip()) from error
+        can_prepare = converter.is_file() and os.access(converter, os.X_OK)
+        explicit = game_env.get("OPENGOTHIC_BASE") or os.environ.get("OPENGOTHIC_BASE")
+        pinned = not ryzen_settings and os.environ.get("OPENGOTHIC_BASE_FINGERPRINT")
         try:
-            with base.resolve(game_dir):
-                pass
+            game_env.update(prepared_game_environment(game_bin, game_dir, game_env))
         except RuntimeError as error:
-            if not _has_child(game_dir, "data") and not game_env.get("OPENGOTHIC_BASE_FINGERPRINT"):
+            if explicit or pinned or not can_prepare:
+                problems.append(str(error))
+            elif not _has_child(game_dir, "data") and not game_env.get("OPENGOTHIC_BASE_FINGERPRINT"):
                 problems.append(f"select an installed Gothic II folder once: {error}")
     if problems:
         raise LaunchError("\n".join(problems))
@@ -293,6 +300,43 @@ def content_converter(game_bin: Path) -> Path:
     return game_bin.parent / ("content-convert.exe" if sys.platform == "win32" else "content-convert")
 
 
+def prepared_game_environment(
+    game_bin: Path, game_dir: Path, env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Keep the game and its services on the same prepared native base."""
+    def verify(selected: base.Base) -> None:
+        marker = selected.native_profile
+        required = ("definitions/native-catalog.json", "storygraph/story.json", "outputunits/outputunits.json")
+        if (
+            not isinstance(marker, dict)
+            or marker.get("version") != 3
+            or type(marker.get("catalog_version")) is not int
+            or marker["catalog_version"] <= 0
+            or not all(re.fullmatch(r"[0-9a-f]{64}", str(marker.get(key)))
+                       for key in ("source_fingerprint", "source_manifest_sha256"))
+            or not all(selected.has_file(name) and (selected.path / name).is_file() for name in required)
+        ):
+            raise RuntimeError(f"base {selected.path} needs a prepared native v3 profile")
+        version = marker["catalog_version"]
+        version_file = game_bin.resolve().with_name("native-catalog-version.txt")
+        try:
+            expected = int(version_file.read_text(encoding="ascii"))
+        except (OSError, ValueError) as error:
+            raise RuntimeError(f"missing game catalog version in {version_file}") from error
+        if version != expected:
+            raise RuntimeError(f"base {selected.path}: native catalog version is {version}, game requires {expected}")
+        source = f"native-script-base-v3\ncatalog-v{version}\n{marker['source_fingerprint']}\n{marker['source_manifest_sha256']}"
+        if hashlib.sha256(source.encode()).hexdigest() != selected.fingerprint:
+            raise RuntimeError(f"base {selected.path}: native profile fingerprint differs")
+        catalog = selected.json(required[0])
+        if (not isinstance(catalog, dict) or catalog.get("format") != "gothic-native-base-catalog"
+                or catalog.get("version") != version):
+            raise RuntimeError(f"base {selected.path}: native catalog version differs")
+
+    with base.resolve(game_dir, verify_native=verify, environ=child_env({**base_cache_env(), **(env or {})})) as selected:
+        return {"OPENGOTHIC_BASE": str(selected.path)}
+
+
 def storygraph_tool(repo: Path) -> Path:
     """The story graph converter of the repository's build (the services look there by themselves)."""
     name = "storygraph.exe" if sys.platform == "win32" else "storygraph"
@@ -345,7 +389,7 @@ def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Pr
         server_args.append("--no-voice")
 
     if s.tts.enabled:
-        env = {**openai_key, **storygraph_env(layout)}  # the original voices read OU.BIN through it
+        env = {**openai_key, **storygraph_env(layout)}  # the original voices read prepared output units through it
         if s.tts.voxcpm_url:
             env["GOTHIC_VOXCPM_URL"] = s.tts.voxcpm_url
         if keys.inworld_api_key:
@@ -403,7 +447,7 @@ def game(config: Config, layout: Layout, ports: Ports, save: str | None = None, 
 def preparation(
     game_bin: Path, game_dir: Path, cwd: Path, env: dict[str, str] | None = None
 ) -> Proc | None:
-    """Prepare content with the converter shipped beside the selected game executable."""
+    """Prepare content with the adjacent converter when the game has one."""
     inherited = child_env(env or {})
     if inherited.get("OPENGOTHIC_BASE"):
         return None
@@ -414,10 +458,15 @@ def preparation(
         return None
     converter = content_converter(game_bin)
     if not converter.is_file() or not os.access(converter, os.X_OK):
-        build = "scripts/build-engine.ps1" if sys.platform == "win32" else "scripts/build-engine.sh"
-        raise LaunchError(
-            f"content-convert is missing or not executable: {converter}; rebuild the engine with {build}"
-        )
+        try:
+            prepared_game_environment(game_bin, game_dir, env)
+        except RuntimeError as error:
+            build = "scripts/build-engine.ps1" if sys.platform == "win32" else "scripts/build-engine.sh"
+            raise LaunchError(
+                f"{error}. Prepare the native base with the offline content-convert resolve tool "
+                f"and set OPENGOTHIC_BASE. For source builds, {build} installs the converter at {converter}"
+            ) from error
+        return None
     return Proc("prepare", [str(converter), "resolve", str(game_dir)], cwd, env or {}, restart=False)
 
 
@@ -466,6 +515,8 @@ def _service(
     cwd: Path,
 ) -> Proc:
     argv = [str(layout.uv), "run", "--project", str(layout.repo / project), script, "serve", *args]
+    if name in ("server", "tts") and (selected := layout.game_env.get("OPENGOTHIC_BASE")):
+        env = {**env, "OPENGOTHIC_BASE": selected}
     return Proc(name, argv, cwd, env, health=f"http://127.0.0.1:{port}/health")
 
 

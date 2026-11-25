@@ -310,6 +310,14 @@ def test_find_layout_lists_everything_missing(config, tmp_path, monkeypatch):
     monkeypatch.setattr(commands, "PLAY_CONTENT", content)
     monkeypatch.setattr(commands.sys, "platform", "linux")
     monkeypatch.delenv("OPENGOTHIC_CONTENT", raising=False)
+    with pytest.raises(LaunchError, match="no ready base"):
+        find_layout(config)
+    converter = binary.with_name("content-convert")
+    converter.touch(mode=0o755)
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "0" * 64)
+    with pytest.raises(LaunchError, match="no ready base"):
+        find_layout(config)
+    monkeypatch.delenv("OPENGOTHIC_BASE_FINGERPRINT")
     layout = find_layout(config)
     assert layout.game_bin == binary and layout.game_dir == game_dir and layout.uv == Path("/bin/sh")
     assert layout.play_content == content
@@ -317,6 +325,7 @@ def test_find_layout_lists_everything_missing(config, tmp_path, monkeypatch):
     bundled = binary.parent / "OpenGothic Dev.app" / "Contents" / "MacOS" / "Gothic2Notr"
     bundled.parent.mkdir(parents=True)
     bundled.symlink_to("../../../Gothic2Notr")  # as scripts/make-dev-app.sh makes it
+    (bundled.parent / "content-convert").symlink_to("../../../content-convert")
     monkeypatch.setattr(commands.sys, "platform", "darwin")
     monkeypatch.setenv("GOTHIC_DIR", "/Volumes/x")
     layout = find_layout(config)
@@ -326,9 +335,49 @@ def test_find_layout_lists_everything_missing(config, tmp_path, monkeypatch):
     assert layout.play_content is None and content_env(layout) == {}
     monkeypatch.setattr(commands.sys, "platform", "linux")
     assert default_game_bin(repo) == binary  # Linux never chooses a stray macOS bundle
-    settings, _, _ = _ready_base(tmp_path, monkeypatch)
+    converter.unlink()
+    version_file = binary.with_name("native-catalog-version.txt")
+    version_file.write_text("7\n")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    settings, native, _ = _ready_base(tmp_path / "gothic-ai", monkeypatch, native=True)
     config.set("game.dir", str(settings))
-    assert find_layout(config).game_dir == settings
+    layout = find_layout(config)
+    assert layout.game_dir == settings
+    assert preparation(binary, settings, tmp_path) is None
+    assert game(config, layout, PORTS).env["OPENGOTHIC_BASE"] == str(native)
+    config.set("voice.enabled", "true")
+    config.set("tts.provider", "inworld")
+    for name in ("server", "tts"):
+        assert by_name(services(config, layout, PORTS, tmp_path))[name].env["OPENGOTHIC_BASE"] == str(native)
+    version_file.write_text("8\n")
+    with pytest.raises(LaunchError, match="native catalog version is 7, game requires 8"):
+        find_layout(config)
+    metadata = json.loads((native / "base.json").read_bytes())
+    metadata["native_script_base"]["version"] = 2
+    (native / "base.json").write_text(json.dumps(metadata))
+    monkeypatch.setenv("OPENGOTHIC_BASE", str(native))
+    config.set("game.dir", str(game_dir))
+    with pytest.raises(LaunchError, match="needs a prepared native v3 profile"):
+        find_layout(config)
+
+
+def test_pinned_native_base_can_use_store_when_cached_catalog_is_invalid(tmp_path, monkeypatch):
+    game_dir, fixture, _ = _ready_base(tmp_path, monkeypatch, native=True)
+    fingerprint = json.loads((fixture / "base.json").read_bytes())["fingerprint"]
+    cache = tmp_path / "cache" / fingerprint
+    store_root = tmp_path / "store"
+    stored = store_root / "base" / fingerprint
+    shutil.copytree(fixture, cache)
+    shutil.copytree(fixture, stored)
+    binary = tmp_path / "Gothic2Notr"
+    binary.with_name("native-catalog-version.txt").write_text("7\n")
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", fingerprint)
+    monkeypatch.setenv("OPENGOTHIC_BASE_STORE", str(store_root))
+
+    assert commands.prepared_game_environment(binary, game_dir)["OPENGOTHIC_BASE"] == str(cache)
+    catalog = cache / "definitions/native-catalog.json"
+    catalog.write_bytes(catalog.read_bytes().replace(b'"version":7', b'"version":8'))
+    assert commands.prepared_game_environment(binary, game_dir)["OPENGOTHIC_BASE"] == str(stored)
 
 
 @pytest.mark.parametrize("platform", ["linux", "darwin"])
@@ -393,7 +442,8 @@ def test_ryzen_settings_load_shared_fingerprints_before_preparation(config, tmp_
     monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "c" * 64)
     assert find_layout(config).game_env["OPENGOTHIC_BASE_FINGERPRINT"] == "c" * 64
     monkeypatch.setenv("OPENGOTHIC_BASE", "/explicit/base")
-    assert preparation(binary, settings, tmp_path, game(config, find_layout(config), PORTS).env) is None
+    with pytest.raises(LaunchError, match="no ready base"):
+        find_layout(config)
 
 
 @posix_only

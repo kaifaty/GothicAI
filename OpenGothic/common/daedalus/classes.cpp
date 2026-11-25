@@ -41,7 +41,7 @@ namespace daedalus {
 
 #undef IF_SYM_EXIST
 
-#define ZKLOG_CLASS(a, b) log(LogLevel::DEBUG, "Daedalus", "Registering script class \"%s\" as zenkit::%s", a, b)
+#define ZKLOG_CLASS(a, b) daedalus::log(daedalus::LogLevel::DEBUG, "Daedalus", "Registering script class \"%s\" as zenkit::%s", a, b)
 
 void daedalus::IGuildValues::register_(DaedalusScript& s) {
 	ZKLOG_CLASS("C_GILVALUES", "IGuildValues");
@@ -117,7 +117,8 @@ void daedalus::IParticleEffectEmitKey::register_(DaedalusScript& s) {
 	s.register_member("C_PARTICLEFXEMITKEY.EMFXLIFESPAN", &IParticleEffectEmitKey::em_fx_lifespan);
 }
 
-void daedalus::INpc::register_(DaedalusScript& s) {
+void NpcInstance::register_(daedalus::DaedalusScript& s) {
+	using daedalus::INpc;
 	ZKLOG_CLASS("C_NPC", "INpc");
 	s.register_member<INpc>("C_NPC.ID", &INpc::id);
 	s.register_member<INpc>("C_NPC.NAME", &INpc::name);
@@ -178,7 +179,8 @@ void daedalus::IMission::register_(DaedalusScript& s) {
 	s.register_member("C_MISSION.RUNNING", &IMission::running);
 }
 
-void daedalus::IItem::register_(DaedalusScript& s) {
+void ItemInstance::register_(daedalus::DaedalusScript& s) {
+	using daedalus::IItem;
 	ZKLOG_CLASS("C_ITEM", "IItem");
 	s.register_member<IItem>("C_ITEM.ID", &IItem::id);
 	s.register_member<IItem>("C_ITEM.NAME", &IItem::name);
@@ -241,7 +243,8 @@ void daedalus::IFocus::register_(DaedalusScript& s) {
 	});
 }
 
-void daedalus::IInfo::register_(DaedalusScript& s) {
+void DialogInstance::register_(daedalus::DaedalusScript& s) {
+	using daedalus::IInfo;
 	ZKLOG_CLASS("C_INFO", "IInfo");
 	s.register_member("C_INFO.NPC", &IInfo::npc);
 	s.register_member("C_INFO.NR", &IInfo::nr);
@@ -251,14 +254,6 @@ void daedalus::IInfo::register_(DaedalusScript& s) {
 	s.register_member("C_INFO.DESCRIPTION", &IInfo::description);
 	s.register_member("C_INFO.TRADE", &IInfo::trade);
 	s.register_member("C_INFO.PERMANENT", &IInfo::permanent);
-}
-
-void daedalus::IInfo::add_choice(IInfoChoice const& ch) {
-	choices.insert(choices.begin(), ch);
-}
-
-void daedalus::IInfo::remove_choice(std::size_t index) {
-	choices.erase(choices.begin() + static_cast<decltype(choices)::difference_type>(index));
 }
 
 void daedalus::IItemReact::register_(DaedalusScript& s) {

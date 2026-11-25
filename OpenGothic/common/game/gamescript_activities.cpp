@@ -4,6 +4,7 @@
 #include "world/objects/npc.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 void GameScript::loadNativeRoutines() {
   if(!nativeRoutineProgram)
@@ -17,18 +18,10 @@ void GameScript::loadNativeRoutines() {
     {"B_EVENT_PORTAL_EARTHQUAKE.RANDY",     &PointGestureRolls::earthquake},
     };
   for(const auto& [name,field] : pointRolls)
-    findSymbol(name)->bind_global_int(pointGestureRolls.*field);
+    bindRuntimeVariable(name,pointGestureRolls.*field);
 
   if(!activityEvents || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
     return;
-
-  vm.override_function("B_MM_ASSESSENEMY",std::function<void()>{[this] { runMonsterAssessEnemy(); }},[this] {
-    return nativeMonsterPerceptionsEnabled();
-    });
-  using NpcHandle = std::shared_ptr<daedalus::INpc>;
-  vm.override_function("B_GIVEINVITEMS",std::function<int32_t(NpcHandle,NpcHandle,int32_t,int32_t)>{
-    [this](NpcHandle giver,NpcHandle taker,int32_t item,int32_t amount) { return giveInventoryItems(giver,taker,item,amount); }
-    },[this] { return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off; });
 
   static constexpr NativeRoutinePhase routines[] = {
     {"ZS_GOTOBED",            &GameScript::runMovementRoutine},
@@ -121,61 +114,45 @@ void GameScript::loadNativeRoutines() {
     };
   for(const auto& routine : routines) {
     for(const std::string_view suffix : {"", "_LOOP", "_END"}) {
-      const auto* symbol = vm.find_symbol_by_name(std::string(routine.state).append(suffix));
-      if(symbol==nullptr)
+      const auto function = findFunction(std::string(routine.state).append(suffix));
+      if(!function.isValid())
         continue; // Some stock states have only Init or Init and Loop.
       auto phase = routine;
       phase.enters = suffix.empty();
-      nativeRoutinePhases.emplace(symbol->index(),phase);
+      nativeRoutinePhases.emplace(uint32_t(function.ptr),phase);
       }
     }
 
-  const auto enabled=[this] {
-    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  using Actor = std::shared_ptr<daedalus::INpc>;
+  const auto bind = [this]<class R,class... P>(std::string_view name,const std::function<R(P...)>& callback) {
+    nativeExternals.insert_or_assign(std::string(name),storygraph::makeNativeInternal(callback));
     };
-  vm.override_function("B_MM_WISPDETECT",std::function<int32_t()>{[this] { return detectWisp(); }},enabled);
-  vm.override_function("B_WISPDETECTEDITEM",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [this](auto& machine) -> daedalus::DaedalusNakedCall {
-      if(auto* mask = detectWispItem())
-        machine.push_reference(mask);
-      else
-        machine.push_int(0);
-      return {};
-      }
-    },enabled);
-  vm.override_function("B_GETWISPDETECTEDITEM",std::function<void()>{[this] { approachWispItem(); }},enabled);
-  vm.override_function("B_ASSIGNDRAGONTALK",std::function<void(NpcHandle)>{[this](const NpcHandle& dragon) {
-    assignDragonTalk(dragon);
-    }},enabled);
-  vm.override_function("C_WANTTOEAT",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [this](auto&) -> daedalus::DaedalusNakedCall {
-      pushMonsterWantsToEat();
-      return {};
-      }
-    },enabled);
-  vm.override_function("C_NPCISMONSTERMAGE",std::function<int32_t(NpcHandle)>{
-    [this](NpcHandle npc) { return int32_t(isMonsterMage(npc)); }},enabled);
-  vm.override_function("PERCEPTION_SET_MONSTER_RTN",std::function<void()>{[this] {
-    if(auto* npc = findNpc(vm.global_self()))
+  bind("B_MM_ASSESSENEMY",std::function<void()>{[this] { runMonsterAssessEnemy(); }});
+  bind("B_GIVEINVITEMS",std::function<int32_t(Actor,Actor,int32_t,int32_t)>{
+    [this](Actor giver,Actor taker,int32_t item,int32_t amount) { return giveInventoryItems(giver,taker,item,amount); }});
+  bind("B_MM_WISPDETECT",std::function<int32_t()>{[this] { return detectWisp(); }});
+  bind("B_WISPDETECTEDITEM",std::function<int32_t()>{[this] { return detectWispItem(); }});
+  bind("B_GETWISPDETECTEDITEM",std::function<void()>{[this] { approachWispItem(); }});
+  bind("B_ASSIGNDRAGONTALK",std::function<void(Actor)>{[this](const Actor& dragon) { assignDragonTalk(dragon); }});
+  bind("C_WANTTOEAT",std::function<int32_t(Actor,Actor)>{
+    [this](Actor monster,Actor body) { return int32_t(monsterWantsToEat(monster,body)); }});
+  bind("C_NPCISMONSTERMAGE",std::function<int32_t(Actor)>{[this](Actor npc) { return int32_t(isMonsterMage(npc)); }});
+  bind("PERCEPTION_SET_MONSTER_RTN",std::function<void()>{[this] {
+    if(auto* npc = findNpc(nativeNpc("SELF")))
       enableMonsterRoutinePerceptions(*npc);
-    }},enabled);
-  vm.override_function("B_MAGICHURTNPC",std::function<void(NpcHandle,NpcHandle,int32_t)>{
-    [this](NpcHandle attacker, NpcHandle target, int32_t damage) { magicHurtNpc(attacker,target,damage); }},enabled);
-  vm.override_function("B_AWAKE_STONEGUARDIAN",std::function<void(NpcHandle)>{[this](NpcHandle actor) {
-    awakenStoneGuardian(actor);
-    }},enabled);
-  vm.override_function("B_REMOVEGHOST",std::function<int32_t()>{[this] {
+    }});
+  bind("B_MAGICHURTNPC",std::function<void(Actor,Actor,int32_t)>{
+    [this](Actor attacker,Actor target,int32_t damage) { magicHurtNpc(attacker,target,damage); }});
+  bind("B_AWAKE_STONEGUARDIAN",std::function<void(Actor)>{[this](Actor actor) { awakenStoneGuardian(actor); }});
+  bind("B_REMOVEGHOST",std::function<int32_t()>{[this] {
     removeFinishedGhosts();
     return 0; // The stock function declares an integer and returns without a value.
-    }},enabled);
-  vm.override_function("B_GIVEPLAYERXP",std::function<void(int32_t)>{
-    [this](int32_t amount) { givePlayerXp(amount); }},enabled);
-  loadNativeQuestLog([this,enabled] { return !vm.has_legacy_dispatcher() || enabled(); });
+    }});
   }
 
-bool GameScript::runMonsterScheduler(Npc& npc, const daedalus::DaedalusSymbol&, int& result) {
+bool GameScript::runMonsterScheduler(Npc& npc, std::string_view, int& result) {
   auto& aivar = npc.handle().aivar;
-  aivar[size_t(findSymbol("AIV_MM_PRIORITY")->get_int())] = findSymbol("PRIO_EAT")->get_int();
+  aivar[size_t(npcRuleInt("AIV_MM_PRIORITY"))] = npcRuleInt("PRIO_EAT");
   removeRavensStoneGuardians(npc);
 
   // Overlapping windows keep the priority of the original scheduler. With no match it starts REST.
@@ -230,15 +207,15 @@ bool GameScript::endMonsterRoutine(Npc& npc, MonsterRoutine routine) {
 
 void GameScript::removeRavensStoneGuardians(Npc& npc) {
   // The stock rule resolves the live guardian through the SELF alias.
-  if(npc.handle().guild==GIL_Stoneguardian && findSymbol("RAVENISDEAD")->get_int()==1)
-    invokeKillNpc(int32_t(vm.global_self()->index()));
+  if(npc.handle().guild==GIL_Stoneguardian && deathProgress.ravenDead==1)
+    invokeKillNpc(int32_t(runtimeState.id("SELF").value()));
   }
 
-bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, NpcActivityProbe::Phase& probe) {
+bool GameScript::invokeNativeRoutine(Npc& npc, uint32_t function, std::string_view name, NpcActivityProbe::Phase& probe) {
   if(!activityEvents || floorDefer.active())
     return false;
-  const auto it = nativeRoutinePhases.find(symbol.index());
-  if(it==nativeRoutinePhases.end() || !(this->*it->second.callback)(npc,symbol,probe.result))
+  const auto it = nativeRoutinePhases.find(function);
+  if(it==nativeRoutinePhases.end() || !(this->*it->second.callback)(npc,name,probe.result))
     return false;
   const auto& phase = it->second;
   probe.fromRecord();
@@ -246,9 +223,8 @@ bool GameScript::invokeNativeRoutine(Npc& npc, const daedalus::DaedalusSymbol& s
   return true;
   }
 
-bool GameScript::invokeNativeRoutineReaction(Npc& npc, const daedalus::DaedalusSymbol& symbol,
+bool GameScript::invokeNativeRoutineReaction(Npc& npc, std::string_view name,
                                                NpcActivityProbe::Phase& phase) {
-  const std::string_view name = symbol.name();
   if((name!="B_GOLEMRISE" && name!="B_ASSESSSLEEPTALK" && name!="B_EVENT_PORTAL_EARTHQUAKE") ||
      !nativeRoomReactionsEnabled())
     return false;
@@ -262,9 +238,8 @@ bool GameScript::invokeNativeRoutineReaction(Npc& npc, const daedalus::DaedalusS
   return true;
   }
 
-bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::DaedalusSymbol& symbol,
+bool GameScript::invokeNativeStatusPerception(Npc& npc, std::string_view name,
                                               NpcActivityProbe::Phase& phase) {
-  const std::string_view name = symbol.name();
   const bool stopDamage = name=="B_STOPMAGICBURN" || name=="B_STOPMAGICBURNSHORT" || name=="B_STOPPYRO" || name=="B_STOPZAPPED";
   const bool restartBurn = name=="B_RESTARTBURN" || name=="B_RESTARTBURNSHORT";
   if((name!="B_ASSESSMAGIC" && name!="B_STOPMAGICFLEE" && name!="B_STOPMAGICSLEEP" && name!="B_ASSESSMAGICSLEEPTALK" &&
@@ -291,7 +266,7 @@ bool GameScript::invokeNativeStatusPerception(Npc& npc, const daedalus::Daedalus
   else if(restartBurn) {
     const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
     const auto spell = npc.lastHitSpellId();
-    const auto id = [this](std::string_view symbol) { return findSymbol(symbol)->get_int(); };
+    const auto id = [this](std::string_view symbol) { return npcRuleInt(symbol); };
     const bool shortBurn = name=="B_RESTARTBURNSHORT";
     const bool sameEffect = spell==id("SPL_CHARGEFIREBALL") || (shortBurn
       ? spell==id("SPL_FIRESTORM")
@@ -339,9 +314,8 @@ bool GameScript::routineTimerDue(const Npc& npc, ScriptFn loop) const {
 
 void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& activity) {
   const auto storeLoopRoll = [&](std::string_view variable, int32_t roll) {
-    const auto& loop = findSymbol(npc.aiState.funcLoop.ptr)->name();
-    if(auto* local = findSymbol(std::string(loop).append(variable)))
-      local->set_int(roll);
+    const auto loop = storyProgramName(uint32_t(npc.aiState.funcLoop.ptr));
+    setNpcRuleInt(std::string(loop).append(variable),roll);
     };
   if(const auto* mob=activity.mob) {
     const auto& timer=*mob->timer;
@@ -357,16 +331,12 @@ void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& acti
     }
   const auto& point = *activity.point;
   const auto gestureRoll = int32_t(rollRandom(uint32_t(point.rollRange),&npc,true));
-  if(nativeRoutineProgram) {
-    using Form = ActivityDefinitions::PointActivity::Form;
-    switch(point.form) {
-      case Form::Guard:       pointGestureRolls.guard = gestureRoll; break;
-      case Form::ArmsCrossed: pointGestureRolls.crossedArms = gestureRoll; break;
-      case Form::Waypoint:    pointGestureRolls.waypoint = gestureRoll; break;
-      default: break;
-      }
-    } else {
-    storeLoopRoll(".RANDOM",gestureRoll);
+  using Form = ActivityDefinitions::PointActivity::Form;
+  switch(point.form) {
+    case Form::Guard:       pointGestureRolls.guard = gestureRoll; break;
+    case Form::ArmsCrossed: pointGestureRolls.crossedArms = gestureRoll; break;
+    case Form::Waypoint:    pointGestureRolls.waypoint = gestureRoll; break;
+    default: break;
     }
   const auto& gesture = point.gestures[size_t(gestureRoll)];
   if(!gesture.animation.empty())
@@ -374,14 +344,10 @@ void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& acti
   if(point.portal) {
     const auto& portal = *point.portal;
     const auto roll = int32_t(rollRandom(uint32_t(portal.rollRange),&npc,true));
-    if(nativeRoutineProgram)
-      pointGestureRolls.portal = roll;
-    else
-      storeLoopRoll(".EVENTRANDY",roll);
+    pointGestureRolls.portal = roll;
     const auto guild = npc.handle().guild;
-    const auto dead = nativeRoutineProgram ? deathProgress.ravenDead : findSymbol("RAVENISDEAD")->get_int();
-    const auto level = nativeRoutineProgram ? currentStoryWorld : findSymbol("CURRENTLEVEL")->get_int();
-    if(roll==portal.triggerRoll && guild!=portal.excludedGuild && dead==portal.ravenDead && level==portal.world)
+    if(roll==portal.triggerRoll && guild!=portal.excludedGuild && deathProgress.ravenDead==portal.ravenDead &&
+       currentStoryWorld==portal.world)
       npc.invokeRoutine(findFunction(portal.function));
     }
   if(gesture.resetTimer)
@@ -389,17 +355,14 @@ void GameScript::runActivityGesture(Npc& npc, const ActivityEvents::Record& acti
   }
 
 bool GameScript::invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe) {
-  // The startup floor fix wraps the script externals; inside its window the phase keeps the VM path.
-  if(floorDefer.active())
-    return false;
   const auto* phase = ActivityDefinitionRuntime::find(activityDefinitions,function);
   if(phase==nullptr || (!activityEvents && (phase->record.point || phase->record.mob->timer ||
                                              phase->record.mob->skipApproachWhenBusy)))
     return false;
   probe.fromRecord();
-  probe.result = ActivityDefinitionRuntime::run(vm,world(),npc,*phase,[this,&npc](int32_t item) {
-    storeItem(npc.addItem(uint32_t(item),1));
-    });
+  probe.result = ActivityDefinitionRuntime::run(world(),npc,*phase,[this,&npc](std::string_view) {
+    setPerceptionPreset(true,std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()));
+    },[this,&npc](int32_t item) { storeItem(npc.addItem(uint32_t(item),1)); });
   return true;
   }
 
@@ -412,7 +375,7 @@ const ActivityEvents::Record* GameScript::eventActivity(ScriptFn init) {
   if(phase==nullptr || phase->phase!=ActivityDefinitions::Phase::Init)
     return nullptr;
   if(phase->record.mob && (phase->record.mob->loopResult!=LOOP_CONTINUE ||
-     !ActivityDefinitionRuntime::accepted(vm.find_symbol_by_index(uint32_t(init.ptr))->name())))
+     !ActivityDefinitionRuntime::accepted(phase->name)))
     return nullptr;
   return &phase->record;
   }
@@ -421,7 +384,7 @@ std::vector<std::string_view> GameScript::eventActivityNames() {
   std::vector<std::string_view> names;
   for(const auto& [id,phase]:activityDefinitions.phases)
     if(phase.phase==ActivityDefinitions::Phase::Init && eventActivity(ScriptFn(id)))
-      names.push_back(symbolName(id));
+      names.push_back(phase.name);
   std::sort(names.begin(),names.end());
   return names;
   }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "world/records/recordinstance.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -7,7 +9,6 @@
 
 class Item;
 class Npc;
-namespace daedalus { struct IItem; }
 
 namespace InventoryTransfer {
 

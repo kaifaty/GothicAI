@@ -838,15 +838,17 @@ public:
         throw std::runtime_error("fixture duration_ms must be in [1,1000]");
       BodyController::fixtureLock(*actor,request["duration_ms"].GetUint());
     } else if(kind=="script_takeover") {
-      const auto state = actor->world().script().findSymbolIndex("ZS_ATTACK");
-      if(state==size_t(-1))
+      const auto state = actor->world().rules().findFunction("ZS_ATTACK");
+      if(!state.isValid())
         throw std::runtime_error("fixture native attack state is missing");
-      actor->startState(ScriptFn(uint32_t(state)),"");
+      actor->startState(state,"");
     } else if(kind=="soft_action" || kind=="attach_control") {
       auto& world = actor->world();
       if(world.findNpcByInstance(actor->instanceSymbol())!=actor)
         throw std::runtime_error("legacy fixture needs an unambiguous script instance");
-      const auto symbol = world.script().findSymbol(actor->instanceSymbol())->name();
+      const std::string symbol(world.rules().symbolName(actor->instanceSymbol()));
+      if(symbol.empty())
+        throw std::runtime_error("fixture NPC instance identity is missing");
       const auto emit = [&](std::string&& row) { legacyReplies.push_back(std::move(row)); };
       if(kind=="soft_action") {
         NpcObserver observer(emit,[](std::string_view) { return std::string_view{}; });
@@ -1494,7 +1496,6 @@ int main(int argc, const char** argv) {
     if(opts.societyExport.empty())
       std::filesystem::create_directories(opts.output);
     CommandLine commandLine(argc,argv);
-    daedalus::set_log_level(daedalus::LogLevel::WARNING);
     Resources resources;
     Gothic gothic;
     auto stuckLogger = StuckLogger::fromEnvironment();

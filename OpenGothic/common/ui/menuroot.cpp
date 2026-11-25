@@ -4,9 +4,6 @@
 
 #include "basestore.h"
 #include "contentcensus.h"
-#include "game/definitions/baseprogram.h"
-#include "game/definitions/basescripts.h"
-#include "programdata.h"
 #include "ui/gamemenu.h"
 #include "gothic.h"
 #include "resources.h"
@@ -47,12 +44,9 @@ void MenuRoot::initSettings() {
   if(lang==menuLanguage && records.has_value())
     return;
 
-  const auto& index = baseProgramIndex();
-  const auto& sha = selectBaseProgram(index,"MENU.DAT",lang).source.recordSha256;
+  constexpr auto sha = MenuDefinitions::stockProgram;
   const auto base = Resources::baseDir();
   const auto section = MenuDefinitions::section(base,sha);
-  if(sha!=MenuDefinitions::stockProgram)
-    throw BaseStore::Error("menus require the supported prepared catalog");
   try {
     records = MenuDefinitions::read(base,sha);
     if(auto* census = Resources::contentCensus())
@@ -105,9 +99,14 @@ void MenuRoot::execute(int32_t symbol) {
       case MenuDefinitions::Action::Kind::ApplyVideoOptions:
         applyVideoOptions();
         break;
-      case MenuDefinitions::Action::Kind::ApplyPerformanceOptions:
-        Gothic::notImplementedRoutine("APPLY_OPTIONS_PERFORMANCE");
+      case MenuDefinitions::Action::Kind::ApplyPerformanceOptions: {
+        static const bool reported = [] {
+          Log::e("not implemented call [APPLY_OPTIONS_PERFORMANCE]");
+          return true;
+          }();
+        (void)reported;
         break;
+        }
       }
     }
   }

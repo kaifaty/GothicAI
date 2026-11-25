@@ -28,7 +28,7 @@ def _identity(directory, kind):
         return None
 
 
-def _ready_script_base(directory, *, native, recipe=None):
+def _ready_script_base(directory, *, native, catalog_version=None):
     try:
         metadata = json.loads((directory / "base.json").read_bytes())
     except (OSError, ValueError):
@@ -38,8 +38,9 @@ def _ready_script_base(directory, *, native, recipe=None):
     if not native:
         return "native_script_base" not in metadata
     marker = metadata.get("native_script_base")
-    return (isinstance(marker, dict) and marker.get("version") == 2
-            and (recipe is None or marker.get("runtime_recipe") == recipe))
+    return (isinstance(marker, dict) and marker.get("version") == 3
+            and type(marker.get("catalog_version")) is int and marker["catalog_version"] > 0
+            and (catalog_version is None or marker["catalog_version"] == catalog_version))
 
 
 def _compatible_fingerprint(kind, fingerprint, expected, roots, ready=None):
@@ -122,7 +123,9 @@ def game_environment(home=None, environ=None, assets=None, converter=None):
             native = formats.get("script_base") == "native"
             result["OPENGOTHIC_BASE_FINGERPRINT"] = _compatible_fingerprint(
                 "base", base, formats["base"], roots,
-                ready=lambda directory: _ready_script_base(directory, native=native, recipe=formats.get("runtime_recipe")),
+                ready=lambda directory: _ready_script_base(
+                    directory, native=native, catalog_version=formats.get("catalog_version"),
+                ),
             )
         if videos and "OPENGOTHIC_VIDEOS_FINGERPRINT" not in environ:
             result["OPENGOTHIC_VIDEOS_FINGERPRINT"] = _compatible_fingerprint("videos", videos, formats["videos"], roots)

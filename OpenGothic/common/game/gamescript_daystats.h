@@ -1,16 +1,23 @@
 #pragma once
 
-#include "daedalus/vm.h"
 #include "routinedefinitions.h"
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
+namespace daedalus {
+class DaedalusSymbol;
+class DaedalusVm;
+struct DaedalusInstruction;
+}
+
 // The deterministic counters are independent of world data, for the offline contract.
 class DayScriptStats {
   public:
+    enum class Metric { VmInstructions, NativePhases };
     struct Phase {
       uint64_t engine=0, records=0, nested=0, instructions=0, random=0;
       std::map<std::string,uint64_t> externals;
@@ -19,9 +26,10 @@ class DayScriptStats {
       uint64_t rows=0;
       std::map<std::string,Phase> phases;
       };
-    explicit DayScriptStats(const RoutineDefinitions::Library& routines);
+    DayScriptStats(const RoutineDefinitions::Library& routines, Metric metric);
     static std::shared_ptr<DayScriptStats> attach(daedalus::DaedalusVm& vm, const RoutineDefinitions::Library& routines);
     void stop(daedalus::DaedalusVm& vm);
+    void registerBeastState(std::string_view symbol);
     void begin(std::string_view symbol);
     void end();
     void record();
@@ -32,13 +40,14 @@ class DayScriptStats {
 
   private:
     enum class RootCall { Pending, Observed, Record };
-    struct Context { std::string state, phase; RootCall root=RootCall::Pending; };
+    struct Context { std::string symbol, state, phase; RootCall root=RootCall::Pending; };
     struct Frame { std::string name; uint32_t address; uint64_t* instructions=nullptr; };
     void call(const daedalus::DaedalusSymbol& symbol, const daedalus::DaedalusVm& vm);
     void instruction(const daedalus::DaedalusInstruction& instruction, uint32_t pc);
     void external(const daedalus::DaedalusSymbol& symbol);
     Phase* phase();
     std::string family(std::string_view name) const;
+    Metric metric;
     bool active=true;
     uint64_t callObserver=0, instructionObserver=0;
     uint64_t calls=0, rolls=0, unattributedInstructions=0;

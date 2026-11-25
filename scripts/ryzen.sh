@@ -595,8 +595,8 @@ remote_run() {
     game_settings
     digest="$(storygraph_digest)"
     build_storygraph "$state" "$digest"
-    # Select the base and refresh its pointer before the server tests read it.
-    "$RYZEN_STORYGRAPH_BIN" "$GOTHIC_DIR" --ou-messages >/dev/null
+    # A pinned base is already selected. Otherwise refresh the installation's pointer.
+    "$RYZEN_STORYGRAPH_BIN" "${OPENGOTHIC_BASE:-$GOTHIC_DIR}" --ou-messages >/dev/null
     cd "$ROOT/server"
     uv run pytest "$@" && rc=0 || rc=$?
     echo "Ryzen: pytest $((SECONDS - started))s, exit $rc"
@@ -621,8 +621,8 @@ remote_run() {
   e2e_window_position "$display_slot"
   echo "Ryzen: e2e slot $display_slot; ports $PORT/$ASR_PORT/$TTS_PORT; window $TEMPEST_WINDOW_SIZE at $TEMPEST_WINDOW_POS; screen $RYZEN_SCREEN_SIZE"
   require_prepared "$action" "$state" "$run" "${SCENARIO:-m0}"
-  # Select the base and refresh its pointer before the server and TTS read it.
-  "$RYZEN_STORYGRAPH_BIN" "$GOTHIC_DIR" --ou-messages >/dev/null
+  # Read a pinned base directly. Its path is inherited by the server and TTS.
+  "$RYZEN_STORYGRAPH_BIN" "${OPENGOTHIC_BASE:-$GOTHIC_DIR}" --ou-messages >/dev/null
   # Dependencies were synchronized without the display; uv run must not rebuild them here.
   export UV_NO_SYNC=1
   # Windowed on the logged-in desktop; never take it fullscreen or use a software display.
@@ -830,17 +830,19 @@ PY
 
 select_mac_base_parts() {
   local parts
-  base_format='' videos_format='' base_recipe=''
+  base_format='' videos_format='' base_catalog_version=''
   if [[ "$auto_base" == 1 ]]; then
     base_format="$(cmake -DBASE_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/BaseFormat.cmake")"
     if [[ "$ACTION" != pytest ]]; then
-      base_recipe="$(cmake -DBASE_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/RuntimeBindingRecipe.cmake")"
+      base_catalog_version="$(sed -nE 's/^inline constexpr int catalogVersion = ([0-9]+);$/\1/p' \
+        "$ROOT/OpenGothic/common/game/definitions/nativebasecatalog.h")"
+      [[ -n "$base_catalog_version" ]] || { echo 'Missing native catalog version' >&2; return 1; }
     fi
   fi
   if [[ "$auto_videos" == 1 ]]; then videos_format="$(cmake -DVIDEO_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/VideoFormat.cmake")"; fi
   GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
   # Select checkout-compatible ready parts without identifying or changing the installation.
-  parts="$(python3 - "$GOTHIC_DIR" "$base_format" "$videos_format" "$auto_base" "$auto_videos" "$ACTION" "$ROOT/scripts" "$base_recipe" <<'PY'
+  parts="$(python3 - "$GOTHIC_DIR" "$base_format" "$videos_format" "$auto_base" "$auto_videos" "$ACTION" "$ROOT/scripts" "$base_catalog_version" <<'PY'
 import hashlib
 import json
 import os
@@ -859,7 +861,7 @@ def identity(kind, directory):
     metadata = json.loads((directory / ('base.json' if kind == 'base' else 'videos.json')).read_bytes())
     return metadata if kind == 'base' else json.loads(metadata['identity'])
 
-action, recipe = sys.argv[6], sys.argv[8]
+action, catalog_version = sys.argv[6], int(sys.argv[8]) if sys.argv[8] else None
 
 def import_required(message):
     if action == 'setup':
@@ -894,7 +896,7 @@ def select(kind, expected):
     actual = pointed['format_sha256']
 
     def ready(directory):
-        return not native or _ready_script_base(directory, native=True, recipe=recipe)
+        return not native or _ready_script_base(directory, native=True, catalog_version=catalog_version)
 
     project = False
     if actual != expected or not ready(path):
@@ -991,7 +993,8 @@ export -f verify_base_part
   printf "__name__ = 'ryzen_game'\n"
   printf '%s\n' "$3"
   cat <<'PY_HOST'
-kind, expected, profile, recipe = sys.argv[1:]
+kind, expected, profile, version = sys.argv[1:]
+catalog_version = int(version) if version else None
 fingerprint = ''
 try:
     parts = json.loads((Path.home() / 'gothic-ai/game-base.json').read_text())
@@ -1007,7 +1010,7 @@ try:
     game_base = kind == 'base' and profile != 'pytest'
     for projected in (True, False) if game_base else (False,):
         def ready(directory):
-            if game_base and not _ready_script_base(directory, native=projected, recipe=recipe):
+            if game_base and not _ready_script_base(directory, native=projected, catalog_version=catalog_version):
                 return False
             return subprocess.run(
                 ['bash', '-c', 'verify_base_part "$@"', '--', kind, str(directory), directory.name, 'quick'],
@@ -1033,7 +1036,7 @@ sys.exit(3)
 PY_HOST
 } | python3 - "$1" "$2" "$4" "$5"
 REMOTE
-  } | remote bash -s -- "$1" "$2" "$(cat "$ROOT/scripts/ryzen_game.py")" "$ACTION" "$base_recipe"
+  } | remote bash -s -- "$1" "$2" "$(cat "$ROOT/scripts/ryzen_game.py")" "$ACTION" "$base_catalog_version"
 }
 
 resolve_host_base_parts() {

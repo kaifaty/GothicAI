@@ -2,11 +2,11 @@
 
 #if defined(CONTENT_CONVERT_PARTICLE_PROGRAMS)
 #include "definitiontypes.h"
+#include "programdata.h"
 #endif
 
 #include "basestore.h"
 #include "gothicglb.h"
-#include "programdata.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
@@ -245,16 +245,12 @@ std::shared_ptr<Def::ParticleEffect> Catalog::materialize(std::string_view name)
   return std::make_shared<Def::ParticleEffect>(it->second);
   }
 
-std::optional<Catalog> openStockCatalog(const ProgramData::Index& index) {
-  const auto* source=ProgramData::particleFxProgram(index);
-  if(source==nullptr || source->recordSha256!=EffectDefinitionData::stockParticleProgram)
-    return std::nullopt;
-
-  const auto baseRoot=index.dir.parent_path();
-  const auto section=EffectDefinitionData::particleSection(baseRoot,source->recordSha256);
+std::optional<Catalog> openStockCatalog(const fs::path& base) {
+  constexpr auto program=EffectDefinitionData::stockParticleProgram;
+  const auto section=EffectDefinitionData::particleSection(base,program);
   try {
     if(fs::exists(section))
-      return Catalog(EffectDefinitionData::readParticles(baseRoot,source->recordSha256));
+      return Catalog(EffectDefinitionData::readParticles(base,program));
     }
   catch(const std::runtime_error& error) {
     throw BaseStore::Error(section.string()+": "+error.what());
@@ -264,23 +260,27 @@ std::optional<Catalog> openStockCatalog(const ProgramData::Index& index) {
 
 namespace {
 Catalog openCatalog(const fs::path& baseRoot) {
-  const auto index=ProgramData::readIndex(baseRoot/"programs");
-  if(auto stock=openStockCatalog(index))
-    return std::move(*stock);
 #if defined(CONTENT_CONVERT_PARTICLE_PROGRAMS)
-  const auto* source=index.findVfs("ParticleFx.dat");
-  if(source==nullptr) source=index.findHost("_work/Data/Scripts/_compiled/ParticleFx.dat");
-  require(source!=nullptr,"ParticleFx.dat missing from program base index");
-  std::string sha256;
-  auto program=ProgramData::readProgram(index.path(*source),&sha256);
-  require(sha256==source->recordSha256,"particle program identity differs from base index");
-  auto script=daedalus::DaedalusScript::from_program(std::move(program));
-  VmDef::ParticleEffect::register_(script);
-  return Catalog(std::make_unique<daedalus::DaedalusVm>(std::move(script),
-      daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS));
-#else
-  throw BaseStore::Error("native game requires a prepared particle catalog");
+  const auto programs=baseRoot/"programs";
+  if(fs::exists(programs/"programs.json")) {
+    const auto index=ProgramData::readIndex(programs);
+    const auto* source=ProgramData::particleFxProgram(index);
+    require(source!=nullptr,"ParticleFx.dat missing from program base index");
+    if(source->recordSha256==EffectDefinitionData::stockParticleProgram)
+      if(auto stock=openStockCatalog(baseRoot))
+        return std::move(*stock);
+    std::string sha256;
+    auto program=ProgramData::readProgram(index.path(*source),&sha256);
+    require(sha256==source->recordSha256,"particle program identity differs from base index");
+    auto script=daedalus::DaedalusScript::from_program(std::move(program));
+    VmDef::ParticleEffect::register_(script);
+    return Catalog(std::make_unique<daedalus::DaedalusVm>(std::move(script),
+        daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS));
+    }
 #endif
+  if(auto stock=openStockCatalog(baseRoot))
+    return std::move(*stock);
+  throw BaseStore::Error("native game requires a prepared particle catalog");
   }
 }
 

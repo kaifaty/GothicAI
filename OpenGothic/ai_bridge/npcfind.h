@@ -48,8 +48,8 @@ inline Npc* findNpc(World& world, std::string_view name, const Npc* near = nullp
 
 // a script state function (ZS_ATTACK, ZS_FLEE...), invalid if the scripts have none by that name
 inline ScriptFn scriptState(World& world, std::string_view name) {
-  const size_t id = world.script().findSymbolIndex(upper(name));
-  return id==size_t(-1) ? ScriptFn() : ScriptFn(id);
+  const auto id = world.script().storyScriptFunctionId(name);
+  return id ? ScriptFn(*id) : ScriptFn();
   }
 
 // the name of a script state function, empty if none

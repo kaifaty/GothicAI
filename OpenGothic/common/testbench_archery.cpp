@@ -513,7 +513,7 @@ bool archeryCommand(const ArcheryContext& context,const std::string& line,const 
       const char* mode = below ? "dice (draw below minimum)" : (burst ? "hands burst" : "hands steady");
       const auto name = n->displayName();
       const auto symbol = symName(w,n);
-      const auto weaponName = w.script().findSymbol(weapon->clsId())->name();
+      const auto weaponName = w.script().storyItemName(uint32_t(weapon->clsId()));
       char buf[640];
       std::snprintf(buf,sizeof(buf),"archers npc %s name %.*s: str %d dex %d weapon %.*s damage %d need %.2f r %.4f f_s %.4f f_b %.4f mode %s",
                     symbol.c_str(),int(name.size()),name.data(),

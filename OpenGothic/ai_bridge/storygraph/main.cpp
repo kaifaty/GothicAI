@@ -31,7 +31,7 @@
 #include "graphjson.h"
 #include "lifter.h"
 #include "model.h"
-#include "outputunits.h"
+#include "oumessages.h"
 #include "program.h"
 #include "programdata.h"
 #include "game/definitions/runtimebindings.h"
@@ -85,40 +85,6 @@ static std::string executableSha(const char* executable) {
   if(fs::is_regular_file(fs::path(executable),error))
     return BaseImport::sha256File(fs::path(executable));
   return {};
-  }
-
-static WorldData::ZenFile loadLibrary(const OutputUnits::Index& index, const OutputUnits::Source& source,
-                                     std::string& actualSha) {
-  auto library = OutputUnits::readLibrary(index.path(source),&actualSha);
-  if(actualSha!=source.recordSha256)
-    throw std::runtime_error("selected OU record identity differs from its index");
-  return library;
-  }
-
-static int printOuMessages(const OutputUnits::Index& index) {
-  std::string text = "{\"format\":\"gothic-ou-messages\",\"version\":1,\"source\":";
-  const auto* source = index.serverOuPy();
-  if(source==nullptr) {
-    text += "null,\"native_sha256\":null,\"messages\":null}";
-    } else {
-    std::string actualSha;
-    const auto library = loadLibrary(index,*source,actualSha);
-    text += "{\"path\":"+gothicglb::jsonString(source->path)+",\"sha256\":"+
-            gothicglb::jsonString(source->sha256)+"},\"native_sha256\":"+
-            gothicglb::jsonString(actualSha)+",\"messages\":[";
-    bool first = true;
-    for(const auto& message:OutputUnits::messagesInArchiveOrder(library)) {
-      if(!first)
-        text += ',';
-      first = false;
-      text += '['+gothicglb::jsonString(message->name)+','+gothicglb::jsonString(message->text)+']';
-      }
-    text += "]}";
-    }
-  text += '\n';
-  if(std::fwrite(text.data(),1,text.size(),stdout)!=text.size() || std::fflush(stdout)!=0)
-    throw std::runtime_error("cannot write OU messages to stdout");
-  return 0;
   }
 
 static double pct(size_t a, size_t b) { return b==0 ? 0.0 : 100.0*double(a)/double(b); }
@@ -245,6 +211,8 @@ static int run(int argc, char** argv) {
 
   const fs::path input(datPath);
   const bool directory = fs::is_directory(input);
+  if(ouMessages && directory && fs::is_regular_file(input/"base.json"))
+    return printPreparedOuMessages(input);
   const auto gothic = installationRoot(input,directory);
   // A cold base import writes converter summaries to cout; the export's stdout is only JSON.
   auto* importOutput = ouMessages ? std::cout.rdbuf(std::cerr.rdbuf()) : nullptr;
@@ -274,9 +242,7 @@ static int run(int argc, char** argv) {
   for(const auto& archive:metadata["archives"].GetArray())
     archives.emplace_back(archive["name"].GetString(),archive["size"].GetUint64());
   std::sort(archives.begin(),archives.end());
-  const auto ouIndex = OutputUnits::readIndex(base.path/"outputunits");
-  if(ouIndex.archives!=archives)
-    throw std::runtime_error("output units index archives differ from the selected base");
+  const auto ouIndex = readOuIndex(base.path,archives);
   if(ouMessages)
     return printOuMessages(ouIndex);
   const auto index = ProgramData::readIndex(base.path/"programs");
@@ -335,7 +301,7 @@ static int run(int argc, char** argv) {
     } else {
     const auto relative = fs::path(source->path).parent_path().parent_path()/"CONTENT"/"CUTSCENE"/"OU.BIN";
     if(const auto* ouSource = ouIndex.findHost(relative.generic_string())) {
-      lines = loadLines(loadLibrary(ouIndex,*ouSource,ouNativeSha));
+      lines = loadLines(readOuLibrary(ouIndex,*ouSource,ouNativeSha));
       ouSourceSha = ouSource->sha256;
       }
     }

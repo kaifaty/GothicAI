@@ -15,12 +15,9 @@
 #include <malloc.h>
 #endif
 
-#include "daedalus/classes.h"
 #include "basestore.h"
 
-#include "game/definitions/definitiontypes.h"
-#include "game/definitions/gameplaydefinitions.h"
-#include "game/definitions/runtimebindings.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "game/bodyenginepolicy.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
@@ -106,9 +103,7 @@ Gothic::Gothic() {
     ouDef = "OU";
     }
 
-  Resources::loadBase({.stockProgram=GameplayDefinitions::stockProgram,
-                       .projectedOnly=true,
-                       .validateProgramMetadata=RuntimeBindings::validate});
+  Resources::loadBase({.projectedOnly=true,.catalogVersion=NativeBaseCatalog::catalogVersion});
 
   Settings::inst().onSettingsChanged.bind(this,&Gothic::setupSettings);
   setupSettings();
@@ -643,48 +638,6 @@ std::string_view Gothic::menuMain() const {
   return ::menuMain;
   }
 
-void Gothic::enableScriptAudit(daedalus::DaedalusVm& vm, std::string_view datFile) {
-  vm.require_native_execution(datFile,true);
-  Log::i("native-script-audit: armed program=",datFile," (metadata only)");
-  }
-
-void Gothic::setupCommonScriptClasses(daedalus::DaedalusScript& sc) {
-  // Use customized setup, instead of daedalus::register_all_script_classes
-  auto registerIfExists = [&](std::string_view sym, auto d) {
-    if(sc.find_symbol_by_name(sym) != nullptr) {
-      d(sc);
-      }
-    };
-
-  auto registerOpaque = [&](std::string_view sym){
-    if(auto ptr = sc.find_symbol_by_name(sym)) {
-      sc.register_as_opaque(ptr);
-      }
-    };
-
-  registerIfExists("C_GILVALUES",    daedalus::IGuildValues::register_);
-  registerIfExists("C_NPC",          daedalus::INpc::register_);
-  registerIfExists("C_MISSION",      daedalus::IMission::register_);
-  registerIfExists("C_ITEM",         daedalus::IItem::register_);
-  registerIfExists("C_FOCUS",        daedalus::IFocus::register_);
-  registerIfExists("C_INFO",         daedalus::IInfo::register_);
-  registerIfExists("C_ITEMREACT",    daedalus::IItemReact::register_);
-  registerIfExists("C_SPELL",        daedalus::ISpell::register_);
-  registerOpaque  ("C_SVM"); // structure is very customizable, so better to use type-less mapping
-  registerIfExists("C_MENU",         daedalus::IMenu::register_);
-  registerIfExists("C_MENU_ITEM",    daedalus::IMenuItem::register_);
-  registerIfExists("CCAMSYS",        VmDef::Camera::register_);
-  registerIfExists("C_MUSICSYS_CFG", daedalus::IMusicSystem::register_);
-  registerIfExists("C_MUSICTHEME",   VmDef::MusicTheme::register_);
-  registerIfExists("C_MUSICJINGLE",  daedalus::IMusicJingle::register_);
-  registerIfExists("C_PARTICLEFX",   VmDef::ParticleEffect::register_);
-  registerIfExists("CFX_BASE",       VmDef::EffectBase::register_);
-  registerIfExists("C_PARTICLEFXEMITKEY", VmDef::ParticleEffectEmitKey::register_);
-  registerOpaque  ("C_FIGHTAI"); // many mods get it wrong/corrupted. Opaque binding is one is a way to get around it
-  registerIfExists("C_SFX",          VmDef::SoundEffect::register_);
-  registerIfExists("C_SNDSYS_CFG",   daedalus::ISoundSystem::register_);
-  }
-
 void Gothic::setupSettings() {
   Resources::configureTextures(Settings::getS("GAME","texture_budget_mb"),Settings::getS("GAME","texture_far_skip_mips"),
                                Settings::getS("GAME","texture_target_mb"),Settings::getS("GAME","texture_screen_mips"),
@@ -756,20 +709,13 @@ std::u16string Gothic::nestedPath(const std::initializer_list<const char16_t*> &
   return CommandLine::inst().nestedPath(name,type);
   }
 
-void Gothic::setupVmCommonApi(daedalus::DaedalusVm& vm,storygraph::NativeExternals* natives) {
-  vm.register_default_external([](std::string_view name) { notImplementedRoutine(std::string {name}); });
-
-  if(auto sym = vm.find_symbol_by_name("C_SVM"))
-    vm.register_as_opaque(sym);
-  if(auto sym = vm.find_symbol_by_name("C_FIGHTAI"))
-    vm.register_as_opaque(sym);
-
-  const auto bind=[&](std::string_view name,auto callback,bool observe=true) {
-    storygraph::registerNativeExternal(vm,natives,name,std::function{callback},observe);
+void Gothic::bindNativeGameApi(storygraph::NativeExternals& operations) {
+  const auto bind = [&](std::string_view name, auto callback) {
+    operations.insert_or_assign(storygraph::nativeOperationName(name),
+                                storygraph::makeNativeExternal(std::function{callback}));
     };
-  // The four existing direct operations keep their observer-free path.
-  bind("concatstrings", [](std::string_view a, std::string_view b) { return Gothic::concatstrings(a, b);},false);
-  bind("inttostring",   [](int i)   { return Gothic::inttostring(i);   },false);
+  bind("concatstrings", [](std::string_view a, std::string_view b) { return Gothic::concatstrings(a, b);});
+  bind("inttostring",   [](int i)   { return Gothic::inttostring(i);   });
   bind("floattostring", [](float f) { return Gothic::floattostring(f); });
   bind("inttofloat",    [](int i)   { return Gothic::inttofloat(i);    });
   bind("floattoint",    [](float f) { return Gothic::floattoint(f);    });
@@ -780,9 +726,9 @@ void Gothic::setupVmCommonApi(daedalus::DaedalusVm& vm,storygraph::NativeExterna
   bind("introducechapter", [this](std::string_view title, std::string_view subtitle, std::string_view img, std::string_view sound, int time){ introducechapter(title, subtitle, img, sound, time); });
   bind("playvideo",        [this](std::string_view name){ return playvideo(name); });
   bind("playvideoex",      [this](std::string_view name, bool a, bool b){ return playvideoex(name, a, b); });
-  bind("printscreen",      [this](std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printscreen(msg, posx, posy, font, timesec); },false);
+  bind("printscreen",      [this](std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printscreen(msg, posx, posy, font, timesec); });
   bind("printdialog",      [this](int dialognr, std::string_view msg, int posx, int posy, std::string_view font, int timesec){ return printdialog(dialognr, msg, posx, posy, font, timesec); });
-  bind("print",            [this](std::string_view msg){ print(msg); },false);
+  bind("print",            [this](std::string_view msg){ print(msg); });
 
   bind("doc_create",          [this](){ return doc_create(); });
   bind("doc_createmap",       [this](){ return doc_createmap(); });
@@ -802,15 +748,6 @@ void Gothic::setupVmCommonApi(daedalus::DaedalusVm& vm,storygraph::NativeExterna
   bind("printdebugch",        [this](int ch, std::string_view msg){ printdebugch(ch, msg); });
   bind("printdebuginst",      [this](std::string_view msg){ printdebuginst(msg); });
   bind("printdebuginstch",    [this](int ch, std::string_view msg){ printdebuginstch(ch, msg); });
-  }
-
-void Gothic::notImplementedRoutine(std::string_view fn) {
-  static std::set<std::string, std::less<>> s;
-
-  if(s.find(fn)==s.end()){
-    auto [v, _] = s.insert(std::string {fn});
-    Log::e("not implemented call [",v->c_str(),"]");
-    }
   }
 
 std::string Gothic::concatstrings(std::string_view a, std::string_view b) {

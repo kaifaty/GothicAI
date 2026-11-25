@@ -70,16 +70,7 @@ std::string upper(std::string_view s) {
 std::string npcId(World& world, Npc& npc) {
   if(npc.isPlayer())
     return "PLAYER";
-  if(auto sym = world.script().findSymbol(npc.instanceSymbol()))
-    return sym->name();
-  return {};
-  }
-
-Npc* npcBySymbol(World& world, std::string_view symbol) {
-  if(symbol=="PLAYER")
-    return world.player();
-  const size_t id = world.script().findSymbolIndex(upper(symbol));
-  return id==size_t(-1) ? nullptr : world.findNpcByInstance(id);
+  return std::string(world.script().storyNpcName(npc.instanceSymbol()));
   }
 
 bool inView(Npc& player, Npc& npc, float dist) {
@@ -642,11 +633,9 @@ void NpcObserver::releaseHeld(World& world, Held& h) {
   if(h.bandit && (self->isAttack() || self->isTalk() || !owner(npcId(world,*self)).empty() ||
                  BodyController::owns(*self)))
     return;  // an explicit fight or a newer owner takes precedence over a late sight signal
-  if(!h.item.empty()) {
-    const auto item = world.script().findSymbolIndex(h.item);
-    if(item!=size_t(-1))
-      world.script().setInstanceItem(*other,item);
-    }
+  if(!h.item.empty())
+    if(const auto item = world.script().findItemInstance(h.item))
+      world.script().setInstanceItem(*other,*item);
   self->passPerception(*other,h.victim!=nullptr ? victim : nullptr,h.perc);
   }
 
@@ -655,7 +644,7 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
   const auto symbol = upper(JsonRead::str(msg,"npc"));
   const auto action = JsonRead::str(msg,"action");
   auto result = [&](std::string_view status, std::string_view detail) { reply(id,symbol,status,detail,action); };
-  Npc*       npc    = npcBySymbol(world,symbol);
+  Npc*       npc    = AiNpc::findNpc(world,symbol);
   Npc*       pl     = world.player();
   if(npc==nullptr || npc->isPlayer() || pl==nullptr) {
     result("rejected","npc not found");
@@ -804,14 +793,13 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
         }
       const auto reasonName = run.nonlethal ? std::string("AR_NONE") : upper(JsonRead::str(args,"reason"));
       if(!reasonName.empty()) {
-        auto* reason = world.script().findSymbol(reasonName);
+        const auto reason = world.script().intConstant(reasonName);
         const auto attack = HeroDeed::constant(*npc,"AIV_ATTACKREASON");
         const auto last = HeroDeed::constant(*npc,"AIV_LASTPLAYERAR");
         const auto fight = HeroDeed::constant(*npc,"AIV_LASTFIGHTAGAINSTPLAYER");
         const auto comment = HeroDeed::constant(*npc,"AIV_LASTFIGHTCOMMENT");
-        const auto valid = [](int32_t index) { return index>=0 && uint32_t(index)<daedalus::INpc::aivar_count; };
-        if(!reasonName.starts_with("AR_") || reason==nullptr || !reason->is_const() ||
-           reason->type()!=daedalus::DaedalusDataType::INT || !valid(attack) ||
+        const auto valid = [](int32_t index) { return index>=0 && uint32_t(index)<NpcRecord::aivar_count; };
+        if(!reasonName.starts_with("AR_") || !reason || !valid(attack) ||
            (target->isPlayer() && !valid(last)) || !valid(fight) || !valid(comment)) {
           result("rejected","fight needs a vanilla AR_* reason and its attack variables");
           return;
@@ -819,9 +807,9 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
         // Match B_Attack's combat bookkeeping without B_MemorizePlayerCrime:
         // the server already owns the witness memory and community counters.
         auto& aiv = npc->handlePtr()->aivar;
-        aiv[size_t(attack)] = reason->get_int(0);
+        aiv[size_t(attack)] = *reason;
         if(target->isPlayer())
-          aiv[size_t(last)] = reason->get_int(0);
+          aiv[size_t(last)] = *reason;
         aiv[size_t(fight)] = HeroDeed::constant(*npc,"FIGHT_CANCEL",0);
         aiv[size_t(comment)] = 0;
         }
@@ -918,17 +906,17 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
       return;
       }
     const auto   name = upper(JsonRead::str(args,"item"));
-    const size_t cls  = world.script().findSymbolIndex(name);
-    const size_t have = cls==size_t(-1) ? 0 : npc->inventory().itemCount(cls);
+    const auto   cls  = world.script().findItemInstance(name);
+    const size_t have = cls ? npc->inventory().itemCount(*cls) : 0;
     if(have==0) {
       result("rejected","npc has no item " + name);
       return;
       }
-    if(auto* it = const_cast<Inventory&>(npc->inventory()).getItem(cls); it!=nullptr && it->isMission()) {
+    if(auto* it = const_cast<Inventory&>(npc->inventory()).getItem(*cls); it!=nullptr && it->isMission()) {
       result("rejected","a mission item: " + name);  // v39: never between npc's
       return;
       }
-    run.item   = cls;
+    run.item   = *cls;
     run.count  = std::min(have,size_t(std::max<int64_t>(1,JsonRead::integer(args,"count",1))));
     run.giveTo = target->instanceSymbol();
     if(npc->qDistTo(*target)>AiNpc::GiveRange*AiNpc::GiveRange)
@@ -953,7 +941,7 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
                 running.end());
   run.id       = std::string(id);
   run.symbol   = symbol;
-  run.instance = world.script().findSymbolIndex(symbol);
+  run.instance = npc->instanceSymbol();
   run.start    = world.tickCount();
   run.state    = state;
   run.maxMs    = run.theft.active ? StateMaxMs : (run.investigate ? 46000 : (action=="start_activity" ? ActivityMaxMs : (state.isValid() ? StateMaxMs : ActMaxMs)));
@@ -963,7 +951,7 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
 
 void NpcObserver::routine(World& world, const rapidjson::Value& msg) {
   const auto symbol = upper(JsonRead::str(msg,"npc"));
-  Npc*       npc    = npcBySymbol(world,symbol);
+  Npc*       npc    = AiNpc::findNpc(world,symbol);
   JsonWriter j("routine");
   j.str("req",JsonRead::str(msg,"req")).str("npc",symbol);
   if(npc==nullptr || npc->isPlayer()) {
@@ -986,16 +974,8 @@ void NpcObserver::routine(World& world, const rapidjson::Value& msg) {
      .end();
     });
   j.endArray().array("routines");
-  // the npc's routine variants: Rtn_<name>_<id> in the scripts
-  const std::string suffix = "_" + std::to_string(npc->handle().id);
-  for(size_t i=0; i<world.script().symbolsCount(); ++i) {
-    auto sym = world.script().findSymbol(i);
-    if(sym==nullptr)
-      continue;
-    const std::string& n = sym->name();
-    if(n.size()>4+suffix.size() && n.starts_with("RTN_") && n.ends_with(suffix))
-      j.item(n.substr(4,n.size()-4-suffix.size()));
-    }
+  for(auto name : world.script().storyRoutineVariants(npc->handle().id))
+    j.item(name);
   j.endArray().array("event_activities");
   for(auto name:world.script().eventActivityNames())
     j.item(name);

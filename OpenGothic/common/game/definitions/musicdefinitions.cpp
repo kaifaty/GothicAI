@@ -1,24 +1,18 @@
 #include "musicdefinitions.h"
 
-#include "basescripts.h"
 #include "basestore.h"
 #include "contentcensus.h"
-#include "programdata.h"
 #include "resources.h"
 
 #include <algorithm>
 #include <cctype>
 
 MusicDefinitions::MusicDefinitions() {
-  const auto& index = baseProgramIndex();
-  const auto* source = ProgramData::musicProgram(index);
-  if(source==nullptr || source->recordSha256!=MusicDefinitionData::stockProgram)
-    throw BaseStore::Error("music requires the supported prepared catalog");
-
+  constexpr auto program = MusicDefinitionData::stockProgram;
   const auto base = Resources::baseDir();
-  const auto section = MusicDefinitionData::section(base,source->recordSha256);
+  const auto section = MusicDefinitionData::section(base,program);
   try {
-    themes = MusicDefinitionData::read(base,source->recordSha256);
+    themes = MusicDefinitionData::read(base,program);
     if(auto* census = Resources::contentCensus())
       census->replaced("Music.dat","base/"+section.lexically_relative(base).generic_string());
     }

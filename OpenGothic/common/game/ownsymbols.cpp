@@ -1,14 +1,13 @@
 #include "ownsymbols.h"
 
-#include "daedalus/vm.h"
+#include "game/definitions/nativebasecatalog.h"
 
 #include <Tempest/Log>
 
-#include <algorithm>
 #include <cctype>
+#include <utility>
 
 using namespace Tempest;
-using daedalus::DaedalusDataType;
 
 static std::string upper(std::string_view s) {
   std::string r(s);
@@ -32,13 +31,6 @@ const OwnSymbols::Entry* OwnSymbols::find(uint32_t index) const {
   return nullptr;
   }
 
-daedalus::DaedalusSymbol* OwnSymbols::binding(std::string_view name) const {
-  if(!name.starts_with(Prefix))
-    return nullptr;
-  const auto found = bindings.find(name);
-  return found!=bindings.end() ? found->second : nullptr;
-  }
-
 std::optional<int32_t> OwnSymbols::intValue(std::string_view name) const {
   const auto* entry = find(name);
   if(entry!=nullptr && entry->kind==Kind::Int)
@@ -54,95 +46,80 @@ bool OwnSymbols::setInt(std::string_view name, int32_t value) {
   return true;
   }
 
-daedalus::DaedalusSymbol* OwnSymbols::likeOf(daedalus::DaedalusVm& vm, uint32_t index) {
+bool OwnSymbols::addInt(std::string_view name, std::string& why) {
+  return add({Kind::Int,upper(name),{},0},why)!=nullptr;
+  }
+
+std::optional<uint32_t> OwnSymbols::addNpc(std::string_view name, std::string_view like, std::string& why) {
+  if(const auto* entry = add({Kind::Npc,upper(name),upper(like),0},why))
+    return entry->index;
+  return std::nullopt;
+  }
+
+ScriptVars::Object* OwnSymbols::nativeNpc(uint32_t index) {
+  if(catalog==nullptr || index<catalog->directorFirstId)
+    return nullptr;
   const auto* entry = find(index);
-  return entry!=nullptr && entry->kind==Kind::Npc ? vm.find_symbol_by_name(entry->like) : nullptr;
-  }
-daedalus::DaedalusSymbol* OwnSymbols::addInt(daedalus::DaedalusVm& vm, std::string_view name, std::string& why) {
-  return add(vm,Entry{Kind::Int,upper(name),{},0},why);
+  return entry!=nullptr && entry->kind==Kind::Npc ? std::get_if<ScriptVars::Object>(state.find(index)) : nullptr;
   }
 
-daedalus::DaedalusSymbol* OwnSymbols::addNpc(daedalus::DaedalusVm& vm, std::string_view name, std::string_view like, std::string& why) {
-  return add(vm,Entry{Kind::Npc,upper(name),upper(like),0},why);
-  }
-
-daedalus::DaedalusSymbol* OwnSymbols::addNpc(daedalus::DaedalusVm& vm, std::string_view name,
-                                          const daedalus::DaedalusSymbol& prototype, std::string& why) {
-  return add(vm,Entry{Kind::Npc,upper(name),prototype.name(),0},why,&prototype);
-  }
-
-daedalus::DaedalusSymbol* OwnSymbols::add(daedalus::DaedalusVm& vm, const Entry& e, std::string& why,
-                                        const daedalus::DaedalusSymbol* prototype) {
-  if(e.name.size()<=Prefix.size() || !e.name.starts_with(Prefix)) {
-    why = e.name + ": a symbol of ours is named " + std::string(Prefix) + "...";
+const OwnSymbols::Entry* OwnSymbols::add(Entry entry, std::string& why) {
+  if(catalog==nullptr || list.size()>=NativeBaseCatalog::directorCapacity) {
+    why = "no room for " + entry.name;
     return nullptr;
     }
-  if(bindings.contains(e.name)) {
-    why = e.name + " is taken";
+  if(entry.name.size()<=Prefix.size() || !entry.name.starts_with(Prefix) || upper(entry.name)!=entry.name) {
+    why = entry.name + ": expected a director name beginning with " + std::string(Prefix);
     return nullptr;
     }
-
-  daedalus::DaedalusSymbol* s = nullptr;
-  if(e.kind==Kind::Int) {
-    s = vm.add_int_symbol(e.name);
-    }
-  else if(e.kind==Kind::Npc) {
-    if(prototype==nullptr) {
-      prototype = vm.find_symbol_by_name(e.like);
-      if(prototype==nullptr || prototype->type()!=DaedalusDataType::INSTANCE || prototype->is_generated()) {
-        why = e.like + " is not an instance of the scripts";
-        return nullptr;
-        }
-      auto* cls = vm.find_symbol_by_index(prototype->parent());
-      while(cls!=nullptr && cls->type()!=DaedalusDataType::CLASS)
-        cls = vm.find_symbol_by_index(cls->parent());
-      auto* npc = vm.find_symbol_by_name("C_NPC");
-      if(cls==nullptr || npc==nullptr || cls->index()!=npc->index()) {
-        why = e.like + " is not an npc";
-        return nullptr;
-        }
+  if(entry.kind==Kind::Npc) {
+    const auto* prototype = NativeBaseCatalog::findIdentity(catalog->identities.npcs,entry.like);
+    if(prototype==nullptr || prototype->name!=entry.like) {
+      why = entry.like + " is not an authored NPC";
+      return nullptr;
       }
-    s = vm.add_instance_symbol(e.name,*prototype);
     }
-  if(s==nullptr) {
-    why = "no room for " + e.name;
+  else if(entry.kind!=Kind::Int || !entry.like.empty()) {
+    why = "invalid declaration for " + entry.name;
     return nullptr;
     }
 
-  state.bind(*s);
-  Entry made = e;
-  made.index = s->index();
-  bindings.emplace(made.name,s);
-  Log::i("[symbols] ",made.name," (",made.index,")",made.kind==Kind::Npc ? " made like " + made.like : "");
-  list.push_back(std::move(made));
-  return s;
+  entry.index = catalog->directorFirstId+uint32_t(list.size());
+  if(!state.declareDirector(entry)) {
+    why = entry.name + " is taken";
+    return nullptr;
+    }
+  Log::i("[director] ",entry.name," (",entry.index,")",entry.kind==Kind::Npc ? " made like " + entry.like : "");
+  list.push_back(std::move(entry));
+  return &list.back();
   }
 
 void OwnSymbols::save(SaveArchive& fout) const {
   ScriptVars::writeSymbolDefinitions(fout,list);
   }
 
-bool OwnSymbols::load(daedalus::DaedalusVm& vm, SaveArchive& fin) {
+bool OwnSymbols::load(SaveArchive& fin) {
   const auto [format,count] = ScriptVars::readSymbolHeader(fin);
   if(format!=ScriptVars::SymbolFormat) {
-    Log::e("[symbols] a save of format ",int(format),", this game reads ",int(ScriptVars::SymbolFormat),": none made");
+    Log::e("[director] unsupported save declaration format ",int(format));
+    return false;
+    }
+  if(catalog==nullptr || !list.empty() || count>NativeBaseCatalog::directorCapacity) {
+    Log::e("[director] invalid native declaration count ",count);
     return false;
     }
 
-  bool same = true;
   for(uint32_t i=0; i<count; ++i) {
-    const auto e = ScriptVars::readSymbolDefinition(fin);
-    std::string why;
-    auto*       s = e.kind==Kind::Int || e.kind==Kind::Npc ? add(vm,e,why) : nullptr;
-    if(s==nullptr) {
-      Log::e("[symbols] ",e.name," is not made again: ",why.empty() ? "unknown kind" : why);
-      same = false;
+    auto entry = ScriptVars::readSymbolDefinition(fin);
+    if(entry.index!=catalog->directorFirstId+i) {
+      Log::e("[director] ",entry.name," has unexpected saved ID ",entry.index);
+      return false;
       }
-    else if(s->index()!=e.index) {
-      Log::e("[symbols] ",e.name," is ",s->index()," now, the save has ",e.index,
-             ": the scripts are not those of the save");
-      same = false;
+    std::string why;
+    if(add(std::move(entry),why)==nullptr) {
+      Log::e("[director] could not restore declaration: ",why);
+      return false;
       }
     }
-  return same;
+  return true;
   }

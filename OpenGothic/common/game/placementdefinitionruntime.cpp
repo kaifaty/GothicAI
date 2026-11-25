@@ -18,7 +18,6 @@ Value resolveValue(Value value, const daedalus::DaedalusScript& script) {
     const auto* symbol=script.find_symbol_by_name(value.text);
     if(symbol==nullptr) throw std::runtime_error("unknown symbol "+value.text);
     value.integer=int32_t(symbol->index());
-    value.text.clear();
     }
   return value;
   }
@@ -187,7 +186,6 @@ PlacementDefinitionRuntime::Definitions PlacementDefinitionRuntime::resolve(
             if(literal==literals.end()) throw std::runtime_error("no immutable string literal for "+call.function);
             argument.literal=literal->second.first;
             argument.literalIndex=literal->second.second;
-            argument.value.text.clear();
             }
           resolved.args.push_back(std::move(argument));
           }

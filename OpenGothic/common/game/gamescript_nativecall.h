@@ -1,8 +1,9 @@
 #pragma once
 
-#include "daedalus/vm.h"
 #include "storygraph/nativeexec.h"
+#include "world/records/recordinstance.h"
 
+#include <concepts>
 #include <map>
 #include <memory>
 #include <span>
@@ -13,37 +14,25 @@
 
 namespace storygraph {
 
-class BoundNativeCall final {
-  public:
-    using Instance = std::shared_ptr<daedalus::DaedalusInstance>;
-    using ResolveActor = std::function<Instance(NativeInstance)>;
-    using BindActor = std::function<NativeInstance(const Instance&)>;
-    using MapReference = std::function<std::optional<NativeSlot>(const daedalus::DaedalusSymbol&, uint16_t, const Instance&)>;
-
-    BoundNativeCall(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& symbol);
-    const NativeFunction& signature() const { return function; }
-    bool active() const;
-    static void observeExternal(daedalus::DaedalusVm& vm, const daedalus::DaedalusSymbol& symbol,
-                                std::span<const NativeValue> args, const ResolveActor& resolve);
-    std::optional<NativeCall> invoke(std::span<const NativeValue> args, const ResolveActor& resolve,
-                                     const BindActor& bind, const MapReference& map, std::string& error) const;
-
-  private:
-    daedalus::DaedalusVm& vm;
-    daedalus::DaedalusSymbol& symbol;
-    NativeFunction function;
-  };
+std::string nativeOperationName(std::string_view name);
 
 struct NativeExternal final {
+  using Instance = std::shared_ptr<RecordInstance>;
+  using ResolveActor = std::function<Instance(NativeInstance)>;
+  using BindActor = std::function<NativeInstance(const Instance&)>;
+
   NativeFunction signature;
-  std::function<NativeCall(std::span<const NativeValue>, const BoundNativeCall::ResolveActor&,
-                           const BoundNativeCall::BindActor&)> call;
-  bool observe=true;
+  std::function<NativeCall(std::span<const NativeValue>, const ResolveActor&, const BindActor&)> call;
+  bool external=true;
   };
 
 using NativeExternals=std::map<std::string,NativeExternal,std::less<>>;
 
 namespace detail {
+
+template<class T>
+concept RecordPointer = std::same_as<T,std::shared_ptr<typename T::element_type>> &&
+                        std::derived_from<typename T::element_type,RecordInstance>;
 
 template<class T>
 constexpr NativeValue::Type externalType() {
@@ -54,50 +43,48 @@ constexpr NativeValue::Type externalType() {
     } else if constexpr(std::is_same_v<T,std::string_view> || std::is_same_v<T,std::string>) {
     return NativeValue::Str;
     } else {
-    static_assert(daedalus::DaedalusInstancePointer<T>);
+    static_assert(RecordPointer<T>);
     return NativeValue::Inst;
     }
   }
 
 template<class T>
-T externalArgument(const NativeValue& value, const BoundNativeCall::ResolveActor& resolve) {
+T externalArgument(const NativeValue& value, const NativeExternal::ResolveActor& resolve) {
   if constexpr(std::is_integral_v<T>) {
     return static_cast<T>(value.i);
     } else if constexpr(std::is_same_v<T,float>) {
     return value.f;
-    } else if constexpr(std::is_same_v<T,std::string_view>) {
+    } else if constexpr(std::is_same_v<T,std::string_view> || std::is_same_v<T,std::string>) {
     return value.s;
     } else {
     using Instance = typename T::element_type;
     auto instance = resolve(value.inst);
     if(value.inst!=0 && instance==nullptr)
       throw std::runtime_error("Unbound instance argument");
-    if constexpr(!std::is_same_v<Instance,daedalus::DaedalusInstance>) {
-      if(instance!=nullptr && (instance->instance_type()==nullptr || *instance->instance_type()!=typeid(Instance)))
-        throw std::runtime_error("Instance argument has the wrong type");
-      }
-    return std::static_pointer_cast<Instance>(std::move(instance));
+    auto record = std::dynamic_pointer_cast<Instance>(instance);
+    if(instance!=nullptr && record==nullptr)
+      throw std::runtime_error("Instance argument has the wrong type");
+    return record;
     }
   }
 
 }
 
 template<class R, class... P>
-NativeExternal makeNativeExternal(const std::function<R(P...)>& callback,bool observe=true) {
+NativeExternal makeNativeExternal(const std::function<R(P...)>& callback) {
   NativeExternal external;
-  external.observe=observe;
   external.signature.parameters = {detail::externalType<P>()...};
   if constexpr(!std::is_void_v<R>)
     external.signature.result = detail::externalType<R>();
-  external.call = [callback](std::span<const NativeValue> args, const BoundNativeCall::ResolveActor& resolve,
-                             const BoundNativeCall::BindActor& bind) -> NativeCall {
+  external.call = [callback](std::span<const NativeValue> args, const NativeExternal::ResolveActor& resolve,
+                             const NativeExternal::BindActor& bind) -> NativeCall {
     const auto parameters = [&]<size_t... I>(std::index_sequence<I...>) {
       return std::tuple<P...>{detail::externalArgument<P>(args[I],resolve)...};
       }(std::index_sequence_for<P...>{});
     if constexpr(std::is_void_v<R>) {
       std::apply(callback,parameters);
       return {};
-      } else if constexpr(daedalus::DaedalusInstancePointer<R>) {
+      } else if constexpr(detail::RecordPointer<R>) {
       return {NativeValue::instance(bind(std::apply(callback,parameters))),{}};
       } else if constexpr(std::is_same_v<R,float>) {
       return {NativeValue::real(std::apply(callback,parameters)),{}};
@@ -112,16 +99,10 @@ NativeExternal makeNativeExternal(const std::function<R(P...)>& callback,bool ob
   }
 
 template<class R, class... P>
-void registerNativeExternal(daedalus::DaedalusVm& vm,NativeExternals* registry,std::string_view name,
-                            const std::function<R(P...)>& callback,bool observe=true) {
-  vm.register_external(name,callback);
-  if(registry==nullptr)
-    return;
-  const auto* symbol=vm.find_symbol_by_name(name);
-  // Function locals require the VM's call frame.
-  if(symbol==nullptr || symbol->has_local_variables_enabled())
-    return;
-  registry->insert_or_assign(symbol->name(),makeNativeExternal(callback,observe));
+NativeExternal makeNativeInternal(const std::function<R(P...)>& callback) {
+  auto operation = makeNativeExternal(callback);
+  operation.external = false;
+  return operation;
   }
 
 }

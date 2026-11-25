@@ -145,5 +145,5 @@ class GameRules {
     virtual void startupFloorBeforeResetMove(Npc& npc, const Tempest::Vec3& destination) = 0;
     virtual void startupFloorBeforeKeep(Npc& npc) = 0;
     virtual std::array<int32_t,3> storyNpcTypes() = 0;
-    virtual size_t scriptVmMemorySize() const = 0;
+    virtual size_t scriptStatePayloadSize() const = 0;
   };

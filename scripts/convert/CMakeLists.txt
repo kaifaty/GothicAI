@@ -26,12 +26,11 @@ if(MSVC)
 endif()
 endif()
 add_executable(content-convert convert.cpp stressbase.cpp stressmeshes.cpp worldcook.cpp clusterlodcensus.cpp ../../OpenGothic/common/basestore.cpp
-  ../../OpenGothic/tools/runtimebindingroots.cpp ../../OpenGothic/tools/nativebasecatalogimport.cpp
+  ../../OpenGothic/tools/runtimebindingroots.cpp ../../OpenGothic/tools/nativebasecatalogimport.cpp ../../OpenGothic/tools/nativeworldplacementimport.cpp
   ../../OpenGothic/common/game/definitions/nativebasecatalog.cpp
   ../../OpenGothic/common/gltfmeshcolor.cpp
   ../../OpenGothic/common/world/voblayer.cpp ../../OpenGothic/common/world/movablevobs.cpp
-  ../../OpenGothic/common/game/definitions/particlecontent.cpp
-  ../../OpenGothic/common/game/definitions/definitiontypes.cpp)
+  ../../OpenGothic/common/game/definitions/particlecontent.cpp)
 get_filename_component(VOB_LAYER_MOVABLE_CSV "${CMAKE_CURRENT_SOURCE_DIR}/../../OpenGothic/data/movable-vobs.csv" ABSOLUTE)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VOB_LAYER_MOVABLE_CSV}")
@@ -61,15 +60,22 @@ endif()
 # Offline particle checks (check-particles) use the game's particlecontent loader and VM without writing base data.
 target_compile_definitions(content-convert PRIVATE CONTENT_CONVERT_PARTICLE_PROGRAMS=1)
 # Definitions import executes item constructors through the shared snapshot library.
-target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
+target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus gothic-offline-bindings)
 
 target_link_libraries(content-convert PRIVATE gothic-npc-snapshot StoryGraph)
-add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
+set(native_definition_readers
   ../../OpenGothic/common/game/itemdefinitionruntime.cpp
   ../../OpenGothic/common/game/npcdefinitionruntime.cpp
   ../../OpenGothic/common/game/npchelperruntime.cpp
+  ../../OpenGothic/common/game/routinedefinitionruntime.cpp)
+target_sources(content-convert PRIVATE ${native_definition_readers}
+  ../../OpenGothic/common/game/definitions/nativeworldplacement.cpp)
+target_include_directories(content-convert PRIVATE "${NPC_SNAPSHOT_GENERATED_DIR}")
+add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
+  ${native_definition_readers}
+  ../../OpenGothic/tools/itemdefinitionimport.cpp
+  ../../OpenGothic/common/game/definitions/nativebasecatalog.cpp
   ../../OpenGothic/common/game/placementdefinitionruntime.cpp
-  ../../OpenGothic/common/game/routinedefinitionruntime.cpp
   ../../OpenGothic/common/world/objects/npcroutinetable.cpp
   ../../OpenGothic/common/world/waypoint.cpp)
 target_include_directories(gothic-npc-snapshot-contract PRIVATE "${NPC_SNAPSHOT_GENERATED_DIR}")

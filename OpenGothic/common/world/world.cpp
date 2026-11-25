@@ -2145,8 +2145,8 @@ void World::probeMemory(std::string_view stage) const {
   if(wview) wview->probeMemory(stage);
   Tempest::Log::i("[loadprobe-owner] stage=",stage," name=waynet_cpu bytes=",wmatrix->probeCpuBytes());
   Tempest::Log::i("[loadprobe-owner] stage=",stage," name=vob_objects_cpu bytes=",wobj.probeVobBytes());
-  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=script_vm_cpu bytes=",
-                 rules().scriptVmMemorySize());
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=script_state_payload_cpu bytes=",
+                 rules().scriptStatePayloadSize());
   }
 
 void World::animationPfx(const Animation::MdsParticleEffect& p, MdlVisual& visual, bool inPfxRange) {

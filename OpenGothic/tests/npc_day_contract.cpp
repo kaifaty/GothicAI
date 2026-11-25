@@ -1,4 +1,5 @@
 #include "game/gamescript_daystats.h"
+#include "daedalus/vm.h"
 #include "programdata.h"
 #include "storygraph/bytecode.h"
 #include "storygraph/exec.h"
@@ -281,6 +282,33 @@ void checkNativePhaseAccounting() {
         phase("ZS_B")["records"]==0 && phase("ZS_B")["nested"]==2,
         "the inner script phase and later fallback retain their own root calls");
   stats->stop(vm);
+
+  DayScriptStats native({},DayScriptStats::Metric::NativePhases);
+  native.registerBeastState("ZS_MM_IDLE");
+  native.begin("ZS_A_LOOP");
+  native.record();
+  native.record();
+  native.random(true,true);
+  native.begin("B_ASSESSPLAYER");
+  native.record();
+  native.random(true,true);
+  native.end();
+  native.random(true,true);
+  native.end();
+  native.begin("ZS_MM_IDLE_LOOP");
+  native.end();
+  counters.Parse(native.json().c_str());
+  check(!counters.HasParseError() && counters["metric"]=="native_phase_calls" && counters["calls"]==2 &&
+        !counters.HasMember("instructions_by_symbol") && !counters.HasMember("unattributed_instructions"),
+        "native phase counts identify their metric and omit VM costs");
+  check(phase("ZS_A")["engine"]==1 && phase("ZS_A")["records"]==1 && phase("ZS_A")["random"]==2 &&
+        !phase("ZS_A").HasMember("instructions") && !phase("ZS_A").HasMember("nested") &&
+        !phase("ZS_A").HasMember("externals") && phase("ZS_MM_IDLE")["engine"]==1 && phase("ZS_MM_IDLE")["records"]==0,
+        "native accounting counts accepted phases once and preserves observed phase entries");
+  check(counters["random_sources"]["HLP_RANDOM/ZS_A/loop"]==2 &&
+        counters["random_sources"]["HLP_RANDOM/outside/B_ASSESSPLAYER"]==1 &&
+        counters["symbols"]["B_ASSESSPLAYER"]==1 && counters["families"]["perceptions"]==1,
+        "native observations retain perception identity and return to the parent RNG context");
   }
 
 void run() {

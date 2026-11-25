@@ -472,10 +472,7 @@ Npc* BeastWatch::locate(World& world, Npc* ptr, const Wolf& w) {
   }
 
 std::string BeastWatch::idOf(World& world, const Npc& npc, const Wolf& w) const {
-  std::string sym;
-  if(auto s = world.script().findSymbol(npc.instanceSymbol()))
-    sym = s->name();
-  return sym + "#" + std::to_string(w.serial);
+  return std::string(world.script().storyNpcName(npc.instanceSymbol())) + "#" + std::to_string(w.serial);
   }
 
 std::string BeastWatch::stateOf(World& world, Npc& npc, const Wolf& w, Npc& hero) const {

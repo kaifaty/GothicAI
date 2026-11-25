@@ -26,6 +26,16 @@ if(OPENGOTHIC_ENABLE_APP_CADENCE)
   target_compile_definitions(${PROJECT_NAME} PUBLIC OPENGOTHIC_ENABLE_APP_CADENCE=1)
 endif()
 add_executable(Gothic2Notr)
+target_compile_definitions(${PROJECT_NAME} PRIVATE GOTHIC_NATIVE_V3=1)
+target_compile_definitions(Gothic2Notr PRIVATE GOTHIC_NATIVE_V3=1)
+
+set(nativeCatalogHeader "${PROJECT_SOURCE_DIR}/common/game/definitions/nativebasecatalog.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${nativeCatalogHeader}")
+file(STRINGS "${nativeCatalogHeader}" nativeCatalogVersion REGEX "^inline constexpr int catalogVersion = [1-9][0-9]*;")
+if(NOT nativeCatalogVersion MATCHES "catalogVersion = ([1-9][0-9]*)")
+  message(FATAL_ERROR "The native catalog version is missing")
+endif()
+file(GENERATE OUTPUT "$<TARGET_FILE_DIR:Gothic2Notr>/native-catalog-version.txt" CONTENT "${CMAKE_MATCH_1}\n")
 
 if(MSVC)
   add_definitions(-D_USE_MATH_DEFINES)
@@ -114,6 +124,9 @@ list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/def
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/deathtrophydefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/symbolcatalog.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/runtimebindings.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/baseprogram.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/definitiontypes.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/placementdefinitionruntime.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/stockstoryprograms.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/storygraph.cpp")
 list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/meshclusterlod.cpp")
@@ -258,8 +271,8 @@ target_compile_definitions(gothic-cluster-lod-test PRIVATE
 if(NOT MSVC)
   target_compile_options(gothic-cluster-lod-test PRIVATE -Wall -Wconversion -Werror -ffp-contract=off)
 endif()
-add_subdirectory(common/daedalus)
-target_link_libraries(${PROJECT_NAME} gothic-script-state)
+# Only import tools and explicit comparison contracts link Daedalus.
+add_subdirectory(common/daedalus EXCLUDE_FROM_ALL)
 target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/convert/CMakeLists.txt")
   add_subdirectory(../scripts/convert content-convert)
@@ -368,6 +381,7 @@ target_link_libraries(Gothic2Notr PRIVATE AiBridge)
 # Uses the shared engine/CPU simulation without constructing a window or graphics/audio device.
 if(UNIX)
   add_executable(gothic-body-runner game/bodyrunner.cpp game/societyexport.cpp)
+  target_compile_definitions(gothic-body-runner PRIVATE GOTHIC_NATIVE_V3=1)
   target_link_libraries(gothic-body-runner PRIVATE OpenGothic AiBridge)
   # --society-export names the engine's commit: refreshed on every build of the runner, the header is
   # rewritten only when the commit changes ("unknown" in a copy without .git).
@@ -381,7 +395,7 @@ if(UNIX)
   # Pure production resolver/command gates: no assets, simulation or rendering device.
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
-  add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp)
+  add_executable(gothic-npc-day-contract tests/npc_day_contract.cpp common/game/gamescript_daystats.cpp)
   target_link_libraries(gothic-npc-day-contract PRIVATE OpenGothic AiBridge StoryGraph gothic-daedalus)
   target_include_directories(gothic-npc-day-contract SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   # Real NPC/world fixture for growing and shrinking the live observation subscription.
@@ -444,7 +458,7 @@ if(UNIX)
   target_link_libraries(gothic-render-rig-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-render-rig-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
-  add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
+  add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp common/game/definitions/baseprogram.cpp)
   target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)
   target_include_directories(gothic-mesh-gltf-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_definitions(gothic-mesh-gltf-test PRIVATE
@@ -639,22 +653,10 @@ endif()
     tests/physics_contract_noise.cpp
     tests/physics_bonds_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
-  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL
-    tests/placed_items_contract.cpp tests/npc_live_fixture.cpp)
-  target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_compile_definitions(gothic-placed-items-contract PRIVATE GOTHIC_BENNET_LOOKUP_AUDIT=1)
-    set_property(SOURCE tests/placed_items_contract.cpp APPEND PROPERTY
-      COMPILE_DEFINITIONS GOTHIC_BENNET_LOOKUP_WRAPPERS=1)
-    foreach(method IN ITEMS
-        19find_symbol_by_nameESt17basic_string_viewIcSt11char_traitsIcEE
-        20find_symbol_by_indexEj
-        22find_symbol_by_addressEj)
-      target_link_options(gothic-placed-items-contract PRIVATE
-        "LINKER:--wrap=_ZN8daedalus14DaedalusScript${method}"
-        "LINKER:--wrap=_ZNK8daedalus14DaedalusScript${method}")
-    endforeach()
-  endif()
+  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
+  target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge)
+  add_executable(gothic-native-story-contract EXCLUDE_FROM_ALL tests/native_story_contract.cpp)
+  target_link_libraries(gothic-native-story-contract PRIVATE OpenGothic AiBridge)
   # The society stand's world (docs/society-sim.md): runs gothic-body-runner --society-export twice on the
   # game's data (GOTHIC_DIR) and checks it against evals/npc-decisions/day_people.json and places.json.
   # Only where the runner exists (UNIX, see above).
@@ -849,8 +851,9 @@ endif()
       target_compile_options(gothic-vob-layer-test PRIVATE -Wall -Wconversion -Werror)
     endif()
   endif()
-  add_executable(gothic-basecontent-contract EXCLUDE_FROM_ALL tests/basecontent_contract.cpp)
-  target_link_libraries(gothic-basecontent-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  add_executable(gothic-basecontent-contract EXCLUDE_FROM_ALL tests/basecontent_contract.cpp common/game/definitions/baseprogram.cpp)
+  target_link_libraries(gothic-basecontent-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import
+    gothic-offline-bindings)
   target_include_directories(gothic-basecontent-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   if(UNIX)
     add_executable(gothic-video-contract EXCLUDE_FROM_ALL tests/video_contract.cpp)
@@ -944,6 +947,7 @@ endif()
 
 # installation
 install(TARGETS Gothic2Notr DESTINATION bin)
+install(FILES "$<TARGET_FILE_DIR:Gothic2Notr>/native-catalog-version.txt" DESTINATION bin)
 
 include(cmake/ZenKitGuard.cmake)
 include(cmake/EngineLayerGuard.cmake)

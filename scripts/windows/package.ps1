@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Packs the prebuilt Windows release into one ZIP, with its build manifest and SHA256SUMS.
+Packs the prebuilt Windows release and offline tools into ZIP archives with manifests and SHA256SUMS.
 
 .DESCRIPTION
 Runs after scripts\build-engine.ps1 and reads that build's outputs. The archive holds what a player runs,
@@ -10,11 +10,12 @@ copied by whitelist into the repository's own layout, so the launcher finds ever
   scripts\windows\                       the entry points' PowerShell and Python helpers, Russian messages
   launcher\core, server, asr-service, tts-service, libs\chatgpt-auth
                                          sources, pyproject.toml, uv.lock, .python-version (no tests)
-  OpenGothic\build\opengothic\           Gothic2Notr.exe, content-convert.exe and every DLL of that folder
-  OpenGothic\ai_bridge\storygraph\build\ storygraph.exe
+  OpenGothic\build\opengothic\           Gothic2Notr.exe and its app-local DLLs
+  OpenGothic\ai_bridge\storygraph\build\ storygraph.exe (native OU reader)
   tools\uv\                              the pinned official uv.exe and its licenses
   licenses\                              the licenses of everything compiled in or shipped
-The Microsoft C++ runtime DLLs go beside both executables (app-local, from the Visual Studio redist
+The tools archive keeps the original paths of content-convert.exe and the offline storygraph.exe.
+The Microsoft C++ runtime DLLs go beside the executables (app-local, from the Visual Studio redist
 folder). Python and the locked wheels are not packed: Setup downloads them once through uv.
 
 The archive is refused when something private or build-only slipped in, when a binary is not x64, or when
@@ -53,8 +54,13 @@ $Forbidden = '(?i)(\.(pdb|ilk|obj|lib|exp|pyc|pyo|sav|vdf|zen|log)$)' +
 
 $OutDir = [System.IO.Path]::GetFullPath($OutDir)
 $stage = Join-Path $OutDir $Name
-if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
-New-Item -ItemType Directory -Force -Path $stage | Out-Null
+$toolName = "$Name-tools"
+$toolStage = Join-Path $OutDir $toolName
+$packageWork = Join-Path $OutDir ".$Name"
+foreach ($folder in $stage, $toolStage, $packageWork) {
+    if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $folder | Out-Null
+}
 
 function Copy-Into([string]$Source, [string]$Relative) {
     if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) { throw "missing: $Source" }
@@ -88,13 +94,12 @@ foreach ($project in $PythonProjects) {
         ForEach-Object { Copy-FromRepo (Get-Relative $_.FullName $Root) }
 }
 
-# the game, its base and video converter, and every DLL of their output folder (Tempest, the DirectX
-# shader compiler...)
+# the game and native dialogue reader, with the DLLs of their build folders
 $gameDir = Join-Path $Root $Game
 Copy-FromRepo "$Game\Gothic2Notr.exe"
-Copy-FromRepo "$Game\content-convert.exe"
+Copy-FromRepo "$Game\native-catalog-version.txt"
 Get-ChildItem -LiteralPath $gameDir -Filter '*.dll' -File | ForEach-Object { Copy-FromRepo "$Game\$($_.Name)" }
-Copy-FromRepo "$Storygraph\storygraph.exe"
+Copy-Into (Join-Path $Root "$Storygraph\storygraph-ou.exe") "$Storygraph\storygraph.exe"
 Get-ChildItem -LiteralPath (Join-Path $Root $Storygraph) -Filter '*.dll' -File |
     ForEach-Object { Copy-FromRepo "$Storygraph\$($_.Name)" }
 
@@ -167,10 +172,17 @@ $source = Join-Path $OutDir 'SOURCE.txt'
 Add-License $source 'SOURCE.txt'
 Remove-Item -LiteralPath $source
 
-# refuse anything private or build-only
-$files = @(Get-ChildItem -LiteralPath $stage -Recurse -File)
-$bad = @($files | Where-Object { (Get-Relative $_.FullName $stage) -match $Forbidden })
-if ($bad.Count -gt 0) { throw "not for the archive: $(($bad | ForEach-Object { Get-Relative $_.FullName $stage }) -join ', ')" }
+# the offline programs keep their paths and the same app-local DLLs and source notices
+$gameStage = $stage
+$stage = $toolStage
+Copy-FromRepo "$Game\content-convert.exe"
+Copy-FromRepo "$Storygraph\storygraph.exe"
+Copy-FromRepo 'LICENSE'
+foreach ($relative in $Game, $Storygraph) {
+    Get-ChildItem -LiteralPath (Join-Path $gameStage $relative) -Filter '*.dll' -File |
+        ForEach-Object { Copy-Into $_.FullName "$relative\$($_.Name)" }
+}
+Copy-Item -LiteralPath (Join-Path $gameStage 'licenses') -Destination $stage -Recurse
 
 # x64 binaries whose every imported DLL is packed beside them or part of Windows
 function Test-X64([string]$Path) {
@@ -186,73 +198,93 @@ function Test-X64([string]$Path) {
         $stream.Dispose()
     }
 }
-$system32 = Join-Path $env:SystemRoot 'System32'
-$binaries = @()
-foreach ($binary in @($files | Where-Object { $_.Extension -in '.exe', '.dll' })) {
-    $relative = Get-Relative $binary.FullName $stage
-    if (-not (Test-X64 $binary.FullName)) { throw "not an x64 binary: $relative" }
-    $imports = @()
-    $listing = Get-NativeOutput 'dumpbin.exe' @('/nologo', '/dependents', $binary.FullName)
-    foreach ($dll in @($listing -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[\w.\-]+\.dll$' })) {
-        $from = if (Test-Path -LiteralPath (Join-Path $binary.DirectoryName $dll)) { 'packed' }
-            elseif ($dll -match '^(msvcp|vcruntime|concrt|vccorlib)\d') { $null }  # app-local only
-            elseif ($dll -match '^(api|ext)-ms-win-') { 'windows' }
-            elseif ($dll -ieq 'vulkan-1.dll') { 'graphics driver' }
-            elseif (Test-Path -LiteralPath (Join-Path $system32 $dll)) { 'windows' }
-            else { $null }
-        if (-not $from) { throw "$relative imports $dll, which is neither packed beside it nor part of Windows" }
-        $imports += [ordered]@{ dll = $dll; from = $from }
+function Write-Archive([string]$ArchiveName, [string[]]$RequiredBinaries, [string[]]$RequiredFiles, [string]$PackagedUv) {
+    $stage = Join-Path $OutDir $ArchiveName
+    # refuse anything private or build-only
+    $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File)
+    $bad = @($files | Where-Object { (Get-Relative $_.FullName $stage) -match $Forbidden })
+    if ($bad.Count -gt 0) { throw "not for the archive: $(($bad | ForEach-Object { Get-Relative $_.FullName $stage }) -join ', ')" }
+
+    $system32 = Join-Path $env:SystemRoot 'System32'
+    $binaries = @()
+    foreach ($binary in @($files | Where-Object { $_.Extension -in '.exe', '.dll' })) {
+        $relative = Get-Relative $binary.FullName $stage
+        if (-not (Test-X64 $binary.FullName)) { throw "not an x64 binary: $relative" }
+        $imports = @()
+        $listing = Get-NativeOutput 'dumpbin.exe' @('/nologo', '/dependents', $binary.FullName)
+        foreach ($dll in @($listing -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[\w.\-]+\.dll$' })) {
+            $from = if (Test-Path -LiteralPath (Join-Path $binary.DirectoryName $dll)) { 'packed' }
+                elseif ($dll -match '^(msvcp|vcruntime|concrt|vccorlib)\d') { $null }  # app-local only
+                elseif ($dll -match '^(api|ext)-ms-win-') { 'windows' }
+                elseif ($dll -ieq 'vulkan-1.dll') { 'graphics driver' }
+                elseif (Test-Path -LiteralPath (Join-Path $system32 $dll)) { 'windows' }
+                else { $null }
+            if (-not $from) { throw "$relative imports $dll, which is neither packed beside it nor part of Windows" }
+            $imports += [ordered]@{ dll = $dll; from = $from }
+        }
+        $binaries += [ordered]@{
+            path = $relative.Replace('\', '/')
+            bytes = $binary.Length
+            sha256 = (Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            imports = $imports
+        }
     }
-    $binaries += [ordered]@{
-        path = $relative.Replace('\', '/')
-        bytes = $binary.Length
-        sha256 = (Get-FileHash -LiteralPath $binary.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        imports = $imports
+    foreach ($needed in $RequiredBinaries) {
+        if (-not ($binaries | Where-Object { $_.path -eq $needed })) { throw "$needed is not in the archive" }
     }
-}
-foreach ($needed in 'OpenGothic/build/opengothic/Gothic2Notr.exe', 'OpenGothic/build/opengothic/content-convert.exe',
-                    'OpenGothic/ai_bridge/storygraph/build/storygraph.exe') {
-    if (-not ($binaries | Where-Object { $_.path -eq $needed })) { throw "$needed is not in the archive" }
+
+    # the archive, its manifest and their checksums
+    $zip = Join-Path $packageWork "$ArchiveName.zip"
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+    $check = [System.IO.Compression.ZipFile]::OpenRead($zip)
+    try {
+        $entries = @($check.Entries | ForEach-Object { $_.FullName })
+    } finally {
+        $check.Dispose()
+    }
+    foreach ($needed in ($RequiredBinaries + $RequiredFiles)) {
+        if ($entries -notcontains "$ArchiveName/$needed") { throw "the archive lacks $ArchiveName/$needed" }
+    }
+    $manifest = [ordered]@{
+        name = $ArchiveName
+        repository = $Repository
+        commit = $Commit
+        run = $RunUrl
+        built_utc = (Get-Date).ToUniversalTime().ToString('o')
+        msvc_tools = $env:VCToolsVersion
+        msvc_runtime = $crt.Name
+        vulkan_sdk = $VulkanSdkVersion
+        uv = $PackagedUv
+        files = $entries.Count
+        binaries = $binaries
+        licenses = @($licenses | ForEach-Object { $_.Replace('\', '/') })
+        verified = 'built and unit-tested on windows-2022; gameplay, graphics and microphone not yet tested on a real PC'
+    }
+    $manifestFile = Join-Path $packageWork "$ArchiveName.manifest.json"
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($manifestFile, ($manifest | ConvertTo-Json -Depth 6), $utf8)
+    Remove-Item -LiteralPath $stage -Recurse -Force
+    Write-Host "packed $($entries.Count) files for $ArchiveName"
+    return $zip, $manifestFile
 }
 
-# the archive, its manifest and their checksums
-$zip = Join-Path $OutDir "$Name.zip"
-if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip }
-[System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $true)
-$check = [System.IO.Compression.ZipFile]::OpenRead($zip)
+$gameBinaries = @('OpenGothic/build/opengothic/Gothic2Notr.exe', 'OpenGothic/ai_bridge/storygraph/build/storygraph.exe',
+                  'tools/uv/uv.exe')
+$gameFiles = @('Start-GothicAI.cmd', 'Setup-GothicAI.cmd', 'Prepare-GothicAI-Game.cmd', 'Check-Microphone.cmd',
+               'OpenGothic/build/opengothic/native-catalog-version.txt',
+               'scripts/windows/game_profile.py', 'scripts/windows/microphone-check.ps1', 'server/uv.lock')
+$toolBinaries = @('OpenGothic/build/opengothic/content-convert.exe', 'OpenGothic/ai_bridge/storygraph/build/storygraph.exe')
 try {
-    $entries = @($check.Entries | ForEach-Object { $_.FullName })
+    $outputs = @(Write-Archive $Name $gameBinaries $gameFiles $UvVersion)
+    $outputs += @(Write-Archive $toolName $toolBinaries @() '')
+    $sums = foreach ($file in $outputs) {
+        '{0}  {1}' -f (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path -Leaf $file)
+    }
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    $checksums = Join-Path $packageWork 'SHA256SUMS'
+    [System.IO.File]::WriteAllLines($checksums, [string[]]$sums, $utf8)
+    Move-Item -LiteralPath ($outputs + $checksums) -Destination $OutDir -Force
 } finally {
-    $check.Dispose()
+    Remove-Item -LiteralPath $packageWork -Recurse -Force
 }
-foreach ($needed in 'Start-GothicAI.cmd', 'Setup-GothicAI.cmd', 'Prepare-GothicAI-Game.cmd', 'Check-Microphone.cmd',
-                    'scripts/windows/game_profile.py', 'scripts/windows/microphone-check.ps1', 'tools/uv/uv.exe',
-                    'OpenGothic/build/opengothic/Gothic2Notr.exe', 'OpenGothic/build/opengothic/content-convert.exe',
-                    'OpenGothic/ai_bridge/storygraph/build/storygraph.exe', 'server/uv.lock') {
-    if ($entries -notcontains "$Name/$needed") { throw "the archive lacks $Name/$needed" }
-}
-$manifest = [ordered]@{
-    name = $Name
-    repository = $Repository
-    commit = $Commit
-    run = $RunUrl
-    built_utc = (Get-Date).ToUniversalTime().ToString('o')
-    msvc_tools = $env:VCToolsVersion
-    msvc_runtime = $crt.Name
-    vulkan_sdk = $VulkanSdkVersion
-    uv = $UvVersion
-    files = $entries.Count
-    binaries = $binaries
-    licenses = @($licenses | ForEach-Object { $_.Replace('\', '/') })
-    verified = 'built and unit-tested on windows-2022; gameplay, graphics and microphone not yet tested on a real PC'
-}
-$manifestFile = Join-Path $OutDir "$Name.manifest.json"
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText($manifestFile, ($manifest | ConvertTo-Json -Depth 6), $utf8)
-$sums = foreach ($file in $zip, $manifestFile) {
-    '{0}  {1}' -f (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path -Leaf $file)
-}
-[System.IO.File]::WriteAllLines((Join-Path $OutDir 'SHA256SUMS'), [string[]]$sums, $utf8)
-Remove-Item -LiteralPath $stage -Recurse -Force
-Write-Host "packed $($entries.Count) files:"
 Get-ChildItem -LiteralPath $OutDir -File | ForEach-Object { Write-Host ('  {0} ({1:N0} bytes)' -f $_.Name, $_.Length) }

@@ -13,8 +13,6 @@
 #include <optional>
 #include <vector>
 
-namespace ProgramData { struct Index; }
-
 namespace ParticleContent {
 
 // An own sprite atlas played per particle (cols x rows cells, row by row from the top left); each particle starts
@@ -122,7 +120,7 @@ class Catalog final {
     std::map<std::string,Def::ParticleEffect,std::less<>> records;
   };
 
-std::optional<Catalog> openStockCatalog(const ProgramData::Index& index);
+std::optional<Catalog> openStockCatalog(const std::filesystem::path& base);
 GameHost::ParticleNameCheck nameChecker();
 std::string canonicalName(std::string_view name);
 

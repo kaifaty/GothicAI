@@ -1,9 +1,12 @@
 #include "scriptvars.h"
 
-#include "daedalus/script.h"
+#include "nativebasecatalog.h"
 #include "savearchive.h"
 
+#include <algorithm>
+#include <cctype>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace {
@@ -29,6 +32,16 @@ std::vector<T> readValues(SaveArchive& in) {
     values.push_back(std::move(value));
     }
   return values;
+  }
+
+template<class T>
+void bindField(ScriptVars::Slot* slot, std::string_view name, T& value) {
+  auto* array = std::get_if<ScriptVars::Array<T>>(slot);
+  if(array==nullptr || array->values.size()!=1 || array->storage==nullptr)
+    throw std::runtime_error("Cannot bind mutable runtime field "+std::string(name));
+  value = std::move(array->values.front());
+  array->values = {&value,1};
+  array->storage.reset();
   }
 
 } // namespace
@@ -84,35 +97,75 @@ void ScriptVars::writeRow(SaveArchive& out, const Row& row) {
     }
   }
 
-void ScriptVars::State::bind(daedalus::DaedalusSymbol& symbol) {
-  using Type = daedalus::DaedalusDataType;
-  if(symbol.is_member())
-    return;
-  const auto id = symbol.index();
-  if(symbol.type()==Type::INSTANCE) {
-    const auto it = values.try_emplace(id,Object{}).first;
-    symbol.bind_global_instance(std::get<Object>(it->second));
-    return;
+void ScriptVars::State::loadInitial(std::span<const NativeBaseCatalog::InitialRow> rows) {
+  if(!values.empty())
+    throw std::runtime_error("Session state is already initialized");
+  for(const auto& row : rows) {
+    names.emplace(row.name,row.id);
+    auto slot = std::visit([](const auto& initial) -> Slot {
+      using T = std::decay_t<decltype(initial)>;
+      if constexpr(std::is_same_v<T,NativeBaseCatalog::Alias>) {
+        return Object{};
+        }
+      else {
+        using Field = typename T::value_type;
+        Array<Field> array;
+        array.storage = std::make_unique<Field[]>(initial.size());
+        array.values = {array.storage.get(),initial.size()};
+        std::ranges::copy(initial,array.values.begin());
+        return array;
+        }
+      },row.value);
+    values.emplace(row.id,std::move(slot));
     }
-  if(symbol.is_const() || symbol.count()==0)
-    return;
-  const auto bindArray = [&]<class T>(std::span<T> bound, std::unique_ptr<T[]>(daedalus::DaedalusSymbol::*take)()) {
-    const auto it = values.try_emplace(id,std::in_place_type<Array<T>>).first;
-    auto& array = std::get<Array<T>>(it->second);
-    if(bound.empty()) {
-      // Keep addresses of existing values, including strings already viewed by the session.
-      array.storage = (symbol.*take)();
-      bound = {array.storage.get(),symbol.count()};
-      }
-    array.values = bound;
-    };
-  using Symbol = daedalus::DaedalusSymbol;
-  switch(symbol.type()) {
-    case Type::INT:    bindArray(symbol.bound_global_int(),&Symbol::take_global_int);       break;
-    case Type::FLOAT:  bindArray(std::span<float>{},&Symbol::take_global_float);            break;
-    case Type::STRING: bindArray(symbol.bound_global_string(),&Symbol::take_global_string); break;
-    default: break;
+  }
+
+void ScriptVars::State::declareArchetypes(std::span<const NativeBaseCatalog::Identity> rows) {
+  for(const auto& [id,name] : rows) {
+    if(values.contains(id) || names.contains(name))
+      throw std::runtime_error("Duplicate runtime object identity "+name);
+    values.emplace(id,Object{});
+    names.emplace(name,id);
     }
+  }
+
+bool ScriptVars::State::declareDirector(const SymbolDefinition& definition) {
+  if(values.contains(definition.index) || names.contains(definition.name))
+    return false;
+  if(definition.kind==SymbolKind::Int) {
+    Array<int32_t> array;
+    array.storage = std::make_unique<int32_t[]>(1);
+    array.values = {array.storage.get(),1};
+    values.emplace(definition.index,std::move(array));
+    }
+  else if(definition.kind==SymbolKind::Npc) {
+    values.emplace(definition.index,Object{});
+    }
+  else {
+    return false;
+    }
+  names.emplace(definition.name,definition.index);
+  return true;
+  }
+
+void ScriptVars::State::bind(std::string_view name, int32_t& value) {
+  bindField(find(name),name,value);
+  }
+
+void ScriptVars::State::bind(std::string_view name, std::string& value) {
+  bindField(find(name),name,value);
+  }
+
+std::optional<uint32_t> ScriptVars::State::id(std::string_view name) const {
+  if(const auto it = names.find(name); it!=names.end())
+    return it->second;
+  const auto lower = [](unsigned char ch) { return std::islower(ch)!=0; };
+  if(std::ranges::none_of(name,lower))
+    return std::nullopt;
+  std::string upper(name);
+  std::ranges::transform(upper,upper.begin(),[](unsigned char ch) { return char(std::toupper(ch)); });
+  const auto it = names.find(upper);
+  return it==names.end() ? std::nullopt : std::optional(it->second);
   }
 
 ScriptVars::Slot* ScriptVars::State::find(uint32_t id) {
@@ -123,6 +176,16 @@ ScriptVars::Slot* ScriptVars::State::find(uint32_t id) {
 const ScriptVars::Slot* ScriptVars::State::find(uint32_t id) const {
   const auto it = values.find(id);
   return it==values.end() ? nullptr : &it->second;
+  }
+
+ScriptVars::Slot* ScriptVars::State::find(std::string_view name) {
+  const auto key = id(name);
+  return key ? find(*key) : nullptr;
+  }
+
+const ScriptVars::Slot* ScriptVars::State::find(std::string_view name) const {
+  const auto key = id(name);
+  return key ? find(*key) : nullptr;
   }
 
 ScriptVars::SymbolHeader ScriptVars::readSymbolHeader(SaveArchive& in) {

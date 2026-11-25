@@ -8,6 +8,8 @@
 #include <functional>
 #include <unordered_map>
 
+namespace NativeBaseCatalog { struct Selection; }
+
 namespace NpcHelperRuntime {
 struct Definitions {
   std::unordered_map<uint32_t,NpcHelperDefinitions::Definition> helpers;
@@ -16,6 +18,8 @@ struct Definitions {
 bool enabled();
 Definitions resolve(const NpcHelperDefinitions::Library& library,const daedalus::DaedalusScript& script);
 Definitions load(const std::filesystem::path& base,const daedalus::DaedalusScript& script,std::string_view sha256);
+Definitions resolve(const NpcHelperDefinitions::Library& library,const NativeBaseCatalog::Selection& catalog);
+Definitions load(const std::filesystem::path& base,const NativeBaseCatalog::Selection& catalog,std::string_view sha256);
 // Arguments have already been pushed by NPC record playback. A fallback leaves them untouched.
 bool invoke(daedalus::DaedalusVm& vm,const std::shared_ptr<daedalus::INpc>& npc,
             const daedalus::DaedalusSymbol* function,const Definitions& definitions);
@@ -26,4 +30,6 @@ using InvokeExternal=std::function<int32_t(const daedalus::DaedalusSymbol&, std:
 bool invokePrepared(daedalus::DaedalusVm& vm,const std::shared_ptr<daedalus::INpc>& npc,
                     uint32_t function,const Definitions& definitions,std::span<const NpcHelperDefinitions::Value> args,
                     const InvokeExternal& invokeExternal={});
+bool invokePrepared(uint32_t function,const Definitions& definitions,
+                    std::span<const NpcHelperDefinitions::Value> args,NpcHelperDefinitions::Host& host);
 }

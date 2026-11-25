@@ -1,100 +1,56 @@
 #include "gamescript.h"
 
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
+#include "loadprobe.h"
+#include "world/objects/npc.h"
+
 #include <stdexcept>
 
-int GameScript::initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc,
-                                   daedalus::DaedalusSymbol* function) {
-  return RoutineDefinitionRuntime::initialize(vm,function,routineDefinitions,[&](const auto& row) {
-    ta_min(npc,row.startHour,row.startMinute,row.endHour,row.endMinute,int(row.state),row.waypoint);
-    });
+void GameScript::addPreparedRoutine(Npc* npc, const RoutineDefinitionRuntime::Routine& routine) {
+  if(npc==nullptr)
+    return;
+  for(const auto& row : routine.rows) {
+    LoadProbe::Startup::Detail::Scope detail("ta_min",[&]{return row.waypoint;});
+    npc->addRoutine(gtime(row.startHour,row.startMinute),gtime(row.endHour,row.endMinute),row.state,row.waypoint);
+    }
   }
 
 void GameScript::loadNativeRoutineExchange() {
-  if(!nativeRoutineProgram)
-    return;
+  using Actor=std::shared_ptr<daedalus::INpc>;
+  nativeExternals.insert_or_assign("B_STARTOTHERROUTINE",storygraph::makeNativeInternal(
+    std::function<void(Actor,std::string_view)>{[this](Actor actor,std::string_view routine) {
+      startOtherRoutine(actor,routine);
+      }}));
+  nativeExternals.insert_or_assign("B_GREG_COMESTODEXTER",storygraph::makeNativeInternal(
+    std::function<void()>{[this] {
+      if(const auto self = nativeNpc("SELF"))
+        runGregRoutineTransition(*self);
+      }}));
+  }
 
-  const auto instanceId=[this](daedalus::DaedalusSymbol* symbol) {
-    vm.push_reference(symbol);
-    vm.unsafe_call_external(findSymbol("HLP_GETINSTANCEID"));
-    return vm.pop_int();
-    };
-  using Handle=std::shared_ptr<daedalus::INpc>;
-  vm.override_function("B_STARTOTHERROUTINE",std::function<void(Handle,std::string_view)>{
-    [this,instanceId](Handle npc,std::string_view routine) {
-      auto* actor=findSymbol("B_STARTOTHERROUTINE.SLF");
-      auto* name=findSymbol("B_STARTOTHERROUTINE.NEWROUTINE");
-      name->set_string(routine);
-      actor->set_instance(npc);
-
-      // Keep the existing engine boundaries, including the placement barrier.
-      const auto call=[&](std::string_view external) {
-        vm.push_reference(actor);
-        vm.unsafe_call_external(findSymbol(external));
-        };
-      call("AI_STANDUP");
-      const auto selected=instanceId(actor);
-      const auto self=instanceId(vm.global_self());
-      const bool sameInstance=selected==self;
-      if(!sameInstance) {
-        call("NPC_ISDEAD");
-        const bool dead=vm.pop_int()!=0;
-        call("HLP_ISVALIDNPC");
-        const bool valid=vm.pop_int()!=0;
-        if(dead || !valid)
-          return;
-        }
-      vm.push_reference(actor);
-      vm.push_reference(name);
-      vm.unsafe_call_external(findSymbol("NPC_EXCHANGEROUTINE"));
-      if(!sameInstance)
-        call("AI_CONTINUEROUTINE");
-      }},RoutineDefinitionRuntime::enabled);
-
-  vm.override_function("B_GREG_COMESTODEXTER",std::function<void()>{[this,instanceId] {
-    auto* dexter=findSymbol("DEXTER");
-    const auto expected=instanceId(dexter);
-    const auto actual=instanceId(vm.global_self());
-    if(expected!=actual)
+void GameScript::startOtherRoutine(const std::shared_ptr<daedalus::INpc>& actor,std::string_view routine) {
+  setNpcRuleString("B_STARTOTHERROUTINE.NEWROUTINE",routine);
+  storyActorSlot("B_STARTOTHERROUTINE.SLF") = actor;
+  const auto binding = nativeWorldActor(actor);
+  nativeWorldOperation("AI_STANDUP",{binding},actor);
+  const bool sameInstance = hlp_getinstanceid(actor)==hlp_getinstanceid(nativeNpc("SELF"));
+  if(!sameInstance) {
+    const bool dead = npc_isdead(actor);
+    if(!hlp_isvalidnpc(actor) || dead)
       return;
-    auto* complete=findSymbol("B_GREG_COMESTODEXTER_ONETIME");
-    const auto no=findSymbol("FALSE")->get_int();
-    if(complete->get_int()!=no)
-      return;
-
-    constexpr uint16_t enemyOverride=61; // AIV_ENEMYOVERRIDE in the verified program.
-    const auto context=dexter->get_instance();
-    vm.unsafe_set_gi(context);
-    if(context)
-      findSymbol("C_NPC.AIVAR")->set_int(no,enemyOverride,context.get());
-    findSymbol("GREGLOCATION")->set_int(findSymbol("GREG_DEXTER")->get_int());
-    vm.push_reference(findSymbol("GREG_NW"));
-    vm.push_reference(findSymbol("$12928"));
-    vm.unsafe_call_bl(findSymbol("B_STARTOTHERROUTINE"));
-    complete->set_int(findSymbol("TRUE")->get_int());
-    }},RoutineDefinitionRuntime::enabled);
+    }
+  const auto savedRoutine = storygraph::NativeValue::str(std::string(npcRuleString("B_STARTOTHERROUTINE.NEWROUTINE")));
+  nativeWorldOperation("NPC_EXCHANGEROUTINE",{binding,savedRoutine},actor);
+  if(!sameInstance)
+    nativeWorldOperation("AI_CONTINUEROUTINE",{binding},actor);
   }
 
 void GameScript::loadNativeAiStates() {
-  using Type = daedalus::DaedalusDataType;
-  for(const auto& fn : vm.symbols()) {
-    if(fn.type()==Type::FUNCTION && fn.is_const() && !fn.is_external())
-      aiStates.emplace(fn.index(),AiState{fn.index(),size_t(-1),size_t(-1),fn.name()});
-    }
-  for(const auto& phase : vm.symbols()) {
-    const std::string_view name = phase.name();
-    const bool loop = name.ends_with("_LOOP");
-    if(!loop && !name.ends_with("_END"))
-      continue;
-    const auto* init = vm.find_symbol_by_name(name.substr(0,name.size()-(loop ? 5 : 4)));
-    if(init==nullptr)
-      continue;
-    if(const auto it = aiStates.find(init->index()); it!=aiStates.end()) {
-      if(loop)
-        it->second.funcLoop=phase.index();
-      else
-        it->second.funcEnd=phase.index();
-      }
-    }
+  const auto& catalog = *baseNativeCatalog();
+  const auto phase = [](std::optional<uint32_t> id) { return id ? size_t(*id) : size_t(-1); };
+  for(const auto& state : catalog.states)
+    aiStates.emplace(state.id,AiState{state.id,phase(state.loop),phase(state.end),state.name});
   }
 
 const AiState& GameScript::aiState(ScriptFn id) {
@@ -102,11 +58,14 @@ const AiState& GameScript::aiState(ScriptFn id) {
   }
 
 void GameScript::runGregRoutineTransition(const daedalus::INpc& self) {
-  const auto& dexter = findSymbol("DEXTER")->get_instance();
-  if(dexter!=nullptr && dexter->symbol_index()==self.symbol_index() &&
-     findSymbol("B_GREG_COMESTODEXTER_ONETIME")->get_int()==0) {
-    int32_t gregResult = 0;
-    if(!invokeStockProgram(*findSymbol("B_GREG_COMESTODEXTER"),gregResult,nullptr,true))
-      throw std::runtime_error("Prepared Greg routine transition is unavailable");
-    }
+  const auto dexter = nativeNpc("DEXTER");
+  if(dexter==nullptr || dexter->symbol_index()!=self.symbol_index() ||
+     npcRuleInt("B_GREG_COMESTODEXTER_ONETIME")!=0)
+    return;
+
+  constexpr uint16_t enemyOverride=61; // AIV_ENEMYOVERRIDE in the verified program.
+  dexter->aivar[enemyOverride] = 0;
+  setNpcRuleInt("GREGLOCATION",npcRuleInt("GREG_DEXTER"));
+  startOtherRoutine(nativeNpc("GREG_NW"),"Dexter");
+  setNpcRuleInt("B_GREG_COMESTODEXTER_ONETIME",1);
   }

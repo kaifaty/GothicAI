@@ -14,45 +14,41 @@ class GameScript::StockPrograms final {
     friend struct NpcDefinitionContract;
 
     class Host;
-    using Binding = std::pair<daedalus::DaedalusSymbol*,SymbolKind>;
 
-    bool run(uint32_t id, int32_t& result, bool* failed, bool preparedOnly);
-    bool runPrepared(const daedalus::DaedalusSymbol& fn, int32_t& result, bool* failed);
-    const StockStoryPrograms::Catalog* preparedCatalog();
-    void bindCatalog(const StockStoryPrograms::Catalog& catalog);
-    void bindSymbol(daedalus::DaedalusSymbol& symbol, SymbolKind kind);
-    Binding binding(std::string_view name) const;
+    bool run(uint32_t id, int32_t& result, bool* failed);
+    bool runPrepared(uint32_t id, std::string_view name, int32_t& result, bool* failed);
     const StockStoryPrograms::Entry* program(uint32_t id) const;
+    const StockStoryPrograms::Entry* program(std::string_view name) const;
     std::optional<storygraph::NativeFunction> function(std::string_view name) const;
     std::unique_ptr<Host> host(bool effects);
 
     GameScript&                          script;
-    daedalus::DaedalusVm&                 vm;
-    std::optional<StockStoryPrograms::Catalog> prepared;
-    std::unordered_map<std::string_view,Binding> bindings;
-    std::unordered_map<uint32_t,daedalus::DaedalusSymbol*> ids;
-    std::unordered_map<std::string_view,storygraph::BoundNativeCall> calls;
+    StockStoryPrograms::Catalog          prepared;
   };
 
 struct GameScript::BennetOreDialog final {
   uint32_t                                 infoId = 0;
+  uint32_t                                 conditionId = 0;
+  uint32_t                                 answerId = 0;
   const storygraph::Program*               condition = nullptr;
   const storygraph::Program*               answer = nullptr;
-  daedalus::DaedalusSymbol*                 conditionSymbol = nullptr;
-  daedalus::DaedalusSymbol*                 answerSymbol = nullptr;
   };
 
 struct GameScript::BennetOre final {
+  static constexpr std::string_view missionName = "MIS_BENNET_BRINGORE";
+  static constexpr std::string_view teachingName = "BENNET_TEACHSMITH";
+
+  template<class Script>
+  static auto progressField(Script& script, std::string_view name) -> decltype(&script.bennetOreMission) {
+    if(name==missionName)
+      return &script.bennetOreMission;
+    if(name==teachingName)
+      return &script.bennetOreTeaching;
+    return nullptr;
+    }
+
   std::array<BennetOreDialog,3>             dialogs;
-  std::shared_ptr<const daedalus::IItem>    ore;
+  std::shared_ptr<const ItemInstance>       ore;
   InventoryTransfer::Text                  notices;
   std::string_view                         font;
-  uint32_t                                 missionId = 0;
-  uint32_t                                 teachingId = 0;
-  const daedalus::DaedalusSymbol*           smithTalent = nullptr;
-  const daedalus::DaedalusSymbol*           rescueMission = nullptr;
-  daedalus::DaedalusSymbol*                oreAlias = nullptr;
-  daedalus::DaedalusSymbol*                giverAlias = nullptr;
-  daedalus::DaedalusSymbol*                takerAlias = nullptr;
-  daedalus::DaedalusSymbol*                itemAlias = nullptr;
   };

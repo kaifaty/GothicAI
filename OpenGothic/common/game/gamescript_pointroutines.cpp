@@ -1,5 +1,7 @@
 #include "gamescript.h"
 
+#include <stdexcept>
+
 #include <array>
 
 #include "game/npcactivityhost.h"
@@ -28,8 +30,7 @@ constexpr int32_t InPose = 0, NeedsPose = 1, WalkingToPost = 2;
 constexpr int32_t ApproachDistance = 500;
 }
 
-bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  std::string_view name = symbol.name();
+bool GameScript::runPointRoutine(Npc& npc, std::string_view name, int& result) {
   Phase phase = Phase::Init;
   if(name.ends_with("_LOOP")) {
     name.remove_suffix(5);
@@ -52,7 +53,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
     return NpcEngineCalls::distanceToWaypoint(world(),npc,npc.handle().wp)>ApproachDistance;
     };
   const auto awayFromHero = [&] {
-    const auto hero = std::static_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
+    const auto hero = nativeNpc("HERO");
     return npc_getdisttonpc(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),hero)>ApproachDistance;
     };
   const auto stopLookAt = [&] {
@@ -96,9 +97,9 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
       npc.aiPush(AiQueue::aiUseMob("IDOL",-1));
       }
     else if(kind==PointRoutine::Study) {
-      const auto scroll = findSymbol("FAKESCROLL_ADDON")->index();
+      const auto scroll = findItemInstance("FAKESCROLL_ADDON").value();
       // The old End removes from Self the number of scrolls held by Other.
-      if(auto* other = findNpc(vm.global_other())) {
+      if(auto* other = findNpc(nativeNpc("OTHER"))) {
         const auto count = other->itemCount(scroll);
         if(count>0)
           npc.delItem(scroll,uint32_t(count));
@@ -159,7 +160,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
         }
       if(stage==NeedsPose && seconds>7) {
         const auto roll = int32_t(rollRandom(100,&npc,true));
-        findSymbol("ZS_PRACTICE_MAGIC_LOOP.ZUFALL")->set_int(roll);
+        setNpcRuleInt("ZS_PRACTICE_MAGIC_LOOP.ZUFALL",roll);
         constexpr std::array gestures{
           std::pair{25,"T_PRACTICEMAGIC"}, std::pair{50,"T_PRACTICEMAGIC2"},
           std::pair{70,"T_PRACTICEMAGIC3"}, std::pair{90,"T_PRACTICEMAGIC4"},
@@ -178,7 +179,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
     case PointRoutine::PracticeSword:
       if(stage==NeedsPose) {
         if(npc.currentMeleeWeapon()==nullptr) {
-          storeItem(npc.addItem(findSymbol("ITMW_1H_BAU_MACE")->index(),1));
+          storeItem(npc.addItem(findItemInstance("ITMW_1H_BAU_MACE").value(),1));
           npc.aiPush(AiQueue::aiEquipBestMeleeWeapon());
           }
         npc.aiPush(AiQueue::aiReadyMeleeWeapon());
@@ -212,16 +213,18 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
     case PointRoutine::Study: {
       // The previous roll supplies the threshold. The VM locals are shared across the
       // NPCs in this state and persist in the save along with the queued commands.
-      auto* random = findSymbol("ZS_STUDY_WP_LOOP.RANDY");
-      const auto deadline = 25 + random->get_int();
-      findSymbol("ZS_STUDY_WP_LOOP.RANDYSTATETIME")->set_int(deadline);
+      const auto deadline = 25 + npcRuleInt("ZS_STUDY_WP_LOOP.RANDY");
+      setNpcRuleInt("ZS_STUDY_WP_LOOP.RANDYSTATETIME",deadline);
       const auto roll = int32_t(rollRandom(10,&npc,true));
-      random->set_int(roll);
+      setNpcRuleInt("ZS_STUDY_WP_LOOP.RANDY",roll);
       const auto eventRoll = int32_t(rollRandom(100,&npc,true));
-      findSymbol("ZS_STUDY_WP_LOOP.EVENTRANDY")->set_int(eventRoll);
+      setNpcRuleInt("ZS_STUDY_WP_LOOP.EVENTRANDY",eventRoll);
       const auto wait = 5 + roll;
-      findSymbol("ZS_STUDY_WP_LOOP.WAIT")->set_int(wait);
-      findSymbol("ZS_STUDY_WP_LOOP.WAITTIME")->set_float(float(wait));
+      setNpcRuleInt("ZS_STUDY_WP_LOOP.WAIT",wait);
+      auto* waitTime=std::get_if<ScriptVars::Array<float>>(runtimeState.find("ZS_STUDY_WP_LOOP.WAITTIME"));
+      if(waitTime==nullptr)
+        throw std::runtime_error("missing saved study routine wait time");
+      waitTime->values.front()=float(wait);
       if(awayFromWaypoint()) {
         gotoWaypoint();
         npc.aiPush(AiQueue::aiAlignToWp());
@@ -229,7 +232,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
       if(seconds>=deadline) {
         if(seated()) {
           npc.aiPush(AiQueue::aiStandup());
-          npc.aiPush(AiQueue::aiTurnToNpc(findNpc(vm.global_hero())));
+          npc.aiPush(AiQueue::aiTurnToNpc(findNpc(nativeNpc("HERO"))));
           }
         npc.aiPush(AiQueue::aiRemoveWeapon());
         constexpr std::array<std::string_view,3> poses = {
@@ -240,7 +243,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
         else if(roll>3) {
           npc.aiPush(AiQueue::aiPlayAnim("T_LGUARD_2_STAND"));
           stage = NeedsPose;
-          const auto scroll = findSymbol("FAKESCROLL_ADDON")->index();
+          const auto scroll = findItemInstance("FAKESCROLL_ADDON").value();
           if(npc.itemCount(scroll)==0)
             storeItem(npc.addItem(scroll,1));
           stopLookAt();
@@ -248,7 +251,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
           npc.aiPush(AiQueue::aiWait(uint64_t(wait)*1000));
           npc.aiPush(AiQueue::aiUseItemToState(int32_t(scroll),-1));
           npc.setStateTime(0);
-          if(findSymbol("RAVENISDEAD")->get_int()==0 && npc.handle().guild==GIL_KDW &&
+          if(npcRuleInt("RAVENISDEAD")==0 && npc.handle().guild==GIL_KDW &&
              ((currentStoryWorld==4 && eventRoll==1) || (currentStoryWorld==1 && eventRoll<5)))
             runPortalEarthquake(npc);
           }
@@ -265,8 +268,7 @@ bool GameScript::runPointRoutine(Npc& npc, const daedalus::DaedalusSymbol& symbo
   return true;
   }
 
-bool GameScript::runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol, int& result) {
-  const std::string_view name = symbol.name();
+bool GameScript::runBanditCamp(Npc& npc, std::string_view name, int& result) {
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   auto& stage = npc.handle().aivar[PositionStage];
   result = LOOP_CONTINUE;
@@ -312,7 +314,7 @@ bool GameScript::runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol,
 
   if(!seated && stage==InPose && npc_getstatetime(self)>5) {
     const auto roll = int32_t(rollRandom(3,&npc,true));
-    findSymbol("ZS_BANDIT_LOOP.RANDOM")->set_int(roll);
+    setNpcRuleInt("ZS_BANDIT_LOOP.RANDOM",roll);
     if(roll==0)
       npc.aiPush(AiQueue::aiPlayAnim("T_HGUARD_LOOKAROUND"));
     npc_setstatetime(self,0);
@@ -321,7 +323,7 @@ bool GameScript::runBanditCamp(Npc& npc, const daedalus::DaedalusSymbol& symbol,
   }
 
 void GameScript::runPortalEarthquake(Npc& npc) {
-  const auto hero = vm.global_hero()->get_instance();
+  const auto hero = storyActorSlot("HERO");
   wld_playeffect("FX_EarthQuake",hero,hero,0,0,0,0);
   const auto roll = rollRandom(4,&npc,true);
   pointGestureRolls.earthquake = int32_t(roll);

@@ -8,7 +8,8 @@ The Windows counterpart of scripts/build-engine.sh, plus the converter the AI se
   OpenGothic\build\opengothic\content-convert.exe        the base and video converter the launcher runs first
   OpenGothic\build\opengothic\engine-platform-link.exe   the platform's complete link check
   OpenGothic\build\opengothic\engine-island.exe          the standalone island (also in ALL)
-  OpenGothic\ai_bridge\storygraph\build\storygraph.exe    the story graph converter (STORYGRAPH_TOOL)
+  OpenGothic\ai_bridge\storygraph\build\storygraph.exe    the offline story graph converter
+  OpenGothic\ai_bridge\storygraph\build\storygraph-ou.exe the packaged server's native OU reader
 
 Needs Visual Studio 2022 or its Build Tools with "Desktop development with C++" (MSVC x64, Windows SDK and
 "C++ CMake tools", which bring CMake and Ninja), the Vulkan SDK (VULKAN_SDK, glslangValidator) and Git. The
@@ -72,7 +73,7 @@ Invoke-Step (@('--build', $build, '--target', 'Gothic2Notr', 'engine-platform-li
 $graph = Join-Path $engine 'ai_bridge\storygraph'
 $graphBuild = Join-Path $graph 'build'
 Invoke-Step @('-S', $graph, '-B', $graphBuild, '-G', 'Ninja', "-DCMAKE_BUILD_TYPE=$BuildType")
-Invoke-Step (@('--build', $graphBuild, '--target', 'storygraph') + $parallel + $keepGoing)
+Invoke-Step (@('--build', $graphBuild, '--target', 'storygraph', 'storygraph-ou') + $parallel + $keepGoing)
 
 # The runtime output folder already holds the game, its converter (a dependency of the game target),
 # Tempest.dll and the shader compiler DLLs Tempest copies.
@@ -80,7 +81,7 @@ $out = Join-Path $build 'opengothic'
 $expected = @('Gothic2Notr.exe', 'content-convert.exe', 'engine-platform-link.exe', 'engine-island.exe',
     'Tempest.dll', 'dxcompiler.dll', 'dxil.dll' |
     ForEach-Object { Join-Path $out $_ })
-$expected += Join-Path $graphBuild 'storygraph.exe'
+$expected += @('storygraph.exe', 'storygraph-ou.exe' | ForEach-Object { Join-Path $graphBuild $_ })
 $absent = @($expected | Where-Object { -not (Test-Path -LiteralPath $_) })
 if ($absent.Count -gt 0) { throw "the build finished without: $($absent -join ', ')" }
 

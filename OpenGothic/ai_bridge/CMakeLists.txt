@@ -18,6 +18,7 @@ file(GLOB AIBRIDGE_SOURCES CONFIGURE_DEPENDS "*.h" "*.cpp")
 list(REMOVE_ITEM AIBRIDGE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/textcodec.cpp)
 
 add_library(AiBridge STATIC ${AIBRIDGE_SOURCES})
+target_compile_definitions(AiBridge PRIVATE GOTHIC_NATIVE_V3=1)
 target_include_directories(AiBridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # rapidjson 1.1 trips modern clang warnings; treat it as a system header
 target_include_directories(AiBridge SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)

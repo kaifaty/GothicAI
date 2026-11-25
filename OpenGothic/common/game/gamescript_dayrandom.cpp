@@ -19,9 +19,7 @@ uint32_t GameScript::rollRandom(uint32_t max, const Npc* actor, bool script) {
 int GameScript::hlp_random(int bound) {
   uint32_t mod=uint32_t(std::max(1,bound));
   const Npc* self=nullptr;
-  if(!isolatedRandom.empty() && vm.global_self()!=nullptr)
-    self=findNpc(vm.global_self());
-  if(NpcActivityProbe::instance && self==nullptr && vm.global_self()->is_instance_of<daedalus::INpc>())
-    self=static_cast<Npc*>(static_cast<daedalus::INpc*>(vm.global_self()->get_instance().get())->user_ptr);
+  if(!isolatedRandom.empty() || NpcActivityProbe::instance!=nullptr)
+    self = findNpc(dynamic_cast<NpcInstance*>(storyActorSlot("SELF").get()));
   return int32_t(rollRandom(mod,self,true));
   }
