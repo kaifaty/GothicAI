@@ -43,6 +43,8 @@ endif()
 file(GLOB_RECURSE BASE_FORMAT_INPUTS ${BASE_FORMAT_CONFIGURE_DEPENDS} RELATIVE "${BASE_ROOT}"
   "${BASE_ROOT}/common/asset/*.h" "${BASE_ROOT}/common/asset/fromzenkit.cpp"
   "${BASE_ROOT}/common/import/npcsnapshot.*" "${BASE_ROOT}/common/daedalus/*" "${BASE_ROOT}/common/world/records/*"
+  "${BASE_ROOT}/common/game/definitions/nativebasecatalog.*" "${BASE_ROOT}/common/game/definitions/nativeworldplacement.*"
+  "${BASE_ROOT}/tools/nativebasecatalogimport.*" "${BASE_ROOT}/tools/nativeworldplacementimport.*"
   "${BASE_ROOT}/lib/ZenKit/src/*" "${BASE_ROOT}/lib/ZenKit/include/*"
   "${BASE_ROOT}/lib/ZenKit/vendor/libsquish/*.h" "${BASE_ROOT}/lib/ZenKit/vendor/libsquish/*.cpp"
   "${BASE_ROOT}/lib/rapidjson/include/*.h"
