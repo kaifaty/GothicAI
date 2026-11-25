@@ -73,6 +73,7 @@ target_sources(content-convert PRIVATE ${native_definition_readers}
 target_include_directories(content-convert PRIVATE "${NPC_SNAPSHOT_GENERATED_DIR}")
 add_executable(gothic-npc-snapshot-contract EXCLUDE_FROM_ALL ../../OpenGothic/tests/npc_snapshot_contract.cpp
   ${native_definition_readers}
+  ../../OpenGothic/tools/itemdefinitionimport.cpp
   ../../OpenGothic/common/game/definitions/nativebasecatalog.cpp
   ../../OpenGothic/common/game/placementdefinitionruntime.cpp
   ../../OpenGothic/common/world/objects/npcroutinetable.cpp
