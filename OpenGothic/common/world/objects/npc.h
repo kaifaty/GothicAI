@@ -182,7 +182,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     NpcSimTier simTier() const { return simTierValue; }
     bool       hasSimTier() const { return simTierAssigned; }
     void       setSimTier(NpcSimTier t);
-    void       setSimTierOverride(std::optional<NpcSimTier> t) { simTierOverrideValue = t; }
+    void       setSimTierOverride(std::optional<NpcSimTier> t);
     auto       simTierOverride() const -> std::optional<NpcSimTier> { return simTierOverrideValue; }
 
     bool       isPlayer() const;
@@ -198,10 +198,11 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     float      simplifiedMoveSpeed() const;
     // The same in another walk mode (WM_Walk, WM_Run), cm per ms of world time: the society export.
     float      simplifiedMoveSpeed(WalkBit mode) const;
+    bool       hasCampfireActivity() const;
     bool       canSuspendCampfireBody() const;
     bool       campfireBodySuspended() const { return physic.bodySuspended(); }
     bool       suspendCampfireBody();
-    void       resumeCampfireBody() { physic.resumeBody(); }
+    void       resumeCampfireBody();
 
     void       tick(uint64_t dt);
     const NpcLogicalState& logicalBodyState() const { return logicalBody; }
@@ -253,6 +254,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     // Far NPC tick (world/npcsimtick.h): world time not yet handed to tick(), its rhythm. Runtime only, not saved.
     auto       simTick() -> NpcSimTick::State& { return simTickState; }
     auto       simTick() const -> const NpcSimTick::State& { return simTickState; }
+    uint64_t   pendingSimTick() const;
 
     std::string_view displayName() const;
     auto       displayPosition() const -> Tempest::Vec3;
@@ -711,6 +713,9 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool      societyGestureNeedsPose(uint64_t leadMs) const;
     std::string_view societyRoutineBlocker(std::string_view state, bool groupPilot, bool wide) const;
     bool      trySocietyEarlyTick();
+    void      applySimTier(NpcSimTier t);
+    bool      canDeferIdleMonsterBody() const;
+    bool      canSleepMonsterRest() const;
     void      wakeSociety();
     // The initializer has run; installing funcIni alone does not start the state.
     bool      isStateStarted() const { return aiState.started; }
@@ -1173,6 +1178,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool                           animLodTargeted = false;
     uint32_t                       animLodSeed = 0;
     NpcSimTick::State              simTickState;
+    bool                           monsterRestSleeping = false;
     Tempest::Vec3                  characterVisualSamplePosition;
     Tempest::Vec3                  characterVisualSampleNormal;
     uint64_t                       characterVisualSampleTick = 0;

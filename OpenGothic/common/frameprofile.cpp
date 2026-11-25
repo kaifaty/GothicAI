@@ -48,7 +48,9 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "tree_bough_nodes","tree_bough_source_cards","tree_bough_parent_cards","tree_bough_triangles","tree_bough_height_mpx",
   "tree_bough_active_bands","tree_bough_version_pairs","tree_bough_band_triangles","tree_level_bands","tree_shadow_bands",
   "npc_simplified_ticked","npc_simplified_deferred","npc_simplified_native",
-  "society_anim_deferred","society_anim_catchup","society_npc_tick_skipped","npc_late_pose_candidates"};
+  "society_anim_deferred","society_anim_catchup","society_npc_tick_skipped","npc_late_pose_candidates",
+  "npc_idle_wheel_deferred","npc_tier_candidates","npc_policy_candidates",
+  "npc_rest_routine_deferred","npc_rest_routine_deadline"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }

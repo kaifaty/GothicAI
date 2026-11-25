@@ -306,6 +306,8 @@ void Npc::clearSlotItem(std::string_view slot) {
   }
 
 void Npc::updateWeaponSkeleton() {
+  if(simTickState.idleParked)
+    owner.noteIdleNpcChange(*this);
   visual.updateWeaponSkeleton(invent.currentMeleeWeapon(),invent.currentRangedWeapon());
   }
 
@@ -344,7 +346,10 @@ void Npc::setScale(float x, float y, float z) {
 const Animation::Sequence* Npc::playAnimByName(std::string_view name, BodyState bs, bool force) {
   if(currentInteract!=nullptr)
     syncDeferredAnimation();
-  return visual.startAnimAndGet(*this,name,calcAniComb(),bs,force);
+  const auto result = visual.startAnimAndGet(*this,name,calcAniComb(),bs,force);
+  if(result!=nullptr && simTickState.idleParked)
+    owner.noteIdleNpcChange(*this);
+  return result;
   }
 
 bool Npc::setPlayerPose(bool kneel, std::string_view reason) {
@@ -431,6 +436,8 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
   if(currentInteract!=nullptr && (a==Anim::InteractOut || a==Anim::InteractToStand))
     syncDeferredAnimation();
   const auto result = visual.startAnimAndGet(*this,a,comb,st,wlk);
+  if(result!=nullptr && simTickState.idleParked)
+    owner.noteIdleNpcChange(*this);
   if(result!=nullptr && isUsingItemInHand() && (a==Anim::AttackBlock || a==Anim::Jump || a==Anim::JumpUp ||
      a==Anim::JumpUpLow || a==Anim::JumpUpMid || a==Anim::JumpHang))
     interruptItemUse(a==Anim::AttackBlock ? "parade" : "jump");

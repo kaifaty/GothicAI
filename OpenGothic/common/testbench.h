@@ -26,6 +26,7 @@ namespace TestBench {
   // Explicit graph fixtures must fail instead of accepting a native fallback.
   bool     strictGraphMovement(const Npc& npc);
   // Only the current npcduel copies retain near-hero simulation and physics at any distance.
+  bool     npcDuelRunning();
   bool     npcDuelActor(const Npc& npc);
   void     npcDuelSwingStart(const Npc& npc);
   void     npcDuelSwingEnd(const Npc& npc, std::string_view outcome);

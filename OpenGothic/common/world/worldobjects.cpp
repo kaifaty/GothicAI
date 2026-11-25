@@ -534,6 +534,10 @@ bool WorldObjects::keepsFullSimulation(const Npc& npc) {
   return NavDemos::fullSimulation(npc) || BodyArena::isActor(npc);
   }
 
+bool WorldObjects::npcSimulationFixtureActive() {
+  return NavDemos::hasFullSimulationActors() || BodyArena::enabled();
+  }
+
 bool WorldObjects::keepsNearPolicy(const Npc& npc) {
   return NavDemos::fullSimulation(npc);
   }
@@ -749,6 +753,8 @@ std::unique_ptr<Npc> WorldObjects::takeNpc(const Npc* ptr) {
     if(&npc==ptr){
       npc.suspendRagdoll();
       npc.wakeSociety();
+      npc.simTick().pending = npc.pendingSimTick();
+      npc.simTick().idleParked = false;
       invalidateNpcOrder();
       auto ret=std::move(npcArr[i]);
       npcArr.erase(npcArr.begin() + int32_t(i));
@@ -1023,7 +1029,9 @@ void WorldObjects::catchUpAnimation() {
   if(campfireBodiesSuspended) {
     // A camera turn can bring a distant campfire into view in the same frame.
     // Restore the collision entry on this thread before the parallel pose pass.
-    for(auto& npc:npcArr)
+    refreshNpcCells();
+    orderNpcCandidates(npcCampfires);
+    for(auto* npc:npcSpatialOrder)
       if(npc->campfireBodySuspended() && (mustUpdateAnimation(*npc,view) || view.visible(*npc)))
         npc->resumeCampfireBody();
     }

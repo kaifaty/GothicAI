@@ -672,6 +672,10 @@ void arenaAbort(std::string_view reason) {
 }
 
 
+bool TestBench::npcDuelRunning() {
+  return bench.npcDuel.active;
+  }
+
 bool TestBench::npcDuelActor(const Npc& npc) {
   return bench.npcDuel.active && (bench.npcDuel.actors[0]==&npc || bench.npcDuel.actors[1]==&npc);
   }

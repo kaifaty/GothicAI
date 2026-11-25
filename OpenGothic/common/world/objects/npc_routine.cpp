@@ -98,6 +98,7 @@ void Npc::clearState(bool noFinalize) {
 
 void Npc::finishState(bool noFinalize, uint16_t reason) {
   if(BodyController::deferNative(*this,[this,noFinalize,reason] { finishState(noFinalize,reason); })) return;
+  monsterRestSleeping = false;
   resumeCampfireBody();
   stopActivityEvents(reason);
   if(aiState.funcIni.isValid() && aiState.started) {
@@ -290,6 +291,17 @@ bool Npc::trySocietyEarlyTick() {
   headInput.reset();
   owner.recordSocietyEarlyTick(*this);
   return true;
+  }
+
+bool Npc::canSleepMonsterRest() const {
+  // The stock Loop and row end share the perception deadline. Keep the
+  // original callback, including its random draws, on that native beat.
+  constexpr float maxPointDistance = 300.f;
+  return aiState.started && std::string_view(aiState.hint)=="ZS_MM_RTN_REST" &&
+         activityEvents.init==aiState.funcIni.ptr && activityEvents.activity==nullptr &&
+         aiState.loopNextTime>owner.tickCount() && currentFp!=nullptr && currentFpLock.point()==currentFp &&
+         qDistTo(currentFp)<maxPointDistance*maxPointDistance && outputPipe->isFinished() &&
+         canDeferIdleMonsterBody() && !animationLodPinned();
   }
 
 void Npc::tickRoutine() {

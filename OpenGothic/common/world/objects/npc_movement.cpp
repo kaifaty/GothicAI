@@ -67,7 +67,13 @@ bool Npc::hasNativeCombatActivity() const {
   }
 
 bool Npc::canDeferIdleMonsterTick() const {
-  if(aiPolicy!=NpcProcessPolicy::AiFar2 || weaponState()!=WeaponState::Fist || !isMonster() ||
+  return weaponState()==WeaponState::Fist && canDeferIdleMonsterBody();
+  }
+
+bool Npc::canDeferIdleMonsterBody() const {
+  const auto weapon = weaponState();
+  const bool idleStance = weapon==WeaponState::Fist || weapon==WeaponState::W1H || weapon==WeaponState::W2H;
+  if(aiPolicy!=NpcProcessPolicy::AiFar2 || !idleStance || !isMonster() ||
      externalCtrl || isDown() || currentInteract!=nullptr || mvAlgo.state()!=MoveAlgo::Run ||
      !go2.empty() || aiQueue.size()!=0 || aiQueueOverlay.size()!=0 || !isStanding() ||
      hasNativeCombatActivity())

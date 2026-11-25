@@ -53,6 +53,8 @@ uint64_t phase(const Npc& npc, uint64_t periodMs);
 
 struct State {
   uint64_t pending = 0; // world time not yet handed to Npc::tick
+  uint64_t lastIdleTick = 0;
+  bool     idleParked = false;
   };
 
 // Whether a qualifying NPC ticks in this frame: `clock` is the world clock of the tick loop after the frame,

@@ -20,6 +20,11 @@ gtime after(gtime now, uint64_t ms) {
   }
 }
 
+bool Npc::hasCampfireActivity() const {
+  const auto* point = activityEvents.activity ? activityEvents.activity->point : nullptr;
+  return point!=nullptr && point->form==ActivityDefinitions::PointActivity::Form::Campfire;
+  }
+
 bool Npc::canSuspendCampfireBody() const {
   using ActivityEvents::Stage;
   const auto& state = activityEvents;
@@ -63,6 +68,13 @@ bool Npc::suspendCampfireBody() {
     }
   physic.suspendBody();
   return true;
+  }
+
+void Npc::resumeCampfireBody() {
+  if(!physic.bodySuspended())
+    return;
+  physic.resumeBody();
+  owner.noteNpcCellChange(*this);
   }
 
 void Npc::wakeActivity(uint16_t wakes) {
@@ -111,6 +123,8 @@ void Npc::stopActivityEvents(uint16_t why) {
     places.unwait(*this);
     }
   activityEvents = ActivityEvents::State();
+  if(atPoint && record->point->form==ActivityDefinitions::PointActivity::Form::Campfire)
+    owner.noteNpcCellChange(*this);
   if(probe) probe->activityTransition(*this,why,before);
   }
 
@@ -121,6 +135,8 @@ void Npc::startActivityEvents(const ActivityEvents::Record* activity) {
   activityEvents.activity = activity;
   if(activityEvents.activity==nullptr)
     return;
+  if(hasCampfireActivity())
+    owner.noteNpcCellChange(*this);
   activityEvents.stage      = ActivityEvents::Stage::Approach;
   activityEvents.awaitQueue = true;
   activityEvents.deadline   = after(owner.time(),ActivityEvents::WatchdogMs);
@@ -134,6 +150,8 @@ void Npc::restoreActivityEvents(const ActivityEvents::Record* activity) {
   activityEvents.init     = aiState.funcIni.ptr;
   activityEvents.activity = activity;
   activityEvents.pending  = ActivityEvents::Loaded;
+  if(hasCampfireActivity())
+    owner.noteNpcCellChange(*this);
   }
 
 void Npc::tickActivityEvents(bool runLoop) {

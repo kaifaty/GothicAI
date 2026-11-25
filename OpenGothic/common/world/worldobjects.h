@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <vector>
 #include <memory>
 #include <map>
@@ -19,6 +20,7 @@
 #include "game/rpgvocabulary.h"
 #include "objects/vob.h"
 #include "npcsimtier.h"
+#include "npcsimtick.h"
 #include "animationlod.h"
 #include "mobreservations.h"
 
@@ -66,7 +68,7 @@ class WorldObjects final {
     void           load(Serialize& fout);
     void           save(Serialize& fout);
     void           tick(uint64_t dt, uint64_t dtPlayer);
-    // Assigns every NPC its simulation tier (npcsimtier.h); tick() calls it
+    // Updates NPC simulation tiers (npcsimtier.h); tick() calls it
     // first, loading calls it once the hero, camera and residency are ready.
     void           updateSimTiers();
     const NpcSimTiers::Stats& simTierStats() const { return simTiers; }
@@ -224,8 +226,12 @@ class WorldObjects final {
     using NpcCellKey = std::pair<int32_t,int32_t>;
     struct NpcCellMember {
       NpcCellKey    key{};
-      Tempest::Vec3 lo{}, hi{};
+      Tempest::Vec3 position{}, lo{}, hi{};
+      std::optional<NpcSimTier> tierOverride;
+      NpcProcessPolicy policy = NpcProcessPolicy::AiFar2;
       bool          deferred = false;
+      bool          combat = false;
+      bool          campfire = false;
       };
     struct NpcCell {
       std::vector<Npc*> actors;
@@ -234,6 +240,7 @@ class WorldObjects final {
       uint64_t      viewRevision = 0;
       bool          dirtyBounds = true;
       bool          couldSee = false;
+      std::optional<std::array<NpcSimTier,2>> tiers;
       };
     std::map<NpcCellKey,NpcCell> npcCells;
     std::unordered_map<Npc*,NpcCellMember> npcCellMembers;
@@ -242,10 +249,26 @@ class WorldObjects final {
     std::vector<Npc*> npcCellChanges, latePoses;
     std::optional<AnimationLod::View> latePoseView;
     uint64_t latePoseViewRevision = 0;
-    bool npcCellsDirty = true;
+    bool npcCellsDirty = true, npcSortDirty = true;
+    bool npcTiersRebuild = true, npcPoliciesRebuild = true;
+    bool npcTierFixture = false, npcPolicyFixture = false;
+    const ChunkResidency* npcTierResidency = nullptr;
+    const Npc* npcTierHero = nullptr;
+    const Npc* npcPolicyHero = nullptr;
+    std::optional<std::pair<ChunkId,ChunkId>> npcTierFocus;
+    std::optional<Tempest::Vec3> npcPolicyPosition;
+    std::unordered_set<Npc*> npcTierChanges, npcPolicyChanges, npcNearMembers, npcCombat, npcCampfires;
+    std::vector<Npc*> npcSpatialOrder;
+    static bool npcSimulationFixtureActive();
+    void orderNpcCandidates(const std::unordered_set<Npc*>& candidates);
     void updateSocietyDispatch(Npc& npc);
     void refreshSocietyPoseDispatch();
-    size_t nextNativeNpc(size_t first) const;
+    size_t nextNativeNpc(size_t first, bool persistent, bool idleCadence) const;
+    void noteIdleNpcChange(Npc& npc);
+    void prepareIdleNpcCadence(uint64_t dt, uint64_t period);
+    size_t clearIdleNpcCadence(uint64_t clock, size_t visited = 0);
+    void parkIdleNpc(Npc& npc);
+    void unparkIdleNpc(Npc& npc, uint64_t clock);
     void noteNpcCadence(uint64_t dt);
     uint64_t societyDueStep(const Npc& npc, uint64_t entered) const;
     bool           makeAnimationLodView(AnimationLod::View& view) const;
@@ -258,6 +281,13 @@ class WorldObjects final {
     uint64_t       animationLodDeferred = 0;
     std::vector<uint8_t> tailPlan; // per npcArr slot, AnimationTail::Step bits
     std::vector<uint64_t> nativeNpcMask;
+    static constexpr size_t IdleAgeSlots = 2*NpcSimTick::MaxPeriodMs+1;
+    std::array<std::vector<uint64_t>, NpcSimTick::MaxPeriodMs> idlePhase;
+    std::array<std::vector<uint64_t>, IdleAgeSlots> idleAge;
+    std::vector<uint64_t> idleParked, idleReady;
+    std::unique_ptr<std::atomic<uint64_t>[]> idleUrgent;
+    uint64_t idlePeriod = 0;
+    bool idleCadenceInvalid = true;
     std::vector<size_t> nativePoseIndices;
     bool npcDispatchDirty = true;
     bool poseDispatchDirty = true;

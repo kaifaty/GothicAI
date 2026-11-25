@@ -101,9 +101,12 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     void                 recordSocietyEarlyTick(const Npc& npc);
     void                 sleepSocietyNpc(Npc& npc);
     void                 wakeSocietyNpc(Npc& npc);
+    void                 noteIdleNpcChange(Npc& npc) { wobj.noteIdleNpcChange(npc); }
+    uint64_t             npcCadenceClock() const { return wobj.simTickClock; }
     bool                 persistentSocietyEnabled() const;
     void                 prepareSocietyTick(uint64_t dt);
     void                 noteNpcCellChange(Npc& npc) { wobj.noteNpcCellChange(npc); }
+    void                 invalidateNpcTiers() { wobj.npcTiersRebuild = true; }
     void                 updateSocietyInterest();
     std::optional<bool>  stepSocietyRoute(Npc& npc, const WayPoint* destination, uint64_t dt, float destDist);
     std::string_view     name() const override { return wname; }

@@ -68,6 +68,7 @@ struct NpcDefinitionContract {
   static auto& bennetTransferObserver(GameScript& script) { return script.bennetTransferObserver; }
   static const auto& aiState(const Npc& npc) { return npc.aiState; }
   static auto& aiState(Npc& npc) { return npc.aiState; }
+  static bool monsterRestSleeping(const Npc& npc) { return npc.monsterRestSleeping; }
   static void tickRoutine(Npc& npc) { npc.aiState.loopNextTime=npc.world().tickCount(); npc.tickRoutine(); }
   static void nextAiAction(Npc& npc) { npc.nextAiAction(npc.aiQueue,0); }
   static ScriptFn perception(const Npc& npc, PercType type) { return npc.perception[type].func; }
@@ -804,11 +805,40 @@ void farIdleMonster(Gothic& gothic) {
 
     for(unsigned t=0;t<8;++t)
       tick();
-    for(unsigned t=0;t<8 && wolf->simTick().pending!=8;++t)
+    if(!damage) {
+      // Regeneration makes every dispatched dt observable even when the
+      // wolf does not move. Compare the wheel with the original cadence.
+      auto& attr = wolf->handle().attribute;
+      const auto oldHp = attr[ATR_HITPOINTS], oldMax = attr[ATR_HITPOINTSMAX], oldRegen = attr[ATR_REGENERATEHP];
+      attr[ATR_HITPOINTSMAX] = 10000;
+      attr[ATR_REGENERATEHP] = 1000;
+      auto pending = wolf->pendingSimTick();
+      const auto phase = NpcSimTick::phase(*wolf,33);
+      for(const uint64_t dt:{7,8,0,16,7,8,24,8,25,30,33,34,50,7,8,8,7,8,8,7,8}) {
+        const auto clock = world.npcCadenceClock();
+        const auto hp = attr[ATR_HITPOINTS];
+        require(NpcSimTick::qualifies(*wolf,NpcSimTick::Scope::Graph),"the cadence fixture stays eligible");
+        session.tick(dt);
+        session.updateAnimation(dt);
+        require(world.npcCadenceClock()==clock+dt,"the fixture uses the requested step");
+        pending += dt;
+        const bool due = NpcSimTick::due(clock+dt,dt,pending,phase,33);
+        require(wolf->pendingSimTick()==(due ? 0 : pending) &&
+                attr[ATR_HITPOINTS]==hp+(due ? int32_t(pending) : 0),
+                "the idle wheel dispatches on the original step with the original elapsed time");
+        if(due)
+          pending=0;
+        }
+      attr[ATR_HITPOINTS] = oldHp;
+      attr[ATR_HITPOINTSMAX] = oldMax;
+      attr[ATR_REGENERATEHP] = oldRegen;
+      std::puts("Idle wolf cadence: zero, short, age-limited and long steps match native dispatch and elapsed time");
+      }
+    for(unsigned t=0;t<8 && wolf->pendingSimTick()!=8;++t)
       tick();
     require(wolf->processPolicy()==NpcProcessPolicy::AiFar2 && wolf->simTier()==NpcSimTier::Simplified &&
            wolf->weaponState()==WeaponState::Fist && !wolf->usesSimplifiedMovement() &&
-           wolf->simTick().pending==8 && rayHits(*wolf),
+           wolf->pendingSimTick()==8 && rayHits(*wolf),
            "an idle distant wolf defers its native tick and keeps its collision");
     const auto alertedAt=world.tickCount();
     const auto preyHp=prey->attribute(ATR_HITPOINTS);
@@ -824,7 +854,7 @@ void farIdleMonster(Gothic& gothic) {
     require((wolf->target()==prey || wolf->aiQueueSize()>0) && !NpcSimTick::qualifies(*wolf,NpcSimTick::Scope::Graph),
            "the wolf leaves the deferred cadence as soon as it acquires a target or queues a warning");
     tick();
-    require(world.tickCount()==alertedAt+8 && wolf->simTick().pending==0 &&
+    require(world.tickCount()==alertedAt+8 && wolf->pendingSimTick()==0 &&
             wolf->logicalBodyState().worldStep==16 && rayHits(*wolf),
            "the first native step after the alert consumes the time owed and keeps collision");
 
@@ -832,7 +862,7 @@ void farIdleMonster(Gothic& gothic) {
     bool attack=false;
     for(unsigned t=0;t<1500 && prey->attribute(ATR_HITPOINTS)==preyHp;++t) {
       tick();
-      require(wolf->simTick().pending==0,"the engaged wolf ticks every frame");
+      require(wolf->pendingSimTick()==0,"the engaged wolf ticks every frame");
       if(pursuit==0 && wolf->qDistTo(*prey)<startDistance*0.65f)
         pursuit=world.tickCount()-alertedAt;
       attack|=wolf->isAttackAnim();
@@ -845,6 +875,49 @@ void farIdleMonster(Gothic& gothic) {
     world.removeNpc(*wolf);
     world.removeNpc(*prey);
     }
+
+  const auto skeletonType = world.script().findSymbolIndex("SKELETON");
+  const auto sword = world.script().findItemInstance("ITMW_1H_VLK_SWORD");
+  const auto rest = world.script().findFunction("ZS_MM_RTN_REST");
+  auto* skeleton = world.addNpc(skeletonType,field->groundPos);
+  require(skeleton && sword && rest.isValid(),"armed rest fixture needs a skeleton, a sword and its native state");
+  onlyBehaviorActors(world,skeleton);
+  skeleton->clearRoutine();
+  skeleton->clearState(true);
+  skeleton->clearAiQueue();
+  skeleton->clearGoTo();
+  skeleton->setTarget(nullptr);
+  skeleton->handle().start_aistate=0;
+  skeleton->attachToPoint(field);
+  skeleton->setToFightMode(*sword);
+  skeleton->setAnim(Npc::Anim::Idle);
+  skeleton->setSimTierOverride(NpcSimTier::Simplified);
+  require(skeleton->startState(rest,field->name),"the skeleton enters stock rest");
+  for(unsigned t=0;t<220 && !NpcDefinitionContract::monsterRestSleeping(*skeleton);++t)
+    tick();
+  require(skeleton->weaponState()==WeaponState::W1H && NpcDefinitionContract::monsterRestSleeping(*skeleton) &&
+          skeleton->pendingSimTick()==0 && rayHits(*skeleton) &&
+          skeleton->lockedWayPoint()==field,
+          "armed rest sleeps at its original point with native collision");
+  const auto nextLoop = NpcDefinitionContract::aiState(*skeleton).loopNextTime;
+  for(unsigned t=0;t<4 && world.tickCount()+8<nextLoop;++t) {
+    tick();
+    require(NpcDefinitionContract::monsterRestSleeping(*skeleton) && skeleton->pendingSimTick()==0 &&
+            NpcDefinitionContract::aiState(*skeleton).loopNextTime==nextLoop,
+            "armed rest waits for its native routine deadline while the body ticks");
+    }
+  for(unsigned t=0;t<220 && NpcDefinitionContract::aiState(*skeleton).loopNextTime==nextLoop;++t)
+    tick();
+  require(NpcDefinitionContract::aiState(*skeleton).loopNextTime>nextLoop && skeleton->isInState(rest) &&
+          skeleton->lockedWayPoint()==field && rayHits(*skeleton),
+          "stock rest resumes on its native perception beat without losing the post or body");
+  moveBehaviorHero(gothic,field->groundPos+Tempest::Vec3(200,0,0));
+  tick();
+  require(!NpcDefinitionContract::monsterRestSleeping(*skeleton) && rayHits(*skeleton) &&
+          skeleton->lockedWayPoint()==field && skeleton->isStanding(),
+          "the approaching hero wakes armed rest with the same standing body and point");
+  std::puts("Armed monster rest: native deadline, point reservation, approaching hero and collision");
+  world.removeNpc(*skeleton);
   NpcSimTick::setConfig(restore);
   }
 

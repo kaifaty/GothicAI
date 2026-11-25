@@ -93,8 +93,10 @@ bool Npc::implSetPosition(const Tempest::Vec3& pos, bool keepBodySuspended) {
   }
 
 void Npc::setViewPosition(const Tempest::Vec3& pos) {
-  if(pos!=position())
+  if(pos!=position()) {
     wakeSociety();
+    owner.noteNpcCellChange(*this);
+    }
   // Routine legacy alignment must not move the frozen physical pose. Explicit
   // teleports use setPosition and translate the dormant state there.
   x = pos.x;
@@ -249,6 +251,7 @@ void Npc::resetNavigationEpisode() {
   std::destroy_at(&mvAlgo);
   std::construct_at(&mvAlgo,*this);
   currentTarget = nearestEnemy = currentOther = currentVictim = lastHit = nullptr;
+  owner.noteNpcCellChange(*this);
   outWaitTime = aiOutputBarrier = physicsNoiseUntil = 0;
   castLevel = CS_NoCast;
   currentSpellCast = size_t(-1);
