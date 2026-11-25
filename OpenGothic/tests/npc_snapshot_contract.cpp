@@ -961,6 +961,36 @@ void itemDefinitions(const fs::path& dir) {
   const auto library=ItemDefinitions::read(base,p.sha256);
   auto vm=itemVm(p);
   auto definitions=ItemDefinitionRuntime::resolve(library,*vm);
+  auto nativeLibrary=library;
+  nativeLibrary.uncaptured={{"ITMI_INNOSEYE_BROKEN_MIS","game_state"}};
+  NativeBaseCatalog::Selection catalog;
+  for(const auto& [name,item] : library.items)
+    catalog.identities.items.push_back({vm->find_symbol_by_name(name)->index(),name});
+  catalog.identities.items.push_back({50000,"ITMI_INNOSEYE_BROKEN_MIS"});
+  catalog.identities.npcs.push_back({vm->find_symbol_by_name("ITEM_OWNER")->index(),"ITEM_OWNER"});
+  for(unsigned i=0;i<7;++i) {
+    const auto name="ITEM_CALLBACK_"+std::to_string(i);
+    catalog.itemCallbacks.push_back({vm->find_symbol_by_name(name)->index(),name});
+    }
+  catalog.itemCallbacks.push_back({50001,"EQUIP_ITMI_INNOSEYE_BROKEN_MIS"});
+  const auto native=ItemDefinitionRuntime::resolveNative(nativeLibrary,catalog);
+  check(native.brokenEye==50000 && native.items.size()==definitions.items.size() &&
+        native.itemUsePrograms==definitions.itemUsePrograms,
+        "native items keep their archetype IDs, item-use roots and the dynamic broken Eye identity");
+  for(const auto& [name,item] : library.items) {
+    const auto id=vm->find_symbol_by_name(name)->index();
+    IItem expected{},actual{};
+    static_cast<ItemRecord&>(expected)=definitions.items.at(id);
+    static_cast<ItemRecord&>(actual)=native.items.at(id);
+    sameItem(expected,actual,name);
+    }
+  catalog.itemCallbacks.erase(catalog.itemCallbacks.begin());
+  bool missingCallback=false;
+  try { (void)ItemDefinitionRuntime::resolveNative(nativeLibrary,catalog); }
+  catch(const std::runtime_error& error) {
+    missingCallback=std::string_view(error.what()).find("ITEM_CALLBACK_0")!=std::string_view::npos;
+    }
+  check(missingCallback,"native item resolver explicitly rejects a missing callback identity");
   check(!ItemDefinitionRuntime::initialize(*vm,std::make_shared<IItem>(),vm->find_symbol_by_name("IT_RECORD_WRITE"),definitions),
         "global-writing item uses the VM constructor");
   check(vm->find_symbol_by_name("CHAPTER")->get_int()==7,"VM fallback preserves the constructor's global write");

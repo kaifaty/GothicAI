@@ -61,6 +61,7 @@ struct Selection {
   Identities identities;
   Constants constants;
   std::vector<Identity> routines;
+  std::vector<Identity> itemCallbacks;
   };
 
 const Identity* findIdentity(std::span<const Identity> rows, uint32_t id);

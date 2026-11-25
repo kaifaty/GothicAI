@@ -11,6 +11,8 @@
 #include <variant>
 #include <vector>
 
+namespace NativeBaseCatalog { struct Selection; }
+
 namespace ItemDefinitionRuntime {
 struct RestoreChange {
   Attribute attribute;
@@ -71,6 +73,9 @@ struct Definitions {
   std::unordered_map<uint32_t,EquipmentStatEffect> equipmentStatEffects;
   };
 Definitions resolve(const ItemDefinitions::Library& library, const daedalus::DaedalusScript& script);
+Definitions resolveNative(const ItemDefinitions::Library& library, const NativeBaseCatalog::Selection& catalog);
+Definitions loadNative(const std::filesystem::path& base, const NativeBaseCatalog::Selection& catalog,
+                       std::string_view sha256);
 // Select the section by the verified program-record SHA, applying the game's environment switch.
 Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScript& program,
                  std::string_view sha256);

@@ -271,6 +271,7 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
   if(v3) {
     bound(base/"outputunits"/"outputunits.json");
     bound(base/"definitions"/program.sha256/"routines.json");
+    bound(base/"definitions"/program.sha256/"items.json");
     catalogs=NativeBaseCatalog::prepare(index,OutputUnits::readIndex(base/"outputunits"));
     auto script=daedalus::DaedalusScript::from_program(std::move(program.data));
     catalogs->states=NativeBaseCatalog::prepareStates(script);
@@ -278,6 +279,7 @@ void prepareProgramProjection(const fs::path& source, const fs::path& output, Pr
     catalogs->constants=NativeBaseCatalog::prepareConstants(script);
     catalogs->identities=NativeBaseCatalog::prepareIdentities(script,base);
     catalogs->routines=NativeBaseCatalog::prepareRoutines(script,base);
+    catalogs->itemCallbacks=NativeBaseCatalog::prepareItemCallbacks(script,base);
     }
 
   const auto sourceSymbols=ProgramData::symbolMetadataPath(base,program.sha256);
@@ -1131,14 +1133,16 @@ int selfTest() {
     };
   expectedCatalog.identities={{{100,"NPC_TEST"}},{{200,"IT_TEST"}},{{300,"DIA_TEST"}}};
   expectedCatalog.routines={{400,"RTN_START_100"}};
+  expectedCatalog.itemCallbacks={{500,"EQUIP_TEST"}};
   const auto output=dir/"native-catalog";
   NativeBaseCatalog::write(output,expectedCatalog);
   const auto catalog=NativeBaseCatalog::read(output);
   require(catalog.fight==programs.sources[2].recordSha256 && catalog.language==3 && catalog.states==expectedCatalog.states &&
           catalog.initialState==expectedCatalog.initialState && catalog.identities==expectedCatalog.identities &&
           catalog.constants==expectedCatalog.constants && catalog.routines==expectedCatalog.routines &&
+          catalog.itemCallbacks==expectedCatalog.itemCallbacks &&
           std::signbit(std::get<std::vector<float>>(catalog.initialState[1].value)[0]),
-          "native catalog identities, language, NPC phases, constants, routines and initial state round trip");
+          "native catalog identities, language, NPC phases, constants, routines, item callbacks and initial state round trip");
   const auto stateFile=NativeBaseCatalog::section(output);
   auto invalid=DefinitionJson::read(stateFile);
   invalid["npc_states"][0][2].SetNull();

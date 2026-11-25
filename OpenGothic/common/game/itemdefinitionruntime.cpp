@@ -1,4 +1,5 @@
 #include "itemdefinitionruntime.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "itemrecordfields.h"
 #include "itemloadprobe.h"
 
@@ -9,45 +10,56 @@
 #include <type_traits>
 
 namespace {
-template<class T> void resolveField(T& value, const std::vector<std::string>& names, size_t& index,
-                                   const daedalus::DaedalusScript& script) {
+template<class T, class Lookup>
+void resolveField(T& value, const std::vector<std::string>& names, size_t& index, const Lookup& lookup) {
   if constexpr(std::is_array_v<T>) {
-    for(auto& element:value) resolveField(element,names,index,script);
+    for(auto& element:value) resolveField(element,names,index,lookup);
     }
   else if constexpr(!std::is_same_v<T,std::string>) {
     const auto& name=names.at(index++);
     if(name.empty()) return;
-    const auto* symbol=script.find_symbol_by_name(name);
-    if(symbol==nullptr) throw std::runtime_error("unknown symbol "+name);
-    value=T(symbol->index());
+    const auto id=lookup(name);
+    if(!id || *id>INT32_MAX) throw std::runtime_error("unknown or invalid identity "+name);
+    value=T(*id);
     }
   }
-}
-
-ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolve(const ItemDefinitions::Library& library,
-                                                                  const daedalus::DaedalusScript& script) {
-  Definitions definitions;
+template<class FindItem, class FindReference>
+ItemDefinitionRuntime::Definitions resolveRecords(const ItemDefinitions::Library& library, const FindItem& findItem,
+                                                   const FindReference& findReference) {
+  ItemDefinitionRuntime::Definitions definitions;
   for(const auto& [name,definition]:library.items) {
     try {
-      const auto* symbol=script.find_symbol_by_name(name);
-      if(symbol==nullptr) throw std::runtime_error("unknown item symbol");
+      const auto id=findItem(name);
+      if(!id) throw std::runtime_error("unknown item identity");
       ItemRecord record=definition.record;
       itemRecordFields(record,[&](const char* field, auto& value, bool function) {
         if(!function) return;
         try {
           size_t index=0;
           const auto& names=definition.symbols.at(field);
-          resolveField(value,names,index,script);
+          resolveField(value,names,index,[&](std::string_view name) { return findReference(field,name); });
           if(index!=names.size()) throw std::runtime_error("symbol array extent differs");
           }
         catch(const std::exception& e) { throw std::runtime_error(std::string(field)+": "+e.what()); }
         });
       if(record.on_state[0]>0)
         definitions.itemUsePrograms.insert(uint32_t(record.on_state[0]));
-      definitions.items.emplace(symbol->index(),std::move(record));
+      if(!definitions.items.emplace(*id,std::move(record)).second)
+        throw std::runtime_error("duplicate item identity");
       }
     catch(const std::exception& e) { throw std::runtime_error("item definitions: "+name+": "+e.what()); }
     }
+  return definitions;
+  }
+}
+
+ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolve(const ItemDefinitions::Library& library,
+                                                                  const daedalus::DaedalusScript& script) {
+  const auto lookup=[&](std::string_view name) -> std::optional<uint32_t> {
+    const auto* symbol=script.find_symbol_by_name(name);
+    return symbol!=nullptr ? std::optional(symbol->index()) : std::nullopt;
+    };
+  auto definitions=resolveRecords(library,lookup,[&](std::string_view,std::string_view name) { return lookup(name); });
   for(const auto& [name,document]:library.documents) {
     const auto* root=script.find_symbol_by_name(name);
     const auto* handle=script.find_symbol_by_name(document.handle);
@@ -66,6 +78,40 @@ ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolve(const ItemDefi
     definitions.documents.emplace(root->index(),std::move(resolved));
     }
   return definitions;
+  }
+
+ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolveNative(const ItemDefinitions::Library& library,
+                                                                        const NativeBaseCatalog::Selection& catalog) {
+  const auto index=[](const std::vector<NativeBaseCatalog::Identity>& rows) {
+    std::unordered_map<std::string_view,uint32_t> result;
+    result.reserve(rows.size());
+    for(const auto& [id,name] : rows)
+      result.emplace(name,id);
+    return result;
+    };
+  const auto items=index(catalog.identities.items);
+  const auto owners=index(catalog.identities.npcs);
+  const auto callbacks=index(catalog.itemCallbacks);
+  const auto lookup=[](const auto& map,std::string_view name) -> std::optional<uint32_t> {
+    const auto it=map.find(name);
+    return it!=map.end() ? std::optional(it->second) : std::nullopt;
+    };
+  auto definitions=resolveRecords(library,[&](std::string_view name) { return lookup(items,name); },
+    [&](std::string_view field,std::string_view name) { return lookup(field=="owner" ? owners : callbacks,name); });
+  for(const auto& [name,reason] : library.uncaptured) {
+    if(name!="ITMI_INNOSEYE_BROKEN_MIS")
+      throw std::runtime_error("item definitions: no native constructor for "+name+": "+reason);
+    definitions.brokenEye=lookup(items,name);
+    if(!definitions.brokenEye || !callbacks.contains("EQUIP_ITMI_INNOSEYE_BROKEN_MIS"))
+      throw std::runtime_error("item definitions: missing identity for the broken Eye of Innos");
+    }
+  return definitions;
+  }
+
+ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::loadNative(const std::filesystem::path& base,
+                                                                     const NativeBaseCatalog::Selection& catalog,
+                                                                     std::string_view sha256) {
+  return resolveNative(ItemDefinitions::read(base,sha256),catalog);
   }
 
 ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::load(const std::filesystem::path& base,
