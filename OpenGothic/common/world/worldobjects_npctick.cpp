@@ -23,7 +23,9 @@ void WorldObjects::refreshSocietyDispatch() {
   poseDispatchDirty = true;
   }
 
-void WorldObjects::updateSocietyDispatch(const Npc& npc) {
+void WorldObjects::updateSocietyDispatch(Npc& npc) {
+  if(npc.hasDeferredAnimation())
+    noteNpcCellChange(npc);
   if(!npcDispatchDirty) {
     const auto i = npc.societyDispatchIndex;
     const auto bit = uint64_t(1)<<(i%64);

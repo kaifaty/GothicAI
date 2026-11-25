@@ -232,13 +232,13 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     void       updateTransform();
     // Animation LOD (world/animationlod.h): an NPC outside the frustum keeps the
     // skipped frames' dt here; the next updateAnimation of any caller applies it.
-    void       deferAnimation(uint64_t dt) { animLodPendingDt += dt; }
+    void       deferAnimation(uint64_t dt);
     void       deferDistantAnimation(uint64_t dt, uint64_t now) {
       deferAnimation(dt);
       visual.skipAnimationSoundsThrough(now);
       }
     bool       hasDeferredAnimation() const { return animLodPendingDt>0; }
-    void       deferSocietyAnimation(uint64_t dt) { deferAnimation(dt); societyAnimationDebt = true; }
+    void       deferSocietyAnimation(uint64_t dt);
     bool       hasSocietyAnimationDebt() const { return societyAnimationDebt || societyPoseSuspended; }
     bool       needsLayerPoseUpdate() const { return visual.pose().needsLayerPoseUpdate(); }
     bool       canPauseDistantPose(uint64_t gestureLead) const;
@@ -1169,6 +1169,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     bool                           societySleeping = false;
     bool                           societyPoseSuspended = false;
     uint32_t                       societyDispatchIndex = uint32_t(-1);
+    bool                           npcCellChangePending = false;
     bool                           animLodTargeted = false;
     uint32_t                       animLodSeed = 0;
     NpcSimTick::State              simTickState;

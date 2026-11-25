@@ -103,6 +103,7 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
     void                 wakeSocietyNpc(Npc& npc);
     bool                 persistentSocietyEnabled() const;
     void                 prepareSocietyTick(uint64_t dt);
+    void                 noteNpcCellChange(Npc& npc) { wobj.noteNpcCellChange(npc); }
     void                 updateSocietyInterest();
     std::optional<bool>  stepSocietyRoute(Npc& npc, const WayPoint* destination, uint64_t dt, float destDist);
     std::string_view     name() const override { return wname; }

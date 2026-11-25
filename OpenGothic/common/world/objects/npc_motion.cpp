@@ -59,6 +59,7 @@ bool Npc::implSetPosition(const Tempest::Vec3& pos, bool keepBodySuspended) {
   x = ix;
   y = iy;
   z = iz;
+  owner.noteNpcCellChange(*this);
   visual.setTextureOwner(Vec3(x,y,z),!isPlayer());
   resetCharacterVisualHeight();
   if(!isPlayer() && (isHuman() || Settings::physicsFlags().monsterCharacterVirtual))

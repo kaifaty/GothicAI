@@ -155,6 +155,8 @@ void Npc::setVisual(const Skeleton* v) {
     }
   visual.setVisual(v);
   invalidateTalentOverlays();
+  if(hasDeferredAnimation())
+    owner.noteNpcCellChange(*this);
   }
 
 void Npc::setVisualBody(int32_t headTexNr, int32_t teethTexNr, int32_t bodyTexNr, int32_t bodyTexColor,
@@ -204,6 +206,8 @@ void Npc::updateArmor() {
       visual.setArmor(*this,std::move(vbody));
       }
     }
+  if(hasDeferredAnimation())
+    owner.noteNpcCellChange(*this);
   }
 
 void Npc::updateQuiver() {
@@ -753,6 +757,21 @@ void Npc::updateTransform() {
   updateAnimation(0, true);
   }
 
+void Npc::deferAnimation(uint64_t dt) {
+  const bool first = animLodPendingDt==0 && dt!=0;
+  animLodPendingDt += dt;
+  if(first)
+    owner.noteNpcCellChange(*this);
+  }
+
+void Npc::deferSocietyAnimation(uint64_t dt) {
+  const bool first = !societyAnimationDebt || animLodPendingDt==0;
+  animLodPendingDt += dt;
+  societyAnimationDebt = true;
+  if(first)
+    owner.noteNpcCellChange(*this);
+  }
+
 void Npc::syncDeferredAnimation() const {
   if((animLodPendingDt==0 && !societyPoseSuspended) || !AnimationLod::canSyncOnRead())
     return;
@@ -911,8 +930,11 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   AnimationTail::noteAnimationUpdate();
   // Frames the animation LOD skipped: the pose follows the world clock, the
   // smoothing filters and effects get the whole interval at once.
-  dt += animLodPendingDt;
-  animLodPendingDt = 0;
+  if(hasDeferredAnimation()) {
+    dt += animLodPendingDt;
+    animLodPendingDt = 0;
+    owner.noteNpcCellChange(*this);
+    }
   if(societyAnimationDebt) {
     societyAnimationDebt = false;
     FrameProfile::add(FrameProfile::Amount::SocietyAnimCatchUp,1);

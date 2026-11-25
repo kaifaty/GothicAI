@@ -2,9 +2,136 @@
 
 #include "world/objects/npc.h"
 #include "world/world.h"
+#include "worldchunkmanifest.h"
 #include "frameprofile.h"
 
 #include <algorithm>
+
+void WorldObjects::invalidateNpcOrder() {
+  npcDispatchDirty = true;
+  npcCellsDirty = true;
+  }
+
+void WorldObjects::noteNpcCellChange(Npc& npc) {
+  if(npcCellsDirty || !npcCellMembers.contains(&npc))
+    return;
+  std::lock_guard guard(npcCellChangeLock);
+  if(npc.npcCellChangePending)
+    return;
+  npc.npcCellChangePending = true;
+  npcCellChanges.push_back(&npc);
+  }
+
+void WorldObjects::updateNpcCell(Npc& npc) {
+  npc.npcCellChangePending = false;
+  const auto position = npc.position();
+  const auto chunk = ChunkId::fromPosition(position.x,position.z);
+  const NpcCellKey key{chunk.x,chunk.z};
+  const auto existing = npcCellMembers.find(&npc);
+  const bool deferred = npc.hasDeferredAnimation();
+  Tempest::Vec3 lo = position, hi = position;
+  if(deferred) {
+    AnimationLod::View::bodyBounds(npc,lo,hi);
+    lo = {std::min(lo.x,position.x),std::min(lo.y,position.y),std::min(lo.z,position.z)};
+    hi = {std::max(hi.x,position.x),std::max(hi.y,position.y),std::max(hi.z,position.z)};
+    }
+  if(deferred && npc.hasSocietyAnimationDebt())
+    societyPoseDebts.insert(&npc);
+  else
+    societyPoseDebts.erase(&npc);
+
+  if(existing!=npcCellMembers.end()) {
+    auto& member = existing->second;
+    auto& cell   = npcCells.at(member.key);
+    if(member.key==key) {
+      if(member.deferred!=deferred || (deferred && (member.lo!=lo || member.hi!=hi))) {
+        cell.deferred -= size_t(member.deferred);
+        cell.deferred += size_t(deferred);
+        cell.dirtyBounds = true;
+        }
+      member = {key,lo,hi,deferred};
+      return;
+      }
+    std::erase(cell.actors,&npc);
+    cell.deferred -= size_t(member.deferred);
+    cell.dirtyBounds = true;
+    if(cell.actors.empty())
+      npcCells.erase(member.key);
+    } else if(!npcCellsDirty) {
+    // Construction can touch position before the NPC joins npcArr.
+    return;
+    }
+
+  auto& cell = npcCells[key];
+  cell.actors.push_back(&npc);
+  cell.deferred += size_t(deferred);
+  cell.dirtyBounds = true;
+  npcCellMembers.insert_or_assign(&npc,NpcCellMember{key,lo,hi,deferred});
+  }
+
+void WorldObjects::refreshNpcCells() {
+  // The animation workers have joined and NPC list mutations are on this thread.
+  if(npcCellsDirty) {
+    npcCellChanges.clear();
+    npcCells.clear();
+    npcCellMembers.clear();
+    societyPoseDebts.clear();
+    for(auto& npc:npcArr)
+      updateNpcCell(*npc);
+    npcCellsDirty = false;
+    return;
+    }
+  for(auto* npc:npcCellChanges)
+    updateNpcCell(*npc);
+  npcCellChanges.clear();
+  }
+
+void WorldObjects::collectLatePoses(const AnimationLod::View& view, bool persistent) {
+  refreshSocietyDispatch();
+  refreshNpcCells();
+  if(!latePoseView || !latePoseView->sameView(view)) {
+    latePoseView = view;
+    ++latePoseViewRevision;
+    }
+  latePoses.clear();
+  for(auto& [key,cell]:npcCells) {
+    if(cell.deferred==0)
+      continue;
+    if(cell.dirtyBounds) {
+      bool first = true;
+      for(auto* npc:cell.actors) {
+        const auto& member = npcCellMembers.at(npc);
+        if(!member.deferred)
+          continue;
+        if(first) {
+          cell.lo = member.lo;
+          cell.hi = member.hi;
+          first = false;
+          } else {
+          cell.lo = {std::min(cell.lo.x,member.lo.x),std::min(cell.lo.y,member.lo.y),std::min(cell.lo.z,member.lo.z)};
+          cell.hi = {std::max(cell.hi.x,member.hi.x),std::max(cell.hi.y,member.hi.y),std::max(cell.hi.z,member.hi.z)};
+          }
+        }
+      }
+    if(cell.dirtyBounds || cell.viewRevision!=latePoseViewRevision) {
+      cell.couldSee     = view.couldSee(cell.lo,cell.hi);
+      cell.viewRevision = latePoseViewRevision;
+      cell.dirtyBounds  = false;
+      }
+    if(!cell.couldSee)
+      continue;
+    for(auto* npc:cell.actors)
+      if(npc->hasDeferredAnimation() && !npc->hasSocietyAnimationDebt())
+        latePoses.push_back(npc);
+    }
+  // Society can resume a pose for an interaction outside the view.
+  for(auto* npc:societyPoseDebts)
+    if(!persistent || !npc->societyPoseSuspended)
+      latePoses.push_back(npc);
+  std::sort(latePoses.begin(),latePoses.end(),[](const Npc* a,const Npc* b) {
+    return a->societyDispatchIndex<b->societyDispatchIndex;
+    });
+  }
 
 void WorldObjects::updateSimTiers() {
   updateSimTiers(false);
@@ -64,7 +191,7 @@ void WorldObjects::updateSimTiers(bool beforeTick) {
     }
   if(beforeTick && needSort) {
     FrameProfile::Scope sorting(FrameProfile::Zone::NpcSort);
-    npcDispatchDirty = true;
+    invalidateNpcOrder();
     std::sort(npcArr.begin(),npcArr.end(),[](const auto& a,const auto& b) {
       return a->handle().id<b->handle().id;
       });

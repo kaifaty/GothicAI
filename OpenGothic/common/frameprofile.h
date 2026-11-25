@@ -75,7 +75,7 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   // that execute native movement (Npc::usesSimplifiedMovement false)
   NpcSimplifiedTicked, NpcSimplifiedDeferred, NpcSimplifiedNative,
   // Explicit Society worker deferrals and the pose updates that consume them.
-  SocietyAnimDeferred, SocietyAnimCatchUp, SocietyNpcTickSkipped, Count };
+  SocietyAnimDeferred, SocietyAnimCatchUp, SocietyNpcTickSkipped, NpcLatePoseCandidates, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error, Simulation };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };

@@ -3,6 +3,11 @@
 #include <array>
 #include <vector>
 #include <memory>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "asset/worldtypes.h"
 
@@ -209,8 +214,36 @@ class WorldObjects final {
   private:
     friend class World;
     friend class SocietyProjection;
+    void invalidateNpcOrder();
     void refreshSocietyDispatch();
-    void updateSocietyDispatch(const Npc& npc);
+    void noteNpcCellChange(Npc& npc);
+    void refreshNpcCells();
+    void updateNpcCell(Npc& npc);
+    void collectLatePoses(const AnimationLod::View& view, bool persistent);
+
+    using NpcCellKey = std::pair<int32_t,int32_t>;
+    struct NpcCellMember {
+      NpcCellKey    key{};
+      Tempest::Vec3 lo{}, hi{};
+      bool          deferred = false;
+      };
+    struct NpcCell {
+      std::vector<Npc*> actors;
+      Tempest::Vec3 lo{}, hi{};
+      size_t        deferred = 0;
+      uint64_t      viewRevision = 0;
+      bool          dirtyBounds = true;
+      bool          couldSee = false;
+      };
+    std::map<NpcCellKey,NpcCell> npcCells;
+    std::unordered_map<Npc*,NpcCellMember> npcCellMembers;
+    std::unordered_set<Npc*> societyPoseDebts;
+    std::mutex npcCellChangeLock;
+    std::vector<Npc*> npcCellChanges, latePoses;
+    std::optional<AnimationLod::View> latePoseView;
+    uint64_t latePoseViewRevision = 0;
+    bool npcCellsDirty = true;
+    void updateSocietyDispatch(Npc& npc);
     void refreshSocietyPoseDispatch();
     size_t nextNativeNpc(size_t first) const;
     void noteNpcCadence(uint64_t dt);

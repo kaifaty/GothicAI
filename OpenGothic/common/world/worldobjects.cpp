@@ -108,7 +108,7 @@ void WorldObjects::load(Serialize &fin) {
   items.clear();
 
   uint32_t sz = fin.directorySize("worlds/",fin.worldName(),"/npc/");
-  npcDispatchDirty = true;
+  invalidateNpcOrder();
   npcArr.resize(sz);
   for(size_t i=0; i<sz; ++i)
     npcArr[i] = std::make_unique<Npc>(owner,size_t(-1),"");
@@ -686,7 +686,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
     npc->attachToPoint(pos);
     npc->updateTransform();
     owner.rules().invokeRefreshAtInsert(*npc);
-    npcDispatchDirty = true;
+    invalidateNpcOrder();
     npcArr.emplace_back(npc);
     } else {
     const auto sym = owner.rules().symbolName(npcInstance);
@@ -716,7 +716,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, const Vec3& pos) {
   npc->updateTransform();
   owner.rules().invokeRefreshAtInsert(*npc);
 
-  npcDispatchDirty = true;
+  invalidateNpcOrder();
   npcArr.emplace_back(npc);
   return npc;
   }
@@ -738,7 +738,7 @@ Npc* WorldObjects::insertPlayer(std::unique_ptr<Npc> &&npc, std::string_view at)
   npc->setDirection (pos->direction());
   npc->attachToPoint(pos);
   npc->updateTransform();
-  npcDispatchDirty = true;
+  invalidateNpcOrder();
   npcArr.emplace_back(std::move(npc));
   return npcArr.back().get();
   }
@@ -749,7 +749,7 @@ std::unique_ptr<Npc> WorldObjects::takeNpc(const Npc* ptr) {
     if(&npc==ptr){
       npc.suspendRagdoll();
       npc.wakeSociety();
-      npcDispatchDirty = true;
+      invalidateNpcOrder();
       auto ret=std::move(npcArr[i]);
       npcArr.erase(npcArr.begin() + int32_t(i));
       return ret;
@@ -1029,24 +1029,32 @@ void WorldObjects::catchUpAnimation() {
     }
   if(!catchUp)
     return;
+  collectLatePoses(view,persistent);
+  FrameProfile::add(FrameProfile::Amount::NpcLatePoseCandidates,latePoses.size());
+  const auto needsPose = [&](const Npc& npc) {
+    if(!npc.hasDeferredAnimation())
+      return false;
+    const bool societyWake = npc.hasSocietyAnimationDebt() &&
+                             (npc.needsLayerPoseUpdate() || !owner.societyHoldsAnimation(npc) || mustUpdateAnimation(npc,view));
+    return societyWake || view.visible(npc) || view.nearCamera(npc);
+    };
+#ifndef NDEBUG
+  for(const auto& npc:npcArr)
+    if((!persistent || !npc->societyPoseSuspended) && needsPose(*npc))
+      assert(std::binary_search(latePoses.begin(),latePoses.end(),npc.get(),[](const Npc* a,const Npc* b) {
+        return a->societyDispatchIndex<b->societyDispatchIndex;
+        }));
+#endif
+  if(latePoses.empty())
+    return;
   std::atomic<uint64_t> caught{0};
   AnimationLod::beginPass();
-  const auto catchUpNpc = [&](std::unique_ptr<Npc>& i){
-    if(!i->hasDeferredAnimation())
+  Workers::parallelTasks(latePoses,[&](Npc* npc) {
+    if(!needsPose(*npc))
       return;
-    const bool societyWake = i->hasSocietyAnimationDebt() &&
-                             (i->needsLayerPoseUpdate() || !owner.societyHoldsAnimation(*i) || mustUpdateAnimation(*i,view));
-    if(!societyWake && !view.visible(*i) && !view.nearCamera(*i))
-      return;
-    i->updateAnimation(0);
+    npc->updateAnimation(0);
     caught.fetch_add(1,std::memory_order_relaxed);
-    };
-  if(persistent) {
-    refreshSocietyPoseDispatch();
-    Workers::parallelTasks(nativePoseIndices,[&](size_t i) { catchUpNpc(npcArr[i]); });
-    } else {
-    Workers::parallelTasks(npcArr,catchUpNpc);
-    }
+    });
   AnimationLod::endPass();
   FrameProfile::add(FrameProfile::Amount::NpcAnimCatchUp,caught.load(std::memory_order_relaxed));
   }
@@ -1674,7 +1682,7 @@ void WorldObjects::emitPhysicsNoise(const PhysicsNoise& noise) {
   }
 
 void WorldObjects::resetPositionToTA() {
-  npcDispatchDirty = true;
+  invalidateNpcOrder();
   for(auto& r:routines)
     r.curState = 0;
 
