@@ -511,7 +511,7 @@ def main() -> int:
             replace(group, command=(
                 *group.command[:2], "--with", "pytest-xdist", *group.command[2:],
                 "-n", "2", "--dist", "loadfile", "--durations=20",
-            )) if group.name in {"server", "scripts"} else group
+            )) if group.name in {"server", "scripts", "content"} else group
             for group in groups
         )
     selections = select_groups(root, paths, event=event, level=level, groups=groups)
