@@ -3,6 +3,9 @@
 #include "gamescript_inventorytransfer.h"
 
 #include "game/definitions/tradeinventorydata.h"
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
+#include "gothic.h"
 #include "game/definitions/deathtrophydefinitions.h"
 #include "game/npcactivityhost.h"
 #include "resources.h"
@@ -27,369 +30,6 @@ struct RestoreContext {
   };
 
 } // namespace
-
-bool GameScript::applyCumulativeFoodEffect(std::string_view callback) {
-  const bool apple = callback=="USE_APPLE";
-  if(!apple && callback!="USE_MUSHROOM_01")
-    return false;
-
-  auto* self = vm.global_self();
-  auto* change = findSymbol("NPC_CHANGEATTRIBUTE");
-  vm.push_reference(self);
-  vm.push_reference(findSymbol("ATR_HITPOINTS"));
-  vm.push_reference(findSymbol(apple ? "HP_APPLE" : "HP_MUSHROOM_01"));
-  vm.unsafe_call_external(change);
-  vm.push_reference(self);
-  vm.unsafe_call_external(findSymbol("NPC_ISPLAYER"));
-  if(vm.pop_int()==0)
-    return true;
-
-  auto* counter = findSymbol(apple ? "APPLE_BONUS" : "DUNKELPILZ_BONUS");
-  const auto caller = vm.unsafe_get_gi();
-  const auto count = [&] { return vm.get_int(caller,counter,0); };
-  vm.set_int(caller,counter,0,std::bit_cast<int32_t>(uint32_t(count())+1u));
-
-  const auto print = [&](const char* notice) {
-    vm.push_reference(findSymbol(notice));
-    vm.unsafe_call_external(findSymbol("PRINT"));
-    };
-  if(apple) {
-    if(count()==7)
-      print("PRINT_EAT1");
-    if(count()==15)
-      print("PRINT_EAT2");
-    }
-  if(count()!=(apple ? 25 : 50))
-    return true;
-
-  if(apple)
-    print("PRINT_EAT3");
-  vm.push_reference(self);
-  vm.push_reference(findSymbol(apple ? "ATR_STRENGTH" : "ATR_MANA_MAX"));
-  vm.push_int(apple ? 1 : 5);
-  vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
-  if(!apple) {
-    vm.push_reference(self);
-    vm.push_reference(findSymbol("ATR_MANA"));
-    vm.push_int(5);
-    vm.unsafe_call_external(change);
-    }
-  vm.push_reference(findSymbol(apple ? "$14176" : "$14605")); // Each callback's stock LevelUp string.
-  vm.unsafe_call_external(findSymbol("SND_PLAY"));
-  vm.set_int(caller,counter,0,0);
-  return true;
-  }
-
-bool GameScript::applyStockItemUseEffect(std::string_view callback) {
-  auto* self = vm.global_self();
-  const auto reference = [&](const char* name) { vm.push_reference(findSymbol(name)); };
-  const auto external = [&](const char* name) { return vm.unsafe_call_external(findSymbol(name)); };
-  const auto attribute = [&](const char* name) {
-    vm.push_reference(self);
-    reference(name);
-    };
-  const auto change = [&](const char* name, const char* dose) {
-    attribute(name);
-    reference(dose);
-    external("NPC_CHANGEATTRIBUTE");
-    };
-  const auto raise = [&](const char* name, const char* dose) {
-    attribute(name);
-    reference(dose);
-    vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
-    };
-  const auto text = [&](const char* caption, const char* dose, const char* scratch) {
-    reference(caption);
-    reference(dose);
-    external("INTTOSTRING");
-    external("CONCATSTRINGS");
-    vm.set_string(vm.unsafe_get_gi(),findSymbol(scratch),0,vm.pop_string());
-    };
-  const auto screen = [&](const char* message, int32_t x, int32_t y, const char* font, int32_t seconds) {
-    reference(message);
-    vm.push_int(x);
-    vm.push_int(y);
-    reference(font);
-    vm.push_int(seconds);
-    return external("PRINTSCREEN");
-    };
-  const auto print = [&](const char* message, int32_t x, int32_t y, const char* font, int32_t seconds = 2) {
-    if(screen(message,x,y,font,seconds))
-      (void)vm.pop_int();
-    };
-  const auto playEffect = [&](const char* name, daedalus::DaedalusSymbol* actor) {
-    reference(name);
-    vm.push_reference(actor);
-    vm.push_reference(actor);
-    vm.push_int(0);
-    vm.push_int(0);
-    vm.push_int(0);
-    reference("FALSE");
-    external("WLD_PLAYEFFECT");
-    };
-  const auto read = [&](const char* name) {
-    return vm.get_int(vm.unsafe_get_gi(),findSymbol(name),0);
-    };
-  const auto set = [&](const char* name,int32_t value) {
-    vm.set_int(vm.unsafe_get_gi(),findSymbol(name),0,value);
-    };
-  const auto setFlag = [&](const char* flag) { set(flag,read("TRUE")); };
-  const auto sameInstance = [&](daedalus::DaedalusSymbol* first, daedalus::DaedalusSymbol* second) {
-    vm.push_reference(first);
-    external("HLP_GETINSTANCEID");
-    vm.push_reference(second);
-    external("HLP_GETINSTANCEID");
-    const auto secondId = vm.pop_int();
-    const auto firstId = vm.pop_int();
-    return firstId==secondId;
-    };
-
-  if(callback=="USE_MEATSOUP") {
-    text("NAME_BONUS_STR","STR_MEATSOUP","USE_MEATSOUP.CONCATTEXT");
-    raise("ATR_STRENGTH","STR_MEATSOUP");
-    print("USE_MEATSOUP.CONCATTEXT",-1,34,"FONT_SCREENSMALL");
-    return true;
-    }
-  if(callback=="USE_FIRESTEW") {
-    raise("ATR_STRENGTH","STR_FIRESTEW");
-    change("ATR_HITPOINTS_MAX","HP_FIRESTEW");
-    print("$13177",-1,34,"FONT_SCREENSMALL"); // Stock strength and health notice.
-    return true;
-    }
-  if(callback=="USE_XPSTEW") {
-    change("ATR_HITPOINTS","HP_STEW");
-    reference("$14201"); // Stock LevelUp cue for this stew.
-    external("SND_PLAY");
-    attribute("ATR_STRENGTH");
-    vm.push_int(1);
-    vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
-    return true;
-    }
-  if(callback=="USE_CORAGONSBEERBEER") {
-    raise("ATR_MANA_MAX","MANA_BEER");
-    change("ATR_MANA","MANA_BEER");
-    change("ATR_HITPOINTS_MAX","HP_BEER");
-    change("ATR_HITPOINTS","HP_BEER");
-    text("PRINT_LEARNHITPOINTS_MAX","HP_BEER","USE_CORAGONSBEERBEER.CONCATTEXT");
-    print("USE_CORAGONSBEERBEER.CONCATTEXT",55,-1,"FONT_SCREEN");
-    return true;
-    }
-
-  if(callback=="USEITPO_SPEED" || callback=="USE_SPEED_HERB_01") {
-    const bool potion = callback=="USEITPO_SPEED";
-    vm.push_reference(self);
-    reference(potion ? "$14669" : "$14601"); // The stock HUMANS_SPRINT.MDS references.
-    reference(potion ? "TIME_SPEED" : "SPEED_BOOST");
-    external("MDL_APPLYOVERLAYMDSTIMED");
-    return true;
-    }
-  if(callback=="USEITPO_GEIST_01" || callback=="USESCHLAFHAMMER") {
-    const auto actor = self->get_instance();
-    RestoreContext restore{vm,vm.unsafe_get_gi()};
-    vm.unsafe_set_gi(actor);
-    auto* attributes = findSymbol("C_NPC.ATTRIBUTE");
-    const auto hp = vm.get_int(actor,attributes,ATR_HITPOINTS);
-    if(callback=="USEITPO_GEIST_01") {
-      vm.set_int(actor,attributes,ATR_HITPOINTS,std::bit_cast<int32_t>(uint32_t(hp)-1000u));
-      } else if(hp>2) {
-      vm.set_int(actor,attributes,ATR_HITPOINTS,vm.get_int(actor,attributes,ATR_HITPOINTS)/2);
-      }
-    return true;
-    }
-  if(callback=="USEITPO_GEIST_02") {
-    vm.push_reference(self);
-    external("NPC_ISPLAYER");
-    if(vm.pop_int()!=0) {
-      const auto xp = read("XP_AMBIENT");
-      vm.push_int(std::bit_cast<int32_t>(uint32_t(xp)*5u));
-      vm.unsafe_call_bl(findSymbol("B_GIVEPLAYERXP"));
-      }
-    return true;
-    }
-
-  if(callback=="USELOUHAMMER") {
-    const auto alreadyRaised = read("HAMMER_ONCE");
-    if(alreadyRaised==read("FALSE")) {
-      raise("ATR_MANA_MAX","MANA_LOUSHAMMER");
-      setFlag("HAMMER_ONCE");
-      }
-    return true;
-    }
-  if(callback=="USESCHNELLERHERING") {
-    vm.push_int(int32_t(findSymbol("PC_HERO")->index()));
-    external("HLP_GETNPC");
-    auto* hero = findSymbol("USESCHNELLERHERING.HER");
-    hero->set_instance(vm.pop_instance());
-    if(sameInstance(hero,self)) {
-      vm.push_reference(self);
-      reference("$13165"); // Stock HUMANS_SPRINT.MDS for this food.
-      vm.push_int(120000);
-      external("MDL_APPLYOVERLAYMDSTIMED");
-      }
-    setFlag("PLAYER_KNOWSSCHNELLERHERING");
-    return true;
-    }
-  if(callback=="USEITPO_MEGADRINK") {
-    const auto actor = self->get_instance();
-    RestoreContext restore{vm,vm.unsafe_get_gi()};
-    vm.unsafe_set_gi(actor);
-    auto* attributes = findSymbol("C_NPC.ATTRIBUTE");
-    const auto strength = vm.get_int(actor,attributes,ATR_STRENGTH);
-    const auto dexterity = vm.get_int(actor,attributes,ATR_DEXTERITY);
-    raise(strength<dexterity ? "ATR_DEXTERITY" : "ATR_STRENGTH","STRORDEX_MEGADRINK");
-    attribute("ATR_MANA");
-    // The stock mana delta is the negated ATR_MANA index.
-    vm.push_int(std::bit_cast<int32_t>(0u-uint32_t(read("ATR_MANA"))));
-    external("NPC_CHANGEATTRIBUTE");
-    reference("$14675"); // Stock DEM_Warn sound.
-    external("SND_PLAY");
-    return true;
-    }
-  if(callback=="USE_DRAGONEGGDRINKNEORAS") {
-    change("ATR_HITPOINTS","HP_ELIXIER");
-    attribute("ATR_STRENGTH");
-    vm.push_int(3);
-    vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
-    reference("$16012"); // Stock DEM_Warn sound.
-    external("SND_PLAY");
-    setFlag("NEORAS_SCUSEDDRAGONEGGDRINK");
-    return true;
-    }
-
-  if(callback=="USE_HEALOBSESSION") {
-    change("ATR_HITPOINTS","HP_ESSENZ");
-    const auto used = read("SC_OBSESSIONTIMES");
-    set("SC_OBSESSIONTIMES",std::bit_cast<int32_t>(uint32_t(used)+1u));
-    auto* healer = findSymbol("B_CLEARSCOBSESSION.HEILER");
-    auto* hero = vm.global_hero();
-    healer->set_instance(self->get_instance());
-    if(!sameInstance(hero,healer)) {
-      vm.push_reference(healer);
-      external("AI_STOPPROCESSINFOS");
-      }
-    set("SC_ISOBSESSED",read("FALSE"));
-    set("SC_OBSESSIONCOUNTER",0);
-    print("PRINT_CLEARSCOBSESSION",-1,-1,"FONT_SCREEN",3);
-
-    playEffect("$15858",hero); // Stock spellFX_LIGHTSTAR_VIOLET.
-    reference("$15859"); // Stock SFX_HealObsession.
-    external("SND_PLAY");
-    return true;
-    }
-  if(callback=="USEITPO_STORY") {
-    const auto ran = read("B_RAVENSESCAPEINTOTEMPELAVI_ONETIME");
-    if(ran==read("FALSE")) {
-      reference("$51974"); // Stock PORTAL_RAVEN.BIK.
-      reference("TRUE");
-      reference("FALSE");
-      const bool videoResult = external("PLAYVIDEOEX");
-      setFlag("RAVENISINTEMPEL");
-      reference("TOPIC_ADDON_RAVENKDW");
-      reference("LOG_MISSION");
-      external("LOG_CREATETOPIC");
-      reference("TOPIC_ADDON_RAVENKDW");
-      reference("LOG_RUNNING");
-      external("LOG_SETTOPICSTATUS");
-      reference("TOPIC_ADDON_RAVENKDW");
-      reference("$51975"); // Stock journal entry about Raven's escape.
-      vm.unsafe_call_bl(findSymbol("B_LOGENTRY"));
-      setFlag("B_RAVENSESCAPEINTOTEMPELAVI_ONETIME");
-      if(videoResult)
-        (void)vm.pop_int();
-      }
-    return true;
-    }
-  if(callback=="USE_TESTTRIGGER") {
-    runWorldFirstEntryTrigger(false);
-    return true;
-    }
-
-  if(callback=="USE_SWAMPHERB" || callback=="USE_ZEITSPALT_ADDON") {
-    vm.push_reference(self);
-    external("NPC_ISPLAYER");
-    if(vm.pop_int()!=0) {
-      if(callback=="USE_SWAMPHERB") {
-        playEffect("$14573",self); // Stock SLOW_TIME.
-        } else {
-        playEffect("$13288",self); // Stock spellFX_BELIARSRAGE.
-        reference("$13289"); // Stock SLOW_MOTION stop cue.
-        external("WLD_STOPEFFECT");
-        playEffect("$13290",self); // Stock SLOW_MOTION start cue.
-        }
-      }
-    return true;
-    }
-  if(callback=="USEITPO_POTIONOFDEATH") {
-    RestoreContext restore{vm,vm.unsafe_get_gi()};
-    auto* hero = vm.global_hero();
-    const auto context = [&](daedalus::DaedalusSymbol* role) {
-      auto instance = role->get_instance();
-      vm.unsafe_set_gi(instance);
-      return instance;
-      };
-    auto* attributes = findSymbol("C_NPC.ATTRIBUTE");
-    const auto guild = vm.get_int(context(hero),findSymbol("C_NPC.GUILD"),0);
-    if(guild==read("GIL_KDF")) {
-      playEffect("$16161",hero); // Stock spellFX_LIGHTSTAR_BLUE.
-      reference("$16162"); // Stock SFX_HealObsession.
-      external("SND_PLAY");
-      const auto refill = [&](Attribute current, Attribute maximum) {
-        const auto from = context(self);
-        const auto to = context(self);
-        vm.set_int(to,attributes,current,vm.get_int(from,attributes,maximum));
-        };
-      refill(ATR_HITPOINTS,ATR_HITPOINTSMAX);
-      refill(ATR_MANA,ATR_MANAMAX);
-      auto* aivar = findSymbol("C_NPC.AIVAR");
-      const auto increase = [&](const char* attr,uint16_t training) {
-        attribute(attr);
-        vm.push_int(5);
-        external("NPC_CHANGEATTRIBUTE");
-        const auto before = vm.get_int(context(self),aivar,training);
-        vm.set_int(context(self),aivar,training,std::bit_cast<int32_t>(uint32_t(before)+5u));
-        };
-      increase("ATR_STRENGTH",81); // REAL_STRENGTH
-      increase("ATR_DEXTERITY",82); // REAL_DEXTERITY
-
-      // The void script frame keeps the three screen results until the overlay has started.
-      int32_t notices = 0;
-      notices += screen("PRINT_LEARNSTR5",-1,45,"FONT_SCREEN",2);
-      notices += screen("PRINT_LEARNDEX5",-1,55,"FONT_SCREEN",2);
-      notices += screen("PRINT_FULLYHEALED",-1,65,"FONT_SCREEN",2);
-      vm.push_reference(self);
-      reference("$16163"); // Stock HUMANS_SPRINT.MDS.
-      reference("TIME_SPEED");
-      external("MDL_APPLYOVERLAYMDSTIMED");
-      for(int32_t i=0; i<notices; ++i)
-        (void)vm.pop_int();
-      } else {
-      vm.push_reference(hero);
-      vm.push_int(std::bit_cast<int32_t>(3.f)); // Stock AI_WAIT float operand.
-      external("AI_WAIT");
-      vm.push_reference(self);
-      reference("$16164"); // Stock S_FIRE_VICTIM.
-      external("AI_PLAYANI");
-      playEffect("$16165",hero); // Stock VOB_MAGICBURN.
-      vm.push_reference(self);
-      vm.push_reference(self);
-      reference("$16166"); // Stock $Dead voice line.
-      vm.unsafe_call_bl(findSymbol("B_SAY"));
-      vm.push_reference(self);
-      reference("$16167"); // Stock VOB_MAGICBURN stop cue.
-      external("AI_STOPFX");
-      attribute("ATR_HITPOINTS");
-      const auto maximum = vm.get_int(context(self),attributes,ATR_HITPOINTSMAX);
-      vm.push_int(std::bit_cast<int32_t>(0u-uint32_t(maximum)));
-      external("NPC_CHANGEATTRIBUTE");
-      vm.push_reference(self);
-      reference("$16168"); // Stock S_FIRE_VICTIM stop cue.
-      external("NPC_STOPANI");
-      }
-    return true;
-    }
-
-  return false;
-  }
 
 void GameScript::loadNativeTradeInventory() {
   if(!nativeRoutineProgram)
@@ -710,9 +350,13 @@ bool GameScript::applyArmorSetEffect(Npc& npc, uint32_t callback) {
     return false;
   if(npc.isPlayer()) {
     const auto& effect = it->second;
-    vm.find_symbol_by_index(effect.armorFlag)->set_int(effect.equip ? 1 : 0);
-    if(vm.find_symbol_by_index(effect.beltFlag)->get_int()==1) {
-      const auto amount = findSymbol("BA_BONUS01")->get_int();
+    auto* armor=std::get_if<ScriptVars::Array<int32_t>>(runtimeState.find(effect.armorFlag));
+    const auto* belt=std::get_if<ScriptVars::Array<int32_t>>(runtimeState.find(effect.beltFlag));
+    if(armor==nullptr || belt==nullptr)
+      throw std::runtime_error("missing armor set runtime state");
+    armor->values.front()=effect.equip ? 1 : 0;
+    if(belt->values.front()==1) {
+      const auto amount=itemRuntimeInt("BA_BONUS01");
       const auto delta = effect.equip ? amount : -amount;
       for(const auto protection : {PROT_EDGE,PROT_BLUNT,PROT_POINT,PROT_MAGIC,PROT_FIRE})
         npc.changeProtection(protection,npc.protection(protection)+delta);
@@ -730,8 +374,8 @@ bool GameScript::applyFightSkillItemEffect(Npc& npc, uint32_t callback) {
     return true;
   using Value=NpcHelperDefinitions::Value;
   const std::array arguments={Value{.kind=Value::Kind::Self},Value{.integer=effect.talent},Value{.integer=effect.delta}};
-  return invokeNpcHelper(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),
-                         uint32_t(findSymbolIndex("B_ADDFIGHTSKILL")),arguments);
+  const auto id=storyScriptFunctionId("B_ADDFIGHTSKILL").value();
+  return invokeNpcHelper(std::static_pointer_cast<daedalus::INpc>(npc.handlePtr()),id,arguments);
   }
 
 bool GameScript::applyEquipmentStatEffect(Npc& npc, uint32_t callback) {
@@ -739,21 +383,18 @@ bool GameScript::applyEquipmentStatEffect(Npc& npc, uint32_t callback) {
   if(it==itemDefinitions.equipmentStatEffects.end())
     return false;
   const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
-  auto* protection = findSymbol("C_NPC.PROTECTION");
-  auto* attribute = findSymbol("C_NPC.ATTRIBUTE");
   const auto& effect = it->second;
   for(const auto& change : effect.changes) {
-    const auto amount = uint32_t(vm.find_symbol_by_index(change.amount)->get_int());
+    const auto amount = uint32_t(change.amount);
     const auto delta = effect.equip ? amount : 0u-amount;
     if(const auto* index = std::get_if<Protection>(&change.stat)) {
-      const auto current = uint32_t(vm.get_int(actor,protection,*index));
-      vm.set_int(actor,protection,*index,std::bit_cast<int32_t>(current+delta));
+      auto& stat=actor->protection[*index];
+      stat=std::bit_cast<int32_t>(uint32_t(stat)+delta);
       }
     else if(const auto* write = std::get_if<ItemDefinitionRuntime::EquipmentAttributeWrite>(&change.stat)) {
-      const auto current = vm.get_int(actor,attribute,write->attribute);
-      const bool belowMinimum = !effect.equip && write->minimum && int64_t(current)-int64_t(amount)<*write->minimum;
-      const auto value = belowMinimum ? *write->minimum : std::bit_cast<int32_t>(uint32_t(current)+delta);
-      vm.set_int(actor,attribute,write->attribute,value);
+      auto& stat=actor->attribute[write->attribute];
+      const bool belowMinimum=!effect.equip && write->minimum && int64_t(stat)-int64_t(amount)<*write->minimum;
+      stat=belowMinimum ? *write->minimum : std::bit_cast<int32_t>(uint32_t(stat)+delta);
       }
     else {
       npc_changeattribute(actor,std::get<Attribute>(change.stat),std::bit_cast<int32_t>(delta));
@@ -771,175 +412,102 @@ bool GameScript::applyQuestEquipmentEffect(std::string_view item, bool equip) {
   if(!chargedEye && !depletedEye && !deathAmulet && !ranger && !orcElite)
     return false;
 
-  auto* self = vm.global_self();
-  const auto reference = [&](const char* name) { vm.push_reference(findSymbol(name)); };
-  const auto external = [&](const char* name) { return vm.unsafe_call_external(findSymbol(name)); };
-  const auto print = [&](const char* message) {
-    reference(message);
-    external("PRINT");
+  const auto self=std::dynamic_pointer_cast<daedalus::INpc>(storyActorSlot("SELF"));
+  const auto hero=std::dynamic_pointer_cast<daedalus::INpc>(storyActorSlot("HERO"));
+  const auto yes=itemRuntimeInt("TRUE"), no=itemRuntimeInt("FALSE");
+  const auto play=[&](std::string_view visual) {
+    wld_playeffect(itemRuntimeText(visual),self,self,0,0,0,no);
     };
-  const auto playEffect = [&](const char* visual) {
-    reference(visual);
-    vm.push_reference(self);
-    vm.push_reference(self);
-    vm.push_int(0);
-    vm.push_int(0);
-    vm.push_int(0);
-    reference("FALSE");
-    external("WLD_PLAYEFFECT");
+  const auto cue=[&](std::string_view sound) { snd_play(itemRuntimeText(sound)); };
+  const auto animate=[&](std::string_view animation) {
+    ai_playani(self,itemRuntimeText(animation));
+    ai_standup(self);
     };
-  const auto sound = [&](const char* name) {
-    reference(name);
-    external("SND_PLAY");
-    };
-
   if(orcElite) {
-    vm.push_reference(self);
-    reference("ATR_STRENGTH");
-    vm.push_int(equip ? -20 : 20);
-    external("NPC_CHANGEATTRIBUTE");
+    npc_changeattribute(self,ATR_STRENGTH,equip ? -20 : 20);
     if(equip)
-      print("PRINT_ORCELITERINGEQUIP");
+      Gothic::inst().onPrint(itemRuntimeText("PRINT_ORCELITERINGEQUIP"));
     return true;
     }
   if(ranger) {
-    auto* hero = vm.global_hero();
-    vm.push_reference(hero);
-    external("HLP_GETINSTANCEID");
-    vm.push_reference(self);
-    external("HLP_GETINSTANCEID");
-    const auto wearerId = vm.pop_int();
-    if(vm.pop_int()!=wearerId)
+    if(hlp_getinstanceid(self)!=hlp_getinstanceid(hero))
       return true;
-    const auto yes = findSymbol("TRUE")->get_int();
-    const auto no = findSymbol("FALSE")->get_int();
-    auto* laresRing = findSymbol("RANGERRINGISLARESRING");
-    auto* wearing = findSymbol("SCISWEARINGRANGERRING");
     if(equip) {
-      if(findSymbol("ENTERED_ADDONWORLD")->get_int()==no) {
-        vm.push_reference(hero);
-        vm.push_int(int32_t(findSymbolIndex("ITRI_RANGER_ADDON")));
-        external("NPC_HASITEMS");
-        if(vm.pop_int()==no)
-          laresRing->set_int(yes);
-        }
-      wearing->set_int(yes);
-      print("PRINT_ADDON_SCISWEARINGRANGERRING");
+      if(itemRuntimeInt("ENTERED_ADDONWORLD")==no &&
+         npc_hasitems(hero,int32_t(findItemInstance("ITRI_RANGER_ADDON").value()))==no)
+        setItemRuntimeInt("RANGERRINGISLARESRING",yes);
+      setItemRuntimeInt("SCISWEARINGRANGERRING",yes);
+      Gothic::inst().onPrint(itemRuntimeText("PRINT_ADDON_SCISWEARINGRANGERRING"));
       } else {
-      if(findSymbol("SC_ISRANGER")->get_int()==no)
-        wearing->set_int(no);
-      laresRing->set_int(no);
+      if(itemRuntimeInt("SC_ISRANGER")==no)
+        setItemRuntimeInt("SCISWEARINGRANGERRING",no);
+      setItemRuntimeInt("RANGERRINGISLARESRING",no);
       }
     return true;
     }
   if(depletedEye) {
-    playEffect("$15685"); // Stock spellFX_Fear.
-    sound("$15686"); // Stock MFX_FEAR_CAST.
+    play("ITEM_EYE_DISCHARGED_VISUAL");
+    cue("ITEM_EYE_DISCHARGED_SOUND");
     return true;
     }
-
-  struct RestoreContext {
-    daedalus::DaedalusVm& vm;
-    std::shared_ptr<daedalus::DaedalusInstance> caller;
-    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
-    } restore{vm,vm.unsafe_get_gi()};
-  const auto animation = [&](const char* name) {
-    vm.push_reference(self);
-    reference(name);
-    external("AI_PLAYANI");
-    vm.push_reference(self);
-    external("AI_STANDUP");
-    };
   if(chargedEye && equip) {
-    playEffect("$15676"); // Stock spellFX_Innoseye.
-    playEffect("$15677"); // Stock spellFX_LIGHTSTAR_RED.
-    playEffect("$15678"); // Stock FX_EarthQuake.
-    animation("$15679"); // Stock T_MAGRUN_2_HEASHOOT.
-    sound("$15680"); // Stock SFX_INNOSEYE.
+    play("ITEM_EYE_CHARGED_VISUAL");
+    play("ITEM_EYE_CHARGED_GLOW");
+    play("ITEM_EYE_CHARGED_QUAKE");
+    animate("ITEM_EYE_CHARGED_ANIMATION");
+    cue("ITEM_EYE_CHARGED_SOUND");
     }
   static constexpr std::pair<Protection,const char*> fields[] = {
     {PROT_EDGE,"AM_EYEPROTEDGE"}, {PROT_BLUNT,"AM_EYEPROTEDGE"}, {PROT_POINT,"AM_EYEPROTPOINT"},
     {PROT_FIRE,"AM_EYEPROTFIRE"}, {PROT_MAGIC,"AM_EYEPROTMAGE"},
     };
-  auto* protection = findSymbol("C_NPC.PROTECTION");
   for(const auto& [index,eyeBonus] : fields) {
-    const auto amount = chargedEye ? uint32_t(findSymbol(eyeBonus)->get_int()) : 30u;
-    const auto wearer = self->get_instance();
-    vm.unsafe_set_gi(wearer);
-    const auto current = uint32_t(vm.get_int(wearer,protection,index));
-    vm.set_int(wearer,protection,index,std::bit_cast<int32_t>(equip ? current+amount : current-amount));
+    const auto amount=chargedEye ? uint32_t(itemRuntimeInt(eyeBonus)) : 30u;
+    auto& protection=self->protection[index];
+    const auto current=uint32_t(protection);
+    protection=std::bit_cast<int32_t>(equip ? current+amount : current-amount);
     }
-  if(chargedEye && equip) {
-    reference("$15681"); // Stock empty screen message.
-    vm.push_int(-1);
-    vm.push_int(-1);
-    reference("FONT_SCREEN");
-    vm.push_int(0);
-    if(external("PRINTSCREEN"))
-      (void)vm.pop_int();
-    }
+  if(chargedEye && equip)
+    ai_printscreen(itemRuntimeText("ITEM_EYE_CHARGED_MESSAGE"),-1,-1,itemRuntimeText("FONT_SCREEN"),0);
   if(deathAmulet && equip) {
-    playEffect("$16181"); // Stock spellFX_LIGHTSTAR_WHITE.
-    playEffect("$16182"); // Stock FX_EarthQuake.
-    playEffect("$16183"); // Stock spellFX_INCOVATION_WHITE.
-    animation("$16184"); // Stock T_MAGRUN_2_HEASHOOT.
-    sound("$16185"); // Stock MFX_FIRERAIN_INVEST.
+    play("ITEM_DEATH_AMULET_LIGHT");
+    play("ITEM_DEATH_AMULET_QUAKE");
+    play("ITEM_DEATH_AMULET_VISUAL");
+    animate("ITEM_DEATH_AMULET_ANIMATION");
+    cue("ITEM_DEATH_AMULET_SOUND");
     }
   return true;
   }
 
 void GameScript::applyWispEquipmentEffect(bool equip) {
-  auto* detector = findSymbol("WISP_DETECTOR");
-  auto* local = findSymbol(equip ? "EQUIP_WISPDETECTOR.DETWSP" : "UNEQUIP_WISPDETECTOR.DETWSP");
-  auto* no = findSymbol("FALSE");
-  const auto external = [&](const char* name) { vm.unsafe_call_external(findSymbol(name)); };
-  const auto sound = [&](const char* name) {
-    vm.push_reference(findSymbol(name));
-    external("SND_PLAY");
-    };
-  const auto teleport = [&](const char* destination) {
-    vm.push_reference(local);
-    vm.push_reference(findSymbol(destination));
-    external("AI_TELEPORT");
-    };
-  if(equip) {
-    auto* initialized = findSymbol("EQUIP_WISPDETECTOR_ONETIME");
-    if(initialized->get_int()==no->get_int()) {
-      const auto yes = findSymbol("TRUE")->get_int();
-      findSymbol("PLAYER_TALENT_WISPDETECTOR")->set_int(yes,0);
-      findSymbol("WISPSEARCHING")->set_int(findSymbol("WISPSEARCH_NF")->get_int());
-      initialized->set_int(yes);
-      }
+  const auto name=equip ? "EQUIP_WISPDETECTOR.DETWSP" : "UNEQUIP_WISPDETECTOR.DETWSP";
+  const auto id=storyNpcId("WISP_DETECTOR").value();
+  const auto no=itemRuntimeInt("FALSE");
+  if(equip && itemRuntimeInt("EQUIP_WISPDETECTOR_ONETIME")==no) {
+    const auto yes=itemRuntimeInt("TRUE");
+    setItemRuntimeInt("PLAYER_TALENT_WISPDETECTOR",yes);
+    setItemRuntimeInt("WISPSEARCHING",itemRuntimeInt("WISPSEARCH_NF"));
+    setItemRuntimeInt("EQUIP_WISPDETECTOR_ONETIME",yes);
     }
-  vm.push_int(int32_t(detector->index()));
-  external("HLP_GETNPC");
-  local->set_instance(vm.pop_instance());
+  const auto wisp=hlp_getnpc(int32_t(id));
+  storyActorSlot(name)=wisp;
   if(equip) {
-    teleport("$16475"); // Stock TOT destination.
-    vm.push_reference(vm.global_self());
-    vm.push_int(int32_t(detector->index()));
-    vm.push_int(1);
-    vm.push_int(std::bit_cast<int32_t>(500.f));
-    external("WLD_SPAWNNPCRANGE");
-
-    vm.push_reference(findSymbol("$16476")); // Stock spellFX_LIGHTSTAR_WHITE.
-    vm.push_reference(detector);
-    vm.push_reference(detector);
-    vm.push_int(0);
-    vm.push_int(0);
-    vm.push_int(0);
-    vm.push_reference(no);
-    external("WLD_PLAYEFFECT");
-    sound("$16477"); // Stock MFX_Transform_Cast.
+    ai_teleport(wisp,itemRuntimeText("ITEM_WISP_SPAWN_WAYPOINT"));
+    const auto self=std::dynamic_pointer_cast<daedalus::INpc>(storyActorSlot("SELF"));
+    wld_spawnnpcrange(self,int32_t(id),1,500.f);
+    const auto spawned=hlp_getnpc(int32_t(id));
+    wld_playeffect(itemRuntimeText("ITEM_WISP_VISUAL"),spawned,spawned,0,0,0,no);
+    snd_play(itemRuntimeText("ITEM_WISP_EQUIP_SOUND"));
     } else {
-    vm.push_reference(local);
-    external("NPC_ISDEAD");
-    if(vm.pop_int()==no->get_int())
-      sound("$16478"); // Stock WSP_Dead_A1.
-    teleport("$16479"); // Stock TOT destination before removal.
-    vm.push_int(int32_t(local->index()));
-    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
-    teleport("$16480"); // Stock TOT destination after removal.
+    if(!npc_isdead(wisp))
+      snd_play(itemRuntimeText("ITEM_WISP_UNEQUIP_SOUND"));
+    ai_teleport(wisp,itemRuntimeText("ITEM_WISP_REMOVE_WAYPOINT"));
+    const auto [self,other]=storyActors();
+    const auto localId=runtimeState.id(name).value();
+    const auto removed=callStoryFunction("B_REMOVENPC",self,other,{int32_t(localId)});
+    if(!removed.ok)
+      throw std::runtime_error("cannot remove Wisp detector: "+removed.error);
+    ai_teleport(wisp,itemRuntimeText("ITEM_WISP_RETURN_WAYPOINT"));
     }
   }
 
@@ -948,6 +516,12 @@ bool GameScript::applyStatefulEquipmentEffect(Npc& npc, std::string_view callbac
   if(!equip && !callback.starts_with("UNEQUIP_"))
     return false;
   const auto item = callback.substr(equip ? 6 : 8);
+  if(equip && item=="ITMI_INNOSEYE_BROKEN_MIS") {
+    const auto actor=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+    wld_playeffect("spellFX_Fear",actor,actor,0,0,0,itemRuntimeInt("FALSE"));
+    snd_play("MFX_FEAR_CAST");
+    return true;
+    }
   if(item=="WISPDETECTOR") {
     applyWispEquipmentEffect(equip);
     return true;
@@ -971,9 +545,9 @@ bool GameScript::applyStatefulEquipmentEffect(Npc& npc, std::string_view callbac
     const char* sound;
     std::optional<Attribute> maximum;
     } sets[] = {
-      {{"ITAM_ADDON_HEALTH", "ITRI_ADDON_HEALTH_01", "ITRI_ADDON_HEALTH_02"}, "HP", "$12935", "$12936", ATR_HITPOINTSMAX},
-      {{"ITAM_ADDON_MANA",   "ITRI_ADDON_MANA_01",   "ITRI_ADDON_MANA_02"  }, "MA", "$12937", "$12938", ATR_MANAMAX},
-      {{"ITAM_ADDON_STR",    "ITRI_ADDON_STR_01",    "ITRI_ADDON_STR_02"   }, "STR","$12939", "$12940", std::nullopt},
+      {{"ITAM_ADDON_HEALTH", "ITRI_ADDON_HEALTH_01", "ITRI_ADDON_HEALTH_02"}, "HP", "ITEM_HEALTH_SET_VISUAL", "ITEM_HEALTH_SET_SOUND", ATR_HITPOINTSMAX},
+      {{"ITAM_ADDON_MANA",   "ITRI_ADDON_MANA_01",   "ITRI_ADDON_MANA_02"  }, "MA", "ITEM_MANA_SET_VISUAL", "ITEM_MANA_SET_SOUND", ATR_MANAMAX},
+      {{"ITAM_ADDON_STR",    "ITRI_ADDON_STR_01",    "ITRI_ADDON_STR_02"   }, "STR","ITEM_STRENGTH_SET_VISUAL", "ITEM_STRENGTH_SET_SOUND", std::nullopt},
       };
   const auto belt = std::ranges::find(belts,item,&Belt::item);
   const auto set = std::ranges::find_if(sets,[&](const ArtifactSet& entry) {
@@ -984,19 +558,11 @@ bool GameScript::applyStatefulEquipmentEffect(Npc& npc, std::string_view callbac
     return applyQuestEquipmentEffect(item,equip);
 
   const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
-  struct RestoreContext {
-    daedalus::DaedalusVm& vm;
-    std::shared_ptr<daedalus::DaedalusInstance> caller;
-    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
-    } restore{vm,vm.unsafe_get_gi()};
-  const auto read = [&](std::string_view name) { return findSymbol(name)->get_int(); };
+  const auto read = [&](std::string_view name) { return itemRuntimeInt(name); };
   const auto yes = read("TRUE");
   const auto no = read("FALSE");
-  const auto add = [&](const char* member, uint16_t index, uint32_t delta) {
-    vm.unsafe_set_gi(actor);
-    auto* field = findSymbol(member);
-    const auto current = uint32_t(vm.get_int(actor,field,index));
-    vm.set_int(actor,field,index,std::bit_cast<int32_t>(current+delta));
+  const auto add = [](int32_t& field, uint32_t delta) {
+    field=std::bit_cast<int32_t>(uint32_t(field)+delta);
     };
   if(manaStaff) {
     if(!npc_isplayer(actor))
@@ -1005,30 +571,28 @@ bool GameScript::applyStatefulEquipmentEffect(Npc& npc, std::string_view callbac
     if(equip) {
       npc_changeattribute(actor,ATR_MANA,20);
       } else {
-      vm.unsafe_set_gi(actor);
-      auto* field = findSymbol("C_NPC.ATTRIBUTE");
-      if(vm.get_int(actor,field,ATR_MANA)>=20)
+      if(actor->attribute[ATR_MANA]>=20)
         npc_changeattribute(actor,ATR_MANA,-20);
       else
-        vm.set_int(actor,field,ATR_MANA,0);
+        actor->attribute[ATR_MANA]=0;
       }
     return true;
     }
   if(belt!=std::end(belts)) {
     const bool leather = belt==std::begin(belts);
-    auto* flag = findSymbol(belt->equipped);
+    const auto flag=belt->equipped;
     if(!leather)
-      flag->set_int(equip ? yes : no);
+      setItemRuntimeInt(flag,equip ? yes : no);
     const auto protect = [&](Protection protection, const char* amount) {
       const auto delta = uint32_t(read(amount));
-      add("C_NPC.PROTECTION",protection,equip ? delta : 0u-delta);
+      add(actor->protection[protection],equip ? delta : 0u-delta);
       };
     for(const auto protection : {PROT_EDGE,PROT_BLUNT,PROT_POINT})
       protect(protection,"BELT_PROT_01");
     if(leather) {
       if(!npc_isplayer(actor))
         return true;
-      flag->set_int(equip ? yes : no);
+      setItemRuntimeInt(flag,equip ? yes : no);
       }
     if(read(belt->armor)==yes) {
       for(const auto protection : {PROT_EDGE,PROT_BLUNT,PROT_POINT})
@@ -1044,37 +608,37 @@ bool GameScript::applyStatefulEquipmentEffect(Npc& npc, std::string_view callbac
   const auto amulet = prefix+"_AMULETT_EQUIPPED";
   const auto firstRing = prefix+"_RING_1_EQUIPPED";
   const auto secondRing = prefix+"_RING_2_EQUIPPED";
-  auto* value = findSymbol("C_"+prefix+"_ARTEFAKTVALUE."+prefix+"_ARTEFAKT_VALUE");
+  const auto value="C_"+prefix+"_ARTEFAKTVALUE."+prefix+"_ARTEFAKT_VALUE";
   const auto effectFlag = prefix+"_ARTEFAKT_EFFEKT";
   const auto calculateBonus = [&] {
-    value->set_int(0);
+    setItemRuntimeInt(value,0);
     const bool hasAmulet = read(amulet)==yes;
     const int rings = int(read(firstRing)==yes) + int(read(secondRing)==yes);
     if(hasAmulet && rings==2 && read(effectFlag)==no) {
-      wld_playeffect(findSymbol(set->visual)->get_string(),actor,actor,0,0,0,no);
-      snd_play(findSymbol(set->sound)->get_string());
-      findSymbol(effectFlag)->set_int(yes);
+      wld_playeffect(itemRuntimeText(set->visual),actor,actor,0,0,0,no);
+      snd_play(itemRuntimeText(set->sound));
+      setItemRuntimeInt(effectFlag,yes);
       }
     static constexpr const char* ringBonuses[] = {nullptr,"_RING_SOLO_BONUS","_RING_DOUBLE_BONUS"};
     static constexpr const char* amuletBonuses[] = {"_AMULETT_SOLO_BONUS","_AMULETT_EINRING_BONUS","_AMULETT_ARTEFAKT_BONUS"};
     const auto* bonus = hasAmulet ? amuletBonuses[rings] : ringBonuses[rings];
     if(bonus!=nullptr)
-      value->set_int(read(prefix+bonus));
-    return value->get_int();
+      setItemRuntimeInt(value,read(prefix+bonus));
+    return read(value);
     };
 
-  auto* previous = findSymbol(std::string(callback)+".OLDVALUE");
-  auto* current = findSymbol(std::string(callback)+".NEWVALUE");
-  previous->set_int(calculateBonus());
+  const auto previous=std::string(callback)+".OLDVALUE";
+  const auto current=std::string(callback)+".NEWVALUE";
+  setItemRuntimeInt(previous,calculateBonus());
   const auto& flag = item==set->items[0] ? amulet : (item==set->items[1] ? firstRing : secondRing);
-  findSymbol(flag)->set_int(equip ? yes : no);
-  current->set_int(calculateBonus());
-  const auto delta = uint32_t(current->get_int())-uint32_t(previous->get_int());
+  setItemRuntimeInt(flag,equip ? yes : no);
+  setItemRuntimeInt(current,calculateBonus());
+  const auto delta = uint32_t(read(current))-uint32_t(read(previous));
   if(set->maximum) {
-    add("C_NPC.ATTRIBUTE",*set->maximum,delta);
+    add(actor->attribute[*set->maximum],delta);
     } else {
-    add("C_NPC.PROTECTION",PROT_EDGE,delta);
-    add("C_NPC.PROTECTION",PROT_BLUNT,delta);
+    add(actor->protection[PROT_EDGE],delta);
+    add(actor->protection[PROT_BLUNT],delta);
     }
   return true;
   }
@@ -1112,9 +676,9 @@ int32_t GameScript::giveInventoryItems(const std::shared_ptr<daedalus::INpc>& gi
                                        const std::shared_ptr<daedalus::INpc>& taker, int32_t item, int32_t amount) {
   inventoryTransferVariables.amount = amount;
   inventoryTransferVariables.item = item;
-  inventoryTaker->set_instance(taker);
-  inventoryGiver->set_instance(giver);
-  const auto held = std::dynamic_pointer_cast<daedalus::IItem>(vm.global_item()->get_instance());
+  storyActorSlot("B_GIVEINVITEMS.TAKER")=taker;
+  storyActorSlot("B_GIVEINVITEMS.GIVER")=giver;
+  const auto held=std::dynamic_pointer_cast<daedalus::IItem>(storyActorSlot("ITEM"));
   const auto transfer = InventoryTransfer::run(findNpc(giver),findNpc(taker),uint32_t(item),amount,
                                               held ? std::string_view(held->name) : std::string_view{},inventoryTransferText);
   if(transfer.itemChanged)
@@ -1325,30 +889,26 @@ void refreshSmithWeaponDescriptions(daedalus::DaedalusVm& vm) {
 }
 
 void GameScript::runStockPickLock(int32_t success, int32_t brokenOrOpen) {
-  vm.set_int(nullptr,findSymbol("G_PICKLOCK.BBROKENOPEN"),0,brokenOrOpen);
-  vm.set_int(nullptr,findSymbol("G_PICKLOCK.BSUCCESS"),0,success);
-
+  setItemRuntimeInt("G_PICKLOCK.BBROKENOPEN",brokenOrOpen);
+  setItemRuntimeInt("G_PICKLOCK.BSUCCESS",success);
   static constexpr std::pair<std::string_view,std::string_view> feedback[] = {
-    {"$27342", "PRINT_PICKLOCK_FAILURE"}, // Wrong move.
-    {"$27341", "PRINT_PICKLOCK_BROKEN"},  // Broken pick.
-    {"$27340", "PRINT_PICKLOCK_SUCCESS"}, // Correct move.
-    {"$27339", "PRINT_PICKLOCK_UNLOCK"},  // Open lock.
+    {"HERO_LOCK_FAILURE_SOUND", "PRINT_PICKLOCK_FAILURE"},
+    {"HERO_LOCK_BROKEN_SOUND", "PRINT_PICKLOCK_BROKEN"},
+    {"HERO_LOCK_SUCCESS_SOUND", "PRINT_PICKLOCK_SUCCESS"},
+    {"HERO_LOCK_UNLOCK_SOUND", "PRINT_PICKLOCK_UNLOCK"},
     };
-  const auto& [sound,message] = feedback[2*size_t(success!=0)+size_t(brokenOrOpen!=0)];
-  vm.push_reference(vm.global_self());
-  vm.push_reference(findSymbol(sound));
-  vm.unsafe_call_external(findSymbol("SND_PLAY3D"));
-  vm.push_reference(findSymbol(message));
-  vm.unsafe_call_external(findSymbol("PRINT"));
-
-  if(success || !brokenOrOpen)
-    return;
-  const auto roll = hlp_random(100);
-  vm.set_int(nullptr,findSymbol("G_PICKLOCK.RND"),0,roll);
-  if(roll<=25) {
-    const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(vm.global_hero()->get_instance());
-    npc_sendpassiveperc(hero,PERC_ASSESSQUIETSOUND,hero,hero);
+  const auto& [sound,message]=feedback[2*size_t(success!=0)+size_t(brokenOrOpen!=0)];
+  snd_play3d(std::dynamic_pointer_cast<daedalus::INpc>(storyActorSlot("SELF")),itemRuntimeText(sound));
+  Gothic::inst().onPrint(itemRuntimeText(message));
+  if(!success && brokenOrOpen) {
+    const auto roll=hlp_random(100);
+    setItemRuntimeInt("G_PICKLOCK.RND",roll);
+    if(roll<=25) {
+      const auto hero=std::dynamic_pointer_cast<daedalus::INpc>(storyActorSlot("HERO"));
+      npc_sendpassiveperc(hero,PERC_ASSESSQUIETSOUND,hero,hero);
+      }
     }
+  return;
   }
 
 namespace {

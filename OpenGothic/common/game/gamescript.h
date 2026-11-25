@@ -611,13 +611,15 @@ class GameScript final : public GameRules {
     void startHumanWarning(const std::shared_ptr<daedalus::INpc>& self, ScriptFn state);
     int32_t botheredByWeapon(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void loadNativeEquipment();
-    bool applyCumulativeFoodEffect(std::string_view callback);
-    bool applyStockItemUseEffect(std::string_view callback);
     bool applyArmorSetEffect(Npc& npc, uint32_t callback);
     bool applyFightSkillItemEffect(Npc& npc, uint32_t callback);
     bool applyEquipmentStatEffect(Npc& npc, uint32_t callback);
     bool applyStatefulEquipmentEffect(Npc& npc, std::string_view callback);
-    bool invokeStockItemProgram(const daedalus::DaedalusSymbol& function);
+    bool invokeStockItemProgram(uint32_t function);
+    int32_t itemRuntimeInt(std::string_view name) const;
+    void setItemRuntimeInt(std::string_view name, int32_t value);
+    std::string_view itemRuntimeText(std::string_view name) const;
+    void setItemRuntimeText(std::string_view name, std::string_view value);
     void applyWispEquipmentEffect(bool equip);
     bool applyQuestEquipmentEffect(std::string_view item, bool equip);
     void createAmmo(const std::shared_ptr<daedalus::INpc>& self);
@@ -963,17 +965,7 @@ class GameScript final : public GameRules {
     InventoryTransfer::Variables                                inventoryTransferVariables;
     InventoryTransfer::Text                                     inventoryTransferText;
     std::string_view                                            inventoryTransferFont;
-    daedalus::DaedalusSymbol*                                    inventoryGiver = nullptr;
-    daedalus::DaedalusSymbol*                                    inventoryTaker = nullptr;
-    const daedalus::DaedalusSymbol*                              directorVisual = nullptr;
-    struct PreparedItem {
-      daedalus::DaedalusInstance identity;
-      daedalus::DaedalusSymbol*   alias;
-      };
-    std::unordered_map<uint32_t,PreparedItem>                     preparedItems;
     ItemRecord                                                  brokenEyePrepared;
-    const daedalus::DaedalusSymbol*                              brokenEyeSetting = nullptr;
-    const daedalus::DaedalusSymbol*                              brokenEyeGem = nullptr;
     int32_t                                                     bennetOreMission = 0, bennetOreTeaching = 0;
     struct PointGestureRolls {
       int32_t guard = 0, crossedArms = 0, waypoint = 0, portal = 0, earthquake = 0;

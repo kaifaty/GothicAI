@@ -3517,12 +3517,12 @@ CollideMask GameScript::runStockSpellCollision(Npc& target, Npc& caster, int32_t
     };
   constexpr int32_t humanSeparator = int32_t(GIL_SEPERATOR_HUM);
   constexpr auto nonlethalDamage = CollideMask(COLL_APPLYDAMAGE | COLL_DONTKILL);
-  findSymbol("C_CANNPCCOLLIDEWITHSPELL.SPELLTYPE")->set_int(spellId);
+  setItemRuntimeInt("C_CANNPCCOLLIDEWITHSPELL.SPELLTYPE",spellId);
   const auto self = std::static_pointer_cast<daedalus::INpc>(target.handlePtr());
   const auto other = std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
   const auto guild = int32_t(self->guild);
   const int32_t realId = self->aivar[43]; // AIV_MM_REAL_ID
-  const auto idIs = [&](std::string_view name) { return realId==findSymbol(name)->get_int(); };
+  const auto idIs = [&](std::string_view name) { return realId==itemRuntimeInt(name); };
   const auto wet = [&] {
     const bool diving = npcBodyStateContains(self,BS_DIVE);
     const bool swimming = npcBodyStateContains(self,BS_SWIM);
@@ -3533,7 +3533,7 @@ CollideMask GameScript::runStockSpellCollision(Npc& target, Npc& caster, int32_t
     const bool down = isNpcDownInScript(self);
     return inWater || down;
     };
-  const auto heroTarget = [&] { return hlp_getinstanceid(self)==hlp_getinstanceid(vm.global_hero()->get_instance()); };
+  const auto heroTarget = [&] { return hlp_getinstanceid(self)==hlp_getinstanceid(storyActorSlot("HERO")); };
   const auto sturdy = [&] {
     return guild==GIL_DRAGON || guild==GIL_TROLL || guild==GIL_SUMMONED_DEMON || guild==GIL_DEMON ||
            guild==GIL_SUMMONED_GOLEM || guild==GIL_STONEGOLEM;
@@ -3657,7 +3657,7 @@ CollideMask GameScript::runStockSpellCollision(Npc& target, Npc& caster, int32_t
       }
     case DestroyUndead: {
       const bool undead = isUndeadNpc(self);
-      return undead && hpMax<=findSymbol("SPL_DAMAGE_DESTROYUNDEAD")->get_int() ? COLL_DOEVERYTHING : COLL_DONOTHING;
+      return undead && hpMax<=itemRuntimeInt("SPL_DAMAGE_DESTROYUNDEAD") ? COLL_DOEVERYTHING : COLL_DONOTHING;
       }
     case BreathOfDeath: {
       const bool undead = isUndeadNpc(self);
@@ -3684,10 +3684,10 @@ CollideMask GameScript::runStockSpellCollision(Npc& target, Npc& caster, int32_t
     case PalRepelEvil:
       if(!isEvilNpc(self))
         return COLL_DONOTHING;
-      return hpMax<=findSymbol("SPL_DAMAGE_PALREPELEVIL")->get_int() ? COLL_DOEVERYTHING : COLL_APPLYHALVEDAMAGE;
+      return hpMax<=itemRuntimeInt("SPL_DAMAGE_PALREPELEVIL") ? COLL_DOEVERYTHING : COLL_APPLYHALVEDAMAGE;
     case PalDestroyEvil: {
       const bool evil = isEvilNpc(self);
-      return evil && hpMax<=findSymbol("SPL_DAMAGE_PALDESTROYEVIL")->get_int() ? COLL_DOEVERYTHING : COLL_DONOTHING;
+      return evil && hpMax<=itemRuntimeInt("SPL_DAMAGE_PALDESTROYEVIL") ? COLL_DOEVERYTHING : COLL_DONOTHING;
       }
     default:
       return COLL_DOEVERYTHING;
@@ -3712,22 +3712,15 @@ std::optional<int> GameScript::runSpecialSpellMana(Npc& caster, int spell, int m
     return {};
 
   const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
-  findSymbol("SPELL_PROCESSMANA.MANAINVESTED")->set_int(mana);
-  findSymbol("SPELL_PROCESSMANA.ACTIVESPELL")->set_int(npc_getactivespell(self));
-  findSymbol(rule->invested)->set_int(mana);
+  setItemRuntimeInt("SPELL_PROCESSMANA.MANAINVESTED",mana);
+  setItemRuntimeInt("SPELL_PROCESSMANA.ACTIVESPELL",npc_getactivespell(self));
+  setItemRuntimeInt(rule->invested,mana);
   if(spell==SuckEnergy && mana==0)
     return SPL_RECEIVEINVEST;
 
-  struct RestoreContext {
-    daedalus::DaedalusVm& vm;
-    std::shared_ptr<daedalus::DaedalusInstance> caller;
-    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
-    } restore{vm,vm.unsafe_get_gi()};
-  vm.unsafe_set_gi(self);
-  auto* attribute=findSymbol("C_NPC.ATTRIBUTE");
-  const auto available=[&] { return vm.get_int(self,attribute,ATR_MANA); };
-  const auto runeCost=findSymbol(rule->runeCost)->get_int();
-  const auto scrollCost=findSymbol("SPL_COST_SCROLL")->get_int();
+  const auto available=[&] { return self->attribute[ATR_MANA]; };
+  const auto runeCost=itemRuntimeInt(rule->runeCost);
+  const auto scrollCost=itemRuntimeInt("SPL_COST_SCROLL");
   if(spell==SuckEnergy) {
     const bool canPayScroll=available()>=scrollCost;
     if(npc_getactivespellisscroll(self) && canPayScroll)
@@ -3740,7 +3733,7 @@ std::optional<int> GameScript::runSpecialSpellMana(Npc& caster, int spell, int m
   if(!canPayRune && !(scroll && canPayScroll))
     return SPL_SENDSTOP;
   const auto pay=[&](int32_t cost) {
-    vm.set_int(self,attribute,ATR_MANA,std::bit_cast<int32_t>(uint32_t(available())-uint32_t(cost)));
+    self->attribute[ATR_MANA]=std::bit_cast<int32_t>(uint32_t(available())-uint32_t(cost));
     };
   if(spell==Swarm) {
     // Even a scroll that passed admission at five mana pays the rune cost.
@@ -3748,25 +3741,19 @@ std::optional<int> GameScript::runSpecialSpellMana(Npc& caster, int spell, int m
     return SPL_SENDCAST;
     }
 
-  const auto target=std::dynamic_pointer_cast<daedalus::INpc>(vm.global_other()->get_instance());
-  auto* guild=findSymbol("C_NPC.GUILD");
+  const auto target=std::dynamic_pointer_cast<daedalus::INpc>(storyActorSlot("OTHER"));
   if(spell==Charm) {
-    vm.unsafe_set_gi(target);
-    auto* aivar=findSymbol("C_NPC.AIVAR");
-    const auto crimeNone=findSymbol("CRIME_NONE")->get_int();
-    const bool questRunning=findSymbol("MIS_IGNAZ_CHARM")->get_int()==findSymbol("LOG_RUNNING")->get_int();
-    const auto crime=vm.get_int(target,aivar,1);
+    const auto crimeNone=itemRuntimeInt("CRIME_NONE");
+    const bool questRunning=itemRuntimeInt("MIS_IGNAZ_CHARM")==itemRuntimeInt("LOG_RUNNING");
+    const auto crime=target ? target->aivar[1] : 0;
     if(questRunning && crime!=crimeNone)
-      findSymbol("CHARM_TEST")->set_int(findSymbol("TRUE")->get_int());
+      setItemRuntimeInt("CHARM_TEST",itemRuntimeInt("TRUE"));
     adjustPetzCrime(target,std::nullopt);
-    vm.set_int(target,aivar,1,crimeNone);
-    vm.set_int(target,aivar,0,findSymbol("FIGHT_NONE")->get_int());
-    const auto guildAttitude=[&] {
-      vm.unsafe_set_gi(target);
-      const auto targetGuild=vm.get_int(target,guild,0);
-      vm.unsafe_set_gi(self);
-      return wld_getguildattitude(targetGuild,vm.get_int(self,guild,0));
-      };
+    if(target) {
+      target->aivar[1]=crimeNone;
+      target->aivar[0]=itemRuntimeInt("FIGHT_NONE");
+      }
+    const auto guildAttitude=[&] { return wld_getguildattitude(target ? int32_t(target->guild) : 0,self->guild); };
     if(guildAttitude()!=ATT_HOSTILE && npc_getattitude(target,self)==ATT_HOSTILE)
       npc_settempattitude(target,guildAttitude());
     return SPL_SENDCAST;
@@ -3774,10 +3761,9 @@ std::optional<int> GameScript::runSpecialSpellMana(Npc& caster, int spell, int m
 
   // Sleep and Inflate spend mana before testing the target, with a second scroll query.
   pay(npc_getactivespellisscroll(self) ? scrollCost : runeCost);
-  vm.unsafe_set_gi(target);
-  const auto targetGuild=vm.get_int(target,guild,0);
+  const auto targetGuild=target ? int32_t(target->guild) : 0;
   const auto distance=npc_getdisttonpc(self,target);
-  const auto flags=vm.get_int(target,findSymbol("C_NPC.FLAGS"),0);
+  const auto flags=target ? int32_t(target->flags) : 0;
   const bool down=isNpcDownInScript(target);
   const bool diving=npcBodyStateContains(target,BS_DIVE);
   const bool swimming=npcBodyStateContains(target,BS_SWIM);
@@ -3792,10 +3778,6 @@ std::optional<int> GameScript::runSpecialSpellMana(Npc& caster, int spell, int m
   }
 
 std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
-  if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
-     ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
-    return {};
-
   const auto* active=caster.activeWeapon();
   if(active==nullptr || !active->isSpellOrRune())
     return {};
@@ -3888,14 +3870,14 @@ std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
     return {};
 
   const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
-  findSymbol("SPELL_PROCESSMANA.MANAINVESTED")->set_int(mana);
+  setItemRuntimeInt("SPELL_PROCESSMANA.MANAINVESTED",mana);
   // This external also publishes the active item on its stock instance symbol.
-  findSymbol("SPELL_PROCESSMANA.ACTIVESPELL")->set_int(npc_getactivespell(self));
-  findSymbol(rule->invested)->set_int(mana);
+  setItemRuntimeInt("SPELL_PROCESSMANA.ACTIVESPELL",npc_getactivespell(self));
+  setItemRuntimeInt(rule->invested,mana);
 
   const auto available=self->attribute[ATR_MANA];
   if(rule->charge) {
-    const auto step=findSymbol(rule->cost)->get_int();
+    const auto step=itemRuntimeInt(rule->cost);
     if(available<step)
       return rule->denied;
 
@@ -3915,32 +3897,22 @@ std::optional<int> GameScript::runStockSpellMana(Npc& caster, int mana) {
     }
 
   const auto scroll=npc_getactivespellisscroll(self);
-  const auto scrollCost=findSymbol("SPL_COST_SCROLL")->get_int();
-  const auto runeCost=findSymbol(rule->cost)->get_int();
+  const auto scrollCost=itemRuntimeInt("SPL_COST_SCROLL");
+  const auto runeCost=itemRuntimeInt(rule->cost);
   if(!((scroll && available>=scrollCost) || available>=runeCost))
     return rule->denied;
   if(!rule->transformTo.empty()) {
     // Stock debits the full transform cost even when the scroll threshold allowed entry.
     self->attribute[ATR_MANA]-=runeCost;
-    npc_setactivespellinfo(self,int32_t(findSymbolIndex(rule->transformTo)));
+    npc_setactivespellinfo(self,int32_t(storyNpcId(rule->transformTo).value()));
     }
   return SPL_SENDCAST;
   }
 
 bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32_t level) {
-  if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
-     ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
-    return false;
-
   const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
   auto& mana=self->attribute[ATR_MANA];
   auto& selection=self->aivar[20]; // AIV_SELECTSPELL
-  struct RestoreContext {
-    daedalus::DaedalusVm& vm;
-    std::shared_ptr<daedalus::DaedalusInstance> caller;
-    ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
-    };
-
   if(function=="SPELL_CAST_HEAL" || function=="SPELL_CAST_PALHEAL") {
     struct Heal { std::string_view spell, cost, amount; };
     static constexpr Heal mage[] = {
@@ -3955,12 +3927,10 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
       };
     for(const auto& heal : function=="SPELL_CAST_PALHEAL" ? paladin : mage) {
       // Each stock test queries the active spell, publishing its item instance.
-      if(npc_getactivespell(self)!=findSymbol(heal.spell)->get_int())
+      if(npc_getactivespell(self)!=itemRuntimeInt(heal.spell))
         continue;
-      mana-=findSymbol(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : heal.cost)->get_int();
-      const RestoreContext restore{vm,vm.unsafe_get_gi()};
-      vm.unsafe_set_gi(self);
-      npc_changeattribute(self,ATR_HITPOINTS,findSymbol(heal.amount)->get_int());
+      mana-=itemRuntimeInt(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : heal.cost);
+      npc_changeattribute(self,ATR_HITPOINTS,itemRuntimeInt(heal.amount));
       return true;
       }
     ++selection;
@@ -4036,28 +4006,25 @@ bool GameScript::runStockSpellCast(Npc& caster, std::string_view function, int32
   if(cast==std::end(casts))
     return runStockTeleportCast(self,function);
   if(!cast->levelParameter.empty())
-    findSymbol(cast->levelParameter)->set_int(level);
+    setItemRuntimeInt(cast->levelParameter,level);
   if(function=="SPELL_CAST_FEAR")
     ai_setnpcstostate(self,int(findFunction("ZS_MAGICFLEE").ptr),1000);
   if(cast->payment==Payment::ChargeStep) {
-    mana-=findSymbol(cast->cost)->get_int();
+    mana-=itemRuntimeInt(cast->cost);
     if(mana<0)
       mana=0;
     }
   else if(cast->payment==Payment::ScrollOrDrain) {
-    mana=npc_getactivespellisscroll(self) ? mana-findSymbol("SPL_COST_SCROLL")->get_int() : 0;
+    mana=npc_getactivespellisscroll(self) ? mana-itemRuntimeInt("SPL_COST_SCROLL") : 0;
     }
   else if(!cast->cost.empty()) {
-    mana-=findSymbol(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : cast->cost)->get_int();
+    mana-=itemRuntimeInt(npc_getactivespellisscroll(self) ? "SPL_COST_SCROLL" : cast->cost);
     }
   const auto& summon = cast->summon;
   if(!summon.forHero.empty()) {
-    // Instance creation may execute callbacks with the caster as the caller's context.
-    const RestoreContext restore{vm,vm.unsafe_get_gi()};
-    vm.unsafe_set_gi(self);
     if(summon.selection!=Selection::After)
       ++selection;
-    const auto instance = findSymbolIndex(npc_isplayer(self) ? summon.forHero : summon.forNpc);
+    const auto instance = storyNpcId(npc_isplayer(self) ? summon.forHero : summon.forNpc).value();
     wld_spawnnpcrange(self,int(instance),summon.count,summon.lifeTime);
     if(summon.selection==Selection::Before)
       return true;

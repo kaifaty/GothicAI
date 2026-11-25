@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <stdexcept>
 #include <type_traits>
@@ -126,7 +127,9 @@ ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolveNative(const It
 ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::loadNative(const std::filesystem::path& base,
                                                                      const NativeBaseCatalog::Selection& catalog,
                                                                      std::string_view sha256) {
-  return resolveNative(ItemDefinitions::read(base,sha256),catalog);
+  auto definitions=resolveNative(ItemDefinitions::read(base,sha256),catalog);
+  registerStockEffects(definitions,catalog);
+  return definitions;
   }
 
 ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::load(const std::filesystem::path& base,
@@ -174,7 +177,19 @@ bool ItemDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shar
   return false;
   }
 
-void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
+namespace {
+
+using namespace ItemDefinitionRuntime;
+using RestoreAmount = decltype(RestoreChange::amount);
+
+struct StockEffectBindings {
+  std::function<uint32_t(std::string_view)> callback;
+  std::function<uint32_t(std::string_view)> flag;
+  std::function<int32_t(std::string_view)> constant;
+  std::function<RestoreAmount(std::string_view)> dose;
+  };
+
+void registerRestoreEffects(Definitions& definitions, const StockEffectBindings& bindings) {
   // These callbacks make one or two constant changes to the current attributes of SELF.
   struct StockRestore {
     std::string_view callback;
@@ -227,25 +242,17 @@ void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions
     {"USE_BLUEPLANT",        ATR_MANA,       "MANA_BLUEPLANT", ATR_HITPOINTS, "HP_BLUEPLANT"},
     };
   for(const auto& row : stock) {
-    const auto* function = program.find_symbol_by_name(row.callback);
-    const auto* value = program.find_symbol_by_name(row.amount);
-    if(function==nullptr || value==nullptr)
-      throw std::runtime_error("stock item restore: missing symbol for "+std::string(row.callback));
-    RestoreEffect effect{{row.attribute,value->index()},{}};
-    if(!row.secondAmount.empty()) {
-      const auto* second = program.find_symbol_by_name(row.secondAmount);
-      if(second==nullptr)
-        throw std::runtime_error("stock item restore: missing second dose for "+std::string(row.callback));
-      effect.second = RestoreChange{row.secondAttribute,second->index()};
-      }
-    if(!definitions.restoreEffects.emplace(function->index(),effect).second)
+    const auto function = bindings.callback(row.callback);
+    RestoreEffect effect{{row.attribute,bindings.dose(row.amount)},{}};
+    if(!row.secondAmount.empty())
+      effect.second=RestoreChange{row.secondAttribute,bindings.dose(row.secondAmount)};
+    if(!definitions.restoreEffects.emplace(function,effect).second)
       throw std::runtime_error("stock item restore: duplicate callback "+std::string(row.callback));
     }
 
-  const auto* meatbug=program.find_symbol_by_name("USE_MEATBUGFLESH");
-  if(meatbug==nullptr ||
-     !definitions.restoreEffects.emplace(meatbug->index(),RestoreEffect{{ATR_HITPOINTS,int32_t(10)}, {}}).second)
-    throw std::runtime_error("stock item restore: invalid USE_MEATBUGFLESH callback");
+  if(!definitions.restoreEffects.emplace(bindings.callback("USE_MEATBUGFLESH"),
+                                          RestoreEffect{{ATR_HITPOINTS,int32_t(10)}, {}}).second)
+    throw std::runtime_error("stock item restore: duplicate USE_MEATBUGFLESH callback");
 
   // Full elixirs assign the corresponding maximum directly to the current attribute.
   static constexpr struct StockFullRestore {
@@ -256,8 +263,7 @@ void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions
     {"USEITPO_MANA_04",   {ATR_MANA,      ATR_MANAMAX}},
     };
   for(const auto& [callback,effect]:full) {
-    const auto* function=program.find_symbol_by_name(callback);
-    if(function==nullptr || !definitions.fullRestoreEffects.emplace(function->index(),effect).second)
+    if(!definitions.fullRestoreEffects.emplace(bindings.callback(callback),effect).second)
       throw std::runtime_error("stock item full restore: invalid callback "+std::string(callback));
     }
 
@@ -276,22 +282,15 @@ void ItemDefinitionRuntime::registerStockRestoreEffects(Definitions& definitions
     {"USE_DEX_HERB_01",      ATR_DEXTERITY,    int32_t(1)},
     };
   for(const auto& [callback,attribute,dose,refill]:permanent) {
-    const auto* function=program.find_symbol_by_name(callback);
-    PermanentAttributeEffect effect{{attribute,int32_t(0)},refill};
-    if(const auto* name=std::get_if<std::string_view>(&dose)) {
-      const auto* symbol=program.find_symbol_by_name(*name);
-      if(symbol==nullptr)
-        throw std::runtime_error("stock permanent item attribute: missing dose "+std::string(callback));
-      effect.increase.amount=symbol->index();
-      } else {
-      effect.increase.amount=std::get<int32_t>(dose);
-      }
-    if(function==nullptr || !definitions.permanentAttributeEffects.emplace(function->index(),effect).second)
+    const auto* name=std::get_if<std::string_view>(&dose);
+    const auto amount=name ? bindings.dose(*name) : RestoreAmount(std::get<int32_t>(dose));
+    PermanentAttributeEffect effect{{attribute,amount},refill};
+    if(!definitions.permanentAttributeEffects.emplace(bindings.callback(callback),effect).second)
       throw std::runtime_error("stock permanent item attribute: invalid callback "+std::string(callback));
     }
   }
 
-void ItemDefinitionRuntime::registerStockArmorSetEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
+void registerArmorSetEffects(Definitions& definitions, const StockEffectBindings& bindings) {
   struct StockArmorSet {
     std::string_view item;
     std::string_view armorFlag;
@@ -310,35 +309,26 @@ void ItemDefinitionRuntime::registerStockArmorSetEffects(Definitions& definition
     {"ITAR_LEATHER_L",   "LEATHERARMOR_EQUIPPED", "LEATHER01_EQUIPPED"},
     };
   for(const auto& [item,armor,belt] : stock) {
-    const auto* armorFlag = program.find_symbol_by_name(armor);
-    const auto* beltFlag = program.find_symbol_by_name(belt);
+    const auto armorFlag = bindings.flag(armor);
+    const auto beltFlag = bindings.flag(belt);
     for(bool equip : {true,false}) {
       const auto callback = std::string(equip ? "EQUIP_" : "UNEQUIP_").append(item);
-      const auto* function = program.find_symbol_by_name(callback);
-      if(function==nullptr || armorFlag==nullptr || beltFlag==nullptr)
-        throw std::runtime_error("stock armor set: missing symbol for "+callback);
-      definitions.armorSetEffects.emplace(function->index(),ArmorSetEffect{armorFlag->index(),beltFlag->index(),equip});
+      definitions.armorSetEffects.emplace(bindings.callback(callback),ArmorSetEffect{armorFlag,beltFlag,equip});
       }
     }
   }
 
-void ItemDefinitionRuntime::registerStockFightSkillEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
+void registerFightSkillEffects(Definitions& definitions, const StockEffectBindings& bindings) {
   const auto bind = [&](std::string_view suffix, Talent talent, int32_t bonus, bool playerOnly) {
     for(bool equip : {true,false}) {
       const auto name = std::string(equip ? "EQUIP_" : "UNEQUIP_").append(suffix);
-      const auto* function = program.find_symbol_by_name(name);
-      if(function==nullptr)
-        throw std::runtime_error("stock weapon skill: missing symbol "+name);
-      definitions.fightSkillEffects.emplace(function->index(),FightSkillEffect{talent,equip ? bonus : -bonus,playerOnly});
+      definitions.fightSkillEffects.emplace(bindings.callback(name),FightSkillEffect{talent,equip ? bonus : -bonus,playerOnly});
       }
     };
   const auto bindWeapons = [&](std::string_view hand, Talent talent, std::initializer_list<int> bonuses) {
     for(const auto bonus : bonuses) {
       const auto suffix = (bonus<10 ? "0" : "")+std::to_string(bonus);
-      const auto* constant = program.find_symbol_by_name("WAFFENBONUS_"+suffix);
-      if(constant==nullptr)
-        throw std::runtime_error("stock weapon skill: missing bonus "+suffix);
-      bind(std::string(hand).append(suffix),talent,constant->get_int(),true);
+      bind(std::string(hand).append(suffix),talent,bindings.constant("WAFFENBONUS_"+suffix),true);
       }
     };
   // The remaining generic tiers have no stock item bindings.
@@ -348,7 +338,7 @@ void ItemDefinitionRuntime::registerStockFightSkillEffects(Definitions& definiti
   bind("MORGANSRING",TALENT_1H,10,false);
   }
 
-void ItemDefinitionRuntime::registerStockEquipmentStatEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
+void registerEquipmentStatEffects(Definitions& definitions, const StockEffectBindings& bindings) {
   constexpr EquipmentAttributeWrite hp{ATR_HITPOINTS,2}, maxHp{ATR_HITPOINTSMAX};
   constexpr EquipmentAttributeWrite mana{ATR_MANA,0}, maxMana{ATR_MANAMAX};
   constexpr EquipmentAttributeWrite strength{ATR_STRENGTH}, dexterity{ATR_DEXTERITY};
@@ -418,15 +408,10 @@ void ItemDefinitionRuntime::registerStockEquipmentStatEffects(Definitions& defin
   const auto bind = [&](std::string_view callback,bool equip,std::initializer_list<Change> source) {
     std::vector<EquipmentStatChange> changes;
     changes.reserve(source.size());
-    for(const auto& [stat,amount] : source) {
-      const auto* value = program.find_symbol_by_name(amount);
-      if(value==nullptr || value->type()!=daedalus::DaedalusDataType::INT || !value->is_const())
-        throw std::runtime_error("stock equipment stat: invalid amount "+std::string(amount));
-      changes.push_back({stat,value->index()});
-      }
+    for(const auto& [stat,amount] : source)
+      changes.push_back({stat,bindings.constant(amount)});
     const auto name = std::string(equip ? "EQUIP_" : "UNEQUIP_").append(callback);
-    const auto* function = program.find_symbol_by_name(name);
-    if(function==nullptr || !definitions.equipmentStatEffects.emplace(function->index(),EquipmentStatEffect{std::move(changes),equip}).second)
+    if(!definitions.equipmentStatEffects.emplace(bindings.callback(name),EquipmentStatEffect{std::move(changes),equip}).second)
       throw std::runtime_error("stock equipment stat: invalid callback "+name);
     };
   for(const auto& row : stock)
@@ -441,4 +426,52 @@ void ItemDefinitionRuntime::registerStockEquipmentStatEffects(Definitions& defin
   // The stock ring subtracts its health bonus from current mana when removed.
   bind("ITRI_HP_MANA_01",false,{{maxMana,"RI_HPMANA_MANA"}, {maxHp,"RI_HPMANA_HP"},
                                {hp,"RI_HPMANA_HP"}, {mana,"RI_HPMANA_HP"}});
+  }
+
+
+void bindStockEffects(Definitions& definitions, const StockEffectBindings& bindings) {
+  registerRestoreEffects(definitions,bindings);
+  registerArmorSetEffects(definitions,bindings);
+  registerFightSkillEffects(definitions,bindings);
+  registerEquipmentStatEffects(definitions,bindings);
+  }
+
+}
+
+void ItemDefinitionRuntime::registerStockEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
+  const auto symbol=[&](std::string_view name) -> const daedalus::DaedalusSymbol& {
+    if(const auto* value=program.find_symbol_by_name(name))
+      return *value;
+    throw std::runtime_error("missing stock item effect symbol "+std::string(name));
+    };
+  const auto id=[&](std::string_view name) { return symbol(name).index(); };
+  const auto integer=[&](std::string_view name) {
+    const auto& value=symbol(name);
+    if(value.type()!=daedalus::DaedalusDataType::INT || !value.is_const())
+      throw std::runtime_error("invalid stock item constant "+std::string(name));
+    return value.get_int();
+    };
+  bindStockEffects(definitions,{id,id,integer,id});
+  }
+
+void ItemDefinitionRuntime::registerStockEffects(Definitions& definitions, const NativeBaseCatalog::Selection& catalog) {
+  const auto callback=[&](std::string_view name) {
+    if(const auto* value=NativeBaseCatalog::findIdentity(catalog.itemCallbacks,name))
+      return value->id;
+    throw std::runtime_error("missing native item effect callback "+std::string(name));
+    };
+  const auto flag=[&](std::string_view name) {
+    const auto row=std::ranges::find(catalog.initialState,name,&NativeBaseCatalog::InitialRow::name);
+    if(row!=catalog.initialState.end())
+      if(const auto* values=std::get_if<std::vector<int32_t>>(&row->value); values!=nullptr && values->size()==1)
+        return row->id;
+    throw std::runtime_error("missing native item effect state "+std::string(name));
+    };
+  const auto constant=[&](std::string_view name) {
+    if(const auto* value=NativeBaseCatalog::findConstant(catalog,name))
+      if(const auto* values=std::get_if<std::vector<int32_t>>(&value->values); values!=nullptr && values->size()==1)
+        return values->front();
+    throw std::runtime_error("missing native item effect constant "+std::string(name));
+    };
+  bindStockEffects(definitions,{callback,flag,constant,constant});
   }

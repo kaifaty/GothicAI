@@ -73,6 +73,17 @@ struct ScopeCtx final {
   };
 
 namespace {
+struct ItemActorScope final {
+  ItemActorScope(ScriptVars::Object& slot, Npc* actor) : slot(slot), previous(slot) {
+    slot=actor!=nullptr ? std::static_pointer_cast<daedalus::INpc>(actor->handlePtr()) : nullptr;
+    }
+  ItemActorScope(const ItemActorScope&)=delete;
+  ~ItemActorScope() { slot=std::move(previous); }
+
+  ScriptVars::Object& slot;
+  ScriptVars::Object previous;
+  };
+
 struct BennetLookupAudit final {
   explicit BennetLookupAudit(const std::function<void(bool)>& scope) : scope(scope) {
     if(scope)
@@ -1131,102 +1142,48 @@ void GameScript::exec(const GameScript::DlgChoice &dlg, Npc& player, Npc& npc) {
   }
 
 void GameScript::printCannotUseError(Npc& npc, int32_t atr, int32_t nValue) {
-  auto id = vm.find_symbol_by_name("G_CanNotUse");
-  if(id==nullptr)
-    return;
-
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockHeroEquipDenial(npc.isPlayer(),atr,nValue);
-  vm.call_function<void>(id, npc.isPlayer(), atr, nValue);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroEquipDenial(npc.isPlayer(),atr,nValue);
   }
 
 void GameScript::printCannotCastError(Npc &npc, int32_t plM, int32_t itM) {
-  auto id = vm.find_symbol_by_name("G_CanNotCast");
-  if(id==nullptr)
-    return;
-
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockHeroCastDenial(npc.isPlayer(),itM,plM);
-  vm.call_function<void>(id, npc.isPlayer(), itM, plM);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroCastDenial(npc.isPlayer(),itM,plM);
   }
 
 void GameScript::printCannotBuyError(Npc &npc) {
-  auto id = vm.find_symbol_by_name("player_trade_not_enough_gold");
-  if(id==nullptr)
-    return;
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockHeroFeedback("PRINT_TRADE_NOT_ENOUGH_GOLD");
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_TRADE_NOT_ENOUGH_GOLD");
   }
 
 void GameScript::printMobMissingItem(Npc &npc) {
-  auto id = vm.find_symbol_by_name("player_mob_missing_item");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockHeroFeedback("PRINT_MISSINGITEM","$MISSINGITEM",true);
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_MISSINGITEM","$MISSINGITEM",true);
   }
 
 void GameScript::printMobMissingKey(Npc& npc) {
-  auto id = vm.find_symbol_by_name("player_mob_missing_key");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockHeroFeedback("PRINT_KEYMISSING","$KEYMISSING",true);
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_KEYMISSING","$KEYMISSING",true);
   }
 
 void GameScript::printMobAnotherIsUsing(Npc &npc) {
-  auto id = vm.find_symbol_by_name("player_mob_another_is_using");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockHeroFeedback("PRINT_ANOTHERUSER",{},true);
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_ANOTHERUSER",{},true);
   }
 
 void GameScript::printMobMissingKeyOrLockpick(Npc& npc) {
-  auto id = vm.find_symbol_by_name("player_mob_missing_key_or_lockpick");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockHeroFeedback("PRINT_PICKLOCK_OR_KEYMISSING","$PICKLOCKORKEYMISSING",true);
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_PICKLOCK_OR_KEYMISSING","$PICKLOCKORKEYMISSING",true);
   }
 
 void GameScript::printMobMissingLockpick(Npc& npc) {
-  auto id = vm.find_symbol_by_name("player_mob_missing_lockpick");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockHeroMissingLockpick();
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroMissingLockpick();
   }
 
 void GameScript::printMobTooFar(Npc& npc) {
-  auto id = vm.find_symbol_by_name("player_mob_too_far_away");
-  if(id==nullptr) {
-    owner.player()->playAnimByName("T_DONTKNOW", BS_NONE);
-    return;
-    }
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockHeroFeedback("PRINT_TOOFAR_AWAY",{},true);
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockHeroFeedback("PRINT_TOOFAR_AWAY",{},true);
   }
 
 void GameScript::invokeState(const std::shared_ptr<NpcRecord>& actor, const std::shared_ptr<NpcRecord>& other,
@@ -1282,136 +1239,90 @@ int GameScript::invokeState(Npc* npc, Npc* other, Npc* victim, ScriptFn fn) {
 void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
   if(fn==size_t(-1) || fn == 0)
     return;
-  auto functionSymbol = vm.find_symbol_by_index(uint32_t(fn.ptr));
-
-  if (functionSymbol == nullptr)
-    return;
-
-  ScopeVar self(*vm.global_self(), npc->handlePtr());
-  const bool nativeItems = nativeRoutineProgram && activityEvents &&
-                           ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
-  const auto armorAndSkillEffects = [&] {
-    return applyArmorSetEffect(*npc,functionSymbol->index()) || applyFightSkillItemEffect(*npc,functionSymbol->index());
+  const auto* catalog=baseNativeCatalog();
+  const auto id=uint32_t(fn.ptr);
+  const auto* effect=NativeBaseCatalog::findIdentity(catalog->itemCallbacks,id);
+  if(effect==nullptr)
+    throw std::runtime_error("unknown item callback "+std::to_string(id));
+  ItemActorScope self(storyActorSlot("SELF"),npc);
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
+  const auto restore=[&](const ItemDefinitionRuntime::RestoreChange& change) {
+    npc_changeattribute(actor,change.attribute,std::get<int32_t>(change.amount));
     };
-  // For NPCs these callbacks only test actor identity or change talent. The
-  // outer equip external still handles the pending floor fix and its neighbours.
-  if(nativeItems && floorDefer.active() && !npc->isPlayer() && armorAndSkillEffects())
+  if(const auto it=itemDefinitions.restoreEffects.find(id); it!=itemDefinitions.restoreEffects.end()) {
+    restore(it->second.first);
+    if(it->second.second)
+      restore(*it->second.second);
     return;
-  if(nativeItems && !floorDefer.active()) {
-    const auto amount = [&](const ItemDefinitionRuntime::RestoreChange& change) {
-      const auto* symbol = std::get_if<uint32_t>(&change.amount);
-      return symbol ? vm.find_symbol_by_index(*symbol)->get_int() : std::get<int32_t>(change.amount);
-      };
-    const auto it = itemDefinitions.restoreEffects.find(functionSymbol->index());
-    if(it!=itemDefinitions.restoreEffects.end()) {
-      const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
-      const auto apply = [&](const ItemDefinitionRuntime::RestoreChange& change) {
-        npc_changeattribute(actor,change.attribute,amount(change));
-        };
-      apply(it->second.first);
-      if(it->second.second)
-        apply(*it->second.second);
-      return;
-      }
-    const auto full = itemDefinitions.fullRestoreEffects.find(functionSymbol->index());
-    if(full!=itemDefinitions.fullRestoreEffects.end()) {
-      const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
-      auto* attribute = findSymbol("C_NPC.ATTRIBUTE");
-      vm.set_int(actor,attribute,full->second.attribute,vm.get_int(actor,attribute,full->second.maximum));
-      return;
-      }
-    const auto permanent = itemDefinitions.permanentAttributeEffects.find(functionSymbol->index());
-    if(permanent!=itemDefinitions.permanentAttributeEffects.end()) {
-      const auto actor = std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
-      const auto& effect = permanent->second;
-      vm.push_reference(vm.global_self());
-      vm.push_int(effect.increase.attribute);
-      const auto* dose = std::get_if<uint32_t>(&effect.increase.amount);
-      if(dose)
-        vm.push_reference(vm.find_symbol_by_index(*dose));
-      else
-        vm.push_int(std::get<int32_t>(effect.increase.amount));
-      vm.unsafe_call_bl(findSymbol("B_RAISEATTRIBUTE"));
-      if(effect.refill)
-        npc_changeattribute(actor,*effect.refill,amount(effect.increase));
-      return;
-      }
-    if(applyCumulativeFoodEffect(functionSymbol->name()) || applyStockItemUseEffect(functionSymbol->name()) ||
-       armorAndSkillEffects() ||
-       applyEquipmentStatEffect(*npc,functionSymbol->index()) || applyStatefulEquipmentEffect(*npc,functionSymbol->name()) ||
-       invokeStockItemProgram(*functionSymbol))
-      return;
     }
-  vm.call_function<void>(functionSymbol);
+  if(const auto it=itemDefinitions.fullRestoreEffects.find(id); it!=itemDefinitions.fullRestoreEffects.end()) {
+    actor->attribute[it->second.attribute]=actor->attribute[it->second.maximum];
+    return;
+    }
+  if(const auto it=itemDefinitions.permanentAttributeEffects.find(id); it!=itemDefinitions.permanentAttributeEffects.end()) {
+    const auto& permanent=it->second;
+    const auto amount=std::get<int32_t>(permanent.increase.amount);
+    const auto [_,other]=storyActors();
+    const auto raise=callStoryFunction("B_RAISEATTRIBUTE",npc,other,{npc,int32_t(permanent.increase.attribute),amount});
+    if(!raise.ok)
+      throw std::runtime_error("cannot raise item attribute: "+raise.error);
+    if(permanent.refill)
+      npc_changeattribute(actor,*permanent.refill,amount);
+    return;
+    }
+  if(applyArmorSetEffect(*npc,id) || applyFightSkillItemEffect(*npc,id) ||
+     applyEquipmentStatEffect(*npc,id) || applyStatefulEquipmentEffect(*npc,effect->name) ||
+     invokeStockItemProgram(id) || effect->name=="USE_RAKE")
+    return;
+  int32_t result=0;
+  bool failed=false;
+  if(invokeStockProgram(id,result,&failed) && !failed)
+    return;
+  throw std::runtime_error("missing or failed item effect "+effect->name);
   }
 
 int GameScript::invokeMana(Npc &npc, Npc* target, int mana) {
-  auto fn = vm.find_symbol_by_name("Spell_ProcessMana");
-  if(fn==nullptr)
-    return SpellCode::SPL_SENDSTOP;
-
-  ScopeVar self (*vm.global_self(),  npc.handlePtr());
-  ScopeVar other(*vm.global_other(), target != nullptr ? target->handlePtr() : nullptr);
-
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  ItemActorScope other(storyActorSlot("OTHER"),target);
   if(usesNativeShrinkSpell(npc.activeWeapon()))
     return runShrinkMana(npc,mana,false);
   if(const auto result=runStockSpellMana(npc,mana))
     return *result;
-  return vm.call_function<int>(fn,mana);
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  setItemRuntimeInt("SPELL_PROCESSMANA.MANAINVESTED",mana);
+  setItemRuntimeInt("SPELL_PROCESSMANA.ACTIVESPELL",npc_getactivespell(actor));
+  return SPL_SENDSTOP;
   }
 
 int GameScript::invokeManaRelease(Npc &npc, Npc* target, int mana) {
-  auto fn = vm.find_symbol_by_name("Spell_ProcessMana_Release");
-  if(fn==nullptr)
-    return SpellCode::SPL_SENDSTOP;
-
-  ScopeVar self (*vm.global_self(),  npc.handlePtr());
-  ScopeVar other(*vm.global_other(), target != nullptr ? target->handlePtr() : nullptr);
-
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  ItemActorScope other(storyActorSlot("OTHER"),target);
   if(usesNativeShrinkSpell(npc.activeWeapon()))
     return runShrinkMana(npc,mana,true);
-  if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
-     ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
-    const auto actor = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
-    findSymbol("SPELL_PROCESSMANA_RELEASE.MANAINVESTED")->set_int(mana);
-    const auto spell = npc_getactivespell(actor);
-    findSymbol("SPELL_PROCESSMANA_RELEASE.ACTIVESPELL")->set_int(spell);
-    for(const auto name : {"SPL_PYROKINESIS", "SPL_CHARGEFIREBALL", "SPL_CHARGEZAP", "SPL_WINDFIST"})
-      if(spell==findSymbol(name)->get_int())
-        return SPL_SENDCAST;
-    return SPL_SENDSTOP;
-    }
-  return vm.call_function<int>(fn,mana);
+  const auto actor=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
+  setItemRuntimeInt("SPELL_PROCESSMANA_RELEASE.MANAINVESTED",mana);
+  const auto spell=npc_getactivespell(actor);
+  setItemRuntimeInt("SPELL_PROCESSMANA_RELEASE.ACTIVESPELL",spell);
+  for(const auto name : {"SPL_PYROKINESIS", "SPL_CHARGEFIREBALL", "SPL_CHARGEZAP", "SPL_WINDFIST"})
+    if(spell==itemRuntimeInt(name))
+      return SPL_SENDCAST;
+  return SPL_SENDSTOP;
   }
 
 void GameScript::invokeSpell(Npc &npc, Npc* target, Item &it) {
-  auto&      tag = spellFxInstanceNames.at(uint16_t(it.spellId()));
+  const auto& tag=spellFxInstanceNames.at(uint16_t(it.spellId()));
   string_frm name("Spell_Cast_",tag);
-  auto       fn = vm.find_symbol_by_name(name);
-  if(fn==nullptr)
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  ItemActorScope other(storyActorSlot("OTHER"),target);
+  const auto function=storygraph::nativeOperationName(name);
+  if(function=="SPELL_CAST_SHRINK" && usesNativeShrinkSpell(&it)) {
+    castShrink(npc,target);
     return;
-
-  // FIXME: actually set the spell level!
-  int32_t  splLevel = 0;
-  ScopeVar self (*vm.global_self(),  npc.handlePtr());
-  ScopeVar other(*vm.global_other(), target != nullptr ? target->handlePtr() : nullptr);
-  try {
-    if(fn->name()=="SPELL_CAST_SHRINK" && usesNativeShrinkSpell(&it)) {
-      castShrink(npc,target);
-      return;
-      }
-    if(runStockSpellCast(npc,fn->name(),splLevel))
-      return;
-    if(fn->count()==1) {
-      // this is a leveled spell
-      vm.call_function<void>(fn, splLevel);
-      } else {
-      vm.call_function<void>(fn);
-      }
     }
-  catch(...) {
-    Log::d("unable to call spell-script: \"",name,"\'");
-    }
+  // The original transform spells apply their form through active spell info.
+  if(function=="SPELL_CAST_TRANSFORM" || runStockSpellCast(npc,function,0))
+    return;
+  throw std::runtime_error("unknown spell effect "+function);
   }
 
 int GameScript::invokeCond(Npc& npc, std::string_view name) {
@@ -1429,16 +1340,9 @@ int GameScript::invokeCond(Npc& npc, std::string_view name) {
   }
 
 void GameScript::invokePickLock(Npc& npc, int bSuccess, int bBrokenOpen) {
-  auto fn   = vm.find_symbol_by_name("G_PickLock");
-  if(fn==nullptr)
-    return;
-  ScopeVar self(*vm.global_self(), npc.handlePtr());
-  if(nativeRoutineProgram && activityEvents && !floorDefer.active() &&
-     ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off) {
-    runStockPickLock(bSuccess,bBrokenOpen);
-    return;
-    }
-  vm.call_function<void>(fn, bSuccess, bBrokenOpen);
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  runStockPickLock(bSuccess,bBrokenOpen);
+  return;
   }
 
 void GameScript::invokeRefreshAtInsert(Npc& npc) {
@@ -1448,25 +1352,16 @@ void GameScript::invokeRefreshAtInsert(Npc& npc) {
   }
 
 CollideMask GameScript::canNpcCollideWithSpell(Npc& npc, Npc* shooter, int32_t spellId) {
-  auto fn   = vm.find_symbol_by_name("C_CanNpcCollideWithSpell");
-  if(fn==nullptr)
+  if(shooter==nullptr)
     return COLL_DOEVERYTHING;
-
-  ScopeVar self (*vm.global_self(),  npc.handlePtr());
-  ScopeVar other(*vm.global_other(), shooter->handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockSpellCollision(npc,*shooter,spellId);
-  return CollideMask(vm.call_function<int>(fn, spellId));
+  ItemActorScope self(storyActorSlot("SELF"),&npc);
+  ItemActorScope other(storyActorSlot("OTHER"),shooter);
+  return runStockSpellCollision(npc,*shooter,spellId);
   }
 
 int GameScript::playerHotKeyScreenMap(Npc& pl) {
-  auto fn   = vm.find_symbol_by_name("player_hotkey_screen_map");
-  if(fn==nullptr) {
-    return -1;
-    }
-
-  ScopeVar self(*vm.global_self(), pl.handlePtr());
-  const int map = nativeRoutineProgram && nativeHumanPerceptionsEnabled() ? stockHeroMap() : vm.call_function<int>(fn);
+  ItemActorScope self(storyActorSlot("SELF"),&pl);
+  const auto map=stockHeroMap();
   if(map>=0)
     pl.useItem(size_t(map));
   return map;
@@ -1477,17 +1372,11 @@ void GameScript::playerHotLamePotion(Npc& pl) {
   if(opt==0)
     return;
 
-  auto fn   = vm.find_symbol_by_name("player_hotkey_lame_potion");
-  if(fn==nullptr)
-    return;
-
   if(Settings::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,true))
     return;
-
-  ScopeVar self(*vm.global_self(), pl.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockLegacyPotionKey(true);
-  vm.call_function<void>(fn);
+  ItemActorScope self(storyActorSlot("SELF"),&pl);
+  runStockLegacyPotionKey(true);
+  return;
   }
 
 void GameScript::playerHotLameHeal(Npc& pl) {
@@ -1495,17 +1384,11 @@ void GameScript::playerHotLameHeal(Npc& pl) {
   if(opt==0)
     return;
 
-  auto fn   = vm.find_symbol_by_name("player_hotkey_lame_heal");
-  if(fn==nullptr)
-    return;
-
   if(Settings::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,false))
     return;
-
-  ScopeVar self(*vm.global_self(), pl.handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockLegacyPotionKey(false);
-  vm.call_function<void>(fn);
+  ItemActorScope self(storyActorSlot("SELF"),&pl);
+  runStockLegacyPotionKey(false);
+  return;
   }
 
 std::string_view GameScript::spellCastAnim(Npc&, Item &it) {
@@ -1610,14 +1493,8 @@ uint32_t GameScript::messageTime(std::string_view id) const {
   }
 
 void GameScript::printNothingToGet() {
-  auto id = vm.find_symbol_by_name("player_plunder_is_empty");
-  if(id==nullptr) {
-    return;
-    }
-  ScopeVar self(*vm.global_self(), owner.player()->handlePtr());
-  if(nativeRoutineProgram && nativeHumanPerceptionsEnabled())
-    return runStockHeroEmptyLoot();
-  vm.call_function<void>(id);
+  ItemActorScope self(storyActorSlot("SELF"),owner.player());
+  runStockHeroEmptyLoot();
   }
 
 void GameScript::useInteractive(const std::shared_ptr<NpcRecord>& hnpc, std::string_view func) {

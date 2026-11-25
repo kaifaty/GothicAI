@@ -181,6 +181,56 @@ NativeBaseCatalog::Constants NativeBaseCatalog::prepareConstants(const daedalus:
     DefinitionJson::require(result.emplace(symbol.name(),Constant{symbol.index(),std::move(data)}).second,
                             "duplicate named constant "+symbol.name());
     }
+  // These stock literals have native consumers outside the prepared story programs.
+  static constexpr std::pair<std::string_view,std::string_view> literals[] = {
+    {"ITEM_BROKEN_EYE_NAME", "$15687"},
+    {"ITEM_BROKEN_EYE_VISUAL", "$15688"},
+    {"HERO_MANA_POTION_MISSING", "$18825"},
+    {"HERO_MANA_POTION_FULL", "$18826"},
+    {"HERO_HEALTH_POTION_MISSING", "$18827"},
+    {"HERO_HEALTH_POTION_FULL", "$18828"},
+    {"HERO_WEAPON_DAMAGE_SUFFIX", "$18925"},
+    {"HERO_CAST_CIRCLE_SUFFIX", "$27336"},
+    {"HERO_EQUIP_UNKNOWN_REASON", "$27337"},
+    {"HERO_EQUIP_ATTRIBUTE_SUFFIX", "$27338"},
+    {"HERO_LOCK_UNLOCK_SOUND", "$27339"},
+    {"HERO_LOCK_SUCCESS_SOUND", "$27340"},
+    {"HERO_LOCK_BROKEN_SOUND", "$27341"},
+    {"HERO_LOCK_FAILURE_SOUND", "$27342"},
+    {"ITEM_HEALTH_SET_VISUAL", "$12935"},
+    {"ITEM_HEALTH_SET_SOUND", "$12936"},
+    {"ITEM_MANA_SET_VISUAL", "$12937"},
+    {"ITEM_MANA_SET_SOUND", "$12938"},
+    {"ITEM_STRENGTH_SET_VISUAL", "$12939"},
+    {"ITEM_STRENGTH_SET_SOUND", "$12940"},
+    {"ITEM_EYE_CHARGED_VISUAL", "$15676"},
+    {"ITEM_EYE_CHARGED_GLOW", "$15677"},
+    {"ITEM_EYE_CHARGED_QUAKE", "$15678"},
+    {"ITEM_EYE_CHARGED_ANIMATION", "$15679"},
+    {"ITEM_EYE_CHARGED_SOUND", "$15680"},
+    {"ITEM_EYE_CHARGED_MESSAGE", "$15681"},
+    {"ITEM_EYE_DISCHARGED_VISUAL", "$15685"},
+    {"ITEM_EYE_DISCHARGED_SOUND", "$15686"},
+    {"ITEM_DEATH_AMULET_LIGHT", "$16181"},
+    {"ITEM_DEATH_AMULET_QUAKE", "$16182"},
+    {"ITEM_DEATH_AMULET_VISUAL", "$16183"},
+    {"ITEM_DEATH_AMULET_ANIMATION", "$16184"},
+    {"ITEM_DEATH_AMULET_SOUND", "$16185"},
+    {"ITEM_WISP_SPAWN_WAYPOINT", "$16475"},
+    {"ITEM_WISP_VISUAL", "$16476"},
+    {"ITEM_WISP_EQUIP_SOUND", "$16477"},
+    {"ITEM_WISP_UNEQUIP_SOUND", "$16478"},
+    {"ITEM_WISP_REMOVE_WAYPOINT", "$16479"},
+    {"ITEM_WISP_RETURN_WAYPOINT", "$16480"},
+    };
+  for(const auto& [key,name] : literals) {
+    const auto* symbol=program.find_symbol_by_name(name);
+    DefinitionJson::require(symbol && symbol->is_const() && symbol->is_generated() &&
+                            symbol->type()==STRING && symbol->count()==1,
+                            "invalid stock literal for "+std::string(key));
+    DefinitionJson::require(result.emplace(key,Constant{symbol->index(),std::vector<std::string>{symbol->get_string()}}).second,
+                            "duplicate stock literal "+std::string(key));
+    }
   return result;
   }
 

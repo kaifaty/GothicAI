@@ -45,7 +45,7 @@ struct EquipmentAttributeWrite {
   };
 struct EquipmentStatChange {
   std::variant<Protection,Attribute,EquipmentAttributeWrite> stat;
-  uint32_t amount;
+  int32_t amount;
   };
 struct EquipmentStatEffect {
   std::vector<EquipmentStatChange> changes;
@@ -80,10 +80,8 @@ Definitions loadNative(const std::filesystem::path& base, const NativeBaseCatalo
 Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScript& program,
                  std::string_view sha256);
 // Register effects only after verifying the stock NotR program SHA.
-void registerStockRestoreEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
-void registerStockArmorSetEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
-void registerStockFightSkillEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
-void registerStockEquipmentStatEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
+void registerStockEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
+void registerStockEffects(Definitions& definitions, const NativeBaseCatalog::Selection& catalog);
 // Both the game and its contract use this complete choice of initialization path.
 // Returns true when a definition supplied the fields, false after a VM constructor.
 bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::IItem>& item,

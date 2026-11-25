@@ -1224,43 +1224,41 @@ bool GameScript::runShrinkState(Npc& npc, std::string_view name, int& result) {
   }
 
 bool GameScript::usesNativeShrinkSpell(const Item* item) const {
-  return item!=nullptr && item->isSpellOrRune() && item->spellId()==shrinkSpell &&
-         nativeRoutineProgram && activityEvents && !floorDefer.active() &&
-         ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  return item!=nullptr && item->isSpellOrRune() && item->spellId()==shrinkSpell;
   }
 
 int GameScript::runShrinkMana(Npc& caster, int mana, bool release) {
   const auto self=std::static_pointer_cast<daedalus::INpc>(caster.handlePtr());
   if(release) {
-    findSymbol("SPELL_PROCESSMANA_RELEASE.MANAINVESTED")->set_int(mana);
-    findSymbol("SPELL_PROCESSMANA_RELEASE.ACTIVESPELL")->set_int(npc_getactivespell(self));
+    setItemRuntimeInt("SPELL_PROCESSMANA_RELEASE.MANAINVESTED",mana);
+    setItemRuntimeInt("SPELL_PROCESSMANA_RELEASE.ACTIVESPELL",npc_getactivespell(self));
     return SPL_SENDSTOP;
     }
-  findSymbol("SPELL_PROCESSMANA.MANAINVESTED")->set_int(mana);
-  findSymbol("SPELL_PROCESSMANA.ACTIVESPELL")->set_int(npc_getactivespell(self));
-  findSymbol("SPELL_LOGIC_SHRINK.MANAINVESTED")->set_int(mana);
+  setItemRuntimeInt("SPELL_PROCESSMANA.MANAINVESTED",mana);
+  setItemRuntimeInt("SPELL_PROCESSMANA.ACTIVESPELL",npc_getactivespell(self));
+  setItemRuntimeInt("SPELL_LOGIC_SHRINK.MANAINVESTED",mana);
   const auto available=self->attribute[ATR_MANA];
   const auto scroll=npc_getactivespellisscroll(self);
   return (scroll && available>=shrinkScrollCost) || available>=shrinkRuneCost ? SPL_SENDCAST : SPL_SENDSTOP;
   }
 
 bool GameScript::isUndeadNpc(const std::shared_ptr<daedalus::INpc>& npc) {
-  findSymbol("C_NPCISUNDEAD.SLF")->set_instance(npc);
+  storyActorSlot("C_NPCISUNDEAD.SLF")=npc;
   if(!npc)
     return false;
   const auto guild = npc->guild;
-  return npc->aivar[realId]==findSymbol("ID_DRAGON_UNDEAD")->get_int() ||
+  return npc->aivar[realId]==itemRuntimeInt("ID_DRAGON_UNDEAD") ||
          guild==GIL_UNDEADORC || guild==GIL_SHADOWBEAST_SKELETON || guild==GIL_ZOMBIE || guild==GIL_SKELETON_MAGE ||
          guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON || guild==GIL_SUMMONED_GOBBO_SKELETON || guild==GIL_GOBBO_SKELETON;
   }
 
 bool GameScript::isEvilNpc(const std::shared_ptr<daedalus::INpc>& npc) {
-  findSymbol("C_NPCISEVIL.SLF")->set_instance(npc);
+  storyActorSlot("C_NPCISEVIL.SLF")=npc;
   const auto undead = isUndeadNpc(npc);
   if(!npc)
     return false;
   const auto guild = npc->guild;
-  return undead || npc->aivar[realId]==findSymbol("ID_TROLL_BLACK")->get_int() ||
+  return undead || npc->aivar[realId]==itemRuntimeInt("ID_TROLL_BLACK") ||
          guild==GIL_SUMMONED_DEMON || guild==GIL_DEMON || guild==GIL_DRACONIAN ||
          guild==GIL_ORC || guild==GIL_DRAGON || guild==GIL_DMT;
   }

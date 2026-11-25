@@ -33,21 +33,14 @@ bool GameScript::runStockTeleportCast(const std::shared_ptr<daedalus::INpc>& act
     {"SPELL_CAST_TELEPORTTAVERNE",     "NEWWORLD_ZEN", "NW_TAVERNE_04",            16},
     };
   const auto cast = [&](const Destination& destination) {
-    const auto level = findSymbol(destination.world)->get_int();
-    vm.set_int(nullptr,findSymbol("B_PRINTTELEPORTTOOFARAWAY.LEVEL"),0,level);
-    if(level!=currentStoryWorld) {
-      vm.push_reference(findSymbol("PRINT_TELEPORTTOOFARAWAY"));
-      vm.push_int(-1);
-      vm.push_reference(findSymbol("YPOS_LEVELUP"));
-      vm.push_reference(findSymbol("FONT_SCREENSMALL"));
-      vm.push_int(2);
-      if(vm.unsafe_call_external(findSymbol("PRINTSCREEN")))
-        (void)vm.pop_int();
-      }
-    const auto mana = findSymbol(npc_getactivespellisscroll(actor) ? "SPL_COST_SCROLL" : "SPL_COST_TELEPORT")->get_int();
-    auto* attribute = findSymbol("C_NPC.ATTRIBUTE");
-    const auto oldMana = vm.get_int(actor,attribute,ATR_MANA);
-    vm.set_int(actor,attribute,ATR_MANA,std::bit_cast<int32_t>(uint32_t(oldMana)-uint32_t(mana)));
+    const auto level=itemRuntimeInt(destination.world);
+    setItemRuntimeInt("B_PRINTTELEPORTTOOFARAWAY.LEVEL",level);
+    if(level!=currentStoryWorld)
+      ai_printscreen(itemRuntimeText("PRINT_TELEPORTTOOFARAWAY"),-1,itemRuntimeInt("YPOS_LEVELUP"),
+                     itemRuntimeText("FONT_SCREENSMALL"),2);
+    const auto mana=itemRuntimeInt(npc_getactivespellisscroll(actor) ? "SPL_COST_SCROLL" : "SPL_COST_TELEPORT");
+    auto& current=actor->attribute[ATR_MANA];
+    current=std::bit_cast<int32_t>(uint32_t(current)-uint32_t(mana));
     ai_teleport(actor,destination.waypoint);
     ai_playani(actor,"T_HEASHOOT_2_STAND");
     };
