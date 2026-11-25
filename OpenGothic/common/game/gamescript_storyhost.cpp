@@ -3,6 +3,7 @@
 #include <Tempest/Log>
 
 #include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "storygraph/vocab.h"
 #include "world/objects/npc.h"
 
@@ -187,6 +188,12 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
     bool hasVariable(std::string_view name, bool instanceOnly) const override {
+      if(const auto* catalog = baseNativeCatalog()) {
+        if(const auto* state = owner.script.runtimeState.find(name))
+          return !instanceOnly || std::holds_alternative<ScriptVars::Object>(*state);
+        if(NativeBaseCatalog::findConstant(*catalog,name)!=nullptr)
+          return !instanceOnly;
+        }
       const auto* symbol = owner.binding(name).first;
       if(symbol==nullptr || symbol->is_member() || symbol->is_external())
         return false;
@@ -207,6 +214,12 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
     std::optional<int32_t> symbolIndex(std::string_view name) const override {
+      if(const auto* catalog = baseNativeCatalog()) {
+        if(const auto id = owner.script.runtimeState.id(name))
+          return int32_t(*id);
+        if(const auto* constant = NativeBaseCatalog::findConstant(*catalog,name))
+          return int32_t(constant->id);
+        }
       const auto* slot = owner.binding(name).first;
       if(slot==nullptr)
         return std::nullopt;
@@ -230,12 +243,30 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
           error = "Invalid member context: "+std::string(slot.name);
         return result;
         }
-      auto* symbol = resolveValue(slot.name);
-      if(symbol==nullptr || symbol->is_member() || (slot.kind==NativeSlot::Instance && symbol->type()!=INSTANCE)) {
-        error = "Unknown story slot "+std::string(slot.name);
-        return std::nullopt;
-        }
       try {
+        if(const auto* catalog = baseNativeCatalog()) {
+          if(const auto* state = owner.script.runtimeState.find(slot.name)) {
+            if(slot.kind==NativeSlot::Instance && !std::holds_alternative<ScriptVars::Object>(*state))
+              throw std::runtime_error("Expected a runtime actor or item reference");
+            return readState(*state,slot.index);
+            }
+          if(const auto* constant = NativeBaseCatalog::findConstant(*catalog,slot.name)) {
+            if(slot.kind==NativeSlot::Instance)
+              throw std::runtime_error("Expected a runtime actor or item reference");
+            return std::visit([&](const auto& field) -> NativeValue {
+              using T = std::remove_cvref_t<decltype(field)>;
+              if constexpr(std::is_same_v<T,NativeBaseCatalog::Alias>)
+                throw std::runtime_error("Invalid constant type");
+              else
+                return readValues(std::span(field),slot.index);
+              },constant->values);
+            }
+          }
+        auto* symbol = resolveValue(slot.name);
+        if(symbol==nullptr || symbol->is_member() || (slot.kind==NativeSlot::Instance && symbol->type()!=INSTANCE)) {
+          error = "Unknown story slot "+std::string(slot.name);
+          return std::nullopt;
+          }
         if(const auto* state = owner.script.runtimeState.find(symbol->index()))
           return readState(*state,slot.index);
         switch(symbol->type()) {
@@ -267,6 +298,18 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
         if(!StoryRecordFields::visit(context.get(),[&](auto& record) { written=writeRecordField(record,slot,value,error); }))
           error = "Invalid member context: "+std::string(slot.name);
         return written;
+        }
+      if(const auto* catalog = baseNativeCatalog()) {
+        if(auto* state = owner.script.runtimeState.find(slot.name)) {
+          if(writeState(*state,slot,value))
+            return true;
+          error = "Invalid value for runtime field "+std::string(slot.name);
+          return false;
+          }
+        if(NativeBaseCatalog::findConstant(*catalog,slot.name)!=nullptr) {
+          error = "Cannot write story constant "+std::string(slot.name);
+          return false;
+          }
         }
       auto* symbol = resolveValue(slot.name);
       if(symbol==nullptr || symbol->is_member() || (symbol->is_const() && slot.kind!=NativeSlot::Instance)) {
@@ -402,22 +445,26 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
   private:
+    template<class T>
+    static NativeValue readValues(std::span<T> values, uint16_t index) {
+      if(index>=values.size())
+        throw std::runtime_error("Runtime field index out of range");
+      using Value = typename decltype(values)::value_type;
+      if constexpr(std::is_same_v<Value,int32_t>)
+        return NativeValue::integer(values[index]);
+      else if constexpr(std::is_same_v<Value,float>)
+        return NativeValue::real(values[index]);
+      else
+        return NativeValue::str(values[index]);
+      }
+
     NativeValue readState(const ScriptVars::Slot& state, uint16_t index) {
       return std::visit([&](const auto& field) -> NativeValue {
         using T = std::remove_cvref_t<decltype(field)>;
-        if constexpr(std::is_same_v<T,ScriptVars::Object>) {
+        if constexpr(std::is_same_v<T,ScriptVars::Object>)
           return NativeValue::instance(bind(field));
-          } else {
-          if(index>=field.values.size())
-            throw std::runtime_error("Runtime field index out of range");
-          using Value = typename decltype(field.values)::value_type;
-          if constexpr(std::is_same_v<Value,int32_t>)
-            return NativeValue::integer(field.values[index]);
-          else if constexpr(std::is_same_v<Value,float>)
-            return NativeValue::real(field.values[index]);
-          else
-            return NativeValue::str(field.values[index]);
-          }
+        else
+          return readValues(field.values,index);
         },state);
       }
 
