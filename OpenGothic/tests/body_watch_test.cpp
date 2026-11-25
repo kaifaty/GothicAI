@@ -22,6 +22,7 @@
 #include "testbench.h"
 #include "utils/workers.h"
 #include "world/objects/npc.h"
+#include "world/records/liveinstances.h"
 #include "world/objects/item.h"
 #include "world/bullet.h"
 #include "world/waypoint.h"
@@ -60,8 +61,8 @@ struct NpcDefinitionContract {
   static bool checkInfo(GameScript& script, const std::shared_ptr<NpcRecord>& npc, Npc& other) {
     auto& slot=script.storyActorSlot("OTHER");
     const auto previous=slot;
-    slot=other.handlePtr();
-    const auto result=script.npc_checkinfo(npc,1);
+    slot=std::static_pointer_cast<NpcInstance>(other.handlePtr());
+    const auto result=script.npc_checkinfo(std::static_pointer_cast<NpcInstance>(npc),1);
     slot=previous;
     return result;
     }

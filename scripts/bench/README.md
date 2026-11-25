@@ -1972,10 +1972,7 @@ boundaries, first differences and source analysis are in the
 [D4 baseline](../../reports/engine/2026-11-14-npc-data/d4-baseline.md#харад-и-загрузка-на-занятии).
 `npc-day-smith-save.bench` and `npc-day-smith-reload.bench` provide this fixture for Harad.
 `gothic-npc-day-contract` checks nested VM calls, random ownership, totals, repeated JSON bytes and
-actual engine queue observation on a synthetic program, without game data. The synthetic fixture of
-`gothic-placed-items-contract` additionally exercises `invokeState` through the real `Hlp_Random`,
-`GameScript::rand` and measurement probe, and verifies JSONL commands from both regular and overlay
-`Npc::aiPush` queues. The day contract also checks that merged `LookAtNpc` commands are both traced.
+actual engine queue observation on a synthetic program, without game data. The native day contract also checks phase counters and the distinction between regular and overlay commands.
 At the end of each interval the probe removes its call observer and releases its collector.
 Call observers must leave the VM's call-observer list unchanged during notification.
 The day contract runs two intervals on one VM and checks that other call observers still run in registration order.

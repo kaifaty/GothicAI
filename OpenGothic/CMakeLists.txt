@@ -652,22 +652,10 @@ endif()
     tests/physics_contract_noise.cpp
     tests/physics_bonds_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
-  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL
-    tests/placed_items_contract.cpp tests/npc_live_fixture.cpp)
-  target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_compile_definitions(gothic-placed-items-contract PRIVATE GOTHIC_BENNET_LOOKUP_AUDIT=1)
-    set_property(SOURCE tests/placed_items_contract.cpp APPEND PROPERTY
-      COMPILE_DEFINITIONS GOTHIC_BENNET_LOOKUP_WRAPPERS=1)
-    foreach(method IN ITEMS
-        19find_symbol_by_nameESt17basic_string_viewIcSt11char_traitsIcEE
-        20find_symbol_by_indexEj
-        22find_symbol_by_addressEj)
-      target_link_options(gothic-placed-items-contract PRIVATE
-        "LINKER:--wrap=_ZN8daedalus14DaedalusScript${method}"
-        "LINKER:--wrap=_ZNK8daedalus14DaedalusScript${method}")
-    endforeach()
-  endif()
+  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
+  target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge)
+  add_executable(gothic-native-story-contract EXCLUDE_FROM_ALL tests/native_story_contract.cpp)
+  target_link_libraries(gothic-native-story-contract PRIVATE OpenGothic AiBridge)
   # The society stand's world (docs/society-sim.md): runs gothic-body-runner --society-export twice on the
   # game's data (GOTHIC_DIR) and checks it against evals/npc-decisions/day_people.json and places.json.
   # Only where the runner exists (UNIX, see above).
