@@ -49,6 +49,7 @@ void checkValue(const Value& value, Type type) {
   if(!ok) throw std::runtime_error("value type differs from script binding");
   }
 
+#ifndef GOTHIC_NATIVE_V3
 // init_instance restores both SELF and the VM's member context. External calls may
 // execute item on_equip scripts, so both must remain the NPC throughout playback.
 struct Context {
@@ -92,6 +93,9 @@ void push(daedalus::DaedalusVm& vm, const NpcDefinitionRuntime::Argument& arg,
       break;
     }
   }
+#endif
+
+
 }
 
 bool NpcDefinitionRuntime::enabled() {
@@ -99,6 +103,7 @@ bool NpcDefinitionRuntime::enabled() {
   return value==nullptr || std::strcmp(value,"0")!=0;
   }
 
+#ifndef GOTHIC_NATIVE_V3
 NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinitions::Library& library,
                                                                const daedalus::DaedalusScript& script) {
   Definitions definitions;
@@ -162,6 +167,7 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinit
     }
   return definitions;
   }
+#endif
 
 NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::load(const std::filesystem::path& base,
                                                             const NativeBaseCatalog::Selection& catalog,
@@ -235,6 +241,7 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::load(const std::filesyst
   return definitions;
   }
 
+#ifndef GOTHIC_NATIVE_V3
 NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::load(const std::filesystem::path& base,
                                                             const daedalus::DaedalusScript& program,
                                                             std::string_view sha256) {
@@ -329,3 +336,4 @@ bool NpcDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::share
     }
   return true;
   }
+#endif

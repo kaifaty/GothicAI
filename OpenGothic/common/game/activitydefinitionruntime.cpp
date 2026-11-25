@@ -10,8 +10,6 @@
 #include <stdexcept>
 
 namespace {
-using Type = daedalus::DaedalusDataType;
-
 // Accepted untimed states.
 constexpr std::array<std::string_view,13> acceptedStates = {
   "ZS_SMITH_ANVIL",
@@ -29,6 +27,9 @@ constexpr std::array<std::string_view,13> acceptedStates = {
   "ZS_POTION_ALCHEMY",
   };
 
+#ifndef GOTHIC_NATIVE_V3
+using Type = daedalus::DaedalusDataType;
+
 const daedalus::DaedalusSymbol* function(const daedalus::DaedalusScript& script, const std::string& name, bool result) {
   const auto* symbol = script.find_symbol_by_name(name);
   if(symbol==nullptr || symbol->type()!=Type::FUNCTION || symbol->is_external() || symbol->count()!=0 ||
@@ -36,6 +37,9 @@ const daedalus::DaedalusSymbol* function(const daedalus::DaedalusScript& script,
     throw std::runtime_error("invalid activity function "+name);
   return symbol;
   }
+#endif
+
+
 }
 
 ActivityDefinitionRuntime::Mode ActivityDefinitionRuntime::mode() {
@@ -117,6 +121,7 @@ ActivityDefinitionRuntime::Definitions resolveRecords(const ActivityDefinitions:
 
 }
 
+#ifndef GOTHIC_NATIVE_V3
 ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
     const ActivityDefinitions::Library& library, const daedalus::DaedalusScript& script, Mode mode) {
   return resolveRecords(library,mode,[&](const std::string& name,const std::string& perceptions) {
@@ -126,6 +131,7 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
                           function(script,name+"_END",false)->index()},helper->index()};
     });
   }
+#endif
 
 ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
     const ActivityDefinitions::Library& library, const NativeBaseCatalog::Selection& catalog) {
@@ -139,6 +145,7 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::resolve(
     });
   }
 
+#ifndef GOTHIC_NATIVE_V3
 ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::load(
     const std::filesystem::path& base, const daedalus::DaedalusScript& program, std::string_view sha256) {
   const auto current = mode();
@@ -146,6 +153,7 @@ ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::load(
     return Definitions{};
   return resolve(ActivityDefinitions::read(base,sha256),program,current);
   }
+#endif
 
 ActivityDefinitionRuntime::Definitions ActivityDefinitionRuntime::load(
     const std::filesystem::path& base, const NativeBaseCatalog::Selection& catalog, std::string_view sha256) {

@@ -36,6 +36,7 @@ Definitions resolveRows(const RoutineDefinitions::Library& library, ResolveRouti
   }
 }
 
+#ifndef GOTHIC_NATIVE_V3
 RoutineDefinitionRuntime::Definitions RoutineDefinitionRuntime::resolve(const RoutineDefinitions::Library& library,
                                                                         const daedalus::DaedalusScript& script) {
   return resolveRows(library,[&](std::string_view name) -> std::optional<uint32_t> {
@@ -51,12 +52,14 @@ RoutineDefinitionRuntime::Definitions RoutineDefinitionRuntime::resolve(const Ro
     return function->index();
     });
   }
+#endif
 
 bool RoutineDefinitionRuntime::enabled() {
   const auto* value=std::getenv("OPENGOTHIC_ROUTINE_RECORDS");
   return value==nullptr || std::strcmp(value,"0")!=0;
   }
 
+#ifndef GOTHIC_NATIVE_V3
 RoutineDefinitionRuntime::Definitions RoutineDefinitionRuntime::load(const std::filesystem::path& base,
                                                                      const daedalus::DaedalusScript& program,
                                                                      std::string_view sha256) {
@@ -64,6 +67,7 @@ RoutineDefinitionRuntime::Definitions RoutineDefinitionRuntime::load(const std::
     return resolve(RoutineDefinitions::read(base,sha256),program);
   return {};
   }
+#endif
 
 RoutineDefinitionRuntime::Definitions RoutineDefinitionRuntime::load(const std::filesystem::path& base,
                                                                      const NativeBaseCatalog::Selection& catalog,
@@ -86,6 +90,7 @@ RoutineDefinitionRuntime::Definitions RoutineDefinitionRuntime::load(const std::
   return definitions;
   }
 
+#ifndef GOTHIC_NATIVE_V3
 int RoutineDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol* function,
                                          const Definitions& definitions, const std::function<void(const Row&)>& add) {
   if(function==nullptr) return 0;
@@ -101,3 +106,4 @@ int RoutineDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, daedalus::Dae
   vm.call_function<void>(function);
   return 0;
   }
+#endif

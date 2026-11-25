@@ -12,8 +12,9 @@
 namespace {
 using namespace NpcHelperDefinitions;
 using namespace daedalus;
-using Type = DaedalusDataType;
 using Kind = Value::Kind;
+#ifndef GOTHIC_NATIVE_V3
+using Type = DaedalusDataType;
 
 DaedalusSymbol& symbol(DaedalusVm& vm,std::string_view name) {
   auto* found=vm.find_symbol_by_name(std::string(name));
@@ -115,6 +116,7 @@ class RuntimeHost final : public Host {
     const NpcHelperRuntime::Definitions& definitions;
     const NpcHelperRuntime::InvokeExternal* invoke;
   };
+#endif
 
 std::span<const NativeBaseCatalog::NpcConstructorType> arguments(const Definition& definition) {
   return std::visit([](const auto& helper)->std::span<const NativeBaseCatalog::NpcConstructorType> {
@@ -139,6 +141,7 @@ bool NpcHelperRuntime::enabled() {
   return value==nullptr || std::strcmp(value,"0")!=0;
   }
 
+#ifndef GOTHIC_NATIVE_V3
 NpcHelperRuntime::Definitions NpcHelperRuntime::resolve(const Library& library,const DaedalusScript& script) {
   Definitions definitions;
   for(const auto& entry:script.symbols())
@@ -160,6 +163,7 @@ NpcHelperRuntime::Definitions NpcHelperRuntime::load(const std::filesystem::path
   // Keep the library while disabled too: contracts and a running process can toggle the fallback.
   return resolve(NpcHelperDefinitions::read(base,sha256),script);
   }
+#endif
 
 NpcHelperRuntime::Definitions NpcHelperRuntime::resolve(const Library& library,const NativeBaseCatalog::Selection& catalog) {
   Definitions definitions;
@@ -179,6 +183,7 @@ NpcHelperRuntime::Definitions NpcHelperRuntime::load(const std::filesystem::path
   return resolve(NpcHelperDefinitions::read(base,sha256),catalog);
   }
 
+#ifndef GOTHIC_NATIVE_V3
 bool NpcHelperRuntime::invoke(DaedalusVm& vm,const std::shared_ptr<INpc>& npc,
                               const DaedalusSymbol* function,const Definitions& definitions) {
   if(!enabled() || function==nullptr) return false;
@@ -222,6 +227,7 @@ bool NpcHelperRuntime::invokePrepared(DaedalusVm& vm,const std::shared_ptr<INpc>
   RuntimeHost host(vm,npc,definitions,invokeExternal ? &invokeExternal : nullptr);
   return invokePrepared(function,definitions,args,host);
   }
+#endif
 
 bool NpcHelperRuntime::invokePrepared(uint32_t function,const Definitions& definitions,
                                      std::span<const Value> args,Host& host) {
