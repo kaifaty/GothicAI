@@ -333,6 +333,7 @@ void GameScript::initCommon() {
   bindExternal("ai_outputsvm_overlay",           &GameScript::ai_outputsvm_overlay);
   bindExternal("ai_startstate",                  &GameScript::ai_startstate);
   bindExternal("ai_playani",                     &GameScript::ai_playani);
+  bindExternal("ai_stopfx",                      &GameScript::ai_stopfx);
   bindExternal("ai_setwalkmode",                 &GameScript::ai_setwalkmode);
   bindExternal("ai_wait",                        &GameScript::ai_wait);
   bindExternal("ai_waitms",                      &GameScript::ai_waitms);

@@ -821,6 +821,7 @@ class GameScript final : public GameRules {
     void ai_outputsvm_overlay(std::shared_ptr<daedalus::INpc> selfRef, std::shared_ptr<daedalus::INpc> targetRef, std::string_view name);
     void ai_startstate       (std::shared_ptr<daedalus::INpc> selfRef, int func, int state, std::string_view wp);
     void ai_playani          (std::shared_ptr<daedalus::INpc> npcRef, std::string_view name);
+    void ai_stopfx           (std::shared_ptr<daedalus::INpc> npcRef, std::string_view name);
     void ai_setwalkmode      (std::shared_ptr<daedalus::INpc> npcRef, int modeBits);
     void ai_wait             (std::shared_ptr<daedalus::INpc> npcRef, float ms);
     void ai_waitms           (std::shared_ptr<daedalus::INpc> npcRef, int ms);

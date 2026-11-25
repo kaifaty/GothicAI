@@ -557,6 +557,14 @@ void GameScript::ai_playani(std::shared_ptr<daedalus::INpc> npcRef, std::string_
     npc->aiPush(AiQueue::aiPlayAnim(name));
   }
 
+void GameScript::ai_stopfx(std::shared_ptr<daedalus::INpc> npcRef, std::string_view name) {
+  auto* npc=findNpc(npcRef);
+  if(npc==nullptr)
+    return;
+  if(const auto* effect=Gothic::inst().loadVisualFx(name))
+    npc->stopEffect(*effect);
+  }
+
 void GameScript::ai_setwalkmode(std::shared_ptr<daedalus::INpc> npcRef, int modeBits) {
   if(auto npc = findNpc(npcRef))
     NpcEngineCalls::setWalkMode(*npc,modeBits);
