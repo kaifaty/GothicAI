@@ -44,6 +44,8 @@ struct Profile {
   };
 inline constexpr int nativeProjectionVersion=2;
 bool isNativeProjection(const std::filesystem::path& base);
+// Lease and verify an explicit prepared base for asset readers, without selecting a game profile.
+Selection openPreparedBase(const std::filesystem::path& base, BaseImport::Identity& identity);
 // Legacy definition artifacts are kept only in offline bases.
 bool isFullSymbolFile(const std::filesystem::path& relative);
 // Derive the production projection identity from an already verified combined base.

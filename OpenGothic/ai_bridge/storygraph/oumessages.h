@@ -8,5 +8,6 @@ OutputUnits::Index readOuIndex(const std::filesystem::path& base, const BaseImpo
 WorldData::ZenFile readOuLibrary(const OutputUnits::Index& index, const OutputUnits::Source& source,
                                 std::string& actualSha);
 int printOuMessages(const OutputUnits::Index& index);
+int printPreparedOuMessages(const std::filesystem::path& base);
 
 }

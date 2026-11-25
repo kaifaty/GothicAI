@@ -211,6 +211,8 @@ static int run(int argc, char** argv) {
 
   const fs::path input(datPath);
   const bool directory = fs::is_directory(input);
+  if(ouMessages && directory && fs::is_regular_file(input/"base.json"))
+    return printPreparedOuMessages(input);
   const auto gothic = installationRoot(input,directory);
   // A cold base import writes converter summaries to cout; the export's stdout is only JSON.
   auto* importOutput = ouMessages ? std::cout.rdbuf(std::cerr.rdbuf()) : nullptr;

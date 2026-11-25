@@ -81,7 +81,6 @@ endif()
 
 # The server's reader only needs the prepared output-unit catalogue.
 add_executable(storygraph-ou EXCLUDE_FROM_ALL oumain.cpp oumessages.cpp ../../common/basestore.cpp)
-target_include_directories(storygraph-ou PRIVATE ..)
 target_include_directories(storygraph-ou SYSTEM PRIVATE ../../lib/rapidjson/include)
 target_link_libraries(storygraph-ou PRIVATE gothic-base-runtime gothic-video-runtime)
 if(NOT MSVC)

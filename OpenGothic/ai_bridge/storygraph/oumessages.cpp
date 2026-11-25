@@ -1,7 +1,10 @@
 #include "oumessages.h"
 
+#include "basestore.h"
+#include "definitionjson.h"
 #include "gothicglb.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <stdexcept>
 
@@ -44,4 +47,26 @@ int storygraph::printOuMessages(const OutputUnits::Index& index) {
   if(std::fwrite(text.data(),1,text.size(),stdout)!=text.size() || std::fflush(stdout)!=0)
     throw std::runtime_error("cannot write OU messages to stdout");
   return 0;
+  }
+
+int storygraph::printPreparedOuMessages(const std::filesystem::path& base) {
+  BaseImport::Identity identity;
+  const auto selection = BaseStore::openPreparedBase(base,identity);
+  const auto manifest = DefinitionJson::read(selection.path/"base-files.json");
+  const auto requireBound = [&](const std::string& name) {
+    const auto& files = manifest["files"];
+    if(!std::ranges::any_of(files.GetArray(),[&](const auto& entry) { return entry["path"]==name.c_str(); }))
+      throw std::runtime_error("prepared base manifest omits "+name);
+    };
+  requireBound("outputunits/outputunits.json");
+  rapidjson::Document metadata;
+  metadata.Parse(identity.json.data(),identity.json.size());
+  BaseImport::Files archives;
+  for(const auto& archive:metadata["archives"].GetArray())
+    archives.emplace_back(archive["name"].GetString(),archive["size"].GetUint64());
+  std::sort(archives.begin(),archives.end());
+  const auto index = readOuIndex(selection.path,archives);
+  if(const auto* source = index.serverOuPy())
+    requireBound(index.path(*source).lexically_relative(selection.path).generic_string());
+  return printOuMessages(index);
   }
