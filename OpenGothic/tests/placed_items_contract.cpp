@@ -49,7 +49,6 @@
 #include "graphics/visualfx.h"
 #include "graphics/pfx/particlefx.h"
 #include "dialoggraph.h"
-#include "npccontroller.h"
 #include "storygraph/bytecode.h"
 #include "storygraph/exprjson.h"
 #include "world/bullet.h"
