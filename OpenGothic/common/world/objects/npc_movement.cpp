@@ -460,7 +460,7 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
   if(go2.flag==GT_No)
     return false;
 
-  resumeCampfireBody();
+  resumeBody();
   if(isInAir() || interactive()!=nullptr) {
     mvAlgo.tick(dt);
     return true;
@@ -811,8 +811,8 @@ void Npc::attachToPoint(const WayPoint *p) {
     return;
   if(currentFp!=p)
     wakeSociety();
-  if(currentFp!=p && campfireBodySuspended())
-    resumeCampfireBody();
+  if(currentFp!=p && bodySuspended())
+    resumeBody();
   if(currentFp!=p && activityEvents.activity && activityEvents.activity->point &&
      (activityEvents.stage==ActivityEvents::Stage::Hold || activityEvents.stage==ActivityEvents::Stage::Wait))
     wakeActivity(ActivityEvents::Detached);
@@ -836,7 +836,7 @@ bool Npc::goToPosition(const Vec3& position) {
 
 void Npc::clearGoTo() {
   if(go2.activity)
-    resumeCampfireBody();
+    resumeBody();
   simpleMovement.ground=nullptr;
   if(pendingSimpleGoTo()!=nullptr)
     aiQueue.pop();

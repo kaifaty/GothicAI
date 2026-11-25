@@ -900,6 +900,14 @@ bool WorldObjects::mustUpdateAnimation(const Npc& npc, const AnimationLod::View&
          BodyArena::isActor(npc) || NavDemos::fullSimulation(npc) || animationProbed(npc);
   }
 
+bool WorldObjects::bodyNeedsSimulation(const Npc& npc, const AnimationLod::View& view, bool resting) const {
+  // The hero can move before its process-policy ring is refreshed.
+  const auto* hero = owner.player();
+  if(resting && hero && npc.qDistTo(*hero)<NpcNearPolicyRadius*NpcNearPolicyRadius)
+    return true;
+  return mustUpdateAnimation(npc,view,resting && npc.settledFurniturePose()) || view.visible(npc);
+  }
+
 bool WorldObjects::animationPassSkips(const Npc& npc, const Npc* player, bool skipFar, bool frozen) {
   // Headless body training may skip NPCs beyond the far range (>60 m from the hero)
   // that are not arena actors: nobody sees them, and they are most of the world.
@@ -952,6 +960,12 @@ void WorldObjects::updateAnimation(uint64_t dt) {
   const auto updateNpc = [&](std::unique_ptr<Npc>& i){
     auto& plan = tailPlan[size_t(&i-npcArr.data())];
     if(animationPassSkips(*i,pl,skipFar,frozen)) {
+      plan = i->animationTailPlan(true,keepShadow);
+      return;
+      }
+    if(i->restingBodySuspended()) {
+      i->deferDistantAnimation(dt,now);
+      deferred.fetch_add(1,std::memory_order_relaxed);
       plan = i->animationTailPlan(true,keepShadow);
       return;
       }
@@ -1020,20 +1034,20 @@ void WorldObjects::catchUpAnimation() {
   const bool persistent = owner.persistentSocietyEnabled();
   const bool catchUp = animationLodDeferred!=0 || societyPoseWakePending;
   societyPoseWakePending = false;
-  if(!catchUp && !campfireBodiesSuspended)
+  if(!catchUp && !npcBodiesSuspended)
     return;
   FrameProfile::Scope timing(FrameProfile::Zone::NpcAnimationCatchUp);
   AnimationLod::View view;
   if(!makeAnimationLodView(view))
     return;
-  if(campfireBodiesSuspended) {
-    // A camera turn can bring a distant campfire into view in the same frame.
+  if(npcBodiesSuspended) {
+    // A camera turn can bring a suspended body into view in the same frame.
     // Restore the collision entry on this thread before the parallel pose pass.
     refreshNpcCells();
-    orderNpcCandidates(npcCampfires);
+    orderNpcCandidates(npcBodyCandidates);
     for(auto* npc:npcSpatialOrder)
-      if(npc->campfireBodySuspended() && (mustUpdateAnimation(*npc,view) || view.visible(*npc)))
-        npc->resumeCampfireBody();
+      if(npc->bodySuspended() && bodyNeedsSimulation(*npc,view,npc->restingBodySuspended()))
+        npc->resumeBody();
     }
   if(!catchUp)
     return;

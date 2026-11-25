@@ -56,6 +56,7 @@ struct Asset {
   uint32_t sourceSub = 0; // corresponding original canopy submesh
   uint32_t sourceCards = 0;
   uint32_t sourceTriangles = 0;
+  float cullPadding = 0.f; // wind travel beyond the authored node boxes
   };
 
 struct Projection {

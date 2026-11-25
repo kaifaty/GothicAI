@@ -216,6 +216,10 @@ void FrameProfile::sample(std::string_view segment, uint64_t frame) {
   const auto length=std::min(segment.size(),sizeof(r->segment)-1);
   std::memcpy(r->segment,segment.data(),length); r->segment[length]=0; r->frame=frame;
   }
+bool FrameProfile::hasSample() {
+  const auto* r=recorder().current.load(std::memory_order_acquire);
+  return r!=nullptr && r->segment[0]!=0;
+  }
 FrameProfile::Scope::Scope(Zone zone, bool include):zone(zone) {
   if(!include || !enabled()) return;
   if(include) record=recorder().current.load(std::memory_order_acquire);

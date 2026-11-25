@@ -18,6 +18,10 @@ gtime after(gtime now, uint64_t ms) {
   now.addMilis(ms);
   return now;
   }
+
+bool isRestingSleepState(std::string_view state) {
+  return state=="ZS_SLEEP" || state=="ZS_SLEEP_DEEP" || state=="ZS_MM_RTN_SLEEP";
+  }
 }
 
 bool Npc::hasCampfireActivity() const {
@@ -57,23 +61,57 @@ bool Npc::canSuspendCampfireBody() const {
          isOnFreePoint(point->point) && currentFpLock.point()==currentFp && currentFp->useCounter()==1;
   }
 
-bool Npc::suspendCampfireBody() {
-  if(physic.bodySuspended())
-    return true;
-  if(!go2.empty()) {
+bool Npc::hasRestingBodyActivity() const {
+  return isRestingSleepState(aiState.hint) || !activityEvents.waitPoints.empty() || waitTime>owner.tickCount();
+  }
+
+bool Npc::canSuspendRestingBody() const {
+  const auto now = owner.tickCount();
+  const bool sleeping = isRestingSleepState(aiState.hint);
+  const auto& activity = activityEvents;
+  const bool waitingForPoint = activity.stage==ActivityEvents::Stage::Wait &&
+                               !activity.waitPoints.empty() && !activity.awaitQueue &&
+                               !activity.pending && !activity.retry && !activity.restart && !isAiBusy();
+  if(!sleeping && waitTime<=now && !waitingForPoint)
+    return false;
+  if(societySleeping || (waitingForPoint && owner.societyHoldsRoutineAfterTick(*this)) ||
+     externalCtrl || currentTarget!=nullptr || !go2.empty() || aiQueueOverlay.size()!=0 ||
+     !outputPipe->isFinished() || isDown() || isMeleeFighter() || physicsNoiseUntil>now ||
+     isPhysicsInvestigating() || spellWhirling() || BodyController::owns(*this) ||
+     (!physic.isEnabled() && !bodySuspended()))
+    return false;
+  if(!sleeping)
+    return currentInteract==nullptr && !nativeBodyAction() && bodyStateMasked()==BS_STAND &&
+           visual.pose().isStanding() && weaponState()==WeaponState::NoWeapon;
+  if(!aiState.started || aiState.eTime<=owner.time() || isAiBusy() || bodyStateMasked()!=BS_LIE)
+    return false;
+  if(std::string_view(aiState.hint)=="ZS_MM_RTN_SLEEP")
+    return currentInteract==nullptr && visual.pose().isInAnim("S_SLEEP");
+  return settledFurniturePose();
+  }
+
+bool Npc::suspendDistantBody(bool resting) {
+  if(!bodySuspended() && !go2.empty()) {
     // The first sample of a graph segment can preserve an authored height above the floor.
     const auto floor=owner.physic()->landRay(position()+Tempest::Vec3(0,30,0),60);
     if(!floor.hasCol || std::abs(floor.v.y-y)>5.f)
       return false;
     }
   physic.suspendBody();
-  return true;
+  if(resting && !restingBody)
+    clearMeleeShadow();
+  restingBody = resting && bodySuspended();
+  return bodySuspended();
   }
 
-void Npc::resumeCampfireBody() {
-  if(!physic.bodySuspended())
+void Npc::resumeBody() {
+  if(!bodySuspended() && !restingBody)
     return;
   physic.resumeBody();
+  if(restingBody) {
+    restingBody = false;
+    syncDeferredAnimation();
+    }
   owner.noteNpcCellChange(*this);
   }
 
@@ -341,9 +379,12 @@ bool Npc::isActivityPoint(const WayPoint* point) const {
   }
 
 void Npc::stopWaitingForPoints() {
+  if(activityEvents.waitPoints.empty())
+    return;
   for(auto* p:activityEvents.waitPoints)
     p->stopWaiting(*this);
   activityEvents.waitPoints.clear();
+  owner.noteNpcCellChange(*this);
   }
 
 void Npc::seekActivityPoint(uint16_t wakes) {
@@ -416,6 +457,8 @@ void Npc::seekActivityPoint(uint16_t wakes) {
       }
     for(auto* p:s.waitPoints)
       p->waitForFree(*this);
+    if(!s.waitPoints.empty())
+      owner.noteNpcCellChange(*this);
     occluded = owner.findFreePoint(centerPosition(),a.point)!=nullptr;
     }
   s.stage    = on ? Stage::Hold : Stage::Wait;

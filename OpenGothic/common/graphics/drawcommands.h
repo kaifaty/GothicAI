@@ -92,6 +92,9 @@ class DrawCommands {
     void compactHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool early);
     void finishHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& winners, uint8_t fId);
     void finishBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool late);
+    bool hasPendingBoughExpansion() const { return boughHistoryToken!=0; }
+    bool diagnoseBoughVisibility(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, const Tempest::Texture2d& depth,
+                                  const Tempest::Matrix4x4& viewProject, bool verify, uint64_t stamp);
     const Tempest::StorageBuffer& historyStatus() const { return history.status; }
     uint32_t historyClusterCount() const;
 

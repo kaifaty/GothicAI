@@ -456,6 +456,8 @@ bool World::persistentSocietyEnabled() const {
   }
 
 void World::sleepSocietyNpc(Npc& npc) {
+  if(npc.restingBodySuspended())
+    npc.resumeBody();
   societyProjection->sleep(*this,npc);
   }
 
