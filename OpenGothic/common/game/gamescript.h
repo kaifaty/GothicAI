@@ -439,6 +439,7 @@ class GameScript final : public GameRules {
     void setNpcRuleString(std::string_view name, std::string_view value);
     void loadNativeRoutines();
     void loadNativeRoutineExchange();
+    void startOtherRoutine(const std::shared_ptr<daedalus::INpc>& actor,std::string_view routine);
     void runGregRoutineTransition(const daedalus::INpc& self);
 
     using NativeRoutineCallback = bool (GameScript::*)(Npc&, std::string_view, int&);
@@ -474,14 +475,11 @@ class GameScript final : public GameRules {
     int32_t countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor);
     void initializeInstanceNpc(const std::shared_ptr<daedalus::INpc>& npc, size_t instance);
     std::optional<uint32_t> npcTemplateId(uint32_t instance) const;
-    void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* symbol, bool useRecords);
     void initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc, uint32_t templateId);
     static void applyNpcConstructorField(NpcRecord& npc, const NpcDefinitionRuntime::Field& field);
-    bool applyNpcConstructorCall(const std::shared_ptr<daedalus::INpc>& npc,const NpcDefinitionRuntime::Call& call,
-                                const std::function<void()>& observe={});
+    bool applyNpcConstructorCall(const std::shared_ptr<daedalus::INpc>& npc,const NpcDefinitionRuntime::Call& call);
     int32_t callNpcHelperOperation(const std::shared_ptr<daedalus::INpc>& npc,std::string_view name,
-                                   std::span<const NpcHelperDefinitions::Value> arguments,bool returns,
-                                   const std::function<void()>& observe={});
+                                   std::span<const NpcHelperDefinitions::Value> arguments,bool returns);
     bool invokeNpcHelper(const std::shared_ptr<daedalus::INpc>& npc,uint32_t function,
                          std::span<const NpcHelperDefinitions::Value> args);
     bool startHotkeyPotion(Npc& pl, bool mana);
@@ -667,7 +665,6 @@ class GameScript final : public GameRules {
     void stopLookAtNpc(const std::shared_ptr<daedalus::INpc>& self);
     void queueItemUse(const std::shared_ptr<daedalus::INpc>& self, int32_t item);
     void loadNativeDefinitions(const NativeBaseCatalog::Selection& catalog);
-    int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
     static void addPreparedRoutine(Npc* npc, const RoutineDefinitionRuntime::Routine& routine);
     bool game_initgerman     ();
     bool game_initenglish    ();

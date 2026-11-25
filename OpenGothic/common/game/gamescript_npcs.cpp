@@ -106,8 +106,7 @@ class PreparedNpcHelperHost final : public NpcHelperDefinitions::Host {
 }
 
 int32_t GameScript::callNpcHelperOperation(const std::shared_ptr<daedalus::INpc>& npc,std::string_view name,
-                                           std::span<const HelperValue> arguments,bool returns,
-                                           const std::function<void()>& observe) {
+                                           std::span<const HelperValue> arguments,bool returns) {
   using storygraph::NativeValue;
   constexpr storygraph::NativeInstance self=1;
   const auto external=nativeExternals.find(name);
@@ -138,9 +137,7 @@ int32_t GameScript::callNpcHelperOperation(const std::shared_ptr<daedalus::INpc>
     if(values[index].type!=external->second.signature.parameters[index])
       throw std::runtime_error("NPC helper definitions: wrong native argument for "+std::string(name));
     }
-  if(observe)
-    observe();
-  const auto resolve=[&npc](storygraph::NativeInstance id) -> storygraph::BoundNativeCall::Instance {
+  const auto resolve=[&npc](storygraph::NativeInstance id) -> ScriptVars::Object {
     return id==self ? npc : nullptr;
     };
   return external->second.call(std::span(values).first(arguments.size()),resolve,{}).value.i;
@@ -190,30 +187,21 @@ void GameScript::setNpcRuleString(std::string_view name,std::string_view value) 
 
 bool GameScript::invokeNpcHelper(const std::shared_ptr<daedalus::INpc>& npc,uint32_t function,
                                  std::span<const HelperValue> args) {
-  if(baseNativeCatalog()!=nullptr) {
-    if(npc==nullptr)
-      throw std::runtime_error("NPC helper definitions: missing prepared actor");
-    PreparedNpcHelperHost host(npc,runtimeState,[this,&npc](std::string_view name,std::span<const HelperValue> values,bool returns) {
-      return callNpcHelperOperation(npc,name,values,returns);
-      },[this](std::string_view name) {
-      const auto id=findSymbolIndex(name);
-      if(id==size_t(-1))
-        throw std::runtime_error("NPC helper definitions: unknown prepared identity "+std::string(name));
-      return int32_t(id);
-      });
-    return NpcHelperRuntime::invokePrepared(function,npcDefinitions.helpers,args,host);
-    }
-  if(vm.has_legacy_dispatcher())
-    return NpcHelperRuntime::invokePrepared(vm,npc,function,npcDefinitions.helpers,args);
-  return NpcHelperRuntime::invokePrepared(vm,npc,function,npcDefinitions.helpers,args,
-    [this,&npc](const daedalus::DaedalusSymbol& operation,std::span<const HelperValue> arguments,
-                const std::function<void()>& observe) {
-      return callNpcHelperOperation(npc,operation.name(),arguments,operation.has_return(),observe);
-      });
+  if(npc==nullptr)
+    throw std::runtime_error("NPC helper definitions: missing prepared actor");
+  PreparedNpcHelperHost host(npc,runtimeState,[this,&npc](std::string_view name,std::span<const HelperValue> values,bool returns) {
+    return callNpcHelperOperation(npc,name,values,returns);
+    },[this](std::string_view name) {
+    const auto id=findSymbolIndex(name);
+    if(id==size_t(-1))
+      throw std::runtime_error("NPC helper definitions: unknown prepared identity "+std::string(name));
+    return int32_t(id);
+    });
+  return NpcHelperRuntime::invokePrepared(function,npcDefinitions.helpers,args,host);
   }
 
 bool GameScript::applyNpcConstructorCall(const std::shared_ptr<daedalus::INpc>& npc,
-                                         const NpcDefinitionRuntime::Call& call,const std::function<void()>& observe) {
+                                         const NpcDefinitionRuntime::Call& call) {
   using Type = daedalus::DaedalusDataType;
   using storygraph::NativeValue;
   if(call.deferred) {
@@ -270,9 +258,7 @@ bool GameScript::applyNpcConstructorCall(const std::shared_ptr<daedalus::INpc>& 
     if(values[index].type!=native.signature.parameters[index])
       return false;
     }
-  if(observe)
-    observe();
-  const auto resolve=[&npc](storygraph::NativeInstance id) -> storygraph::BoundNativeCall::Instance {
+  const auto resolve=[&npc](storygraph::NativeInstance id) -> ScriptVars::Object {
     return id==self ? npc : nullptr;
     };
   native.call(std::span(values).first(call.args.size()),resolve,{});
@@ -307,21 +293,6 @@ void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& 
     }
   }
 
-void GameScript::initializeNpcDefinition(const std::shared_ptr<daedalus::INpc>& npc,
-                                         daedalus::DaedalusSymbol* symbol, bool useRecords) {
-  if(npc->user_ptr)
-    static_cast<Npc*>(npc->user_ptr)->npcInstanceSymbol=symbol->index();
-  // A director NPC keeps its own symbol while using its template's definition.
-  auto* like=own.likeOf(vm,symbol->index());
-  const auto applyCall=[this,&npc](const daedalus::DaedalusSymbol&,const NpcDefinitionRuntime::Call& call,
-                                   const std::function<void()>& observe) {
-    return !vm.has_legacy_dispatcher() && applyNpcConstructorCall(npc,call,observe);
-    };
-  const NpcDefinitionRuntime::Definitions empty;
-  const auto applyField=vm.has_legacy_dispatcher() ? nullptr : &GameScript::applyNpcConstructorField;
-  NpcDefinitionRuntime::initialize(vm,npc,symbol,useRecords ? npcDefinitions : empty,like,applyCall,applyField);
-  }
-
 void GameScript::refreshNpcAtInsert(Npc& npc) {
   auto& record = npc.handle();
   if(record.attribute[ATR_HITPOINTS]<=0)
@@ -330,7 +301,7 @@ void GameScript::refreshNpcAtInsert(Npc& npc) {
   // Retain the saved local and compare instance identities, as the stock script
   // does even when the currently controlled character is not PC_HERO.
   const auto hero = hlp_getnpc(int(findSymbolIndex("PC_HERO")));
-  findSymbol("B_REFRESHATINSERT.HER")->set_instance(hero);
+  storyActorSlot("B_REFRESHATINSERT.HER") = hero;
   const auto self = std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   if(hlp_getinstanceid(self)==hlp_getinstanceid(hero) || record.guild>=int32_t(GIL_SEPERATOR_HUM))
     return;
@@ -351,13 +322,6 @@ void GameScript::refreshNpcAtInsert(Npc& npc) {
   }
 
 void GameScript::initPerceptions() {
-  // New sessions can call this before a world is attached.
-  if(!nativeRoutineProgram || !NpcDefinitionRuntime::enabled()) {
-    if(hasSymbolName("initPerceptions"))
-      vm.call_function("initPerceptions");
-    return;
-    }
-
   perc_setrange(PERC_ASSESSDAMAGE,       9999);
   perc_setrange(PERC_ASSESSOTHERSDAMAGE, 1000);
   perc_setrange(PERC_ASSESSDEFEAT,       2000);
@@ -407,146 +371,74 @@ void GameScript::loadNativeNpcDeath() {
   for(size_t i=0;i<flags.size();++i)
     bindRuntimeVariable(flags[i],deathProgress.dragonDeaths[i]);
   using NpcRef = std::shared_ptr<daedalus::INpc>;
-  vm.override_function("B_KILLNPC",std::function<void(int32_t)>{[this](int32_t symbol) { killNpc(symbol); }},
-                       NpcDefinitionRuntime::enabled);
-  vm.override_function("B_REMOVENPC",std::function<void(int32_t)>{[this](int32_t symbol) { removeNpc(symbol); }},
-                       NpcDefinitionRuntime::enabled);
-  vm.override_function("B_DRAGONKILLCOUNTER",std::function<int32_t(NpcRef)>{[this](NpcRef actor) {
-    return countDragonDeaths(actor);
-    }},[this] {
-    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
-    });
+  nativeExternals.insert_or_assign("B_KILLNPC",storygraph::makeNativeInternal(
+    std::function<void(int32_t)>{[this](int32_t symbol) { killNpc(symbol); }}));
+  nativeExternals.insert_or_assign("B_REMOVENPC",storygraph::makeNativeInternal(
+    std::function<void(int32_t)>{[this](int32_t symbol) { removeNpc(symbol); }}));
+  nativeExternals.insert_or_assign("B_DRAGONKILLCOUNTER",storygraph::makeNativeInternal(
+    std::function<int32_t(NpcRef)>{[this](NpcRef actor) { return countDragonDeaths(actor); }}));
   }
 
 void GameScript::invokeKillNpc(int32_t symbol) {
-  if(!nativeRoutineProgram) {
-    vm.call_function<void>("B_KILLNPC",symbol);
-    return;
-    }
-  // Use the same call frame and gated dispatch as a script BL instruction.
-  vm.push_int(symbol);
-  vm.unsafe_call_bl(findSymbol("B_KILLNPC"));
+  killNpc(symbol);
   }
 
 void GameScript::killNpc(int32_t symbol) {
-  auto* parameter = findSymbol("B_KILLNPC.NPCINSTANCE");
-  auto* local = findSymbol("B_KILLNPC.NPC");
-  vm.set_int(vm.unsafe_get_gi(),parameter,0,symbol);
-
-  // Use the engine bindings to keep the startup floor barrier for these NPC calls.
-  vm.push_reference(parameter);
-  vm.unsafe_call_external(findSymbol("HLP_GETNPC"));
-  local->set_instance(vm.pop_instance());
-  vm.push_reference(local);
-  vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
-  vm.push_int(vm.pop_int()==0);
-  vm.push_reference(local);
-  vm.unsafe_call_external(findSymbol("HLP_ISVALIDNPC"));
-  const bool valid = vm.pop_int()!=0;
-  const bool alive = vm.pop_int()!=0;
-  if(!alive || !valid)
+  setNpcRuleInt("B_KILLNPC.NPCINSTANCE",symbol);
+  const auto npc = hlp_getnpc(symbol);
+  storyActorSlot("B_KILLNPC.NPC") = npc;
+  const bool alive = !npc_isdead(npc);
+  if(!hlp_isvalidnpc(npc) || !alive)
     return;
 
-  // The dispatch frame restores the member context on return.
-  const auto npc = local->get_instance();
-  vm.unsafe_set_gi(npc);
-  vm.set_int(npc,findSymbol("C_NPC.FLAGS"),0,0);
-  vm.push_reference(local);
-  vm.push_int(int32_t(findSymbolIndex("ITMI_OLDCOIN")));
-  vm.unsafe_call_external(findSymbol("CREATEINVITEM"));
-
-  // The stock damage reads the saved actor's maximum HP after the inventory call.
-  vm.push_reference(local);
-  vm.push_reference(findSymbol("ATR_HITPOINTS"));
-  const auto target = local->get_instance();
-  vm.unsafe_set_gi(target);
-  const auto maximum = vm.get_int(target,findSymbol("C_NPC.ATTRIBUTE"),ATR_HITPOINTSMAX);
-  vm.push_int(std::bit_cast<int32_t>(0u-uint32_t(maximum)));
-  vm.unsafe_call_external(findSymbol("NPC_CHANGEATTRIBUTE"));
+  npc->flags = NpcFlag::NONE;
+  createinvitem(npc,int32_t(findSymbolIndex("ITMI_OLDCOIN")));
+  const auto target = nativeNpc("B_KILLNPC.NPC");
+  const auto maximum = target ? target->attribute[ATR_HITPOINTSMAX] : 0;
+  npc_changeattribute(target,ATR_HITPOINTS,std::bit_cast<int32_t>(0u-uint32_t(maximum)));
   }
 
 void GameScript::removeNpc(int32_t symbol) {
-  auto* parameter = findSymbol("B_REMOVENPC.NPCINSTANCE");
-  auto* actor = findSymbol("B_REMOVENPC.NPC");
-  parameter->set_int(symbol);
-  vm.push_reference(parameter);
-  vm.unsafe_call_external(findSymbol("HLP_GETNPC"));
-  actor->set_instance(vm.pop_instance());
-
-  vm.push_reference(actor);
-  vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
-  const bool dead = vm.pop_int()!=0;
-  vm.push_reference(actor);
-  vm.unsafe_call_external(findSymbol("HLP_ISVALIDNPC"));
-  const bool valid = vm.pop_int()!=0;
-  if(dead || !valid)
+  setNpcRuleInt("B_REMOVENPC.NPCINSTANCE",symbol);
+  const auto npc = hlp_getnpc(symbol);
+  storyActorSlot("B_REMOVENPC.NPC") = npc;
+  const bool dead = npc_isdead(npc);
+  if(!hlp_isvalidnpc(npc) || dead)
     return;
 
-  const auto initial = std::static_pointer_cast<daedalus::INpc>(actor->get_instance());
-  vm.unsafe_set_gi(initial);
-  initial->flags = NpcFlag::NONE;
-  vm.push_reference(actor);
-  vm.push_reference(findSymbol("$13017")); // Stock TOT destination.
-  vm.unsafe_call_external(findSymbol("AI_TELEPORT"));
-  vm.push_reference(actor);
-  vm.push_reference(findSymbol("$13018")); // Stock TOT routine.
-  vm.unsafe_call_bl(findSymbol("B_STARTOTHERROUTINE"));
+  npc->flags = NpcFlag::NONE;
+  ai_teleport(npc,"TOT");
+  startOtherRoutine(npc,"TOT");
 
-  const auto target = std::static_pointer_cast<daedalus::INpc>(actor->get_instance());
-  vm.unsafe_set_gi(target);
-  const auto maximumHp = target ? target->attribute[ATR_HITPOINTSMAX] : 0;
-  vm.push_reference(actor);
-  vm.push_reference(findSymbol("ATR_HITPOINTS"));
-  vm.push_int(std::bit_cast<int32_t>(0u-uint32_t(maximumHp)));
-  vm.unsafe_call_external(findSymbol("NPC_CHANGEATTRIBUTE"));
-  vm.push_reference(actor);
-  vm.push_reference(findSymbol("$13019"));
-  vm.unsafe_call_external(findSymbol("AI_TELEPORT"));
+  const auto target = nativeNpc("B_REMOVENPC.NPC");
+  const auto maximum = target ? target->attribute[ATR_HITPOINTSMAX] : 0;
+  npc_changeattribute(target,ATR_HITPOINTS,std::bit_cast<int32_t>(0u-uint32_t(maximum)));
+  ai_teleport(nativeNpc("B_REMOVENPC.NPC"),"TOT");
   }
 
 int32_t GameScript::countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor) {
-  auto* current = findSymbol("B_DRAGONKILLCOUNTER.CURRENT_DRAGON");
-  auto* raven = findSymbol("B_DRAGONKILLCOUNTER.RAVN");
-  auto* yes = findSymbol("TRUE");
-  auto* no = findSymbol("FALSE");
-  const auto findNpc = [&](std::string_view name, daedalus::DaedalusSymbol* local) {
-    vm.push_int(int32_t(findSymbolIndex(name)));
-    vm.unsafe_call_external(findSymbol("HLP_GETNPC"));
-    local->set_instance(vm.pop_instance());
+  const auto lookup = [&](std::string_view name,std::string_view local) {
+    storyActorSlot(local) = hlp_getnpc(int32_t(findSymbolIndex(name)));
     };
-  const auto instanceId = [&](daedalus::DaedalusSymbol* npc) {
-    vm.push_reference(npc);
-    vm.unsafe_call_external(findSymbol("HLP_GETINSTANCEID"));
-    return vm.pop_int();
+  const auto matchesCurrent = [&](std::string_view local) {
+    return hlp_getinstanceid(nativeNpc(local))==hlp_getinstanceid(nativeNpc("B_DRAGONKILLCOUNTER.CURRENT_DRAGON"));
     };
-  const auto matchesCurrent = [&](daedalus::DaedalusSymbol* npc) {
-    const auto id = instanceId(npc);
-    return id==instanceId(current);
-    };
-  const auto memberNpc = [&](daedalus::DaedalusSymbol* symbol) {
-    const auto npc = std::static_pointer_cast<daedalus::INpc>(symbol->get_instance());
-    vm.unsafe_set_gi(npc);
-    return npc;
-    };
-  bool moviePlayed = false;
+  int32_t movieResult=0;
   const auto play = [&](std::string_view movie) {
-    vm.push_reference(findSymbol(movie));
-    vm.push_reference(yes);
-    vm.push_reference(no);
-    vm.unsafe_call_external(findSymbol("PLAYVIDEOEX"));
-    moviePlayed = true;
+    using storygraph::NativeValue;
+    const std::array args={NativeValue::str(std::string(movie)),NativeValue::integer(1),NativeValue::integer(0)};
+    movieResult=nativeExternals.at("PLAYVIDEOEX").call(args,{},{}).value.i;
     };
 
-  current->set_instance(actor);
-  findNpc("BDT_1090_ADDON_RAVEN",raven);
-  if(matchesCurrent(raven) && deathProgress.ravenDead==no->get_int()) {
-    play("$17823"); // Raven.
-    deathProgress.ravenDead=yes->get_int();
-    vm.push_int(int32_t(findSymbolIndex("MYXIR_ADW")));
-    vm.unsafe_call_bl(findSymbol("B_REMOVENPC"));
+  storyActorSlot("B_DRAGONKILLCOUNTER.CURRENT_DRAGON") = actor;
+  lookup("BDT_1090_ADDON_RAVEN","B_DRAGONKILLCOUNTER.RAVN");
+  if(matchesCurrent("B_DRAGONKILLCOUNTER.RAVN") && deathProgress.ravenDead==0) {
+    play("EXTRO_RAVEN.BIK");
+    deathProgress.ravenDead=1;
+    removeNpc(int32_t(findSymbolIndex("MYXIR_ADW")));
     }
 
-  const auto dragon = memberNpc(current);
+  const auto dragon = nativeNpc("B_DRAGONKILLCOUNTER.CURRENT_DRAGON");
   if(dragon && dragon->guild==GIL_DRAGON) {
     constexpr std::pair<std::string_view,std::string_view> dragons[] = {
       {"DRAGON_SWAMP","B_DRAGONKILLCOUNTER.SWAPDRAGN"},
@@ -555,65 +447,46 @@ int32_t GameScript::countDragonDeaths(const std::shared_ptr<daedalus::INpc>& act
       {"DRAGON_ICE",  "B_DRAGONKILLCOUNTER.ICDRAGN"},
       };
     for(const auto& [name,local]:dragons)
-      findNpc(name,findSymbol(local));
+      lookup(name,local);
     for(size_t i=0;i<std::size(dragons);++i) {
       auto& latch=deathProgress.dragonDeaths[i];
-      const bool pending=latch==no->get_int();
-      // The instance comparisons run even when the dragon is already counted.
-      const bool same=matchesCurrent(findSymbol(dragons[i].second));
-      if(pending && same) {
+      if(matchesCurrent(dragons[i].second) && latch==0) {
         deathProgress.dragonsKilled=std::bit_cast<int32_t>(uint32_t(deathProgress.dragonsKilled)+1u);
-        latch=yes->get_int();
+        latch=1;
         }
       }
     }
 
   if(deathProgress.dragonsKilled==4) {
-    deathProgress.allDragonsDead=yes->get_int();
-    vm.push_reference(findSymbol("BIFF"));
-    vm.unsafe_call_external(findSymbol("NPC_ISDEAD"));
-    const bool biffAlive = vm.pop_int()==no->get_int();
-    const bool biffInParty = findSymbol("DJG_BIFFPARTY")->get_int()==yes->get_int();
-    if(biffAlive && biffInParty)
-      deathProgress.biffSurvived=yes->get_int();
+    deathProgress.allDragonsDead=1;
+    if(!npc_isdead(nativeNpc("BIFF")) && npcRuleInt("DJG_BIFFPARTY")==1)
+      deathProgress.biffSurvived=1;
     }
 
   constexpr size_t monsterId = 43; // Stock AIVAR slot.
-  const auto defeated = memberNpc(current);
-  if(defeated && defeated->aivar[monsterId]==findSymbol("ID_DRAGON_UNDEAD")->get_int()) {
-    deathProgress.undeadDragonDead=yes->get_int();
-    auto* topic = findSymbol("TOPIC_BACKTOSHIP");
-    vm.push_reference(topic);
-    vm.push_reference(findSymbol("LOG_MISSION"));
-    vm.unsafe_call_external(findSymbol("LOG_CREATETOPIC"));
-    vm.push_reference(topic);
-    vm.push_reference(findSymbol("LOG_RUNNING"));
-    vm.unsafe_call_external(findSymbol("LOG_SETTOPICSTATUS"));
-    vm.push_reference(topic);
-    vm.push_reference(findSymbol("PRINT_DRAGKILLCOUNT"));
-    vm.unsafe_call_bl(findSymbol("B_LOGENTRY"));
-    vm.push_reference(vm.global_hero());
-    vm.push_reference(findSymbol("$17824")); // Undead dragon exit waypoint.
-    vm.unsafe_call_external(findSymbol("AI_TELEPORT"));
+  const auto defeated = nativeNpc("B_DRAGONKILLCOUNTER.CURRENT_DRAGON");
+  if(defeated && defeated->aivar[monsterId]==npcRuleInt("ID_DRAGON_UNDEAD")) {
+    deathProgress.undeadDragonDead=1;
+    const auto topic = npcRuleString("TOPIC_BACKTOSHIP");
+    log_createtopic(topic,npcRuleInt("LOG_MISSION"));
+    log_settopicstatus(topic,npcRuleInt("LOG_RUNNING"));
+    const auto entry = callStoryFunction("B_LOGENTRY",findNpc(nativeNpc("SELF")),findNpc(nativeNpc("OTHER")),
+                                         {std::string(topic),std::string(npcRuleString("PRINT_DRAGKILLCOUNT"))});
+    if(!entry.ok)
+      throw std::runtime_error("B_LOGENTRY: "+entry.error);
+    const auto hero = nativeNpc("HERO");
+    ai_teleport(hero,"UNDEAD_ENDTELEPORT");
 
-    const auto guildIs = [&](int32_t guild) {
-      const auto hero = memberNpc(vm.global_hero());
-      return hero && hero->guild==guild;
-      };
-    const bool paladin = guildIs(GIL_PAL);
-    const bool militia = guildIs(GIL_MIL);
-    if(paladin || militia) {
-      play("$17825");
-      } else {
-      const bool dragonHunter = guildIs(GIL_DJG);
-      const bool mercenary = guildIs(GIL_SLD);
-      play(dragonHunter || mercenary ? "$17826" : "$17827");
-      }
+    const auto guild = hero ? int32_t(hero->guild) : int32_t(GIL_NONE);
+    if(guild==GIL_PAL || guild==GIL_MIL)
+      play("EXTRO_PAL.BIK");
+    else if(guild==GIL_DJG || guild==GIL_SLD)
+      play("EXTRO_DJG.BIK");
+    else
+      play("EXTRO_KDF.BIK");
     }
 
-  // PLAYVIDEOEX leaves its result on the stock stack. The call frame returns
-  // the latest movie result, or the VM's default INT when no movie was played.
-  return moviePlayed ? vm.pop_int() : 0;
+  return movieResult;
   }
 
 void GameScript::loadNativeNpcGlobals() {
@@ -622,34 +495,20 @@ void GameScript::loadNativeNpcGlobals() {
 
   bindRuntimeVariable("KAPITEL",storyChapter);
   auto globals = NpcWorldData::loadGlobals(Resources::baseDir());
-  const bool prepared = baseNativeCatalog()!=nullptr;
-  if(!globals) {
-    if(prepared)
-      throw std::runtime_error("missing native NPC global bindings");
-    return;
-    }
+  if(!globals)
+    throw std::runtime_error("missing native NPC global bindings");
 
-  const auto initialize = std::function<void()>{[this,prepared,record=std::move(*globals)] {
+  const auto initialize = std::function<void()>{[this,record=std::move(*globals)] {
     if(storyChapter==record.unsetChapter)
       storyChapter=record.defaultChapter;
     for(const auto& [source,target]:record.bindings) {
-      if(prepared) {
-        auto* alias = std::get_if<ScriptVars::Object>(runtimeState.find(target));
-        if(alias==nullptr)
-          throw std::runtime_error("missing native NPC alias: "+std::to_string(target));
-        *alias = hlp_getnpc(source);
-        }
-      else {
-        vm.push_int(source);
-        vm.unsafe_call_external(findSymbol("HLP_GETNPC"));
-        findSymbol(target)->set_instance(vm.pop_instance());
-        }
+      auto* alias = std::get_if<ScriptVars::Object>(runtimeState.find(target));
+      if(alias==nullptr)
+        throw std::runtime_error("missing native NPC alias: "+std::to_string(target));
+      *alias = hlp_getnpc(source);
       }
     }};
-  if(prepared)
-    nativeExternals.insert_or_assign("B_INITNPCGLOBALS",storygraph::makeNativeInternal(initialize));
-  else
-    vm.override_function("B_INITNPCGLOBALS",initialize,NpcDefinitionRuntime::enabled);
+  nativeExternals.insert_or_assign("B_INITNPCGLOBALS",storygraph::makeNativeInternal(initialize));
   }
 
 void GameScript::loadNativeMonsterAttitudes() {
@@ -657,31 +516,18 @@ void GameScript::loadNativeMonsterAttitudes() {
     return;
 
   auto rules = NpcWorldData::loadAttitudes(Resources::baseDir());
-  const bool prepared = baseNativeCatalog()!=nullptr;
-  if(!rules) {
-    if(prepared)
-      throw std::runtime_error("missing native monster attitudes");
-    return;
-    }
+  if(!rules)
+    throw std::runtime_error("missing native monster attitudes");
 
-  const auto initialize = std::function<void()>{[this,prepared,rules=std::move(*rules)] {
+  const auto initialize = std::function<void()>{[this,rules=std::move(*rules)] {
     static constexpr int32_t humanGuilds[] = {
       GIL_NONE,GIL_PAL,GIL_MIL,GIL_VLK,GIL_KDF,GIL_NOV,GIL_DJG,GIL_SLD,GIL_BAU,GIL_BDT,GIL_STRF,GIL_OUT,GIL_PIR,GIL_KDW,
       };
     constexpr int32_t humanSeparator = int32_t(GIL_SEPERATOR_HUM);
-    const auto write = [this,prepared](std::string_view name,int32_t value) {
-      if(prepared) {
-        if(!setGlobalIntSymbol(name,value))
-          throw std::runtime_error("missing native monster attitude variable: "+std::string(name));
-        }
-      else {
-        findSymbol(name)->set_int(value);
-        }
-      };
     for(const auto& rule : rules) {
-      write("B_SETMONSTERATTITUDE.TOGUILD",rule.to);
-      write("B_SETMONSTERATTITUDE.ATTITUDE",rule.attitude);
-      write("B_SETMONSTERATTITUDE.FROMGUILD",rule.from);
+      setNpcRuleInt("B_SETMONSTERATTITUDE.TOGUILD",rule.to);
+      setNpcRuleInt("B_SETMONSTERATTITUDE.ATTITUDE",rule.attitude);
+      setNpcRuleInt("B_SETMONSTERATTITUDE.FROMGUILD",rule.from);
       if(rule.to==humanSeparator) {
         for(const auto guild : humanGuilds)
           wld_setguildattitude(rule.from,rule.attitude,guild);
@@ -695,8 +541,5 @@ void GameScript::loadNativeMonsterAttitudes() {
         }
       }
     }};
-  if(prepared)
-    nativeExternals.insert_or_assign("B_INITMONSTERATTITUDES",storygraph::makeNativeInternal(initialize));
-  else
-    vm.override_function("B_INITMONSTERATTITUDES",initialize,NpcDefinitionRuntime::enabled);
+  nativeExternals.insert_or_assign("B_INITMONSTERATTITUDES",storygraph::makeNativeInternal(initialize));
   }
