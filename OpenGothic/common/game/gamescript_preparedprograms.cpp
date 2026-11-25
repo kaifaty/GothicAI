@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "gamescript_inventorytransfer.h"
+#include "game/definitions/basescripts.h"
 #include "game/definitions/nativebasecatalog.h"
 #include "game/serialize.h"
 #include "storygraph/nativeexec.h"
