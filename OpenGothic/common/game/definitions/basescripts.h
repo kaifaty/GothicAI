@@ -6,7 +6,6 @@
 #include <string_view>
 #include <vector>
 
-namespace ProgramData { struct Index; }
 namespace OutputUnits { struct Index; }
 namespace asset { struct CutsceneBlock; }
 namespace NativeBaseCatalog { struct Selection; }
@@ -15,7 +14,6 @@ namespace NativeBaseCatalog { struct Selection; }
 std::string_view baseFightCatalog();
 // The prepared runtime catalog on a v3 base, owned until the next base selection.
 const NativeBaseCatalog::Selection* baseNativeCatalog();
-const ProgramData::Index& baseProgramIndex();
 const OutputUnits::Index& baseOutputUnitsIndex();
 bool loadBaseOutputUnits(std::string_view request, int language,
                          std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks);

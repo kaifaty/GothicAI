@@ -1,9 +1,7 @@
 #include "basescripts.h"
 
-#include "definitionjson.h"
 #include "gamebasecontent.h"
 #include "nativebasecatalog.h"
-#include "programdata.h"
 #include "outputunits.h"
 #include "resources.h"
 #include "resources_internal.h"
@@ -11,7 +9,6 @@
 
 #include <Tempest/Log>
 
-#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -27,30 +24,11 @@ namespace {
 class BaseScripts final : public GameBaseContent {
   public:
     void index(const std::filesystem::path& root) override {
-      const auto metadata = DefinitionJson::read(root/"base.json");
-      if(!metadata.IsObject())
-        throw std::runtime_error("invalid Gothic base identity: "+root.string());
-      const auto profile = metadata.FindMember("native_script_base");
-      const bool hasNativeCatalog = profile!=metadata.MemberEnd() && profile->value.IsObject() &&
-                                    profile->value.HasMember("version") &&
-                                    profile->value["version"]==NativeBaseCatalog::projectionVersion;
-      if(hasNativeCatalog) {
-        nativeCatalog = NativeBaseCatalog::read(root);
-        basePrograms = {};
-        } else {
-        nativeCatalog.reset();
-        basePrograms = ProgramData::readIndex(root/"programs");
-        }
+      nativeCatalog = NativeBaseCatalog::read(root);
       baseOutputUnits = OutputUnits::readIndex(root/"outputunits");
       }
 
     void validate(const Files& validationArchives, const LooseCheck& validateLoose) const override {
-      if(!nativeCatalog) {
-        if(basePrograms.archives!=validationArchives)
-          throw std::runtime_error("selected base archives differ from program base index: "+basePrograms.dir.string());
-        validateLoose(basePrograms.looseFiles,"program");
-        Log::i("base: ",basePrograms.programs.size()," programs from \"",basePrograms.dir.string(),"\"");
-        }
       if(baseOutputUnits.archives!=validationArchives)
         throw std::runtime_error("selected base archives differ from output units base index: "+baseOutputUnits.dir.string());
       validateLoose(baseOutputUnits.looseFiles,"output units");
@@ -58,25 +36,9 @@ class BaseScripts final : public GameBaseContent {
       }
 
     int language() const override {
-      if(nativeCatalog)
-        return nativeCatalog->language;
-      for(int language=-1;language<8;++language) {
-        const bool program=std::any_of(basePrograms.selections.begin(),basePrograms.selections.end(),
-                                      [&](const auto& row) {
-          return row.language==language && row.request=="GOTHIC.DAT" && row.source &&
-                 basePrograms.sources.at(*row.source).skipped.empty();
-          });
-        const bool outputUnits=std::any_of(baseOutputUnits.selections.begin(),baseOutputUnits.selections.end(),
-                                          [&](const auto& row) {
-          return row.language==language && row.source &&
-                 baseOutputUnits.sources.at(*row.source).skipped.empty();
-          });
-        if(program && outputUnits) return language;
-        }
-      return -1;
+      return nativeCatalog ? nativeCatalog->language : -1;
       }
 
-    ProgramData::Index basePrograms;
     OutputUnits::Index baseOutputUnits;
     std::optional<NativeBaseCatalog::Selection> nativeCatalog;
   };
@@ -85,18 +47,11 @@ BaseScripts scripts;
 }
 
 std::string_view baseFightCatalog() {
-  if(scripts.nativeCatalog)
-    return scripts.nativeCatalog->fight;
-  const auto* source = ProgramData::fightProgram(scripts.basePrograms);
-  return source!=nullptr ? std::string_view(source->recordSha256) : std::string_view();
+  return scripts.nativeCatalog ? std::string_view(scripts.nativeCatalog->fight) : std::string_view{};
   }
 
 const NativeBaseCatalog::Selection* baseNativeCatalog() {
   return scripts.nativeCatalog ? &*scripts.nativeCatalog : nullptr;
-  }
-
-const ProgramData::Index& baseProgramIndex() {
-  return scripts.basePrograms;
   }
 
 const OutputUnits::Index& baseOutputUnitsIndex() {

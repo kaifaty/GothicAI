@@ -133,7 +133,6 @@ class GameScript final : public GameRules {
     void         savePerc(Serialize& fout);
     void         loadPerc(Serialize& fin);
 
-    inline auto& getVm() { return vm; }
     bool         usesVerifiedNpcProgram() const { return nativeRoutineProgram; }
     bool         ownsNativeBennetProgram(uint32_t function) const;
     // The caller binds the ambient NPC context for stock dialogs.
@@ -220,8 +219,6 @@ class GameScript final : public GameRules {
 
     std::string_view            menuMain() const;
 
-    daedalus::DaedalusSymbol*     findSymbol(std::string_view s);
-    daedalus::DaedalusSymbol*     findSymbol(const size_t s);
     // the hero has heard this dialog of the npc's, as when it is played (Npc_KnowsInfo)
     void                        setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info);
     bool                        doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) const;
@@ -229,7 +226,6 @@ class GameScript final : public GameRules {
     std::string_view            storyDialogName(uint32_t info) const;
     std::optional<uint32_t>      storyDialogFunction(std::string_view name, bool condition = false) const;
     size_t                      findSymbolIndex(std::string_view s) override;
-    size_t                      symbolsCount() const;
 
     const AiState&              aiState  (ScriptFn id) override;
     const SpellRecord&          spellDesc(int32_t splId) override;
@@ -533,13 +529,11 @@ class GameScript final : public GameRules {
     Item* findItem(daedalus::IItem* handle);
     Item* findItemById(size_t id);
     Item* findItemById(const std::shared_ptr<daedalus::DaedalusInstance>& handle);
-    Npc*  findNpc(daedalus::DaedalusSymbol* s);
     Npc*  findNpc(daedalus::INpc*           handle);
     Npc*  findNpc(const std::shared_ptr<daedalus::INpc>& handle);
     Npc*  findNpcById (const std::shared_ptr<daedalus::DaedalusInstance>& handle);
     Npc*  findNpcById (size_t id);
     auto  findInfo    (size_t id) -> daedalus::IInfo*;
-    auto  findFocus(std::string_view name) -> daedalus::IFocus;
 
     void storeItem(Item* it);
     bool invokeNativeMobState(const daedalus::DaedalusSymbol& symbol);
@@ -673,11 +667,7 @@ class GameScript final : public GameRules {
     void lookAtNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other);
     void stopLookAtNpc(const std::shared_ptr<daedalus::INpc>& self);
     void queueItemUse(const std::shared_ptr<daedalus::INpc>& self, int32_t item);
-    static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
-                                       RoutineDefinitionRuntime::Definitions& routines,
-                                       NpcDefinitionRuntime::Definitions& npcs,
-                                       ActivityDefinitionRuntime::Definitions& activities, QuietSoundReaction& quietSound,
-                                       bool& nativeRoutineProgram);
+    void loadNativeDefinitions(const NativeBaseCatalog::Selection& catalog);
     int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
     static void addPreparedRoutine(Npc* npc, const RoutineDefinitionRuntime::Routine& routine);
     bool game_initgerman     ();
@@ -972,7 +962,6 @@ class GameScript final : public GameRules {
       } pointGestureRolls;
     ScriptVars::State                                           runtimeState;
     OwnSymbols                                                  own{runtimeState};
-    daedalus::DaedalusVm                                          vm;
     std::unique_ptr<StockPrograms>                                stockPrograms;
     storygraph::NativeExternals                                  nativeExternals;
     std::unique_ptr<BennetOre>                                    bennetOre;

@@ -1,49 +1,29 @@
 #include "gamescript.h"
 
 #include "basestore.h"
-#include "game/definitions/baseprogram.h"
 #include "game/definitions/gameplaydefinitions.h"
 #include "game/definitions/nativebasecatalog.h"
-#include "game/definitions/runtimebindings.h"
 #include "game/definitions/basescripts.h"
 #include "gothic.h"
 #include "loadprobe.h"
-#include "programdata.h"
+#include "resources.h"
 #include "settings.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 
-daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
-                                         RoutineDefinitionRuntime::Definitions& routines,
-                                         NpcDefinitionRuntime::Definitions& npcs,
-                                         ActivityDefinitionRuntime::Definitions& activities, QuietSoundReaction& quietSound,
-                                         bool& nativeRoutineProgram) {
-  const auto lang=Settings::getI("GAME", "language");
-  const auto& index=baseProgramIndex();
-  const auto base=index.dir.parent_path();
-  const auto selected=selectBaseProgram(index,gothic.defaultGameDatFile(),lang);
-  const auto& sha256=selected.source.recordSha256;
-  if(sha256!=GameplayDefinitions::stockProgram)
-    throw BaseStore::Error("native game requires the prepared catalog for the verified stock program");
-  auto script=daedalus::DaedalusScript::from_program(RuntimeBindings::read(base,sha256));
-  items=ItemDefinitionRuntime::load(base,script,sha256);
-  routines=RoutineDefinitionRuntime::load(base,script,sha256);
-  npcs=NpcDefinitionRuntime::load(base,script,sha256);
-  activities=ActivityDefinitionRuntime::load(base,script,sha256);
-  // Native behavior is verified against this particular stock Night of the Raven program.
-  nativeRoutineProgram=true;
-  if(!items.items.empty())
-    items.brokenEye=script.find_symbol_by_name("ITMI_INNOSEYE_BROKEN_MIS")->index();
-  ItemDefinitionRuntime::registerStockEffects(items,script);
-  const auto* callback=script.find_symbol_by_name("B_ASSESSQUIETSOUND");
-  const auto* height=script.find_symbol_by_name("PERC_DIST_HEIGHT");
-  const auto* indoorHeight=script.find_symbol_by_name("PERC_DIST_INDOOR_HEIGHT");
-  quietSound={ScriptFn(callback->index()),height->get_int(0),indoorHeight->get_int(0)};
-  const auto flags=daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
-  auto vm=daedalus::DaedalusVm::without_legacy_dispatcher(std::move(script),flags);
-  Gothic::enableScriptAudit(vm,gothic.defaultGameDatFile());
-  NpcDefinitionRuntime::observeCalls(vm,npcs,base,sha256);
-  return vm;
+void GameScript::loadNativeDefinitions(const NativeBaseCatalog::Selection& catalog) {
+  const auto& base = Resources::baseDir();
+  const auto sha = GameplayDefinitions::stockProgram;
+  itemDefinitions = ItemDefinitionRuntime::loadNative(base,catalog,sha);
+  routineDefinitions = RoutineDefinitionRuntime::load(base,catalog,sha);
+  npcDefinitions = NpcDefinitionRuntime::load(base,catalog,sha);
+  npcDefinitions.helpers = NpcHelperRuntime::load(base,catalog,sha);
+  activityDefinitions = ActivityDefinitionRuntime::load(base,catalog,sha);
+  const auto* callback = NativeBaseCatalog::findIdentity(catalog.npcCallbacks,"B_ASSESSQUIETSOUND");
+  if(callback==nullptr)
+    throw BaseStore::Error("missing native quiet sound callback");
+  quietSound = {ScriptFn(callback->id),intConstant("PERC_DIST_HEIGHT").value(),intConstant("PERC_DIST_INDOOR_HEIGHT").value()};
+  nativeRoutineProgram = true;
   }
 
 int32_t GameScript::itemRuntimeInt(std::string_view name) const {

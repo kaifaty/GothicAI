@@ -781,7 +781,7 @@ bool GameScript::npc_ownedbynpc(std::shared_ptr<daedalus::IItem> itmRef, std::sh
 
   const auto id = uint32_t(itm->handle().owner);
   const auto* owner = ownedInstance(id);
-  return owner!=nullptr && owner->get()==npc->handlePtr().get();
+  return owner!=nullptr && owner->get()==static_cast<NpcInstance*>(npc->handlePtr().get());
   }
 
 bool GameScript::npc_canseesource(std::shared_ptr<daedalus::INpc> npcRef) {
