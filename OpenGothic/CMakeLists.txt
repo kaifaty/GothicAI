@@ -124,6 +124,7 @@ list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/game/def
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/deathtrophydefinitions.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/symbolcatalog.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/runtimebindings.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/common/game/definitions/definitiontypes.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/game/placementdefinitionruntime.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/stockstoryprograms.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/common/import/storygraph.cpp")
@@ -862,7 +863,8 @@ endif()
     endif()
   endif()
   add_executable(gothic-basecontent-contract EXCLUDE_FROM_ALL tests/basecontent_contract.cpp)
-  target_link_libraries(gothic-basecontent-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_link_libraries(gothic-basecontent-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import
+    gothic-offline-bindings)
   target_include_directories(gothic-basecontent-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   if(UNIX)
     add_executable(gothic-video-contract EXCLUDE_FROM_ALL tests/video_contract.cpp)

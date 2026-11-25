@@ -1563,7 +1563,7 @@ struct BaseContentContract {
       modelField(a.move[i],b.move[i],field+".move["+std::to_string(i)+"]");
     }
 
-  static void definitionSourceClasses(daedalus::DaedalusScript& sc) {
+  static void definitionSourceClasses(daedalus::DaedalusScript& sc, bool useNativeBindings=false) {
     auto registerIfExists = [&](std::string_view sym, auto d) {
       if(sc.find_symbol_by_name(sym) != nullptr) {
         d(sc);
@@ -1587,15 +1587,15 @@ struct BaseContentContract {
     registerOpaque  ("C_SVM"); // structure is very customizable, so better to use type-less mapping
     registerIfExists("C_MENU",         daedalus::IMenu::register_);
     registerIfExists("C_MENU_ITEM",    daedalus::IMenuItem::register_);
-    registerIfExists("CCAMSYS",        daedalus::ICamera::register_);
+    registerIfExists("CCAMSYS",        useNativeBindings ? VmDef::Camera::register_ : daedalus::ICamera::register_);
     registerIfExists("C_MUSICSYS_CFG", daedalus::IMusicSystem::register_);
-    registerIfExists("C_MUSICTHEME",   daedalus::IMusicTheme::register_);
+    registerIfExists("C_MUSICTHEME",   useNativeBindings ? VmDef::MusicTheme::register_ : daedalus::IMusicTheme::register_);
     registerIfExists("C_MUSICJINGLE",  daedalus::IMusicJingle::register_);
-    registerIfExists("C_PARTICLEFX",   daedalus::IParticleEffect::register_);
-    registerIfExists("CFX_BASE",       daedalus::IEffectBase::register_);
-    registerIfExists("C_PARTICLEFXEMITKEY", daedalus::IParticleEffectEmitKey::register_);
+    registerIfExists("C_PARTICLEFX",   useNativeBindings ? VmDef::ParticleEffect::register_ : daedalus::IParticleEffect::register_);
+    registerIfExists("CFX_BASE",       useNativeBindings ? VmDef::EffectBase::register_ : daedalus::IEffectBase::register_);
+    registerIfExists("C_PARTICLEFXEMITKEY", useNativeBindings ? VmDef::ParticleEffectEmitKey::register_ : daedalus::IParticleEffectEmitKey::register_);
     registerOpaque  ("C_FIGHTAI"); // many mods get it wrong/corrupted. Opaque binding is one is a way to get around it
-    registerIfExists("C_SFX",          daedalus::ISoundEffect::register_);
+    registerIfExists("C_SFX",          useNativeBindings ? VmDef::SoundEffect::register_ : daedalus::ISoundEffect::register_);
     registerIfExists("C_SNDSYS_CFG",   daedalus::ISoundSystem::register_);
     }
 
@@ -2224,7 +2224,7 @@ struct BaseContentContract {
       const auto before=json(censusPath);
       const auto selected=selectBaseProgram(index,request,-1);
       auto script=daedalus::DaedalusScript::from_program(ProgramData::readProgram(index.path(selected.source)));
-      Gothic::setupCommonScriptClasses(script);
+      definitionSourceClasses(script,true);
       auto native=std::make_unique<daedalus::DaedalusVm>(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
       require(Resources::writeCensus(),"cannot write offline definition census");
       require(before["files"]==json(censusPath)["files"],request+": offline definition record added an original DAT open");
