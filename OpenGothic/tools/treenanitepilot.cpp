@@ -23,6 +23,7 @@ constexpr std::array Profiles{"empty", "sparse", "dense", "dense-high"};
 
 enum class Mode { Direct, Visibility, VerifyDirect, VerifyVisibility };
 enum Query : uint32_t { Start, AfterClear, AfterColorBarrier, AfterRaster, AfterReadBarrier, Finish, QueryCount };
+enum class VerificationExit : int { Passed = 0, RasterMismatch = 1, MaterialMismatch = 3 };
 
 struct Timing {
   double clear = 0, raster = 0, barrier = 0, resolve = 0, gpu = 0;
@@ -122,7 +123,9 @@ class Renderer {
       const auto instanceBytes = submission.instances.size() * sizeof(Instance);
       if(drawBytes > data[3].size || instanceBytes > data[4].size)
         throw std::runtime_error("A draw record upload exceeds the pilot capacity");
-      std::memcpy(data[7].map, &submission.frame, sizeof(Frame));
+      auto frame = submission.frame;
+      frame.control[0] = gpu.properties.limits.subPixelPrecisionBits;
+      std::memcpy(data[7].map, &frame, sizeof(Frame));
       gpu.begin();
       const auto copy = [&](const auto& source, size_t size, size_t offset, Buffer target) {
         if(size) {
@@ -469,8 +472,8 @@ class Renderer {
     std::array<VkPipeline, 3> resolveVariants{};
 };
 
-bool verify(Renderer& pilot, const Scene& scene, std::ostream& out) {
-  bool passed = true;
+VerificationExit verify(Renderer& pilot, const Scene& scene, std::ostream& out) {
+  bool rasterPassed = true, materialPassed = true;
   for(const auto name : Scene::testNames()) {
     const auto prepared = scene.prepare(name);
     pilot.upload(prepared);
@@ -499,7 +502,9 @@ bool verify(Renderer& pilot, const Scene& scene, std::ostream& out) {
     }
     for(const auto owner : prepared.requiredDrawRecords)
       expected &= owner < seen.size() && seen[owner];
-    passed &= result.passed() && expected;
+    rasterPassed &= expected && result.all.ownerMismatches == 0 && result.all.depthMismatches == 0 &&
+                    result.all.flagMismatches == 0 && result.backgroundMismatches == 0;
+    materialPassed &= result.passed();
     out << "{\"type\":\"verification\",\"test\":\"" << name << "\",\"center_owner\":" << center
         << ",\"expectations_passed\":" << (expected ? "true" : "false") << ",\"submitted_primitives\":"
         << prepared.submittedPrimitives << ',';
@@ -511,7 +516,9 @@ bool verify(Renderer& pilot, const Scene& scene, std::ostream& out) {
       break;
   }
   pilot.memory(out, "after_verification");
-  return passed;
+  if(!rasterPassed)
+    return VerificationExit::RasterMismatch;
+  return materialPassed ? VerificationExit::Passed : VerificationExit::MaterialMismatch;
 }
 
 void price(Renderer& pilot, const Scene& scene, Mode mode, double warmupSeconds, uint32_t samples, std::ostream& out) {
@@ -611,7 +618,7 @@ int main(int argc, char** argv) {
     Renderer pilot;
     pilot.setup(scene, argv[1], mode, out);
     if(mode == "verify")
-      return verify(pilot, scene, out) ? 0 : 1;
+      return int(verify(pilot, scene, out));
     price(pilot, scene, mode == "direct" ? Mode::Direct : Mode::Visibility, warmup, uint32_t(samples), out);
     return 0;
   } catch(const std::exception& error) {

@@ -162,14 +162,16 @@ def run_arm(args, name, mode):
         replaced = sum(row["replaced_pixels"] for row in checks)
         if lost or replaced:
             raise ValueError(f"Winning pixels lost: {lost}; replaced: {replaced}. Stopping before timing.")
-        if not all(row["passed"] for row in checks):
-            raise ValueError("Pixel verification failed. Stopping before timing.")
+        if result.returncode == 3:
+            print("Material tolerances failed. Pricing continues without accepting pixel parity.", flush=True)
+            return False
     result.check_returncode()
     if timed:
         profiles = arm_stats(out, name, [])["profiles"]
         for profile in PROFILES:
             if profile not in profiles or any(profiles[profile][key] is None for key in (*COUNTS, "gpu_ms")):
                 raise ValueError(f"{name} / {profile}: missing samples or counters after the initial {TRIM_MS}ms")
+    return True
 
 
 def run(args):
@@ -182,7 +184,7 @@ def run(args):
         raise ValueError("The pilot executable, shader directory and exported asset must exist")
     args.output.mkdir(parents=True, exist_ok=False)
     try:
-        run_arm(args, "verify", "verify")
+        parity = run_arm(args, "verify", "verify")
         with (args.output / "gpu.log").open("w") as log:
             monitor = subprocess.Popen([sys.executable, str(Path(__file__).with_name("perf_gpu_log.py")),
                                         str(args.output / "gpu.csv")], stdout=log, stderr=log)
@@ -193,6 +195,8 @@ def run(args):
                 if monitor.poll() is None:
                     monitor.terminate()
                     monitor.wait(timeout=6)
+        if not parity:
+            raise ValueError("Four price arms completed. Material verification failed.")
     finally:
         (args.output / "summary.json").write_text(json.dumps(summary(args.output), indent=2, sort_keys=True) + "\n")
 

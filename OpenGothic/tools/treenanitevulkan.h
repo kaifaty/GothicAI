@@ -397,6 +397,7 @@ class Vulkan {
       out << "{\"type\":\"device\",\"phase\":\"" << phase << "\",\"device\":\"" << properties.deviceName
           << "\",\"driver_raw\":" << properties.driverVersion << ",\"api_raw\":" << properties.apiVersion
           << ",\"timestamp_period_ns\":" << properties.limits.timestampPeriod
+          << ",\"subpixel_precision_bits\":" << properties.limits.subPixelPrecisionBits
           << ",\"maxMeshOutputMemorySize\":" << meshProperties.maxMeshOutputMemorySize
           << ",\"meshOutputPerVertexGranularity\":" << meshProperties.meshOutputPerVertexGranularity
           << ",\"meshOutputPerPrimitiveGranularity\":" << meshProperties.meshOutputPerPrimitiveGranularity

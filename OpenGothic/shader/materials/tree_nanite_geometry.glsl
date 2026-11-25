@@ -23,7 +23,7 @@ layout(set=0, binding=7, std140) uniform TreeFrame {
   mat4  viewProject;
   mat4  prevViewProject;
   vec4  viewport; // width, height, inverse width, inverse height
-  uvec4 control;
+  uvec4 control; // x: subpixel precision bits of the pilot's Vulkan rasterizer
   } frame;
 
 const uint TreePrimitiveMask = (1u << 13) - 1u;

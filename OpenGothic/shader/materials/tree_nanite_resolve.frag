@@ -22,14 +22,38 @@ float sum3(vec3 v) {
   return v.x + v.y + v.z;
   }
 
+bool treeUnclipped(vec4 v) {
+  return v.w > 0.0 && v.z >= 0.0 && v.z <= v.w && all(lessThanEqual(abs(v.xy), vec2(v.w)));
+  }
+
 TreeInterpolation treeInterpolation(vec4 a, vec4 b, vec4 c, vec2 pixel) {
   // Perspective-correct weights solve sum(w_i*clip_i.xy) = p*sum(w_i*clip_i.w),
   // with sum(w_i)=1. The cross product solves both homogeneous equations
   // before the final normalization. It also works for vertices behind the eye.
-  const vec2 p = (pixel - 0.5*frame.viewport.xy) * (2.0*frame.viewport.zw);
   const vec3 w = vec3(a.w, b.w, c.w);
-  const vec3 x = fma(vec3(-p.x), w, vec3(a.x, b.x, c.x));
-  const vec3 y = fma(vec3(-p.y), w, vec3(a.y, b.y, c.y));
+  const vec3 clipX = vec3(a.x, b.x, c.x);
+  const vec3 clipY = vec3(a.y, b.y, c.y);
+  if(frame.control.x != 0u && treeUnclipped(a) && treeUnclipped(b) && treeUnclipped(c)) {
+    // On the pilot RTX the rasterizer interpolates on quantized framebuffer
+    // vertices. Keep the displacement from the sample in fixed-point units
+    // until after subtraction so thin triangles retain that displacement.
+    const float grid = float(1u << frame.control.x);
+    const vec2 halfViewportGrid = frame.viewport.xy * (0.5*grid);
+    const vec2 pixelGrid = (pixel - 0.5*frame.viewport.xy)*grid;
+    // The viewport center is an exact even grid coordinate for the pilot.
+    // Rounding relative to it avoids losing fractional bits to that offset.
+    const vec3 sx = roundEven((clipX/w)*halfViewportGrid.x);
+    const vec3 sy = roundEven((clipY/w)*halfViewportGrid.y);
+    const vec3 x = (sx - pixelGrid.x)*(w/grid);
+    const vec3 y = (sy - pixelGrid.y)*(w/grid);
+    return TreeInterpolation(cross(x, y), cross(-w, y), cross(x, -w));
+    }
+
+  // Clipping can add vertices. Use the original homogeneous triangle for
+  // that case, including at the near plane and for w<=0.
+  const vec2 p = (pixel - 0.5*frame.viewport.xy) * (2.0*frame.viewport.zw);
+  const vec3 x = fma(vec3(-p.x), w, clipX);
+  const vec3 y = fma(vec3(-p.y), w, clipY);
   return TreeInterpolation(cross(x, y), cross(-2.0*frame.viewport.z*w, y), cross(x, -2.0*frame.viewport.w*w));
   }
 
@@ -77,6 +101,7 @@ float clippedTreeArea(vec4 a, vec4 b, vec4 c) {
 uint treeEdgeMask(TreeInterpolation interp, vec4 a, vec4 b, vec4 c, float qSum) {
   // Each unnormalized weight is zero along the corresponding screen-space
   // line. Divide by its pixel gradient to get perpendicular distance in pixels.
+  // The subpixel bit keeps the original triangle's projected area.
   const vec3 norms = sqrt(interp.dqDx*interp.dqDx + interp.dqDy*interp.dqDy);
   bool nearEdge = any(lessThanEqual(abs(interp.q), norms));
   const vec3 z = vec3(a.z, b.z, c.z);
