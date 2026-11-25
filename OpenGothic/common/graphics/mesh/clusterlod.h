@@ -11,6 +11,8 @@ namespace ClusterLod {
 
 constexpr uint32_t MaxVertices = 64;
 constexpr uint32_t MaxTriangles = 64;
+constexpr uint32_t MaxFoliageVertices = 256;
+constexpr uint32_t MaxFoliageTriangles = 128;
 constexpr uint32_t NoGroup = std::numeric_limits<uint32_t>::max();
 
 using Point = std::array<float, 3>;
@@ -65,18 +67,23 @@ struct Graph {
 Graph build(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
             std::span<const uint8_t> boundary);
 
-enum class StopReason { Reduction, Material, Boundary, Locked, Count };
+enum class StopReason { Reduction, Material, Boundary, Locked, Area, Count };
 enum class CensusVariant { Normal, NoMaterials, NoOpenBorder, NoBoundaries, NoAttributeSeams, AnyReduction, PositionsOnly };
 
 struct BuildStats {
   std::vector<float> positionErrorCm; // parallel to Graph::groups
   std::array<size_t, size_t(StopReason::Count)> stoppedGroups{}, stoppedTriangles{};
+  std::vector<float> dilationCm; // foliage transitions, parallel to Graph::groups
   };
 
 // Counterfactual variants are for the census and can discard material or boundary guarantees.
 Graph buildWithStats(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
                      std::span<const uint8_t> boundary, BuildStats& stats,
                      CensusVariant variant = CensusVariant::Normal);
+
+// Stage-one tree profile. Mark bark triangles locked and keep their original geometry.
+Graph buildFoliage(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
+                   std::span<const uint8_t> boundary, BuildStats& stats, bool logical128 = true);
 
 struct View {
   Point camera;

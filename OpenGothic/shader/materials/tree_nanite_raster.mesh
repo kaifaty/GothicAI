@@ -1,0 +1,57 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "tree_nanite_geometry.glsl"
+
+layout(local_size_x=32) in;
+layout(triangles, max_vertices=64, max_primitives=64) out;
+out gl_MeshPerVertexEXT { invariant vec4 gl_Position; } gl_MeshVerticesEXT[];
+layout(push_constant) uniform TreeDraw { uint firstRecord; } draw;
+
+#if defined(DIRECT_RASTER)
+#include "tree_nanite_material.glsl"
+layout(location=0) perprimitiveEXT out flat uint materialId[];
+layout(location=2) out vec2 rasterUv[];
+layout(location=3) out vec3 rasterNormal[];
+layout(location=4) out vec3 rasterPosition[];
+layout(location=5) out vec3 rasterPreviousStatic[];
+layout(location=6) out vec3 rasterPreviousDelta[];
+#endif
+#if !defined(DIRECT_RASTER) || defined(VERIFY)
+layout(location=1) perprimitiveEXT out flat uvec2 rasterOwner[];
+#endif
+
+void main() {
+  const uint recordId = draw.firstRecord + gl_WorkGroupID.x;
+  const uvec4 record = records[recordId];
+  const uvec4 meshlet = meshlets[record.x];
+  const TreeInstance instance = instances[record.y];
+  const uint lane = gl_LocalInvocationIndex;
+#if defined(DIRECT_RASTER)
+  const uint flags = floatBitsToUint(materials[record.z].uvScaleFlags.z);
+#endif
+
+  SetMeshOutputsEXT(meshlet.z, meshlet.w);
+  for(uint i=lane; i<meshlet.z; i+=gl_WorkGroupSize.x) {
+    const TreeVertex v = treeVertex(meshlet.x + i);
+    const vec3 world = treeWorldPosition(v, instance);
+    gl_MeshVerticesEXT[i].gl_Position = treeClipPosition(world);
+#if defined(DIRECT_RASTER)
+    rasterUv[i]             = v.uv.xy;
+    rasterNormal[i]         = treeVertexNormal(v.normal, flags);
+    rasterPosition[i]       = world;
+    rasterPreviousStatic[i] = treePreviousStatic(world);
+    rasterPreviousDelta[i]  = treePreviousDelta(v, instance);
+#endif
+    }
+  for(uint i=lane; i<meshlet.w; i+=gl_WorkGroupSize.x) {
+    gl_PrimitiveTriangleIndicesEXT[i] = treeTriangle(meshlet.y + i);
+#if defined(DIRECT_RASTER)
+    materialId[i] = record.z;
+#endif
+#if !defined(DIRECT_RASTER) || defined(VERIFY)
+    rasterOwner[i] = uvec2(recordId, i);
+#endif
+    }
+  }
