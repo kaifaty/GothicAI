@@ -32,16 +32,18 @@ void GameScript::loadNativeRoutineExchange() {
 void GameScript::startOtherRoutine(const std::shared_ptr<daedalus::INpc>& actor,std::string_view routine) {
   setNpcRuleString("B_STARTOTHERROUTINE.NEWROUTINE",routine);
   storyActorSlot("B_STARTOTHERROUTINE.SLF") = actor;
-  ai_standup(actor);
+  const auto binding = nativeWorldActor(actor);
+  nativeWorldOperation("AI_STANDUP",{binding},actor);
   const bool sameInstance = hlp_getinstanceid(actor)==hlp_getinstanceid(nativeNpc("SELF"));
   if(!sameInstance) {
     const bool dead = npc_isdead(actor);
     if(!hlp_isvalidnpc(actor) || dead)
       return;
     }
-  npc_exchangeroutine(actor,npcRuleString("B_STARTOTHERROUTINE.NEWROUTINE"));
+  const auto savedRoutine = storygraph::NativeValue::str(std::string(npcRuleString("B_STARTOTHERROUTINE.NEWROUTINE")));
+  nativeWorldOperation("NPC_EXCHANGEROUTINE",{binding,savedRoutine},actor);
   if(!sameInstance)
-    ai_continueroutine(actor);
+    nativeWorldOperation("AI_CONTINUEROUTINE",{binding},actor);
   }
 
 void GameScript::loadNativeAiStates() {

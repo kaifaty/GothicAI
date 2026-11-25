@@ -396,7 +396,9 @@ void GameScript::killNpc(int32_t symbol) {
   createinvitem(npc,int32_t(findSymbolIndex("ITMI_OLDCOIN")));
   const auto target = nativeNpc("B_KILLNPC.NPC");
   const auto maximum = target ? target->attribute[ATR_HITPOINTSMAX] : 0;
-  npc_changeattribute(target,ATR_HITPOINTS,std::bit_cast<int32_t>(0u-uint32_t(maximum)));
+  using storygraph::NativeValue;
+  nativeWorldOperation("NPC_CHANGEATTRIBUTE",{nativeWorldActor(target),NativeValue::integer(ATR_HITPOINTS),
+                                               NativeValue::integer(std::bit_cast<int32_t>(0u-uint32_t(maximum)))},target);
   }
 
 void GameScript::removeNpc(int32_t symbol) {
@@ -408,13 +410,16 @@ void GameScript::removeNpc(int32_t symbol) {
     return;
 
   npc->flags = NpcFlag::NONE;
-  ai_teleport(npc,"TOT");
+  nativeWorldOperation("AI_TELEPORT",{nativeWorldActor(npc),storygraph::NativeValue::str("TOT")},npc);
   startOtherRoutine(npc,"TOT");
 
   const auto target = nativeNpc("B_REMOVENPC.NPC");
   const auto maximum = target ? target->attribute[ATR_HITPOINTSMAX] : 0;
-  npc_changeattribute(target,ATR_HITPOINTS,std::bit_cast<int32_t>(0u-uint32_t(maximum)));
-  ai_teleport(nativeNpc("B_REMOVENPC.NPC"),"TOT");
+  using storygraph::NativeValue;
+  nativeWorldOperation("NPC_CHANGEATTRIBUTE",{nativeWorldActor(target),NativeValue::integer(ATR_HITPOINTS),
+                                               NativeValue::integer(std::bit_cast<int32_t>(0u-uint32_t(maximum)))},target);
+  const auto removed = nativeNpc("B_REMOVENPC.NPC");
+  nativeWorldOperation("AI_TELEPORT",{nativeWorldActor(removed),NativeValue::str("TOT")},removed);
   }
 
 int32_t GameScript::countDragonDeaths(const std::shared_ptr<daedalus::INpc>& actor) {

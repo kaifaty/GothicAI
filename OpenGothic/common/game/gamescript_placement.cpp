@@ -60,6 +60,10 @@ void GameScript::loadNativeWorldEntry() {
                                                                  StockStoryPrograms::stockProgram,*catalog);
   }
 
+NativeValue GameScript::nativeWorldActor(const ScriptVars::Object& actor) {
+  return NativeValue::instance(actor ? operationActor : 0);
+  }
+
 NativeValue GameScript::nativeWorldOperation(std::string_view name,std::initializer_list<NativeValue> args,
                                             const ScriptVars::Object& actor) {
   const auto found = nativeExternals.find(name);
@@ -254,7 +258,7 @@ void GameScript::runWorldInit(std::string_view name) {
   if(dragonIsland) {
     currentStoryWorld = nativeWorldNumber("DRAGONISLAND_ZEN");
     const auto& player = storyActorSlot("HERO");
-    const auto actor = NativeValue::instance(player ? operationActor : 0);
+    const auto actor = nativeWorldActor(player);
     const auto item = NativeValue::integer(nativeWorldActorId("ITKE_SHIP_LEVELCHANGE_MIS",false));
     if(nativeWorldOperation("NPC_HASITEMS",{actor,item},player).i!=0)
       nativeWorldOperation("NPC_REMOVEINVITEMS",{actor,item,NativeValue::integer(1)},player);
@@ -280,7 +284,7 @@ void GameScript::runWorldInit(std::string_view name) {
   if(nativeWorldNumber(thievesCleared)!=yes && nativeWorldNumber("DIEBESGILDE_VERRATEN")!=0) {
     const auto alive = [&](std::string_view alias) {
       const auto& npc = storyActorSlot(alias);
-      return nativeWorldOperation("NPC_ISDEAD",{NativeValue::instance(npc ? operationActor : 0)},npc).i==0;
+      return nativeWorldOperation("NPC_ISDEAD",{nativeWorldActor(npc)},npc).i==0;
       };
     const bool ramirez = alive("RAMIREZ");
     const bool jesper = alive("JESPER");
