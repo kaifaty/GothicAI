@@ -10,6 +10,8 @@
 #include <type_traits>
 
 namespace {
+constexpr storygraph::NativeInstance operationActor = 1;
+
 struct ShipCompanion {
   std::string_view flag, npc, partner = {};
   };
@@ -58,14 +60,16 @@ void GameScript::loadNativeWorldEntry() {
                                                                  StockStoryPrograms::stockProgram,*catalog);
   }
 
-void GameScript::nativeWorldExternal(std::string_view name,std::initializer_list<NativeValue> args) {
+NativeValue GameScript::nativeWorldOperation(std::string_view name,std::initializer_list<NativeValue> args,
+                                            const ScriptVars::Object& actor) {
   const auto found = nativeExternals.find(name);
   if(found==nativeExternals.end())
     throw std::runtime_error("Missing world operation "+std::string(name));
   const auto& operation = found->second;
   if(!std::ranges::equal(operation.signature.parameters,args,{},std::identity{},&NativeValue::type))
     throw std::runtime_error("Invalid world operation arguments for "+std::string(name));
-  operation.call(args,{},{});
+  const auto resolve = [&actor](storygraph::NativeInstance id) { return id==operationActor ? actor : nullptr; };
+  return operation.call(args,resolve,{}).value;
   }
 
 void GameScript::nativeWorldFunction(std::string_view name,const std::vector<storygraph::StoryArgument>& args) {
@@ -94,7 +98,7 @@ int32_t GameScript::nativeWorldActorId(std::string_view name,bool npc) {
   }
 
 void GameScript::nativeWorldSpawn(const NativeWorldPlacement::Spawn& row) {
-  nativeWorldExternal(row.npc ? "WLD_INSERTNPC" : "WLD_INSERTITEM",
+  nativeWorldOperation(row.npc ? "WLD_INSERTNPC" : "WLD_INSERTITEM",
                       {NativeValue::integer(int32_t(row.instance)),NativeValue::str(row.point)});
   }
 
@@ -136,15 +140,15 @@ void GameScript::runStartup(std::string_view name) {
     for(const auto& row : nativeWorldPlacement.dragonIsland)
       nativeWorldSpawn(row);
 
-    nativeWorldExternal("PLAYVIDEO",{NativeValue::str("SHIP.BIK")});
+    nativeWorldOperation("PLAYVIDEO",{NativeValue::str("SHIP.BIK")});
     const auto* topic = NativeBaseCatalog::findConstant(*baseNativeCatalog(),"TOPIC_HALLENVONIRDORATH");
     const auto* text = topic==nullptr ? nullptr : std::get_if<std::vector<std::string>>(&topic->values);
     if(text==nullptr || text->size()!=1)
       throw std::runtime_error("Missing Dragon Island journal topic");
     const auto title = NativeValue::str(text->front());
-    nativeWorldExternal("LOG_CREATETOPIC",{title,NativeValue::integer(nativeWorldNumber("LOG_MISSION"))});
-    nativeWorldExternal("LOG_SETTOPICSTATUS",{title,NativeValue::integer(nativeWorldNumber("LOG_RUNNING"))});
-    nativeWorldExternal("LOG_ADDENTRY",{title,NativeValue::str(nativeWorldPlacement.dragonArrival)});
+    nativeWorldOperation("LOG_CREATETOPIC",{title,NativeValue::integer(nativeWorldNumber("LOG_MISSION"))});
+    nativeWorldOperation("LOG_SETTOPICSTATUS",{title,NativeValue::integer(nativeWorldNumber("LOG_RUNNING"))});
+    nativeWorldOperation("LOG_ADDENTRY",{title,NativeValue::str(nativeWorldPlacement.dragonArrival)});
     nativeWorldFunction("B_KAPITELWECHSEL",{int32_t(6),nativeWorldNumber("DRAGONISLAND_ZEN")});
     return;
     }
@@ -163,11 +167,11 @@ void GameScript::runStartup(std::string_view name) {
       else if constexpr(std::is_same_v<T,KillNpc>)
         nativeWorldFunction("B_KILLNPC",{int32_t(value.instance)});
       else if constexpr(std::is_same_v<T,InitLanguage>)
-        nativeWorldExternal("GAME_INITGERMAN");
+        nativeWorldOperation("GAME_INITGERMAN");
       else if constexpr(std::is_same_v<T,PlayVideo>)
-        nativeWorldExternal("PLAYVIDEO",{NativeValue::str(value.name)});
+        nativeWorldOperation("PLAYVIDEO",{NativeValue::str(value.name)});
       else if constexpr(std::is_same_v<T,SetTime>)
-        nativeWorldExternal("WLD_SETTIME",{NativeValue::integer(value.hour),NativeValue::integer(value.minute)});
+        nativeWorldOperation("WLD_SETTIME",{NativeValue::integer(value.hour),NativeValue::integer(value.minute)});
       },step);
     }
   }
@@ -175,10 +179,10 @@ void GameScript::runStartup(std::string_view name) {
 void GameScript::runNativeWorldRooms(std::string_view name) {
   const auto& region = nativeWorldPlacement.rooms.at(std::string(name));
   for(const auto& mob : region.mobs)
-    nativeWorldExternal("WLD_SETMOBROUTINE",{NativeValue::integer(mob.hour),NativeValue::integer(mob.minute),
+    nativeWorldOperation("WLD_SETMOBROUTINE",{NativeValue::integer(mob.hour),NativeValue::integer(mob.minute),
                                            NativeValue::str(mob.name),NativeValue::integer(mob.state)});
   const auto assign = [&](const NativeWorldPlacement::Room& room) {
-    nativeWorldExternal("WLD_ASSIGNROOMTOGUILD",{NativeValue::str(room.label),NativeValue::integer(room.guild)});
+    nativeWorldOperation("WLD_ASSIGNROOMTOGUILD",{NativeValue::str(room.label),NativeValue::integer(room.guild)});
     };
   for(const auto& room : region.rooms) {
     if(const auto* fixed = std::get_if<NativeWorldPlacement::Room>(&room)) {
@@ -191,7 +195,7 @@ void GameScript::runNativeWorldRooms(std::string_view name) {
   }
 
 void GameScript::runNativeAddonChapterEntry() {
-  nativeWorldExternal("B_INITNPCGLOBALS");
+  nativeWorldOperation("B_INITNPCGLOBALS");
   const auto yes = nativeWorldNumber("TRUE");
   const auto no = nativeWorldNumber("FALSE");
   const auto remove = [&](std::string_view actor) {
@@ -219,13 +223,13 @@ void GameScript::runNativeAddonChapterEntry() {
     nativeWorldFlag(chapters[i],yes);
     }
   currentStoryWorld = nativeWorldNumber("ADDONWORLD_ZEN");
-  nativeWorldExternal("B_INITNPCGLOBALS");
+  nativeWorldOperation("B_INITNPCGLOBALS");
   }
 
 void GameScript::runWorldInit(std::string_view name) {
   const auto key = storygraph::nativeOperationName(name);
   if(key=="INIT_GLOBAL") {
-    nativeWorldExternal("GAME_INITGERMAN");
+    nativeWorldOperation("GAME_INITGERMAN");
     return;
     }
   const bool oldWorld = key=="INIT_OLDWORLD";
@@ -241,19 +245,20 @@ void GameScript::runWorldInit(std::string_view name) {
     }
   if(addonWorld)
     runNativeWorldRooms("INIT_SUB_ADDON_PART_BANDITSCAMP_01");
-  nativeWorldExternal("B_INITMONSTERATTITUDES");
-  nativeWorldExternal("B_INITNPCGLOBALS");
+  nativeWorldOperation("B_INITMONSTERATTITUDES");
+  nativeWorldOperation("B_INITNPCGLOBALS");
   if(addonWorld) {
     runNativeAddonChapterEntry();
     return;
     }
   if(dragonIsland) {
     currentStoryWorld = nativeWorldNumber("DRAGONISLAND_ZEN");
-    const auto player = std::dynamic_pointer_cast<daedalus::INpc>(storyActorSlot("HERO"));
-    const auto keyItem = nativeWorldActorId("ITKE_SHIP_LEVELCHANGE_MIS",false);
-    if(npc_hasitems(player,keyItem)!=0)
-      npc_removeinvitems(player,keyItem,1);
-    nativeWorldExternal("B_INITNPCGLOBALS");
+    const auto& player = storyActorSlot("HERO");
+    const auto actor = NativeValue::instance(player ? operationActor : 0);
+    const auto item = NativeValue::integer(nativeWorldActorId("ITKE_SHIP_LEVELCHANGE_MIS",false));
+    if(nativeWorldOperation("NPC_HASITEMS",{actor,item},player).i!=0)
+      nativeWorldOperation("NPC_REMOVEINVITEMS",{actor,item,NativeValue::integer(1)},player);
+    nativeWorldOperation("B_INITNPCGLOBALS");
     return;
     }
 
@@ -274,7 +279,8 @@ void GameScript::runWorldInit(std::string_view name) {
   constexpr auto thievesCleared = "ANDRE_DIEBESGILDE_AUFGERAEUMT";
   if(nativeWorldNumber(thievesCleared)!=yes && nativeWorldNumber("DIEBESGILDE_VERRATEN")!=0) {
     const auto alive = [&](std::string_view alias) {
-      return !npc_isdead(std::dynamic_pointer_cast<daedalus::INpc>(storyActorSlot(alias)));
+      const auto& npc = storyActorSlot(alias);
+      return nativeWorldOperation("NPC_ISDEAD",{NativeValue::instance(npc ? operationActor : 0)},npc).i==0;
       };
     const bool ramirez = alive("RAMIREZ");
     const bool jesper = alive("JESPER");

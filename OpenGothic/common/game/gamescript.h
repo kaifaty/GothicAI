@@ -459,7 +459,8 @@ class GameScript final : public GameRules {
     void loadNativeWorldEntry();
     void runNativeWorldRooms(std::string_view name);
     void runNativeAddonChapterEntry();
-    void nativeWorldExternal(std::string_view name,std::initializer_list<storygraph::NativeValue> args = {});
+    storygraph::NativeValue nativeWorldOperation(std::string_view name,
+      std::initializer_list<storygraph::NativeValue> args = {},const ScriptVars::Object& actor = {});
     void nativeWorldFunction(std::string_view name,const std::vector<storygraph::StoryArgument>& args = {});
     void nativeWorldSpawn(const NativeWorldPlacement::Spawn& row);
     int32_t nativeWorldNumber(std::string_view name) const;
