@@ -282,6 +282,22 @@
 
 ## Как повторить
 
+Прогоны остановлены решением от 18 ноября. Посмотреть полное расписание без
+SSH, сборки и очереди можно одной командой из корня репозитория.
+
+```sh
+PERF_DRY_RUN=1 reports/engine/2026-11-16-modern-trees/tree-cost/run.sh /absolute/out
+```
+
+Для возобновления подготовь наборы по командам ниже и вызови тот же
+`run.sh /absolute/out [вариант...]` без `PERF_DRY_RUN=1`. Без имён он передаёт
+в [режим вариантов `perf.sh`](../../../docs/performance.md#несколько-вариантов-в-одной-заявке)
+два круга и шесть отдельных запусков счётчиков VSM. Имена после папки выбирают
+только указанные прогоны, в круге 3 и в круге 4 при повторе имени. Имя
+`F1024-vsmstats` пишет счётчики полного леса в `F1024-vsmstats/round-1/`.
+Время кадра сравнивается по основным кругам. `NO_BUILD=1` использует сборку
+с совпавшим отпечатком.
+
 ```sh
 U="uv run --no-project --with numpy --with pillow --with scipy python"
 T=~/.local/share/gothic-ai/remaster/trees-fir/fir-probe-4/materials/trees_fir   # текстуры ели А
@@ -298,7 +314,11 @@ python3 reports/engine/2026-11-16-modern-trees/tree-cost/screen.py ~/.local/shar
 OPENGOTHIC_CONTENT=<набор> TEMPEST_WINDOW_SIZE=2560x1440 BENCH_HOST=ryzen scripts/bench.sh tree-cost /absolute/out
 ```
 
-Наборы на Ryzen лежат в `~/gothic-ai/tree-cost/content/`. Прогоны — на хранилище `/mnt/shared/gothic-ai/tree-cost/runs/` (серия 1) и в `~/gothic-ai/tree-cost/runs/` (серия 3, без архивации: заявка прервана).
+Наборы на Ryzen лежат в `~/gothic-ai/tree-cost/content/`. Результаты новой
+заявки сохраняются в выбранную папку вместе с `ryzen.log`. Архив заявки лежит
+в `/mnt/shared/gothic-ai/perf-stand/runs/`. Результаты замеров из этой заметки
+лежат в `/mnt/shared/gothic-ai/tree-cost/runs/` (серия 1) и в
+`~/gothic-ai/tree-cost/runs/` (серия 3, без архивации: заявка прервана).
 
 ## Что из этого следует для уровней
 
