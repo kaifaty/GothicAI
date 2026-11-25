@@ -548,7 +548,7 @@ auto GameScript::buildLearnString(std::string_view title) -> daedalus::DaedalusS
   const auto cost = storySlot("B_BUILDLEARNSTRING.KOSTEN")->get_int();
   const auto text = savedTitle.get_string() + storySlot("PRINT_KOSTEN")->get_string() +
                     std::to_string(cost) + storySlot("PRINT_LP")->get_string();
-  // The formatting externals reuse one temporary slot, which the legacy save also stores.
+  // The compatibility formatter reuses the VM's temporary string slot.
   vm.push_string(text);
   auto& result = *storySlot("B_BUILDLEARNSTRING.CONCATTEXT");
   result.set_string(vm.pop_string());
@@ -556,40 +556,101 @@ auto GameScript::buildLearnString(std::string_view title) -> daedalus::DaedalusS
   }
 
 bool GameScript::readDialogInfos() {
+  const auto* catalog = baseNativeCatalog();
   const auto rows = DialogInfoData::load(Resources::baseDir());
-  if(!rows)
+  if(!rows) {
+    if(catalog!=nullptr)
+      throw BaseStore::Error("native base is missing stock dialog definitions");
     return false;
+    }
 
-  const auto* cls = vm.find_symbol_by_name("C_INFO");
+  using Info = daedalus::IInfo;
+  // Member IDs in the verified stock program that supplies dialog-infos.json.
+  constexpr uint32_t firstMember = 1587;
+  static constexpr std::array<int32_t Info::*,8> members = {
+    &Info::npc, &Info::nr, &Info::important, &Info::condition, &Info::information,
+    nullptr, // DESCRIPTION holds text or a lesson expression.
+    &Info::trade, &Info::permanent
+    };
+
+  const auto setLessonInt = [&](std::string_view name, int32_t value) {
+    if(catalog==nullptr) {
+      vm.find_symbol_by_name(name)->set_int(value);
+      } else if(!setGlobalIntSymbol(name,value)) {
+      throw BaseStore::Error("native dialog definition needs lesson state "+std::string(name));
+      }
+    };
+  const auto lessonString = [&](std::string_view name) -> std::string& {
+    auto* slot = std::get_if<ScriptVars::Array<std::string>>(runtimeState.find(name));
+    if(slot==nullptr || slot->values.size()!=1)
+      throw BaseStore::Error("native dialog definition needs lesson state "+std::string(name));
+    return slot->values.front();
+    };
+  const auto lessonCaption = [&](const DialogInfoData::Lesson& lesson) -> std::string_view {
+    setLessonInt("B_GETLEARNCOSTTALENT.SKILL",lesson.skill);
+    setLessonInt("B_GETLEARNCOSTTALENT.TALENT",lesson.talent);
+    if(catalog==nullptr)
+      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.OTH")->set_instance(vm.global_other()->get_instance());
+    else
+      storyActorSlot("B_GETLEARNCOSTTALENT.OTH") = storyActorSlot("OTHER");
+
+    const auto cost = fixedTalentLearnCost(lesson.talent,lesson.skill);
+    setLessonInt("B_GETLEARNCOSTTALENT.KOSTEN",cost);
+    setLessonInt("B_BUILDLEARNSTRING.KOSTEN",cost);
+    if(catalog==nullptr)
+      return buildLearnString(lesson.title).get_string();
+
+    auto& title = lessonString("B_BUILDLEARNSTRING.TEXT");
+    auto& result = lessonString("B_BUILDLEARNSTRING.CONCATTEXT");
+    const auto costText = stringSymbol("PRINT_KOSTEN",{});
+    const auto lp = stringSymbol("PRINT_LP",{});
+    if(costText.data()==nullptr || lp.data()==nullptr)
+      throw BaseStore::Error("native dialog definition needs the stock lesson caption constants");
+    title = lesson.title;
+    result = title;
+    result.append(costText).append(std::to_string(cost)).append(lp);
+    return result;
+    };
+
   dialogsInfo.reserve(rows->size());
-  vm.enumerate_instances_by_class_name("C_INFO",[&](auto& symbol) {
+  const auto read = [&](daedalus::DaedalusSymbol& symbol) {
     const auto fields = rows->find(symbol.index());
     if(fields==rows->end())
-      throw std::runtime_error("dialog infos: missing instance "+symbol.name());
-    auto info = vm.allocate_instance<daedalus::IInfo>(&symbol);
+      throw BaseStore::Error("dialog infos: missing instance "+symbol.name());
+    // Keep legacy aliases of this live record usable during the catalog cutover.
+    auto info = vm.allocate_instance<Info>(&symbol);
     for(const auto& field : fields->second) {
-      auto* member = vm.find_symbol_by_index(field.member);
-      if(member==nullptr || !member->is_member() || member->parent()!=cls->index())
-        throw std::runtime_error("dialog infos: invalid member for "+symbol.name());
-      if(const auto* lesson = std::get_if<DialogInfoData::Lesson>(&field.value)) {
-        vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.SKILL")->set_int(lesson->skill);
-        vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.TALENT")->set_int(lesson->talent);
-        vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.OTH")->set_instance(vm.global_other()->get_instance());
-        const auto cost = fixedTalentLearnCost(lesson->talent,lesson->skill);
-        vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.KOSTEN")->set_int(cost);
-        vm.find_symbol_by_name("B_BUILDLEARNSTRING.KOSTEN")->set_int(cost);
-        member->set_string(buildLearnString(lesson->title).get_string(),0,info.get());
+      const auto member = field.member-firstMember;
+      if(member>=members.size())
+        throw BaseStore::Error("dialog infos: invalid member for "+symbol.name());
+      if(const auto number = members[member]) {
+        const auto* value = std::get_if<int32_t>(&field.value);
+        if(value==nullptr)
+          throw BaseStore::Error("dialog infos: invalid numeric field for "+symbol.name());
+        (*info).*number = *value;
+        } else if(const auto* title = std::get_if<std::string>(&field.value)) {
+        info->description = *title;
+        } else if(const auto* lesson = std::get_if<DialogInfoData::Lesson>(&field.value)) {
+        info->description = lessonCaption(*lesson);
+        } else {
+        throw BaseStore::Error("dialog infos: invalid description for "+symbol.name());
         }
-      else if(const auto* title = std::get_if<std::string>(&field.value))
-        member->set_string(*title,0,info.get());
-      else
-        member->set_int(std::get<int32_t>(field.value),0,info.get());
       }
     rememberStoryDialog(symbol.name(),*info);
     dialogsInfo.push_back(std::move(info));
-    });
+    };
+  if(catalog!=nullptr) {
+    for(const auto& dialog : catalog->identities.dialogs) {
+      auto* symbol = vm.find_symbol_by_index(dialog.id);
+      if(symbol==nullptr || symbol->name()!=dialog.name)
+        throw BaseStore::Error("dialog infos: invalid native identity "+dialog.name);
+      read(*symbol);
+      }
+    } else {
+    vm.enumerate_instances_by_class_name("C_INFO",read);
+    }
   if(dialogsInfo.size()!=rows->size())
-    throw std::runtime_error("dialog infos: unexpected instance in stock records");
+    throw BaseStore::Error("dialog infos: unexpected instance in stock records");
   return true;
   }
 

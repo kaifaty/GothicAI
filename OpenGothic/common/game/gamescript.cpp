@@ -505,7 +505,8 @@ void GameScript::initDialogs() {
   storyDialogsById.clear();
   storyDialogs.clear();
   dialogsInfo.clear();
-  const bool native = nativeRoutineProgram && activityEvents && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
+  const bool native = baseNativeCatalog()!=nullptr ||
+                      (nativeRoutineProgram && activityEvents && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off);
   if(native && readDialogInfos())
     return;
   vm.enumerate_instances_by_class_name("C_INFO", [this](daedalus::DaedalusSymbol& sym){
