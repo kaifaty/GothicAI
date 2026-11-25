@@ -929,9 +929,14 @@ void placementDefinitions(const fs::path& dir) {
     const auto otherScript=DaedalusScript::from_program(other.data);
     const auto selected=PlacementDefinitionRuntime::load(base,otherScript,other.sha256);
     const auto startup=otherScript.find_symbol_by_name("STARTUP_TEST")->index();
-    const auto& argument=std::get<PlacementDefinitionRuntime::Call>(selected.placements.at(startup).front()).args[1];
-    check(otherScript.find_symbol_by_index(argument.literal)->get_string(argument.literalIndex)=="OTHER_WP",
-          "placement selection follows the loaded program SHA");
+    const auto& arguments=std::get<PlacementDefinitionRuntime::Call>(selected.placements.at(startup).front()).args;
+    const auto& instance=arguments[0].value;
+    const auto& point=arguments[1];
+    check(instance.kind==PlacementDefinitions::Value::Kind::Symbol &&
+          instance.text==otherScript.find_symbol_by_index(uint32_t(instance.integer))->name() &&
+          point.value.text=="OTHER_WP" &&
+          otherScript.find_symbol_by_index(point.literal)->get_string(point.literalIndex)==point.value.text,
+          "placement selection keeps the captured instance and waypoint alongside their compatibility IDs");
     }
   catch(...) { environment(present ? previous.c_str() : nullptr); throw; }
   environment(present ? previous.c_str() : nullptr);

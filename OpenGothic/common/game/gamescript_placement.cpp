@@ -2,10 +2,14 @@
 
 #include "gamescript_nativecall.h"
 
+#include "game/definitions/basescripts.h"
+#include "game/definitions/nativebasecatalog.h"
+
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <initializer_list>
+#include <stdexcept>
 #include <variant>
 #include <vector>
 
@@ -892,20 +896,33 @@ void GameScript::runWorldFirstEntryTrigger(bool oldWorld) {
 
 void GameScript::runStartup(std::string_view fn) {
   const auto* function = vm.find_symbol_by_name(fn);
-  const auto applyNativeInsert = [this](const PlacementDefinitionRuntime::Call& call) {
+  const auto applyNativeInsert = [this,catalog=baseNativeCatalog()](const PlacementDefinitionRuntime::Call& call) {
     if(call.deferred || vm.has_legacy_dispatcher())
       return false;
-    const auto& target = *vm.find_symbol_by_index(call.function);
-    if(target.name()!="WLD_INSERTNPC" && target.name()!="WLD_INSERTITEM")
+    const auto* target = vm.find_symbol_by_index(call.function);
+    if(target==nullptr)
+      throw std::runtime_error("Placement definitions: missing startup operation");
+    const bool npc = target->name()=="WLD_INSERTNPC";
+    if(!npc && target->name()!="WLD_INSERTITEM")
       return false;
+    using Kind = PlacementDefinitions::Value::Kind;
+    if(call.args.size()!=2 || call.args[1].value.kind!=Kind::String)
+      throw std::runtime_error("Placement definitions: invalid startup insertion arguments");
 
-    const auto& instance = call.args[0];
-    const auto& point = call.args[1];
-    const auto& waypoint = vm.find_symbol_by_index(point.literal)->get_string(point.literalIndex);
+    const auto& instance = call.args[0].value;
+    const auto& waypoint = call.args[1].value.text;
+    auto id = instance.integer;
+    if(catalog!=nullptr) {
+      const auto& rows = npc ? catalog->identities.npcs : catalog->identities.items;
+      const auto* identity = NativeBaseCatalog::findIdentity(rows,uint32_t(id));
+      if(instance.kind!=Kind::Symbol || identity==nullptr || identity->name!=instance.text)
+        throw std::runtime_error("Placement definitions: invalid native startup identity "+instance.text);
+      id = int32_t(identity->id);
+      }
     using storygraph::NativeValue;
-    const std::array args{NativeValue::integer(instance.value.integer),NativeValue::str(waypoint)};
-    storygraph::BoundNativeCall::observeExternal(vm,target,args,{});
-    nativeExternals.at(target.name()).call(args,{},{});
+    const std::array args{NativeValue::integer(id),NativeValue::str(waypoint)};
+    storygraph::BoundNativeCall::observeExternal(vm,*target,args,{});
+    nativeExternals.at(target->name()).call(args,{},{});
     return true;
     };
   if(nativeRoutineProgram && PlacementDefinitionRuntime::enabled() && function && function->name()=="STARTUP_DRAGONISLAND" &&
