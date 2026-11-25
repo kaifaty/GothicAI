@@ -218,17 +218,8 @@ class GameScript::StockPrograms::Host final : public NativeExecutionHost {
       }
 
     std::optional<int32_t> symbolIndex(std::string_view name) const override {
-      if(const auto* catalog = baseNativeCatalog()) {
-        if(const auto id = owner.script.runtimeState.id(name))
-          return int32_t(*id);
-        if(const auto* constant = NativeBaseCatalog::findConstant(*catalog,name))
-          return int32_t(constant->id);
-        if(owner.prepared) {
-          const auto found = owner.prepared->symbols.find(nativeOperationName(name));
-          if(found!=owner.prepared->symbols.end())
-            return int32_t(found->second);
-          }
-        }
+      if(baseNativeCatalog()!=nullptr)
+        return owner.script.storySymbolIndex(name);
       const auto* slot = owner.binding(name).first;
       if(slot==nullptr)
         return std::nullopt;

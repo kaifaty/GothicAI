@@ -3,6 +3,7 @@
 #include "itemrecordfields.h"
 #include "itemloadprobe.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
@@ -98,6 +99,20 @@ ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolveNative(const It
     };
   auto definitions=resolveRecords(library,[&](std::string_view name) { return lookup(items,name); },
     [&](std::string_view field,std::string_view name) { return lookup(field=="owner" ? owners : callbacks,name); });
+  for(const auto& [name,document] : library.documents) {
+    const auto root=lookup(callbacks,name);
+    const auto handle=std::ranges::find(catalog.initialState,document.handle,&NativeBaseCatalog::InitialRow::name);
+    if(!root || !definitions.itemUsePrograms.contains(*root) || handle==catalog.initialState.end() ||
+       document.handle!=name+".NDOCID")
+      throw std::runtime_error("invalid item document "+name);
+    const auto* values=std::get_if<std::vector<int32_t>>(&handle->value);
+    if(values==nullptr || values->size()!=1)
+      throw std::runtime_error("invalid item document handle "+document.handle);
+    Document resolved{handle->id,document.map,{}};
+    for(const auto& call : document.calls)
+      resolved.calls.push_back({call.function,call.arguments});
+    definitions.documents.emplace(*root,std::move(resolved));
+    }
   for(const auto& [name,reason] : library.uncaptured) {
     if(name!="ITMI_INNOSEYE_BROKEN_MIS")
       throw std::runtime_error("item definitions: no native constructor for "+name+": "+reason);

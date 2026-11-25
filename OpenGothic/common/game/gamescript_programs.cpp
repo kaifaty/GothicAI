@@ -4,6 +4,7 @@
 
 #include "basestore.h"
 #include "contentcensus.h"
+#include "game/definitions/nativebasecatalog.h"
 #include "gothic.h"
 #include "resources.h"
 #include "world/objects/npc.h"
@@ -21,6 +22,19 @@ storygraph::NativeFunction preparedSignature(const StockStoryPrograms::Entry& pr
   if(program.returnType!=0)
     fn.result=storygraph::nativeValueType(DaedalusDataType(program.returnType));
   return fn;
+  }
+
+template<class Key>
+auto nativeStoryIdentity(const NativeBaseCatalog::Selection& catalog, Key key)
+    -> std::pair<const NativeBaseCatalog::Identity*,GameScript::SymbolKind> {
+  using Kind = GameScript::SymbolKind;
+  const auto& names = catalog.identities;
+  for(const auto& [rows,kind] : std::array{
+      std::pair{std::span(names.npcs),Kind::Npc},std::pair{std::span(names.items),Kind::Item},
+      std::pair{std::span(names.dialogs),Kind::Info}})
+    if(const auto* entry = NativeBaseCatalog::findIdentity(rows,key))
+      return {entry,kind};
+  return {nullptr,Kind::Other};
   }
 }
 
@@ -229,6 +243,14 @@ std::string_view GameScript::storyProgramName(uint32_t id) {
   const auto& programs = storyPrograms();
   if(const auto* program = programs.program(id))
     return program->name;
+  if(const auto* catalog = baseNativeCatalog()) {
+    const auto state = std::ranges::find(catalog->states,id,&NativeBaseCatalog::State::id);
+    if(state!=catalog->states.end())
+      return state->name;
+    if(const auto* routine = NativeBaseCatalog::findIdentity(catalog->routines,id))
+      return routine->name;
+    return {};
+    }
   const auto found = programs.ids.find(id);
   if(found!=programs.ids.end() && found->second->type()==daedalus::DaedalusDataType::FUNCTION)
     return found->second->name();
@@ -236,6 +258,13 @@ std::string_view GameScript::storyProgramName(uint32_t id) {
   }
 
 std::string_view GameScript::storySymbolName(uint32_t id) {
+  if(const auto* catalog = baseNativeCatalog()) {
+    if(const auto [entry,kind] = nativeStoryIdentity(*catalog,id); entry!=nullptr)
+      return entry->name;
+    if(const auto* entry = own.find(id))
+      return entry->name;
+    return storyProgramName(id);
+    }
   const auto& programs = storyPrograms();
   if(const auto found = programs.ids.find(id); found!=programs.ids.end())
     return found->second->name();
@@ -256,12 +285,47 @@ daedalus::DaedalusSymbol* GameScript::storySlot(uint32_t id) const {
   }
 
 std::optional<int32_t> GameScript::storySymbolIndex(std::string_view name) {
+  if(const auto* catalog = baseNativeCatalog()) {
+    if(const auto id = runtimeState.id(name))
+      return int32_t(*id);
+    if(const auto* constant = NativeBaseCatalog::findConstant(*catalog,name))
+      return int32_t(constant->id);
+    if(const auto [entry,kind] = nativeStoryIdentity(*catalog,name); entry!=nullptr)
+      return int32_t(entry->id);
+    if(const auto* entry = own.find(name))
+      return int32_t(entry->index);
+    const auto& programs = storyPrograms().prepared;
+    const auto found = programs->symbols.find(storygraph::nativeOperationName(name));
+    if(found!=programs->symbols.end())
+      return int32_t(found->second);
+    if(const auto id = storyScriptFunctionId(name))
+      return int32_t(*id);
+    return std::nullopt;
+    }
   if(const auto [slot,kind] = storyPrograms().binding(name); slot!=nullptr)
     return int32_t(slot->index());
   return std::nullopt;
   }
 
 std::optional<GameScript::SymbolKind> GameScript::storySymbolKind(std::string_view name) {
+  if(const auto* catalog = baseNativeCatalog()) {
+    if(const auto [entry,kind] = nativeStoryIdentity(*catalog,name); entry!=nullptr)
+      return kind;
+    if(const auto* entry = own.find(name))
+      return entry->kind==OwnSymbols::Kind::Int ? SymbolKind::Variable : SymbolKind::Npc;
+    if(const auto id = runtimeState.id(name)) {
+      const auto row = std::ranges::lower_bound(catalog->initialState,*id,{},&NativeBaseCatalog::InitialRow::id);
+      if(row!=catalog->initialState.end() && row->id==*id)
+        if(const auto* alias = std::get_if<NativeBaseCatalog::Alias>(&row->value))
+          return *alias==NativeBaseCatalog::Alias::Npc ? SymbolKind::Npc : SymbolKind::Item;
+      return SymbolKind::Variable;
+      }
+    if(NativeBaseCatalog::findConstant(*catalog,name)!=nullptr)
+      return SymbolKind::Constant;
+    if(nativeExternals.contains(storygraph::nativeOperationName(name)) || storyScriptFunctionId(name))
+      return SymbolKind::Function;
+    return std::nullopt;
+    }
   if(const auto [slot,kind] = storyPrograms().binding(name); slot!=nullptr)
     return kind;
   return std::nullopt;
@@ -277,6 +341,17 @@ daedalus::DaedalusSymbol* GameScript::storySlot(std::string_view name, SymbolKin
   }
 
 std::optional<uint32_t> GameScript::storyScriptFunctionId(std::string_view name) {
+  if(const auto* catalog = baseNativeCatalog()) {
+    const auto key = storygraph::nativeOperationName(name);
+    if(const auto* program = storyPrograms().program(key))
+      return program->id;
+    const auto state = std::ranges::find(catalog->states,key,&NativeBaseCatalog::State::name);
+    if(state!=catalog->states.end())
+      return state->id;
+    if(const auto* routine = NativeBaseCatalog::findIdentity(catalog->routines,name))
+      return routine->id;
+    return std::nullopt;
+    }
   const auto [slot,kind] = storyPrograms().binding(name);
   if(kind==SymbolKind::Function && slot->is_const() && !slot->is_external())
     return slot->index();
@@ -284,6 +359,8 @@ std::optional<uint32_t> GameScript::storyScriptFunctionId(std::string_view name)
   }
 
 bool GameScript::storySlotWritable(std::string_view name) {
+  if(baseNativeCatalog()!=nullptr)
+    return runtimeState.find(name)!=nullptr;
   using enum daedalus::DaedalusDataType;
   const auto [slot,kind] = storyPrograms().binding(name);
   if(slot==nullptr || slot->is_const() || slot->is_external() || slot->is_member())

@@ -812,7 +812,7 @@ void compareNpcDefinitions(World& world, bool helpersOnly, bool isolated) {
     require(!gameRoutines.empty() && gameRoutines.size()==routines.routines.size(),"the game must load all captured routine definitions");
     for(const auto& [name,rows]:routines.routines) {
       const auto symbol=vm.find_symbol_by_name(name)->index();
-      require(gameRoutines.contains(symbol) && gameRoutines.at(symbol).size()==rows.size(),
+      require(gameRoutines.contains(symbol) && gameRoutines.at(symbol).rows.size()==rows.size(),
               "the game's routine definitions must match their section");
       }
     }

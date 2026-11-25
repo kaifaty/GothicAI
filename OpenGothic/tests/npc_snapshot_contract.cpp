@@ -973,10 +973,21 @@ void itemDefinitions(const fs::path& dir) {
     catalog.itemCallbacks.push_back({vm->find_symbol_by_name(name)->index(),name});
     }
   catalog.itemCallbacks.push_back({50001,"EQUIP_ITMI_INNOSEYE_BROKEN_MIS"});
+  const auto itemId=vm->find_symbol_by_name("IT_RECORD_TEST")->index();
+  const auto documentId=uint32_t(definitions.items.at(itemId).on_state[0]);
+  const auto documentName=vm->find_symbol_by_index(documentId)->name();
+  const auto documentHandle=documentName+".NDOCID";
+  catalog.initialState.push_back({50002,documentHandle,std::vector<int32_t>{0}});
+  nativeLibrary.documents.emplace(documentName,ItemDefinitions::Document{documentHandle,false,
+    {{"DOC_SETPAGES",{int32_t(1)}},{"DOC_PRINTLINE",{int32_t(0),std::string("Native item document")}}}});
   const auto native=ItemDefinitionRuntime::resolveNative(nativeLibrary,catalog);
   check(native.brokenEye==50000 && native.items.size()==definitions.items.size() &&
         native.itemUsePrograms==definitions.itemUsePrograms,
         "native items keep their archetype IDs, item-use roots and the dynamic broken Eye identity");
+  const auto& document=native.documents.at(documentId);
+  check(document.handle==50002 && document.calls.size()==2 && document.calls[1].function=="DOC_PRINTLINE" &&
+        std::get<std::string>(document.calls[1].arguments[1])=="Native item document",
+        "native item documents retain the session handle and ordered typed actions");
   for(const auto& [name,item] : library.items) {
     const auto id=vm->find_symbol_by_name(name)->index();
     IItem expected{},actual{};
