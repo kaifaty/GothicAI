@@ -107,6 +107,13 @@ PERF_WARMUP_MAX="${PERF_WARMUP_MAX:-300}"
 [[ "$PERF_WARMUP" != [0-9]* ]] || PERF_WARMUP=$((10#$PERF_WARMUP))
 [[ "$PERF_WARMUP_MAX" =~ ^[0-9]*[1-9][0-9]*$ ]] || fail 'PERF_WARMUP_MAX must be positive seconds'
 PERF_WARMUP_MAX=$((10#$PERF_WARMUP_MAX))
+VARIANT_OUT=''
+if [[ "${1:-}" == --variants ]]; then
+  [[ "${BENCH_HOST:-local}" == ryzen && -n "${2:-}" ]] || fail 'usage: BENCH_HOST=ryzen perf.sh --variants OUT [places...] < variants.txt'
+  VARIANT_OUT="$2"
+  shift 2
+  VARIANT_PLAN="$(python3 "$ROOT/scripts/perf_variants.py" plan "$PERF_REPEAT")"
+fi
 if [[ $# == 0 ]]; then PLACES=(market harbour forest interior combat); else PLACES=("$@"); fi
 for place in "${PLACES[@]}"; do
   case "$place" in
@@ -117,7 +124,8 @@ done
 export PERF_WINDOW PERF_REPEAT PERF_WAIT
 export PERF_ARGS="${PERF_ARGS:-}" PERF_ENV="${PERF_ENV:-}" PERF_VID_RES="${PERF_VID_RES:-0}" PERF_INI="${PERF_INI:-}"
 if [[ "$REMOTE_RUN" == 0 ]]; then
-  OUT="$ROOT/.bench/perf-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  RUN_ID="perf-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  OUT="${VARIANT_OUT:-$ROOT/.bench/$RUN_ID}"
   export PERF_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
   export PERF_DIRTY="$(git -C "$ROOT" status --porcelain --untracked-files=normal | wc -l | tr -d ' ')"
   BENCH_HOST="${BENCH_HOST:-local}"
@@ -142,13 +150,13 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
       REMOTE_BUILT_FINGERPRINT="$(remote bash -c 'cat "$1" 2>/dev/null || true' -- "$SOURCE/OpenGothic/build-perf/source_fingerprint")"
       check_build_fingerprint "$REMOTE_BUILT_FINGERPRINT"
     fi
-    REMOTE_OUT="$TASK/runs/${OUT##*/}"
-    NAS_OUT="/mnt/shared/gothic-ai/perf-stand/runs/${OUT##*/}"
+    REMOTE_OUT="$TASK/runs/$RUN_ID"
+    NAS_OUT="/mnt/shared/gothic-ai/perf-stand/runs/$RUN_ID"
     remote mkdir -p "$SOURCE/OpenGothic" "$SOURCE/scripts/bench" "$REMOTE_OUT"
     remote df -h "$REMOTE_HOME"
     # Stamp changed sources now: old source mtimes could otherwise skip rebuilding newer objects.
     rsync -a --checksum --no-times --delete --exclude='build*/' --exclude='cmake-build-*/' --exclude='.git' "$ROOT/OpenGothic/" "$RYZEN_HOST:$SOURCE/OpenGothic/"
-    rsync -a "$ROOT/scripts/ryzen-build.sh" "$ROOT/scripts/perf.sh" "$ROOT/scripts/perf_report.py" "$ROOT/scripts/perf_gpu_log.py" "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$RYZEN_HOST:$SOURCE/scripts/"
+    rsync -a "$ROOT/scripts/ryzen-build.sh" "$ROOT/scripts/perf.sh" "$ROOT/scripts/perf_variants.py" "$ROOT/scripts/perf_report.py" "$ROOT/scripts/perf_gpu_log.py" "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$RYZEN_HOST:$SOURCE/scripts/"
     rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$RYZEN_HOST:$SOURCE/scripts/convert/"
     rsync -a "$ROOT"/scripts/bench/perf-*.bench "$RYZEN_HOST:$SOURCE/scripts/bench/"
     REMOTE_ENV=(PERF_REMOTE=1 "PERF_VID_RES=$PERF_VID_RES" "PERF_INI=$PERF_INI" "PERF_WINDOW=$PERF_WINDOW" "PERF_REPEAT=$PERF_REPEAT" "PERF_WAIT=$PERF_WAIT"
@@ -162,20 +170,27 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
         --archive "$REMOTE_OUT/build" -- env "${REMOTE_ENV[@]}" "RYZEN_JOBS=${RYZEN_JOBS:-8}" \
         bash "$SOURCE/scripts/perf.sh" __build "$REMOTE_OUT/build"
     fi
+    run_command=(bash "$SOURCE/scripts/perf.sh" __run "$REMOTE_OUT" "${PLACES[@]}")
+    attempts="$PERF_REPEAT"
+    copy_options=(-a)
+    if [[ -n "$VARIANT_OUT" ]]; then
+      remote tee "$REMOTE_OUT/variants.txt" <<< "$VARIANT_PLAN" >/dev/null
+      run_command=(python3 "$SOURCE/scripts/perf_variants.py" run "$REMOTE_OUT" "${PLACES[@]}")
+      attempts="$(wc -l <<< "$VARIANT_PLAN")"
+      copy_options+=(--exclude='*.png')
+    fi
     rc=0
     "$ROOT/scripts/gq" --host "$RYZEN_HOST" run --class quiet --threads 4 --mem 5G --gpu-mem 4G \
-      --display --max "$((10 + ${#PLACES[@]} * PERF_REPEAT * 5))m" --wait-max "${RYZEN_LOCK_WAIT:-3600}" --name 'perf stand' \
+      --display --max "$((10 + ${#PLACES[@]} * attempts * 5))m" --wait-max "${RYZEN_LOCK_WAIT:-3600}" --name 'perf stand' \
       --archive "$REMOTE_OUT" -- env "${REMOTE_ENV[@]}" NO_BUILD=1 \
-      bash "$SOURCE/scripts/perf.sh" __run "$REMOTE_OUT" "${PLACES[@]}" \
+      "${run_command[@]}" \
       2>&1 | tee "$OUT/ryzen.log" || rc="${PIPESTATUS[0]}"
-    # gq moves finished results to NAS with checksums. A failed archive leaves the source.
-    if remote test -d "$NAS_OUT"; then
-      rsync -a "$RYZEN_HOST:$NAS_OUT/" "$OUT/"
-    else
-      rsync -a "$RYZEN_HOST:$REMOTE_OUT/" "$OUT/"
-    fi
+    # An interrupted archive leaves the full source on Ryzen. The NAS may already contain just the build.
+    result_dir="$NAS_OUT"
+    if remote test -d "$REMOTE_OUT"; then result_dir="$REMOTE_OUT"; fi
+    rsync "${copy_options[@]}" "$RYZEN_HOST:$result_dir/" "$OUT/"
     [[ "$rc" == 0 ]] || exit "$rc"
-    python3 "$ROOT/scripts/perf_report.py" run "$OUT"
+    if [[ -z "$VARIANT_OUT" ]]; then python3 "$ROOT/scripts/perf_report.py" run "$OUT"; fi
     echo "$OUT"
     exit
   fi
@@ -238,6 +253,8 @@ for item in shlex.split(os.environ['PERF_ENV']):
     key, sep, value = item.partition('=')
     if not sep or not key.isidentifier():
         raise SystemExit(f'perf: invalid PERF_ENV assignment: {item!r}')
+    if key == 'OPENGOTHIC_CONTENT' and value.startswith('~/'):
+        value = str(Path.home() / value[2:])
     extra_env[key] = value
 meta = dict(binary_sha256=hashlib.sha256(Path(os.environ['GAME_BIN']).read_bytes()).hexdigest(),
             source_fingerprint=os.environ['PERF_SOURCE_FINGERPRINT'],

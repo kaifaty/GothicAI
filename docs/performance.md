@@ -227,6 +227,24 @@ NO_BUILD=1 PERF_ENV='OPENGOTHIC_GPU_SKIP=SSAO' scripts/perf.sh market
 BENCH_HOST=ryzen PERF_REPEAT=2 scripts/perf.sh market harbour
 ```
 
+Для сравнения нескольких вариантов передай в `--variants` папку результатов и список
+`имя|PERF_ENV` на стандартном вводе. Одна сборка обслуживает всю серию в одной заявке `gq quiet`.
+
+```bash
+BENCH_HOST=ryzen PERF_REPEAT=2 scripts/perf.sh --variants /tmp/forest-comparison trees <<'EOF'
+default|
+no-wind|OPENGOTHIC_FOLIAGE=light
+EOF
+```
+
+Первый круг идёт в порядке списка, второй в обратном. При двух вариантах порядок
+получается A B B A. Строка вида `имя/round-3|…` задаёт одиночный запуск после
+обычных кругов, например для повтора или сбора счётчиков. Настройки строки дополняют
+общий `PERF_ENV`. В `OPENGOTHIC_CONTENT` префикс `~/` означает домашнюю папку хоста игры.
+Каждый запуск пишет свой `имя/round-N/report.json`. Если игра завершилась ошибкой,
+остальные варианты проходят по расписанию, результаты копируются, серия возвращает
+код ошибки. Полный набор с кадрами остаётся в архиве, локальная копия пропускает PNG.
+
 Исходники и сборка каждого checkout лежат в
 `~/gothic-ai/perf-stand/<checkout>/source/` и её `OpenGothic/build-perf`.
 `<checkout>` — имя папки worktree с первыми 12 символами SHA-256 абсолютного
@@ -489,6 +507,8 @@ GPU-измерения, показывает mean/p95, количество из
 
 ## План и журнал
 
+- 2026-11-21. Замер леса `tree-cost/run.sh` использует общий режим `perf.sh --variants`.
+  Полная серия и выборочные повторы проходят через замок checkout и сверку сборки общего стенда.
 - 2026-11-15, запуски стенда Ryzen внахлёст из одного checkout: второй запуск
   ждёт первый под замком `.bench/perf-ryzen.lock` (`scripts/perf_lock.py`) и
   считает отпечаток, `PERF_COMMIT` и `PERF_DIRTY` после ожидания. Повод — прогон
