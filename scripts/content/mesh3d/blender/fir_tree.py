@@ -131,6 +131,7 @@ class Tree:
     branches: list[Branch]
     cards: list[dict] = field(default_factory=list)     # role, kind, branch, first vertex and count in the boughs
     stubs: int = 0                                      # the first branches are dead stubs
+    fill_sparse_side: bool = False
 
 
 def signed_volume(position: np.ndarray, index: np.ndarray) -> float:
@@ -142,9 +143,11 @@ class Fir:
     def __init__(self, config: dict, seed: int | None = None, pairs: bool = False):
         self.cfg = config
         self.pairs = pairs          # a bough's triangles twice under a one-sided material: the way before two_sided
-        self.rng = np.random.default_rng(config['seed'] if seed is None else seed)
+        seed = config['seed'] if seed is None else seed
+        self.rng = np.random.default_rng(seed)
         # the chance inside a cluster has a stream of its own: the tree's shape does not depend on the clusters
-        self.own = np.random.default_rng([config['seed'] if seed is None else seed, 1])
+        self.own = np.random.default_rng([seed, 1])
+        self.fill_sparse_side = config.get('id') == 'fir-a' and seed == 7
         self.clusters = 0
         self.height = float(config['height'])
         names = config['materials']
@@ -341,6 +344,13 @@ class Fir:
             flutter.append(max(t, abs(h)))
             share.append(t)
         position = np.array(position)
+        if self.fill_sparse_side and role == 'hang' and branch is not None:
+            # Let the hanging shoots overlap the incomplete tiers on +Y. Fade toward the
+            # trunk, skirt, and top; keep every stem on its original branch.
+            sector = smooth(math.sin(branch.azimuth) / .65)
+            tiers = smooth((branch.height - .27) / .19) * smooth((.85 - branch.height) / .21)
+            reach = smooth((math.hypot(origin[0], origin[1]) - .45) / .55)
+            position[:, 2] += .8 * sector * tiers * reach * np.minimum(position[:, 2] - origin[2], 0.)
         position[:, 2] = np.maximum(position[:, 2], ground + .04 * np.array(flutter) * rng.uniform(.3, 1.))
         S, A1, A2, T, B2, B1 = range(6)
         M = 6 if bend else None
@@ -691,7 +701,7 @@ class Fir:
             cards_by_role={role: sum(r['role'] == role for r in self.records)
                            for role in sorted({r['role'] for r in self.records})},
             closed_parts=self.tubes, inside_out_parts=self.inside_out, scale=scale)
-        return Tree(parts, metrics, self.branches, self.records, stubs)
+        return Tree(parts, metrics, self.branches, self.records, stubs, self.fill_sparse_side)
 
 
 def build(config: dict, seed: int | None = None, scale: float = 1., pairs: bool = False) -> Tree:
@@ -1050,7 +1060,12 @@ def design_level(tree: Tree, level: dict, mask: np.ndarray, atlas: np.ndarray) -
     best = None
     group_ids = np.array(groups_by_option)
     biases = (0., -12., 12., 24., 36.) if pixel_fit else (0., 12., 24.)
-    for share in (level['target_share'], level['share']):
+    shares = (level['target_share'], level['share'])
+    if tree.fill_sparse_side and level['px'] == 200:
+        # Search more tone weights within the original triangle target for spruce A's L2.
+        biases = (0., -12., 12., 24., 36., 48.)
+        shares = (level['target_share'],)
+    for share in shares:
         limit = int(tree.metrics['triangles'] * share) - len(trunk['index'])
         fits = []
         for penalty in (.25, .65, 1.):

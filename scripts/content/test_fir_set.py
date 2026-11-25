@@ -356,13 +356,13 @@ def test_bough_x4_adds_hierarchy_without_changing_the_spruce_or_its_fallbacks(tm
 
 
 def test_spruce_a_and_its_four_levels_rebuild_byte_for_byte(tmp_path, monkeypatch):
-    reference = fir_set.PROBES / 'lod-designed/fir-probe-4'
+    reference = fir_set.PROBES / 'crown-fix/content'
     textures = reference / 'materials/trees_fir'
     meshes = reference / 'meshes/trees_fir'
     visual = 'OWN_TREE_FIR_A_4'
     names = [f'{visual}.glb', *(f'{visual}_L{i}.glb' for i in range(1, 5))]
     if not (textures / 'boughs-albedo.dds').is_file() or not all((meshes / name).is_file() for name in names):
-        pytest.skip('Requires the accepted fir-probe-4 GLBs and canopy atlas')
+        pytest.skip('Requires the crown-fix GLBs and canopy atlas')
 
     monkeypatch.syspath_prepend(str(fir_set.BLENDER))
     import fir_tree
