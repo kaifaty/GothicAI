@@ -453,14 +453,14 @@ void GameScript::npc_settarget(std::shared_ptr<daedalus::INpc> npcRef, std::shar
  */
 bool GameScript::npc_gettarget(std::shared_ptr<daedalus::INpc> npcRef) {
   auto npc = findNpc(npcRef);
-  auto s   = vm.global_other();
+  auto& other = storyActorSlot("OTHER");
 
   if(npc!=nullptr && npc->target()) {
-    s->set_instance(std::static_pointer_cast<daedalus::INpc>(npc->target()->handlePtr()));
+    other = std::static_pointer_cast<NpcInstance>(npc->target()->handlePtr());
     return true;
     }
 
-  s->set_instance(nullptr);
+  other.reset();
   return false;
   }
 
@@ -486,12 +486,12 @@ bool GameScript::npc_getnexttarget(std::shared_ptr<daedalus::INpc> npcRef) {
       npc->setTarget(ret);
     }
 
-  auto s = vm.global_other();
+  auto& other = storyActorSlot("OTHER");
   if(ret!=nullptr) {
-    s->set_instance(std::static_pointer_cast<daedalus::INpc>(ret->handlePtr()));
+    other = std::static_pointer_cast<NpcInstance>(ret->handlePtr());
     return true;
     } else {
-    s->set_instance(nullptr);
+    other.reset();
     return false;
     }
   }
@@ -517,7 +517,7 @@ void GameScript::npc_sendsingleperc(std::shared_ptr<daedalus::INpc> npcRef, std:
 
 bool GameScript::npc_checkinfo(std::shared_ptr<daedalus::INpc> npcRef, int imp) {
   auto n    = findNpc(npcRef);
-  auto hero = findNpc(vm.global_other());
+  auto hero = findNpc(dynamic_cast<NpcInstance*>(storyActorSlot("OTHER").get()));
   if(n==nullptr || hero==nullptr)
     return false;
 
@@ -739,9 +739,8 @@ bool GameScript::npc_isdetectedmobownedbynpc(std::shared_ptr<daedalus::INpc> usr
 
   if(npc!=nullptr && usr!=nullptr && usr->interactive()!=nullptr){
     const auto id = npc->instanceSymbol();
-    auto* inst = nativeRoutineProgram ? storySlot(id) : vm.find_symbol_by_index(id);
-    auto  ow   = usr->interactive()->ownerName();
-    return inst->name() == ow;
+    const auto name = storyNpcName(uint32_t(id));
+    return !name.empty() && name==usr->interactive()->ownerName();
     }
   return false;
   }
@@ -759,7 +758,6 @@ bool GameScript::npc_isdetectedmobownedbyguild(std::shared_ptr<daedalus::INpc> n
   if(npc!=nullptr && npc->detectedMob()!=nullptr) {
     auto  ow   = npc->detectedMob()->ownerName();
     (void)ow;
-    //vm.setReturn(inst.name==ow ? 1 : 0);
     return false;
     }
   return false;
@@ -782,8 +780,8 @@ bool GameScript::npc_ownedbynpc(std::shared_ptr<daedalus::IItem> itmRef, std::sh
     }
 
   const auto id = uint32_t(itm->handle().owner);
-  auto* sym = nativeRoutineProgram ? storySlot(id) : vm.find_symbol_by_index(id);
-  return sym != nullptr && std::static_pointer_cast<daedalus::INpc>(npc->handlePtr())==sym->get_instance();
+  const auto* owner = ownedInstance(id);
+  return owner!=nullptr && owner->get()==npc->handlePtr().get();
   }
 
 bool GameScript::npc_canseesource(std::shared_ptr<daedalus::INpc> npcRef) {

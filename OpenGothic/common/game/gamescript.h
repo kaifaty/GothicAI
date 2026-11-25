@@ -1020,7 +1020,6 @@ class GameScript final : public GameRules {
     QuestLog                                                    quests;
     uint32_t                                                    goldInstance = 0;
     uint32_t                                                    lockPickInstance = 0;
-    daedalus::DaedalusSymbol*                                     B_RefreshAtInsert = nullptr;
     float                                                       tradeValMult = 0.3f;
     std::vector<std::string>                                    spellFxInstanceNames;
     std::vector<std::string>                                    spellFxAniLetters;

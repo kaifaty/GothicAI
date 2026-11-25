@@ -106,22 +106,12 @@ int GameScript::wld_getguildattitude(int gil1, int gil2) {
   }
 
 void GameScript::wld_exchangeguildattitudes(std::string_view name) {
-  if(const auto* catalog = baseNativeCatalog()) {
-    const auto* entry = NativeBaseCatalog::findConstant(*catalog,name);
-    const auto* values = entry==nullptr ? nullptr : std::get_if<std::vector<int32_t>>(&entry->values);
-    if(values==nullptr || values->size()!=gilTblSize*gilTblSize)
-      throw BaseStore::Error("invalid native guild attitude table " + std::string(name));
-    for(size_t i=0;i<gilTblSize;++i)
-      std::copy_n(values->data()+i*gilTblSize,gilTblSize,gilAttitudes.data()+i*gilCount);
-    return;
-    }
-  auto guilds = vm.find_symbol_by_name(name);
-  if(guilds==nullptr)
-    return;
-  for(size_t i=0;i<gilTblSize;++i) {
-    for(size_t r=0;r<gilTblSize;++r)
-      gilAttitudes[i*gilCount+r] = guilds->get_int(uint16_t(i * gilTblSize + r));
-    }
+  const auto* entry = NativeBaseCatalog::findConstant(*baseNativeCatalog(),name);
+  const auto* values = entry==nullptr ? nullptr : std::get_if<std::vector<int32_t>>(&entry->values);
+  if(values==nullptr || values->size()!=gilTblSize*gilTblSize)
+    throw BaseStore::Error("invalid native guild attitude table " + std::string(name));
+  for(size_t i=0;i<gilTblSize;++i)
+    std::copy_n(values->data()+i*gilTblSize,gilTblSize,gilAttitudes.data()+i*gilCount);
   }
 
 bool GameScript::wld_istime(int hour0, int min0, int hour1, int min1) {
@@ -209,7 +199,7 @@ bool GameScript::wld_detectnpc(std::shared_ptr<daedalus::INpc> npcRef, int inst,
       }
     });
   if(ret)
-    vm.global_other()->set_instance(std::static_pointer_cast<daedalus::INpc>(ret->handlePtr()));
+    setInstanceNPC("OTHER",*ret);
   return ret != nullptr;
   }
 
@@ -235,7 +225,7 @@ bool GameScript::wld_detectnpcex(std::shared_ptr<daedalus::INpc> npcRef, int ins
       }
     });
   if(ret)
-    vm.global_other()->set_instance(std::static_pointer_cast<daedalus::INpc>(ret->handlePtr()));
+    setInstanceNPC("OTHER",*ret);
   return ret != nullptr;
   }
 
@@ -258,7 +248,7 @@ bool GameScript::wld_detectitem(std::shared_ptr<daedalus::INpc> npcRef, int flag
     });
 
   if(ret)
-    vm.global_item()->set_instance(std::static_pointer_cast<daedalus::IItem>(ret->handlePtr()));
+    storeItem(ret);
   return ret != nullptr;
   }
 
@@ -554,8 +544,8 @@ void GameScript::ai_outputsvm_overlay(std::shared_ptr<daedalus::INpc> selfRef, s
 void GameScript::ai_startstate(std::shared_ptr<daedalus::INpc> selfRef, int func, int state, std::string_view wp) {
   auto self = findNpc(selfRef);
   if(self!=nullptr && func>0) {
-    Npc*  oth = findNpc(vm.global_other());
-    Npc*  vic = findNpc(vm.global_victim());
+    Npc*  oth = findNpc(dynamic_cast<NpcInstance*>(storyActorSlot("OTHER").get()));
+    Npc*  vic = findNpc(dynamic_cast<NpcInstance*>(storyActorSlot("VICTIM").get()));
     auto& st  = aiState(size_t(func));
     self->aiPush(AiQueue::aiStartState(st.funcIni,state,oth,vic,wp));
     }
@@ -784,7 +774,7 @@ void GameScript::ai_pointatnpc(std::shared_ptr<daedalus::INpc> npcRef, std::shar
   }
 
 int GameScript::ai_printscreen(std::string_view msg, int posx, int posy, std::string_view font, int timesec) {
-  printScreenFor(findNpc(vm.global_self()),msg,posx,posy,font,timesec);
+  printScreenFor(findNpc(dynamic_cast<NpcInstance*>(storyActorSlot("SELF").get())),msg,posx,posy,font,timesec);
   return 0;
   }
 
