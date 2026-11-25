@@ -77,4 +77,3 @@ bool ItemDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shar
   vm.init_instance(item,symbol);
   return false;
   }
-
