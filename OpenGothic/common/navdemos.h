@@ -11,6 +11,7 @@ void reset();
 bool running();
 // Stand population actors and opt-in CV episodes retain full simulation at any distance.
 bool fullSimulation(const Npc& npc);
+bool hasFullSimulationActors();
 // Explicit stand physics mode; ordinary NPC controller radius rules stay unchanged.
 bool forceCharacterVirtual(const Npc& npc);
 // Only the current approach fixture clone is neutral; its physical guild is unchanged.

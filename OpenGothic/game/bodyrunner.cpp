@@ -6,6 +6,7 @@
 
 #include "commandline.h"
 #include "gothic.h"
+#include "frameprofile.h"
 #include "gamemusic.h"
 #include "resources.h"
 #include "basestore.h"
@@ -30,6 +31,7 @@
 #include "../ai_bridge/npcobserver.h"
 
 #include <chrono>
+#include <charconv>
 #include <algorithm>
 #include <cmath>
 #include <cerrno>
@@ -57,6 +59,7 @@ struct Options {
   std::string save, world, scenario, output = ".body-runner", mode = "lockstep", societyExport;
   bool stdio = false, compactReplies = false, schedulingDiagnostics = false, serialWorkers = false, forkReset = false;
   bool forkPrefix = false, gameParity = false;
+  uint64_t stepMs = 0;
 };
 
 Options options(int argc, const char** argv) {
@@ -80,6 +83,13 @@ Options options(int argc, const char** argv) {
     else if(arg=="--fork-reset") result.forkReset = true;
     else if(arg=="--fork-prefix") result.forkPrefix = true;
     else if(arg=="--game-parity") result.gameParity = true;
+    else if(arg=="--step-ms") {
+      const auto ms = value();
+      const auto end = ms.data()+ms.size();
+      const auto parsed = std::from_chars(ms.data(),end,result.stepMs);
+      if(parsed.ec!=std::errc{} || parsed.ptr!=end || result.stepMs<1 || result.stepMs>100)
+        throw std::runtime_error("--step-ms expects an integer from 1 to 100");
+      }
     else if(arg=="--society-export") result.societyExport = value();
   }
   if(!result.societyExport.empty()) {
@@ -322,6 +332,7 @@ public:
     // A forked runner leaves with _exit, past the summary atexit would print.
     AnimationTail::reportCheck();
     saveSummary();
+    FrameProfile::flush();
     observationFile.close(); timingFile.close(); controlFile.close(); arenaFile.close();
   }
 
@@ -470,9 +481,13 @@ public:
     const auto tickDue=due;
     ++schedulingTick;
     schedulingEvent("tick_begin",Clock::now(),tickDue);
-    const uint64_t dt = TestBench::frameDt(33);
+    const uint64_t dt = TestBench::frameDt(opts.stepMs==0 ? 33 : opts.stepMs,opts.stepMs!=0);
+    FrameProfile::Attempt frame(0);
+    frame.simulation(dt);
     SimulationStep::worldPlayerStep(dt,*player);
     SimulationStep::finishStep(dt,*player);
+    FrameProfile::sample("headless",gothic.world()->tickCount());
+    frame.outcome(FrameProfile::Outcome::Simulation);
     // As the rendered frame does after its step: chunk residency follows the hero and the camera
     // (NPC simulation tiers in `auto`); without a view it publishes no visuals.
     gothic.world()->updateLandscape(*gothic.camera());
@@ -990,6 +1005,7 @@ public:
   void close() {
     finishMeleeShadowSwings();
     saveSummary();
+    FrameProfile::flush();
     BodyArena::interrupt("close_requested"); BodyArena::disable();
     BodyTrajectory::reset("close");
     BodyController::reset("close"); BodyController::setSink({});

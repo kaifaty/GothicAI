@@ -240,6 +240,7 @@ void BodyObservations::watch(const std::vector<Npc*>& actors) {
   clearActors();
   auto& s = state();
   for(auto* npc:actors) {
+    npc->wakeSociety();
     Actor actor;
     actor.npc = npc;
     s.actors.push_back(actor);
@@ -257,6 +258,7 @@ void BodyObservations::updateWatch(const std::vector<Npc*>& actors) {
     if(auto actor=tracked(npc)) {
       updated.push_back(*actor);
       } else {
+      npc->wakeSociety();
       Actor added;
       added.npc = npc;
       updated.push_back(std::move(added));

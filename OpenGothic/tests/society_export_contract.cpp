@@ -79,8 +79,10 @@ std::vector<std::string> lines(const std::string& text) {
   return ret;
   }
 
-double exportOnce(const std::string& gothic, const fs::path& out, const fs::path& log) {
-  const auto cmd = shellQuote(SOCIETY_RUNNER)+" -g "+shellQuote(gothic)+" --world NEWWORLD.ZEN --society-export "+
+double exportOnce(const std::string& gothic, const fs::path& out, const fs::path& log, const fs::path& shadow = {}) {
+  const auto cmd = "OPENGOTHIC_SOCIETY_WORLD="+shellQuote(shadow.string())+
+                   " OPENGOTHIC_SOCIETY_CONFIG= OPENGOTHIC_SOCIETY_PILOT_NPC= "+
+                   shellQuote(SOCIETY_RUNNER)+" -g "+shellQuote(gothic)+" --world NEWWORLD.ZEN --society-export "+
                    shellQuote(out.string())+" >"+shellQuote(log.string())+" 2>&1";
   const auto from = std::chrono::steady_clock::now();
   const int  rc   = std::system(cmd.c_str());
@@ -96,6 +98,15 @@ double exportOnce(const std::string& gothic, const fs::path& out, const fs::path
   for(const auto& line:all)
     if(line.rfind("society export:",0)==0)
       std::printf("%s\n",line.c_str());
+  if(!shadow.empty()) {
+    const auto expected = "Society shadow started: actors="+std::to_string(WorldNpcs)+" ";
+    if(text.find(expected)==std::string::npos) {
+      for(const auto& line:all)
+        if(line.find("Society shadow")!=std::string::npos)
+          std::printf("%s\n",line.c_str());
+      fail("the game did not bind the export's startup NPCs");
+      }
+    }
   std::printf("runner wall time: %.1f s\n",sec);
   return sec;
   }
@@ -679,7 +690,7 @@ int main() {
     struct Cleanup { fs::path path; ~Cleanup() { std::error_code e; fs::remove_all(path,e); } } cleanup{root};
     fs::create_directories(root);
     exportOnce(gothic,root/"a.json",root/"a.log");
-    exportOnce(gothic,root/"b.json",root/"b.log");
+    exportOnce(gothic,root/"b.json",root/"b.log",root/"a.json");
     const auto a = read(root/"a.json");
     sameBytes(a,read(root/"b.json"));
 

@@ -77,6 +77,7 @@ void Npc::changeAttribute(Attribute a, int32_t val, bool allowUnconscious) {
       interruptItemUse("hp loss");
     }
 
+  wakeSociety();
   hnpc->attribute[a]+=val;
   if(hnpc->attribute[a]<0)
     hnpc->attribute[a]=0;

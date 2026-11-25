@@ -1,0 +1,37 @@
+# @headless
+# Finish one native blade swing before transferring the melee exchange to Society.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 150
+cam game
+wait 500
+
+put BDT_1011_BANDIT_M 650 -7
+put BAU_904_BAUER 650 7
+stats npc BDT_1011_BANDIT_M str 80 1h 70 talent auto hpmax 2400 hp 2400
+stats npc BAU_904_BAUER str 80 1h 70 talent auto hpmax 2400 hp 2400
+npcequip BDT_1011_BANDIT_M ITMW_1H_VLK_AXE
+npcequip BAU_904_BAUER ITMW_1H_VLK_AXE
+
+npcfight-record begin exchange BDT_1011_BANDIT_M BAU_904_BAUER
+npcfight-handoff arm_melee BDT_1011_BANDIT_M BAU_904_BAUER
+fight BDT_1011_BANDIT_M BAU_904_BAUER
+fight BAU_904_BAUER BDT_1011_BANDIT_M
+npcfight-handoff wait native_hit
+# The first swing after this delay is the bandit's unopposed third swing in the control.
+wait 2400
+npcfight-handoff wait native_swing
+mark leave_combat
+goto NW_XARDAS_TOWER_VALLEY_091
+cam at 23546 1200 -10265 22546 1200 -10265
+npcfight-handoff wait far_hits
+mark return_combat
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 150
+cam game
+npcfight-handoff wait returned_hit
+npcfight-handoff end
+npcfight-record end
+mark combat_end

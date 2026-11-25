@@ -393,6 +393,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say(pl.bowDump());
     }
   else if((c=="stats" || c=="npcday" || c=="npcday-save" || c=="seed") && npcCommandsCommand(npcCommandsContext(),line,a,w,pl,ctrl)) return;
+  else if(c=="npcfight-record")
+    npcFightTraceCommand(bench.npcFightTrace,a,bench.crew,w,pl,bench.scenarioSeed);
+  else if(c=="npcfight-handoff")
+    npcCombatHandoffCommand(a,w,pl,bench.scenarioSeed);
   else if(npcSimCommand(bench.npcDuel,bench.npcTierTest,bench.npcSpeedTest,bench.pc,bench.prog,a,w,pl)) return;
   else if(bodyCommand(bodyContext(),a,w,pl)) return;
   else if(c=="knockdown-launch-equip") {

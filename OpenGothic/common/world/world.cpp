@@ -49,8 +49,11 @@
 #include "physics/worldcollisionmesh.h"
 #include "world/movablevobs.h"
 #include "world/bullet.h"
+#include "world/animationlod.h"
+#include "world/societyprojection.h"
 
 namespace {
+
 
 std::string_view traceObjectName(std::string_view what, bool arrow = false) {
   if(arrow) {
@@ -325,6 +328,8 @@ World::World(GameSession& game, GameRules& rules, std::string_view file, bool st
   }
 
 World::~World() {
+  if(societyProjection)
+    societyProjection->wakeAll(*this);
   }
 
 void World::updateLandscape(const Camera& camera) {
@@ -402,7 +407,143 @@ void World::postInit() {
   // game.rules()->inserNpc("Snapper",wmatrix->startPoint().name);
   }
 
+void World::startSocietyProjection(double clockRate) {
+  if(societyProjection)
+    societyProjection->wakeAll(*this);
+  societyProjection = SocietyProjection::start(*this,clockRate);
+  }
+
+void World::restoreSocietyProjection(double clockRate, Serialize& archive) {
+  if(societyProjection)
+    societyProjection->wakeAll(*this);
+  societyProjection = SocietyProjection::restore(*this,clockRate,archive);
+  }
+
+void World::saveSocietyProjection(Serialize& archive) {
+  if(societyProjection)
+    societyProjection->save(*this,archive);
+  }
+
+bool World::societyHoldsRoutine(const Npc& npc, std::string_view blocker) {
+  if(!societyProjection || !societyProjection->isPilot(npc))
+    return false;
+  const auto start = societyProjection->beginEligibility();
+  if(blocker.empty())
+    blocker = npc.societyRoutineBlocker(societyProjection->routineState(npc),societyProjection->isGroupPilot(),
+                                      societyProjection->wideGroupEnabled());
+  if(blocker.empty())
+    blocker = societyVisibilityBlocker(npc);
+  const bool hold = societyProjection->holdRoutine(npc,blocker);
+  societyProjection->endEligibility(start);
+  return hold;
+  }
+
+void World::retainDeferredSocietyRoutine(const Npc& npc) {
+  if(societyHoldsRoutineAfterTick(npc) && societyHoldsRoutine(npc,{}))
+    societyProjection->recordDeferred();
+  }
+
+bool World::societyHoldsRoutineAfterTick(const Npc& npc) const {
+  return societyProjection && societyProjection->holdsRoutineAfterTick(npc);
+  }
+
+bool World::societyEarlyTickEnabled() const {
+  return societyProjection && societyProjection->earlyTickEnabled();
+  }
+
+bool World::persistentSocietyEnabled() const {
+  return societyProjection && societyProjection->persistentEnabled();
+  }
+
+void World::sleepSocietyNpc(Npc& npc) {
+  if(npc.restingBodySuspended())
+    npc.resumeBody();
+  societyProjection->sleep(*this,npc);
+  }
+
+void World::wakeSocietyNpc(Npc& npc) {
+  if(societyProjection)
+    societyProjection->wake(*this,npc);
+  }
+
+void World::prepareSocietyTick(uint64_t dt) {
+  if(!persistentSocietyEnabled() || dt==0)
+    return;
+  wobj.noteNpcCadence(dt);
+  societyProjection->updateInterest(*this);
+  societyProjection->runDeadlines(*this,dt);
+  }
+
+void World::updateSocietyInterest() {
+  if(persistentSocietyEnabled())
+    societyProjection->updateInterest(*this);
+  }
+
+bool World::societyAnimationEnabled() const {
+  return societyProjection && societyProjection->animationEnabled();
+  }
+
+bool World::societyHoldsAnimation(const Npc& npc, uint64_t leadMs) const {
+  if(npc.societySleeping || !societyAnimationEnabled() || !societyProjection->holdsRoutineAfterTick(npc))
+    return false;
+  if(societyProjection->wideGroupEnabled() && npc.societyGestureNeedsPose(leadMs))
+    return false;
+  // Bench and player movement can move the hero after the world tick admitted the routine.
+  const auto* hero = player();
+  return hero!=nullptr &&
+         (hero->position()-npc.position()).quadLength()>=SocietyProjection::FarDistance*SocietyProjection::FarDistance;
+  }
+
+std::string_view World::societyVisibilityBlocker(const Npc& npc) const {
+  const auto* hero = player();
+  AnimationLod::View camera;
+  if(hero==nullptr)
+    return "no_hero";
+  if(!((hero->position()-npc.position()).quadLength()>=SocietyProjection::FarDistance*SocietyProjection::FarDistance))
+    return "hero_near";
+  if(persistentSocietyEnabled()) {
+    const auto* view = societyProjection->interestView();
+    return view!=nullptr ? societyVisibilityBlocker(npc,*view) : "no_camera";
+    }
+  if(!wobj.makeAnimationLodView(camera))
+    return "no_camera";
+  return societyVisibilityBlocker(npc,camera);
+  }
+
+std::string_view World::societyVisibilityBlocker(const Npc& npc, const AnimationLod::View& view) const {
+  const auto* hero = player();
+  if(hero==nullptr)
+    return "no_hero";
+  if((hero->position()-npc.position()).quadLength()<SocietyProjection::FarDistance*SocietyProjection::FarDistance)
+    return "hero_near";
+  const bool furniture = persistentSocietyEnabled() && npc.societyFurnitureHold();
+  if(wobj.mustUpdateAnimation(npc,view,furniture))
+    return "native_pose_needed";
+  if(view.visible(npc))
+    return "camera_visible";
+  return {};
+  }
+
+std::optional<bool> World::stepSocietyRoute(Npc& npc, const WayPoint* destination, uint64_t dt, float destDist) {
+  if(!societyProjection || !societyProjection->isRoutePilot(npc))
+    return {};
+  if(destination==nullptr && !societyProjection->holdingRoute())
+    return {};
+  return societyProjection->stepRoute(npc,destination,dt,destDist,societyVisibilityBlocker(npc));
+  }
+
+void World::recordSocietyRoutineExecution(bool skipped) {
+  societyProjection->recordExecution(skipped);
+  }
+
+void World::recordSocietyEarlyTick(const Npc& npc) {
+  societyProjection->recordEarlyTick(npc);
+  }
+
 void World::load(Serialize &fin) {
+  if(societyProjection)
+    societyProjection->wakeAll(*this);
+  societyProjection.reset();
   spellFields.clear();
   stuckArrows.clear();
   nextArrowTraceId = 1;
@@ -442,6 +583,8 @@ void World::load(Serialize &fin) {
 
 void World::save(Serialize &fout) {
   // The pose is saved with its solved bones: no NPC may still owe frames to the animation LOD.
+  if(persistentSocietyEnabled())
+    societyProjection->wakeAll(*this);
   wobj.syncDeferredAnimation();
   fout.setContext(this);
   fout.setEntry("worlds/",wname,"/world");
@@ -1121,7 +1264,10 @@ void World::updateAnimation(uint64_t dt) {
   }
 
 void World::catchUpAnimation() {
+  updateSocietyInterest();
   wobj.catchUpAnimation();
+  if(societyProjection)
+    societyProjection->writeProfile();
   }
 
 void World::resetPositionToTA() {
@@ -1231,6 +1377,13 @@ void World::tick(uint64_t dt) {
   static bool doTicks=true;
   if(!doTicks)
     return;
+  if(societyProjection) {
+    societyProjection->writeProfile();
+    if(!societyProjection->advance(*this)) {
+      societyProjection->wakeAll(*this);
+      societyProjection.reset();
+      }
+    }
   tickSpellFields(dt);
   { FrameProfile::Scope timing(FrameProfile::Zone::WorldLogic); wobj.tick(dt,dt); }
   { FrameProfile::Scope timing(FrameProfile::Zone::Prepare); wobj.prepareRagdolls(); }
@@ -1240,6 +1393,8 @@ void World::tick(uint64_t dt) {
   updateStuckArrows(dt);
   { FrameProfile::Scope timing(FrameProfile::Zone::Sync); wobj.syncRagdolls(); }
   sweepBodies();
+  if(societyProjection)
+    societyProjection->sample(*this);
   FrameProfile::Scope timing(FrameProfile::Zone::WorldMisc);
   if(auto pl = player(); pl!=nullptr && !BodyArena::frozenWorld())
     wsound.tick(*pl);
@@ -1251,6 +1406,13 @@ uint64_t World::tickCount() const {
   }
 
 void World::setDayTime(int32_t h, int32_t min) {
+  // The script sets the clock and repositions all native routines; the startup projection
+  // cannot follow that discontinuity from its captured world.
+  if(societyProjection) {
+    Tempest::Log::i("Society shadow stopped: native routine placement reset");
+    societyProjection->wakeAll(*this);
+    societyProjection.reset();
+    }
   gtime now     = GameHost::inst().sessionTime(game);
   auto  day     = now.day();
   gtime dayTime = now.timeInDay();
@@ -1720,6 +1882,10 @@ Bullet& World::shootArrow(const Item& itm, const Tempest::Vec3& pos, const Tempe
   auto& b = wobj.shootBullet(itm, pos, dir, 0, speed);
   b.setTarget(nullptr);
   return b;
+  }
+
+bool World::hasActiveProjectileFrom(const Npc& npc) const {
+  return wobj.hasActiveProjectileFrom(npc);
   }
 
 void World::sendPassivePerc(Npc &self, Npc &other, int32_t perc) {

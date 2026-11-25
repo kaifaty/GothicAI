@@ -1,5 +1,7 @@
 #include "npc.h"
 
+#include "frameprofile.h"
+
 #include "game/bodycontroller.h"
 #include "game/gamerules.h"
 #include "world/objects/interactive.h"
@@ -167,7 +169,16 @@ bool Npc::implAiTick(uint64_t dt) {
   if(aiQueue.size()==0) {
     if(externalCtrl)
       return false;
+    if(monsterRestSleeping && owner.tickCount()<aiState.loopNextTime) {
+      FrameProfile::add(FrameProfile::Amount::NpcRestRoutineDeferred,1);
+      return false;
+      }
+    const bool deadline = monsterRestSleeping;
+    monsterRestSleeping = false;
     tickRoutine();
+    monsterRestSleeping = simTier()==NpcSimTier::Simplified && canSleepMonsterRest();
+    if(deadline)
+      FrameProfile::add(FrameProfile::Amount::NpcRestRoutineDeadline,1);
     if(aiQueue.size()>0)
       nextAiAction(aiQueue,dt);
     return false;
@@ -178,8 +189,12 @@ bool Npc::implAiTick(uint64_t dt) {
 
 void Npc::implAiWait(uint64_t dt) {
   auto w = owner.tickCount()+dt;
-  if(w>waitTime)
+  if(w>waitTime) {
+    const bool newWait = waitTime<=owner.tickCount();
     waitTime = w;
+    if(newWait)
+      owner.noteNpcCellChange(*this);
+    }
   }
 
 void Npc::implAniWait(uint64_t dt) {

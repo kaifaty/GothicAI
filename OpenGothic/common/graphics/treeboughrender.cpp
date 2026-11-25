@@ -1,5 +1,7 @@
 #include "treeboughrender.h"
 
+#include <Tempest/Log>
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -211,6 +213,7 @@ void TreeBoughRender::uploadData() {
     words.push_back(std::bit_cast<uint32_t>(box[1].y-box[0].y));
     putVec(words,bound[0]);
     putVec(words,bound[1]);
+    words.push_back(std::bit_cast<uint32_t>(source.cullPadding));
     words.resize(roots);
     words.insert(words.end(),source.roots.begin(),source.roots.end());
     words.resize(ranges);
@@ -336,6 +339,8 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   flags |= FrameProfile::enabled() ? 2u : 0u;
   flags |= scene.isTreeOcclusionProbe() ? 4u : 0u;
   flags |= lateHiZ ? 8u : 0u;
+  expandedToken = token;
+  expandedFlags = flags;
   struct Push { uint32_t token, flags; float nearZ; uint32_t stage; };
   enc.setBinding(0,scene.uboGlobal[SceneGlobals::V_Main]);
   enc.setBinding(1,view.visClusters);
@@ -399,6 +404,99 @@ void TreeBoughRender::readStats(Encoder<CommandBuffer>& enc, uint8_t frame, bool
   readPending[frame] = true;
   }
 
+uint32_t TreeBoughRender::copyCommands(Encoder<CommandBuffer>& enc, StorageBuffer& destination) {
+  const auto& main = owner.views[SceneGlobals::V_Main];
+  const auto& filtered = owner.history.view;
+  const StorageBuffer* buffers[] = {&main.indirectCmd, &main.visClusters, &indirect, &payload,
+                                    &filtered.indirectCmd, &filtered.visClusters};
+  const auto count = (expandedFlags & 8u)!=0u ? std::size(buffers) : std::size(buffers)-2;
+  size_t bytes = 0;
+  for(size_t i=0; i<count; ++i)
+    bytes += buffers[i]->byteSize();
+  destination = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, bytes);
+  uint32_t offset = 0;
+  for(size_t i=0; i<count; ++i) {
+    const auto words = uint32_t(buffers[i]->byteSize()/sizeof(uint32_t));
+    if(words>0)
+      copy(enc,*buffers[i],destination,offset,words,words);
+    offset += words;
+    }
+  return offset;
+  }
+
+void TreeBoughRender::readDiagnostic(DiagnosticRead& slot) {
+  if(slot.stamp==0)
+    return;
+  auto& device = Resources::device();
+  uint32_t values[DiagnosticCount+StatsCount] = {};
+  device.readBytes(slot.counts,values,sizeof(values));
+  Log::i("bough_hiz_diagnostic stamp_ns=", slot.stamp, " compact_nodes=", values[0], " compact_triangles=", values[1],
+         " hidden_nodes=", values[2], " hidden_triangles=", values[3], " offscreen_nodes=", values[4],
+         " offscreen_triangles=", values[5], " submitted_triangles=", values[6],
+         " stock_triangles=", slot.stockCounts ? int64_t(values[DiagnosticCount+3]) : -1);
+  if(slot.commandWords>0) {
+    std::vector<uint32_t> before(slot.commandWords), after(slot.commandWords);
+    device.readBytes(slot.before,before.data(),slot.before.byteSize());
+    device.readBytes(slot.after,after.data(),slot.after.byteSize());
+    size_t different = 0;
+    for(size_t i=0; i<before.size(); ++i)
+      different += before[i]!=after[i];
+    Log::i("bough_hiz_commands stamp_ns=", slot.stamp, " compared_words=", slot.commandWords,
+           " different_words=", different);
+    slot.before = {};
+    slot.after = {};
+    slot.commandWords = 0;
+    }
+  slot.stamp = 0;
+  }
+
+bool TreeBoughRender::diagnose(Encoder<CommandBuffer>& enc, uint8_t frame, const Texture2d& depth,
+                               const Matrix4x4& viewProject, bool verify, uint64_t stamp) {
+  auto& slot = diagnosticRead[frame];
+  readDiagnostic(slot); // the frame slot's fence has completed
+  if(stamp==0 || !owner.boughExpanded)
+    return false;
+  auto& device = Resources::device();
+  if(diagnosticPipeline.isEmpty()) {
+    diagnosticPipeline = compute("tree_bough_hiz_diagnostic.comp.sprv");
+    diagnosticCounts = device.ssbo(Uninitialized, DiagnosticCount*sizeof(uint32_t));
+    }
+  if(slot.counts.isEmpty())
+    slot.counts = device.ssbo(BufferHeap::Readback, Uninitialized, (DiagnosticCount+StatsCount)*sizeof(uint32_t));
+  if(verify)
+    slot.commandWords = copyCommands(enc,slot.before);
+
+  const auto& scene = owner.scene;
+  struct Push { uint32_t token, flags; float nearZ; uint32_t stage; Matrix4x4 previousViewProject; };
+  Push push = {expandedToken, expandedFlags | 16u, scene.znear, 1, viewProject};
+  enc.setFramebuffer({});
+  enc.setDebugMarker("Bough-HiZ-diagnostic");
+  enc.setBinding(0,scene.uboGlobal[SceneGlobals::V_Main]);
+  enc.setBinding(2,owner.owner.instanceSsbo());
+  enc.setBinding(3,data);
+  enc.setBinding(5,owner.clusters.ssbo());
+  enc.setBinding(6,state);
+  enc.setBinding(7,cpu ? referenceData : data);
+  enc.setBinding(10,(expandedFlags & 8u)!=0u ? owner.history.status : data);
+  enc.setBinding(11,depth,Sampler::nearest());
+  enc.setBinding(12,diagnosticCounts);
+  enc.setPipeline(diagnosticPipeline);
+  enc.setPushData(push);
+  enc.dispatch(1);
+  push.stage = 0;
+  enc.setPushData(push);
+  enc.dispatch(entries.size());
+
+  if(verify)
+    copyCommands(enc,slot.after);
+  copy(enc,diagnosticCounts,slot.counts,0,DiagnosticCount,DiagnosticCount);
+  slot.stockCounts = (expandedFlags & 2u)!=0u;
+  if(slot.stockCounts)
+    copy(enc,state,slot.counts,DiagnosticCount,StatsCount,StatsCount);
+  slot.stamp = stamp;
+  return true;
+  }
+
 void DrawCommands::addBough(const StaticMesh& mesh, uint32_t cluster, uint16_t main, uint16_t impostor,
                            uint32_t first, uint32_t count) {
   if(!boughs)
@@ -425,4 +523,9 @@ void DrawCommands::finishBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fI
   boughExpanded = true;
   if(FrameProfile::enabled())
     boughs->readStats(enc,fId,true);
+  }
+
+bool DrawCommands::diagnoseBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fId, const Texture2d& depth,
+                                           const Matrix4x4& viewProject, bool verify, uint64_t stamp) {
+  return boughs && boughs->diagnose(enc,fId,depth,viewProject,verify,stamp);
   }

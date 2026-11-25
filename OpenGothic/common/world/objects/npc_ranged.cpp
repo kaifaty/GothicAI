@@ -445,6 +445,8 @@ bool Npc::releaseArrow(float draw, const Archery::Stats& st) {
   }
 
 HitZones::Zone Npc::rayHitZone(const Tempest::Vec3& from, const Tempest::Vec3& to, float& t, size_t* bone) const {
+  // A stray arrow can query an off-screen actor outside the combat target pins.
+  syncDeferredAnimation();
   return visual.rayHitZone(from,to,t,bone);
   }
 

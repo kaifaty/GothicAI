@@ -12,6 +12,7 @@ extern bool benchTexturesFrozen;
 #include "npcdayjournal.h"
 #include "frameprofile.h"
 #include "loadprobe.h"
+#include "world/benchhooks.h"
 
 #include <Tempest/Pixmap>
 #include <Tempest/SoundDevice>
@@ -671,11 +672,16 @@ void arenaAbort(std::string_view reason) {
 }
 
 
+bool TestBench::npcDuelRunning() {
+  return bench.npcDuel.active;
+  }
+
 bool TestBench::npcDuelActor(const Npc& npc) {
   return bench.npcDuel.active && (bench.npcDuel.actors[0]==&npc || bench.npcDuel.actors[1]==&npc);
   }
 
 void TestBench::npcDuelSwingStart(const Npc& npc) {
+  npcCombatHandoffSwing(npc,true);
   if(!npcDuelActor(npc))return;
   auto& duel=bench.npcDuel;
   const size_t i=duel.actors[0]==&npc ? 0 : 1;
@@ -685,6 +691,7 @@ void TestBench::npcDuelSwingStart(const Npc& npc) {
   }
 
 void TestBench::npcDuelSwingEnd(const Npc& npc, std::string_view outcome) {
+  npcCombatHandoffSwing(npc,false);
   if(!npcDuelActor(npc))return;
   auto& duel=bench.npcDuel;
   const size_t i=duel.actors[0]==&npc ? 0 : 1;
@@ -812,7 +819,7 @@ void TestBench::configure(std::string scenario, std::string output, int64_t seed
   logFile = nullptr;
   // Reconstruct all scenario-owned buffers/counters/pointers, including terminal and RNG state.
   bench.~Bench();
-  new(&bench) Bench();
+  new(&bench) testbench_detail::Bench();
   bodyTraceAlive = true;
   static std::string configuredScenario;
   configuredScenario = std::move(scenario);
@@ -1073,14 +1080,14 @@ bool TestBench::takeRenderReset() {
   return r;
   }
 
-uint64_t TestBench::frameDt(uint64_t dt) {
+uint64_t TestBench::frameDt(uint64_t dt, bool fixedStep) {
   if(!bench.started || bench.done)
     return dt;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
   if(AppCadence::normalClock()) { ++bench.step;bench.frameMs=dt;return dt; }
 #endif
   ++bench.step;
-  if(realtime) {
+  if(realtime && !fixedStep) {
     using namespace std::chrono;
     const auto now = steady_clock::now();
     if(bench.step==1)
@@ -1090,7 +1097,7 @@ uint64_t TestBench::frameDt(uint64_t dt) {
       std::this_thread::sleep_until(due); else
       bench.lagMs = std::max<int64_t>(bench.lagMs,duration_cast<milliseconds>(now-due).count());
     }
-  bench.frameMs = (bench.step*1000)/Fps - ((bench.step-1)*1000)/Fps;
+  bench.frameMs = fixedStep ? dt : (bench.step*1000)/Fps - ((bench.step-1)*1000)/Fps;
   const auto healingStep=[&](uint64_t step) {
     const auto* world=Gothic::inst().world();
     if(world && bench.healing.test.strikeAt>world->tickCount())
@@ -1105,18 +1112,24 @@ uint64_t TestBench::frameDt(uint64_t dt) {
   return healingStep(dtGame);
   }
 
-void TestBench::beforeNpcTick(Npc& npc) {
-  if(scenarioPath==nullptr || bench.done || !bench.healing.test.strikeAt || !bench.ctrl || !npc.isPlayer())
-    return;
-  auto& world=npc.world();
-  if(world.tickCount()<bench.healing.test.strikeAt)
-    return;
-  bench.healing.test.strikeAt=0;
-  exec("strike player BDT_1013_BANDIT_L",world,npc,*bench.ctrl);
-  healingObserve(bench.healing,world,npc);
+BenchNpcTick TestBench::beforeNpcTick(Npc& npc) {
+  if(scenarioPath==nullptr || bench.done)
+    return BenchNpcTick::Normal;
+  if(bench.healing.test.strikeAt && bench.ctrl && npc.isPlayer() &&
+     npc.world().tickCount()>=bench.healing.test.strikeAt) {
+    auto& world=npc.world();
+    bench.healing.test.strikeAt=0;
+    exec("strike player BDT_1013_BANDIT_L",world,npc,*bench.ctrl);
+    healingObserve(bench.healing,world,npc);
+    }
+  return bench.started ? npcCombatHandoffTick(npc) : BenchNpcTick::Normal;
   }
 
 void TestBench::beforeWorldTick(uint64_t dt) {
+  if(scenarioPath!=nullptr && bench.started && !bench.done && dt!=0)
+    if(auto* world=Gothic::inst().world())
+      tickNpcCombatHandoff(*world);
+
   // Keep the native observer at the fixture's supported point. Nearby enemies
   // retain their ordinary behaviour and cannot push this measurement out of range.
   if(scenarioPath!=nullptr && bench.started && !bench.done && bench.cloth.clothTrace && bench.cloth.clothHold) {
@@ -1180,7 +1193,7 @@ bool TestBench::voiceStems() {
 std::function<void(const int16_t*,size_t)> TestBench::aiVoiceStem(std::string_view npc, std::string_view line, uint32_t rate) {
   if(!voiceStems() || !bench.rec || bench.audio==nullptr || SoundDevice::loopbackRate()==0)
     return {};
-  auto stem = std::make_shared<Bench::VoiceStem>();
+  auto stem = std::make_shared<testbench_detail::Bench::VoiceStem>();
   char suffix[48];
   std::snprintf(suffix,sizeof(suffix),".voice-%02zu.wav",bench.voiceStems.size()+1);
   stem->path = std::filesystem::absolute(outDir+"/"+bench.recName+suffix).string();
@@ -1364,6 +1377,6 @@ void TestBench::arrowAt(const void* arrow, float x, float y, float z) {
     return;
     }
   // drop the ones long gone, start this one
-  std::erase_if(bench.trails,[](const Bench::Trail& t){ return bench.time>t.last+bench.trailKeep; });
+  std::erase_if(bench.trails,[](const testbench_detail::Bench::Trail& t){ return bench.time>t.last+bench.trailKeep; });
   bench.trails.push_back({arrow,{p},bench.time});
   }

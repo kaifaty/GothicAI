@@ -36,6 +36,7 @@
 #include "world/objects/archer.h"
 #include "world/objects/sound.h"
 #include "game/inventory.h"
+#include "society/combat.h"
 #include "physics/charactervirtualdiagnostics.h"
 #include "physics/dynamicworld.h"
 #include "physics/physics.h"
@@ -44,6 +45,8 @@
 #include "physics/ragdoll.h"
 #include "utils/keycodec.h"
 #include "world/waypoint.h"
+
+enum class BenchNpcTick : uint8_t;
 
 class Camera;
 namespace Tempest { class Pixmap; }
@@ -1479,6 +1482,45 @@ struct NpcDuel {
   void hit(Npc& victim, Npc& by, int32_t loss, std::string_view);
   };
 
+struct NpcFightTrace {
+  std::vector<uint32_t> actors;
+  std::string label;
+  uint64_t from = 0;
+
+  void hit(Npc& victim, Npc& by, int32_t loss, std::string_view kind);
+  void stop();
+  };
+
+struct NpcCombatHandoff {
+  enum class Phase : uint8_t { Off, Native, NativeDrain, Society, SocietyDrain, Returned };
+  enum class Wait : uint8_t { None, NativeHit, NativeSwing, NativeProjectile, FarRelease, FarHits, ReturnedHit };
+  enum class Mode : uint8_t { Ranged, Melee, Magic };
+  struct Actor {
+    Npc* npc = nullptr;
+    uint32_t id = 0;
+    size_t ammunition = 0, initialAmmo = 0, ammo = 0;
+    int32_t initialHp = 0, hp = 0, observedDamage = 0;
+    int32_t initialMana = 0, mana = 0;
+    uint32_t nativeShots = 0, nativeHits = 0, shotsAtResume = 0, hitsAtResume = 0, pendingShot = 0;
+    uint32_t swings = 0, activeSwing = 0, lastHitSwing = 0;
+    };
+  World* world = nullptr;
+  std::array<Actor,2> actors;
+  std::optional<Society::Combat::Encounter> encounter;
+  uint64_t seed = 0, waitUntil = 0;
+  uint32_t releases = 0, impacts = 0, impactsWhileFar = 0, pendingAtReturn = 0, nativeDrainHits = 0;
+  uint32_t drainingActor = 0, drainingSwing = 0;
+  size_t rune = size_t(-1);
+  int32_t spell = -1, manaCost = 0;
+  Phase phase = Phase::Off;
+  Wait wait = Wait::None;
+  Mode mode = Mode::Ranged;
+  bool invalidNativeHit = false;
+
+  void hit(Npc& victim, Npc& by, int32_t loss, std::string_view kind);
+  void stop();
+  };
+
 std::string movableRows(World& world,bool allMap=false);
 void movableBegin(World& world,std::string phase);
 void movableFields(World& world);
@@ -1574,6 +1616,13 @@ bool fracturePiecesCommand(FracturePieces& state,Destruction& destruction,const 
 bool waterCommand(Water& waterState,const WaterContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
 bool furniturePartsCommand(FurnitureParts& state,const std::vector<std::string>& a,World& w,Npc& pl);
 bool npcSimCommand(NpcDuel& duelState,NpcTierTest& tierState,NpcSpeedTest& speedState,size_t& pc,const std::vector<std::string>& prog,const std::vector<std::string>& a,World& w,Npc& pl);
+void npcFightTraceCommand(NpcFightTrace& trace,const std::vector<std::string>& args,const std::vector<Npc*>& crew,
+                          World& world,Npc& player,uint64_t seed);
+void npcCombatHandoffCommand(const std::vector<std::string>& args, World& world, Npc& player, uint64_t seed);
+void tickNpcCombatHandoff(World& world);
+BenchNpcTick npcCombatHandoffTick(const Npc& npc);
+void npcCombatHandoffSwing(const Npc& npc, bool starts);
+bool npcCombatHandoffWaiting(uint64_t tick);
 
 const char* envStr(const char* name);
 float groundY(World& w,float x,float z,float y);
@@ -2016,6 +2065,8 @@ struct Bench : OverlayBench, CameraBench {
   bool        duelWaiting  = false;
   using NpcDuel = testbench_detail::NpcDuel;
   NpcDuel npcDuel;
+  NpcFightTrace npcFightTrace;
+  NpcCombatHandoff npcCombatHandoff;
   std::vector<Npc*> observeActors;
   uint64_t    observeFrom = 0, observeEnd = 0;
   bool        observeActive = false;

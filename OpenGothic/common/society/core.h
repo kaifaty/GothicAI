@@ -8,6 +8,18 @@
 namespace Society {
 namespace detail {
 
+inline uint64_t fnv1a64(std::string_view bytes, uint64_t h = 14695981039346656037ull) {
+  for(char c:bytes) {
+    h ^= uint8_t(c);
+    h *= 1099511628211ull;
+    }
+  return h;
+  }
+
+inline bool later(const Pending& x, const Pending& y) {
+  return x.time!=y.time ? x.time>y.time : x.seq>y.seq;
+  }
+
 // sim.cpp
 uint64_t push(State& s, Time t, uint32_t npc, Pending::Kind kind);
 void     pushBody(State& s, Time t, uint32_t npc, Pending::Kind kind);

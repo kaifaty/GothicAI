@@ -18,7 +18,16 @@ gtime after(gtime now, uint64_t ms) {
   now.addMilis(ms);
   return now;
   }
+
+bool isRestingSleepState(std::string_view state) {
+  return state=="ZS_SLEEP" || state=="ZS_SLEEP_DEEP" || state=="ZS_MM_RTN_SLEEP";
+  }
 }
+
+bool Npc::hasCampfireActivity() const {
+  const auto* point = activityEvents.activity ? activityEvents.activity->point : nullptr;
+  return point!=nullptr && point->form==ActivityDefinitions::PointActivity::Form::Campfire;
+  }
 
 bool Npc::canSuspendCampfireBody() const {
   using ActivityEvents::Stage;
@@ -52,27 +61,71 @@ bool Npc::canSuspendCampfireBody() const {
          isOnFreePoint(point->point) && currentFpLock.point()==currentFp && currentFp->useCounter()==1;
   }
 
-bool Npc::suspendCampfireBody() {
-  if(physic.bodySuspended())
-    return true;
-  if(!go2.empty()) {
+bool Npc::hasRestingBodyActivity() const {
+  return isRestingSleepState(aiState.hint) || !activityEvents.waitPoints.empty() || waitTime>owner.tickCount();
+  }
+
+bool Npc::canSuspendRestingBody() const {
+  const auto now = owner.tickCount();
+  const bool sleeping = isRestingSleepState(aiState.hint);
+  const auto& activity = activityEvents;
+  const bool waitingForPoint = activity.stage==ActivityEvents::Stage::Wait &&
+                               !activity.waitPoints.empty() && !activity.awaitQueue &&
+                               !activity.pending && !activity.retry && !activity.restart && !isAiBusy();
+  if(!sleeping && waitTime<=now && !waitingForPoint)
+    return false;
+  if(societySleeping || (waitingForPoint && owner.societyHoldsRoutineAfterTick(*this)) ||
+     externalCtrl || currentTarget!=nullptr || !go2.empty() || aiQueueOverlay.size()!=0 ||
+     !outputPipe->isFinished() || isDown() || isMeleeFighter() || physicsNoiseUntil>now ||
+     isPhysicsInvestigating() || spellWhirling() || BodyController::owns(*this) ||
+     (!physic.isEnabled() && !bodySuspended()))
+    return false;
+  if(!sleeping)
+    return currentInteract==nullptr && !nativeBodyAction() && bodyStateMasked()==BS_STAND &&
+           visual.pose().isStanding() && weaponState()==WeaponState::NoWeapon;
+  if(!aiState.started || aiState.eTime<=owner.time() || isAiBusy() || bodyStateMasked()!=BS_LIE)
+    return false;
+  if(std::string_view(aiState.hint)=="ZS_MM_RTN_SLEEP")
+    return currentInteract==nullptr && visual.pose().isInAnim("S_SLEEP");
+  return settledFurniturePose();
+  }
+
+bool Npc::suspendDistantBody(bool resting) {
+  if(!bodySuspended() && !go2.empty()) {
     // The first sample of a graph segment can preserve an authored height above the floor.
     const auto floor=owner.physic()->landRay(position()+Tempest::Vec3(0,30,0),60);
     if(!floor.hasCol || std::abs(floor.v.y-y)>5.f)
       return false;
     }
   physic.suspendBody();
-  return true;
+  if(resting && !restingBody)
+    clearMeleeShadow();
+  restingBody = resting && bodySuspended();
+  return bodySuspended();
+  }
+
+void Npc::resumeBody() {
+  if(!bodySuspended() && !restingBody)
+    return;
+  physic.resumeBody();
+  if(restingBody) {
+    restingBody = false;
+    syncDeferredAnimation();
+    }
+  owner.noteNpcCellChange(*this);
   }
 
 void Npc::wakeActivity(uint16_t wakes) {
-  if(activityEvents.activity!=nullptr)
+  if(activityEvents.activity!=nullptr && wakes!=0) {
+    wakeSociety();
     activityEvents.pending |= wakes;
+    }
   }
 
 void Npc::stopActivityEvents(uint16_t why) {
   if(activityEvents.init==size_t(-1))
     return; // nothing set up: no reservation, no wait
+  wakeSociety();
   const auto* record=activityEvents.activity;
   const bool atPoint=record && record->point;
   const auto before=activityEvents.stage;
@@ -108,6 +161,8 @@ void Npc::stopActivityEvents(uint16_t why) {
     places.unwait(*this);
     }
   activityEvents = ActivityEvents::State();
+  if(atPoint && record->point->form==ActivityDefinitions::PointActivity::Form::Campfire)
+    owner.noteNpcCellChange(*this);
   if(probe) probe->activityTransition(*this,why,before);
   }
 
@@ -118,6 +173,8 @@ void Npc::startActivityEvents(const ActivityEvents::Record* activity) {
   activityEvents.activity = activity;
   if(activityEvents.activity==nullptr)
     return;
+  if(hasCampfireActivity())
+    owner.noteNpcCellChange(*this);
   activityEvents.stage      = ActivityEvents::Stage::Approach;
   activityEvents.awaitQueue = true;
   activityEvents.deadline   = after(owner.time(),ActivityEvents::WatchdogMs);
@@ -131,6 +188,8 @@ void Npc::restoreActivityEvents(const ActivityEvents::Record* activity) {
   activityEvents.init     = aiState.funcIni.ptr;
   activityEvents.activity = activity;
   activityEvents.pending  = ActivityEvents::Loaded;
+  if(hasCampfireActivity())
+    owner.noteNpcCellChange(*this);
   }
 
 void Npc::tickActivityEvents(bool runLoop) {
@@ -320,9 +379,12 @@ bool Npc::isActivityPoint(const WayPoint* point) const {
   }
 
 void Npc::stopWaitingForPoints() {
+  if(activityEvents.waitPoints.empty())
+    return;
   for(auto* p:activityEvents.waitPoints)
     p->stopWaiting(*this);
   activityEvents.waitPoints.clear();
+  owner.noteNpcCellChange(*this);
   }
 
 void Npc::seekActivityPoint(uint16_t wakes) {
@@ -395,6 +457,8 @@ void Npc::seekActivityPoint(uint16_t wakes) {
       }
     for(auto* p:s.waitPoints)
       p->waitForFree(*this);
+    if(!s.waitPoints.empty())
+      owner.noteNpcCellChange(*this);
     occluded = owner.findFreePoint(centerPosition(),a.point)!=nullptr;
     }
   s.stage    = on ? Stage::Hold : Stage::Wait;
@@ -421,21 +485,43 @@ void Npc::seekActivityPoint(uint16_t wakes) {
     }
   }
 
-void Npc::tickPointGesture() {
+bool Npc::pointGestureDue(uint64_t leadMs) const {
   using namespace ActivityEvents;
   const auto& s = activityEvents;
   if(s.stage!=Stage::Hold && s.stage!=Stage::Wait)
-    return;
+    return false;
   const auto& a = *s.activity->point;
-  if(int32_t(stateTime()/1000)<=a.timerSeconds || hnpc->aivar[19]!=a.poseStage)
-    return;
-  playActivityGesture();
+  return int32_t((stateTime()+leadMs)/1000)>a.timerSeconds && hnpc->aivar[19]==a.poseStage;
+  }
+
+bool Npc::societyGestureNeedsPose(uint64_t leadMs) const {
+  using Form = ActivityDefinitions::PointActivity::Form;
+  const auto* activity = activityEvents.activity;
+  const auto* point = activity!=nullptr ? activity->point : nullptr;
+  if(point==nullptr)
+    return currentInteract!=nullptr && aiState.loopNextTime<=owner.tickCount()+leadMs && mobGestureDue(leadMs);
+  if(!point->timed())
+    return false;
+  // A gesture blend needs recent samples of its outgoing stance and velocity.
+  if(point->form!=Form::Guard && aiState.loopNextTime>owner.tickCount()+leadMs)
+    return false;
+  return pointGestureDue(leadMs);
+  }
+
+void Npc::tickPointGesture() {
+  if(pointGestureDue())
+    playActivityGesture();
+  }
+
+bool Npc::mobGestureDue(uint64_t leadMs) const {
+  const auto* activity = activityEvents.activity;
+  const auto* mob = activity!=nullptr ? activity->mob : nullptr;
+  return mob!=nullptr && mob->timer && int32_t((stateTime()+leadMs)/1000)>mob->timer->timerSeconds &&
+         ActivityDefinitions::bodyStateContains(int32_t(bodyState()),mob->busyBodyState);
   }
 
 void Npc::tickMobTimer() {
-  const auto& mob=*activityEvents.activity->mob;
-  if(mob.timer && int32_t(stateTime()/1000)>mob.timer->timerSeconds &&
-     ActivityDefinitions::bodyStateContains(int32_t(bodyState()),mob.busyBodyState))
+  if(mobGestureDue())
     playActivityGesture();
   }
 

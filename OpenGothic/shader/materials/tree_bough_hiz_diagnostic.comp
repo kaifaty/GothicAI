@@ -1,0 +1,234 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "scene.glsl"
+#include "materials/tree_bough_cut.glsl"
+
+layout(local_size_x = 64) in;
+layout(binding = 0, std140) uniform Scene { SceneDesc scene; };
+layout(binding = 2, std430) readonly buffer Mem { uint instanceMem[]; };
+layout(binding = 3, std430) readonly buffer Data { uint data[]; };
+layout(binding = 5, std430) readonly buffer Cls { Cluster clusters[]; };
+layout(binding = 6, std430) readonly buffer CutState { uint state[]; };
+layout(binding = 7, std430) readonly buffer Ref { uint reference[]; };
+layout(binding = 10, std430) readonly buffer HiZHistory { uint historyStatus[]; };
+layout(binding = 11) uniform sampler2D previousHiZ;
+layout(binding = 12, std430) buffer Diagnostic { uint counters[]; };
+
+layout(push_constant, std430) uniform Push {
+  uint token;
+  uint flags; // bit 0: CPU reference, bit 3: late history HiZ, bit 4: previous final depth available
+  float nearZ;
+  uint stage; // 0: replay cut into counters, 1: clear counters
+  mat4 previousViewProject;
+  } push;
+
+const uint CompactNodes = 0u, CompactTriangles = 1u;
+const uint HiddenNodes = 2u, HiddenTriangles = 3u;
+const uint OffscreenNodes = 4u, OffscreenTriangles = 5u;
+const uint SubmittedTriangles = 6u, CounterCount = 7u;
+const uint BoundsUnknown = 0u, BoundsOutside = 1u, BoundsProjected = 2u;
+const float Epsilon = 1.1920928955078125e-7;
+
+shared uint hasCompact;
+shared uint sums[CounterCount];
+uint nodeBase, rangeBase;
+uint countByLane[CounterCount];
+mat4 currentClip, currentError, previousClip, previousError;
+float windPad;
+bool validBounds;
+
+vec3 readVec(uint offset) {
+  return uintBitsToFloat(uvec3(data[offset], data[offset+1u], data[offset+2u]));
+  }
+
+BoughNode boughGetNode(uint i) {
+  uint at = nodeBase+i*16u;
+  return BoughNode(vec4(0), readVec(at+4u), uintBitsToFloat(data[at+7u]),
+                   readVec(at+8u), uintBitsToFloat(data[at+11u]),
+                   uintBitsToFloat(data[at+12u]), uintBitsToFloat(data[at+13u]),
+                   data[at+14u], data[at+15u]);
+  }
+
+vec3 transformColumn(uint offset) {
+  return uintBitsToFloat(uvec3(instanceMem[offset], instanceMem[offset+1u], instanceMem[offset+2u]));
+  }
+
+mat4 absMatrix(mat4 m) {
+  return mat4(abs(m[0]), abs(m[1]), abs(m[2]), abs(m[3]));
+  }
+
+bool finiteValues(vec4 v) {
+  return all(notEqual(floatBitsToUint(v) & 0x7f800000u, uvec4(0x7f800000u)));
+  }
+
+uint projectBounds(mat4 clipTransform, mat4 clipError, vec3 lo, vec3 hi, out vec4 rect, out float nearest) {
+  // Bound rounding in the two affine transforms before taking the extrema of clip.xyz / clip.w.
+  const vec4 error = clipError * vec4(max(abs(lo), abs(hi)), 1.0) + 32.0 * Epsilon;
+  const float negInf = uintBitsToFloat(0xff800000u);
+  vec4 sideUpper = vec4(negInf);
+  vec2 depthUpper = vec2(negInf);
+  bool canProject = true;
+  rect = vec4(2.0, 2.0, -2.0, -2.0);
+  nearest = 2.0;
+  for(uint corner=0u; corner<8u; ++corner) {
+    const vec3 pos = mix(lo, hi, notEqual(uvec3(corner) & uvec3(1,2,4), uvec3(0)));
+    const vec4 clip = clipTransform * vec4(pos, 1.0);
+    const vec4 low = clip - error, high = clip + error;
+    if(!finiteValues(low) || !finiteValues(high))
+      return BoundsUnknown;
+    // All corners outside one Vulkan clip plane prove exclusion even if some w cannot be divided.
+    sideUpper = max(sideUpper, high.w + vec4(high.xy, -low.xy));
+    depthUpper = max(depthUpper, vec2(high.z, high.w - low.z));
+    if(low.w<=push.nearZ || low.z<=0.0) {
+      canProject = false;
+      continue;
+      }
+    const vec3 lower = min(low.xyz / low.w, low.xyz / high.w);
+    const vec2 upper = max(high.xy / low.w, high.xy / high.w);
+    rect = vec4(min(rect.xy, lower.xy), max(rect.zw, upper));
+    nearest = min(nearest, lower.z);
+    }
+  if(any(lessThan(sideUpper, vec4(0))) || any(lessThan(depthUpper, vec2(0))))
+    return BoundsOutside;
+  return canProject && finiteValues(rect) ? BoundsProjected : BoundsUnknown;
+  }
+
+bool coveredByDepth(vec4 rect, float nearest) {
+  const ivec2 base = textureSize(previousHiZ, 0);
+  const ivec2 pot = ivec2(1) << (findMSB(uvec2(scene.screenRes - 1)) + 1);
+  if(any(lessThanEqual(base, ivec2(0))) || any(greaterThan(base, pot)))
+    return false;
+
+  // The final R32F pyramid stores the furthest source depth of each POT tile. Test all base-level
+  // cells touching the projected box, including a pixel of slack for rasterization at the boundary.
+  const ivec2 tile = pot / base;
+  const vec4 pixels = (clamp(rect, -1.0, 1.0) * 0.5 + 0.5) * vec2(scene.screenRes).xyxy;
+  const vec2 last = vec2(scene.screenRes - 1);
+  const ivec2 lo = ivec2(clamp(pixels.xy - 1.0, vec2(0), last)) / tile;
+  const ivec2 hi = ivec2(clamp(pixels.zw + 1.0, vec2(0), last)) / tile;
+  // One D16 step also covers D24 and D32F quantization of the depth attachment.
+  const float guarded = min(nearest, 1.0) - 1.0/65535.0;
+  for(int y=lo.y; y<=hi.y; ++y) {
+    for(int x=lo.x; x<=hi.x; ++x) {
+      const float depth = texelFetch(previousHiZ, ivec2(x,y), 0).r;
+      if(!(depth>0.0 && guarded>depth))
+        return false; // Includes missing or clear (depth 1) samples.
+      }
+    }
+  return true;
+  }
+
+void boughEmit(uint i, uint transition, float weight) {
+  const uint triangles = data[rangeBase+i*4u+1u]/3u;
+  ++countByLane[CompactNodes];
+  countByLane[CompactTriangles] += triangles;
+  if(!validBounds)
+    return;
+
+  const BoughNode node = boughGetNode(i);
+  const vec3 lo = node.boxMin - windPad, hi = node.boxMax + windPad;
+  vec4 rect;
+  float nearest;
+  const uint current = projectBounds(currentClip, currentError, lo, hi, rect, nearest);
+  if(current==BoundsOutside) {
+    ++countByLane[OffscreenNodes];
+    countByLane[OffscreenTriangles] += triangles;
+    return;
+    }
+  if(current!=BoundsProjected || (push.flags & 16u)==0u ||
+     projectBounds(previousClip, previousError, lo, hi, rect, nearest)!=BoundsProjected ||
+     !coveredByDepth(rect, nearest))
+    return;
+  ++countByLane[HiddenNodes];
+  countByLane[HiddenTriangles] += triangles;
+  }
+
+void main() {
+  const uint lane = gl_LocalInvocationIndex;
+  if(push.stage==1u) {
+    const uint i = gl_GlobalInvocationID.x;
+    if(i<CounterCount)
+      counters[i] = 0u;
+    return;
+    }
+
+  // Mirror the input and full-canopy fast path of tree_bough_expand.comp. The selected nodes
+  // come from the same boughWalkSlice and only this diagnostic SSBO is writable.
+  const uint entry = data[1] + gl_WorkGroupID.x*8u;
+  const uint clusterId = data[entry];
+  const uint asset = data[entry+4u];
+  const uint status = state[data[entry+5u]];
+  const uint ref = data[entry+6u];
+  if(status!=push.token || ((push.flags & 8u)!=0u && (historyStatus[clusterId] & 8u)!=0u))
+    return; // Includes the impostor bit and late-rejected crowns.
+
+  const uint transform = clusters[clusterId].instanceId*16u;
+  const vec3 x = transformColumn(transform), y = transformColumn(transform+3u);
+  const vec3 z = transformColumn(transform+6u), origin = transformColumn(transform+9u);
+  const float focal = 0.5*float(scene.screenRes.y)*abs(scene.project[1][1]);
+  const vec3 forward = vec3(scene.view[0][2], scene.view[1][2], scene.view[2][2]);
+  const vec3 shear = abs(vec3(dot(x, y), dot(y, z), dot(z, x)));
+  const vec3 scale = vec3(dot(x, x), dot(y, y), dot(z, z)) + shear + shear.zxy;
+  const float scaleBound = sqrt(max(max(scale.x, scale.y), scale.z));
+  const BoughProjection projection = BoughProjection(vec3(dot(forward, x), dot(forward, y), dot(forward, z)),
+                                                       dot(forward, origin)+scene.view[3][2], focal*scaleBound, push.nearZ);
+  const uint nodeCount = data[asset+3u];
+  nodeBase = data[asset+2u];
+  rangeBase = data[asset+4u];
+  const uint slice = (nodeCount+gl_WorkGroupSize.x-1u)/gl_WorkGroupSize.x;
+  const uint sliceFirst = min(lane*slice, nodeCount), sliceLast = min(sliceFirst+slice, nodeCount);
+  const bool useReference = (push.flags & 1u)!=0u;
+  if(lane==0u)
+    hasCompact = useReference ? reference[ref] : 0u;
+  barrier();
+
+  if(!useReference) {
+    const vec3 farthest = mix(readVec(asset+15u), readVec(asset+12u), lessThan(projection.forwardLocal, vec3(0)));
+    const float farDepth = projection.originDepth+dot(projection.forwardLocal,farthest);
+    const float openScale = uintBitsToFloat(data[asset+7u]);
+    if(farDepth>projection.nearZ && projection.focalScale<=farDepth*openScale && boughMerges(sliceFirst, sliceLast, projection))
+      atomicOr(hasCompact, 1u);
+    }
+  barrier();
+
+  if(hasCompact==0u) {
+    if(lane==0u)
+      atomicAdd(counters[SubmittedTriangles], data[asset+6u]);
+    return;
+    }
+
+  windPad = uintBitsToFloat(data[asset+18u]);
+  // The loaded wind arms are bounded for rotation and scale. A sheared horizontal basis can amplify them.
+  validBounds = windPad>=0.0 && finiteValues(vec4(windPad)) && uintBitsToFloat(instanceMem[transform+12u])==0.0 &&
+                abs(dot(x,z))<=8.0*Epsilon*length(x)*length(z);
+  const mat4 object = mat4(vec4(x,0), vec4(y,0), vec4(z,0), vec4(origin,1));
+  const mat4 objectError = absMatrix(object) * (32.0 * Epsilon);
+  currentClip = scene.viewProject * object;
+  currentError = absMatrix(scene.viewProject) * objectError;
+  previousClip = push.previousViewProject * object;
+  previousError = absMatrix(push.previousViewProject) * objectError;
+
+  if(lane<CounterCount)
+    sums[lane] = 0u;
+  for(uint i=0u; i<CounterCount; ++i)
+    countByLane[i] = 0u;
+  barrier();
+  if(useReference) {
+    for(uint i=lane; i<nodeCount; i+=gl_WorkGroupSize.x) {
+      const uint transition = reference[ref+1u+i*2u];
+      if(transition!=0xffffffffu)
+        boughEmit(i, transition, uintBitsToFloat(reference[ref+2u+i*2u]));
+      }
+    }
+  else {
+    boughWalkSlice(sliceFirst, sliceLast, projection);
+    }
+  countByLane[SubmittedTriangles] = countByLane[CompactTriangles];
+  for(uint i=0u; i<CounterCount; ++i)
+    if(countByLane[i]>0u)
+      atomicAdd(sums[i], countByLane[i]);
+  barrier();
+  if(lane<CounterCount && sums[lane]>0u)
+    atomicAdd(counters[lane], sums[lane]);
+  }

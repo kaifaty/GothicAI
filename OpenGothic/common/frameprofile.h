@@ -40,6 +40,7 @@ enum class Zone : size_t {
   RtScene,
   // WorldLogic outside Npc::tick; scopes enclose whole loops, never an individual NPC.
   NpcPreTick, NpcSort, NpcPolicy, CollisionZones, InteractiveTick, TriggersTick, NpcTickNear, NpcPerception,
+  NpcAnimationCatchUp,
   Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
@@ -72,8 +73,12 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   TreeLevelBands, TreeShadowBands,
   // WorldObjects::tickNpcs (world/npcsimtick.h): Simplified NPCs that ticked, that waited for their turn, and
   // that execute native movement (Npc::usesSimplifiedMovement false)
-  NpcSimplifiedTicked, NpcSimplifiedDeferred, NpcSimplifiedNative, Count };
-enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
+  NpcSimplifiedTicked, NpcSimplifiedDeferred, NpcSimplifiedNative,
+  // Explicit Society worker deferrals and the pose updates that consume them.
+  SocietyAnimDeferred, SocietyAnimCatchUp, SocietyNpcTickSkipped, NpcLatePoseCandidates,
+  NpcIdleWheelDeferred, NpcTierCandidates, NpcPolicyCandidates,
+  NpcRestRoutineDeferred, NpcRestRoutineDeadline, Count };
+enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error, Simulation };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };
 enum class TextureActivity : uint8_t { Read, Upload, Complete, Ready, Publish };
@@ -84,6 +89,7 @@ bool actorContext();
 void setActors(const std::vector<Npc*>& actors);
 void observer(uint64_t dt, std::chrono::steady_clock::time_point now);
 void sample(std::string_view segment, uint64_t frame);
+bool hasSample();
 void add(Amount amount, uint64_t value);
 void npcAnimation(size_t tier, size_t policy, bool visible, uint64_t elapsedNs);
 void flush();
@@ -150,6 +156,7 @@ constexpr bool actorContext() noexcept { return false; }
 constexpr void setActors(const std::vector<Npc*>&) noexcept {}
 constexpr void observer(uint64_t, std::chrono::steady_clock::time_point) noexcept {}
 constexpr void sample(std::string_view, uint64_t) noexcept {}
+constexpr bool hasSample() noexcept { return false; }
 constexpr void add(Amount, uint64_t) noexcept {}
 constexpr void npcAnimation(size_t, size_t, bool, uint64_t) noexcept {}
 constexpr void flush() noexcept {}

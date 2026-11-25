@@ -1,8 +1,37 @@
 #include "renderer.h"
 
+#include <Tempest/Log>
+#include <charconv>
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+
+#include "frameprofile.h"
 #include "renderer_internal.h"
 
 using namespace Tempest;
+
+void Renderer::readBoughHiZDepth(uint8_t fId) {
+  auto& diag = boughHiZDiag;
+  if(diag.proofStamp==0 || diag.proofSlot!=fId)
+    return;
+
+  // drawScene is called after the fence for this frame slot has completed.
+  const size_t pixelBytes = diag.proofPixelBytes;
+  const size_t depthBytes = diag.proofPixels*pixelBytes;
+  const size_t stride = (depthBytes+3u)&~size_t(3u);
+  std::vector<std::byte> bytes(stride+depthBytes);
+  Resources::device().readBytes(diag.proofDepth, bytes.data(), bytes.size());
+  size_t different = 0;
+  for(size_t i=0; i<depthBytes; i+=pixelBytes)
+    different += std::memcmp(bytes.data()+i, bytes.data()+stride+i, pixelBytes)!=0;
+  Log::i("bough_hiz_depth stamp_ns=", diag.proofStamp, " compared_pixels=", diag.proofPixels,
+         " different_pixels=", different);
+  diag.proofStamp = 0;
+  Resources::recycle(std::move(diag.proofDepth));
+  Resources::recycle(std::move(diag.referenceDepth));
+  }
 
 void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& view,
                                 const BenchProbe::HistoryVerifyRequest& request) {
@@ -11,6 +40,20 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
   const bool reset = !treeHistory.valid || !camHistory.continuous || !commands.hasHistory();
   const float quantization = zBufferFormat==TextureFormat::Depth16 ? 1.f/65535.f :
                              zBufferFormat==TextureFormat::Depth24x8 ? 1.f/16777215.f : 0.f;
+  static const uint32_t diagnosticEvery = [] {
+    const auto* env = std::getenv("OPENGOTHIC_BOUGH_HIZ_DIAG_EVERY");
+    if(env==nullptr)
+      return 0u;
+    uint32_t every = 0;
+    const auto* end = env+std::strlen(env);
+    const auto parsed = std::from_chars(env, end, every);
+    return parsed.ec==std::errc() && parsed.ptr==end ? every : 0u;
+    }();
+  auto& diag = boughHiZDiag;
+  const bool sampleBough = diagnosticEvery!=0 && !reset && diag.valid && commands.hasPendingBoughExpansion() &&
+                           diag.frames++%diagnosticEvery==0;
+  const bool verifyBough = sampleBough && !request && !diag.proved &&
+                           (!FrameProfile::enabled() || FrameProfile::hasSample());
 
   commands.classifyHistory(cmd, textureCast<const Texture2d&>(hiz.hiZ), quantization, false, reset);
   if(!reset)
@@ -31,6 +74,17 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
       }
     }
 
+  if(verifyBough) {
+    // Seed a separate target while the early command list is still available.
+    auto& reference = usesZBuffer(diag.referenceDepth, zBufferFormat, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
+    std::swap(reference, zbuffer);
+    drawHiZ(cmd, view);
+    cmd.setFramebuffer({}, {zbuffer, Preserve, Preserve});
+    commands.drawCommon(cmd, SceneGlobals::V_Main, Material::Solid, Draw::Early);
+    commands.drawCommon(cmd, SceneGlobals::V_Main, Material::AlphaTest, Draw::Early);
+    std::swap(reference, zbuffer);
+    }
+
   if(request) {
     cmd.setFramebuffer({});
     cmd.setBinding(0, zbuffer, Sampler::nearest());
@@ -39,15 +93,15 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     cmd.dispatchThreads(zbuffer.size());
     }
 
+  auto pyramidW = RendererInternal::nextPot(uint32_t(zbuffer.w()));
+  auto pyramidH = RendererInternal::nextPot(uint32_t(zbuffer.h()));
+  while(pyramidW>128 || pyramidH>128) {
+    pyramidW = std::max(1u, pyramidW/2);
+    pyramidH = std::max(1u, pyramidH/2);
+    }
   const auto* grassHiZ = &textureCast<const Texture2d&>(hiz.hiZ);
   if(!reset) {
-    auto w = RendererInternal::nextPot(uint32_t(zbuffer.w()));
-    auto h = RendererInternal::nextPot(uint32_t(zbuffer.h()));
-    while(w>128 || h>128) {
-      w = std::max(1u, w/2);
-      h = std::max(1u, h/2);
-      }
-    auto& pyramid = usesImage2d(treeHistory.pyramid, TextureFormat::R32F, w, h, true);
+    auto& pyramid = usesImage2d(treeHistory.pyramid, TextureFormat::R32F, pyramidW, pyramidH, true);
     buildHiZ(cmd, &pyramid);
     grassHiZ = &textureCast<const Texture2d&>(pyramid);
     commands.classifyHistory(cmd, *grassHiZ, quantization, true, false);
@@ -79,7 +133,45 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     Resources::recycle(std::move(probe));
     }
 
-  drawGBuffer(cmd, fId, view, reset ? Draw::Unfiltered : Draw::Filtered, &treeHistory.winners);
+  const auto mode = reset ? Draw::Unfiltered : Draw::Filtered;
+  size_t proofStride = 0;
+  if(verifyBough) {
+    // Both GBuffer passes see the same camera, grass, early depth and final draw lists.
+    std::swap(diag.referenceDepth, zbuffer);
+    drawGBuffer(cmd, fId, view, mode, &treeHistory.winners);
+    std::swap(diag.referenceDepth, zbuffer);
+    diag.proofPixels = size_t(zbuffer.w())*size_t(zbuffer.h());
+    diag.proofPixelBytes = zBufferFormat==TextureFormat::Depth16 ? sizeof(uint16_t) : sizeof(uint32_t);
+    const size_t depthBytes = diag.proofPixels*diag.proofPixelBytes;
+    proofStride = (depthBytes+3u)&~size_t(3u);
+    diag.proofDepth = Resources::device().ssbo(BufferHeap::Readback, Uninitialized, proofStride+depthBytes);
+    cmd.setFramebuffer({});
+    cmd.copy(textureCast<const Texture2d&>(diag.referenceDepth), 0, diag.proofDepth, 0);
+    }
+  if(diagnosticEvery!=0 && !diag.finalPyramid.isEmpty()) {
+    const auto stamp = sampleBough ? std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch()).count() : 0;
+    if(commands.diagnoseBoughVisibility(cmd, fId, textureCast<const Texture2d&>(diag.finalPyramid),
+                                        diag.previousViewProject, verifyBough, uint64_t(stamp)) && verifyBough) {
+      diag.proofSlot = fId;
+      diag.proofStamp = uint64_t(stamp);
+      diag.proved = true;
+      }
+    }
+
+  drawGBuffer(cmd, fId, view, mode, &treeHistory.winners);
+  if(verifyBough && diag.proofStamp!=0) {
+    cmd.setFramebuffer({});
+    cmd.copy(textureCast<const Texture2d&>(zbuffer), 0, diag.proofDepth, proofStride);
+    }
+  if(diagnosticEvery!=0) {
+    // hiz.hiZ is rebuilt from the early occluders each frame. Preserve the finished
+    // opaque depth separately together with the jittered projection that produced it.
+    auto& pyramid = usesImage2d(diag.finalPyramid, TextureFormat::R32F, pyramidW, pyramidH, true);
+    buildHiZ(cmd, &pyramid);
+    diag.previousViewProject = view.sceneGlobals().viewProject();
+    diag.valid = true;
+    }
   const auto& winners = textureCast<const Texture2d&>(treeHistory.winners);
   commands.finishHistory(cmd, winners, fId);
   treeHistory.valid = true;

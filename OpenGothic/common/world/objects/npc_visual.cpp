@@ -142,6 +142,7 @@ Tempest::Vec3 Npc::animMoveSpeed(uint64_t dt) const {
   }
 
 void Npc::setVisual(const Skeleton* v) {
+  wakeSociety();
   if(visual.visualSkeleton()!=v) {
     living.reset();
     arrowImpacts.clear();
@@ -154,6 +155,8 @@ void Npc::setVisual(const Skeleton* v) {
     }
   visual.setVisual(v);
   invalidateTalentOverlays();
+  if(hasDeferredAnimation())
+    owner.noteNpcCellChange(*this);
   }
 
 void Npc::setVisualBody(int32_t headTexNr, int32_t teethTexNr, int32_t bodyTexNr, int32_t bodyTexColor,
@@ -203,6 +206,8 @@ void Npc::updateArmor() {
       visual.setArmor(*this,std::move(vbody));
       }
     }
+  if(hasDeferredAnimation())
+    owner.noteNpcCellChange(*this);
   }
 
 void Npc::updateQuiver() {
@@ -301,6 +306,8 @@ void Npc::clearSlotItem(std::string_view slot) {
   }
 
 void Npc::updateWeaponSkeleton() {
+  if(simTickState.idleParked)
+    owner.noteIdleNpcChange(*this);
   visual.updateWeaponSkeleton(invent.currentMeleeWeapon(),invent.currentRangedWeapon());
   }
 
@@ -320,6 +327,7 @@ void Npc::setFatness(float f) {
 
 void Npc::setScale(float x, float y, float z) {
   if(sz[0]!=x || sz[1]!=y || sz[2]!=z) {
+    wakeSociety();
     living.reset();
     arrowImpacts.clear();
     releaseRagdoll(false);
@@ -336,7 +344,12 @@ void Npc::setScale(float x, float y, float z) {
   }
 
 const Animation::Sequence* Npc::playAnimByName(std::string_view name, BodyState bs, bool force) {
-  return visual.startAnimAndGet(*this,name,calcAniComb(),bs,force);
+  if(currentInteract!=nullptr)
+    syncDeferredAnimation();
+  const auto result = visual.startAnimAndGet(*this,name,calcAniComb(),bs,force);
+  if(result!=nullptr && simTickState.idleParked)
+    owner.noteIdleNpcChange(*this);
+  return result;
   }
 
 bool Npc::setPlayerPose(bool kneel, std::string_view reason) {
@@ -420,7 +433,11 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
         a = Anim::Idle;
       }
     }
+  if(currentInteract!=nullptr && (a==Anim::InteractOut || a==Anim::InteractToStand))
+    syncDeferredAnimation();
   const auto result = visual.startAnimAndGet(*this,a,comb,st,wlk);
+  if(result!=nullptr && simTickState.idleParked)
+    owner.noteIdleNpcChange(*this);
   if(result!=nullptr && isUsingItemInHand() && (a==Anim::AttackBlock || a==Anim::Jump || a==Anim::JumpUp ||
      a==Anim::JumpUpLow || a==Anim::JumpUpMid || a==Anim::JumpHang))
     interruptItemUse(a==Anim::AttackBlock ? "parade" : "jump");
@@ -743,26 +760,62 @@ Matrix4x4 Npc::mkPositionMatrix() const {
   }
 
 void Npc::updateTransform() {
+  wakeSociety();
   updateAnimation(0, true);
   }
 
-void Npc::syncDeferredAnimation() const {
-  if(animLodPendingDt==0 || !AnimationLod::canSyncOnRead())
-    return;
-  AnimationLod::noteSync();
-  // An Npc is never created const: the solved pose is a cache of the world clock.
-  const_cast<Npc*>(this)->updateAnimation(0);
+void Npc::deferAnimation(uint64_t dt) {
+  const bool first = animLodPendingDt==0 && dt!=0;
+  animLodPendingDt += dt;
+  if(first)
+    owner.noteNpcCellChange(*this);
   }
 
-bool Npc::animationLodPinned() const {
-  // Melee shadow bodies and blades, living hit bodies, ragdolls and mobsi read
-  // this NPC's bones every frame from world logic. A drawn weapon alone does not
-  // pin: monsters keep Fist mode at rest. A fighter has a target, swings, or has
-  // an open shadow-blade window.
+void Npc::deferSocietyAnimation(uint64_t dt) {
+  const bool first = !societyAnimationDebt || animLodPendingDt==0;
+  animLodPendingDt += dt;
+  societyAnimationDebt = true;
+  if(first)
+    owner.noteNpcCellChange(*this);
+  }
+
+void Npc::syncDeferredAnimation() const {
+  if((animLodPendingDt==0 && !societyPoseSuspended) || !AnimationLod::canSyncOnRead())
+    return;
+  if(societyPoseSuspended)
+    const_cast<Npc*>(this)->wakeSociety();
+  if(animLodPendingDt==0)
+    return;
+  AnimationLod::noteSync();
+  // A physical read may follow another pose update and a relocation at the
+  // same timestamp. Rebuild the world-space bones even on that step.
+  const_cast<Npc*>(this)->updateAnimation(0,true);
+  }
+
+bool Npc::canPauseDistantPose(uint64_t gestureLead) const {
+  return mvAlgo.state()==MoveAlgo::Run && !needsLayerPoseUpdate() &&
+         !societyGestureNeedsPose(gestureLead) && !owner.isInSfxRange(position()) && visual.canPauseAnimation();
+  }
+
+bool Npc::settledFurniturePose() const {
+  if(currentInteract==nullptr || !currentInteract->hasSettledUser(*this))
+    return false;
+
+  const auto scheme = currentInteract->schemeName();
+  const auto body   = bodyStateMasked();
+  if(scheme=="BEDHIGH")
+    return body==BS_LIE;
+  return body==BS_SIT && (scheme=="BENCH" || scheme=="CHAIR" || scheme=="THRONE");
+  }
+
+bool Npc::animationLodPinned(bool allowSettledFurniture) const {
+  // Melee, living hit bodies and ragdolls need the current bones. Interactive
+  // users also keep them unless this caller can defer a settled furniture pose.
+  // A weapon pins the pose during targeting, attacks or an open blade window.
   const bool fighting = weaponState()!=WeaponState::NoWeapon &&
                         (currentTarget!=nullptr || isAttackAnim() || (meleeShadow && meleeShadow->window));
   return animLodTargeted || isPlayer() || fighting ||
-         ragdoll!=nullptr || living!=nullptr || currentInteract!=nullptr || spellFrozen();
+         ragdoll!=nullptr || living!=nullptr || (currentInteract!=nullptr && !allowSettledFurniture) || spellFrozen();
   }
 
 void Npc::resetCharacterVisualHeight() {
@@ -885,8 +938,15 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   AnimationTail::noteAnimationUpdate();
   // Frames the animation LOD skipped: the pose follows the world clock, the
   // smoothing filters and effects get the whole interval at once.
-  dt += animLodPendingDt;
-  animLodPendingDt = 0;
+  if(hasDeferredAnimation()) {
+    dt += animLodPendingDt;
+    animLodPendingDt = 0;
+    owner.noteNpcCellChange(*this);
+    }
+  if(societyAnimationDebt) {
+    societyAnimationDebt = false;
+    FrameProfile::add(FrameProfile::Amount::SocietyAnimCatchUp,1);
+    }
   if(lieVisualYOffset!=0) {
     auto matrix=visual.transform();
     matrix.set(3,1,matrix.at(3,1)-lieVisualYOffset);

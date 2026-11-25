@@ -77,6 +77,7 @@ struct Config {
   bool        loaded  = false;               // a file was given
   int         version = 0;
   uint64_t    hash    = 0;                   // FNV-1a 64 of its bytes
+  uint64_t    resolvedHash = 0;              // includes the bytes of the loaded cards, protected list and places
   size_t      bytes   = 0;
 
   struct Needs {
@@ -475,8 +476,8 @@ struct Option {
 
 constexpr Time FarBack = std::numeric_limits<Time>::max();
 
-// Flat arrays, `stride` = K slots per row: menu and mask [n, K], `count` options per row. The feature arrays `own`
-// and `options` are for the encoder of С4 and stay empty.
+// Flat arrays, `stride` = K slots per row: menu and mask [n, K], `count` options per row. The encoded features
+// use the order in featureLayout(); option slots past `count` are zero.
 struct DecisionBatch {
   size_t                stride = MenuSize;
   std::vector<uint32_t> npc;
@@ -488,6 +489,15 @@ struct DecisionBatch {
   size_t size() const { return npc.size(); }
   void   clear() { npc.clear(); cause.clear(); count.clear(); menu.clear(); mask.clear(); own.clear(); options.clear(); }
   };
+
+constexpr uint32_t FeatureVersion = 1;
+
+struct FeatureLayout {
+  size_t                   stride = MenuSize;
+  std::vector<std::string> own, options; // names in tensor order, including columns from the world's config
+  };
+
+FeatureLayout featureLayout(const World& world);
 
 struct Choice {
   uint32_t npc    = 0;
@@ -590,6 +600,11 @@ struct State {
 
 struct Snapshot {
   State state;
+  uint32_t version = 1;
+  uint64_t worldHash = 0;
+  uint64_t configHash = 0;
+  uint64_t seed = 0;
+  const World* syntheticWorld = nullptr; // in-memory worlds have no export hash
   };
 
 // Options by waynet point within the menu's reach (the fastest decider walking the travel limit), nearest first:
@@ -636,14 +651,21 @@ Sim      makeSim(const World& world, const SimConfig& config);
 // start_aistate without a routine; every person's needs at their `start` level with its own noise from `seed`.
 void     reset(Sim& sim, uint64_t seed);
 // Plays every event up to and including `horizon` and stops there, or earlier at the first second with decisions
-// asked: then `out` holds a row per deciding NPC (in NPC order) and the time stays at that second. Returns the rows.
+// asked: then `out` holds an encoded row per deciding NPC (in NPC order) and the time stays at that second.
+// Returns the rows.
 size_t   advance(Sim& sim, DecisionBatch& out, Time horizon);
+// Fills only the feature arrays of a batch built at the current second. Does not change the simulation or its RNG.
+void     encode(const Sim& sim, DecisionBatch& batch);
 // The choices for the rows of the last batch, one per row in its order. A choice out of its row's mask is a logic
 // error (std::logic_error): the policy broke the rules. A place taken by an earlier choice of the same batch is
 // `action_failed`, and the NPC keeps what it did.
 void     act(Sim& sim, std::span<const Choice> choices);
 Snapshot save(const Sim& sim);
 void     restore(Sim& sim, const Snapshot& snapshot);
+// Durable checkpoint for the same exported world, config and decision mode. Serialize after finishing the frame
+// and draining its journal. A failed deserialize leaves the simulation untouched.
+std::string serialize(const Sim& sim);
+void        deserialize(Sim& sim, std::string_view bytes);
 // The journal since the previous call; valid until the next advance, reset or restore.
 std::span<const Event> drainEvents(Sim& sim);
 // A person's level of need k at the sim's current time (its segment goes on until the next rate event).

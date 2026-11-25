@@ -2099,6 +2099,11 @@ bool NavDemos::forceCharacterVirtual(const Npc& npc) {
                           (population.active && population.members.contains(&npc)) ||
                           NavTransitions::controls(npc)));
 }
+bool NavDemos::hasFullSimulationActors() {
+  return running() || TestBench::npcDuelRunning() ||
+         (settings.cv && (preparingLegacy!=nullptr || NavTransitions::running()));
+  }
+
 bool NavDemos::fullSimulation(const Npc& npc) {
   return TestBench::npcDuelActor(npc) || (legacy.active && legacy.target==&npc) ||
          (population.active && population.members.contains(&npc)) || forceCharacterVirtual(npc);

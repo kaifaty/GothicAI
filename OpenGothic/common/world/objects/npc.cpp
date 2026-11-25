@@ -364,16 +364,53 @@ bool Npc::performOutput(const AiQueue::AiAction &act) {
   return false;
   }
 
+uint64_t Npc::pendingSimTick() const {
+  return simTickState.idleParked ? owner.npcCadenceClock()-simTickState.lastIdleTick : simTickState.pending;
+  }
+
+void Npc::wakeSociety() {
+  monsterRestSleeping = false;
+  if(restingBody)
+    resumeBody();
+  if(simTickState.idleParked)
+    owner.noteIdleNpcChange(*this);
+  if(societySleeping)
+    owner.wakeSocietyNpc(*this);
+  }
+
+void Npc::setExternalControl(bool e) {
+  if(externalCtrl!=e)
+    wakeSociety();
+  externalCtrl = e;
+  }
+
 void Npc::setProcessPolicy(NpcProcessPolicy t) {
   if(aiPolicy==t)
     return;
+  wakeSociety();
   if(aiPolicy==NpcProcessPolicy::Player)
     runAng = 0;
   aiPolicy=t;
+  owner.noteNpcCellChange(*this);
   visual.setTextureOwner(position(),!isPlayer());
   }
 
+void Npc::setSimTierOverride(std::optional<NpcSimTier> t) {
+  if(simTierOverrideValue==t)
+    return;
+  simTierOverrideValue = t;
+  owner.noteNpcCellChange(*this);
+  }
+
 void Npc::setSimTier(NpcSimTier t) {
+  if(simTierValue!=t || !simTierAssigned)
+    owner.invalidateNpcTiers();
+  applySimTier(t);
+  }
+
+void Npc::applySimTier(NpcSimTier t) {
+  if(simTierValue!=t)
+    wakeSociety();
   simTierValue = t;
   simTierAssigned = true;
   if(!loadedFpReferences)
@@ -600,8 +637,11 @@ void Npc::refreshMeleeFighter() {
   const bool melee = mode==WeaponState::Fist || mode==WeaponState::W1H || mode==WeaponState::W2H;
   const auto delta = currentTarget!=nullptr ? currentTarget->position()-position() : Vec3{};
   if(MeleeFighter::qualifies(isPlayer(),melee,isAttack(),currentTarget!=nullptr,
-                            currentTarget!=nullptr && currentTarget->isDown(),delta.x*delta.x+delta.z*delta.z))
+                            currentTarget!=nullptr && currentTarget->isDown(),delta.x*delta.x+delta.z*delta.z)) {
+    if(currentTarget->simTickState.idleParked)
+      owner.noteIdleNpcChange(*currentTarget);
     MeleeFighter::refresh(meleeFighter,currentTarget->meleeFighter,owner.tickCount());
+    }
   }
 
 bool Npc::isMeleeFighter() const {
@@ -996,7 +1036,15 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
-  Bench::beforeNpcTick(*this);
+  const auto benchTick = Bench::beforeNpcTick(*this);
+  if(benchTick==BenchNpcTick::MeleeDrain) {
+    tickAnimationTags();
+    if(isAttackAnim())
+      mvAlgo.tick(dt,MoveAlgo::WaitMove);
+    return;
+    }
+  if(benchTick==BenchNpcTick::Paused)
+    return;
   updateQuiver();
   updateSimpleMovement();
   NpcLogicalState::Tick logicalTick(*this,dt);
@@ -1157,7 +1205,8 @@ void Npc::tick(uint64_t dt) {
       if(!magnetHeading)
         implTurnToFai(*currentTarget,dt);
       }
-    mvAlgo.tick(dt,MoveAlgo::WaitMove);
+    if(!restingBodySuspended())
+      mvAlgo.tick(dt,MoveAlgo::WaitMove);
     return;
     }
 
@@ -1186,7 +1235,7 @@ void Npc::tick(uint64_t dt) {
       }
     }
 
-  if(!campfireBodySuspended())
+  if(!bodySuspended())
     mvAlgo.tick(dt);
   implAiTick(dt);
   }
@@ -1241,11 +1290,14 @@ void Npc::setTarget(Npc *t) {
   if(currentTarget==t)
     return;
 
+  wakeSociety();
   if(t!=nullptr) {
-    resumeCampfireBody();
-    t->resumeCampfireBody();
+    t->wakeSociety();
+    resumeBody();
+    t->resumeBody();
     }
   currentTarget = t;
+  owner.noteNpcCellChange(*this);
   if(!go2.empty() && !isPlayer())
     clearGoTo();
   }
