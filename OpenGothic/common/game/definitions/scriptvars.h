@@ -12,7 +12,6 @@
 
 class SaveArchive;
 class RecordInstance;
-namespace daedalus { class DaedalusSymbol; }
 namespace NativeBaseCatalog { struct InitialRow; struct Identity; }
 
 namespace ScriptVars {
@@ -57,7 +56,6 @@ class State final {
     void loadInitial(std::span<const NativeBaseCatalog::InitialRow> rows);
     void declareArchetypes(std::span<const NativeBaseCatalog::Identity> rows);
     bool declareDirector(const SymbolDefinition& definition);
-    void bind(daedalus::DaedalusSymbol& symbol);
     void bind(std::string_view name, int32_t& value);
     void bind(std::string_view name, std::string& value);
     std::optional<uint32_t> id(std::string_view name) const;
@@ -69,7 +67,7 @@ class State final {
     const auto& slots() const { return values; }
 
   private:
-    // The VM compatibility views may keep pointers to these cells for the session lifetime.
+    // Keep slot addresses stable as the director adds declarations.
     std::map<uint32_t,Slot> values;
     std::map<std::string,uint32_t,std::less<>> names;
   };

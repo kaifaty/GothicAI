@@ -1,12 +1,12 @@
 #include "scriptvars.h"
 
-#include "daedalus/script.h"
 #include "nativebasecatalog.h"
 #include "savearchive.h"
 
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace {
@@ -146,37 +146,6 @@ bool ScriptVars::State::declareDirector(const SymbolDefinition& definition) {
     }
   names.emplace(definition.name,definition.index);
   return true;
-  }
-
-void ScriptVars::State::bind(daedalus::DaedalusSymbol& symbol) {
-  using Type = daedalus::DaedalusDataType;
-  if(symbol.is_member())
-    return;
-  const auto id = symbol.index();
-  if(symbol.type()==Type::INSTANCE) {
-    const auto it = values.try_emplace(id,Object{}).first;
-    symbol.bind_global_instance(std::get<Object>(it->second));
-    return;
-    }
-  if(symbol.is_const() || symbol.count()==0)
-    return;
-  const auto bindArray = [&]<class T>(std::span<T> bound, std::unique_ptr<T[]>(daedalus::DaedalusSymbol::*take)()) {
-    const auto it = values.try_emplace(id,std::in_place_type<Array<T>>).first;
-    auto& array = std::get<Array<T>>(it->second);
-    if(bound.empty()) {
-      // Keep addresses of existing values, including strings already viewed by the session.
-      array.storage = (symbol.*take)();
-      bound = {array.storage.get(),symbol.count()};
-      }
-    array.values = bound;
-    };
-  using Symbol = daedalus::DaedalusSymbol;
-  switch(symbol.type()) {
-    case Type::INT:    bindArray(symbol.bound_global_int(),&Symbol::take_global_int);       break;
-    case Type::FLOAT:  bindArray(std::span<float>{},&Symbol::take_global_float);            break;
-    case Type::STRING: bindArray(symbol.bound_global_string(),&Symbol::take_global_string); break;
-    default: break;
-    }
   }
 
 void ScriptVars::State::bind(std::string_view name, int32_t& value) {
