@@ -26,25 +26,6 @@ struct RestoreContext {
   ~RestoreContext() { vm.unsafe_set_gi(std::move(caller)); }
   };
 
-void pushTieredLearnCost(daedalus::DaedalusVm& vm, daedalus::DaedalusSymbol& result,
-                        const std::shared_ptr<daedalus::DaedalusInstance>& learner,
-                        daedalus::DaedalusSymbol* aivar, uint16_t index,
-                        std::optional<int32_t> points = std::nullopt) {
-  // The result reference holds the learner's context before BL restores the caller's.
-  RestoreContext restore{vm,vm.unsafe_get_gi()};
-  vm.unsafe_set_gi(learner);
-  int32_t cost = 5;
-  for(; cost>1; --cost) {
-    // The trained value excludes equipment and temporary bonuses.
-    if(vm.get_int(learner,aivar,index)>=30*(cost-1))
-      break;
-    }
-  result.set_int(cost);
-  if(points)
-    result.set_int(std::bit_cast<int32_t>(uint32_t(cost)*uint32_t(*points)));
-  vm.push_reference(&result);
-  }
-
 int32_t fixedTalentLearnCost(int32_t talent, int32_t skill) {
   // Tables indexed by the verified NotR skill IDs.
   static constexpr uint8_t smith[] = {2,4,4,6,6,8,8,10,10,4,6,8,10};
@@ -320,12 +301,7 @@ auto GameScript::npcRecord(daedalus::DaedalusSymbol* symbol) -> std::shared_ptr<
   }
 
 void GameScript::loadNativeAmbientInfos() {
-  if(!nativeRoutineProgram)
-    return;
-
-  using Type = daedalus::DaedalusDataType;
-  using Symbol = daedalus::DaedalusSymbol;
-  using Actor = std::shared_ptr<daedalus::INpc>;
+  using Actor = std::shared_ptr<NpcInstance>;
   constexpr uint32_t ambient = 1u<<uint32_t(NpcType::G2_AMBIENT);
   constexpr uint32_t oldCamp = 1u<<uint32_t(NpcType::G2_OC_AMBIENT);
   constexpr uint32_t banditCamp = 1u<<uint32_t(NpcType::G2_BL_AMBIENT);
@@ -388,62 +364,14 @@ void GameScript::loadNativeAmbientInfos() {
       }
     };
   const auto ambientData = DialogInfoData::loadAmbient(Resources::baseDir());
-  if(const auto* catalog = baseNativeCatalog()) {
-    if(!ambientData)
-      throw BaseStore::Error("native base is missing stock ambient dialog bindings");
-    struct Binding {
-      ScriptVars::Object* savedActor = nullptr;
-      std::vector<uint32_t> topics;
-      };
-    std::array<Binding,std::size(selectors)> bindings;
-    for(size_t i=0; i<std::size(selectors); ++i) {
-      if(selectors[i].suffix.empty())
-        continue;
-      const auto name = std::string("B_ASSIGNAMBIENTINFOS_").append(selectors[i].suffix);
-      const auto found = ambientData->find(name);
-      if(found==ambientData->end())
-        throw BaseStore::Error("missing stock ambient dialog binding: "+name);
-      const auto alias = runtimeState.id(name+".SLF");
-      auto& binding = bindings[i];
-      binding.savedActor = alias==found->second.actor ? storyOwnedInstance(name+".SLF") : nullptr;
-      if(binding.savedActor==nullptr || std::ranges::any_of(found->second.topics,[&](uint32_t id) {
-            return NativeBaseCatalog::findIdentity(catalog->identities.dialogs,id)==nullptr;
-            }))
-        throw BaseStore::Error("invalid stock ambient dialog binding: "+name);
-      binding.topics = found->second.topics;
-      }
-    auto* savedActor = &storyActorSlot("B_ASSIGNAMBIENTINFOS.SLF");
-    nativeExternals.insert_or_assign("B_ASSIGNAMBIENTINFOS",storygraph::makeNativeInternal(std::function<void(Actor)>{
-      [this,savedActor,assign,bindings=std::move(bindings)](const Actor& actor) {
-        *savedActor = actor;
-        assign(actor,[&](size_t i) {
-          const auto& binding = bindings[i];
-          if(binding.savedActor==nullptr) {
-            assignDementorTalk(actor);
-            return;
-            }
-          *binding.savedActor = actor;
-          const auto owner = hlp_getinstanceid(actor);
-          for(auto id : binding.topics) {
-            auto* info = findInfo(id);
-            if(info==nullptr)
-              throw std::runtime_error("missing loaded stock ambient dialog "+std::to_string(id));
-            info->npc = owner;
-            }
-          });
-        }}));
-    return;
-    }
+  const auto* catalog = baseNativeCatalog();
   if(!ambientData)
-    return;
+    throw BaseStore::Error("native base is missing stock ambient dialog bindings");
   struct Binding {
-    Symbol* savedActor = nullptr;
-    std::vector<Symbol*> topics;
+    ScriptVars::Object* savedActor = nullptr;
+    std::vector<uint32_t> topics;
     };
   std::array<Binding,std::size(selectors)> bindings;
-  auto* infoClass = findSymbol("C_INFO");
-  auto* npcMember = findSymbol("C_INFO.NPC");
-  auto* instanceId = findSymbol("HLP_GETINSTANCEID");
   for(size_t i=0; i<std::size(selectors); ++i) {
     if(selectors[i].suffix.empty())
       continue;
@@ -451,183 +379,44 @@ void GameScript::loadNativeAmbientInfos() {
     const auto found = ambientData->find(name);
     if(found==ambientData->end())
       throw BaseStore::Error("missing stock ambient dialog binding: "+name);
+    const auto alias = runtimeState.id(name+".SLF");
     auto& binding = bindings[i];
-    binding.savedActor = findSymbol(found->second.actor);
-    if(binding.savedActor==nullptr || binding.savedActor->name()!=name+".SLF" || binding.savedActor->type()!=Type::INSTANCE)
-      throw BaseStore::Error("invalid stock ambient dialog actor: "+name);
-    for(auto id : found->second.topics) {
-      auto* topic = findSymbol(id);
-      if(topic==nullptr || topic->type()!=Type::INSTANCE || topic->parent()!=infoClass->index())
-        throw BaseStore::Error("invalid stock ambient dialog topic: "+name);
-      binding.topics.push_back(topic);
-      }
+    binding.savedActor = alias==found->second.actor ? storyOwnedInstance(name+".SLF") : nullptr;
+    if(binding.savedActor==nullptr || std::ranges::any_of(found->second.topics,[&](uint32_t id) {
+          return NativeBaseCatalog::findIdentity(catalog->identities.dialogs,id)==nullptr;
+          }))
+      throw BaseStore::Error("invalid stock ambient dialog binding: "+name);
+    binding.topics = found->second.topics;
     }
-
-  const auto enabled = [this] {
-    if(!activityEvents || floorDefer.active() || ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
-      return false;
-    try {
-      const auto& argument = vm.stack_frame(0);
-      if(argument.reference)
-        return std::get<Symbol*>(argument.value)->is_instance_of<daedalus::INpc>();
-      const auto* actor = std::get_if<std::shared_ptr<daedalus::DaedalusInstance>>(&argument.value);
-      return actor && *actor && (*actor)->instance_type()==&typeid(daedalus::INpc);
-      } catch(const daedalus::DaedalusVmException&) {
-      return false;
-      }
-    };
-  auto* savedActor = findSymbol("B_ASSIGNAMBIENTINFOS.SLF");
-  auto* dementor = findSymbol("B_ASSIGNDEMENTORTALK");
-  vm.override_function("B_ASSIGNAMBIENTINFOS",std::function<void(Actor)>{
-    [this,savedActor,dementor,npcMember,instanceId,assign,bindings=std::move(bindings)](const Actor& actor) {
-      savedActor->set_instance(actor);
+  auto* savedActor = &storyActorSlot("B_ASSIGNAMBIENTINFOS.SLF");
+  nativeExternals.insert_or_assign("B_ASSIGNAMBIENTINFOS",storygraph::makeNativeInternal(std::function<void(Actor)>{
+    [this,savedActor,assign,bindings=std::move(bindings)](const Actor& actor) {
+      *savedActor = actor;
       assign(actor,[&](size_t i) {
-        vm.unsafe_set_gi(actor);
         const auto& binding = bindings[i];
         if(binding.savedActor==nullptr) {
-          vm.push_reference(savedActor);
-          vm.unsafe_call_bl(dementor);
-          } else {
-          binding.savedActor->set_instance(actor);
-          for(auto* topic : binding.topics) {
-            vm.push_reference(binding.savedActor);
-            vm.unsafe_call_external(instanceId);
-            const auto owner = vm.pop_int();
-            const auto context = topic->get_instance();
-            vm.unsafe_set_gi(context);
-            vm.set_int(context,npcMember,0,owner);
-            }
+          assignDementorTalk(actor);
+          return;
+          }
+        *binding.savedActor = actor;
+        const auto owner = hlp_getinstanceid(actor);
+        for(auto id : binding.topics) {
+          auto* info = findInfo(id);
+          if(info==nullptr)
+            throw std::runtime_error("missing loaded stock ambient dialog "+std::to_string(id));
+          info->npc = owner;
           }
         });
-      }},enabled);
+      }}));
   }
 
-void GameScript::loadNativeTrainingHelpers() {
-  if(!nativeRoutineProgram || baseNativeCatalog()!=nullptr)
-    return;
-  const auto enabled = [this] {
-    return activityEvents && !floorDefer.active() && ActivityDefinitionRuntime::mode()!=ActivityDefinitionRuntime::Mode::Off;
-    };
-  vm.override_function("B_BUILDLEARNSTRING",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [this](auto& machine) -> daedalus::DaedalusNakedCall {
-      storySlot("B_BUILDLEARNSTRING.KOSTEN")->set_int(machine.pop_int());
-      // The script returns its global string slot, which a later call can overwrite before it is read.
-      machine.push_reference(&buildLearnString(machine.pop_string()));
-      return {};
-      }
-    },enabled);
-  vm.override_function("B_GETLEARNCOSTATTRIBUTE",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [this](auto& machine) -> daedalus::DaedalusNakedCall {
-      const auto attribute = machine.pop_int();
-      storySlot("B_GETLEARNCOSTATTRIBUTE.ATTRIBUT")->set_int(attribute);
-      const auto learner = machine.pop_instance();
-      storySlot("B_GETLEARNCOSTATTRIBUTE.OTH")->set_instance(learner);
-      auto* result = storySlot("B_GETLEARNCOSTATTRIBUTE.KOSTEN");
-      result->set_int(0);
-      std::string_view slot;
-      switch(attribute) {
-        case ATR_STRENGTH:  slot = "REAL_STRENGTH";  break;
-        case ATR_DEXTERITY: slot = "REAL_DEXTERITY"; break;
-        case ATR_MANAMAX:   slot = "REAL_MANA_MAX";  break;
-        default: machine.push_reference(result); return {};
-        }
-      pushTieredLearnCost(machine,*result,learner,storySlot("C_NPC.AIVAR"),uint16_t(storySlot(slot)->get_int()));
-      return {};
-      }
-    },enabled);
-  vm.override_function("B_GETLEARNCOSTTALENT",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [this](auto& machine) -> daedalus::DaedalusNakedCall {
-      const auto skill = machine.pop_int();
-      storySlot("B_GETLEARNCOSTTALENT.SKILL")->set_int(skill);
-      const auto talent = machine.pop_int();
-      storySlot("B_GETLEARNCOSTTALENT.TALENT")->set_int(talent);
-      const auto learner = machine.pop_instance();
-      storySlot("B_GETLEARNCOSTTALENT.OTH")->set_instance(learner);
-      auto* result = storySlot("B_GETLEARNCOSTTALENT.KOSTEN");
-      result->set_int(0);
-      if(TALENT_1H<=talent && talent<=TALENT_CROSSBOW) {
-        static constexpr std::string_view slots[] = {
-          "REAL_TALENT_1H","REAL_TALENT_2H","REAL_TALENT_BOW","REAL_TALENT_CROSSBOW"
-          };
-        const auto index = uint16_t(storySlot(slots[size_t(talent-TALENT_1H)])->get_int());
-        pushTieredLearnCost(machine,*result,learner,storySlot("C_NPC.AIVAR"),index,skill);
-        } else {
-        result->set_int(fixedTalentLearnCost(talent,skill));
-        machine.push_reference(result);
-        }
-      return {};
-      }
-    },enabled);
-  auto* raise = findSymbol("B_RAISEATTRIBUTE");
-  auto* counter = findSymbol("B_RAISEREALATTRIBUTELEARNCOUNTER");
-  const auto canRaise = [this,enabled] { return enabled() && hasStockNpcThreeArguments(vm); };
-  vm.override_function(raise->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [raise,counter](auto& machine) -> daedalus::DaedalusNakedCall {
-      raiseAttribute(machine,*raise,*counter);
-      return {};
-      }
-    },canRaise);
-  vm.override_function(counter->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [counter](auto& machine) -> daedalus::DaedalusNakedCall {
-      raiseRealAttributeLearnCounter(machine,*counter);
-      return {};
-      }
-    },canRaise);
-  auto* raiseFight=findSymbol("B_RAISEFIGHTTALENT");
-  vm.override_function(raiseFight->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [raiseFight](auto& machine) -> daedalus::DaedalusNakedCall {
-      raiseFightTalent(machine,*raiseFight);
-      return {};
-      }
-    },canRaise);
-  auto* realFight=findSymbol("B_RAISEREALFIGHTTALENTPERCENT");
-  vm.override_function(realFight->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [realFight](auto& machine) -> daedalus::DaedalusNakedCall {
-      raiseRealFightTalent(machine,*realFight);
-      return {};
-      }
-    },canRaise);
-  auto* addFight=findSymbol("B_ADDFIGHTSKILL");
-  if(npcDefinitions.helpers.helpers.contains(addFight->index())) {
-    const auto student=[this] {
-      const auto& frame=vm.stack_frame(2);
-      const auto actor=frame.reference ? std::get<daedalus::DaedalusSymbol*>(frame.value)->get_instance() :
-                                        std::get<std::shared_ptr<daedalus::DaedalusInstance>>(frame.value);
-      return std::static_pointer_cast<daedalus::INpc>(actor);
-      };
-    vm.override_function(addFight->name(),std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-      [this,addFight,student](auto& machine) -> daedalus::DaedalusNakedCall {
-        RestoreContext restore{machine,machine.unsafe_get_gi()};
-        NpcHelperRuntime::invoke(machine,student(),addFight,npcDefinitions.helpers);
-        return {};
-        }
-      },[canRaise,student] { return NpcHelperRuntime::enabled() && canRaise() && student()!=nullptr; });
-    }
-  }
-
-auto GameScript::buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol& {
-  auto& savedTitle = *storySlot("B_BUILDLEARNSTRING.TEXT");
-  savedTitle.set_string(title);
-  const auto cost = storySlot("B_BUILDLEARNSTRING.KOSTEN")->get_int();
-  const auto text = savedTitle.get_string() + storySlot("PRINT_KOSTEN")->get_string() +
-                    std::to_string(cost) + storySlot("PRINT_LP")->get_string();
-  // The compatibility formatter reuses the VM's temporary string slot.
-  vm.push_string(text);
-  auto& result = *storySlot("B_BUILDLEARNSTRING.CONCATTEXT");
-  result.set_string(vm.pop_string());
-  return result;
-  }
-
-bool GameScript::readDialogInfos() {
+void GameScript::readDialogInfos() {
   const auto* catalog = baseNativeCatalog();
   const auto rows = DialogInfoData::load(Resources::baseDir());
-  if(!rows) {
-    if(catalog!=nullptr)
-      throw BaseStore::Error("native base is missing stock dialog definitions");
-    return false;
-    }
+  if(!rows)
+    throw BaseStore::Error("native base is missing stock dialog definitions");
 
-  using Info = daedalus::IInfo;
+  using Info = DialogInstance;
   // Member IDs in the verified stock program that supplies dialog-infos.json.
   constexpr uint32_t firstMember = 1587;
   static constexpr std::array<int32_t Info::*,8> members = {
@@ -637,11 +426,8 @@ bool GameScript::readDialogInfos() {
     };
 
   const auto setLessonInt = [&](std::string_view name, int32_t value) {
-    if(catalog==nullptr) {
-      vm.find_symbol_by_name(name)->set_int(value);
-      } else if(!setGlobalIntSymbol(name,value)) {
+    if(!setGlobalIntSymbol(name,value))
       throw BaseStore::Error("native dialog definition needs lesson state "+std::string(name));
-      }
     };
   const auto lessonString = [&](std::string_view name) -> std::string& {
     auto* slot = std::get_if<ScriptVars::Array<std::string>>(runtimeState.find(name));
@@ -652,16 +438,11 @@ bool GameScript::readDialogInfos() {
   const auto lessonCaption = [&](const DialogInfoData::Lesson& lesson) -> std::string_view {
     setLessonInt("B_GETLEARNCOSTTALENT.SKILL",lesson.skill);
     setLessonInt("B_GETLEARNCOSTTALENT.TALENT",lesson.talent);
-    if(catalog==nullptr)
-      vm.find_symbol_by_name("B_GETLEARNCOSTTALENT.OTH")->set_instance(vm.global_other()->get_instance());
-    else
-      storyActorSlot("B_GETLEARNCOSTTALENT.OTH") = storyActorSlot("OTHER");
+    storyActorSlot("B_GETLEARNCOSTTALENT.OTH") = storyActorSlot("OTHER");
 
     const auto cost = fixedTalentLearnCost(lesson.talent,lesson.skill);
     setLessonInt("B_GETLEARNCOSTTALENT.KOSTEN",cost);
     setLessonInt("B_BUILDLEARNSTRING.KOSTEN",cost);
-    if(catalog==nullptr)
-      return buildLearnString(lesson.title).get_string();
 
     auto& title = lessonString("B_BUILDLEARNSTRING.TEXT");
     auto& result = lessonString("B_BUILDLEARNSTRING.CONCATTEXT");
@@ -697,27 +478,19 @@ bool GameScript::readDialogInfos() {
         throw BaseStore::Error("dialog infos: invalid description for "+name);
         }
       }
-    rememberStoryDialog(name,*info);
     dialogsInfo.push_back(info);
     };
-  if(catalog!=nullptr) {
-    for(const auto& dialog : catalog->identities.dialogs) {
-      auto* alias = ownedInstance(dialog.id);
-      if(alias==nullptr)
-        throw BaseStore::Error("dialog infos: invalid native identity "+dialog.name);
-      auto info = std::make_shared<Info>();
-      info->setRecordIdentity(dialog.id);
-      read(dialog.id,dialog.name,info);
-      *alias = std::move(info);
-      }
-    } else {
-    vm.enumerate_instances_by_class_name("C_INFO",[&](auto& symbol) {
-      read(symbol.index(),symbol.name(),vm.allocate_instance<Info>(&symbol));
-      });
+  for(const auto& dialog : catalog->identities.dialogs) {
+    auto* alias = ownedInstance(dialog.id);
+    if(alias==nullptr)
+      throw BaseStore::Error("dialog infos: invalid native identity "+dialog.name);
+    auto info = std::make_shared<Info>();
+    info->setRecordIdentity(dialog.id);
+    read(dialog.id,dialog.name,info);
+    *alias = std::move(info);
     }
   if(dialogsInfo.size()!=rows->size())
     throw BaseStore::Error("dialog infos: unexpected instance in stock records");
-  return true;
   }
 
 void GameScript::setNpcInfoKnown(const NpcRecord& npc, const daedalus::IInfo& info) {
@@ -739,36 +512,17 @@ bool GameScript::doesNpcKnowInfo(const NpcRecord& npc, size_t infoInstance) cons
   return dlgKnownInfos.contains({actor,infoInstance});
   }
 
-void GameScript::rememberStoryDialog(std::string_view name, daedalus::IInfo& info) {
-  const auto [entry, inserted] = storyDialogs.emplace(name,&info);
-  if(!inserted || !storyDialogsById.try_emplace(info.symbol_index(),entry->first,&info).second)
-    throw std::runtime_error("duplicate story dialog: "+std::string(name));
-  }
-
-const daedalus::IInfo* GameScript::storyDialog(std::string_view name) const {
-  if(const auto* catalog = baseNativeCatalog()) {
-    const auto* dialog = NativeBaseCatalog::findIdentity(catalog->identities.dialogs,name);
-    if(dialog==nullptr)
-      return nullptr;
-    const auto entry = storyDialogsById.find(dialog->id);
-    return entry!=storyDialogsById.end() ? entry->second.second : nullptr;
-    }
-  if(const auto entry=storyDialogs.find(name); entry!=storyDialogs.end())
-    return entry->second;
-  std::string upper(name);
-  for(auto& ch : upper)
-    ch = char(std::toupper(static_cast<unsigned char>(ch)));
-  const auto entry = storyDialogs.find(upper);
-  return entry!=storyDialogs.end() ? entry->second : nullptr;
+const DialogInstance* GameScript::storyDialog(std::string_view name) const {
+  const auto* dialog = NativeBaseCatalog::findIdentity(baseNativeCatalog()->identities.dialogs,name);
+  if(dialog==nullptr)
+    return nullptr;
+  const auto* alias = std::get_if<ScriptVars::Object>(runtimeState.find(dialog->id));
+  return alias!=nullptr ? dynamic_cast<const DialogInstance*>(alias->get()) : nullptr;
   }
 
 std::string_view GameScript::storyDialogName(uint32_t id) const {
-  if(const auto* catalog = baseNativeCatalog()) {
-    const auto* dialog = NativeBaseCatalog::findIdentity(catalog->identities.dialogs,id);
-    return dialog!=nullptr ? std::string_view(dialog->name) : std::string_view{};
-    }
-  const auto entry = storyDialogsById.find(id);
-  return entry!=storyDialogsById.end() ? entry->second.first : std::string_view{};
+  const auto* dialog = NativeBaseCatalog::findIdentity(baseNativeCatalog()->identities.dialogs,id);
+  return dialog!=nullptr ? std::string_view(dialog->name) : std::string_view{};
   }
 
 std::optional<uint32_t> GameScript::storyDialogFunction(std::string_view name, bool condition) const {

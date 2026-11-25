@@ -126,7 +126,6 @@ class GameScript final : public GameRules {
     void         loadQuests(Serialize& fin);
     void         saveBennetProgress(Serialize& fout) const;
     void         loadBennetProgress(Serialize& fin);
-    bool         isBennetProgressSymbol(uint32_t symbol) const;
     void         saveVar(Serialize& fout);
     void         loadVar(Serialize& fin);
     void         initPerceptions();
@@ -320,8 +319,6 @@ class GameScript final : public GameRules {
     friend class GameStoryExternals;
     class StockPrograms;
     StockPrograms& storyPrograms();
-    daedalus::DaedalusSymbol* storySlot(uint32_t id) const;
-    daedalus::DaedalusSymbol* storySlot(std::string_view name, SymbolKind* kind = nullptr) const;
     struct BennetOre;
     struct BennetOreDialog;
     bool invokeActivity(Npc& npc, uint32_t function, NpcActivityProbe::Phase& probe);
@@ -429,8 +426,6 @@ class GameScript final : public GameRules {
     bool runStockTeleportCast(const std::shared_ptr<daedalus::INpc>& actor, std::string_view function);
     void assessMagic(Npc& npc);
     void givePlayerXp(int32_t amount);
-    void loadNativeQuestLog(const std::function<bool()>& enabled);
-    void closeQuestTopic(std::string_view topic, int32_t mission, int32_t common, int32_t endChapter);
     bool monsterRoutineWindowActive(const Npc& npc, const MonsterRoutineWindow& window);
     void enableMonsterRoutinePerceptions(Npc& npc);
     bool isMonsterMage(const std::shared_ptr<daedalus::INpc>& npc);
@@ -520,12 +515,10 @@ class GameScript final : public GameRules {
     void  initSettings();
     void  loadDialogOU();
     void  loadNativeAmbientInfos();
-    void  loadNativeTrainingHelpers();
     void  loadNativeAiStates();
     void  bindRuntimeVariable(std::string_view name, int32_t& value);
     void  bindRuntimeVariable(std::string_view name, std::string& value);
-    auto  buildLearnString(std::string_view title) -> daedalus::DaedalusSymbol&;
-    bool  readDialogInfos();
+    void  readDialogInfos();
 
     Item* findItem(daedalus::IItem* handle);
     Item* findItemById(size_t id);
@@ -891,7 +884,6 @@ class GameScript final : public GameRules {
     void sort(std::vector<DlgChoice>& dlg);
     // Run a dialog condition, answer or choice through the native story executor.
     int32_t dialogFunction(uint32_t function);
-    void rememberStoryDialog(std::string_view name, daedalus::IInfo& info);
     const daedalus::IInfo* storyDialog(std::string_view name) const;
 
     void initBennetOre();
@@ -966,7 +958,6 @@ class GameScript final : public GameRules {
     std::unique_ptr<StockPrograms>                                stockPrograms;
     storygraph::NativeExternals                                  nativeExternals;
     std::unique_ptr<BennetOre>                                    bennetOre;
-    daedalus::DaedalusSymbol*                                     levelUpSound = nullptr;
     std::function<void(bool)>                                    bennetLookupScope;
     std::function<void(Npc&,Npc&)>                               bennetTransferObserver;
     StartupFloor                                                floorDefer{*this};
@@ -981,8 +972,6 @@ class GameScript final : public GameRules {
 
     std::set<std::pair<size_t,size_t>>                          dlgKnownInfos;
     std::vector<std::shared_ptr<daedalus::IInfo>>                 dialogsInfo;
-    std::map<std::string,const daedalus::IInfo*,std::less<>>     storyDialogs;
-    std::unordered_map<uint32_t,std::pair<std::string_view,daedalus::IInfo*>> storyDialogsById;
     std::vector<std::shared_ptr<asset::CutsceneBlock>>           dialogs;
     std::unordered_map<size_t,AiState>                          aiStates;
     std::unique_ptr<AiOuputPipe>                                aiDefaultPipe;

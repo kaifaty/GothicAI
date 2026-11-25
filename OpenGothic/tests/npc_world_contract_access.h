@@ -240,9 +240,9 @@ struct NpcDefinitionContract {
   static const auto& transferVariables(const GameScript& script) { return script.inventoryTransferVariables; }
   static int32_t dialogCondition(GameScript& script,daedalus::DaedalusSymbol* fn) { return script.dialogFunction(fn->index()); }
   static bool hasPreparedStockProgram(const GameScript& script, const daedalus::DaedalusSymbol& fn) {
-    if(!script.stockPrograms || !script.stockPrograms->prepared)
+    if(!script.stockPrograms)
       return false;
-    const auto& programs=script.stockPrograms->prepared->programs;
+    const auto& programs=script.stockPrograms->prepared.programs;
     const auto entry=programs.find(fn.index());
     return entry!=programs.end() && entry->second.name==fn.name();
     }
