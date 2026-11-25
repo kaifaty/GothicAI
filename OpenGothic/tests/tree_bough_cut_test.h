@@ -59,7 +59,7 @@ void treeBoughRasterCases(Tempest::Device& device) {
   const float instance[16] = {1.f,0.f,0.f, 0.f,1.f,0.f, 0.f,0.f,1.f, 0.f,0.f,0.f};
   uint32_t bucket[36] = {};
   bucket[12] = bucket[15] = std::bit_cast<uint32_t>(1.f); // alphaWeight and uvScale
-  bucket[14] = 0x200u; // BK_HASHED_ALPHA
+  bucket[14] = 0x200u | 0x10u | 0x1000000u; // BK_HASHED_ALPHA | BK_NORMAL | BK_CANOPY
   SceneGlobals::UboGlobal globals{};
   globals.view = globals.project = Matrix4x4::mkIdentity();
   globals.project[3][0] = 0.013f;
@@ -67,6 +67,7 @@ void treeBoughRasterCases(Tempest::Device& device) {
   globals.clipInfo = {0.1f,0.f,1.f};
   globals.screenRes = {int(side),int(side)};
   globals.screenResInv = {1.f/float(side),1.f/float(side)};
+  globals.mipGradScale = 1.f;
   globals.viewFlags = SceneGlobals::VF_TAA;
   globals.taaFrame = 7;
 
@@ -78,6 +79,12 @@ void treeBoughRasterCases(Tempest::Device& device) {
   std::ranges::copy(instance, jointInstance);
   jointInstance[13] = std::bit_cast<float>(TreeBough::impostorJointFade(0.8f)); // static draw's animation slot
   const auto jointInstances = device.ssbo(jointInstance, sizeof(jointInstance));
+  float coarseInstance[16];
+  std::ranges::copy(instance, coarseInstance);
+  coarseInstance[13] = std::bit_cast<float>(MeshLevels::CanopyVertexNormal);
+  const auto coarseInstances = device.ssbo(coarseInstance, sizeof(coarseInstance));
+  coarseInstance[13] = std::bit_cast<float>(TreeBough::impostorJointFade(0.8f) | MeshLevels::CanopyVertexNormal);
+  const auto coarseJointInstances = device.ssbo(coarseInstance, sizeof(coarseInstance));
   const auto buckets = device.ssbo(bucket, sizeof(bucket));
   const auto vbo = device.ssbo(vertices);
   const auto compactIbo = device.ssbo(compact);
@@ -86,8 +93,12 @@ void treeBoughRasterCases(Tempest::Device& device) {
   const uint8_t texel[] = {255,255,255,191};
   std::memcpy(albedo.data(),texel,sizeof(texel));
   const auto texture = device.texture(albedo,false);
+  const uint8_t normalTexel[] = {216,128,240,255};
+  std::memcpy(albedo.data(),normalTexel,sizeof(normalTexel));
+  const auto detail = device.texture(albedo,false);
   auto diffuse = device.attachment(TextureFormat::RGBA8,side,side);
   auto normal = device.attachment(TextureFormat::R32U,side,side);
+  auto orm = device.attachment(TextureFormat::RGBA8,side,side);
   auto motion = device.attachment(TextureFormat::RG16F,side,side);
   RenderState state;
   state.setCullFaceMode(RenderState::CullMode::NoCull);
@@ -101,16 +112,16 @@ void treeBoughRasterCases(Tempest::Device& device) {
         return device.pipeline(state, Shader(), shader(meshName), shader(frag));
       return device.pipeline(Topology::Triangles,state,shader(vert),shader(frag));
       };
-    const auto bough = pipeline("main_bough_g_slot.vert.sprv", "main_bough_g_slot.mesh.sprv", "main_bough_g_at_slot.frag.sprv");
-    const auto legacy = pipeline("main_obj_g_slot.vert.sprv", "main_obj_g_slot.mesh.sprv", "main_obj_g_at_slot.frag.sprv");
-    const auto jointGeometry = pipeline("main_joint_g_slot.vert.sprv", "main_joint_g_slot.mesh.sprv", "main_joint_g_at_slot.frag.sprv");
+    const auto bough = pipeline("main_bough_g_orm_slot.vert.sprv", "main_bough_g_orm_slot.mesh.sprv", "main_bough_g_at_orm_slot.frag.sprv");
+    const auto legacy = pipeline("main_obj_g_orm_slot.vert.sprv", "main_obj_g_orm_slot.mesh.sprv", "main_obj_g_at_orm_slot.frag.sprv");
+    const auto jointGeometry = pipeline("main_joint_g_orm_slot.vert.sprv", "main_joint_g_orm_slot.mesh.sprv", "main_joint_g_at_orm_slot.frag.sprv");
     // Draws `count` workgroups of `size` nodes each, or one node of the vertex path.
     const auto renderGroups = [&](const RenderPipeline& pso, const StorageBuffer& ibo, uint32_t index,
                                   const StorageBuffer& instanceData, uint32_t size, uint32_t count) {
       auto command = device.commandBuffer();
       {
         auto enc = command.startEncoding(device);
-        enc.setFramebuffer({{diffuse,Vec4(),Preserve},{normal,Vec4(),Preserve},{motion,Vec4(),Preserve}});
+        enc.setFramebuffer({{diffuse,Vec4(),Preserve},{normal,Vec4(),Preserve},{orm,Vec4(),Preserve},{motion,Vec4(),Preserve}});
         enc.setBinding(0,scene);
         enc.setBinding(1,mesh && &pso==&bough ? meshPayload : payload);
         enc.setBinding(2,instanceData);
@@ -119,7 +130,11 @@ void treeBoughRasterCases(Tempest::Device& device) {
         enc.setBinding(5,vbo);
         enc.setBinding(6,texture);
         enc.setBinding(7,Sampler::nearest(ClampMode::ClampToEdge));
+        enc.setBinding(15,detail);
+        enc.setBinding(16,texture);
         enc.setBinding(21,instances);
+        for(auto slot : {23u,24u,25u})
+          enc.setBinding(slot,texture);
         enc.setPipeline(pso);
         for(uint32_t i=0; i<count; ++i) {
           const uint32_t push[] = {index+i*size,size};
@@ -138,14 +153,38 @@ void treeBoughRasterCases(Tempest::Device& device) {
       return renderGroups(pso,ibo,index,instanceData,1,1);
       };
     const auto full = render(bough,compactIbo,0,instances);
+    const auto rgba = static_cast<const uint8_t*>(full.data());
+    size_t sample = (side/2)*side;
+    while(sample<(side/2+1)*side && rgba[sample*4]==0)
+      ++sample;
+    require(sample<(side/2+1)*side,"no covered pixel for the canopy normal test");
+    const auto readNormal = [&] {
+      const auto pixels = device.readPixels(normal);
+      return static_cast<const uint32_t*>(pixels.data())[sample];
+      };
+    const auto closeNormal = readNormal();
     const auto parent = render(bough,compactIbo,1,instances);
     const auto child = render(bough,compactIbo,2,instances);
     const auto baseline = render(legacy,packedIbo,0,instances);
     require(std::memcmp(full.data(),baseline.data(),full.dataSize())==0,"steady bough differs from legacy card");
+    require(readNormal()==closeNormal,"near compact and GLB crowns disagree on the detail normal");
+    const auto coarseBough = render(bough,compactIbo,0,coarseInstances);
+    const auto coarseNormal = readNormal();
+    const auto coarseGlb = render(legacy,packedIbo,0,coarseInstances);
+    require(coarseNormal!=closeNormal && readNormal()==coarseNormal,
+            "coarse compact and GLB crowns must both use the vertex normal");
+    require(std::memcmp(coarseBough.data(),full.data(),full.dataSize())==0 &&
+            std::memcmp(coarseGlb.data(),baseline.data(),baseline.dataSize())==0,
+            "canopy normal LOD changed G-buffer coverage or albedo");
     const auto jointCrown = render(bough,compactIbo,0,jointInstances);
     const auto jointWood = render(jointGeometry,packedIbo,0,jointInstances);
     require(std::memcmp(jointCrown.data(),jointWood.data(),jointCrown.dataSize())==0,
             "compact and regular geometry disagree on impostor mask");
+    const auto coarseJoint = render(bough,compactIbo,0,coarseJointInstances);
+    const auto coarseJointGlb = render(jointGeometry,packedIbo,0,coarseJointInstances);
+    require(std::memcmp(coarseJoint.data(),jointCrown.data(),jointCrown.dataSize())==0 &&
+            std::memcmp(coarseJointGlb.data(),jointWood.data(),jointWood.dataSize())==0,
+            "the canopy normal LOD tag must preserve a fractional impostor joint");
     const auto covered = [](const Pixmap& pixmap, size_t i) { return static_cast<const uint8_t*>(pixmap.data())[i*4]!=0; };
     std::array<size_t,2> draws{};
     size_t jointPixels = 0;
@@ -210,6 +249,9 @@ void treeBoughRasterCases(Tempest::Device& device) {
 void treeBoughCutCases() {
   using namespace TreeBough;
   using namespace Tempest;
+  require(!MeshLevels::canopyUsesVertexNormal(1, 180.f, 0.f) && MeshLevels::canopyUsesVertexNormal(2, 220.f, 0.f) &&
+          !MeshLevels::canopyUsesVertexNormal(2, 200.f, 200.f) && MeshLevels::canopyUsesVertexNormal(1, 199.f, 200.f),
+          "crown normal-map limit must follow the selected GLB or the compact cut's authored L2 height");
   const auto node = [](Vec3 lo, Vec3 hi, float px, uint32_t parent, uint32_t end) {
     const auto centre = (lo + hi) * 0.5f;
     const auto diameter = (hi - lo).length();
@@ -388,6 +430,7 @@ void treeBoughCutCases() {
   require(activeJointSamples>2, "tree bough fixture missed the impostor joint");
   std::cout << "tree bough impostor joint: " << activeJointSamples << " fractional CPU/GPU samples\n";
   treeLevelBandPicks();
+  treeLevelOrderCase();
   treeLevelBandMasks(device);
   treeBoughGroupCases(device);
   treeBoughRasterCases(device);

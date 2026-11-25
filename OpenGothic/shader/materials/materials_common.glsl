@@ -103,6 +103,9 @@ const uint L_VsmLights  = L_Shadow1;
 #define MAT_CLUSTER_LEVEL
 #endif
 
+// Static instances pass this bit from their animation word to the G-buffer material reference (meshlevels.h).
+#define CanopyVertexNormal 0x40000000u
+
 const vec4 MeshletPaddingPosition = vec4(0.0, 0.0, 2.0, 1.0);
 
 #if defined(MAT_UV) || defined(MAT_NORMAL) || defined(MAT_POSITION) || defined(MAT_COLOR) || defined(MAT_MOTION)
@@ -255,6 +258,10 @@ Instance pullInstance(uint i) {
   ret.deformPtr = instanceMem[i+14];
   ret.deformCount = instanceMem[i+15];
   return ret;
+  }
+
+uint canopyNormalTag(uint instanceId) {
+  return instanceMem[instanceId*16u+13u] & CanopyVertexNormal;
   }
 
 MorphDesc pullMorphDesc(uint i) {

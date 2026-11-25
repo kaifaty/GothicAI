@@ -1056,16 +1056,18 @@ void VisualObjects::preFrameUpdateLevels() {
   if(probePx)
     shadowProbe = {};
   const bool drawStatic = (DrawCommands::hiddenTypes & (1u << DrawCommands::Static))==0;
+  const bool materialMaps = Shaders::options().doMaterialMaps;
   for(auto id:objectsLevels) {
     auto&       obj  = objects[id];
     const auto* mesh = obj.bucketId->staticMesh;
     if(mesh==nullptr)
       continue;
+    const bool staticInstance = obj.type==DrawCommands::Static || obj.type==DrawCommands::Movable;
     const bool canImpostor = obj.impostorShadowCmd!=uint16_t(-1) && benchImpostors!=BenchImpostors::Off;
     MeshLevels::Selection level;
     uint8_t shadowLevel = 0;
     bool shadowCoarse = false;
-    bool sunLod = false;
+    uint32_t sunFlags = 0;
     bool probeChanged = false;
     uint32_t joint = 0;
     if(obj.deformCount==0 && py!=0.f && resY>0) {
@@ -1123,7 +1125,7 @@ void VisualObjects::preFrameUpdateLevels() {
           }
         }
       if(obj.bandCluster!=uint32_t(-1))
-        sunLod = updateLevelBand(obj, height, height*1080.f/float(resY), shadowLevels, fullShadows, level, shadowLevel, shadowCoarse);
+        sunFlags = updateLevelBand(obj, height, height*1080.f/float(resY), shadowLevels, fullShadows, level, shadowLevel, shadowCoarse);
       if((level.impostor() || joint!=0u) && obj.levelSub==0 && obj.visible && drawStatic) {
         const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));
         const Vec3 y(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
@@ -1133,9 +1135,16 @@ void VisualObjects::preFrameUpdateLevels() {
         if(scene.frustrum[SceneGlobals::V_Main].testPoint(middle,radius))
           impostorDraws.push_back(id);
         }
+      if(staticInstance && materialMaps && !level.impostor() &&
+         HiZOccluders::canopy(obj.bucketId->mat.foliage, obj.alpha==Material::AlphaTest)) {
+        const bool cut = obj.type==DrawCommands::Static && mesh->treeBough && obj.levelSub==mesh->treeBough->sourceSub;
+        const float cutL2Px = cut && mesh->levels.size()>1 ? mesh->levels[1].px : 0.f;
+        if((cut || obj.bucketId->mat.normal!=nullptr) && MeshLevels::canopyUsesVertexNormal(level.glb, height, cutL2Px))
+          joint |= MeshLevels::CanopyVertexNormal;
+        }
       }
-    if(mesh->treeBough && obj.animPtr!=joint) {
-      // The static hierarchy uses the otherwise idle animation slot for the joint fade.
+    if(staticInstance && obj.animPtr!=joint) {
+      // The otherwise idle animation slot holds the impostor joint and the crown's normal-map choice.
       obj.animPtr = joint;
       obj.objInstance.set(&joint, offsetof(InstanceDesc,animPtr), sizeof(joint));
       if(!obj.bandInstance.isEmpty())
@@ -1147,8 +1156,7 @@ void VisualObjects::preFrameUpdateLevels() {
     const auto command = level.impostor() ? obj.impostorShadowCmd : obj.cmdId;
     const bool separateShadow = shadowLevel!=level.glb;
     uint32_t shadowCommand = separateShadow ? obj.cmdId : (c.shadowCommandId & 0xFFFFu);
-    if(sunLod)
-      shadowCommand |= DrawClusters::ShadowSunLod;
+    shadowCommand |= sunFlags;
     if(vsmStats && (c.shadowCommandId & (DrawClusters::ShadowVisual | DrawClusters::ShadowCoarse))!=0) {
       shadowCommand |= shadowCoarse ? DrawClusters::ShadowCoarse : DrawClusters::ShadowVisual;
       if(probeChanged)
@@ -1358,7 +1366,7 @@ void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t 
     std::copy_n(obj.pos.data(), 16, instance.transform);
     instance.info[0] = clustersMem[obj.clusterId].instanceId;
     instance.info[1] = lightFlags;
-    instance.info[2] = obj.animPtr;
+    instance.info[2] = obj.animPtr & ~MeshLevels::CanopyVertexNormal;
     }
 
   auto& buffer = impostorBuffer[fId];

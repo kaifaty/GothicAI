@@ -49,7 +49,11 @@ void main() {
     const uint bucketId = boughBucket(vertTask);
     Varyings   var;
     gl_MeshVerticesEXT[laneID].gl_Position = processVertex(var, vertTask.x, boughFirstIndex(vertTask), bucketId, vertLane);
-    bucketIdOut[laneID]  = bucketId;
+#if defined(MATERIAL_MAPS)
+    bucketIdOut[laneID] = bucketId | canopyNormalTag(vertTask.x);
+#else
+    bucketIdOut[laneID] = bucketId;
+#endif
     boughFadeOut[laneID] = boughFade(vertTask, boughMaskOut[laneID]);
 #include "mesh_varyings.glsl"
     }

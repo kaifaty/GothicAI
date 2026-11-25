@@ -36,6 +36,7 @@ constexpr uint32_t ImpostorMipCount  = 5;
 constexpr float  Hysteresis = 1.1f;
 constexpr float  ShadowNearDefaultPx = 800.f;
 constexpr float  ShadowFarPx = 400.f;
+constexpr uint32_t CanopyVertexNormal = 0x40000000u; // static instance animation word, then the G-buffer material reference
 
 struct Selection {
   uint8_t stage = 0;
@@ -146,6 +147,11 @@ inline uint8_t pick(const float* px, size_t count, uint8_t current, float height
   while(level>0 && height>=px[level-1]*Hysteresis)
     --level;
   return uint8_t(level);
+  }
+
+// A compact crown has a local cut in place of a GLB level. Use its mesh's authored L2 height for the whole crown.
+inline bool canopyUsesVertexNormal(uint8_t glb, float height, float cutL2Px) {
+  return cutL2Px>0.f ? height<cutL2Px : glb>1;
   }
 
 inline bool shadowUsesVisual(float heightAt1080, bool wasSeparate, float nearPx) {

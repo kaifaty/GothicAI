@@ -86,13 +86,22 @@ bool meshletInEntry(const vec4 local, const Instance obj, const float scale, con
 void cullCandidate(const uint c) {
   const uvec4   cand    = candidates[c];
   Cluster cluster = clusters[cand.x];
-  if(cand.w!=0u) {
+  const uint tail = cand.w & ~(VSM_SUN_LOD1 | VSM_SUN_MASKED_L4);
+  const bool lod1 = (cand.w & VSM_SUN_LOD1)!=0u;
+  const bool maskedL4 = (cand.w & VSM_SUN_MASKED_L4)!=0u;
+  if(tail!=0u && !lod1) {
     // SunCaster in visualobjects_levelband.cpp, shared by the sphere test, count and emission.
-    cluster.shadowFirstMeshlet = instanceMem[cand.w];
-    cluster.shadowMeshletCount = int(instanceMem[cand.w+1u]);
-    cluster.shadowCommandId    = instanceMem[cand.w+2u];
+    cluster.shadowFirstMeshlet = instanceMem[tail];
+    cluster.shadowMeshletCount = int(instanceMem[tail+1u] & ~VSM_SUN_COARSE_SIDE);
+    if(!maskedL4)
+      cluster.shadowCommandId = instanceMem[tail+2u];
     }
   cluster = shadowCluster(cluster);
+  if(lod1) {
+    // Keep the resolved shadow command and the original transition mask.
+    cluster.firstMeshlet = instanceMem[tail+5u];
+    cluster.meshletCount = int(instanceMem[tail+6u]);
+    }
   const uint    entry   = cand.y & 0xFFFFu;
   const uint    bin     = cand.y >> 16;
   const uint    lane    = gl_LocalInvocationIndex;
@@ -127,7 +136,8 @@ void cullCandidate(const uint c) {
   const int  count = shadowMeshlets(cluster);
   const uint data  = vsm.pageList[entry];
 #if defined(GEOMETRY_STATS)
-  const uint payloadEntry = entry | (cluster.shadowCommandId & VSM_GEOMETRY_MASK);
+  const uint geometry = cluster.shadowCommandId & VSM_GEOMETRY_MASK;
+  const uint payloadEntry = entry | (lod1 ? ((geometry & VSM_GEOMETRY_PROBE) | VSM_GEOMETRY_COARSE) : geometry);
 #else
   const uint payloadEntry = entry;
 #endif

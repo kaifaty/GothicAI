@@ -35,6 +35,14 @@ layout(location = 0) in flat uint bucketId;
 #if defined(MAT_VARYINGS)
 layout(location = 1) in Varyings  shInp;
 #endif
+#if defined(GBUFFER_MOTION) && defined(MATERIAL_MAPS) && defined(ATEST)
+// The coarse crown's detail normal is already in its vertices. The tag can decorate a bucket or a payload index.
+#define DRAW_MATERIAL_REF (materialRef & ~CanopyVertexNormal)
+#define GBUF_HAS_NORMAL ((bucket[bucketId].flags & BK_NORMAL)!=0 && (materialRef & CanopyVertexNormal)==0u)
+#else
+#define DRAW_MATERIAL_REF materialRef
+#define GBUF_HAS_NORMAL ((bucket[bucketId].flags & BK_NORMAL)!=0)
+#endif
 #if defined(TREE_BOUGH_CARDS) || defined(TREE_BOUGH_JOINT)
 #include "tree_bough_dissolve.glsl"
 #endif
@@ -544,7 +552,7 @@ void mainGBuffer(vec4 t) {
   const uint tId = 0;
 #endif
   if(maps.antitile) {
-    const bool hasNormal = (bucket[bucketId].flags & BK_NORMAL)!=0;
+    const bool hasNormal = GBUF_HAS_NORMAL;
     const bool hasOrm = (bucket[bucketId].flags & BK_ORM)!=0;
     const float peak = max(maps.weights.x, max(maps.weights.y, maps.weights.z));
     const uint dominant = maps.weights.x==peak ? 0u : (maps.weights.y==peak ? 1u : 2u);
@@ -584,7 +592,7 @@ void mainGBuffer(vec4 t) {
     } else if(maps.proj.on) {
     projectionMaps(maps.proj, tId, outNormal, outOrm.rgb);
     } else {
-    if((bucket[bucketId].flags & BK_NORMAL)!=0) {
+    if(GBUF_HAS_NORMAL) {
       vec4 nm = textureGrad(sampler2D(textureNormal[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale);
       outNormal = encodeNormal(mappedNormal(normal, dpdx, dpdy, duvdx, duvdy, nm));
       }
@@ -1105,22 +1113,22 @@ void main() {
 #endif
 #if defined(TREE_BOUGH_JOINT) && defined(GBUFFER)
   const bool treeJoint = (materialRef & BoughJointTag)!=0u;
-  const uint taskRef = materialRef & ~BoughJointTag;
+  const uint taskRef = DRAW_MATERIAL_REF & ~BoughJointTag;
 #endif
 #if defined(TREE_BOUGH_CARDS)
-  bucketId = materialRef;
+  bucketId = DRAW_MATERIAL_REF;
 #elif defined(HISTORY_PAYLOAD)
 #if defined(TREE_BOUGH_JOINT)
   const uvec4 historyTask = payload[taskRef];
 #else
-  const uvec4 historyTask = payload[materialRef];
+  const uvec4 historyTask = payload[DRAW_MATERIAL_REF];
 #endif
   const uint historyOwner = historyTask.w & 0x00FFFFFFu;
   bucketId = historyTask.z;
   uint clusterLevel = historyTask.w >> 24u;
 #elif defined(MAT_CLUSTER_LEVEL)
   bucketId = materialRef & 0xffffu;
-  uint clusterLevel = materialRef >> 16u;
+  uint clusterLevel = DRAW_MATERIAL_REF >> 16u;
 #elif defined(MAT_MOTION)
   bucketId = materialRef;
 #endif
@@ -1131,7 +1139,7 @@ void main() {
     const uvec4 task = payload[taskRef];
 #else
   if(treeProbe) {
-    const uvec4 task = payload[materialRef];
+    const uvec4 task = payload[DRAW_MATERIAL_REF];
 #endif
     bucketId = task.z;
     const bool historyReference = (scene.viewFlags & VF_HIZ_HISTORY_REFERENCE)!=0u;
@@ -1239,7 +1247,11 @@ void main() {
   if(treeJoint) {
     // the impostor joint's 3D side, then the side of a level band, at independent ranks of the same sample
     const Instance instance = pullInstance(payload[taskRef].x);
+#if defined(MATERIAL_MAPS) && defined(ATEST)
+    const uint fade = boughJointFade(instance.animPtr & ~CanopyVertexNormal) ^ BoughFadeChild;
+#else
     const uint fade = boughJointFade(instance.animPtr) ^ BoughFadeChild;
+#endif
     const uint seed = boughJointSeed(instance.mat[3]);
     const vec2 sampleOffset = boughSampleOffset(gl_FragCoord.xy, boughMaskCoordinates(instance.mat[3], scene));
     if(!boughCovers(fade, seed, sampleOffset) ||

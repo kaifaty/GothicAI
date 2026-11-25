@@ -273,7 +273,7 @@ class VisualObjects final {
     // The level bands of a tree with a bough hierarchy (visualobjects_levelband.cpp)
     void     allocLevelBand(Object& obj);
     void     freeLevelBand(Object& obj);
-    bool     updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
+    uint32_t updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
                              MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse);
     void     drawImpostors(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool history);
     // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh

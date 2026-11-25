@@ -428,10 +428,14 @@ void main() {
   const uint payloadId = workIndex + firstMeshlet;
   const uvec4 task     = payload[payloadId];
 #if defined(TREE_BOUGH_CARDS)
+#if defined(MATERIAL_MAPS)
+  uint materialRef = boughBucket(task);
+#else
   const uint materialRef = boughBucket(task);
+#endif
 #elif defined(HISTORY_PAYLOAD)
   // Both history phases use this same vertex shader and carry the unchanged payload index.
-#if defined(TREE_BOUGH_JOINT)
+#if defined(TREE_BOUGH_JOINT) || (MESH_TYPE==T_OBJ && defined(MATERIAL_MAPS))
   uint materialRef = payloadId;
 #else
   const uint materialRef = payloadId;
@@ -455,6 +459,10 @@ void main() {
     if((obj.animPtr & BoughJointTag)!=0u || boughBandActive(boughBandWord(obj)))
       materialRef = payloadId | BoughJointTag;
   }
+#endif
+
+#if MESH_TYPE==T_OBJ && defined(GBUFFER_MOTION) && defined(MATERIAL_MAPS)
+  materialRef |= canopyNormalTag(task.x);
 #endif
 
 #if defined(VIRTUAL_SHADOW)
