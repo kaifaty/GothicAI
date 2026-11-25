@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -32,6 +33,8 @@ using TreeNanite::MaxLogicalTriangles;
 using TreeNanite::MaxMeshletPrimitives;
 using TreeNanite::MaxMeshletVertices;
 using TreeNanite::Meshlet;
+using TreeNanite::Bone;
+using TreeNanite::Skin;
 
 constexpr float Infinity = std::numeric_limits<float>::infinity();
 
@@ -50,28 +53,28 @@ struct Input {
   std::vector<Triangle>        triangles;
   std::vector<uint8_t>         locks;
   std::vector<uint32_t>        wind;
-  std::array<uint8_t,32>       glbHash, materialsHash;
+  std::vector<Bone>            bones;
+  std::vector<Skin>            skin;
+  std::array<uint8_t,32>       sourceHash, materialsHash, rigHash;
   float                       height;
   };
 
-Input readInput(const std::filesystem::path& glb, const std::filesystem::path& materials) {
+rapidjson::Document readJson(const std::vector<uint8_t>& bytes, const char* error) {
+  rapidjson::Document document;
+  require(!bytes.empty() && !document.Parse(reinterpret_cast<const char*>(bytes.data()),bytes.size()).HasParseError() &&
+          document.IsObject(),error);
+  return document;
+  }
+
+void readCardMesh(Input& out, const std::filesystem::path& glb, const rapidjson::Document& document) {
   std::vector<uint8_t> source;
   const auto mesh = loadGltfMesh(glb,&source);
   const auto colors = loadGltfMeshColors(source,mesh);
   require(mesh.sub_meshes.size()==2 && mesh.sub_meshes[0].mat.name=="OWN_TREE_FIR_BARK" &&
           mesh.sub_meshes[1].mat.name=="OWN_TREE_FIR_BOUGHS" && colors.size()==2,
           "expected the two spruce A materials with wind weights");
-
-  const auto materialBytes = gothicglb::readFile(materials);
-  rapidjson::Document document;
-  require(!materialBytes.empty() && !document.Parse(reinterpret_cast<const char*>(materialBytes.data()),
-                                                     materialBytes.size()).HasParseError(), "invalid materials JSON");
-
-  Input out = {};
-  out.glbHash = sha256Bytes(source);
-  out.materialsHash = sha256Bytes(materialBytes);
+  out.sourceHash = sha256Bytes(source);
   out.height = mesh.bbox.max.y;
-  require(out.height>0,"expected a tree in its bind pose with an up-Y trunk");
   for(uint32_t material=0; material<mesh.sub_meshes.size(); ++material) {
     const auto& sub = mesh.sub_meshes[material];
     const auto& entry = gothicglb::member(document,sub.mat.texture.c_str());
@@ -99,7 +102,122 @@ Input readInput(const std::filesystem::path& glb, const std::filesystem::path& m
     for(const auto& t : sub.triangles)
       out.triangles.push_back({{start+t.wedges[0],start+t.wedges[1],start+t.wedges[2]},material,bark});
     }
-  require(!out.triangles.empty(),"expected spruce triangles");
+  }
+
+void readNeedleMesh(Input& out, const std::filesystem::path& path) {
+  // The pilot's rigid, opaque triangle stream has 32-bit indices rather than
+  // the MRM restrictions of the GLB-to-game converter.
+  struct FileVertex {
+    Vertex vertex;
+    uint16_t first, second;
+    uint8_t weight, lock;
+    std::array<uint8_t,2> padding;
+    };
+  using FileTriangle = std::array<uint32_t,4>;
+  using Header = std::array<uint32_t,4>;
+  static_assert(std::endian::native == std::endian::little && sizeof(FileVertex)==44);
+  const auto bytes = gothicglb::readFile(path);
+  require(bytes.size()>=sizeof(Header),"truncated spruce geometry");
+  Header header;
+  std::memcpy(header.data(),bytes.data(),sizeof(Header));
+  const auto [magic,version,vertexCount,triangleCount] = header;
+  require(magic==0x47524946 && version==1 && vertexCount>0 && triangleCount>0,
+          "unsupported spruce geometry");
+  require(sizeof(Header) + uint64_t(vertexCount)*sizeof(FileVertex) +
+          uint64_t(triangleCount)*sizeof(FileTriangle)==bytes.size(),"invalid spruce geometry size");
+  out.sourceHash = sha256Bytes(bytes);
+  out.vertices.reserve(vertexCount);
+  out.locks.reserve(vertexCount);
+  out.skin.reserve(vertexCount);
+  out.triangles.reserve(triangleCount);
+  size_t cursor = sizeof(Header);
+  for(uint32_t i=0; i<vertexCount; ++i) {
+    FileVertex v;
+    std::memcpy(&v,bytes.data()+cursor,sizeof(v));
+    require(v.lock<=1 && v.padding==std::array<uint8_t,2>{},"invalid spruce vertex flags");
+    out.vertices.push_back(v.vertex);
+    out.locks.push_back(v.lock);
+    out.skin.push_back({v.first,v.second,v.weight});
+    out.height = std::max(out.height,v.vertex.position[1]);
+    cursor += sizeof(v);
+    }
+  std::array<uint32_t,2> materialCounts{};
+  for(uint32_t i=0; i<triangleCount; ++i) {
+    FileTriangle t;
+    std::memcpy(t.data(),bytes.data()+cursor,sizeof(t));
+    const auto [a,b,c,material] = t;
+    require(a<vertexCount && b<vertexCount && c<vertexCount && material<materialCounts.size(),
+            "invalid spruce triangle");
+    ++materialCounts[material];
+    out.triangles.push_back({{a,b,c},material,material==0});
+    cursor += sizeof(t);
+    }
+  require(materialCounts[0]>0 && materialCounts[1]>0,"expected spruce bark and needle triangles");
+  }
+
+void readRig(Input& out, const std::filesystem::path& path) {
+  const auto bytes = gothicglb::readFile(path);
+  const auto document = readJson(bytes,"invalid spruce rig JSON");
+  require(gothicglb::jsonToInt(gothicglb::member(document,"version"),"version")==1,"unsupported spruce rig");
+  out.rigHash = sha256Bytes(bytes);
+  const auto& bones = gothicglb::member(document,"bones");
+  require(bones.IsArray() && bones.Size()>0 && bones.Size()<=std::numeric_limits<uint16_t>::max(),
+          "invalid spruce rig bone count");
+  for(const auto& v : bones.GetArray()) {
+    require(v.IsArray() && v.Size()==8,"expected bone parent, kind, pivot and axis");
+    const auto integer = [&](unsigned i) { return gothicglb::jsonToInt(v[i],"bone integer"); };
+    const auto vector = [&](unsigned i) {
+      return Point{gothicglb::jsonToFloat(v[i],"bone vector"),gothicglb::jsonToFloat(v[i+1],"bone vector"),
+                   gothicglb::jsonToFloat(v[i+2],"bone vector")};
+      };
+    const auto parent = integer(0), kind = integer(1);
+    require(out.bones.empty() ? parent==-1 && kind==TreeNanite::RootBone :
+            parent>=0 && uint64_t(parent)<out.bones.size() &&
+            kind>=TreeNanite::TrunkBone && kind<=TreeNanite::ShootBone,
+            "invalid spruce rig hierarchy");
+    const auto axis = vector(5);
+    const auto pivot = vector(2);
+    require(std::abs(std::hypot(axis[0],axis[1],axis[2])-1.f)<1e-4f,"expected a unit bone axis");
+    require(std::ranges::all_of(pivot,[](float value) { return std::isfinite(value); }),"invalid bone pivot");
+    out.bones.push_back({pivot,axis,uint32_t(parent),uint32_t(kind)});
+    }
+
+  if(out.skin.empty()) {
+    const auto& bindings = gothicglb::member(document,"vertices");
+    require(bindings.IsArray() && bindings.Size()==out.vertices.size(),
+            "the rig must contain one binding per GLB vertex");
+    size_t vertex = 0;
+    for(const auto& v : bindings.GetArray()) {
+      require(v.IsArray() && v.Size()==4,"expected two joint IDs, weight and lock flag");
+      const auto integer = [&](unsigned i) { return gothicglb::jsonToInt(v[i],"binding integer"); };
+      const auto first = integer(0), second = integer(1), weight = integer(2), lock = integer(3);
+      require(first>=0 && uint64_t(first)<out.bones.size() && second>=0 && uint64_t(second)<out.bones.size() &&
+              weight>=0 && weight<=255 && lock>=0 && lock<=1,"invalid GLB vertex binding");
+      out.skin.push_back({uint16_t(first),uint16_t(second),uint8_t(weight)});
+      out.locks[vertex++] |= uint8_t(lock);
+      }
+    }
+  for(const auto& v : out.skin)
+    require(v.first<out.bones.size() && v.second<out.bones.size(),"joint outside spruce rig");
+  }
+
+Input readInput(const std::filesystem::path& geometry, const std::filesystem::path& materials,
+                const std::filesystem::path& rig) {
+  Input out = {};
+  const auto materialBytes = gothicglb::readFile(materials);
+  const auto document = readJson(materialBytes,"invalid materials JSON");
+  const bool opaque = geometry.extension()==".firg";
+  if(opaque) {
+    require(!rig.empty(),"opaque spruce geometry needs a bone hierarchy");
+    readNeedleMesh(out,geometry);
+    }
+  else {
+    readCardMesh(out,geometry,document);
+    }
+  if(!rig.empty())
+    readRig(out,rig);
+  out.materialsHash = sha256Bytes(materialBytes);
+  require(out.height>0 && !out.triangles.empty(),"expected spruce triangles with an up-Y trunk");
   return out;
   }
 
@@ -114,11 +232,16 @@ Position key(const Point& p) {
   return {bits(p[0]),bits(p[1]),bits(p[2])};
   }
 
-using VertexKey = std::array<uint32_t,9>;
+using VertexKey = std::array<uint32_t,11>;
 
-VertexKey key(const Vertex& v) {
+VertexKey key(const Vertex& v, Skin skin) {
   return {bits(v.position[0]),bits(v.position[1]),bits(v.position[2]),
-          bits(v.normal[0]),bits(v.normal[1]),bits(v.normal[2]),bits(v.uv[0]),bits(v.uv[1]),v.color};
+          bits(v.normal[0]),bits(v.normal[1]),bits(v.normal[2]),bits(v.uv[0]),bits(v.uv[1]),v.color,
+          uint32_t(skin.first) | (uint32_t(skin.second)<<16),skin.weight};
+  }
+
+VertexKey key(const auto& mesh, uint32_t id) {
+  return key(mesh.vertices.at(id),mesh.skin.empty() ? Skin{} : mesh.skin.at(id));
   }
 
 std::vector<uint32_t> clusterTriangles(const Graph& graph, const ClusterLod::Cluster& cluster) {
@@ -152,7 +275,7 @@ struct Topology {
       for(size_t j=0; j<3; ++j) {
         const auto& v = graph.vertices.at(vertices[i+j]);
         positions[j] = key(v.position);
-        wedges[positions[j]].emplace(cluster.material,key(v));
+        wedges[positions[j]].emplace(cluster.material,key(graph,vertices[i+j]));
         }
       for(size_t j=0; j<3; ++j) {
         const auto a = positions[j], b = positions[(j+1)%3];
@@ -170,7 +293,7 @@ bool encloses(const ClusterLod::Sphere& outer, const ClusterLod::Sphere& inner) 
   return distance+inner.radius<=outer.radius;
   }
 
-size_t verifyTransitions(const Graph& graph) {
+size_t verifyTransitions(const Input& input, const Graph& graph) {
   using Side = std::vector<const ClusterLod::Cluster*>;
   struct Transition { Side fine, coarse; };
   std::vector<Transition> transitions(graph.groups.size());
@@ -204,6 +327,10 @@ size_t verifyTransitions(const Graph& graph) {
 
   // Walk simultaneous hierarchy rounds while terminal groups stay in the cut.
   // Check shared vertices even when the neighbour uses a different UV chart.
+  std::set<Position> attachments;
+  for(size_t i=0; i<input.locks.size(); ++i)
+    if(input.locks[i])
+      attachments.insert(key(input.vertices[i].position));
   size_t verified = 0;
   for(;;) {
     std::map<uint32_t,Topology> current;
@@ -231,10 +358,10 @@ size_t verifyTransitions(const Graph& graph) {
       for(const auto* cluster : coarse)
         replacement.add(graph,*cluster);
       for(const auto& [position,wedges] : fine.wedges) {
-        if(positionUses.at(position)>1 || wedges.size()>1) {
+        if(positionUses.at(position)>1 || wedges.size()>1 || attachments.contains(position)) {
           const auto found = replacement.wedges.find(position);
           require(found!=replacement.wedges.end() && found->second==wedges,
-                  "shared position, UV seam or wind weights changed at group " + std::to_string(id));
+                  "shared position, attachment, UV seam or wind weights changed at group " + std::to_string(id));
           }
         }
       for(const auto& [edge,winding] : fine.edges) {
@@ -274,25 +401,26 @@ using Face = std::array<uint32_t,3>;
 
 void verifySource(const Input& input, const Graph& graph) {
   using Signature = std::pair<uint32_t,std::array<VertexKey,3>>;
-  const auto face = [](uint32_t mat, const auto& vertices, uint32_t a, uint32_t b, uint32_t c) -> Signature {
-    return {mat,orientedFace(key(vertices.at(a)),key(vertices.at(b)),key(vertices.at(c)))};
+  const auto face = [](uint32_t mat, const auto& mesh, uint32_t a, uint32_t b, uint32_t c) -> Signature {
+    return {mat,orientedFace(key(mesh,a),key(mesh,b),key(mesh,c))};
     };
   std::vector<Signature> source, leaf;
   for(const auto& t : input.triangles)
-    source.push_back(face(t.material,input.vertices,t.vertices[0],t.vertices[1],t.vertices[2]));
+    source.push_back(face(t.material,input,t.vertices[0],t.vertices[1],t.vertices[2]));
   for(const auto& cluster : graph.clusters) {
     if(cluster.refinedGroup!=NoGroup)
       continue;
     const auto indices = clusterTriangles(graph,cluster);
     for(size_t i=0; i<indices.size(); i+=3)
-      leaf.push_back(face(cluster.material,graph.vertices,indices[i],indices[i+1],indices[i+2]));
+      leaf.push_back(face(cluster.material,graph,indices[i],indices[i+1],indices[i+2]));
     }
   std::ranges::sort(source);
   std::ranges::sort(leaf);
   require(source==leaf,"leaf geometry or attributes differ from the source triangles");
   }
 
-void appendMeshlet(Asset& asset, const Input& input, uint32_t material, std::span<const uint32_t> vertices,
+void appendMeshlet(Asset& asset, const Input& input, std::span<const float> travel, uint32_t material,
+                   std::span<const uint32_t> vertices,
                    std::span<const uint8_t> triangles, std::vector<Face>& faces) {
   require(!vertices.empty() && vertices.size()<=MaxMeshletVertices && !triangles.empty() &&
           triangles.size()<=3*MaxMeshletPrimitives,
@@ -302,7 +430,7 @@ void appendMeshlet(Asset& asset, const Input& input, uint32_t material, std::spa
                      offset(vertices.size()),offset(triangles.size()/3)};
   for(auto id : vertices) {
     const auto& v = asset.vertices.at(id);
-    const auto radius = vertexTravel(v,input.wind.at(material),input.height);
+    const float radius = travel.empty() ? vertexTravel(v,input.wind.at(material),input.height) : travel[id];
     for(size_t axis=0; axis<v.position.size(); ++axis) {
       const float margin = 8.f*std::numeric_limits<float>::epsilon()*std::max(input.height,std::abs(v.position[axis]));
       meshlet.boxMin[axis] = std::min(meshlet.boxMin[axis],std::nextafter(v.position[axis]-radius-margin,-Infinity));
@@ -321,13 +449,23 @@ void appendMeshlet(Asset& asset, const Input& input, uint32_t material, std::spa
 
 Asset pack(const Input& input, const Graph& graph) {
   Asset asset;
-  asset.sourceHash = input.glbHash;
+  asset.sourceHash = input.sourceHash;
   asset.materialHash = input.materialsHash;
   asset.vertices = graph.vertices;
   asset.groups = graph.groups;
+  asset.bones = input.bones;
+  asset.skin = graph.skin;
+  std::vector<float> travel(asset.skin.size());
+  for(uint32_t index=0; index<travel.size(); ++index)
+    travel[index] = TreeNanite::windTravel(asset,index);
   float windMargin = 0.f;
-  for(auto wind : input.wind)
-    windMargin = std::max(windMargin,FoliageTree::travel(wind,input.height));
+  if(travel.empty()) {
+    for(auto wind : input.wind)
+      windMargin = std::max(windMargin,FoliageTree::travel(wind,input.height));
+    }
+  else {
+    windMargin = std::ranges::max(travel);
+    }
   for(auto& group : asset.groups)
     group.bounds.radius = std::nextafter(group.bounds.radius+windMargin,Infinity);
 
@@ -337,7 +475,8 @@ Asset pack(const Input& input, const Graph& graph) {
     const auto indices = clusterTriangles(graph,c);
     for(auto vertexId : std::span(graph.vertexIndices).subspan(c.vertexOffset,c.vertexCount)) {
       const auto& vertex = graph.vertices.at(vertexId);
-      const ClusterLod::Sphere wind = {vertex.position,vertexTravel(vertex,input.wind.at(c.material),input.height)};
+      const float radius = travel.empty() ? vertexTravel(vertex,input.wind.at(c.material),input.height) : travel[vertexId];
+      const ClusterLod::Sphere wind = {vertex.position,radius};
       require(encloses(asset.groups[c.parentGroup].bounds,wind),"fine wind envelope lies outside its group sphere");
       if(c.refinedGroup!=NoGroup)
         require(encloses(asset.groups[c.refinedGroup].bounds,wind),"coarse wind envelope lies outside its group sphere");
@@ -347,7 +486,7 @@ Asset pack(const Input& input, const Graph& graph) {
       original.push_back(orientedFace(indices[i],indices[i+1],indices[i+2]));
 
     if(c.vertexCount<=MaxMeshletVertices && c.triangleCount<=MaxMeshletPrimitives) {
-      appendMeshlet(asset,input,c.material,std::span(graph.vertexIndices).subspan(c.vertexOffset,c.vertexCount),
+      appendMeshlet(asset,input,travel,c.material,std::span(graph.vertexIndices).subspan(c.vertexOffset,c.vertexCount),
                    std::span(graph.indices).subspan(c.indexOffset,c.triangleCount*3),packed);
       }
     else {
@@ -361,7 +500,7 @@ Asset pack(const Input& input, const Graph& graph) {
       for(const auto& m : meshlets) {
         meshopt_optimizeMeshlet(vertexIds.data()+m.vertex_offset,local.data()+m.triangle_offset,
                                 m.triangle_count,m.vertex_count);
-        appendMeshlet(asset,input,c.material,std::span(vertexIds).subspan(m.vertex_offset,m.vertex_count),
+        appendMeshlet(asset,input,travel,c.material,std::span(vertexIds).subspan(m.vertex_offset,m.vertex_count),
                      std::span(local).subspan(m.triangle_offset,m.triangle_count*3),packed);
         }
       }
@@ -405,12 +544,14 @@ void report(std::string_view profile, const Graph& graph, const Asset& asset, co
   for(const auto& [level,ids] : levels) {
     std::vector<size_t> logicalVertices, logicalTriangles, meshletsPerCluster, meshletVertices, meshletTriangles;
     std::set<uint32_t> unique;
+    std::array<size_t,2> materialTriangles{};
     size_t references = 0, triangles = 0;
     for(auto id : ids) {
       const auto& c = graph.clusters[id];
       const auto& packed = asset.clusters[id];
       logicalVertices.push_back(c.vertexCount);
       logicalTriangles.push_back(c.triangleCount);
+      materialTriangles.at(c.material) += c.triangleCount;
       meshletsPerCluster.push_back(packed.meshletCount);
       for(const auto& m : std::span(asset.meshlets).subspan(packed.firstMeshlet,packed.meshletCount)) {
         meshletVertices.push_back(m.vertexCount);
@@ -424,10 +565,39 @@ void report(std::string_view profile, const Graph& graph, const Asset& asset, co
     distribution(profile,level,"logical_vertices",std::move(logicalVertices));
     distribution(profile,level,"logical_triangles",std::move(logicalTriangles));
     distribution(profile,level,"meshlets_per_cluster",std::move(meshletsPerCluster));
+    const size_t meshletCount = meshletVertices.size();
     distribution(profile,level,"meshlet_vertices",std::move(meshletVertices));
     distribution(profile,level,"meshlet_triangles",std::move(meshletTriangles));
     std::cout << profile << '\t' << level << "\ttriangles\t" << triangles << "\tvertex_references\t" << references
               << "\tunique_vertices\t" << unique.size() << "\tduplicate_vertices\t" << references-unique.size() << '\n';
+    if(!asset.skin.empty()) {
+      std::set<uint16_t> bones;
+      for(uint32_t id : unique) {
+        const auto skin = asset.skin[id];
+        if(skin.weight>0)
+          bones.insert(skin.first);
+        if(skin.weight<255)
+          bones.insert(skin.second);
+        }
+      const size_t bytes = unique.size()*(sizeof(Vertex)+sizeof(Skin)) + ids.size()*sizeof(TreeNanite::Cluster) +
+                           meshletCount*sizeof(Meshlet) + (references+triangles)*sizeof(uint32_t);
+      std::cout << profile << '\t' << level << "\tbark_triangles\t" << materialTriangles[0]
+                << "\tcrown_triangles\t" << materialTriangles[1] << "\tinfluencing_bones\t" << bones.size()
+                << "\tgeometry_bytes\t" << bytes << '\n';
+      }
+    }
+  if(!asset.skin.empty()) {
+    size_t fine=0, terminal=0;
+    for(const auto& cluster : asset.clusters)
+      for(const auto& meshlet : std::span(asset.meshlets).subspan(cluster.firstMeshlet,cluster.meshletCount)) {
+        if(cluster.refinedGroup==NoGroup)
+          fine += meshlet.primitiveCount;
+        if(std::isinf(asset.groups[cluster.parentGroup].errorCm))
+          terminal += meshlet.primitiveCount;
+        }
+    std::cout << profile << "\tleaf_cut_triangles\t" << fine << "\tterminal_cut_triangles\t" << terminal << '\n';
+    std::cout << profile << "\tbone_bytes\t" << asset.bones.size()*sizeof(Bone)
+              << "\tskin_bytes\t" << asset.skin.size()*sizeof(Skin) << '\n';
     }
   }
 
@@ -471,21 +641,29 @@ void printHash(std::string_view name, const std::array<uint8_t,32>& hash) {
 
 }
 
-void cookTreeNanite(const std::filesystem::path& glb, const std::filesystem::path& materials,
-                    const std::filesystem::path& output) {
+void cookTreeNanite(const std::filesystem::path& geometry, const std::filesystem::path& materials,
+                    const std::filesystem::path& output, const std::filesystem::path& rig) {
   if(std::filesystem::exists(output))
-    require(!std::filesystem::equivalent(glb,output) && !std::filesystem::equivalent(materials,output),
+    require(!std::filesystem::equivalent(geometry,output) && !std::filesystem::equivalent(materials,output) &&
+            (rig.empty() || !std::filesystem::equivalent(rig,output)),
             "output would replace an input");
-  const auto input = readInput(glb,materials);
-  std::cout << "format_version\t" << TreeNanite::FormatVersion << '\n';
-  printHash("glb_sha256",input.glbHash);
+  const auto input = readInput(geometry,materials,rig);
+  std::cout << "format_version\t" << (input.skin.empty() ? TreeNanite::FormatVersion : TreeNanite::WindFormatVersion)
+            << '\n';
+  printHash(geometry.extension()==".firg" ? "firg_sha256" : "glb_sha256",input.sourceHash);
   printHash("materials_sha256",input.materialsHash);
+  if(!input.skin.empty()) {
+    printHash("rig_sha256",input.rigHash);
+    std::cout << "bones\t" << input.bones.size() << '\n';
+    }
   Asset result;
   for(const bool logical128 : {false,true}) {
+    if(!logical128 && !input.skin.empty())
+      continue;
     ClusterLod::BuildStats stats;
-    const auto graph = ClusterLod::buildFoliage(input.vertices,input.triangles,input.locks,stats,logical128);
+    const auto graph = ClusterLod::buildFoliage(input.vertices,input.triangles,input.locks,stats,logical128,input.skin);
     verifySource(input,graph);
-    const auto verified = verifyTransitions(graph);
+    const auto verified = verifyTransitions(input,graph);
     auto packed = pack(input,graph);
     const char* profile = logical128 ? "logical_128" : "logical_64";
     report(profile,graph,packed,stats,verified);

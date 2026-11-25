@@ -933,15 +933,25 @@ void checkFoliageDilation() {
   vertices.push_back({{1000,0,100},{0,1,0},{0,1},WindWeights});
   triangles.push_back({{0,1,Segments+1},1,true});
   std::vector<uint8_t> locks(vertices.size());
+  std::vector<Skin> skin;
+  for(size_t i=0; i<vertices.size(); ++i)
+    skin.push_back({1,2,uint8_t(i % 256)});
   BuildStats stats;
-  const auto graph = buildFoliage(vertices,triangles,locks,stats);
+  const auto graph = buildFoliage(vertices,triangles,locks,stats,true,skin);
   require(stats.dilationCm.size()==graph.groups.size() &&
           std::ranges::any_of(stats.dilationCm,[](float amount) { return amount>0; }),
           "free foliage borders did not expand");
   require(graph.vertices.size()>vertices.size(),"foliage dilation did not use separate vertices");
+  require(graph.skin.size()==graph.vertices.size(),"a dilated vertex lost its skin");
   for(size_t i=0; i<vertices.size(); ++i)
-    require(graph.vertices[i].position==vertices[i].position && graph.vertices[i].color==vertices[i].color,
+    require(graph.vertices[i].position==vertices[i].position && graph.vertices[i].color==vertices[i].color &&
+            graph.skin[i]==skin[i],
             "foliage dilation changed the input geometry");
+  for(size_t i=vertices.size(); i<graph.vertices.size(); ++i) {
+    const auto source = std::ranges::find(vertices,graph.vertices[i].uv,&Vertex::uv);
+    require(source!=vertices.end() && graph.skin[i]==skin[size_t(source-vertices.begin())],
+            "a dilated foliage vertex changed its joint weights");
+    }
 
   for(const auto& cluster : graph.clusters) {
     require(cluster.triangleCount<=MaxFoliageTriangles && cluster.vertexCount<=MaxFoliageVertices,

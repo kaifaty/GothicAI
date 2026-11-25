@@ -3,6 +3,7 @@
 #include "treenaniteasset.h"
 
 #include <array>
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -42,8 +43,33 @@ struct Material {
   std::array<float, 4> uvScaleFlags, tint;
   };
 
+struct RouteInput {
+  Point eye, target;
+  float time, pressure, windX, windZ;
+  Point sun;
+  float threshold;
+  };
+
+struct RouteUniform {
+  std::array<float, 16> shadowProject;
+  std::array<float, 4> eye, right, up, forward, sun, wind, previousWind;
+  std::array<float, 4> windFade, previousWindFade;
+  };
+
+struct Pose {
+  std::array<float, 4> x, y, z;
+  };
+
+struct RigBone {
+  Point pivot;
+  uint32_t parent;
+  Point axis;
+  uint32_t kind;
+  };
+
 static_assert(sizeof(Vertex) == 48 && sizeof(Meshlet) == 16 && sizeof(DrawRecord) == 16);
 static_assert(sizeof(Instance) == 32 && sizeof(Frame) == 160 && sizeof(Material) == 32);
+static_assert(sizeof(RouteUniform) == 208 && sizeof(Pose) == 48 && sizeof(RigBone) == 32);
 
 struct Phase {
   uint32_t first, count;
@@ -58,10 +84,16 @@ struct Submission {
   uint64_t                selectedBeforeCull = 0;
   uint64_t                selectedPrimitivesBeforeCull = 0;
   uint64_t                culledMeshlets = 0;
+  uint64_t                selectedClusters = 0, terminalClusters = 0;
   std::vector<uint32_t>    requiredDrawRecords; // one-based owner IDs that must win somewhere
   uint32_t                expectedCenterOwner = 0;
   uint32_t                requiredSideBits = 0;
   bool                    requireEdgePixel = false;
+  };
+
+struct RouteFrame {
+  Submission view, shadow;
+  RouteUniform uniform;
   };
 
 class Scene {
@@ -177,10 +209,47 @@ class Scene {
       return submission;
       }
 
+    RouteFrame prepareRoute(const RouteInput& input, const RouteInput& previous, bool cards) const {
+      RouteFrame route{};
+      const auto packed = [](Point p) { return std::array{p[0], p[1], p[2], 0.f}; };
+      const auto view = camera(input.eye, add(input.target, multiply(input.eye, -1.f)));
+      const auto last = camera(previous.eye, add(previous.target, multiply(previous.eye, -1.f)));
+      const auto sun = normalize(input.sun);
+      route.view.frame = frame(view);
+      route.view.frame.prevViewProj = frame(last).viewProj;
+      route.view.frame.control[2] = uint32_t(asset->bones.size());
+      route.view.frame.control[3] = cards ? 1u : 0u;
+      route.uniform.shadowProject = shadowProject(sun);
+      route.uniform.eye = packed(input.eye);
+      route.uniform.right = packed(view.right);
+      route.uniform.right[3] = view.xProjection;
+      route.uniform.up = packed(view.up);
+      route.uniform.up[3] = view.cut.verticalProjection;
+      route.uniform.forward = packed(view.cut.forward);
+      route.uniform.sun = packed(sun);
+      route.uniform.wind = {input.time, input.pressure, input.windX, input.windZ};
+      route.uniform.previousWind = {previous.time, previous.pressure, previous.windX, previous.windZ};
+      route.uniform.windFade = windFade(view);
+      route.uniform.previousWindFade = windFade(last);
+      appendTree(route.view, view, {}, cards ? 0.f : input.threshold);
+      route.view.instances[0].previousTranslationScale = route.view.instances[0].translationScale;
+      route.view.phases = {{0u, uint32_t(route.view.draws.size())}};
+
+      // The 3D caster stays on one fixed cut across the visual LOD transition.
+      route.shadow.frame = route.view.frame;
+      route.shadow.frame.viewProj = route.uniform.shadowProject;
+      appendTree(route.shadow, view, {}, 0.f, false);
+      route.shadow.instances[0].previousTranslationScale = route.shadow.instances[0].translationScale;
+      route.shadow.phases = {{0u, uint32_t(route.shadow.draws.size())}};
+      return route;
+      }
+
     std::vector<Vertex>   vertices;
     std::vector<Meshlet>  meshlets;
     std::vector<uint32_t> words;
     std::vector<Material> materials;
+    std::vector<RigBone>  bones;
+    std::vector<Skin>     skin;
 
   private:
     struct Camera {
@@ -219,7 +288,8 @@ class Scene {
       view.cut.nearDepth = 50.f;
       view.cut.farDepth = 24000.f;
       view.xProjection = projection * float(height) / float(width);
-      view.right = normalize(cross({0.f, 1.f, 0.f}, view.cut.forward));
+      const auto vertical = std::abs(view.cut.forward[1]) > 0.99999f ? Point{0, 0, 1} : Point{0, 1, 0};
+      view.right = normalize(cross(vertical, view.cut.forward));
       view.up = cross(view.cut.forward, view.right);
 
       const auto plane = [eye](Point normal, float distance = 0.f) {
@@ -252,6 +322,40 @@ class Scene {
       return result;
       }
 
+    static std::array<float, 16> shadowProject(Point sun) {
+      const Point center{0.f, 650.f, 0.f};
+      const auto view = multiply(sun, -1.f);
+      const auto vertical = std::abs(view[1]) > 0.99999f ? Point{0, 0, 1} : Point{0, 1, 0};
+      const auto right = normalize(cross(vertical, view));
+      const auto up = cross(view, right);
+      const auto eye = add(center, multiply(sun, 2500.f));
+      std::array<float, 16> matrix{};
+      const auto putRow = [&](size_t row, Point axis, float extent) {
+        for(size_t i = 0; i < 3; ++i)
+          matrix[i * 4 + row] = axis[i] / extent;
+        matrix[12 + row] = -dot(axis, eye) / extent;
+        };
+      putRow(0, right, 1550.f);
+      putRow(1, up, -1100.f);
+      putRow(2, view, 28000.f);
+      matrix[15] = 1.f;
+      return matrix;
+      }
+
+    std::array<float, 4> windFade(const Camera& view) const {
+      const auto relative = add(view.cut.camera, {0.f, -heightCm * 0.5f, 0.f});
+      const float pixelsPerCm = 0.5f * float(height) * view.cut.verticalProjection /
+                               std::max(1.f, std::sqrt(dot(relative, relative)) - heightCm * 0.5f);
+      const auto smooth = [](float from, float full, float value) {
+        const auto t = std::clamp((value - from) / (full - from), 0.f, 1.f);
+        return t*t*(3.f - 2.f*t);
+        };
+      const float shoot = smooth(0.5f, 0.8f, pixelsPerCm * 2.f);
+      const float branch = std::max(shoot, smooth(3.f, 5.f, pixelsPerCm * 0.024f * heightCm));
+      const float trunk = std::max(branch, smooth(2.5f, 4.f, pixelsPerCm * 0.03f * heightCm));
+      return {trunk, branch, shoot, heightCm};
+      }
+
     Point fromPixel(const Camera& view, float x, float y, float depth) const {
       return {(2.f * x / float(width) - 1.f) * depth / view.xProjection,
               (1.f - 2.f * y / float(height)) * depth / view.cut.verticalProjection, depth};
@@ -263,7 +367,19 @@ class Scene {
         const float openness = float(v.color >> 24) / 255.f;
         vertices.push_back({{v.position[0], v.position[1], v.position[2], 1.f},
                             {v.normal[0], v.normal[1], v.normal[2], openness}, {v.uv[0], v.uv[1], 0.f, 0.f}});
+        heightCm = std::max(heightCm, v.position[1]);
         }
+      float topTrunkPivot = 0.f;
+      for(const auto& bone : asset->bones) {
+        bones.push_back({bone.pivot, bone.parent, bone.axis, bone.kind});
+        if(bone.kind == TrunkBone)
+          topTrunkPivot = std::max(topTrunkPivot, bone.pivot[1]);
+        }
+      // The fir rig places its fourth trunk bone at 75% of the source height.
+      // Derive the wind rate from that common rig, regardless of crown contour.
+      if(topTrunkPivot > 0.f)
+        heightCm = topTrunkPivot / 0.75f;
+      skin = asset->skin;
 
       words = asset->vertexIds;
       const auto primitiveOffset = uint32_t(words.size());
@@ -308,17 +424,20 @@ class Scene {
       ++submission.selectedPrimitivesBeforeCull;
       }
 
-    void appendTree(Submission& submission, const Camera& view, Point position) const {
+    void appendTree(Submission& submission, const Camera& view, Point position, float threshold = 1.f,
+                    bool cull = true) const {
       const uint32_t instance = addInstance(submission, position);
       for(const auto& cluster : asset->clusters) {
-        if(!TreeNanite::clusterSelected(*asset, cluster, view.cut, position, 1.f))
+        if(!TreeNanite::clusterSelected(*asset, cluster, view.cut, position, 1.f, threshold))
           continue;
+        ++submission.selectedClusters;
+        submission.terminalClusters += std::isinf(asset->groups[cluster.parentGroup].errorCm);
         submission.selectedBeforeCull += cluster.meshletCount;
         const uint32_t end = cluster.firstMeshlet + cluster.meshletCount;
         for(uint32_t index = cluster.firstMeshlet; index < end; ++index) {
           const auto& meshlet = asset->meshlets[index];
           submission.selectedPrimitivesBeforeCull += meshlet.primitiveCount;
-          if(!TreeNanite::meshletVisible(meshlet, view.cut, position, 1.f)) {
+          if(cull && !TreeNanite::meshletVisible(meshlet, view.cut, position, 1.f)) {
             ++submission.culledMeshlets;
             continue;
             }
@@ -330,6 +449,7 @@ class Scene {
 
     const TreeNanite::Asset* asset;
     uint32_t width, height;
+    float heightCm = 1.f;
     uint32_t tieMesh, nearMesh, eyeMesh, frontMesh, backMesh, seamLeft, seamRight, subpixelMesh;
     uint32_t denseMesh = 0, sparseMesh = 0;
   };

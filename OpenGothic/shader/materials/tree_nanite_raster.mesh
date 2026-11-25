@@ -18,6 +18,10 @@ layout(location=4) out vec3 rasterPosition[];
 layout(location=5) out vec3 rasterPreviousStatic[];
 layout(location=6) out vec3 rasterPreviousDelta[];
 #endif
+#if defined(TREE_WIND) && !defined(DIRECT_RASTER)
+layout(location=0) perprimitiveEXT out flat uint treeLayer[];
+layout(location=2) out vec2 treeUv[];
+#endif
 #if !defined(DIRECT_RASTER) || defined(VERIFY)
 layout(location=1) perprimitiveEXT out flat uvec2 rasterOwner[];
 #endif
@@ -34,21 +38,35 @@ void main() {
 
   SetMeshOutputsEXT(meshlet.z, meshlet.w);
   for(uint i=lane; i<meshlet.z; i+=gl_WorkGroupSize.x) {
+#if defined(TREE_WIND)
+    const TreeVertex v = treeDeform(meshlet.x + i, false);
+#else
     const TreeVertex v = treeVertex(meshlet.x + i);
+#endif
     const vec3 world = treeWorldPosition(v, instance);
     gl_MeshVerticesEXT[i].gl_Position = treeClipPosition(world);
+#if defined(TREE_WIND) && !defined(DIRECT_RASTER)
+    treeUv[i] = v.uv.xy;
+#endif
 #if defined(DIRECT_RASTER)
     rasterUv[i]             = v.uv.xy;
     rasterNormal[i]         = treeVertexNormal(v.normal, flags);
     rasterPosition[i]       = world;
     rasterPreviousStatic[i] = treePreviousStatic(world);
+#if defined(TREE_WIND)
+    rasterPreviousDelta[i]  = treePreviousDeformedDelta(meshlet.x + i, world, instance);
+#else
     rasterPreviousDelta[i]  = treePreviousDelta(v, instance);
+#endif
 #endif
     }
   for(uint i=lane; i<meshlet.w; i+=gl_WorkGroupSize.x) {
     gl_PrimitiveTriangleIndicesEXT[i] = treeTriangle(meshlet.y + i);
 #if defined(DIRECT_RASTER)
     materialId[i] = record.z;
+#endif
+#if defined(TREE_WIND) && !defined(DIRECT_RASTER)
+    treeLayer[i] = record.z;
 #endif
 #if !defined(DIRECT_RASTER) || defined(VERIFY)
     rasterOwner[i] = uvec2(recordId, i);

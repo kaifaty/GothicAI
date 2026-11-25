@@ -24,6 +24,14 @@ struct Vertex {
   uint32_t             color;    // RGBA8, red in the low byte
   };
 
+struct Skin {
+  uint16_t first, second;
+  uint8_t weight; // weight of first; second uses the complement
+  std::array<uint8_t, 3> reserved{};
+
+  bool operator==(const Skin&) const = default;
+  };
+
 struct Triangle {
   std::array<uint32_t, 3> vertices;
   uint32_t               material;
@@ -59,6 +67,7 @@ struct Graph {
   std::vector<uint8_t>  indices;       // three meshlet-local indices per triangle
   std::vector<Cluster>  clusters;
   std::vector<Group>    groups;
+  std::vector<Skin>     skin;         // optional, parallel to vertices
 
   size_t byteSize() const; // payload bytes, excluding vector bookkeeping and capacity
   };
@@ -81,9 +90,10 @@ Graph buildWithStats(std::span<const Vertex> vertices, std::span<const Triangle>
                      std::span<const uint8_t> boundary, BuildStats& stats,
                      CensusVariant variant = CensusVariant::Normal);
 
-// Stage-one tree profile. Mark bark triangles locked and keep their original geometry.
+// Tree profile. Mark bark triangles locked and keep their original geometry.
 Graph buildFoliage(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
-                   std::span<const uint8_t> boundary, BuildStats& stats, bool logical128 = true);
+                   std::span<const uint8_t> boundary, BuildStats& stats, bool logical128 = true,
+                   std::span<const Skin> skin = {});
 
 struct View {
   Point camera;

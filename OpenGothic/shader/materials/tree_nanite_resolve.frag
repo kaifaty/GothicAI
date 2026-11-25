@@ -132,9 +132,15 @@ void main() {
   const uvec4 record = records[id.x-1u];
   const uvec4 meshlet = meshlets[record.x];
   const uvec3 indices = treeTriangle(meshlet.y + (id.y & TreePrimitiveMask));
+#if defined(TREE_WIND)
+  const TreeVertex a = treeDeform(meshlet.x + indices.x, false);
+  const TreeVertex b = treeDeform(meshlet.x + indices.y, false);
+  const TreeVertex c = treeDeform(meshlet.x + indices.z, false);
+#else
   const TreeVertex a = treeVertex(meshlet.x + indices.x);
   const TreeVertex b = treeVertex(meshlet.x + indices.y);
   const TreeVertex c = treeVertex(meshlet.x + indices.z);
+#endif
   const TreeInstance instance = instances[record.y];
   const TreeMaterial material = materials[record.z];
   const uint flags = floatBitsToUint(material.uvScaleFlags.z);
@@ -152,7 +158,13 @@ void main() {
                             treeVertexNormal(c.normal, flags));
   const vec3 normal = normals * weights;
   const mat3 prevStatic = mat3(treePreviousStatic(position[0]), treePreviousStatic(position[1]), treePreviousStatic(position[2]));
+#if defined(TREE_WIND)
+  const mat3 prevDelta = mat3(treePreviousDeformedDelta(meshlet.x + indices.x, position[0], instance),
+                             treePreviousDeformedDelta(meshlet.x + indices.y, position[1], instance),
+                             treePreviousDeformedDelta(meshlet.x + indices.z, position[2], instance));
+#else
   const mat3 prevDelta = mat3(treePreviousDelta(a, instance), treePreviousDelta(b, instance), treePreviousDelta(c, instance));
+#endif
   outMotion = treeMotion(prevStatic * weights, prevDelta * weights);
 
   if(resolveMode == 2u) {

@@ -12,6 +12,7 @@ using ClusterLod::Vertex;
 using ClusterLod::Group;
 
 inline constexpr uint32_t FormatVersion = 1;
+inline constexpr uint32_t WindFormatVersion = 2;
 inline constexpr uint32_t MaxLogicalTriangles = ClusterLod::MaxFoliageTriangles;
 inline constexpr uint32_t MaxMeshletVertices = 64;
 inline constexpr uint32_t MaxMeshletPrimitives = 64;
@@ -28,6 +29,18 @@ struct Meshlet {
   uint32_t vertexCount, primitiveCount;
   };
 
+using ClusterLod::Skin;
+
+enum BoneKind : uint32_t { RootBone, TrunkBone, WhorlBone, ShootBone };
+
+struct Bone {
+  Point pivot, axis;
+  uint32_t parent, kind;
+  };
+
+// Upper rotation angles in radians, mirrored by tree_nanite_pose.comp.
+inline constexpr std::array<float, 4> WindAngleLimit{0.f, 0.022f, 0.025f, 0.10f};
+
 struct Asset {
   std::array<uint8_t, 32> sourceHash, materialHash;
   std::vector<Vertex> vertices;
@@ -36,10 +49,13 @@ struct Asset {
   std::vector<Meshlet> meshlets;
   std::vector<uint32_t> vertexIds;
   std::vector<uint32_t> primitives; // corner indices in bits 0..7, 8..15, 16..23
+  std::vector<Bone> bones;
+  std::vector<Skin> skin; // one entry per vertex, empty in format 1
   };
 
 void write(const std::filesystem::path& path, const Asset& asset);
 Asset load(const std::filesystem::path& path);
+float windTravel(const Asset& asset, uint32_t vertexId);
 
 struct Plane {
   Point normal;
