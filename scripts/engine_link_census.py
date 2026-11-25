@@ -18,8 +18,8 @@ build are system ones; they are only counted.
     python3 scripts/engine_link_census.py OpenGothic/build --check-native-v3 --target gothic-body-runner
 
 Both checks require the unstripped linked executable. The v2 check excludes the bytecode
-dispatcher and offline tooling. The v3 check also excludes the compatibility VM, symbol data
-and runtime bindings codec. Exit codes are 0 for a clean check, 1 for leaked code and 2
+dispatcher and offline tooling. The v3 check also excludes the compatibility VM, program
+index and runtime bindings codec. Exit codes are 0 for a clean check, 1 for leaked code and 2
 for an uninspectable build.
 
 Step 8.2 of the engine layers plan: reports/engine/2026-11-13-empty-island/README.md.
@@ -68,10 +68,11 @@ OFFLINE_SYMBOL = re.compile(
 V3_SCRIPT_ARCHIVES = {"gothic-script-state", "gothic-script-data",
                       "gothic-base-import", "gothic-npc-snapshot", "gothic-video-import"}
 V3_SCRIPT_SOURCE = re.compile(
-    r"/(?:common/(?:daedalus/|import/|game/definitions/runtimebindings\.cpp$)|tools/runtimebindingroots\.cpp$)"
+    r"/(?:common/(?:daedalus/|import/|programdata\.cpp$|asset/programfromzenkit\.cpp$"
+    r"|game/definitions/(?:baseprogram|runtimebindings)\.cpp$)|tools/runtimebindingroots\.cpp$)"
 )
 # Itanium names include namespace components in direct symbols, RTTI and instantiated templates.
-V3_SCRIPT_SYMBOL = re.compile(r"^_Z.*(?:8daedalus|15RuntimeBindings)\d+")
+V3_SCRIPT_SYMBOL = re.compile(r"^_Z.*(?:8daedalus|11ProgramData|15RuntimeBindings)\d+")
 
 
 @dataclass

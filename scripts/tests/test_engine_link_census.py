@@ -162,6 +162,8 @@ def test_native_game_check_on_linked_targets(tmp_path):
     bindings_source = source / "common/game/definitions/runtimebindings.cpp"
     bindings_source.parent.mkdir(parents=True)
     bindings_source.write_text("int compatibilityCodec() { return 0; }\n")
+    bindings_source.with_name("baseprogram.cpp").write_text("int compatibilitySelection() { return 0; }\n")
+    (source / "common/programdata.cpp").write_text("int compatibilityIndex() { return 0; }\n")
     (source / "main.cpp").write_text("int main() { return 0; }\n")
     (source / "dispatch.cpp").write_text(
         "namespace daedalus { struct DaedalusVm { void exec(); }; void DaedalusVm::exec() {} }\n"
@@ -172,8 +174,9 @@ def test_native_game_check_on_linked_targets(tmp_path):
         "int main() { storygraph::liftProgram(); ProgramData::readSymbolMetadata(); return 0; }\n")
     (source / "compatibility_copy.cpp").write_text(
         "namespace daedalus { void embedded() {} }\n"
+        "namespace ProgramData { void readIndex() {} }\n"
         "namespace RuntimeBindings { void validate() {} }\n"
-        "int main() { daedalus::embedded(); RuntimeBindings::validate(); return 0; }\n")
+        "int main() { daedalus::embedded(); ProgramData::readIndex(); RuntimeBindings::validate(); return 0; }\n")
     lift_source = source / "ai_bridge/storygraph/bytecode.cpp"
     lift_source.parent.mkdir(parents=True)
     lift_source.write_text("int bytecodeFixture() { return 0; }\n")
@@ -196,8 +199,8 @@ def test_native_game_check_on_linked_targets(tmp_path):
         "target_link_libraries(dispatcher-archive PRIVATE gothic-daedalus)\n"
         "add_executable(compatibility-archive main.cpp)\n"
         "target_link_libraries(compatibility-archive PRIVATE gothic-script-state)\n"
-        "add_executable(compatibility-source main.cpp common/daedalus/vm.cpp "
-        "common/game/definitions/runtimebindings.cpp)\n"
+        "add_executable(compatibility-source main.cpp common/daedalus/vm.cpp common/programdata.cpp "
+        "common/game/definitions/baseprogram.cpp common/game/definitions/runtimebindings.cpp)\n"
         "add_executable(embedded-compatibility compatibility_copy.cpp)\n"
         "add_executable(direct-vm main.cpp common/daedalus/vm_bytecode.cpp)\n"
         "add_executable(embedded-dispatch dispatch.cpp)\n"
@@ -251,12 +254,14 @@ def test_native_game_check_on_linked_targets(tmp_path):
             assert not strict["compatibility_archives"]
             assert strict["compatibility_objects"] == [
                 "CMakeFiles/compatibility-source.dir/common/daedalus/vm.cpp.o",
+                "CMakeFiles/compatibility-source.dir/common/game/definitions/baseprogram.cpp.o",
                 "CMakeFiles/compatibility-source.dir/common/game/definitions/runtimebindings.cpp.o",
+                "CMakeFiles/compatibility-source.dir/common/programdata.cpp.o",
             ]
         else:
             assert not strict["compatibility_archives"] and not strict["compatibility_objects"]
             assert strict["compatibility_symbols"] == [
-                "_ZN15RuntimeBindings8validateEv", "_ZN8daedalus8embeddedEv",
+                "_ZN11ProgramData9readIndexEv", "_ZN15RuntimeBindings8validateEv", "_ZN8daedalus8embeddedEv",
             ]
     status, missing = run("missing", v3=True)
     assert status == 2 and missing["status"] == "error"
