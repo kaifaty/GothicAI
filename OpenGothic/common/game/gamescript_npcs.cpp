@@ -1,4 +1,5 @@
 #include "gamescript.h"
+#include "game/definitions/basescripts.h"
 
 #include <bit>
 #include <stdexcept>
