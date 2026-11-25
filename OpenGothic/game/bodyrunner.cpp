@@ -1496,7 +1496,6 @@ int main(int argc, const char** argv) {
     if(opts.societyExport.empty())
       std::filesystem::create_directories(opts.output);
     CommandLine commandLine(argc,argv);
-    daedalus::set_log_level(daedalus::LogLevel::WARNING);
     Resources resources;
     Gothic gothic;
     auto stuckLogger = StuckLogger::fromEnvironment();
