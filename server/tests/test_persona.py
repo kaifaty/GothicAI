@@ -208,7 +208,7 @@ def test_missing_base_retries_without_breaking_cached_personas(tmp_path, monkeyp
     assert not workers[-1].is_alive()
     assert attempts == [100.0, 130.0] and exports == []
     assert len(caplog.records) == 1
-    assert "no ready base" in caplog.text and "run the game once with the installation" in caplog.text
+    assert "no ready base" in caplog.text and "prepare it with content-convert resolve" in caplog.text
 
     selected.mkdir()
     manifest = json.dumps({"format": "gothic-base-files", "version": 1, "files": []}).encode()
