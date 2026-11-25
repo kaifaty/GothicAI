@@ -18,7 +18,8 @@ class DrawClusters {
     static constexpr uint32_t ShadowVisual = 1u << 16;
     static constexpr uint32_t ShadowCoarse = 2u << 16;
     static constexpr uint32_t ShadowProbeChanged = 1u << 18;
-    static constexpr uint32_t ShadowSunLod = 1u << 19; // instance has an active whole caster for coarse sun mips
+    static constexpr uint32_t ShadowSunLod = 1u << 19; // instance has an active solar caster
+    static constexpr uint32_t ShadowMidSunShift = 20; // two bits of TreeLevelBand::MidSun
 
     struct alignas(16) Cluster final {
       Tempest::Vec3 pos;

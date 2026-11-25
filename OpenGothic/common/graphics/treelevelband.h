@@ -69,6 +69,18 @@ inline Pick shadow(size_t count, float heightAt1080, uint8_t visualGlb) {
   return pick(ShadowPx, levels, 3, heightAt1080);
   }
 
+enum class MidSun : uint32_t { Native, Whole, Masked, Skip };
+
+// On solar m0–m6 the middle of the crown's ladder uses L4. Where the full crown
+// gives way to L1, keep the full side and its mask; only the coarse side takes L4.
+inline MidSun midSun(const Pick& band, bool coarse) {
+  if(band.fine==0 && band.coarse==1)
+    return coarse ? MidSun::Masked : MidSun::Native;
+  if(band.fine==1 || band.fine==2)
+    return coarse ? MidSun::Skip : MidSun::Whole;
+  return MidSun::Native;
+  }
+
 inline uint32_t share(const Pick& band) {
   if(!band.active())
     return 0;

@@ -57,6 +57,20 @@ void treeLevelBandPicks() {
   require(TreeLevelBand::shadow(2, 300.f, 0).fine==2 && TreeLevelBand::shadow(2, 100.f, 0).fine==2 &&
           TreeLevelBand::shadow(4, 500.f, 3).fine==3 && TreeLevelBand::shadow(4, 100.f, 3).fine==4,
           "the shadow ladder of a short or coarse scale");
+  using MidSun = TreeLevelBand::MidSun;
+  for(const auto& [height, owner, coarse] : {
+      std::tuple(915.f, MidSun::Native, MidSun::Native),
+      std::tuple(914.f, MidSun::Native, MidSun::Masked),
+      std::tuple(800.f, MidSun::Native, MidSun::Masked),
+      std::tuple(600.f, MidSun::Whole, MidSun::Skip),
+      std::tuple(400.f, MidSun::Whole, MidSun::Skip),
+      std::tuple(240.f, MidSun::Whole, MidSun::Skip),
+      std::tuple(226.f, MidSun::Whole, MidSun::Skip),
+      std::tuple(225.f, MidSun::Native, MidSun::Native)}) {
+    const auto band = TreeLevelBand::shadow(4, height, 0);
+    require(TreeLevelBand::midSun(band, false)==owner && TreeLevelBand::midSun(band, true)==coarse,
+            "the solar L4 choice of both shadow sides at " + std::to_string(height) + " px");
+    }
   std::cout << "tree level bands: " << heights.size() << " heights, " << mainBands << " in a main band and "
             << shadowBands << " in a shadow band\n";
   }

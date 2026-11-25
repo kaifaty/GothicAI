@@ -272,13 +272,20 @@ void runCluster(const uint clusterId, const uint mip) {
     const float scale = clusterLodScale(pullInstance(cluster.instanceId).mat);
     const float texelsPerCm = ndcPerCm * (0.5*VSM_CLIPMAP_SIZE / float(1u << mip));
     if(coarseMip && (uintBitsToFloat(instanceMem[tail+3u])*scale)*texelsPerCm<=1.0) {
-      if(instanceMem[tail+1u]==0u)
+      if((instanceMem[tail+1u] & VSM_SUN_COARSE_SIDE)!=0u)
         return; // the other side of the band submits the same tree whole
       sunCaster = tail;
       }
     if(!coarseMip && instanceMem[tail+6u]!=0u && (uintBitsToFloat(instanceMem[tail+7u])*scale)*texelsPerCm<=1.0 &&
        shadowCluster(cluster).firstMeshlet==instanceMem[tail+4u])
       sunCaster = tail | VSM_SUN_LOD1;
+    }
+  if(mip<=6u) {
+    const uint midSun = bitfieldExtract(cluster.shadowCommandId, 20, 2); // TreeLevelBand::MidSun
+    if(midSun==3u)
+      return; // the owner submits the middle bands whole
+    if(midSun!=0u)
+      sunCaster = tail | (midSun==2u ? VSM_SUN_MASKED_L4 : 0u);
     }
 
   aabb = vsmPageTableBox(aabb, mip);
@@ -317,7 +324,7 @@ void runCluster(const uint clusterId, const uint mip) {
 
     uint caster = sunCaster;
     if(hasSunCaster && (entry & FogCasterEntry)!=0u) {
-      if(instanceMem[tail+1u]==0u)
+      if((instanceMem[tail+1u] & VSM_SUN_COARSE_SIDE)!=0u)
         continue; // the other side of the band submits the same tree whole
       caster = tail;
       }

@@ -407,9 +407,10 @@ void vsmPairCapRecords(Tempest::Device& device) {
   SceneGlobals mainScene;
   mainScene.setResolution(1920, 1080);
   using Mode = VisualObjects::BenchShadowLevels;
+  using MidSun = TreeLevelBand::MidSun;
   uint32_t totalDemand = 0, totalWritten = 0;
   const auto checkTree = [&](VisualObjects& trees, VisualObjects::Item& item, float height, float scale, Mode mode,
-                             std::vector<uint32_t> regular, bool whole7, bool whole8, bool lod1Mip3,
+                             std::vector<uint32_t> regular, bool whole7, bool whole8, bool lod1Mip3, MidSun midSun,
                              VisualObjects::Item* bark = nullptr) {
     auto transform = Tempest::Matrix4x4::mkIdentity();
     transform.scale(scale);
@@ -431,10 +432,12 @@ void vsmPairCapRecords(Tempest::Device& device) {
     device.readBytes(trees.instanceSsbo(), instances.data(), instances.size()*sizeof(uint32_t));
     const uint32_t bins[] = {Sun0+16*6, Sun0+16*7, Sun0+16*8, Sun0+16*9, 8, Sun0+16*7, Sun0+16*3};
     std::array<uint32_t,std::extent_v<decltype(Header::pairDemand)>> expectedDemand = {};
+    const bool checkNearBand = regular==std::vector<uint32_t>{0,1,3,4};
     for(uint32_t e=0; e<entries.size(); ++e) {
-      const bool whole = ((e==1 || e==5) && whole7) || (e==2 && whole8);
       for(size_t draw=0; draw<counts.size(); ++draw) {
         const bool isBark = draw>=2;
+        const bool middleSun = !isBark && (e==0 || e==6);
+        const bool whole = ((e==1 || e==5) && whole7) || (e==2 && whole8) || (middleSun && midSun==MidSun::Whole);
         const auto& owner = clusters[isBark ? 2 : 0];
         std::vector<uint32_t> expected;
         if(draw%2==unsigned(whole)) {
@@ -444,6 +447,8 @@ void vsmPairCapRecords(Tempest::Device& device) {
             expected.push_back(13);
           if(!whole)
             expected = isBark ? std::vector<uint32_t>{2,5} : regular;
+          if(middleSun && midSun==MidSun::Masked)
+            expected = {0,1,12,13};
           if(lod1Mip3 && !isBark && e==6) {
             std::replace(expected.begin(), expected.end(), 0u, 3u);
             std::replace(expected.begin(), expected.end(), 1u, 4u);
@@ -460,12 +465,13 @@ void vsmPairCapRecords(Tempest::Device& device) {
           actual.push_back(pair[1]);
           require(pair[2]==owner.bucketId && (!whole || pair[0]==owner.instanceId),
                   "the packed caster keeps its material bucket and the whole caster its owner");
-          if(e==0 && regular.size()==4) { // the emitted sides of the ordinary L0/L1 shadow band
+          if(!whole && (middleSun || e==4 || isBark) && checkNearBand) {
             const uint32_t mask = instances.at(size_t(pair[0])*16+14);
             const uint32_t share = (mask >> TreeLevelBand::Bits) & TreeLevelBand::Full;
             const uint32_t ownerMask = instances.at(size_t(owner.instanceId)*16+14);
+            const bool coarse = pair[1]>=(middleSun && midSun==MidSun::Masked ? 12u : 3u);
             require((mask & TreeLevelBand::Tag)!=0 && share>0 && share<TreeLevelBand::Full &&
-                    mask==(ownerMask | (pair[1]>=3 ? TreeLevelBand::Coarse : 0u)) &&
+                    mask==(ownerMask | (coarse ? TreeLevelBand::Coarse : 0u)) &&
                     (ownerMask & TreeLevelBand::Coarse)==0, "the two emitted levels carry complementary shadow masks");
             }
           }
@@ -483,7 +489,7 @@ void vsmPairCapRecords(Tempest::Device& device) {
   {
     VisualObjects trees(mainScene, packed.bbox());
     auto item = trees.get(mesh, mat, 0, mesh.sub[0].iboLength, true);
-    checkTree(trees, item, 1000, 1, Mode::On, {0,1}, false, false, false); // no hierarchy
+    checkTree(trees, item, 1000, 1, Mode::On, {0,1}, false, false, false, MidSun::Native); // no hierarchy
   }
   mesh.treeBough = std::make_unique<TreeBough::Asset>();
   {
@@ -494,25 +500,26 @@ void vsmPairCapRecords(Tempest::Device& device) {
             whole.pVsm!=trees.drawCommands()[0].pVsm &&
             whole.pVsm==shaders.materialPipeline(mat, DrawCommands::Static, Shaders::T_Vsm, Shaders::options().doBindless),
             "the reserved whole shadow command uses the material's unmasked alpha-tested VSM pipeline");
-    checkTree(trees, item, 1000, 1, Mode::On,  {0,1},     true,  true,  true);
-    checkTree(trees, item, 600, 1, Mode::On,   {3,4},     true,  true,  false);
-    checkTree(trees, item, 800, 1, Mode::On,   {0,1,3,4}, true,  true,  true);
-    checkTree(trees, item, 800, 2, Mode::On,   {0,1,3,4}, true,  true,  false);
-    checkTree(trees, item, 800, 5, Mode::On,   {0,1,3,4}, false, false, false);
-    checkTree(trees, item, 300, 1, Mode::Full, {0,1},     false, false, false);
-    checkTree(trees, item, 300, 1, Mode::Off,  {3,4},     false, false, false);
+    checkTree(trees, item, 1000, 1, Mode::On,  {0,1},     true,  true,  true,  MidSun::Native);
+    checkTree(trees, item, 600, 1, Mode::On,   {3,4},     true,  true,  false, MidSun::Whole);
+    checkTree(trees, item, 400, 1, Mode::On,   {3,4,6,7}, true,  true,  false, MidSun::Whole);
+    checkTree(trees, item, 800, 1, Mode::On,   {0,1,3,4}, true,  true,  true,  MidSun::Masked);
+    checkTree(trees, item, 800, 2, Mode::On,   {0,1,3,4}, true,  true,  false, MidSun::Masked);
+    checkTree(trees, item, 800, 5, Mode::On,   {0,1,3,4}, false, false, false, MidSun::Masked);
+    checkTree(trees, item, 300, 1, Mode::Full, {0,1},     false, false, false, MidSun::Native);
+    checkTree(trees, item, 300, 1, Mode::Off,  {3,4},     false, false, false, MidSun::Native);
     // At 2.43x the still bark alone fits m7, but the crown's authored wind takes the shared tree over the cutoff.
     auto bark = trees.get(mesh, wood, mesh.sub[1].iboOffset, mesh.sub[1].iboLength, true);
-    checkTree(trees, item, 800, 2.43f, Mode::On, {0,1,3,4}, false, true, false, &bark);
+    checkTree(trees, item, 800, 2.43f, Mode::On, {0,1,3,4}, false, true, false, MidSun::Masked, &bark);
   }
   mesh.levels.pop_back();
   {
     VisualObjects trees(mainScene, packed.bbox());
     auto item = trees.get(mesh, mat, 0, mesh.sub[0].iboLength, true);
-    checkTree(trees, item, 800, 1, Mode::On, {0,1,3,4}, false, false, false); // missing L4
+    checkTree(trees, item, 800, 1, Mode::On, {0,1,3,4}, false, false, false, MidSun::Native); // missing L4
   }
   VisualObjects::benchShadowLevels = Mode::Auto;
-  std::cout << "spruce shadow LOD: 10 selections, " << totalDemand << " pairs demanded, " << totalWritten << " written\n";
+  std::cout << "spruce shadow LOD: 11 selections, " << totalDemand << " pairs demanded, " << totalWritten << " written\n";
   }
 
 // The layout of the sun's entries and the selection over frames (shadow-flicker.md, «Третий круг»): the engine's own

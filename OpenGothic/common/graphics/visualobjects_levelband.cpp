@@ -67,7 +67,7 @@ void VisualObjects::allocLevelBand(Object& obj) {
         }
       }
     obj.objInstance.set(&caster, sizeof(InstanceDesc), sizeof(caster));
-    caster.meshletCount = 0; // the owner supplies the whole caster on this mip
+    caster.meshletCount |= 1u << 31; // VSM_SUN_COARSE_SIDE: only the owner may submit an unmasked L4
     caster.lod1MeshletCount = 0; // the coarse side never owns the full crown
     obj.bandInstance.set(&caster, sizeof(InstanceDesc), sizeof(caster));
     }
@@ -93,14 +93,14 @@ void VisualObjects::freeLevelBand(Object& obj) {
 
 // Replaces the hard picks of preFrameUpdateLevels: `level` and `shadowLevel` become the finer sides of the bands. The
 // impostor and a ghost keep them; the shadow scale of a crown starts at the full GLB, as for a hierarchy crown there
-bool VisualObjects::updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
-                                    MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse) {
+uint32_t VisualObjects::updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
+                                        MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse) {
   const auto&  mesh  = *obj.bucketId->staticMesh;
   const size_t count = std::min(mesh.levels.size(), MeshLevels::MaxLevels);
   const bool scale = FoliageTree::isTree(obj.bucketId->mat.foliage);
   const auto& own = clustersMem[obj.clusterId];
   const bool treeStats = (own.shadowCommandId & (DrawClusters::ShadowVisual | DrawClusters::ShadowCoarse))!=0;
-  bool sunLod = false;
+  uint32_t sunFlags = 0, coarseSunFlags = 0;
   TreeLevelBand::Pick main, shadow;
   if(!obj.isGhost && !level.impostor()) {
     float px[MeshLevels::MaxLevels] = {};
@@ -115,7 +115,13 @@ bool VisualObjects::updateLevelBand(Object& obj, float height, float shadowHeigh
       shadow = TreeLevelBand::shadow(count, shadowHeight, crown ? 0 : main.fine);
     else
       shadow = main; // the shadow takes the visual GLB
-    sunLod = shadowLevels && !fullShadows && obj.bandInstance.size()>sizeof(InstanceDesc);
+    if(shadowLevels && !fullShadows && obj.bandInstance.size()>sizeof(InstanceDesc)) {
+      sunFlags = coarseSunFlags = DrawClusters::ShadowSunLod;
+      if(crown && scale) {
+        sunFlags |= uint32_t(TreeLevelBand::midSun(shadow, false)) << DrawClusters::ShadowMidSunShift;
+        coarseSunFlags |= uint32_t(TreeLevelBand::midSun(shadow, true)) << DrawClusters::ShadowMidSunShift;
+        }
+      }
     shadowLevel = shadow.fine;
     if(treeStats)
       shadowCoarse = scale && shadowLevels && shadow.fine!=(crown ? 0 : main.fine);
@@ -150,16 +156,16 @@ bool VisualObjects::updateLevelBand(Object& obj, float height, float shadowHeigh
     next.shadowMeshletCount = coarseShadow.second;
     const uint32_t treeClass = !treeStats ? 0 :
                                (scale && shadowLevels ? DrawClusters::ShadowCoarse : DrawClusters::ShadowVisual);
-    next.shadowCommandId    = obj.bandCmd | treeClass | (sunLod ? DrawClusters::ShadowSunLod : 0u);
+    next.shadowCommandId    = obj.bandCmd | treeClass | coarseSunFlags;
     }
   auto& band = clustersMem[obj.bandCluster];
   if(std::memcmp(&band, &next, sizeof(next))==0)
-    return sunLod;
+    return sunFlags;
   if(band.firstMeshlet!=next.firstMeshlet || band.meshletCount!=next.meshletCount) {
     constexpr auto typeMask = DrawClusters::HistoryStatic;
     next.historyGeneration = (next.historyGeneration & typeMask) | ((next.historyGeneration+1) & ~typeMask);
     }
   band = next;
   clustersMem.markClusters(obj.bandCluster);
-  return sunLod;
+  return sunFlags;
   }

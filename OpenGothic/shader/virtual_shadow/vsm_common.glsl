@@ -60,6 +60,8 @@ const uint VSM_GEOMETRY_COARSE  = 0x20000u;
 const uint VSM_NO_SPHERES = 0xFFFFFFFFu;
 // In the candidate's SunCaster word, the top bit selects L1 and the low bits hold the instance word offset.
 const uint VSM_SUN_LOD1 = 1u << 31;
+#define VSM_SUN_MASKED_L4 (1u << 30)
+#define VSM_SUN_COARSE_SIDE (1u << 31) // in SunCaster::meshletCount
 // const int VSM_CUBE_TBL_SIZE = 2;
 
 struct VsmHeader {
