@@ -208,7 +208,7 @@ int32_t GameScript::stockHeroMap() {
   return old;
   }
 
-void GameScript::runStockLegacyPotionKey(bool mana) {
+void GameScript::runStockPotionHotkey(bool mana) {
   const auto hero = std::dynamic_pointer_cast<daedalus::INpc>(storyActorSlot("HERO"));
   if(npc_isinstate(hero,int32_t(ZS_Dead)))
     return;
@@ -259,7 +259,7 @@ bool GameScript::startHotkeyPotion(Npc& pl, bool mana) {
     }
   const auto missing = pl.attribute(potion.maximum) - pl.attribute(potion.attribute);
   // PLAYER_HOTKEY_LAME_* uses the strongest dose that fits the missing amount,
-  // otherwise the weakest available dose. Its no-item/full-gauge messages still run below.
+  // otherwise the weakest available dose. The caller handles feedback when none can be used.
   const auto selected = Healing::choosePotion(candidates,missing);
   if(selected==Healing::NoPotion) {
     note("none");

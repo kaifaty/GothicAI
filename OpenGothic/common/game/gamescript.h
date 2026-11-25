@@ -543,7 +543,7 @@ class GameScript final : public GameRules {
     void runStockHeroCastDenial(bool player, int32_t requiredCircle, int32_t actualCircle);
     void runStockHeroWeaponPenalty();
     auto stockHeroMap() -> int32_t;
-    void runStockLegacyPotionKey(bool mana);
+    void runStockPotionHotkey(bool mana);
 
     bool aiOutput   (Npc &from, std::string_view name, bool overlay);
     bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);

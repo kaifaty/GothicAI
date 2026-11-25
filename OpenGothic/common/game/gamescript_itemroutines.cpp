@@ -641,7 +641,6 @@ void GameScript::runStockPickLock(int32_t success, int32_t brokenOrOpen) {
       npc_sendpassiveperc(hero,PERC_ASSESSQUIETSOUND,hero,hero);
       }
     }
-  return;
   }
 
 bool GameScript::invokeNativeMobState(uint32_t id, std::string_view name) {

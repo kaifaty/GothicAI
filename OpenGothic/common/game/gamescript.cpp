@@ -1120,7 +1120,7 @@ int GameScript::invokeMana(Npc &npc, Npc* target, int mana) {
   const auto actor=std::static_pointer_cast<daedalus::INpc>(npc.handlePtr());
   setItemRuntimeInt("SPELL_PROCESSMANA.MANAINVESTED",mana);
   setItemRuntimeInt("SPELL_PROCESSMANA.ACTIVESPELL",npc_getactivespell(actor));
-  return SPL_SENDSTOP;
+  return SPL_DONTINVEST;
   }
 
 int GameScript::invokeManaRelease(Npc &npc, Npc* target, int mana) {
@@ -1171,7 +1171,6 @@ int GameScript::invokeCond(Npc& npc, std::string_view name) {
 void GameScript::invokePickLock(Npc& npc, int bSuccess, int bBrokenOpen) {
   ItemActorScope self(storyActorSlot("SELF"),&npc);
   runStockPickLock(bSuccess,bBrokenOpen);
-  return;
   }
 
 void GameScript::invokeRefreshAtInsert(Npc& npc) {
@@ -1204,8 +1203,7 @@ void GameScript::playerHotLamePotion(Npc& pl) {
   if(Settings::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,true))
     return;
   ItemActorScope self(storyActorSlot("SELF"),&pl);
-  runStockLegacyPotionKey(true);
-  return;
+  runStockPotionHotkey(true);
   }
 
 void GameScript::playerHotLameHeal(Npc& pl) {
@@ -1216,8 +1214,7 @@ void GameScript::playerHotLameHeal(Npc& pl) {
   if(Settings::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,false))
     return;
   ItemActorScope self(storyActorSlot("SELF"),&pl);
-  runStockLegacyPotionKey(false);
-  return;
+  runStockPotionHotkey(false);
   }
 
 std::string_view GameScript::spellCastAnim(Npc&, Item &it) {
