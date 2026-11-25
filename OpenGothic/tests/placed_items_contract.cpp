@@ -49,6 +49,7 @@
 #include "graphics/visualfx.h"
 #include "graphics/pfx/particlefx.h"
 #include "dialoggraph.h"
+#include "npccontroller.h"
 #include "storygraph/bytecode.h"
 #include "storygraph/exprjson.h"
 #include "world/bullet.h"
@@ -85,7 +86,6 @@ void npcLiveSynthetic(void (*compare)(World&), void (*disabled)(World&),
                       void (*placement)(World&), void (*placementDisabled)(World&), void (*activities)(World&));
 #include "npc_world_contract_access.h"
 namespace {
-
 using NpcWorldFixture::activityNpc;
 using NpcWorldFixture::activityQueue;
 using NpcWorldFixture::companionPlayerPerceptions;
