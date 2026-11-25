@@ -99,9 +99,14 @@ void MenuRoot::execute(int32_t symbol) {
       case MenuDefinitions::Action::Kind::ApplyVideoOptions:
         applyVideoOptions();
         break;
-      case MenuDefinitions::Action::Kind::ApplyPerformanceOptions:
-        Gothic::notImplementedRoutine("APPLY_OPTIONS_PERFORMANCE");
+      case MenuDefinitions::Action::Kind::ApplyPerformanceOptions: {
+        static const bool reported = [] {
+          Log::e("not implemented call [APPLY_OPTIONS_PERFORMANCE]");
+          return true;
+          }();
+        (void)reported;
         break;
+        }
       }
     }
   }
