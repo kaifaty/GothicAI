@@ -1086,7 +1086,7 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
   ItemActorScope self(storyActorSlot("SELF"),npc);
   const auto actor=std::static_pointer_cast<daedalus::INpc>(npc->handlePtr());
   const auto restore=[&](const ItemDefinitionRuntime::RestoreChange& change) {
-    npc_changeattribute(actor,change.attribute,std::get<int32_t>(change.amount));
+    npc_changeattribute(actor,change.attribute,change.amount);
     };
   if(const auto it=itemDefinitions.restoreEffects.find(id); it!=itemDefinitions.restoreEffects.end()) {
     restore(it->second.first);
@@ -1100,7 +1100,7 @@ void GameScript::invokeItem(Npc *npc, ScriptFn fn) {
     }
   if(const auto it=itemDefinitions.permanentAttributeEffects.find(id); it!=itemDefinitions.permanentAttributeEffects.end()) {
     const auto& permanent=it->second;
-    const auto amount=std::get<int32_t>(permanent.increase.amount);
+    const auto amount=permanent.increase.amount;
     const auto [_,other]=storyActors();
     const auto raise=callStoryFunction("B_RAISEATTRIBUTE",npc,other,{npc,int32_t(permanent.increase.attribute),amount});
     if(!raise.ok)

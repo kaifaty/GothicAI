@@ -1,86 +1,11 @@
 #include "itemdefinitionruntime.h"
 #include "game/definitions/nativebasecatalog.h"
-#include "itemrecordfields.h"
-#include "itemloadprobe.h"
+#include "itemdefinitionresolve.h"
 
 #include <algorithm>
-#include <cstdlib>
-#include <cstring>
 #include <functional>
 #include <initializer_list>
 #include <stdexcept>
-#include <type_traits>
-
-namespace {
-template<class T, class Lookup>
-void resolveField(T& value, const std::vector<std::string>& names, size_t& index, const Lookup& lookup) {
-  if constexpr(std::is_array_v<T>) {
-    for(auto& element:value) resolveField(element,names,index,lookup);
-    }
-  else if constexpr(!std::is_same_v<T,std::string>) {
-    const auto& name=names.at(index++);
-    if(name.empty()) return;
-    const auto id=lookup(name);
-    if(!id || *id>INT32_MAX) throw std::runtime_error("unknown or invalid identity "+name);
-    value=T(*id);
-    }
-  }
-template<class FindItem, class FindReference>
-ItemDefinitionRuntime::Definitions resolveRecords(const ItemDefinitions::Library& library, const FindItem& findItem,
-                                                   const FindReference& findReference) {
-  ItemDefinitionRuntime::Definitions definitions;
-  for(const auto& [name,definition]:library.items) {
-    try {
-      const auto id=findItem(name);
-      if(!id) throw std::runtime_error("unknown item identity");
-      ItemRecord record=definition.record;
-      itemRecordFields(record,[&](const char* field, auto& value, bool function) {
-        if(!function) return;
-        try {
-          size_t index=0;
-          const auto& names=definition.symbols.at(field);
-          resolveField(value,names,index,[&](std::string_view name) { return findReference(field,name); });
-          if(index!=names.size()) throw std::runtime_error("symbol array extent differs");
-          }
-        catch(const std::exception& e) { throw std::runtime_error(std::string(field)+": "+e.what()); }
-        });
-      if(record.on_state[0]>0)
-        definitions.itemUsePrograms.insert(uint32_t(record.on_state[0]));
-      if(!definitions.items.emplace(*id,std::move(record)).second)
-        throw std::runtime_error("duplicate item identity");
-      }
-    catch(const std::exception& e) { throw std::runtime_error("item definitions: "+name+": "+e.what()); }
-    }
-  return definitions;
-  }
-}
-
-ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolve(const ItemDefinitions::Library& library,
-                                                                  const daedalus::DaedalusScript& script) {
-  const auto lookup=[&](std::string_view name) -> std::optional<uint32_t> {
-    const auto* symbol=script.find_symbol_by_name(name);
-    return symbol!=nullptr ? std::optional(symbol->index()) : std::nullopt;
-    };
-  auto definitions=resolveRecords(library,lookup,[&](std::string_view,std::string_view name) { return lookup(name); });
-  for(const auto& [name,document]:library.documents) {
-    const auto* root=script.find_symbol_by_name(name);
-    const auto* handle=script.find_symbol_by_name(document.handle);
-    using Type=daedalus::DaedalusDataType;
-    if(root==nullptr || !definitions.itemUsePrograms.contains(root->index()) || handle==nullptr ||
-       handle->name()!=root->name()+".NDOCID" || handle->type()!=Type::INT || handle->count()!=1 ||
-       handle->is_const() || handle->is_member())
-      throw std::runtime_error("invalid item document "+name);
-    Document resolved{handle->index(),document.map,{}};
-    for(const auto& call:document.calls) {
-      const auto* external=script.find_symbol_by_name(call.function);
-      if(external==nullptr || !external->is_external() || external->count()!=call.arguments.size()+1 || external->has_return())
-        throw std::runtime_error("invalid document action "+call.function);
-      resolved.calls.push_back({call.function,call.arguments});
-      }
-    definitions.documents.emplace(root->index(),std::move(resolved));
-    }
-  return definitions;
-  }
 
 ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::resolveNative(const ItemDefinitions::Library& library,
                                                                         const NativeBaseCatalog::Selection& catalog) {
@@ -132,61 +57,14 @@ ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::loadNative(const std::
   return definitions;
   }
 
-ItemDefinitionRuntime::Definitions ItemDefinitionRuntime::load(const std::filesystem::path& base,
-                                                               const daedalus::DaedalusScript& program,
-                                                               std::string_view sha256) {
-  const auto* enabled=std::getenv("OPENGOTHIC_ITEM_RECORDS");
-  if(enabled==nullptr || std::strcmp(enabled,"0")!=0) {
-    return resolve(ItemDefinitions::read(base,sha256),program);
-    }
-  return {};
-  }
-
-bool ItemDefinitionRuntime::initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::IItem>& item,
-                                       daedalus::DaedalusSymbol* symbol, const Definitions& definitions) {
-  if(symbol!=nullptr) {
-    const auto found=definitions.items.find(symbol->index());
-    if(found!=definitions.items.end()) {
-      // allocate_instance binds the symbol and type. Constructor calls restore SELF,
-      // context, PC and stack; pure item constructors leave no other VM state behind.
-      vm.allocate_instance(item,symbol);
-      static_cast<ItemRecord&>(*item)=found->second;
-      return true;
-      }
-    if(definitions.brokenEye==symbol->index()) {
-      // This constructor samples the current language/story setting, including on each recreation.
-      // Its two generated literals are bound by the verified stock program fingerprint.
-      const auto get=[&](std::string_view name) { return vm.find_symbol_by_name(name); };
-      vm.allocate_instance(item,symbol);
-      item->name=get("$15687")->get_string();
-      item->main_flag=get("ITEM_KAT_MAGIC")->get_int();
-      item->flags=ItemFlag(get("ITEM_AMULET")->get_int() | get("ITEM_MISSION")->get_int());
-      item->value=0;
-      item->visual=get("$15688")->get_string();
-      item->material=get("MAT_STONE")->get_int();
-      item->description=item->name;
-      item->on_equip=int32_t(get("EQUIP_ITMI_INNOSEYE_BROKEN_MIS")->index());
-      item->text[0]=get("TEXT_INNOSEYE_SETTING")->get_string();
-      item->text[1]=get("TEXT_INNOSEYE_GEM")->get_string();
-      item->inv_zbias=get("INVCAM_ENTF_AMULETTE_STANDARD")->get_int();
-      return true;
-      }
-    }
-  LoadProbe::Items::Constructor probe;
-  vm.init_instance(item,symbol);
-  return false;
-  }
-
 namespace {
 
 using namespace ItemDefinitionRuntime;
-using RestoreAmount = decltype(RestoreChange::amount);
 
 struct StockEffectBindings {
   std::function<uint32_t(std::string_view)> callback;
   std::function<uint32_t(std::string_view)> flag;
   std::function<int32_t(std::string_view)> constant;
-  std::function<RestoreAmount(std::string_view)> dose;
   };
 
 void registerRestoreEffects(Definitions& definitions, const StockEffectBindings& bindings) {
@@ -243,9 +121,9 @@ void registerRestoreEffects(Definitions& definitions, const StockEffectBindings&
     };
   for(const auto& row : stock) {
     const auto function = bindings.callback(row.callback);
-    RestoreEffect effect{{row.attribute,bindings.dose(row.amount)},{}};
+    RestoreEffect effect{{row.attribute,bindings.constant(row.amount)},{}};
     if(!row.secondAmount.empty())
-      effect.second=RestoreChange{row.secondAttribute,bindings.dose(row.secondAmount)};
+      effect.second=RestoreChange{row.secondAttribute,bindings.constant(row.secondAmount)};
     if(!definitions.restoreEffects.emplace(function,effect).second)
       throw std::runtime_error("stock item restore: duplicate callback "+std::string(row.callback));
     }
@@ -283,7 +161,7 @@ void registerRestoreEffects(Definitions& definitions, const StockEffectBindings&
     };
   for(const auto& [callback,attribute,dose,refill]:permanent) {
     const auto* name=std::get_if<std::string_view>(&dose);
-    const auto amount=name ? bindings.dose(*name) : RestoreAmount(std::get<int32_t>(dose));
+    const auto amount=name ? bindings.constant(*name) : std::get<int32_t>(dose);
     PermanentAttributeEffect effect{{attribute,amount},refill};
     if(!definitions.permanentAttributeEffects.emplace(bindings.callback(callback),effect).second)
       throw std::runtime_error("stock permanent item attribute: invalid callback "+std::string(callback));
@@ -438,22 +316,6 @@ void bindStockEffects(Definitions& definitions, const StockEffectBindings& bindi
 
 }
 
-void ItemDefinitionRuntime::registerStockEffects(Definitions& definitions, const daedalus::DaedalusScript& program) {
-  const auto symbol=[&](std::string_view name) -> const daedalus::DaedalusSymbol& {
-    if(const auto* value=program.find_symbol_by_name(name))
-      return *value;
-    throw std::runtime_error("missing stock item effect symbol "+std::string(name));
-    };
-  const auto id=[&](std::string_view name) { return symbol(name).index(); };
-  const auto integer=[&](std::string_view name) {
-    const auto& value=symbol(name);
-    if(value.type()!=daedalus::DaedalusDataType::INT || !value.is_const())
-      throw std::runtime_error("invalid stock item constant "+std::string(name));
-    return value.get_int();
-    };
-  bindStockEffects(definitions,{id,id,integer,id});
-  }
-
 void ItemDefinitionRuntime::registerStockEffects(Definitions& definitions, const NativeBaseCatalog::Selection& catalog) {
   const auto callback=[&](std::string_view name) {
     if(const auto* value=NativeBaseCatalog::findIdentity(catalog.itemCallbacks,name))
@@ -473,5 +335,5 @@ void ItemDefinitionRuntime::registerStockEffects(Definitions& definitions, const
         return values->front();
     throw std::runtime_error("missing native item effect constant "+std::string(name));
     };
-  bindStockEffects(definitions,{callback,flag,constant,constant});
+  bindStockEffects(definitions,{callback,flag,constant});
   }

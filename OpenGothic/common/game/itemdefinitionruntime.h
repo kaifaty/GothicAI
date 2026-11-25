@@ -1,8 +1,6 @@
 #pragma once
 
 #include "itemdefinitions.h"
-#include "daedalus/classes.h"
-#include "daedalus/vm.h"
 #include "game/rpgvocabulary.h"
 
 #include <optional>
@@ -16,7 +14,7 @@ namespace NativeBaseCatalog { struct Selection; }
 namespace ItemDefinitionRuntime {
 struct RestoreChange {
   Attribute attribute;
-  std::variant<uint32_t,int32_t> amount; // Symbol index or literal dose.
+  int32_t amount;
   };
 struct RestoreEffect {
   RestoreChange first;
@@ -72,18 +70,8 @@ struct Definitions {
   std::unordered_map<uint32_t,FightSkillEffect> fightSkillEffects;
   std::unordered_map<uint32_t,EquipmentStatEffect> equipmentStatEffects;
   };
-Definitions resolve(const ItemDefinitions::Library& library, const daedalus::DaedalusScript& script);
 Definitions resolveNative(const ItemDefinitions::Library& library, const NativeBaseCatalog::Selection& catalog);
 Definitions loadNative(const std::filesystem::path& base, const NativeBaseCatalog::Selection& catalog,
                        std::string_view sha256);
-// Select the section by the verified program-record SHA, applying the game's environment switch.
-Definitions load(const std::filesystem::path& base, const daedalus::DaedalusScript& program,
-                 std::string_view sha256);
-// Register effects only after verifying the stock NotR program SHA.
-void registerStockEffects(Definitions& definitions, const daedalus::DaedalusScript& program);
 void registerStockEffects(Definitions& definitions, const NativeBaseCatalog::Selection& catalog);
-// Both the game and its contract use this complete choice of initialization path.
-// Returns true when a definition supplied the fields, false after a VM constructor.
-bool initialize(daedalus::DaedalusVm& vm, const std::shared_ptr<daedalus::IItem>& item,
-                daedalus::DaedalusSymbol* symbol, const Definitions& definitions);
 }

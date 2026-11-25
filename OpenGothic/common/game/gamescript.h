@@ -18,6 +18,7 @@
 #include <Tempest/Painter>
 
 #include "game/definitions/svmdefinitions.h"
+#include "game/definitions/deathtrophydefinitions.h"
 #include "game/definitions/symbolcatalog.h"
 #include "game/definitions/spelldefinitions.h"
 #include "game/aiouputpipe.h"
@@ -447,8 +448,8 @@ class GameScript final : public GameRules {
       };
     void refreshNpcAtInsert(Npc& npc);
     void loadNativeNpcDeath();
-    void loadNativeTradeInventory();
     void loadNativeDeathTrophies();
+    void giveDeathTrophies(const std::shared_ptr<daedalus::INpc>& actor);
     void loadNativeNpcGlobals();
     void loadNativeMonsterAttitudes();
     void loadNativeWorldEntry();
@@ -530,7 +531,7 @@ class GameScript final : public GameRules {
     auto  findInfo    (size_t id) -> daedalus::IInfo*;
 
     void storeItem(Item* it);
-    bool invokeNativeMobState(const daedalus::DaedalusSymbol& symbol);
+    bool invokeNativeMobState(uint32_t id, std::string_view name);
     void runStockPickLock(int32_t success, int32_t brokenOrOpen);
     void runStockHeroFeedback(std::string_view message, std::string_view line={}, bool gesture=false);
     void runStockHeroMissingLockpick();
@@ -945,6 +946,8 @@ class GameScript final : public GameRules {
       int32_t stoneGuardianTrigger=0, tookRhademesTrap=0, talkedToRhademesAfter=0, removedRhademes=0;
       int32_t attackWarn=0;
       } ghostProgress;
+    std::optional<DeathTrophyDefinitions::Catalog>                 nativeDeathTrophies;
+    std::unordered_map<uint32_t,int32_t>                          deathTrophySpecies;
     InventoryTransfer::Variables                                inventoryTransferVariables;
     InventoryTransfer::Text                                     inventoryTransferText;
     std::string_view                                            inventoryTransferFont;

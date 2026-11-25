@@ -11,7 +11,7 @@
 #include "activitydefinitions.h"
 #include "game/npcdefinitionruntime.h"
 #include "game/placementdefinitionruntime.h"
-#include "game/itemdefinitionruntime.h"
+#include "../tools/itemdefinitionimport.h"
 #include "game/definitions/nativebasecatalog.h"
 #include "routinedefinitions.h"
 #include "game/routinedefinitionruntime.h"
