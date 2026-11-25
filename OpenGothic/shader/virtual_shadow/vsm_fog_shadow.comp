@@ -56,6 +56,11 @@ void storeHiZValue(uint v) {
   uint  iz = (dx.w << 16);
 
   imageAtomicExchange(pageTbl, at, 1u);
+  if(vsmFogCasterMip(dx.z)) {
+    // The GBuffer has finished marking. Clear depth and fog-only depth both have this bit set,
+    // so concurrent fog marks preserve receiver ownership regardless of their depth order.
+    iz |= imageAtomicOr(pageTblDepth, at, 0u) & VSM_FOG_ONLY_DEPTH_BIT;
+    }
   imageAtomicMin(pageTblDepth, at, iz);
   }
 

@@ -41,6 +41,7 @@ layout(binding = 9, r32ui)  uniform uimage2D dbg;
 
 shared uint pageListSize;
 shared uint pageList[VSM_MAX_PAGES];
+const uint FogCasterEntry = 1u << 31;
 
 shared uint vsmMipMask;
 
@@ -146,6 +147,20 @@ void makeMipMask(const vec4 aabb0) {
   barrier();
   }
 
+bool fogCasterEntry(const ivec3 page, const ivec2 size) {
+  // The sun's surface filter also reads adjacent virtual pages. Keep a full page guard
+  // around the entire merged entry for any receiver marked by the GBuffer.
+  const ivec2 first = max(page.xy-ivec2(1), ivec2(0));
+  const ivec2 end   = min(page.xy+size+ivec2(1), ivec2(VSM_PAGE_TBL_SIZE));
+  for(int y=first.y; y<end.y; ++y)
+    for(int x=first.x; x<end.x; ++x) {
+      const uint depth = imageLoad(pageTblDepth,ivec3(x,y,page.z)).r;
+      if((depth & VSM_FOG_ONLY_DEPTH_BIT)==0u)
+        return false;
+      }
+  return true;
+  }
+
 void pullPages(uint mip) {
   pageListSize = 0;
   barrier();
@@ -165,7 +180,7 @@ void pullPages(uint mip) {
       continue;
 
     const uint id = atomicAdd(pageListSize, 1);
-    pageList[id] = i;
+    pageList[id] = i | (vsmFogCasterMip(mip) && fogCasterEntry(page,sz) ? FogCasterEntry : 0u);
     }
   barrier();
   }
@@ -214,7 +229,7 @@ bool pageHiZTest(ivec4 iaabb, float depthMax, const ivec3 at, const ivec2 sz) {
   for(int x=iaabb.x; x<iaabb.z; ++x)
     for(int y=iaabb.y; y<iaabb.w; ++y) {
       const uint  p = imageLoad(pageTblDepth, ivec3(x,y,at.z)).x;
-      const float f = uintBitsToFloat(p);
+      const float f = uintBitsToFloat(p & ~VSM_FOG_ONLY_DEPTH_BIT);
 
       // if(p!=0xFFFFFFFF)
       //   return true;
@@ -248,8 +263,9 @@ void runCluster(const uint clusterId, const uint mip) {
 
   uint sunCaster = 0u;
   const uint shadowSunLod = 1u << 19; // DrawClusters::ShadowSunLod
-  if((mip==7u || mip==8u) && (cluster.shadowCommandId & shadowSunLod)!=0u) {
-    const uint tail = (cluster.instanceId+1u)*16u; // SunCaster immediately after the 64-byte instance
+  const bool hasSunCaster = (cluster.shadowCommandId & shadowSunLod)!=0u;
+  const uint tail = (cluster.instanceId+1u)*16u; // SunCaster immediately after the 64-byte instance
+  if((mip==7u || mip==8u) && hasSunCaster) {
     const float cmPerTexel = uintBitsToFloat(instanceMem[tail+3u]) * clusterLodScale(pullInstance(cluster.instanceId).mat);
     // Orthographic NDC per cm, independent of the tree's position and the page rectangle.
     const float ndcPerCm = length(vec3(scene.viewProject[0].x, scene.viewProject[1].x, scene.viewProject[2].x));
@@ -268,7 +284,8 @@ void runCluster(const uint clusterId, const uint mip) {
   iaabb.zw = min(iaabb.zw, ivec2(VSM_PAGE_TBL_SIZE));
 
   for(uint ix=0; ix<pageListSize; ++ix) {
-    const uint  i    = pageList[ix];
+    const uint  entry = pageList[ix];
+    const uint  i    = entry & ~FogCasterEntry;
     const uint  data = vsm.pageList[i];
 
     const ivec3 page = unpackVsmPageInfo(data);
@@ -294,7 +311,13 @@ void runCluster(const uint clusterId, const uint mip) {
       continue;
 #endif
 
-    listCandidate(clusterId, i, vsmSunBin(page, sz), sunCaster);
+    uint caster = sunCaster;
+    if(hasSunCaster && (entry & FogCasterEntry)!=0u) {
+      if(instanceMem[tail+1u]==0u)
+        continue; // the other side of the band submits the same tree whole
+      caster = tail;
+      }
+    listCandidate(clusterId, i, vsmSunBin(page, sz), caster);
     }
   }
 
