@@ -14,7 +14,7 @@
 
 daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                          RoutineDefinitionRuntime::Definitions& routines,
-                                         NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
+                                         NpcDefinitionRuntime::Definitions& npcs,
                                          ActivityDefinitionRuntime::Definitions& activities, QuietSoundReaction& quietSound,
                                          bool& nativeRoutineProgram) {
   const auto lang=Settings::getI("GAME", "language");
@@ -28,7 +28,6 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
   items=ItemDefinitionRuntime::load(base,script,sha256);
   routines=RoutineDefinitionRuntime::load(base,script,sha256);
   npcs=NpcDefinitionRuntime::load(base,script,sha256);
-  placements=PlacementDefinitionRuntime::load(base,script,sha256);
   activities=ActivityDefinitionRuntime::load(base,script,sha256);
   // Native behavior is verified against this particular stock Night of the Raven program.
   nativeRoutineProgram=true;
@@ -46,7 +45,6 @@ daedalus::DaedalusVm GameScript::createVm(Gothic& gothic, ItemDefinitionRuntime:
   auto vm=daedalus::DaedalusVm::without_legacy_dispatcher(std::move(script),flags);
   Gothic::enableScriptAudit(vm,gothic.defaultGameDatFile());
   NpcDefinitionRuntime::observeCalls(vm,npcs,base,sha256);
-  PlacementDefinitionRuntime::observeCalls(vm,base,sha256);
   return vm;
   }
 

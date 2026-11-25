@@ -33,7 +33,6 @@
 #include "game/itemdefinitionruntime.h"
 #include "game/routinedefinitionruntime.h"
 #include "game/npcdefinitionruntime.h"
-#include "game/placementdefinitionruntime.h"
 #include "game/activitydefinitionruntime.h"
 #include "world/npcactivityprobe.h"
 #include "asset/worldtypes.h"
@@ -462,9 +461,6 @@ class GameScript final : public GameRules {
     void loadNativeNpcGlobals();
     void loadNativeMonsterAttitudes();
     void loadNativeWorldEntry();
-    void runNativeWorldStartup(std::string_view name);
-    void runNativeWorldInit(std::string_view name);
-    void runNativeWorldTrigger(std::string_view name);
     void runNativeWorldRooms(std::string_view name);
     void runNativeAddonChapterEntry();
     void nativeWorldExternal(std::string_view name,std::initializer_list<storygraph::NativeValue> args = {});
@@ -474,13 +470,7 @@ class GameScript final : public GameRules {
     void nativeWorldFlag(std::string_view name,int32_t value);
     int32_t nativeWorldActorId(std::string_view name,bool npc);
     void runWorldFirstEntryTrigger(bool oldWorld);
-    void loadNewWorldChapterEntries();
-    void loadKhorinisChapter3();
-    void loadOldWorldChapterEntries();
     void removeFinishedGhosts();
-    enum class ChapterWorld : uint8_t { New, Old, Addon };
-    void enterChapterWorld(ChapterWorld world);
-    void changeChapter(int32_t chapter, int32_t level);
     void invokeKillNpc(int32_t symbol);
     void killNpc(int32_t symbol);
     void removeNpc(int32_t symbol);
@@ -683,7 +673,7 @@ class GameScript final : public GameRules {
     void queueItemUse(const std::shared_ptr<daedalus::INpc>& self, int32_t item);
     static daedalus::DaedalusVm createVm(Gothic& gothic, ItemDefinitionRuntime::Definitions& items,
                                        RoutineDefinitionRuntime::Definitions& routines,
-                                       NpcDefinitionRuntime::Definitions& npcs, PlacementDefinitionRuntime::Definitions& placements,
+                                       NpcDefinitionRuntime::Definitions& npcs,
                                        ActivityDefinitionRuntime::Definitions& activities, QuietSoundReaction& quietSound,
                                        bool& nativeRoutineProgram);
     int initializeRoutine(const std::shared_ptr<daedalus::INpc>& npc, daedalus::DaedalusSymbol* function);
@@ -932,8 +922,7 @@ class GameScript final : public GameRules {
     ItemDefinitionRuntime::Definitions                          itemDefinitions;
     RoutineDefinitionRuntime::Definitions                       routineDefinitions;
     NpcDefinitionRuntime::Definitions                           npcDefinitions;
-    PlacementDefinitionRuntime::Definitions                     placementDefinitions;
-    std::optional<NativeWorldPlacement::Definitions>             nativeWorldPlacement;
+    NativeWorldPlacement::Definitions                           nativeWorldPlacement;
     ActivityDefinitionRuntime::Definitions                      activityDefinitions;
     bool                                                        activityEvents = ActivityDefinitionRuntime::events();
     QuietSoundReaction                                          quietSound;
@@ -959,7 +948,6 @@ class GameScript final : public GameRules {
     std::unordered_map<uint32_t,NativeRoutinePhase>              nativeRoutinePhases;
     // The stock VM aliases this storage and is destroyed before it.
     int32_t                                                     storyChapter = 0, currentStoryWorld = 0;
-    std::array<int32_t,8>                                       worldEntryLatches{};
     std::array<int32_t,5>                                       crimeAbsolutionLevels{};
     std::array<int32_t,19>                                      petzCrimeCounters{};
     struct DeathProgress {

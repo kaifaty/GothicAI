@@ -19,7 +19,6 @@
 #include "settings.h"
 #include "resources.h"
 #include "loadprobe.h"
-#include "game/definitions/basescripts.h"
 
 using namespace Tempest;
 
@@ -620,29 +619,25 @@ void GameSession::initScripts(bool firstTime) {
   auto dot   = wname.rfind('.');
   auto name  = (dot==std::string::npos ? wname : wname.substr(0,dot));
 
-  const bool nativeWorld = baseNativeCatalog()!=nullptr;
   if(firstTime) {
     // Fresh start: Wld_InsertNpc leaves the floor fix to the final placement below (game/gamescript_startupfloor.h).
     vm->startupFloor().begin();
-    if(nativeWorld || vm->hasSymbolName("startup_global")) {
+    {
       LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("STARTUP_GLOBAL");});
-      vm->runStartup("startup_global");
+      vm->runStartup("STARTUP_GLOBAL");
       }
-
-    string_frm startup("startup_", name);
-    if(nativeWorld || vm->hasSymbolName(startup)) {
+    {
+      string_frm startup("startup_",name);
       LoadProbe::Startup::Detail::Scope call("script_function",[&]{return std::string(std::string_view(startup));});
       vm->runStartup(startup);
       }
     }
-
-  if(nativeWorld || vm->hasSymbolName("init_global")) {
+  {
     LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("INIT_GLOBAL");});
-    vm->runWorldInit("init_global");
+    vm->runWorldInit("INIT_GLOBAL");
     }
-
-  string_frm init("init_",name);
-  if(nativeWorld || vm->hasSymbolName(init)) {
+  {
+    string_frm init("init_",name);
     LoadProbe::Startup::Detail::Scope call("script_function",[&]{return std::string(std::string_view(init));});
     vm->runWorldInit(init);
     }
