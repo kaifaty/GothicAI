@@ -174,6 +174,35 @@ def test_runs_of_different_checkouts_overlap_in_their_own_stand_folders(stand):
     assert sources["A"] != sources["B"]
 
 
+def test_variant_dry_run_prints_the_quiet_job_in_round_order(stand):
+    root = stand.checkout("variants")
+    env_a = "OPENGOTHIC_CONTENT='${HOME}/control set' OPENGOTHIC_GPU_PASSES=1"
+    env_b = "OPENGOTHIC_CONTENT=forest OPENGOTHIC_GPU_PASSES=1 OPENGOTHIC_RT=0"
+    env_stats = "OPENGOTHIC_CONTENT=forest OPENGOTHIC_GPU_PASSES=1 OPENGOTHIC_VSM_STATS=1"
+    environment = dict(os.environ, BENCH_HOST="ryzen", PERF_DRY_RUN="1", PERF_REPEAT="1",
+                       PERF_VARIANTS=f"C|{env_a}\nF|{env_b}", PERF_COUNTERS=f"F-vsmstats|{env_stats}",
+                       PERF_ONLY="", PATH=f"{stand.bin}{os.pathsep}{os.environ['PATH']}",
+                       PERF_TEST_LOG=str(stand.log))
+    job = subprocess.run(["bash", str(root / "scripts/perf.sh"), "trees"], env=environment,
+                         check=True, capture_output=True, text=True, timeout=10).stdout
+    assert job.startswith("# gq quiet --max 35m (5 runs x 1 repeats)\n")
+    assert stand.lines() == []
+    assert not (root / ".bench").exists()
+
+    stub = stand.tmp / "fake perf.sh"
+    stub.write_text('printf "call|%s|%s|%s|%s\\n" "$@" "$PERF_ENV"\n')
+    out = stand.tmp / "out with spaces"
+    result = subprocess.run(["bash", "-c", job, "--", str(stub), str(out)],
+                            env=dict(environment, HOME=str(stand.home)), check=True,
+                            capture_output=True, text=True, timeout=10)
+    expected = [("C/round-1", env_a), ("F/round-1", env_b), ("F/round-2", env_b),
+                ("C/round-2", env_a), ("F-vsmstats/round-1", env_stats)]
+    assert [line for line in result.stdout.splitlines() if line.startswith("call|")] == [
+        f"call|__run|{out / path}|trees|{settings.replace('${HOME}', str(stand.home))}"
+        for path, settings in expected
+    ]
+
+
 def test_lock_is_not_held_by_a_child_that_outlives_the_command(tmp_path):
     lock = tmp_path / "lock"
     command = [sys.executable, str(SCRIPTS / "perf_lock.py"), str(lock)]

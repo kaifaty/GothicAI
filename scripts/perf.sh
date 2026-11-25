@@ -72,22 +72,96 @@ build_game() {
   tail -5 "$out/build.log"
 }
 
+plan_variants() {
+  local row name round i
+  local timed=() counters=()
+  local known=' ' seen=' '
+  while IFS= read -r row; do
+    [[ -n "$row" ]] && timed+=("$row")
+  done <<< "$PERF_VARIANTS"
+  while IFS= read -r row; do
+    [[ -n "$row" ]] && counters+=("$row")
+  done <<< "${PERF_COUNTERS:-}"
+  [[ -n "${timed[0]:-}" ]] || fail 'PERF_VARIANTS must contain a variant'
+  for row in "${timed[@]}" ${counters[@]+"${counters[@]}"}; do
+    name="${row%%|*}"
+    [[ "$row" == *'|'* && "$name" =~ ^[a-zA-Z0-9_-]+$ ]] || fail "expected name|PERF_ENV, got: $row"
+    [[ "$known" != *" $name "* ]] || fail "duplicate variant: $name"
+    known+="$name "
+  done
+
+  VARIANT_RUNS=()
+  if [[ -z "${PERF_ONLY:-}" ]]; then
+    for row in "${timed[@]}"; do VARIANT_RUNS+=("${row%%|*}/round-1|${row#*|}"); done
+    for ((i=${#timed[@]}-1; i>=0; i--)); do
+      row="${timed[i]}"
+      VARIANT_RUNS+=("${row%%|*}/round-2|${row#*|}")
+    done
+    for row in ${counters[@]+"${counters[@]}"}; do VARIANT_RUNS+=("${row%%|*}/round-1|${row#*|}"); done
+  else
+    while IFS= read -r name; do
+      [[ "$name" =~ ^[a-zA-Z0-9_-]+$ && "$known" == *" $name "* ]] || fail "unknown variant: $name"
+      round=3
+      [[ "$seen" != *" $name "* ]] || round=4
+      seen+="$name "
+      for row in "${timed[@]}"; do
+        [[ "${row%%|*}" != "$name" ]] || VARIANT_RUNS+=("$name/round-$round|${row#*|}")
+      done
+      for row in ${counters[@]+"${counters[@]}"}; do
+        [[ "${row%%|*}" != "$name" ]] || VARIANT_RUNS+=("$name/round-1|${row#*|}")
+      done
+    done <<< "$PERF_ONLY"
+  fi
+}
+
+variant_job() {
+  local row
+  cat <<'BASH'
+set -u
+script="$1"
+out="$2"
+run_variant() {
+  local path="$1" settings="$2" place="$3"
+  echo "perf: $path"
+  PERF_ENV="${settings//\$\{HOME\}/$HOME}" bash "$script" __run "$out/$path" "$place" ||
+    echo "perf: $path FAILED"
+}
+BASH
+  for row in "${VARIANT_RUNS[@]}"; do
+    printf 'run_variant %q %q %q\n' "${row%%|*}" "${row#*|}" "${PLACES[0]}"
+  done
+}
+
 # ryzen.sh clean and shell tests reuse the checkout and fingerprint helpers.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return; fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/OpenGothic/build-perf"
+VARIANT_MODE=0
+DRY_RUN=0
+if [[ "${1:-}" != __build && "${1:-}" != __run ]]; then
+  if [[ -n "${PERF_VARIANTS:-}" ]]; then
+    [[ "${BENCH_HOST:-local}" == ryzen && $# == 1 ]] || fail 'PERF_VARIANTS requires BENCH_HOST=ryzen and one place'
+    VARIANT_MODE=1
+  fi
+  if [[ "${PERF_DRY_RUN:-0}" == 1 ]]; then
+    [[ "$VARIANT_MODE" == 1 ]] || fail 'PERF_DRY_RUN=1 requires PERF_VARIANTS'
+    DRY_RUN=1
+  fi
+fi
 # One Ryzen run per checkout at a time: the stand keeps one source tree and one build per checkout,
 # and a second upload during the first run's queue wait would replace what that run builds and
 # measures. The second run waits here, before it reads its sources. See docs/performance.md.
-if [[ "${1:-}" != __build && "${1:-}" != __run && "${BENCH_HOST:-local}" == ryzen && "${PERF_STAND_LOCKED:-}" != "$ROOT" ]]; then
+if [[ "${1:-}" != __build && "${1:-}" != __run && "$DRY_RUN" == 0 && "${BENCH_HOST:-local}" == ryzen && "${PERF_STAND_LOCKED:-}" != "$ROOT" ]]; then
   mkdir -p "$ROOT/.bench"
   PERF_STAND_LOCKED="$ROOT" exec python3 "$ROOT/scripts/perf_lock.py" "$ROOT/.bench/perf-ryzen.lock" bash "$0" "$@"
 fi
 # The GPU stamp's age counts from entering the stand, before hashing the sources (see run_game warmup).
-export PERF_RUN_STARTED_AT="$(date +%s)"
-# perf-content.sh also calls the queue entry points directly in its own source tree.
-PERF_SOURCE_FINGERPRINT="${PERF_SOURCE_FINGERPRINT:-$(source_fingerprint)}"
-export PERF_SOURCE_FINGERPRINT
+if [[ "$DRY_RUN" == 0 ]]; then
+  export PERF_RUN_STARTED_AT="$(date +%s)"
+  # perf-content.sh also calls the queue entry points directly in its own source tree.
+  PERF_SOURCE_FINGERPRINT="${PERF_SOURCE_FINGERPRINT:-$(source_fingerprint)}"
+  export PERF_SOURCE_FINGERPRINT
+fi
 
 # These entry points run only inside the queue on Ryzen.
 if [[ "${1:-}" == __build ]]; then shift; build_game "$1"; exit; fi
@@ -114,6 +188,17 @@ for place in "${PLACES[@]}"; do
     *) fail "unknown place: $place (market market-walk harbour harbour-night house-night forest interior combat shot face face-far rock meadow grass grass-track grass-fields grass-pack grass-fields-pack grass-ground grass-ground-fields trees xardas temple fires firerain crops crops-onar crops-game itemfx)" ;;
   esac
 done
+RUN_COUNT="${#PLACES[@]}"
+if [[ "$VARIANT_MODE" == 1 ]]; then
+  plan_variants
+  RUN_COUNT="${#VARIANT_RUNS[@]}"
+  VARIANT_JOB="$(variant_job)"
+fi
+RUN_MAX="$((10 + RUN_COUNT * PERF_REPEAT * 5))m"
+if [[ "$DRY_RUN" == 1 ]]; then
+  printf '# gq quiet --max %s (%s runs x %s repeats)\n%s\n' "$RUN_MAX" "$RUN_COUNT" "$PERF_REPEAT" "$VARIANT_JOB"
+  exit
+fi
 export PERF_WINDOW PERF_REPEAT PERF_WAIT
 export PERF_ARGS="${PERF_ARGS:-}" PERF_ENV="${PERF_ENV:-}" PERF_VID_RES="${PERF_VID_RES:-0}" PERF_INI="${PERF_INI:-}"
 if [[ "$REMOTE_RUN" == 0 ]]; then
@@ -123,6 +208,10 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
   BENCH_HOST="${BENCH_HOST:-local}"
   case "$BENCH_HOST" in local|ryzen) ;; *) fail 'BENCH_HOST must be local or ryzen (no automatic fallback)' ;; esac
   if [[ "$BENCH_HOST" == ryzen ]]; then
+    RUN_ID="${OUT##*/}"
+    if [[ "$VARIANT_MODE" == 1 ]]; then
+      OUT="${PERF_OUT:-$OUT}"
+    fi
     RYZEN_HOST="${RYZEN_HOST:-ryzen}"
     remote() {
       local command='' value
@@ -142,8 +231,8 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
       REMOTE_BUILT_FINGERPRINT="$(remote bash -c 'cat "$1" 2>/dev/null || true' -- "$SOURCE/OpenGothic/build-perf/source_fingerprint")"
       check_build_fingerprint "$REMOTE_BUILT_FINGERPRINT"
     fi
-    REMOTE_OUT="$TASK/runs/${OUT##*/}"
-    NAS_OUT="/mnt/shared/gothic-ai/perf-stand/runs/${OUT##*/}"
+    REMOTE_OUT="$TASK/runs/$RUN_ID"
+    NAS_OUT="/mnt/shared/gothic-ai/perf-stand/runs/$RUN_ID"
     remote mkdir -p "$SOURCE/OpenGothic" "$SOURCE/scripts/bench" "$REMOTE_OUT"
     remote df -h "$REMOTE_HOME"
     # Stamp changed sources now: old source mtimes could otherwise skip rebuilding newer objects.
@@ -162,11 +251,14 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
         --archive "$REMOTE_OUT/build" -- env "${REMOTE_ENV[@]}" "RYZEN_JOBS=${RYZEN_JOBS:-8}" \
         bash "$SOURCE/scripts/perf.sh" __build "$REMOTE_OUT/build"
     fi
+    RUN_COMMAND=(bash "$SOURCE/scripts/perf.sh" __run "$REMOTE_OUT" "${PLACES[@]}")
+    if [[ "$VARIANT_MODE" == 1 ]]; then
+      RUN_COMMAND=(bash -c "$VARIANT_JOB" -- "$SOURCE/scripts/perf.sh" "$REMOTE_OUT")
+    fi
     rc=0
     "$ROOT/scripts/gq" --host "$RYZEN_HOST" run --class quiet --threads 4 --mem 5G --gpu-mem 4G \
-      --display --max "$((10 + ${#PLACES[@]} * PERF_REPEAT * 5))m" --wait-max "${RYZEN_LOCK_WAIT:-3600}" --name 'perf stand' \
-      --archive "$REMOTE_OUT" -- env "${REMOTE_ENV[@]}" NO_BUILD=1 \
-      bash "$SOURCE/scripts/perf.sh" __run "$REMOTE_OUT" "${PLACES[@]}" \
+      --display --max "$RUN_MAX" --wait-max "${RYZEN_LOCK_WAIT:-3600}" --name 'perf stand' \
+      --archive "$REMOTE_OUT" -- env "${REMOTE_ENV[@]}" NO_BUILD=1 "${RUN_COMMAND[@]}" \
       2>&1 | tee "$OUT/ryzen.log" || rc="${PIPESTATUS[0]}"
     # gq moves finished results to NAS with checksums. A failed archive leaves the source.
     if remote test -d "$NAS_OUT"; then
@@ -175,7 +267,10 @@ if [[ "$REMOTE_RUN" == 0 ]]; then
       rsync -a "$RYZEN_HOST:$REMOTE_OUT/" "$OUT/"
     fi
     [[ "$rc" == 0 ]] || exit "$rc"
-    python3 "$ROOT/scripts/perf_report.py" run "$OUT"
+    # Each variant's __run already wrote a report in its own round directory.
+    if [[ "$VARIANT_MODE" == 0 ]]; then
+      python3 "$ROOT/scripts/perf_report.py" run "$OUT"
+    fi
     echo "$OUT"
     exit
   fi
