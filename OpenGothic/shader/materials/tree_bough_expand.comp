@@ -45,8 +45,8 @@ float windPad;
 bool validBounds, rechecking;
 mat4 clipTransform, clipError;
 #else
-const uint BoughAccumCount = BoughStatsSumCount;
-const uint BoughStateCount = BoughStatsCount;
+#define BoughAccumCount BoughStatsSumCount
+#define BoughStateCount BoughStatsCount
 #endif
 shared uint hasCompact;
 shared uint mainOffset;
@@ -112,37 +112,45 @@ vec3 transformColumn(uint offset) {
   return uintBitsToFloat(uvec3(instanceMem[offset], instanceMem[offset+1u], instanceMem[offset+2u]));
   }
 
-void initStats(uint lane) {
-  if((push.flags & 2u)==0u)
-    return;
-  if(lane<BoughAccumCount)
-    stats[lane] = 0u;
-  for(uint i=0u; i<BoughAccumCount; ++i)
-    countByLane[i] = 0u;
-  }
+#define BOUGH_INIT_STATS(lane) \
+  if((push.flags & 2u)!=0u) { \
+    if(lane<BoughAccumCount) \
+      stats[lane] = 0u; \
+    for(uint i=0u; i<BoughAccumCount; ++i) \
+      countByLane[i] = 0u; \
+    }
 
-void finishStats(uint lane) {
-  if((push.flags & 2u)==0u)
-    return;
-  for(uint i=0u; i<BoughAccumCount; ++i)
-    if(countByLane[i]>0u)
-      atomicAdd(stats[i], countByLane[i]);
-  barrier();
-  if(lane<BoughAccumCount && stats[lane]>0u)
-    atomicAdd(state[lane<BoughStatsSumCount ? lane : lane+2u], stats[lane]);
-  }
+#ifdef BOUGH_HIZ_CULL
+#define BOUGH_SUM_OFFSET(lane) (lane<BoughStatsSumCount ? lane : lane+2u)
+#else
+#define BOUGH_SUM_OFFSET(lane) lane
+#endif
+
+#define BOUGH_FINISH_STATS(lane) \
+  if((push.flags & 2u)!=0u) { \
+    for(uint i=0u; i<BoughAccumCount; ++i) \
+      if(countByLane[i]>0u) \
+        atomicAdd(stats[i], countByLane[i]); \
+    barrier(); \
+    if(lane<BoughAccumCount && stats[lane]>0u) \
+      atomicAdd(state[BOUGH_SUM_OFFSET(lane)], stats[lane]); \
+    }
 
 void main() {
   const uint lane = gl_LocalInvocationIndex;
-  if(push.stage==1u
 #ifdef BOUGH_HIZ_CULL
-     || push.stage==3u
+  if(push.stage==1u || push.stage==3u) {
+#else
+  if(push.stage==1u) {
 #endif
-     ) {
     uint i = gl_GlobalInvocationID.x;
     if(i<cmd.length())
       cmd[i].instanceCount = 0u;
+#ifdef BOUGH_HIZ_CULL
     if(push.stage==1u && i<BoughStateCount)
+#else
+    if(i<BoughStateCount)
+#endif
       state[i] = 0u;
     return;
     }
@@ -194,13 +202,13 @@ void main() {
   if(rechecking) {
     nodeBase = data[asset+2u];
     rangeBase = data[asset+4u];
-    initStats(lane);
+    BOUGH_INIT_STATS(lane)
     barrier();
     for(uint i=lane; i<pending; i+=gl_WorkGroupSize.x) {
       const uvec4 candidate = candidates[candidateBase+1u+i];
       boughEmit(candidate.x, candidate.y, uintBitsToFloat(candidate.z));
       }
-    finishStats(lane);
+    BOUGH_FINISH_STATS(lane)
     return;
     }
   if(lane==0u)
@@ -231,7 +239,7 @@ void main() {
   const bool useReference = (push.flags & 1u)!=0u;
   if(lane==0u)
     hasCompact = useReference ? reference[ref] : 0u;
-  initStats(lane);
+  BOUGH_INIT_STATS(lane)
   barrier();
 
   if(!useReference) {
@@ -253,11 +261,11 @@ void main() {
 #ifdef BOUGH_HIZ_CULL
     // A verification replay already expanded the unfiltered whole canopies.
     const bool writeCanopy = (push.flags & 16u)==0u;
-#else
-    const bool writeCanopy = true;
 #endif
     if(lane==0u) {
+#ifdef BOUGH_HIZ_CULL
       if(writeCanopy)
+#endif
         mainOffset = mainCmd[command].writeOffset + atomicAdd(mainCmd[command].instanceCount, count);
       if((push.flags & 2u)!=0u) {
         atomicAdd(state[0], data[asset+5u]);
@@ -288,7 +296,7 @@ void main() {
     boughWalkSlice(sliceFirst, sliceLast, projection);
     }
 
-  finishStats(lane);
+  BOUGH_FINISH_STATS(lane)
 #ifdef BOUGH_HIZ_CULL
   barrier();
   if(lane==0u) {
