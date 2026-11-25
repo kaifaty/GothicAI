@@ -461,12 +461,14 @@ void vsmPairCapRecords(Tempest::Device& device) {
         if(draw%2==unsigned(whole)) {
           if(whole)
             expected = isBark ? std::vector<uint32_t>{14} : std::vector<uint32_t>{12};
-          if(whole && !isBark && e!=5)
-            expected.push_back(13);
           if(!whole)
             expected = isBark ? std::vector<uint32_t>{2,5} : regular;
-          if(middleSun && midSun==MidSun::Masked)
-            expected = {0,1,12,13};
+          const bool masked = middleSun && midSun==MidSun::Masked;
+          if(masked)
+            expected = {0,1,12};
+          // The small L4 meshlet lies beyond m3, beyond m6 at 5x, and right of the negative-x m7 page.
+          if(!isBark && (whole || masked) && e!=5 && e!=6 && !(e==0 && scale==5.f))
+            expected.push_back(13);
           if(lod1Mip3 && !isBark && e==6) {
             std::replace(expected.begin(), expected.end(), 0u, 3u);
             std::replace(expected.begin(), expected.end(), 1u, 4u);
