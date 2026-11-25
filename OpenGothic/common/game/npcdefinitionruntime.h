@@ -4,13 +4,12 @@
 #include "npchelperruntime.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
+#include "game/definitions/nativebasecatalog.h"
 
 #include <functional>
 #include <optional>
 #include <unordered_map>
 #include <utility>
-
-namespace NativeBaseCatalog { struct Selection; }
 
 namespace NpcDefinitionRuntime {
 struct Field {
@@ -21,7 +20,7 @@ struct Field {
   };
 struct Argument {
   NpcDefinitions::Value value;
-  daedalus::DaedalusDataType type = daedalus::DaedalusDataType::INT;
+  NativeBaseCatalog::NpcConstructorType type = NativeBaseCatalog::NpcConstructorType::Integer;
   std::optional<std::pair<uint32_t,uint8_t>> oracleLiteral;
   };
 struct Call {

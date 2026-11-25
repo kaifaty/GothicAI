@@ -203,7 +203,7 @@ bool GameScript::invokeNpcHelper(const std::shared_ptr<daedalus::INpc>& npc,uint
 
 bool GameScript::applyNpcConstructorCall(const std::shared_ptr<daedalus::INpc>& npc,
                                          const NpcDefinitionRuntime::Call& call) {
-  using Type = daedalus::DaedalusDataType;
+  using Type = NativeBaseCatalog::NpcConstructorType;
   using storygraph::NativeValue;
   if(call.deferred) {
     if(!npcDefinitions.helpers.helpers.contains(call.function))
@@ -216,11 +216,11 @@ bool GameScript::applyNpcConstructorCall(const std::shared_ptr<daedalus::INpc>& 
       auto& value=arguments[index];
       value=argument.value;
       switch(argument.type) {
-        case Type::STRING: break;
-        case Type::INT:
-        case Type::FUNCTION: value.kind=HelperKind::Int; break;
-        case Type::FLOAT: break;
-        case Type::INSTANCE:
+        case Type::String: break;
+        case Type::Integer:
+        case Type::Function: value.kind=HelperKind::Int; break;
+        case Type::Float: break;
+        case Type::Instance:
           if(value.kind!=HelperKind::Self)
             throw std::runtime_error("NPC helper definitions: helper targets another NPC");
           break;
@@ -244,11 +244,11 @@ bool GameScript::applyNpcConstructorCall(const std::shared_ptr<daedalus::INpc>& 
     const auto& argument=call.args[index];
     const auto& value=argument.value;
     switch(argument.type) {
-      case Type::FLOAT: values[index]=NativeValue::real(value.real); break;
-      case Type::STRING: values[index]=NativeValue::str(value.text); break;
-      case Type::INT:
-      case Type::FUNCTION: values[index]=NativeValue::integer(value.integer); break;
-      case Type::INSTANCE:
+      case Type::Float: values[index]=NativeValue::real(value.real); break;
+      case Type::String: values[index]=NativeValue::str(value.text); break;
+      case Type::Integer:
+      case Type::Function: values[index]=NativeValue::integer(value.integer); break;
+      case Type::Instance:
         if(value.kind!=HelperKind::Self)
           return false;
         values[index]=NativeValue::instance(self);

@@ -1,6 +1,5 @@
 #include "npcdefinitionruntime.h"
 
-#include "game/definitions/nativebasecatalog.h"
 #include "npcloadprobe.h"
 
 #include <cstdlib>
@@ -9,7 +8,7 @@
 #include <unordered_set>
 
 namespace {
-using Type = daedalus::DaedalusDataType;
+using Prepared = NativeBaseCatalog::NpcConstructorType;
 using Value = NpcDefinitions::Value;
 using Kind = Value::Kind;
 
@@ -24,32 +23,32 @@ Value resolveValue(Value value, const Find& find) {
   return value;
   }
 
-Type argumentType(NativeBaseCatalog::NpcConstructorType type) {
-  using Prepared = NativeBaseCatalog::NpcConstructorType;
-  switch(type) {
-    case Prepared::Integer:  return Type::INT;
-    case Prepared::Float:    return Type::FLOAT;
-    case Prepared::String:   return Type::STRING;
-    case Prepared::Instance: return Type::INSTANCE;
-    case Prepared::Function: return Type::FUNCTION;
-    }
-  throw std::runtime_error("invalid NPC constructor type");
-  }
-
-void checkValue(const Value& value, Type type) {
+void checkValue(const Value& value, Prepared type) {
   bool ok=false;
   switch(type) {
-    case Type::STRING: ok=value.kind==Kind::String; break;
-    case Type::FLOAT: ok=value.kind==Kind::Float; break;
-    case Type::INSTANCE: ok=value.kind==Kind::Self || value.kind==Kind::Symbol || value.kind==Kind::Null; break;
-    case Type::INT:
-    case Type::FUNCTION: ok=value.kind==Kind::Int || value.kind==Kind::Symbol || value.kind==Kind::Null; break;
-    default: break;
+    case Prepared::String:   ok=value.kind==Kind::String; break;
+    case Prepared::Float:    ok=value.kind==Kind::Float; break;
+    case Prepared::Instance: ok=value.kind==Kind::Self || value.kind==Kind::Symbol || value.kind==Kind::Null; break;
+    case Prepared::Integer:
+    case Prepared::Function: ok=value.kind==Kind::Int || value.kind==Kind::Symbol || value.kind==Kind::Null; break;
     }
   if(!ok) throw std::runtime_error("value type differs from script binding");
   }
 
 #ifndef GOTHIC_NATIVE_V3
+using Type = daedalus::DaedalusDataType;
+
+Prepared preparedType(Type type) {
+  switch(type) {
+    case Type::INT:      return Prepared::Integer;
+    case Type::FLOAT:    return Prepared::Float;
+    case Type::STRING:   return Prepared::String;
+    case Type::INSTANCE: return Prepared::Instance;
+    case Type::FUNCTION: return Prepared::Function;
+    default: throw std::runtime_error("invalid NPC constructor type");
+    }
+  }
+
 // init_instance restores both SELF and the VM's member context. External calls may
 // execute item on_equip scripts, so both must remain the NPC throughout playback.
 struct Context {
@@ -84,11 +83,11 @@ void push(daedalus::DaedalusVm& vm, const NpcDefinitionRuntime::Argument& arg,
       break;
     case Kind::Self: vm.push_instance(npc); break;
     case Kind::Symbol:
-      if(arg.type==Type::INSTANCE) vm.push_reference(vm.find_symbol_by_index(uint32_t(value.integer)));
+      if(arg.type==Prepared::Instance) vm.push_reference(vm.find_symbol_by_index(uint32_t(value.integer)));
       else vm.push_int(value.integer);
       break;
     case Kind::Null:
-      if(arg.type==Type::INSTANCE) vm.push_instance(nullptr);
+      if(arg.type==Prepared::Instance) vm.push_instance(nullptr);
       else vm.push_int(0);
       break;
     }
@@ -128,7 +127,7 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinit
           if(binding==nullptr || !binding->is_member() || !binding->name().starts_with("C_NPC.") ||
              field->index>=binding->count())
             throw std::runtime_error("invalid NPC field "+field->binding+"["+std::to_string(field->index)+"]");
-          checkValue(field->value,binding->type());
+          checkValue(field->value,preparedType(binding->type()));
           steps.emplace_back(Field{binding->index(),binding->name(),field->index,resolveValue(field->value,symbolId)});
           }
         else if(const auto* write=std::get_if<NpcDefinitions::GlobalIntWrite>(&step)) {
@@ -149,8 +148,9 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::resolve(const NpcDefinit
           Call resolved;
           resolved.function=function->index(); resolved.name=function->name(); resolved.deferred=call.deferred;
           for(size_t i=0;i<parameters.size();++i) {
-            checkValue(call.args[i],parameters[i].type());
-            Argument argument{resolveValue(call.args[i],symbolId),parameters[i].type(),{}};
+            const auto type=preparedType(parameters[i].type());
+            checkValue(call.args[i],type);
+            Argument argument{resolveValue(call.args[i],symbolId),type,{}};
             if(argument.value.kind==Kind::String) {
               const auto literal=literals.find(argument.value.text);
               if(literal!=literals.end())
@@ -204,7 +204,7 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::load(const std::filesyst
           const auto entry=catalog.npcConstructor.members.find(field->binding);
           if(entry==catalog.npcConstructor.members.end() || field->index>=entry->second.count)
             throw std::runtime_error("invalid NPC field "+field->binding+"["+std::to_string(field->index)+"]");
-          checkValue(field->value,argumentType(entry->second.type));
+          checkValue(field->value,entry->second.type);
           steps.emplace_back(Field{entry->second.id,field->binding,field->index,resolveValue(field->value,symbolId)});
           }
         else if(const auto* write=std::get_if<NpcDefinitions::GlobalIntWrite>(&step)) {
@@ -227,7 +227,7 @@ NpcDefinitionRuntime::Definitions NpcDefinitionRuntime::load(const std::filesyst
           resolved.deferred=call.deferred;
           resolved.args.reserve(call.args.size());
           for(size_t i=0;i<call.args.size();++i) {
-            const auto type=argumentType(entry->second.parameters[i]);
+            const auto type=entry->second.parameters[i];
             checkValue(call.args[i],type);
             resolved.args.push_back({resolveValue(call.args[i],symbolId),type,{}});
             }
