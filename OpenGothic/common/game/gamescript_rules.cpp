@@ -93,16 +93,12 @@ bool GameScript::invokeNativeRoomPerception(std::string_view name, NpcActivityPr
   }
 
 void GameScript::loadNativeRoomReaction() {
-  if(!nativeRoutineProgram)
-    return;
-  const auto enabled = [this] { return nativeRoomReactionsEnabled(); };
-  vm.override_function("B_ASSESSENTERROOM",std::function<int32_t()>{[this] { return runEnterRoomReaction(); }},enabled);
-  vm.override_function("C_NPCISBOTHEREDBYPLAYERROOMGUILD",std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>{
-    [this](auto& machine) -> daedalus::DaedalusNakedCall {
-      const auto npc = std::dynamic_pointer_cast<daedalus::INpc>(machine.pop_instance());
-      machine.push_reference(findSymbol(isBotheredByPlayerRoomGuild(npc) ? "TRUE" : "FALSE"));
-      return {};
-      }},enabled);
+  using Actor=std::shared_ptr<daedalus::INpc>;
+  nativeExternals.insert_or_assign("B_ASSESSENTERROOM",storygraph::makeNativeInternal(std::function<int32_t()>{
+    [this] { return runEnterRoomReaction(); }}));
+  nativeExternals.insert_or_assign("C_NPCISBOTHEREDBYPLAYERROOMGUILD",
+    storygraph::makeNativeInternal(std::function<int32_t(Actor)>{
+      [this](Actor npc) { return int32_t(isBotheredByPlayerRoomGuild(npc)); }}));
   }
 
 void GameScript::setPerceptionPreset(bool normal) {
@@ -270,14 +266,14 @@ void GameScript::desynchronizeNpc() {
 
 void GameScript::sayToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other,
                          std::string_view line, bool overlay) {
-  auto& text = *findSymbol(overlay ? "B_SAY_OVERLAY.TEXT" : "B_SAY.TEXT");
-  text.set_string(line);
+  const auto text = overlay ? "B_SAY_OVERLAY.TEXT" : "B_SAY.TEXT";
+  setNpcRuleString(text,line);
   storyActorSlot(overlay ? "B_SAY_OVERLAY.OTH" : "B_SAY.OTH") = other;
   storyActorSlot(overlay ? "B_SAY_OVERLAY.SLF" : "B_SAY.SLF") = self;
   if(overlay)
-    ai_outputsvm_overlay(self,other,text.get_string());
+    ai_outputsvm_overlay(self,other,npcRuleString(text));
   else
-    ai_outputsvm(self,other,text.get_string());
+    ai_outputsvm(self,other,npcRuleString(text));
   }
 
 void GameScript::turnToNpc(const std::shared_ptr<daedalus::INpc>& self, const std::shared_ptr<daedalus::INpc>& other) {
@@ -519,143 +515,145 @@ void GameScript::loadNativeHumanPerceptions() {
   murderCallback = findFunction("B_ASSESSMURDER");
   stopShortZapCallback = findFunction("B_STOPSHORTZAPPED");
   restartTentacleCallback = findFunction("B_RESTARTGREENTENTACLE");
-  const auto enabled = [this] { return nativeHumanPerceptionsEnabled(); };
-  vm.override_function("PERCEPTION_SET_NORMAL",std::function<void()>{[this] { setPerceptionPreset(true); }},enabled);
-  vm.override_function("PERCEPTION_SET_MINIMAL",std::function<void()>{[this] { setPerceptionPreset(false); }},enabled);
-  vm.override_function("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }},enabled);
-  vm.override_function("B_ASSESSDAMAGE",std::function<void()>{[this] { runDamageReaction(); }},enabled);
-  vm.override_function("B_ASSESSENEMY",std::function<int32_t()>{[this] { return runEnemyReaction(); }},enabled);
-  vm.override_function("B_ASSESSPLAYER",std::function<void()>{[this] { runPlayerAssessment(); }},enabled);
-  vm.override_function("B_ASSESSFIGHTSOUND",std::function<void()>{[this] { runFightSoundReaction(); }},enabled);
-  vm.override_function("B_ASSESSGUIDEPLAYER",std::function<void()>{[this] { runGuidePlayerAssessment(); }},enabled);
-  vm.override_function("C_DIEGOTOOFAR",std::function<int32_t(int32_t)>{[this](int32_t tolerance) {
+  const auto bind = [this]<class R,class... P>(std::string_view name,const std::function<R(P...)>& callback) {
+    nativeExternals.insert_or_assign(std::string(name),storygraph::makeNativeInternal(callback));
+    };
+  bind("PERCEPTION_SET_NORMAL",std::function<void()>{[this] { setPerceptionPreset(true); }});
+  bind("PERCEPTION_SET_MINIMAL",std::function<void()>{[this] { setPerceptionPreset(false); }});
+  bind("B_ASSESSDRAWWEAPON",std::function<int32_t()>{[this] { return runDrawWeaponReaction(); }});
+  bind("B_ASSESSDAMAGE",std::function<void()>{[this] { runDamageReaction(); }});
+  bind("B_ASSESSENEMY",std::function<int32_t()>{[this] { return runEnemyReaction(); }});
+  bind("B_ASSESSPLAYER",std::function<void()>{[this] { runPlayerAssessment(); }});
+  bind("B_ASSESSFIGHTSOUND",std::function<void()>{[this] { runFightSoundReaction(); }});
+  bind("B_ASSESSGUIDEPLAYER",std::function<void()>{[this] { runGuidePlayerAssessment(); }});
+  bind("C_DIEGOTOOFAR",std::function<int32_t(int32_t)>{[this](int32_t tolerance) {
     return diegoRouteBoundary(tolerance);
-    }},enabled);
-  vm.override_function("B_VALIDATEOTHER",std::function<void()>{[this] {
+    }});
+  bind("B_VALIDATEOTHER",std::function<void()>{[this] {
     validateCombatTarget(nativeNpc("SELF"));
-    }},enabled);
+    }});
   using Actor = std::shared_ptr<daedalus::INpc>;
-  vm.override_function("B_ATTACK",std::function<void(Actor,Actor,int32_t,int32_t)>{
+  bind("B_ATTACK",std::function<void(Actor,Actor,int32_t,int32_t)>{
     [this](const Actor& self,const Actor& other,int32_t reason,int32_t wait) {
       startNpcAttack(self,other,reason,wait);
-      }},enabled);
-  vm.override_function("C_ISUSEDMOBMYPOSSESSION",std::function<int32_t(Actor,Actor)>{
-    [this](const Actor& self,const Actor& other) { return usedMobIsPossession(self,other); }},enabled);
-  vm.override_function("C_ISTAKENITEMMYPOSSESSION",std::function<int32_t(Actor,Actor,std::shared_ptr<daedalus::IItem>)>{
-    [this](const Actor& self,const Actor& other,const auto& item) { return takenItemIsPossession(self,other,item); }},enabled);
-  vm.override_function("C_WANTTOATTACKTHIEF",std::function<int32_t(Actor,Actor)>{
-    [this](const Actor& self,const Actor& other) { return wantsToAttackThief(self,other); }},enabled);
-  vm.override_function("B_GHOSTSPECIALDAMAGE",std::function<int32_t(Actor,Actor)>{[this](const Actor& attacker,const Actor& defender) {
+      }});
+  bind("C_ISUSEDMOBMYPOSSESSION",std::function<int32_t(Actor,Actor)>{
+    [this](const Actor& self,const Actor& other) { return usedMobIsPossession(self,other); }});
+  bind("C_ISTAKENITEMMYPOSSESSION",std::function<int32_t(Actor,Actor,std::shared_ptr<daedalus::IItem>)>{
+    [this](const Actor& self,const Actor& other,const auto& item) { return takenItemIsPossession(self,other,item); }});
+  bind("C_WANTTOATTACKTHIEF",std::function<int32_t(Actor,Actor)>{
+    [this](const Actor& self,const Actor& other) { return wantsToAttackThief(self,other); }});
+  bind("B_GHOSTSPECIALDAMAGE",std::function<int32_t(Actor,Actor)>{[this](const Actor& attacker,const Actor& defender) {
     ghostSpecialDamage(attacker,defender);
     return 0;
-    }},enabled);
-  vm.override_function("B_BELIARSWEAPONSPECIALDAMAGE",std::function<void(Actor,Actor)>{[this](const Actor& attacker,const Actor& defender) {
+    }});
+  bind("B_BELIARSWEAPONSPECIALDAMAGE",std::function<void(Actor,Actor)>{[this](const Actor& attacker,const Actor& defender) {
     beliarWeaponSpecialDamage(attacker,defender);
-    }},enabled);
-  vm.override_function("C_SCHASREADIEDBELIARSWEAPON",std::function<int32_t()>{[this] { return hasReadiedBeliarWeapon(); }},enabled);
-  vm.override_function("C_ISITEMBELIARSWEAPON",std::function<int32_t(std::shared_ptr<daedalus::IItem>)>{
-    [this](const auto& weapon) { return isBeliarWeaponItem(weapon); }},enabled);
-  vm.override_function("C_NPCISTOUGHGUY",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    }});
+  bind("C_SCHASREADIEDBELIARSWEAPON",std::function<int32_t()>{[this] { return hasReadiedBeliarWeapon(); }});
+  bind("C_ISITEMBELIARSWEAPON",std::function<int32_t(std::shared_ptr<daedalus::IItem>)>{
+    [this](const auto& weapon) { return isBeliarWeaponItem(weapon); }});
+  bind("C_NPCISTOUGHGUY",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return isToughGuy(npc);
-    }},enabled);
-  vm.override_function("C_REFUSETALK",std::function<int32_t(Actor,Actor)>{[this](const Actor& npc,const Actor& other) {
+    }});
+  bind("C_REFUSETALK",std::function<int32_t(Actor,Actor)>{[this](const Actor& npc,const Actor& other) {
     return refusesTalk(npc,other);
-    }},enabled);
-  vm.override_function("C_IAMCANYONRAZOR",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    }});
+  bind("C_IAMCANYONRAZOR",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return isCanyonRazor(npc);
-    }},enabled);
-  vm.override_function("C_DROPUNCONSCIOUS",std::function<int32_t()>{[this] { return dropsUnconsciousNpc(); }},enabled);
-  vm.override_function("B_COUNTCANYONRAZOR",std::function<void()>{[this] { showRemainingCanyonRazors(); }},enabled);
-  vm.override_function("C_WANTTOCALLGUARDS",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    }});
+  bind("C_DROPUNCONSCIOUS",std::function<int32_t()>{[this] { return dropsUnconsciousNpc(); }});
+  bind("B_COUNTCANYONRAZOR",std::function<void()>{[this] { showRemainingCanyonRazors(); }});
+  bind("C_WANTTOCALLGUARDS",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return wantsToCallGuards(npc);
-    }},enabled);
-  vm.override_function("B_CALLGUARDS",std::function<void()>{[this] { callGuards(); }},enabled);
-  vm.override_function("C_BEKLAUEN",std::function<int32_t(int32_t,int32_t)>{[this](int32_t dexterity, int32_t gold) {
+    }});
+  bind("B_CALLGUARDS",std::function<void()>{[this] { callGuards(); }});
+  bind("C_BEKLAUEN",std::function<int32_t(int32_t,int32_t)>{[this](int32_t dexterity, int32_t gold) {
     return canPickpocket(dexterity,gold);
-    }},enabled);
-  vm.override_function("B_BEKLAUEN",std::function<void()>{[this] { attemptPickpocket(); }},enabled);
-  vm.override_function("B_GIVETHIEFXP",std::function<void()>{[this] { givePickpocketXp(); }},enabled);
-  vm.override_function("B_RESETTHIEFLEVEL",std::function<void()>{[this] { decrementPickpocketVictimCount(); }},enabled);
-  vm.override_function("C_WANTTOFLEE",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    }});
+  bind("B_BEKLAUEN",std::function<void()>{[this] { attemptPickpocket(); }});
+  bind("B_GIVETHIEFXP",std::function<void()>{[this] { givePickpocketXp(); }});
+  bind("B_RESETTHIEFLEVEL",std::function<void()>{[this] { decrementPickpocketVictimCount(); }});
+  bind("C_WANTTOFLEE",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     rememberFleeCheck(self,other);
     return 0;
-    }},enabled);
-  vm.override_function("C_NPCRANSACKSALWAYS",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    }});
+  bind("C_NPCRANSACKSALWAYS",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return alwaysRansacks(npc);
-    }},enabled);
-  vm.override_function("C_WANTTORANSACK",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    }});
+  bind("C_WANTTORANSACK",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return wantsToRansack(npc);
-    }},enabled);
-  vm.override_function("B_FINISHINGMOVE",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    }});
+  bind("B_FINISHINGMOVE",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     queueFinishingMove(self,other);
-    }},enabled);
-  vm.override_function("B_ENDPRODUCTIONDIALOG",std::function<void()>{[this] { endProductionDialog(); }},enabled);
-  vm.override_function("B_USEITEM",std::function<void(Actor,int32_t)>{[this](const Actor& self, int32_t item) {
+    }});
+  bind("B_ENDPRODUCTIONDIALOG",std::function<void()>{[this] { endProductionDialog(); }});
+  bind("B_USEITEM",std::function<void(Actor,int32_t)>{[this](const Actor& self, int32_t item) {
     queueItemUse(self,item);
-    }},enabled);
-  vm.override_function("B_TURNTONPC",std::function<void(Actor,Actor)>{[this](const Actor& self,const Actor& other) {
+    }});
+  bind("B_TURNTONPC",std::function<void(Actor,Actor)>{[this](const Actor& self,const Actor& other) {
     turnToNpc(self,other);
-    }},enabled);
-  vm.override_function("B_LOOKATNPC",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    }});
+  bind("B_LOOKATNPC",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     lookAtNpc(self,other);
-    }},enabled);
-  vm.override_function("B_STOPLOOKAT",std::function<void(Actor)>{[this](const Actor& self) { stopLookAtNpc(self); }},enabled);
-  vm.override_function("C_NPCISGATEGUARD",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    }});
+  bind("B_STOPLOOKAT",std::function<void(Actor)>{[this](const Actor& self) { stopLookAtNpc(self); }});
+  bind("C_NPCISGATEGUARD",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return isGateGuard(npc);
-    }},enabled);
-  vm.override_function("C_BODYSTATECONTAINS",std::function<int32_t(Actor,int32_t)>{[this](const Actor& npc, int32_t state) {
+    }});
+  bind("C_BODYSTATECONTAINS",std::function<int32_t(Actor,int32_t)>{[this](const Actor& npc, int32_t state) {
     return npcBodyStateContains(npc,state);
-    }},enabled);
-  vm.override_function("B_CLEARPERCEPTIONS",std::function<void(Actor)>{[this](const Actor& npc) {
+    }});
+  bind("B_CLEARPERCEPTIONS",std::function<void(Actor)>{[this](const Actor& npc) {
     clearPerceptions(npc);
-    }},enabled);
-  vm.override_function("B_SETATTITUDE",std::function<void(Actor,int32_t)>{[this](const Actor& npc,int32_t attitude) {
+    }});
+  bind("B_SETATTITUDE",std::function<void(Actor,int32_t)>{[this](const Actor& npc,int32_t attitude) {
     setCombatAttitude(npc,attitude);
-    }},enabled);
-  vm.override_function("B_SAY",std::function<void(Actor,Actor,std::string_view)>{[this](const Actor& self, const Actor& other, std::string_view line) {
+    }});
+  bind("B_SAY",std::function<void(Actor,Actor,std::string_view)>{[this](const Actor& self, const Actor& other, std::string_view line) {
     sayToNpc(self,other,line);
-    }},enabled);
-  vm.override_function("B_SAY_OVERLAY",std::function<void(Actor,Actor,std::string_view)>{[this](const Actor& self, const Actor& other, std::string_view line) {
+    }});
+  bind("B_SAY_OVERLAY",std::function<void(Actor,Actor,std::string_view)>{[this](const Actor& self, const Actor& other, std::string_view line) {
     sayToNpc(self,other,line,true);
-    }},enabled);
-  vm.override_function("B_SAY_GUILDGREETINGS",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    }});
+  bind("B_SAY_GUILDGREETINGS",std::function<void(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     sayGuildGreeting(self,other);
-    }},enabled);
-  vm.override_function("B_BARTOK_SHITANORC",std::function<void()>{[this] { sayAmbientGreeting(bartokOrcGreeting); }},enabled);
-  vm.override_function("B_KOCH_HACKEBEIL",std::function<void()>{[this] { sayAmbientGreeting(cookCleaverGreeting); }},enabled);
-  vm.override_function("B_SAY_ATTACKREASON",std::function<void()>{[this] { sayAttackReason(); }},enabled);
-  vm.override_function("B_SAY_ATTACKEND",std::function<void()>{[this] { sayAttackEnd(); }},enabled);
-  vm.override_function("C_PLAYERISFAKEPIRATE",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    }});
+  bind("B_BARTOK_SHITANORC",std::function<void()>{[this] { sayAmbientGreeting(bartokOrcGreeting); }});
+  bind("B_KOCH_HACKEBEIL",std::function<void()>{[this] { sayAmbientGreeting(cookCleaverGreeting); }});
+  bind("B_SAY_ATTACKREASON",std::function<void()>{[this] { sayAttackReason(); }});
+  bind("B_SAY_ATTACKEND",std::function<void()>{[this] { sayAttackEnd(); }});
+  bind("C_PLAYERISFAKEPIRATE",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return isPlayerFakePirate(self,other);
-    }},enabled);
-  vm.override_function("B_ADDPETZCRIME",std::function<void(Actor,int32_t)>{[this](const Actor& witness, int32_t crime) {
+    }});
+  bind("B_ADDPETZCRIME",std::function<void(Actor,int32_t)>{[this](const Actor& witness, int32_t crime) {
     adjustPetzCrime(witness,crime);
-    }},enabled);
-  vm.override_function("B_DELETEPETZCRIME",std::function<void(Actor)>{[this](const Actor& witness) {
+    }});
+  bind("B_DELETEPETZCRIME",std::function<void(Actor)>{[this](const Actor& witness) {
     adjustPetzCrime(witness,std::nullopt);
-    }},enabled);
-  loadNativeCrimeReports(enabled);
-  vm.override_function("C_NPCISBOTHEREDBYWEAPON",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    }});
+  loadNativeCrimeReports();
+  bind("C_NPCISBOTHEREDBYWEAPON",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return botheredByWeapon(self,other);
-    }},enabled);
-  vm.override_function("C_WANTTOATTACKMURDER",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    }});
+  bind("C_WANTTOATTACKMURDER",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return wantsToAttackMurderer(self,other);
-    }},enabled);
-  vm.override_function("C_WANTTOREACTTOSNEAKER",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    }});
+  bind("C_WANTTOREACTTOSNEAKER",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return wantsToReactToSneaker(self,other);
-    }},enabled);
-  vm.override_function("B_ASSIGNDEMENTORTALK",std::function<void(Actor)>{[this](const Actor& npc) {
+    }});
+  bind("B_ASSIGNDEMENTORTALK",std::function<void(Actor)>{[this](const Actor& npc) {
     assignDementorTalk(npc);
-    }},enabled);
-  vm.override_function("C_NPCBELONGSTOBL",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    }});
+  bind("C_NPCBELONGSTOBL",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return belongsToBanditCamp(npc);
-    }},enabled);
-  vm.override_function("C_NPCISDOWN",std::function<int32_t(Actor)>{[this](const Actor& npc) {
+    }});
+  bind("C_NPCISDOWN",std::function<int32_t(Actor)>{[this](const Actor& npc) {
     return isNpcDownInScript(npc);
-    }},enabled);
-  vm.override_function("C_PLAYERHASFAKEGUILD",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
+    }});
+  bind("C_PLAYERHASFAKEGUILD",std::function<int32_t(Actor,Actor)>{[this](const Actor& self, const Actor& other) {
     return hasFakeGuild(self,other);
-    }},enabled);
+    }});
   }
 
 bool GameScript::invokeNativeHumanPerception(ScriptFn fn, NpcActivityProbe::Phase& phase) {
@@ -1128,8 +1126,7 @@ int32_t GameScript::runEnemyReaction() {
 void GameScript::runMoveMobReaction() {
   const auto self = nativeNpc("SELF");
   const auto scheme = npc_getdetectedmob(self);
-  vm.push_string(scheme);
-  vm.set_string(vm.unsafe_get_gi(),findSymbol("B_MOVEMOB.DOOR"),0,vm.pop_string());
+  setNpcRuleString("B_MOVEMOB.DOOR",scheme);
   if(scheme!="DOOR")
     return;
   if(wld_getmobstate(self,scheme)==0) {
@@ -1355,22 +1352,17 @@ bool GameScript::wantsToReactToSneaker(const std::shared_ptr<daedalus::INpc>& se
   }
 
 void GameScript::assignDementorTalk(const std::shared_ptr<daedalus::INpc>& npc) {
-  const auto* catalog = baseNativeCatalog();
   storyActorSlot("B_ASSIGNDEMENTORTALK.SLF") = npc;
   if(npc==nullptr || npc->type!=NpcType::G2_AMBIENT || npc->guild!=GIL_DMT)
     return;
   const auto id = hlp_getinstanceid(npc);
+  const auto& dialogs = baseNativeCatalog()->identities.dialogs;
   for(const auto name : {"DIA_AMBIENTDEMENTOR_EXIT", "DIA_AMBIENTDEMENTOR"}) {
-    if(catalog!=nullptr) {
-      const auto* identity = NativeBaseCatalog::findIdentity(catalog->identities.dialogs,name);
-      if(identity==nullptr)
-        throw std::runtime_error("missing ambient dialog: "+std::string(name));
-      if(auto* info = findInfo(identity->id))
-        info->npc = id;
-      }
-    else if(const auto info = storyActorSlot(name)) {
-      vm.set_int(info,findSymbol("C_INFO.NPC"),0,id);
-      }
+    const auto* identity = NativeBaseCatalog::findIdentity(dialogs,name);
+    if(identity==nullptr)
+      throw std::runtime_error("missing ambient dialog: "+std::string(name));
+    if(auto* info = findInfo(identity->id))
+      info->npc = id;
     }
   }
 
@@ -2582,8 +2574,8 @@ std::array<bool,std::size(crimeJurisdictions)> crimeJurisdictionMembership(const
 
 }
 
-void GameScript::loadNativeCrimeReports(const std::function<bool()>& enabled) {
-  using Callback=std::function<daedalus::DaedalusNakedCall(daedalus::DaedalusVm&)>;
+void GameScript::loadNativeCrimeReports() {
+  using Actor=std::shared_ptr<daedalus::INpc>;
   enum class Query { Greatest, Total, Absolution };
   static constexpr struct Report {
     const char* function;
@@ -2595,41 +2587,29 @@ void GameScript::loadNativeCrimeReports(const std::function<bool()>& enabled) {
     {"B_GETCURRENTABSOLUTIONLEVEL","B_GETCURRENTABSOLUTIONLEVEL.SLF",Query::Absolution},
     };
   for(const auto& report:reports) {
-    auto* witnessSlot=findSymbol(report.witnessSlot);
-    vm.override_function(report.function,Callback{
-      [this,witnessSlot,query=report.query](auto& machine) -> daedalus::DaedalusNakedCall {
-        const auto witness=machine.pop_instance();
-        witnessSlot->set_instance(witness);
-        const auto membership=crimeJurisdictionMembership(dynamic_cast<daedalus::INpc*>(witness.get()));
-        for(size_t i=0;i<std::size(crimeJurisdictions);++i) {
-          const auto& jurisdiction=crimeJurisdictions[i];
-          storyActorSlot(jurisdiction.witnessSlot) = witness;
-          if(!membership[i])
-            continue;
-          if(query==Query::Absolution) {
-            machine.push_reference(findSymbol(jurisdiction.absolution));
-            return {};
-            }
-          uint32_t total=0;
-          for(size_t j=0;j<jurisdiction.counters.size() && !jurisdiction.counters[j].empty();++j) {
-            const auto count=petzCrimeCounters[i*jurisdiction.counters.size()+j];
-            if(query==Query::Greatest && count>0) {
-              machine.push_reference(findSymbol(petzCrimeKinds[j]));
-              return {};
-              }
-            total+=uint32_t(count);
-            }
-          if(query==Query::Total) {
-            machine.push_int(std::bit_cast<int32_t>(total));
-            return {};
-            }
+    auto callback = std::function<int32_t(Actor)>{[this,report](const Actor& witness) {
+      storyActorSlot(report.witnessSlot) = witness;
+      const auto membership=crimeJurisdictionMembership(witness.get());
+      for(size_t i=0;i<std::size(crimeJurisdictions);++i) {
+        const auto& jurisdiction=crimeJurisdictions[i];
+        storyActorSlot(jurisdiction.witnessSlot) = witness;
+        if(!membership[i])
+          continue;
+        if(report.query==Query::Absolution)
+          return crimeAbsolutionLevels[i];
+        uint32_t total=0;
+        for(size_t j=0;j<jurisdiction.counters.size() && !jurisdiction.counters[j].empty();++j) {
+          const auto count=petzCrimeCounters[i*jurisdiction.counters.size()+j];
+          if(report.query==Query::Greatest && count>0)
+            return npcRuleInt(petzCrimeKinds[j]);
+          total+=uint32_t(count);
           }
-        if(query==Query::Greatest)
-          machine.push_reference(findSymbol("CRIME_NONE"));
-        else
-          machine.push_int(0);
-        return {};
-        }},enabled);
+        if(report.query==Query::Total)
+          return std::bit_cast<int32_t>(total);
+        }
+      return report.query==Query::Greatest ? npcRuleInt("CRIME_NONE") : 0;
+      }};
+    nativeExternals.insert_or_assign(report.function,storygraph::makeNativeInternal(callback));
     }
   }
 
@@ -2747,58 +2727,51 @@ void GameScript::callGuards() {
 
 void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,
                                 const std::shared_ptr<daedalus::INpc>& target, int32_t reason, int32_t wait) {
-  struct RestoreContext {
-    daedalus::DaedalusVm& vm;
-    std::shared_ptr<daedalus::DaedalusInstance> member;
-    ~RestoreContext() { vm.unsafe_set_gi(std::move(member)); }
-    } restore{vm,vm.unsafe_get_gi()};
-  auto& selfSlot = *findSymbol("B_ATTACK.SLF");
-  auto& otherSlot = *findSymbol("B_ATTACK.OTH");
-  auto& reasonSlot = *findSymbol("B_ATTACK.ATTACK_REASON");
-  auto& waitSlot = *findSymbol("B_ATTACK.WAIT");
-  waitSlot.set_int(wait);
-  reasonSlot.set_int(reason);
-  otherSlot.set_instance(target);
-  selfSlot.set_instance(attacker);
-  const auto self = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(selfSlot.get_instance()); };
-  const auto other = [&] { return std::dynamic_pointer_cast<daedalus::INpc>(otherSlot.get_instance()); };
+  setNpcRuleInt("B_ATTACK.WAIT",wait);
+  setNpcRuleInt("B_ATTACK.ATTACK_REASON",reason);
+  storyActorSlot("B_ATTACK.OTH") = target;
+  storyActorSlot("B_ATTACK.SLF") = attacker;
+  const auto self = [&] { return nativeNpc("B_ATTACK.SLF"); };
+  const auto other = [&] { return nativeNpc("B_ATTACK.OTH"); };
   const auto value = [this](std::string_view name) { return npcRuleInt(name); };
-  auto* aivar = findSymbol("C_NPC.AIVAR");
-  const auto member = [this](const auto& actor) {
-    vm.unsafe_set_gi(actor);
-    return actor;
+  const auto current = [&](uint16_t index) {
+    const auto actor = self();
+    return actor ? actor->aivar[index] : 0;
     };
-  const auto current = [&](uint16_t index) { return vm.get_int(member(self()),aivar,index); };
-  const auto assign = [&](uint16_t index,int32_t val) { vm.set_int(member(self()),aivar,index,val); };
+  const auto assign = [&](uint16_t index,int32_t val) {
+    if(const auto actor = self())
+      actor->aivar[index] = val;
+    };
 
   constexpr uint16_t invincible = 4, lastTarget = 7, attackReason = 9, waitBeforeAttack = 23;
   constexpr uint16_t lastPlayerReason = 47, enemyOverride = 61, lastFightComment = 64;
   const auto no = value("FALSE");
-  assign(waitBeforeAttack,waitSlot.get_int());
-  if(reasonSlot.get_int()==value("AR_SUDDENENEMYINFERNO")) {
+  assign(waitBeforeAttack,npcRuleInt("B_ATTACK.WAIT"));
+  if(npcRuleInt("B_ATTACK.ATTACK_REASON")==value("AR_SUDDENENEMYINFERNO")) {
     assign(enemyOverride,no);
     npc_sendpassiveperc(self(),PERC_ASSESSFIGHTSOUND,self(),other());
     }
 
   if(npc_isinstate(self(),int(ZS_Talk))) {
     assign(invincible,no);
-    vm.set_int(member(other()),aivar,invincible,no);
+    if(const auto actor = other())
+      actor->aivar[invincible] = no;
     }
 
-  const auto targetMemory = member(self());
+  const auto targetMemory = self();
   const auto targetId = hlp_getinstanceid(other());
-  const bool sameTarget = vm.get_int(targetMemory,aivar,lastTarget)==targetId;
+  const bool sameTarget = (targetMemory ? targetMemory->aivar[lastTarget] : 0)==targetId;
   const bool attacking = npc_isinstate(self(),int(ZS_Attack));
   bool changeReason = true;
   if(sameTarget && attacking) {
-    const bool strongerReason = reasonSlot.get_int()>current(attackReason);
+    const bool strongerReason = npcRuleInt("B_ATTACK.ATTACK_REASON")>current(attackReason);
     const bool wantsToKill = hasAttackReasonToKill(self());
     changeReason = strongerReason && !wantsToKill;
     }
   if(changeReason) {
-    assign(attackReason,reasonSlot.get_int());
+    assign(attackReason,npcRuleInt("B_ATTACK.ATTACK_REASON"));
     if(npc_isplayer(other()))
-      assign(lastPlayerReason,reasonSlot.get_int());
+      assign(lastPlayerReason,npcRuleInt("B_ATTACK.ATTACK_REASON"));
     }
 
   const auto hasReason = [&](std::string_view name) { return current(attackReason)==value(name); };
@@ -2808,7 +2781,8 @@ void GameScript::startNpcAttack(const std::shared_ptr<daedalus::INpc>& attacker,
   if(hasReason("AR_SHEEPKILLER"))
     memorize("CRIME_SHEEPKILLER");
   if(hasReason("AR_REACTTOWEAPON") || hasReason("AR_REACTTODAMAGE")) {
-    const bool friendNpc = vm.get_int(member(self()),findSymbol("C_NPC.NPCTYPE"),0)==value("NPCTYPE_FRIEND");
+    const auto actor = self();
+    const bool friendNpc = actor && actor->type==NpcType::G2_FRIEND;
     const bool targetPlayer = npc_isplayer(other());
     const bool toughGuy = isToughGuy(self());
     if(!(friendNpc && targetPlayer) && !toughGuy)

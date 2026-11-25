@@ -633,8 +633,7 @@ void GameScript::givePickpocketXp() {
     nextLevel.set_int(std::bit_cast<int32_t>(uint32_t(count)+uint32_t(next)));
     }
   const auto amount = std::bit_cast<int32_t>(10u*uint32_t(level.get_int())+uint32_t(npcRuleInt("THIEFXP")));
-  vm.push_int(amount);
-  vm.unsafe_call_bl(findSymbol("B_GIVEPLAYERXP"));
+  givePlayerXp(amount);
   }
 
 void GameScript::decrementPickpocketVictimCount() {
@@ -644,41 +643,22 @@ void GameScript::decrementPickpocketVictimCount() {
   }
 
 void GameScript::loadNativeTalkReaction() {
-  if(!nativeRoutineProgram)
-    return;
-  vm.override_function("B_ASSESSTALK",std::function<void()>{[this] { runAssessTalk(); }},[this] {
-    return canRunNativeTalkReaction();
-    });
+  nativeExternals.insert_or_assign("B_ASSESSTALK",storygraph::makeNativeInternal(std::function<void()>{
+    [this] { if(canRunNativeTalkReaction()) runAssessTalk(); }}));
   }
 
 bool GameScript::canRunNativeTalkReaction() {
-  if(!nativeRoutineProgram || !activityEvents || floorDefer.active() ||
-     ActivityDefinitionRuntime::mode()==ActivityDefinitionRuntime::Mode::Off)
-    return false;
   const auto self = nativeNpc("SELF");
   const auto other = nativeNpc("OTHER");
-  const auto* source = findNpc(static_cast<NpcRecord*>(other.get()));
-  if(!findNpc(static_cast<NpcRecord*>(self.get())) || !source || !source->isPlayer() ||
-     other->symbol_index()!=findSymbolIndex("PC_HERO"))
-    return false;
-
-  // An inspector's debug conversation displays room data through the original script.
-  const auto isDebugAlias = [&](std::string_view name) {
-    auto* instance = findSymbol(name);
-    return instance->is_instance_of<daedalus::INpc>() &&
-           hlp_getinstanceid(instance->get_instance())==hlp_getinstanceid(other);
-    };
-  return !isDebugAlias("PC_LEVELINSPEKTOR") && !isDebugAlias("PC_ROCKEFELLER");
+  const auto* source = findNpc(other);
+  return findNpc(self) && source && source->isPlayer() && other->symbol_index()==findSymbolIndex("PC_HERO");
   }
 
 bool GameScript::invokeNativeTalkPerception(std::string_view functionName, NpcActivityProbe::Phase& phase) {
   if(functionName!="B_ASSESSTALK" || !canRunNativeTalkReaction())
     return false;
   phase.fromRecord();
-  if(baseNativeCatalog()!=nullptr)
-    runAssessTalk();
-  else
-    vm.unsafe_call_bl(findSymbol(functionName));
+  runAssessTalk();
   return true;
   }
 
@@ -716,13 +696,11 @@ void GameScript::runAssessTalk() {
 
   storyActorSlot("B_ASSESSTALK.PCL") = hlp_getnpc(int(findSymbolIndex("PC_LEVELINSPEKTOR")));
   storyActorSlot("B_ASSESSTALK.PCR") = hlp_getnpc(int(findSymbolIndex("PC_ROCKEFELLER")));
-  vm.unsafe_set_gi(self());
 
   if(guild()>int32_t(GIL_SEPERATOR_HUM) && !npc_checkinfo(self(),1) && !npc_checkinfo(self(),0))
     return;
   if(guild()<int32_t(GIL_SEPERATOR_HUM)) {
-    vm.unsafe_call_bl(findSymbol("B_ASSESSENEMY"));
-    if(vm.pop_int()!=0)
+    if(runEnemyReaction()!=0)
       return;
     const bool wantsAttack = wantsToAttackMurderer(self(),other());
     const bool murder = playerCrime(self())==npcRuleInt("CRIME_MURDER");

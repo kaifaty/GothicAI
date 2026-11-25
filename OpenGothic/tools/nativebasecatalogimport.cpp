@@ -373,7 +373,7 @@ void NativeBaseCatalog::verify(const std::filesystem::path& base, const Selectio
           selected.directorFirstId==expected.directorFirstId && selected.states==expected.states &&
           selected.initialState==expected.initialState && selected.identities==expected.identities &&
           selected.constants==expected.constants && selected.routines==expected.routines &&
-          selected.itemCallbacks==expected.itemCallbacks &&
+          selected.itemCallbacks==expected.itemCallbacks && selected.npcCallbacks==expected.npcCallbacks &&
           selected.npcConstructor==expected.npcConstructor,
           "native catalog selection differs from its source");
   verifyIdentities(base,selected.identities);
