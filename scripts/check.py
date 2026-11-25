@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import ast
 from collections import Counter, defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
@@ -505,7 +505,16 @@ def main() -> int:
     event = args.event if args.mode == "ci-matrix" else "pull_request"
     paths = [] if event == "workflow_dispatch" else changed_paths(root, args.base, working_tree=args.mode != "ci-matrix")
     level = "full" if args.mode == "ci-matrix" or (args.mode == "run" and args.all) else "direct"
-    selections = select_groups(root, paths, event=event, level=level)
+    groups = GROUPS
+    if args.mode == "ci-matrix":
+        groups = tuple(
+            replace(group, command=(
+                *group.command[:2], "--with", "pytest-xdist", *group.command[2:],
+                "-n", "2", "--dist", "loadfile", "--durations=20",
+            )) if group.name in {"server", "scripts"} else group
+            for group in groups
+        )
+    selections = select_groups(root, paths, event=event, level=level, groups=groups)
     if args.mode == "ci-matrix":
         print(json.dumps([{k: v for k, v in group.items() if k != "reasons"} for group in selections], separators=(",", ":")))
         return 0
