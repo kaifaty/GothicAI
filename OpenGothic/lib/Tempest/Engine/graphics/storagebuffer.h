@@ -8,7 +8,11 @@ class StorageBuffer {
   public:
     StorageBuffer()=default;
     StorageBuffer(StorageBuffer&&)=default;
+    // Copies share the ref-counted allocation, so a published snapshot keeps the buffer alive after streaming
+    // destroys its mesh (DrawBuckets::BucketPub)
+    StorageBuffer(const StorageBuffer&)=default;
     StorageBuffer& operator=(StorageBuffer&&)=default;
+    StorageBuffer& operator=(const StorageBuffer&)=default;
     virtual ~StorageBuffer() = default;
 
     bool   isEmpty()  const { return impl.size()==0; }

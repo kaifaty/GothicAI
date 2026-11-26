@@ -191,13 +191,10 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     cmd.setBinding(L_Ibo, buckets.ibo());
     cmd.setBinding(L_Vbo, buckets.vbo());
     }
-  else if(bx.staticMesh!=nullptr) {
+  else {
+    // the published handles cover the static mesh, its bough page and the anim mesh alike
     cmd.setBinding(L_Ibo, bx.iboBuffer());
     cmd.setBinding(L_Vbo, bx.vboBuffer());
-    }
-  else {
-    cmd.setBinding(L_Ibo, bx.animMesh->ibo8);
-    cmd.setBinding(L_Vbo, bx.animMesh->vbo);
     }
 
   if(v==SceneGlobals::V_Main || cx.isTextureInShadowPass()) {
@@ -243,9 +240,9 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     cmd.setBinding(L_MorphId,  buckets.morphId());
     cmd.setBinding(L_Morph,    buckets.morph());
     }
-  else if(cx.type==Morph && bx.staticMesh!=nullptr) {
-    cmd.setBinding(L_MorphId,  *bx.staticMesh->morph.index);
-    cmd.setBinding(L_Morph,    *bx.staticMesh->morph.samples);
+  else if(cx.type==Morph && !bx.morphId.isEmpty()) {
+    cmd.setBinding(L_MorphId,  bx.morphId);
+    cmd.setBinding(L_Morph,    bx.morph);
     }
 
   if(v==SceneGlobals::V_Main && cx.isSceneInfoRequired()) {

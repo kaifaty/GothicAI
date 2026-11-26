@@ -76,6 +76,14 @@
 - P2: grass GPU-cull отделён от CPU-подготовки: `prepareGrassCpu(fId)` на prep, cull-dispatch (`prepareGrass`) остался в записи после buildHiZ (и в history-пути), как в оригинале; serial-путь не изменён.
 - Пиксели конвейерного кадра (offscreen shot ON, readback представленного кадра) против serial OFF: интерьер mean|d| 0,08 (px>8 = 0%), рынок 1,76/1,37, лес 1,01 — фазовая разница ветра/светляков между прогонами, порчи нет.
 
+## Правки по третьему ревью Codex
+
+- P1: буферы мешей в снимке бакетов хранятся по значению (ibo/vbo/morphId/morph), запись не разыменовывает staticMesh/animMesh/boughPage. Tempest StorageBuffer/VideoBuffer получили shared-копирование ref-counted аллокации (по образцу Texture2d::shared) с токеном учёта, чтобы счётчики живых буферов в тестах не задваивались; снимок продлевает жизнь буфера после сноса чанка/AnimMesh.
+- P1: TreeBoughRender публикует снимок commands + entryCount на commit; draw/expand/diagnose читают снимок, согласованный с загруженной таблицей записей.
+- P1: cookie светов публикуются на prep по значению (publishedCookie), ленивая загрузка на записи убрана.
+- join записи перенесён перед стримингом/resetTemporal (снос чанков) и добавлен в onSettings (смена настроек/тумблеры marvin меняют пути и аттачменты рендера).
+- Живые кластеры в записи не читаются: остатки — writeTreeOcclusionDecisions/orderedClusters (bench-пути, serial).
+
 ## Поэтапный план реализации и оценка
 
 Проект больше партии: ~20 нарушений инварианта в 10+ файлах. Этапы, каждый за выключателем и со своим замером:

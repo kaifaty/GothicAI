@@ -29,12 +29,12 @@ class DrawBuckets {
       const Tempest::StorageBuffer& vboBuffer() const;
       };
 
-    // Published bucket of the frame being recorded: texture handles copied by value (ref-counted),
-    // so a streaming publish that move-assigns the holder cannot change what recording binds.
+    // Published bucket of the frame being recorded: mesh buffer and texture handles copied by value (ref-counted),
+    // so a streaming publish that move-assigns the holder, or destroys the chunk mesh / AnimMesh, cannot change
+    // what recording binds nor free the allocation before the recording joins. No live mesh pointer is dereferenced.
     struct BucketPub {
-      const StaticMesh* staticMesh = nullptr;
-      const AnimMesh*   animMesh   = nullptr;
-      const TreeBough::Page* boughPage = nullptr;
+      Tempest::StorageBuffer ibo, vbo;
+      Tempest::StorageBuffer morphId, morph;
       Tempest::Texture2d tex, normal, orm;
       Tempest::Texture2d frAlbedo, frNormal, frOrm;
       std::vector<Tempest::Texture2d> frames;
@@ -42,8 +42,8 @@ class DrawBuckets {
       bool     frameAni     = false;
       bool     fringeOn     = false;
 
-      const Tempest::StorageBuffer& iboBuffer() const;
-      const Tempest::StorageBuffer& vboBuffer() const;
+      const Tempest::StorageBuffer& iboBuffer() const { return ibo; }
+      const Tempest::StorageBuffer& vboBuffer() const { return vbo; }
       };
     const std::vector<BucketPub>& published() const { return *curBuckets; }
 

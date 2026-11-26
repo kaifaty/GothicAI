@@ -64,7 +64,9 @@ class LightGroup final {
 
     // Light masks (cookies) of own lights, by slot 1..MaxCookies; an empty slot holds white (light.frag binds them all)
     static constexpr size_t MaxCookies = 4;
-    const Tempest::Texture2d& cookie(size_t slot) const;
+    // the cookie handles as of the last prepareGlobals, copied by value (ref-counted): recording binds these while
+    // tick/streaming may load a new mask into cookieTex or free a light. The white fallback is loaded at prep, not record
+    const Tempest::Texture2d& publishedCookie(size_t slot) const;
 
     struct Near {
       Tempest::Vec3 pos;
@@ -116,6 +118,8 @@ class LightGroup final {
     std::vector<LightSource>         lightSourceDesc;
     std::vector<LightSsbo>           lightSourceData;
     size_t                           pubCount = 0;
+    Tempest::Texture2d               pubCookie[MaxCookies];
+    Tempest::Texture2d               pubCookieWhite;
     std::unordered_set<size_t>       animatedLights;
     std::vector<uint32_t>            duryBit;
 

@@ -57,18 +57,6 @@ const Tempest::StorageBuffer& DrawBuckets::Bucket::vboBuffer() const {
   return staticMesh!=nullptr ? staticMesh->vboBuffer() : animMesh->vbo;
   }
 
-const Tempest::StorageBuffer& DrawBuckets::BucketPub::iboBuffer() const {
-  if(boughPage!=nullptr)
-    return boughPage->ibo;
-  return staticMesh!=nullptr ? staticMesh->ibo8Buffer() : animMesh->ibo8;
-  }
-
-const Tempest::StorageBuffer& DrawBuckets::BucketPub::vboBuffer() const {
-  if(boughPage!=nullptr)
-    return boughPage->vbo;
-  return staticMesh!=nullptr ? staticMesh->vboBuffer() : animMesh->vbo;
-  }
-
 void DrawBuckets::publishBuckets() {
   const auto generation = Resources::textureGeneration();
   if(pubBuckets!=nullptr && !cpuDirty && pubGeneration==generation && pubBuckets->size()==bucketsCpu.size()) {
@@ -80,9 +68,18 @@ void DrawBuckets::publishBuckets() {
   p->reserve(bucketsCpu.size());
   for(const auto& b:bucketsCpu) {
     BucketPub pb;
-    pb.staticMesh = b.staticMesh;
-    pb.animMesh   = b.animMesh;
-    pb.boughPage  = b.boughPage;
+    // the mesh buffers by value: Bucket::iboBuffer/vboBuffer resolve the bough page, the static mesh (or its
+    // landscape page) or the anim mesh; the copied handles keep the allocation alive past a streaming teardown
+    if(b.staticMesh!=nullptr || b.animMesh!=nullptr) {
+      pb.ibo = b.iboBuffer();
+      pb.vbo = b.vboBuffer();
+      }
+    if(b.staticMesh!=nullptr) {
+      if(b.staticMesh->morph.index!=nullptr)
+        pb.morphId = *b.staticMesh->morph.index;
+      if(b.staticMesh->morph.samples!=nullptr)
+        pb.morph = *b.staticMesh->morph.samples;
+      }
     if(b.mat.tex!=nullptr)
       pb.tex = b.mat.tex->shared();
     if(b.mat.normal!=nullptr)

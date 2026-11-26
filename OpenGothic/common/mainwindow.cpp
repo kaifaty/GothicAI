@@ -616,6 +616,8 @@ void MainWindow::tickMouse(uint64_t dt) {
   }
 
 void MainWindow::onSettings() {
+  // Renderer reconfiguration replaces attachments and paths the recording thread may still bind.
+  joinRecord();
   auto zMaxFps = Settings::options().fpsLimit;
   if(zMaxFps<=0)
     zMaxFps = Settings::getI("ENGINE", "zMaxFps");
@@ -1665,6 +1667,8 @@ void MainWindow::render(){
       FrameProfile::Scope timing(FrameProfile::Zone::FinishStep);
       return SimulationStep::finishStep(dt,player,[&] { FrameProfile::Scope cameraTiming(FrameProfile::Zone::Camera); tickCamera(dt); });
       }();
+    // Join before streaming: chunk teardown destroys meshes/buffers the recording thread may still bind.
+    joinRecord();
     if(Bench::takeRenderReset())
       renderer.resetTemporal();
     if(auto world = Gothic::inst().world()) {
@@ -1681,10 +1685,6 @@ void MainWindow::render(){
     else if(Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
       Resources::updateTextures(nullptr);
       }
-    // The previous frame's recording must be done before a capture redraws or this frame's preparation
-    // republishes the draw state.
-    joinRecord();
-
     if(capture) {
       profile.flag(FrameProfile::Flag::CaptureRequested);
       Pixmap pm;
