@@ -30,7 +30,7 @@ void addOwner(uint id, uint count) {
     flushOwner(id,count);
   }
 
-uvec4 quad(ivec2 p, ivec2 size) {
+uvec4 sampleOwners2x2(ivec2 p, ivec2 size) {
   if(all(lessThan(p+1,size)))
     return textureGather(winners,vec2(p+1)/vec2(size));
   uvec4 v = uvec4(0);
@@ -56,8 +56,8 @@ void main() {
   barrier();
   ivec2 p = ivec2(gl_GlobalInvocationID.xy)*4;
   ivec2 size = textureSize(winners,0);
-  uvec4 a = quad(p,size), b = quad(p+ivec2(2,0),size);
-  uvec4 c = quad(p+ivec2(0,2),size), d = quad(p+ivec2(2),size);
+  uvec4 a = sampleOwners2x2(p,size), b = sampleOwners2x2(p+ivec2(2,0),size);
+  uvec4 c = sampleOwners2x2(p+ivec2(0,2),size), d = sampleOwners2x2(p+ivec2(2),size);
   if(all(equal(a,a.xxxx)) && all(equal(b,a.xxxx)) &&
      all(equal(c,a.xxxx)) && all(equal(d,a.xxxx))) {
     addOwner(a.x,16u);

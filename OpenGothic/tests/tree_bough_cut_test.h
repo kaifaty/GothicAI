@@ -325,7 +325,7 @@ void treeBoughCutCases() {
     mapping[70] = 76;
     const uint32_t root = 1, compact = 0x40000001u;
     std::array<uint32_t,6> expected = {};
-    for(int i=0; i<w*h; ++i) {
+    for(size_t i=0; i<w*h; ++i) {
       uint32_t id = i%5==0 ? root : 0x80000001u;
       if(i==w*h-1)
         id = compact;
