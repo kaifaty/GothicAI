@@ -55,7 +55,9 @@
 
 ## Приёмочные проверки (после правок ревью)
 
-- Суточный паритет OFF (run 20261126T140753Z) / ON (run 20261126T142454Z), headless lockstep, seed 73106: 304 028 NPC-выборок, 1052 NPC, same ZS/TA/HP/inventory 100%, ошибка позиций 0,00 м, `--require-journal-identical true --require-done true --require-full-length true` + допуски -6c → exit 0. Симуляция конвейером не изменена.
+Артефакты прогонов: `/Users/kaifat/.local/share/gothic-ai-main/render-pipeline-bench/` (perf-пары, offscreen shot, parity-off/on, parity-off2/on2, отчёты паритета); на Ryzen `perf-stand/runs/` и `e2e/render-pipeline/runs/` соответствующих меток.
+
+- Суточный паритет OFF (run 20261126T140753Z) / ON (run 20261126T142454Z), headless lockstep, seed 73106: 304 028 NPC-выборок, 1052 NPC, same ZS/TA/HP/inventory 100%, ошибка позиций 0,00 м, `--require-journal-identical true --require-done true --require-full-length true` + допуски -6c → exit 0. Симуляция конвейером не изменена. Повторено на финальной сборке после третьего раунда правок: OFF run 20261126T154319Z / ON run 20261126T160959Z — журналы идентичны, exit 0.
 - Боевой e2e `m5b` с `OPENGOTHIC_RENDER_PIPELINE=1` на Mac (Ryzen-база без program records для storygraph offline): код выхода 0, случай отыгран целиком (волк, Ксардас, бегство, триггеры DIR_M5B_PROTECT_HERO).
 - Пара perf OFF (perf-20261126T141648Z) / ON (perf-20261126T143306Z): рынок p50 5,728→? (ON market/forest валидированы; shot windowed упал на касте swapchain — исправлено: конвейерный readback только offscreen, windowed capture serial). Пиксели конвейерного кадра проверяются offscreen-парой shot.
 
