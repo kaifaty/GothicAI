@@ -1,0 +1,47 @@
+# Same scene, fixed game steps. Verify the paired draws before recording.
+world-check NEWWORLD.ZEN
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+deterministic on
+set time 12 3
+goto pos 54140 1650 -10780
+clear 3000
+cam at 54140 1760 -10780 60000 2060 -10780
+streaming wait 10000
+wait 1500
+pos
+mark verify-inside
+hiz-verify nanite-inside 8
+cam fly 54140 1760 -10780 54140 2060 -4780 800
+mark verify-turn
+hiz-verify nanite-turn 8 700
+cam at 54140 1760 -10780 60000 2060 -10780
+mark verify-cut
+hiz-verify nanite-cut 8
+goto pos 42364 1700 -8973
+cam at 42364 1808 -8973 54140 2490 -10780
+wait 500
+mark verify-outside
+hiz-verify nanite-outside 8
+hiz-verify finish
+
+goto pos 54140 1650 -10780
+cam at 54140 1760 -10780 60000 2060 -10780
+wait 500
+foliage wait-gust 2200 -10780
+rec motion
+mark wind-front
+wait 2700
+mark crown-pass
+cam fly 55300 2450 -10100 60000 2300 -10500 3600
+wait 3600
+mark cut-transitions
+cam fly 42364 2500 -8973 54140 2490 -10780 4800
+wait 4800
+cam fly 28000 8600 -8618 54140 2490 -10780 3600
+wait 3600
+stop
+quit

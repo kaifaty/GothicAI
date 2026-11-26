@@ -4,7 +4,11 @@
 
 #include "tree_nanite_geometry.glsl"
 
-#if defined(TREE_WIND)
+#if defined(TREE_GAME)
+#include "tree_bough_dissolve.glsl"
+layout(location=2) perprimitiveEXT in flat vec3 rasterPivot;
+layout(location=3) perprimitiveEXT in flat uint rasterJoint;
+#elif defined(TREE_WIND)
 #if !defined(TREE_SHADOW)
 #include "tree_nanite_level_mask.glsl"
 #endif
@@ -20,7 +24,12 @@ layout(location=0) out uvec2 outVisibility;
 #endif
 
 void main() {
-#if defined(TREE_WIND)
+#if defined(TREE_GAME)
+  const uint fade = boughJointFade(rasterJoint);
+  if(fade != 0u && !boughJointCovers(fade ^ BoughFadeChild, rasterPivot, gl_FragCoord.xy, scene))
+    discard;
+#endif
+#if defined(TREE_WIND) && !defined(TREE_GAME)
   const uint layer = treeLayer & 1u;
   if(frame.control.w != 0u && layer == 1u && texture(treeAlbedo, vec3(treeUv, float(layer))).a < 0.5)
     discard;

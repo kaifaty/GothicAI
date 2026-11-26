@@ -26,6 +26,7 @@
 #include <limits>
 
 #include "graphics/material.h"
+#include "graphics/treenanitegpu.h"
 #include "sound/soundfx.h"
 #include "texturebudget.h"
 #include "textureflow.h"
@@ -760,6 +761,7 @@ class Resources final {
       std::vector<std::pair<std::filesystem::path,float>> levels;
       MeshImpostor impostor;
       std::filesystem::path hierarchy;
+      TreeNanite::AssetFiles treeNanite;
       };
     // A level of detail of an own static mesh, its submeshes in the order of the mesh's (PackedMesh::addLevel)
     struct MeshLevel {

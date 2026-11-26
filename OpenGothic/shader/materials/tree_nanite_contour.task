@@ -1,0 +1,163 @@
+#version 460
+#extension GL_EXT_mesh_shader : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "tree_nanite_geometry.glsl"
+#include "tree_nanite_bounds.glsl"
+#include "tree_nanite_contour_tiles.glsl"
+#include "tree_nanite_adaptive_payload.glsl"
+
+layout(local_size_x = 32) in;
+layout(binding = 9) uniform sampler2D earlyHiZ;
+layout(binding = 13, std430) buffer TreeStats { uint stats[]; };
+layout(binding = 14, std430) readonly buffer TreeOrderBuffer { uint denseOrder[]; };
+layout(binding = 24, std430) readonly buffer TreeContourHistoryShape { uvec2 contourHistoryShape[]; };
+layout(binding = 25, std430) readonly buffer TreeContourHistoryWins { uvec2 contourHistoryWins[]; };
+layout(binding = 26, std430) readonly buffer TreeIndirect { uint denseCounts[]; };
+
+#include "tree_nanite_occlusion.glsl"
+
+layout(push_constant, std430) uniform Push {
+  uint firstGroup;
+  uint phase;
+  uint allowOcclusion;
+  uint groupCount;
+  float depthRoundoff;
+  uint profile;
+  } push;
+
+shared uint prefix[32];
+shared uint totals[5];
+const uint DenseTileSize = 512u;
+
+uint lowMask(uint count) {
+  return count >= 32u ? 0xffffffffu : (1u << count) - 1u;
+  }
+
+uint meshletCount(uvec2 mask) {
+  return uint(bitCount(mask.x) + bitCount(mask.y));
+  }
+
+uint triangleCount(uint first, uvec2 mask) {
+  uint count = 0u;
+  for(uint word = 0u; word < 2u; ++word) {
+    uint bits = mask[word];
+    while(bits != 0u) {
+      count += meshlets[first + word * 32u + uint(findLSB(bits))].w;
+      bits &= bits - 1u;
+      }
+    }
+  return count;
+  }
+
+uvec2 selectFace(uint index, uint slot, uint face, uint level) {
+  const uvec2 shape = contourCuts[index];
+  const uvec2 allMeshlets = uvec2(lowMask(shape.y), lowMask(max(shape.y, 32u) - 32u));
+  if(shape.y == 0u || push.phase == 2u)
+    return allMeshlets;
+
+  uvec2 early = allMeshlets;
+  if(frame.contourControl.w != 0u) {
+    const uvec2 previous = uvec2(shape.x, contourStamp(level, frame.contourControl.z - 1u));
+    early = all(equal(contourHistoryShape[index], previous)) ? contourHistoryWins[index] & allMeshlets : uvec2(0u);
+    }
+
+  if(push.phase == 0u) {
+    if(push.profile != 0u && any(notEqual(early, uvec2(0u)))) {
+      atomicAdd(totals[0], meshletCount(early));
+      atomicAdd(totals[1], triangleCount(shape.x, early));
+      }
+    return early;
+    }
+
+  const uvec2 late = allMeshlets & ~early;
+  if(push.allowOcclusion == 0u || meshletCount(late) == 0u)
+    return late;
+
+  // Every contour point is a convex blend of this face's posed vertices.
+  // The common wind envelope therefore conservatively bounds all its meshlets.
+  const TreeSource source = contourFaces[face];
+  const ClipBox box = clipBox(source.lower.xyz, source.upper.xyz, treeCurrentTransformAt(slot));
+  vec4 rect;
+  float nearDepth;
+  if(!projectBox(box, push.depthRoundoff, rect, nearDepth))
+    return late;
+  const bool hidden = fullyHidden(rect, nearDepth);
+  if(push.profile != 0u) {
+    atomicAdd(totals[2], meshletCount(late));
+    if(hidden) {
+      atomicAdd(totals[3], meshletCount(late));
+      atomicAdd(totals[4], triangleCount(shape.x, late));
+      }
+    }
+  return hidden ? uvec2(0u) : late;
+  }
+
+uint loadDenseTile(uint tile, uint lane) {
+  // Dense mode reads the count and ordered indices of a compacted chunk.
+  // The host supplies the chunk capacity in the otherwise unused groupCount.
+  const uint chunkSize = push.groupCount;
+  const uint tilesPerChunk = chunkSize / DenseTileSize;
+  const uint chunk = tile / tilesPerChunk;
+  const uint within = (tile % tilesPerChunk) * DenseTileSize;
+  const uint count = denseCounts[chunk * 3u];
+  if(within >= count)
+    return 0u;
+  const uint tileCount = min(count - within, DenseTileSize);
+  const uint base = chunk * chunkSize + within;
+  for(uint i = lane; i < tileCount; i += gl_WorkGroupSize.x)
+    data.ids[i] = denseOrder[base + i];
+  return tileCount;
+  }
+
+void main() {
+  const uint tile = push.firstGroup + gl_WorkGroupID.x;
+  const uint lane = gl_LocalInvocationIndex;
+  if(push.phase == 3u) {
+    const uint count = loadDenseTile(tile, lane);
+    barrier();
+    EmitMeshTasksEXT(count, 1u, 1u);
+    return;
+    }
+
+  uint slot, firstFace, endFace, level;
+  if(!contourTileRange(tile, push.groupCount, slot, firstFace, endFace, level)) {
+    EmitMeshTasksEXT(0u, 1u, 1u);
+    return;
+    }
+
+  if(push.profile != 0u) {
+    if(lane < 5u)
+      totals[lane] = 0u;
+    barrier();
+    }
+
+  const uint face = firstFace + lane;
+  uvec2 keep = uvec2(0u);
+  if(face < endFace)
+    keep = selectFace(treeContourCutIndex(slot, face, level), slot, face, level);
+
+  const uint count = meshletCount(keep);
+  prefix[lane] = count;
+  barrier();
+  for(uint step = 1u; step < 32u; step <<= 1u) {
+    const uint add = lane >= step ? prefix[lane - step] : 0u;
+    barrier();
+    prefix[lane] += add;
+    barrier();
+    }
+
+  uint offset = prefix[lane] - count;
+  for(uint word = 0u; word < 2u; ++word) {
+    uint bits = keep[word];
+    while(bits != 0u) {
+      const uint part = word * 32u + uint(findLSB(bits));
+      data.ids[offset++] = treeAdaptiveId(slot, face, part);
+      bits &= bits - 1u;
+      }
+    }
+  if(push.profile != 0u && lane < 5u && totals[lane] != 0u)
+    atomicAdd(stats[2u + lane], totals[lane]);
+  barrier();
+  EmitMeshTasksEXT(prefix[31u], 1u, 1u);
+  }

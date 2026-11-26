@@ -26,7 +26,7 @@ if(MSVC)
 endif()
 endif()
 add_executable(content-convert convert.cpp stressbase.cpp stressmeshes.cpp worldcook.cpp clusterlodcensus.cpp ../../OpenGothic/common/basestore.cpp
-  treenanitecook.cpp ../../OpenGothic/tools/treenaniteasset.cpp
+  treenanitecook.cpp ../../OpenGothic/common/graphics/mesh/treenaniteasset.cpp
   ../../OpenGothic/tools/runtimebindingroots.cpp ../../OpenGothic/tools/nativebasecatalogimport.cpp ../../OpenGothic/tools/nativeworldplacementimport.cpp
   ../../OpenGothic/common/game/definitions/nativebasecatalog.cpp
   ../../OpenGothic/common/gltfmeshcolor.cpp

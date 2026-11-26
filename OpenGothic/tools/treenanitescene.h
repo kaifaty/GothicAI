@@ -1,7 +1,7 @@
 #pragma once
 
-#include "treenaniteasset.h"
-#include "treenanitecontours.h"
+#include "graphics/mesh/treenaniteasset.h"
+#include "graphics/mesh/treenanitecontours.h"
 
 #include <array>
 #include <algorithm>

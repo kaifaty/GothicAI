@@ -1,0 +1,81 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_control_flow_attributes : enable
+
+#include "tree_nanite_vsm.glsl"
+#include "virtual_shadow/vsm_cull.glsl"
+
+layout(local_size_x=TreeShadowLanes) in;
+layout(push_constant) uniform TreeShadowDispatch { uint meshletCount, pairCapacity, mode; } push;
+
+shared uint groupPairs;
+shared uint groupFirst;
+
+bool touchesPage(vec3 lower, vec3 upper, mat4x3 transform, uint page) {
+  const vec3 center = treeWorldPoint((upper+lower)*0.5, transform);
+  const vec3 halfSize = (upper-lower)*0.5;
+  const mat3 world = mat3(transform);
+  const mat3 absWorld = mat3(abs(world[0]), abs(world[1]), abs(world[2]));
+  const float padding = 64.0*1.1920928955078125e-7;
+  const vec3 magnitude = absWorld*max(abs(lower), abs(upper)) + abs(transform[3]);
+  const vec3 worldHalfSize = absWorld*halfSize + (magnitude+vec3(1.0))*padding;
+  if(vsmPageIsOmni(page)) {
+    const uvec2 light = unpackLightId(page);
+    const LightSource source = treeLights[light.x];
+    const vec4 sphere = vec4(center, length(worldHalfSize));
+    return vsmOmniFaceTest(sphere, source.pos, source.range, light.y);
+    }
+
+  const vec3 clip = (scene.viewVirtualShadow*vec4(center, 1.0)).xyz;
+  const mat3 project = mat3(scene.viewVirtualShadow);
+  const mat3 absProject = mat3(abs(project[0]), abs(project[1]), abs(project[2]));
+  const vec3 extent = absProject*worldHalfSize +
+                      (absProject*magnitude + abs(scene.viewVirtualShadow[3].xyz) + vec3(1.0))*padding;
+  if(clip.z - extent.z > 1.0 || clip.z + extent.z < 0.0)
+    return false;
+  const ivec3 coord = unpackVsmPageInfo(page);
+  const vec4 box = vsmPageTableBox(vec4(clip.xy-extent.xy, clip.xy+extent.xy), uint(coord.z));
+  return vsmEntryOverlap(box, coord, unpackVsmPageSize(page));
+  }
+
+void main() {
+  const uint slot = gl_WorkGroupID.x;
+  const uint entry = gl_WorkGroupID.y;
+  const uint page = treePages.pageList[entry];
+  if(page == 0u || instanceKeys[slot].z == 0u)
+    return;
+  const mat4x3 transform = treeCurrentTransformAt(slot);
+  if(!touchesPage(frame.lower.xyz, frame.upper.xyz, transform, page))
+    return;
+
+  const uint lane = gl_LocalInvocationIndex;
+  if(lane == 0u)
+    groupPairs = 0u;
+  const uint first = gl_WorkGroupID.z*TreeShadowBatch + lane;
+  const uint last = min(first - lane + TreeShadowBatch, push.meshletCount);
+  uint mask = 0u;
+  for(uint id = first, bit = 1u; id < last; id += TreeShadowLanes, bit <<= 1u) {
+    const TreeShadowSource caster = casters[id];
+    if(touchesPage(caster.lower.xyz, caster.upper.xyz, transform, page))
+      mask |= bit;
+    }
+  barrier();
+
+  const uint count = uint(bitCount(mask));
+  const uint localFirst = count == 0u ? 0u : atomicAdd(groupPairs, count);
+  barrier();
+  if(lane == 0u)
+    groupFirst = groupPairs == 0u ? 0u : atomicAdd(treeShadowStats.x, groupPairs);
+  barrier();
+
+  uint dst = groupFirst + localFirst;
+  uint triangles = 0u;
+  for(; mask != 0u && dst < push.pairCapacity; ++dst) {
+    const uint meshlet = first + uint(findLSB(mask))*TreeShadowLanes;
+    treePairs[dst] = uvec2(slot*push.meshletCount + meshlet, entry);
+    triangles += meshlets[casters[meshlet].draw.x].w;
+    mask &= mask - 1u;
+    }
+  if(triangles != 0u)
+    atomicAdd(treeShadowStats.y, triangles);
+  }

@@ -920,6 +920,13 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
       implLoadMeshImpostor(key,source->impostor,mesh);
     if(source!=nullptr && !source->hierarchy.empty() && mesh.clusterLevels.empty() && TreeBough::enabled())
       TreeBough::attach(mesh,source->hierarchy);
+    if(source!=nullptr && !source->treeNanite.dag.empty() && source->levels.size()==source->treeNanite.levels.size() &&
+       TreeNanite::enabled()) {
+      std::array<std::filesystem::path, 4> authoredLevels;
+      for(size_t i = 0; i < authoredLevels.size(); ++i)
+        authoredLevels[i] = source->levels[i].first;
+      TreeNanite::attach(mesh, source->treeNanite, authoredLevels);
+      }
     return ret;
     }
 

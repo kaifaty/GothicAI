@@ -1,0 +1,69 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_mesh_shader : require
+
+#define TREE_SHADOW_RASTER
+#include "tree_nanite_vsm.glsl"
+
+layout(local_size_x=32) in;
+layout(triangles, max_vertices=64, max_primitives=64) out;
+out gl_MeshPerVertexEXT {
+  invariant vec4 gl_Position;
+  float gl_ClipDistance[5];
+  } gl_MeshVerticesEXT[];
+
+layout(push_constant) uniform TreeShadowDraw { uint firstPair, pairCapacity, meshletCount; } draw;
+
+vec4 treeShadowPagePosition(uint entry, uint data, vec3 world, out float distanceToPage[5]) {
+  const vec2 size = vec2(unpackVsmPageSize(data));
+  vec4 clip;
+  if(vsmPageIsOmni(data)) {
+    const uvec2 face = unpackLightId(data);
+    const LightSource light = treeLights[face.x];
+    const vec3 local = vsmMapDirToFace((world-light.pos)/light.range, face.y);
+    clip = vsmApplyProjective(local);
+    clip.xy = (clip.xy*0.5 + 0.5*clip.w)*size - vec2(unpackVsmPageInfoProj(data))*clip.w;
+    distanceToPage[4] = local.z - scene.vsmLampNear/light.range;
+    }
+  else {
+    const ivec3 page = unpackVsmPageInfo(data);
+    clip = scene.viewVirtualShadow*vec4(world, 1.0);
+    clip.xy = (clip.xy/float(1u << uint(page.z))*0.5 + 0.5)*VSM_PAGE_TBL_SIZE - vec2(page.xy);
+    distanceToPage[4] = 1.0;
+    }
+  distanceToPage[0] = clip.x;
+  distanceToPage[1] = size.x*clip.w-clip.x;
+  distanceToPage[2] = clip.y;
+  distanceToPage[3] = size.y*clip.w-clip.y;
+  clip.xy = (clip.xy + vec2(unpackVsmPageId(entry))*clip.w)*(2.0/VSM_PAGE_PER_ROW) - clip.w;
+  return clip;
+  }
+
+void main() {
+  const uint pairId = draw.firstPair + gl_WorkGroupID.x + TreeShadowRasterWidth*gl_WorkGroupID.y;
+  if(pairId >= min(treeShadowStats.x, draw.pairCapacity)) {
+    SetMeshOutputsEXT(0, 0);
+    return;
+    }
+  const uvec2 pair = treePairs[pairId];
+  const TreeShadowSource source = casters[pair.x%draw.meshletCount];
+  const uint slot = pair.x/draw.meshletCount;
+  const uvec4 record = uvec4(source.draw.x, slot, source.draw.yz);
+  const uvec4 meshlet = meshlets[record.x];
+  const mat4x3 transform = treeCurrentTransformAt(slot);
+  const uint entry = pair.y;
+  const uint page = treePages.pageList[entry];
+  const uint lane = gl_LocalInvocationIndex;
+  SetMeshOutputsEXT(meshlet.z, meshlet.w);
+
+  for(uint i = lane; i < meshlet.z; i += gl_WorkGroupSize.x) {
+    const TreeVertex vertex = treeRasterVertex(record, meshlet.x+i);
+    const vec3 world = treeWorldPoint(vertex.position.xyz, transform);
+    float clip[5];
+    gl_MeshVerticesEXT[i].gl_Position = treeShadowPagePosition(entry, page, world, clip);
+    for(uint p = 0u; p < 5u; ++p)
+      gl_MeshVerticesEXT[i].gl_ClipDistance[p] = clip[p];
+    }
+  for(uint i = lane; i < meshlet.w; i += gl_WorkGroupSize.x)
+    gl_PrimitiveTriangleIndicesEXT[i] = treeTriangle(meshlet.y+i);
+  }

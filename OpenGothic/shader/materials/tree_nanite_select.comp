@@ -1,0 +1,116 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "tree_nanite_geometry.glsl"
+#include "tree_nanite_bounds.glsl"
+
+layout(local_size_x = 128) in;
+layout(binding = 9) uniform sampler2D earlyHiZ;
+#include "tree_nanite_occlusion.glsl"
+layout(binding = 10, std430) writeonly buffer TreeMasks { uint masks[]; };
+layout(binding = 13, std430) buffer TreeStats { uint stats[]; };
+layout(binding = 15, std430) buffer TreeHistory { uvec2 state[]; };
+layout(binding = 21, std430) readonly buffer TreeCut { uint groupCuts[]; };
+
+layout(push_constant, std430) uniform Push {
+  uint serial;
+  uint phase;
+  uint historyValid;
+  uint allowOcclusion;
+  float depthRoundoff;
+  uint profile;
+  uint groupCount;
+  uint pad1;
+  } push;
+
+const uint Early = 1u;
+const uint PreviousCut = 2u;
+const uint NoGroup = 0xffffffffu;
+
+shared uint maskWords[4];
+shared uint totals[7];
+
+bool selectEarly(uint id, uint slot, uint sourceId) {
+  const uint groupBase = slot * (push.groupCount + 1u);
+  const uint level = groupCuts[groupBase];
+  if(level == 0u)
+    return false;
+  const uvec4 lod = treeSources[sourceId].lod;
+  if(lod.w + 1u != level)
+    return false;
+  const bool selected = lod.w != 0u || (frame.params.z <= 0.0 ? lod.x == NoGroup :
+      (lod.x == NoGroup || groupCuts[groupBase + 1u + lod.x] == 0u) &&
+      groupCuts[groupBase + 1u + lod.y] != 0u);
+  if(!selected)
+    return false;
+  const TreeSource source = treeSources[sourceId];
+  if(!inFrustum(clipBox(source.lower.xyz, source.upper.xyz, treeCurrentTransformAt(slot))))
+    return false;
+  if(push.phase == 2u)
+    return true;
+  const bool previousCut = push.historyValid != 0u && (state[id].x >> 2u) == push.serial - 1u;
+  // One winning sample is sufficient for a physical meshlet. A 4x4 grid
+  // keeps this filter selective for sparse needles and small projected meshlets.
+  const bool early = push.historyValid == 0u || state[id].y == push.serial - 1u;
+  state[id].x = (push.serial << 2u) | (early ? Early : 0u) | (previousCut ? PreviousCut : 0u);
+  if(push.profile != 0u) {
+    const uint triangles = meshlets[sourceId].w;
+    atomicAdd(totals[0], 1u);
+    atomicAdd(totals[1], triangles);
+    if(early) {
+      atomicAdd(totals[2], 1u);
+      atomicAdd(totals[3], triangles);
+      }
+    }
+  return early;
+  }
+
+bool selectLate(uint id, uint slot, uint sourceId) {
+  const uint mark = state[id].x;
+  if((mark >> 2u) != push.serial || (mark & Early) != 0u)
+    return false;
+  if(push.allowOcclusion == 0u)
+    return true;
+
+  vec4 rect;
+  float nearDepth;
+  const TreeSource source = treeSources[sourceId];
+  if(!projectBox(clipBox(source.lower.xyz, source.upper.xyz, treeCurrentTransformAt(slot)), push.depthRoundoff, rect, nearDepth))
+    return true;
+  const bool hidden = fullyHidden(rect, nearDepth);
+  if(push.profile != 0u) {
+    atomicAdd(totals[4], 1u);
+    if(hidden) {
+      atomicAdd(totals[5], 1u);
+      atomicAdd(totals[6], meshlets[sourceId].w);
+      }
+    }
+  return !hidden;
+  }
+
+void main() {
+  const uint block = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x;
+  if(block >= (frame.control.y * frame.control.w + 127u) / 128u)
+    return;
+  const uint lane = gl_LocalInvocationIndex;
+  if(lane < 4u)
+    maskWords[lane] = 0u;
+  if(push.profile != 0u && lane < 7u)
+    totals[lane] = 0u;
+  barrier();
+
+  const uint id = block * 128u + lane;
+  if(id < frame.control.y * frame.control.w) {
+    const uint slot = id / frame.control.y;
+    const uint sourceId = id % frame.control.y;
+    const bool keep = push.phase == 1u ? selectLate(id, slot, sourceId) : selectEarly(id, slot, sourceId);
+    if(keep)
+      atomicOr(maskWords[lane / 32u], 1u << (lane % 32u));
+    }
+
+  barrier();
+  if(lane < 4u)
+    masks[block * 5u + lane] = maskWords[lane];
+  if(push.profile != 0u && lane < 7u && totals[lane] != 0u)
+    atomicAdd(stats[lane], totals[lane]);
+  }

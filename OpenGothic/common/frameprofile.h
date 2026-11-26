@@ -41,6 +41,7 @@ enum class Zone : size_t {
   // WorldLogic outside Npc::tick; scopes enclose whole loops, never an individual NPC.
   NpcPreTick, NpcSort, NpcPolicy, CollisionZones, InteractiveTick, TriggersTick, NpcTickNear, NpcPerception,
   NpcAnimationCatchUp,
+  TreeNanitePublish, TreeNaniteEncode,
   Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
@@ -82,6 +83,9 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   WindComputed, WindSkipped,
   // WorldObjects interactive tick: objects parked at rest and skipped this frame
   InteractiveParked,
+  TreeNanitePublishBytes, TreeNaniteTrianglesCandidate, TreeNaniteTrianglesEarly, TreeNaniteTrianglesLate,
+  TreeNaniteMeshletsTested, TreeNaniteMeshletsRejected,
+  TreeNaniteVsmPairs, TreeNaniteVsmTriangles, TreeNaniteVsmOverflow,
   Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error, Simulation };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,

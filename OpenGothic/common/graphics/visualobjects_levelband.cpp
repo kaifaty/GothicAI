@@ -94,7 +94,7 @@ void VisualObjects::freeLevelBand(Object& obj) {
 // Replaces the hard picks of preFrameUpdateLevels: `level` and `shadowLevel` become the finer sides of the bands. The
 // impostor and a ghost keep them; the shadow scale of a crown starts at the full GLB, as for a hierarchy crown there
 uint32_t VisualObjects::updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
-                                        MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse) {
+                                        MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse, bool nanite) {
   const auto&  mesh  = *obj.bucketId->staticMesh;
   const size_t count = std::min(mesh.levels.size(), MeshLevels::MaxLevels);
   const bool scale = FoliageTree::isTree(obj.bucketId->mat.foliage);
@@ -102,7 +102,7 @@ uint32_t VisualObjects::updateLevelBand(Object& obj, float height, float shadowH
   const bool treeStats = (own.shadowCommandId & (DrawClusters::ShadowVisual | DrawClusters::ShadowCoarse))!=0;
   uint32_t sunFlags = 0, coarseSunFlags = 0;
   TreeLevelBand::Pick main, shadow;
-  if(!obj.isGhost && !level.impostor()) {
+  if(!nanite && !obj.isGhost && !level.impostor()) {
     float px[MeshLevels::MaxLevels] = {};
     for(size_t i=0; i<count; ++i)
       px[i] = mesh.levels[i].px;

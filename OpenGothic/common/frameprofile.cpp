@@ -31,7 +31,7 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "animation_npc_pass","melee_shadow","melee_contacts","interactive_animation","logical_body_sync",
   "pfx_prepare","upload_wait","rt_scene",
   "npc_pre_tick","npc_sort","npc_policy","collision_zones","interactive_tick","triggers_tick","npc_tick_near","npc_perception",
-  "npc_animation_catchup"};
+  "npc_animation_catchup","tree_nanite_publish","tree_nanite_encode"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
   "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls",
   "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots",
@@ -52,7 +52,9 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "npc_idle_wheel_deferred","npc_tier_candidates","npc_policy_candidates",
   "npc_rest_routine_deferred","npc_rest_routine_deadline",
   "wind_computed","wind_skipped",
-  "interactive_parked"};
+  "interactive_parked","tree_nanite_publish_bytes","tree_nanite_triangles_candidate","tree_nanite_triangles_early",
+  "tree_nanite_triangles_late","tree_nanite_meshlets_tested","tree_nanite_meshlets_rejected",
+  "tree_nanite_vsm_pairs","tree_nanite_vsm_triangles","tree_nanite_vsm_overflow"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }

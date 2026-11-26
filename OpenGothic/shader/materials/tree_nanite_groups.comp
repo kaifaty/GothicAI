@@ -1,0 +1,69 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#define TREE_FRAME_ONLY
+#include "tree_nanite_geometry.glsl"
+#include "tree_nanite_bounds.glsl"
+
+struct TreeGroup {
+  vec4 sphere;
+  vec4 error;
+  };
+
+layout(local_size_x = 128) in;
+layout(binding = 8, std430) readonly buffer TreeGroups { TreeGroup groups[]; };
+layout(binding = 21, std430) writeonly buffer TreeCut { uint groupCuts[]; };
+
+shared mat4x3 object;
+shared uint activeLevel;
+
+uint authoredLevel() {
+  const vec3 center = treeWorldPoint(frame.restBounds.xyz, object);
+  const float height = frame.restBounds.w * length(object[1]);
+  const float pixelsPerTangent = 0.5 * float(scene.screenRes.y) * abs(scene.project[1].y);
+  const float screenHeight = height * pixelsPerTangent / max(length(center - scene.camPos), 1.0);
+  const uvec4 coarser = uvec4(lessThan(vec4(screenHeight), frame.levelPx));
+  return coarser.x + coarser.y + coarser.z + coarser.w;
+  }
+
+bool wantsFine(TreeGroup group, float scale) {
+  if(floatBitsToUint(group.error.x) == 0x7f800000u)
+    return true;
+
+  const vec3 delta = treeWorldPoint(group.sphere.xyz, object) - scene.camPos;
+  const float radius = group.sphere.w * scale;
+  const vec3 cameraForward = vec3(scene.viewProject[0].w, scene.viewProject[1].w, scene.viewProject[2].w);
+  const float depth = dot(cameraForward, delta);
+  const float guard = 8.0 * Epsilon * max(1.0, abs(depth) + radius);
+  if(abs(depth - frame.params.x) <= radius + guard || abs(depth - frame.params.y) <= radius + guard)
+    return true;
+
+  const float pixelsPerRadian = 0.5 * float(scene.screenRes.y) * abs(scene.project[1].y);
+  const float distance = max(length(delta) - radius, frame.params.x);
+  return group.error.x * scale * pixelsPerRadian > frame.params.z * distance;
+  }
+
+void main() {
+  const uint slot = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x;
+  if(slot >= frame.control.w)
+    return;
+  const uint groupCount = uint(groups.length());
+  const uint base = slot * (groupCount + 1u);
+  const uint lane = gl_LocalInvocationIndex;
+  if(lane == 0u) {
+    activeLevel = 0u;
+    if(instanceKeys[slot].z != 0u && treeImpostorJoint(slot) != TreeImpostorOnly) {
+      object = treeCurrentTransformAt(slot);
+      if(inFrustum(clipBox(frame.lower.xyz, frame.upper.xyz, object)))
+        activeLevel = 1u + authoredLevel();
+      }
+    groupCuts[base] = activeLevel;
+    }
+  barrier();
+  if(activeLevel != 1u || frame.params.z <= 0.0)
+    return;
+
+  const float scale = max(length(object[0]), max(length(object[1]), length(object[2])));
+  for(uint i = lane; i < groupCount; i += gl_WorkGroupSize.x)
+    groupCuts[base + 1u + i] = uint(wantsFine(groups[i], scale));
+  }

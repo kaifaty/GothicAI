@@ -1,0 +1,32 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+
+#define TREE_FRAME_ONLY
+#include "tree_nanite_vsm.glsl"
+
+layout(local_size_x=32) in;
+layout(push_constant) uniform TreeShadowDispatch { uint meshletCount, pairCapacity, mode; } push;
+layout(set=0, binding=25, std430) writeonly buffer TreeShadowIndirect { uvec4 commands[]; };
+
+void main() {
+  const uint id = gl_GlobalInvocationID.x;
+  if(push.mode == 0u) {
+    if(id == 0u) {
+      commands[0] = uvec4(frame.control.w, min(treePages.header.pageCount, uint(VSM_MAX_PAGES)),
+                          (push.meshletCount + TreeShadowBatch - 1u)/TreeShadowBatch, 0u);
+      treeShadowStats = uvec4(0u);
+      }
+    return;
+    }
+  const uint requested = treeShadowStats.x;
+  const uint stored = min(requested, push.pairCapacity);
+  if(id == 0u)
+    treeShadowStats.z = requested - stored;
+  const uint batches = (push.pairCapacity + TreeShadowRasterBatch - 1u)/TreeShadowRasterBatch;
+  for(uint batch = id; batch < batches; batch += gl_NumWorkGroups.x*gl_WorkGroupSize.x) {
+    const uint first = batch*TreeShadowRasterBatch;
+    const uint count = min(stored - min(stored, first), TreeShadowRasterBatch);
+    commands[batch+1u] = uvec4(min(count, TreeShadowRasterWidth),
+                              (count + TreeShadowRasterWidth - 1u)/TreeShadowRasterWidth, 1u, 0u);
+    }
+  }

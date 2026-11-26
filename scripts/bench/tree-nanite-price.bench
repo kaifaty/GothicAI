@@ -1,0 +1,69 @@
+# Timed route for the crown-fix forest. The launcher adds the warm-up to the first arm.
+world-check NEWWORLD.ZEN
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+wait real 100
+overlay off
+ui off
+view full
+walkmode run
+watch player
+face 110
+goto pos 54140 1650 -10780
+clear 3000
+cam at 54140 1760 -10780 60000 2060 -10780
+set time 12 3
+# warmup insertion point
+wait real 6500
+pos
+perf sample perf-tree-nanite/view-1-inside
+wait real 4000
+perf stop
+
+cam game
+face 110
+goto pos 54500 1640 -12700
+face 110
+set time 12 9
+wait real 1650
+face 110
+press forward
+wait real 500
+pos
+perf sample perf-tree-nanite/view-2-hero
+wait real 4050
+perf stop
+pos
+release forward
+wait real 200
+
+cam at 53990 1760 -10780 54680 1570 -11040
+goto pos 54140 1650 -10780
+set time 5 30
+wait real 1800
+pos
+perf sample perf-tree-nanite/view-3-sun
+wait real 3800
+perf stop
+
+goto pos 48765 6250 -3156
+clear 5000
+cam at 48765 6679 -3156 54140 2190 -10780
+set time 12 3
+wait real 2500
+pos
+perf sample perf-tree-nanite/view-4-near
+wait real 3250
+perf stop
+
+goto pos 23216 4300 -8618
+clear 5000
+cam at 23216 11160 -8618 54140 2490 -10780
+wait real 2500
+pos
+perf sample perf-tree-nanite/view-5-far
+wait real 3250
+perf stop
+quit

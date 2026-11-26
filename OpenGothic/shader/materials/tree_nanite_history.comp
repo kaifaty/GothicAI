@@ -1,0 +1,51 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform usampler2D winners;
+layout(binding = 1, std430) buffer TreeHistory { uvec2 state[]; };
+layout(binding = 2, std430) writeonly buffer TreeStats { uint stats[]; };
+layout(binding = 3, std430) buffer TreeContourHistoryWins { uvec2 contourHistoryWins[]; };
+
+layout(push_constant, std430) uniform Push {
+  uint recordCount;
+  uint serial;
+  uint phase;
+  uint pad;
+  uvec4 contourOffsets;
+  uint faceCount;
+  uint maxFaces;
+  uint instanceCount;
+  uint pad1;
+  } push;
+
+void main() {
+  if(push.phase == 2u) {
+    const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy) * 4 + 2;
+    if(any(greaterThanEqual(pixel, textureSize(winners, 0))))
+      return;
+    const uint id = texelFetch(winners, pixel, 0).r;
+    if(id != 0u && id <= push.recordCount)
+      atomicExchange(state[id - 1u].y, push.serial);
+    if(id > push.recordCount && push.faceCount != 0u) {
+      const uint contour = id - 1u - push.recordCount;
+      const uint slot = (contour >> 6u) / push.faceCount;
+      const uint face = (contour >> 6u) % push.faceCount;
+      if(slot < push.instanceCount) {
+        const uint level = face >= push.contourOffsets.w ? 3u : face >= push.contourOffsets.z ? 2u :
+                           face >= push.contourOffsets.y ? 1u : 0u;
+        const uint index = slot * push.maxFaces + face - push.contourOffsets[level];
+        const uint part = contour & 63u;
+        atomicOr(contourHistoryWins[index][part / 32u], 1u << (part % 32u));
+        }
+      }
+    return;
+    }
+
+  const uint group = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x;
+  const uint id = group * 64u + gl_LocalInvocationIndex;
+  if(id < 7u)
+    stats[id] = 0u;
+  if(push.phase == 0u && id < push.recordCount)
+    state[id] = uvec2(0u);
+  }

@@ -1,0 +1,87 @@
+#version 450
+
+layout(local_size_x = 128) in;
+
+layout(binding = 0, std430) buffer TreeMasks { uint masks[]; };
+layout(binding = 1, std430) writeonly buffer TreeIndices { uint indices[]; };
+layout(binding = 2, std430) writeonly buffer TreeIndirect { uint indirect[]; };
+
+layout(push_constant, std430) uniform Push {
+  uint phase;
+  uint blockCount;
+  uint blocksPerChunk;
+  uint pad;
+  } push;
+
+const uint Stride = 5u;
+shared uint prefix[128];
+
+void scanChunk(uint chunk, uint lane) {
+  const uint first = chunk * push.blocksPerChunk;
+  if(first >= push.blockCount)
+    return;
+  const uint count = min(push.blocksPerChunk, push.blockCount - first);
+  const uint blocksPerLane = (count + 127u) / 128u;
+  const uint begin = lane * blocksPerLane;
+  const uint end = min(begin + blocksPerLane, count);
+  uint total = 0u;
+  for(uint i = begin; i < end; ++i) {
+    const uint at = (first + i) * Stride;
+    masks[at + 4u] = total;
+    total += uint(bitCount(masks[at]) + bitCount(masks[at + 1u]) +
+                  bitCount(masks[at + 2u]) + bitCount(masks[at + 3u]));
+    }
+
+  prefix[lane] = total;
+  barrier();
+  for(uint step = 1u; step < 128u; step <<= 1u) {
+    const uint at = (lane + 1u) * step * 2u - 1u;
+    if(at < 128u)
+      prefix[at] += prefix[at - step];
+    barrier();
+    }
+  if(lane == 0u) {
+    indirect[chunk * 3u + 0u] = prefix[127u];
+    indirect[chunk * 3u + 1u] = 1u;
+    indirect[chunk * 3u + 2u] = 1u;
+    prefix[127u] = 0u;
+    }
+  barrier();
+  for(uint step = 64u; step > 0u; step >>= 1u) {
+    const uint at = (lane + 1u) * step * 2u - 1u;
+    if(at < 128u) {
+      const uint lower = prefix[at - step];
+      prefix[at - step] = prefix[at];
+      prefix[at] += lower;
+      }
+    barrier();
+    }
+
+  const uint base = first * 128u + prefix[lane];
+  for(uint i = begin; i < end; ++i)
+    masks[(first + i) * Stride + 4u] += base;
+  }
+
+void scatterBlock(uint block, uint lane) {
+  if(block >= push.blockCount)
+    return;
+  const uint at = block * Stride;
+  const uint word = lane / 32u;
+  const uint bit = 1u << (lane % 32u);
+  const uint mask = masks[at + word];
+  if((mask & bit) == 0u)
+    return;
+
+  uint dest = masks[at + 4u] + uint(bitCount(mask & (bit - 1u)));
+  for(uint prior = 0u; prior < word; ++prior)
+    dest += uint(bitCount(masks[at + prior]));
+  indices[dest] = block * 128u + lane;
+  }
+
+void main() {
+  const uint group = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x;
+  if(push.phase == 0u)
+    scanChunk(group, gl_LocalInvocationIndex);
+  else
+    scatterBlock(group, gl_LocalInvocationIndex);
+  }

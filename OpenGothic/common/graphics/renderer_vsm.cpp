@@ -235,9 +235,11 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fI
   if(settings.vsmStatsFrames)
     wview.logVsmShadowProbe(vsm.frameNo);
 
+  prepareTreeNaniteVsm(cmd,fId,wview,pageList);
   cmd.setDebugMarker("VSM-rendering");
   cmd.setFramebuffer({}, {pageData, 0.f, Tempest::Preserve});
   wview.drawVsm(cmd);
+  drawTreeNaniteVsm(cmd,fId,wview,pageList);
   }
 
 void Renderer::logVsmStats(const WorldView& wview) {

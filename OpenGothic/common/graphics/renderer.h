@@ -67,6 +67,42 @@ class Renderer final {
       } treeHistory;
     void drawTreeHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
                          const BenchProbe::HistoryVerifyRequest& request);
+    struct TreeNaniteFrame {
+      uint32_t control[4];
+      Tempest::Vec4 params, previousEye, lower, upper;
+      uint32_t materialBuckets[4];
+      Tempest::Vec4 levelPx, restBounds;
+      uint32_t contourOffsets[4], contourControl[4];
+      };
+    static_assert(sizeof(TreeNaniteFrame)==160);
+    struct {
+      Tempest::RenderPipeline raster, resolve, shadow, copyDepth;
+      Tempest::ComputePipeline groups, select, compact, history, wind, contourPrepare, shadowPrepare, shadowPairs, verify;
+      Tempest::Attachment winners, refWinners, refDiffuse, refNormal, refOrm, refMotion, refReactive;
+      Tempest::ZBuffer refDepth;
+      Tempest::StorageImage pyramid;
+      Tempest::StorageBuffer state, cut, scratch, records, indirect, poses, stats;
+      Tempest::StorageBuffer contourCuts, contourShapes, contourWins, shadowList, shadowIndirect, shadowStats;
+      Tempest::UniformBuffer<TreeNaniteFrame> frame[Resources::MaxFramesInFlight];
+      Tempest::StorageBuffer statsRead[Resources::MaxFramesInFlight], verifyRead[Resources::MaxFramesInFlight];
+      Tempest::StorageBuffer shadowRead[Resources::MaxFramesInFlight];
+      uint64_t verifyTick[Resources::MaxFramesInFlight] = {};
+      std::string verifySegment[Resources::MaxFramesInFlight];
+      bool statsPending[Resources::MaxFramesInFlight] = {};
+      bool shadowPending[Resources::MaxFramesInFlight] = {};
+      uint32_t serial = 0, revision = 0;
+      Tempest::Size size;
+      Tempest::Vec4 eye;
+      bool valid = false, active = false;
+      } treeNanite;
+    static int treeNaniteVerifyMode();
+    void readTreeNaniteVerification(uint8_t fId);
+    void drawTreeNanite(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
+                        const Camera& camera, const BenchProbe::HistoryVerifyRequest& request);
+    void prepareTreeNaniteVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
+                              const Tempest::StorageBuffer& pageList);
+    void drawTreeNaniteVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
+                           const Tempest::StorageBuffer& pageList);
     struct {
       Tempest::StorageImage finalPyramid;
       Tempest::Matrix4x4 previousViewProject;
@@ -130,7 +166,8 @@ class Renderer final {
     void surfelsTrace     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, Tempest::StorageBuffer& surfels, bool postPass);
 
     void drawHiZ          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
-    void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history = nullptr);
+    void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history = nullptr,
+                          std::string_view marker = {});
     void drawVsm          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void logVsmStats      (const WorldView& view);
     void logVsmFrame      (uint8_t fId);

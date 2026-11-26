@@ -7,7 +7,11 @@
 layout(local_size_x=32) in;
 layout(triangles, max_vertices=64, max_primitives=64) out;
 out gl_MeshPerVertexEXT { invariant vec4 gl_Position; } gl_MeshVerticesEXT[];
+#if defined(TREE_GAME)
+#include "tree_nanite_adaptive_payload.glsl"
+#else
 layout(push_constant) uniform TreeDraw { uint firstRecord; } draw;
+#endif
 
 #if defined(DIRECT_RASTER)
 #include "tree_nanite_material.glsl"
@@ -18,19 +22,31 @@ layout(location=4) out vec3 rasterPosition[];
 layout(location=5) out vec3 rasterPreviousStatic[];
 layout(location=6) out vec3 rasterPreviousDelta[];
 #endif
-#if defined(TREE_WIND) && !defined(DIRECT_RASTER)
+#if defined(TREE_WIND) && !defined(DIRECT_RASTER) && !defined(TREE_GAME)
 layout(location=0) perprimitiveEXT out flat uint treeLayer[];
 layout(location=2) out vec2 treeUv[];
 #endif
 #if !defined(DIRECT_RASTER) || defined(VERIFY)
 layout(location=1) perprimitiveEXT out flat uvec2 rasterOwner[];
 #endif
+#if defined(TREE_GAME)
+layout(location=2) perprimitiveEXT out flat vec3 rasterPivot[];
+layout(location=3) perprimitiveEXT out flat uint rasterJoint[];
+#endif
 
 void main() {
+#if defined(TREE_GAME)
+  const uint recordId = data.ids[gl_WorkGroupID.x];
+  const uvec4 record = treeRecord(recordId);
+  const uvec4 meshlet = meshlets[record.x];
+  const TreeInstance instance = TreeInstance(treeCurrentTransformAt(record.y), mat4x3(0.0));
+  const uint joint = treeImpostorJoint(record.y);
+#else
   const uint recordId = draw.firstRecord + gl_WorkGroupID.x;
   const uvec4 record = records[recordId];
   const uvec4 meshlet = meshlets[record.x];
   const TreeInstance instance = instances[record.y];
+#endif
   const uint lane = gl_LocalInvocationIndex;
 #if defined(DIRECT_RASTER)
   const uint flags = floatBitsToUint(materials[record.z].uvScaleFlags.z);
@@ -45,7 +61,7 @@ void main() {
 #endif
     const vec3 world = treeWorldPosition(v, instance);
     gl_MeshVerticesEXT[i].gl_Position = treeClipPosition(world);
-#if defined(TREE_WIND) && !defined(DIRECT_RASTER)
+#if defined(TREE_WIND) && !defined(DIRECT_RASTER) && !defined(TREE_GAME)
     treeUv[i] = v.uv.xy;
 #endif
 #if defined(DIRECT_RASTER)
@@ -65,11 +81,15 @@ void main() {
 #if defined(DIRECT_RASTER)
     materialId[i] = record.z;
 #endif
-#if defined(TREE_WIND) && !defined(DIRECT_RASTER)
+#if defined(TREE_WIND) && !defined(DIRECT_RASTER) && !defined(TREE_GAME)
     treeLayer[i] = record.z | (treeDrawLevel(record) << 1u);
 #endif
 #if !defined(DIRECT_RASTER) || defined(VERIFY)
     rasterOwner[i] = uvec2(recordId, i);
+#endif
+#if defined(TREE_GAME)
+    rasterPivot[i] = instance.current[3];
+    rasterJoint[i] = joint;
 #endif
     }
   }

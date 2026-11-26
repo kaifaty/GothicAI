@@ -119,7 +119,7 @@ compile direct.frag direct_verify.frag -DVERIFY
 compile resolve.frag resolve_verify.frag -DVERIFY
 
 c++ -std=c++20 -O3 -I"$vulkan_headers/include" -IOpenGothic/common \
-  OpenGothic/tools/treenanitepilot.cpp OpenGothic/tools/treenaniteasset.cpp \
+  OpenGothic/tools/treenanitepilot.cpp OpenGothic/common/graphics/mesh/treenaniteasset.cpp \
   -l:libvulkan.so.1 -o "$out/tree-nanite-pilot"
 ```
 

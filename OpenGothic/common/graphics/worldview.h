@@ -143,6 +143,7 @@ class WorldView {
     HouseLamps&         houseLamps() { return houses; }
     const DrawClusters& clusters() const;
     const DrawBuckets&  drawBuckets() const;
+    VisualObjects&      treeVisuals() { return visuals; }
 
   private:
     std::pair<Tempest::Vec3, Tempest::Vec3> aabb;

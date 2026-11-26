@@ -122,6 +122,13 @@ class VisualObjects final {
     const DrawCommands& drawCommands() const { return drawCmd; }
     const DrawBuckets&  drawBuckets()  const { return bucketsMem; };
 
+    void                selectTreeNanite(bool enabled);
+    const StaticMesh*   treeNaniteMesh() const { return naniteMesh; }
+    const Tempest::StorageBuffer& treeNaniteInstances() const { return naniteInstances; }
+    uint32_t            treeNaniteCount() const { return naniteCount; }
+    uint32_t            treeNaniteRevision() const { return naniteRevision; }
+    uint32_t            treeNaniteBucket(size_t index) const { return naniteBuckets[index].toInt(); }
+
     void preFrameUpdate ();
     void prepareGlobals (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void postFrameupdate();
@@ -274,7 +281,7 @@ class VisualObjects final {
     void     allocLevelBand(Object& obj);
     void     freeLevelBand(Object& obj);
     uint32_t updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
-                             MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse);
+                             MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse, bool nanite);
     void     drawImpostors(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool history);
     // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh
     std::pair<uint32_t,uint32_t> drawnMeshlets(Object& obj);
@@ -334,6 +341,12 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsStrand;
     std::unordered_set<size_t> objectsTree;
     std::unordered_set<size_t> objectsLevels;
+    std::map<size_t,uint32_t>   naniteObjects;
+    const StaticMesh*          naniteMesh = nullptr;
+    Tempest::StorageBuffer     naniteInstances;
+    DrawBuckets::Id            naniteBuckets[2];
+    uint32_t                   naniteCount = 0, naniteRevision = 0, naniteGeneration = 0;
+    bool                       naniteDirty = false;
     struct ShadowProbe {
       uint32_t coarseTrees = 0, changedTrees = 0;
       uint64_t coarseMeshlets = 0, coarseTriangles = 0;

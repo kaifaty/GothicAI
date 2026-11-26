@@ -23,6 +23,7 @@
 #include "graphics/grasscontact.h"
 #include "graphics/grass/grassparams.h"
 #include "graphics/meshlevels.h"
+#include "graphics/treenanitegpu.h"
 #include "camera.h"
 #include "frameprofile.h"
 #include "utils/string_frm.h"
@@ -530,6 +531,7 @@ void Renderer::onWorldChanged() {
   ssao.valid           = false;
   camHistory.hasCur    = false;
   treeHistory.valid   = false;
+  treeNanite.valid    = false;
   boughHiZDiag.valid  = false;
   gi.resetHistory      = true;
   resetSkyFog();
@@ -553,6 +555,7 @@ void Renderer::resetViewHistory() {
   ssao.valid = false;
   camHistory.hasCur = false;
   treeHistory.valid = false;
+  treeNanite.valid = false;
   boughHiZDiag.valid = false;
   taa.frame = 0;
   taa.cur   = 0;
@@ -843,6 +846,7 @@ void Renderer::drawScene(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_
     cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
     } else {
     taa.valid = false; // a video or no world: the next world frame starts over
+    treeNanite.valid = false;
     boughHiZDiag.valid = false;
     cmd.setFramebuffer({{result, Vec4(), Tempest::Preserve}});
     }
@@ -891,6 +895,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   FrameProfile::Scope mainTiming(FrameProfile::Zone::EncodeMain);
   const auto gameTime  = GameServices::inst().worldTime();
   const auto tickCount = GameServices::inst().worldTickCount();
+  treeNanite.active = false;
 
   shaders.waitCompiler();
 
@@ -963,6 +968,10 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
 
   prepareUniforms(wview);
+  const bool naniteView = TreeNanite::enabled() && settings.vsmEnabled && !settings.pathTraceEnabled &&
+                          !captureLandscapeDepth && treeProbe==nullptr &&
+                          (DrawCommands::hiddenTypes & (1u << DrawCommands::Static))==0;
+  wview.treeVisuals().selectTreeNanite(naniteView);
   wview.preFrameUpdate(camera, tickCount, fId);
   wview.prepareGlobals(cmd,fId);
 
@@ -1003,8 +1012,9 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   auto* bench = taa.shot || treeProbe!=nullptr || captureLandscapeDepth ? nullptr : BenchProbe::get();
   const auto verify = bench!=nullptr ? bench->historyVerifyRequest() : BenchProbe::HistoryVerifyRequest{};
+  const bool verifyNanite = naniteView && wview.treeVisuals().treeNaniteCount()!=0 && treeNaniteVerifyMode()!=0;
   if(verify.finish)
-    bench->historyVerifyComplete(treeHistory.verify.finish());
+    bench->historyVerifyComplete(verifyNanite || treeHistory.verify.finish());
   const bool historyView = !taa.shot && treeProbe==nullptr && !captureLandscapeDepth;
   const bool history = historyView && DrawCommands::treeHistoryEnabled() &&
                        wview.treeHistoryCommands().prepareHistory(cmd, textureCast<const Texture2d&>(
@@ -1016,7 +1026,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     const bool rebuiltTextureBank = wview.drawBuckets().textureBankRebuilt();
     if(rebuiltTextureBank)
       cmd.setGraphicsDescriptorArrayReuse(true);
-    drawTreeHistory(cmd, fId, wview, verify);
+    drawTreeHistory(cmd, fId, wview, verifyNanite ? BenchProbe::HistoryVerifyRequest{} : verify);
     if(rebuiltTextureBank)
       cmd.setGraphicsDescriptorArrayReuse(false);
     } else {
@@ -1024,12 +1034,16 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
       treeHistory.valid = false;
       boughHiZDiag.valid = false;
       }
-    if(verify)
+    if(verify && !verifyNanite)
       bench->historyVerifyComplete(false);
     if(!captureLandscapeDepth)
       wview.prepareGrass(cmd, fId, textureCast<const Texture2d&>(hiz.hiZ));
     drawGBuffer(cmd, fId, wview);
     }
+  if(naniteView && wview.treeVisuals().treeNaniteCount()!=0)
+    drawTreeNanite(cmd, fId, wview, camera, verifyNanite ? verify : BenchProbe::HistoryVerifyRequest{});
+  else
+    treeNanite.valid = false;
   if(captureLandscapeDepth) {
     // Water is a separate depth-writing landscape pass. Give it valid inputs
     // without composing sky, fog, reflections, or the rest of the scene.
@@ -1130,8 +1144,10 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   // pass loads and stores it as the scene colour: cleared by the translucent pass itself, it made a tiled GPU (Apple)
   // walk every tile of the screen instead of the tiles with translucent geometry, +0.2 ms of fragments on M1 Pro
   // (reports/render-features/2026-11-10-taa-reactive/mac-cost.md)
-  cmd.setFramebuffer({{taa.reactive, Tempest::Vec4(), Tempest::Preserve}});
-  cmd.setDebugMarker("Reactive-clear");
+  if(!treeNanite.active) {
+    cmd.setFramebuffer({{taa.reactive, Tempest::Vec4(), Tempest::Preserve}});
+    cmd.setDebugMarker("Reactive-clear");
+    }
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}, {taa.reactive, Tempest::Preserve, Tempest::Preserve}},
                      {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Translucent");
@@ -1280,13 +1296,13 @@ void Renderer::drawHiZ(Encoder<CommandBuffer>& cmd, WorldView& view) {
   view.drawHiZ(cmd);
   }
 
-void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history) {
+void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Tempest::StorageImage* history, std::string_view marker) {
   auto& image = history!=nullptr ? *history : hiz.hiZ;
   const auto& potPipeline = history!=nullptr ? shaders.hizHistoryPot : shaders.hiZPot;
   const auto& mipPipeline = history!=nullptr ? shaders.hizHistoryMip : shaders.hiZMip;
   assert(image.w()<=128 && image.h()<=128); // shader limitation
 
-  cmd.setDebugMarker(history!=nullptr ? "HiZ-history-mip" : "HiZ-mip");
+  cmd.setDebugMarker(marker.empty() ? (history!=nullptr ? "HiZ-history-mip" : "HiZ-mip") : marker);
   cmd.setFramebuffer({});
   cmd.setBinding(0, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(1, image);

@@ -11,11 +11,13 @@
 #include <cmath>
 #include <cassert>
 #include <cstdlib>
+#include <limits>
 
 #include "graphics/mesh/submesh/animmesh.h"
 #include "frameprofile.h"
 #include "graphics/meshlevels.h"
 #include "graphics/treeboughasset.h"
+#include "graphics/treenanitegpu.h"
 #include "graphics/treelevelband.h"
 #include "graphics/hizoccluders.h"
 #include <ostream>
@@ -24,6 +26,10 @@
 #include "shaders.h"
 
 using namespace Tempest;
+
+namespace {
+constexpr uint32_t NaniteImpostor = 0x20000000u; // tree_nanite_groups.comp
+}
 
 VisualObjects::BenchImpostors VisualObjects::benchImpostors = BenchImpostors::Auto;
 VisualObjects::BenchShadowLevels VisualObjects::benchShadowLevels = BenchShadowLevels::Auto;
@@ -120,6 +126,8 @@ void VisualObjects::Item::setVisible(bool visible) {
   if(obj.visible==visible || obj.isEmpty())
     return;
   obj.visible = visible;
+  if(owner->naniteObjects.contains(id))
+    owner->naniteDirty = true;
   const bool perMeshlet = obj.type==DrawCommands::Landscape || obj.clusterLod;
   const uint32_t meshletCount = visible ? (perMeshlet ? 1u : owner->drawnMeshlets(obj).second) : 0u;
   for(uint32_t i=0;i<obj.clusterCount;++i)
@@ -510,6 +518,11 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
       allocLevelBand(obj);
     }
 
+  if(type==DrawCommands::Static && mesh.treeNanite && obj.levelSub==mesh.treeNanite->registrationSub) {
+    naniteObjects.emplace(id,++naniteGeneration);
+    naniteDirty = true;
+    }
+
   if(type==DrawCommands::Morph) {
     obj.objMorphAnim = instanceMem.alloc(sizeof(MorphDesc)*Resources::MAX_MORPH_LAYERS);
     obj.animPtr      = obj.objMorphAnim.offsetId<MorphDesc>();
@@ -646,6 +659,8 @@ void VisualObjects::free(size_t id) {
   if(obj.impostorShadowCmd!=uint16_t(-1))
     setImpostorShadow(obj, false);
   drawCmd.removeBough(obj.clusterId);
+  if(naniteObjects.erase(id)!=0)
+    naniteDirty = true;
   freeLevelBand(obj);
   clustersMem.free(obj.clusterId, obj.clusterCount);
   if(Shaders::options().doRtScene) {
@@ -894,6 +909,8 @@ void VisualObjects::setAsGhost(size_t id, bool g) {
 
   mat.alpha   = g ? Material::Ghost : obj.alpha;
   obj.isGhost = g;
+  if(naniteObjects.contains(id))
+    naniteDirty = true;
 
   if(bx.staticMesh!=nullptr)
     obj.bucketId = bucketsMem.alloc(mat, *bx.staticMesh); else
@@ -917,6 +934,49 @@ void VisualObjects::prepareGlobals(Encoder<CommandBuffer>& enc, uint8_t fId) {
   clustersMem.commit(enc, fId);
   drawCmd.commit(enc);
   bucketsMem.commit(enc, fId);
+  }
+
+void VisualObjects::selectTreeNanite(bool enabled) {
+  const StaticMesh* mesh = nullptr;
+  if(enabled && !naniteObjects.empty())
+    mesh = objects[naniteObjects.begin()->first].bucketId->staticMesh;
+  if(mesh!=naniteMesh) {
+    for(auto& bucket:naniteBuckets)
+      bucket = {};
+    naniteMesh = mesh;
+    naniteDirty = true;
+    if(mesh!=nullptr) {
+      for(size_t i=0; i<2; ++i)
+        naniteBuckets[i] = bucketsMem.alloc(mesh->sub[mesh->treeNanite->materialSub[i]].material,*mesh);
+      }
+    }
+  if(!naniteDirty)
+    return;
+  FrameProfile::Scope publish(FrameProfile::Zone::TreeNanitePublish);
+  std::vector<std::array<uint32_t,4>> rows;
+  if(mesh!=nullptr) {
+    rows.reserve(naniteObjects.size());
+    for(const auto& [id,generation]:naniteObjects) {
+      auto& obj = objects[id];
+      if(obj.bucketId->staticMesh==mesh)
+        rows.push_back({obj.objInstance.offsetId<InstanceDesc>(),generation,uint32_t(obj.visible && !obj.isGhost),1u});
+      }
+    const auto& gpu = Resources::device().properties();
+    const auto& asset = *mesh->treeNanite;
+    const auto slots = std::max(size_t(asset.sourceCount),size_t(asset.contourOffsets[1]));
+    const auto ids = (uint64_t(asset.sourceCount)+64ull*asset.contourOffsets.back())*rows.size();
+    if(slots*rows.size()*2*sizeof(uint32_t)>gpu.ssbo.maxRange || rows.size()>size_t(gpu.compute.maxGroups.x) ||
+       ids>=std::numeric_limits<uint32_t>::max()) {
+      Log::e("Tree Nanite instance table exceeds the Vulkan buffer or dispatch limit");
+      rows.clear();
+      }
+    }
+  Resources::recycle(std::move(naniteInstances));
+  naniteInstances = rows.empty() ? StorageBuffer() : Resources::device().ssbo(rows);
+  naniteCount = uint32_t(rows.size());
+  ++naniteRevision;
+  naniteDirty = false;
+  FrameProfile::add(FrameProfile::Amount::TreeNanitePublishBytes,rows.size()*sizeof(rows.front()));
   }
 
 void VisualObjects::preFrameUpdate() {
@@ -1063,6 +1123,7 @@ void VisualObjects::preFrameUpdateLevels() {
     if(mesh==nullptr)
       continue;
     const bool staticInstance = obj.type==DrawCommands::Static || obj.type==DrawCommands::Movable;
+    const bool nanite = mesh==naniteMesh && naniteCount!=0 && obj.type==DrawCommands::Static && !obj.isGhost;
     const bool canImpostor = obj.impostorShadowCmd!=uint16_t(-1) && benchImpostors!=BenchImpostors::Off;
     MeshLevels::Selection level;
     uint8_t shadowLevel = 0;
@@ -1125,7 +1186,7 @@ void VisualObjects::preFrameUpdateLevels() {
           }
         }
       if(obj.bandCluster!=uint32_t(-1))
-        sunFlags = updateLevelBand(obj, height, height*1080.f/float(resY), shadowLevels, fullShadows, level, shadowLevel, shadowCoarse);
+        sunFlags = updateLevelBand(obj, height, height*1080.f/float(resY), shadowLevels, fullShadows, level, shadowLevel, shadowCoarse, nanite);
       if((level.impostor() || joint!=0u) && obj.levelSub==0 && obj.visible && drawStatic) {
         const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));
         const Vec3 y(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
@@ -1135,7 +1196,9 @@ void VisualObjects::preFrameUpdateLevels() {
         if(scene.frustrum[SceneGlobals::V_Main].testPoint(middle,radius))
           impostorDraws.push_back(id);
         }
-      if(staticInstance && materialMaps && !level.impostor() &&
+      if(nanite && level.impostor())
+        joint = NaniteImpostor;
+      if(!nanite && staticInstance && materialMaps && !level.impostor() &&
          HiZOccluders::canopy(obj.bucketId->mat.foliage, obj.alpha==Material::AlphaTest)) {
         const bool cut = obj.type==DrawCommands::Static && mesh->treeBough && obj.levelSub==mesh->treeBough->sourceSub;
         const float cutL2Px = cut && mesh->levels.size()>1 ? mesh->levels[1].px : 0.f;
@@ -1162,19 +1225,20 @@ void VisualObjects::preFrameUpdateLevels() {
       if(probeChanged)
         shadowCommand |= DrawClusters::ShadowProbeChanged;
       }
-    if(level==obj.level && c.commandId==command && shadowLevel==obj.shadowLevel &&
+    const auto countInView = obj.visible && !nanite ? mesh->levelMeshlets(obj.iboOff,obj.iboLen,level.glb).second : 0u;
+    if(level==obj.level && c.commandId==command && shadowLevel==obj.shadowLevel && c.meshletCount==countInView &&
        c.shadowCommandId==shadowCommand)
       continue;
     obj.level = level;
     obj.shadowLevel = shadowLevel;
     const auto range = drawnMeshlets(obj);
-    if(c.commandId!=command || c.firstMeshlet!=range.first || c.meshletCount!=(obj.visible ? range.second : 0u)) {
+    if(c.commandId!=command || c.firstMeshlet!=range.first || c.meshletCount!=countInView) {
       constexpr auto typeMask = DrawClusters::HistoryStatic;
       c.historyGeneration = (c.historyGeneration & typeMask) | ((c.historyGeneration+1) & ~typeMask);
       }
     c.commandId    = command;
     c.firstMeshlet = range.first;
-    c.meshletCount = obj.visible ? range.second : 0u;
+    c.meshletCount = countInView;
     c.shadowCommandId = shadowCommand;
     if(separateShadow) {
       const auto shadow = mesh->levelMeshlets(obj.iboOff, obj.iboLen, shadowLevel);
@@ -1405,7 +1469,7 @@ void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t 
     std::copy_n(obj.pos.data(), 16, instance.transform);
     instance.info[0] = clustersMem[obj.clusterId].instanceId;
     instance.info[1] = lightFlags;
-    instance.info[2] = obj.animPtr & ~MeshLevels::CanopyVertexNormal;
+    instance.info[2] = obj.animPtr==NaniteImpostor ? 0u : obj.animPtr & ~MeshLevels::CanopyVertexNormal;
     }
 
   auto& buffer = impostorBuffer[fId];

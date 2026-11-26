@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace TreeNanite::Pilot {
+namespace TreeNanite {
 
 struct Contours {
   struct Face {

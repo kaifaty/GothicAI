@@ -2,7 +2,7 @@
 
 #include <filesystem>
 
-#include "graphics/mesh/clusterlod.h"
+#include "clusterlod.h"
 
 namespace TreeNanite {
 

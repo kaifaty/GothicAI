@@ -550,6 +550,31 @@ static std::vector<std::pair<std::filesystem::path,float>> meshLevelFiles(const 
   return levels;
   }
 
+static TreeNanite::AssetFiles treeNaniteFiles(const rapidjson::Value& value, const std::filesystem::path& root) {
+  if(!value.IsObject() || !value.HasMember("dag") || !value.HasMember("contours") || !value.HasMember("levels"))
+    return {};
+  const auto path = [&](const rapidjson::Value& field, const char* extension) -> std::filesystem::path {
+    if(!field.IsString())
+      return {};
+    const std::string name(field.GetString(), field.GetStringLength());
+    if(!contentPath(name, extension))
+      return {};
+    return (root/name).lexically_normal();
+    };
+  TreeNanite::AssetFiles result;
+  result.dag = path(value["dag"], "TNDG");
+  result.contours = path(value["contours"], "BIN");
+  const auto& levels = value["levels"];
+  if(result.dag.empty() || result.contours.empty() || !levels.IsArray() || levels.Size() != result.levels.size())
+    return {};
+  for(rapidjson::SizeType i = 0; i < levels.Size(); ++i) {
+    result.levels[i] = path(levels[i], "TNDG");
+    if(result.levels[i].empty())
+      return {};
+    }
+  return result;
+  }
+
 static float meshImpostorFiles(const rapidjson::Value& levels, const std::filesystem::path& root, float previous,
                                std::array<std::filesystem::path,3>& files, std::string& error) {
   for(auto it=levels.Begin(); it!=levels.End(); ++it) {
@@ -650,6 +675,11 @@ void Resources::indexMeshOverrides() {
         if(!error.empty())
           Log::e("meshes: the impostor of \"",key,"\" is not used: ",error);
         }
+      }
+    if(entry.value.HasMember("treeNanite")) {
+      mesh.treeNanite = treeNaniteFiles(entry.value["treeNanite"], root);
+      if(mesh.treeNanite.dag.empty())
+        Log::e("meshes: invalid treeNanite files for \"", key, "\"");
       }
     meshOverrides[std::move(key)] = std::move(mesh);
     }

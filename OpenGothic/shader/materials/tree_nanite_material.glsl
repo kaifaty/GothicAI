@@ -10,7 +10,27 @@ struct TreeMaterial {
   vec4 tint;
   };
 
+#if defined(TREE_GAME)
+#include "foliage_wind.glsl"
+layout(set=0, binding=10, std140) readonly buffer TreeMaterialBuffer { Bucket treeBuckets[]; };
+
+TreeMaterial treeMaterial(uint layer, uint level) {
+  const uint slot = frame.materialBuckets[layer];
+  const Bucket bucket = treeBuckets[slot];
+#if defined(MATERIAL_MAPS)
+  const float scale = bucket.uvScale;
+#else
+  const float scale = 1.0;
+#endif
+  const float tint = layer == 1u && level == 0u ? 1.021 : 1.0;
+  const uint textureSlot = bucket.frameCount != 0u ?
+                           bucket.diffuseFrames + (scene.tickCount32/bucket.frameDuration)%bucket.frameCount : slot;
+  return TreeMaterial(vec4(scale, scale, uintBitsToFloat(bucket.flags), foliageTranslucency(bucket.foliage)),
+                      vec4(vec3(tint), uintBitsToFloat(textureSlot)));
+  }
+#else
 layout(set=0, binding=10, std430) readonly buffer TreeMaterialBuffer { TreeMaterial materials[]; };
+#endif
 
 vec3 treeVertexNormal(vec4 normal, uint flags) {
   if((flags & BK_CROWN) != 0u)
@@ -19,14 +39,31 @@ vec3 treeVertexNormal(vec4 normal, uint flags) {
   }
 
 #if defined(TREE_MATERIAL_FRAGMENT)
+#if defined(TREE_GAME)
+layout(set=0, binding=5) uniform texture2D treeAlbedo[];
+#if defined(MATERIAL_MAPS)
+layout(set=0, binding=8) uniform texture2D treeNormal[];
+layout(set=0, binding=9) uniform texture2D treeOrm[];
+#endif
+layout(set=0, binding=17) uniform sampler treeSampler;
+#else
 layout(set=0, binding=5) uniform sampler2DArray treeAlbedo;
 layout(set=0, binding=8) uniform sampler2DArray treeNormal;
 layout(set=0, binding=9) uniform sampler2DArray treeOrm;
+#endif
 
 layout(location=0) out vec4 outDiffuse;
 layout(location=1) out uint outNormal;
+#if !defined(TREE_GAME) || defined(MATERIAL_MAPS)
 layout(location=2) out vec4 outOrm;
 layout(location=3) out vec2 outMotion;
+#if defined(TREE_GAME)
+layout(location=4) out float outReactive;
+#endif
+#else
+layout(location=2) out vec2 outMotion;
+layout(location=3) out float outReactive;
+#endif
 
 struct TreeGradients {
   vec2 uvDx, uvDy;
@@ -62,15 +99,30 @@ vec2 treeMotion(vec3 previousStatic, vec3 previousDelta) {
 
 void treeWriteMaterial(uint layer, TreeMaterial material, vec2 uv, vec3 normal, bool front, TreeGradients grad) {
   const uint flags = floatBitsToUint(material.uvScaleFlags.z);
+#if defined(TREE_GAME)
+  const uint slot = floatBitsToUint(material.tint.w);
+  const vec2 dx = grad.uvDx*scene.mipGradScale;
+  const vec2 dy = grad.uvDy*scene.mipGradScale;
+#else
   const vec3 texCoord = vec3(uv, float(layer));
+#endif
   const vec3 facingNormal = front && (flags & BK_TWO_SIDED_FLIP) != 0u ? -normal : normal;
   vec3 shadedNormal = treeSafeNormal(facingNormal);
+#if !defined(TREE_GAME) || defined(MATERIAL_MAPS)
   vec4 orm = vec4(1, 1, 0, (flags & BK_MATERIAL_MAPS) != 0u ? 1.0 : 0.0);
   int hints = 0; // Stage 1 rasterizes opaque triangles.
   if((flags & BK_NORMAL) != 0u)
+#if defined(TREE_GAME)
+    shadedNormal = treeMappedNormal(facingNormal, grad, textureGrad(sampler2D(treeNormal[nonuniformEXT(slot)], treeSampler), uv, dx, dy));
+#else
     shadedNormal = treeMappedNormal(facingNormal, grad, textureGrad(treeNormal, texCoord, grad.uvDx, grad.uvDy));
+#endif
   if((flags & BK_ORM) != 0u)
+#if defined(TREE_GAME)
+    orm.rgb = textureGrad(sampler2D(treeOrm[nonuniformEXT(slot)], treeSampler), uv, dx, dy).rgb;
+#else
     orm.rgb = textureGrad(treeOrm, texCoord, grad.uvDx, grad.uvDy).rgb;
+#endif
   if((flags & BK_FOLIAGE) != 0u && material.uvScaleFlags.w > 0.0) {
     orm.b = material.uvScaleFlags.w;
     hints |= GBufFoliageBit;
@@ -79,10 +131,27 @@ void treeWriteMaterial(uint layer, TreeMaterial material, vec2 uv, vec3 normal, 
     orm.a = gbufCrownShadeCode(crownShade(crownOpenness(normal)));
     hints |= GBufCrownBit;
     }
+#else
+  const int hints = 0;
+#endif
 
+#if defined(TREE_GAME)
+  const vec3 albedo = textureGrad(sampler2D(treeAlbedo[nonuniformEXT(slot)], treeSampler), uv, dx, dy).rgb;
+  outDiffuse = vec4(albedo*material.tint.rgb, float(hints)/255.0);
+#if defined(MATERIAL_MAPS)
+  if((flags & BK_CROWN) != 0u && (scene.viewFlags & VF_CROWN_MASK) != 0u) {
+    outDiffuse.rgb = crownMask(crownOpenness(normal), orm.b);
+    outDiffuse.a = float(hints & ~GBufCrownBit)/255.0;
+    orm.a = 1.0;
+    }
+#endif
+#else
   outDiffuse = vec4(textureGrad(treeAlbedo, texCoord, grad.uvDx, grad.uvDy).rgb * material.tint.rgb, float(hints)/255.0);
+#endif
   outNormal  = encodeNormal(shadedNormal);
+#if !defined(TREE_GAME) || defined(MATERIAL_MAPS)
   outOrm     = orm;
+#endif
   }
 #endif
 

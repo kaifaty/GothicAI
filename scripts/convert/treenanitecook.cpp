@@ -4,7 +4,7 @@
 #include "gltfmeshcolor.h"
 #include "gothicglb.h"
 #include "graphics/foliagetree.h"
-#include "treenaniteasset.h"
+#include "graphics/mesh/treenaniteasset.h"
 #include "worldchunkbinary.h"
 
 #include <meshoptimizer.h>

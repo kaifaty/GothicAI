@@ -1,0 +1,113 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#define TREE_CONTOUR_PREPARE
+#include "tree_nanite_geometry.glsl"
+#include "tree_nanite_bounds.glsl"
+#include "tree_nanite_contour_tiles.glsl"
+
+layout(local_size_x = 32) in;
+layout(binding = 13, std430) buffer TreeStats { uint stats[]; };
+layout(binding = 23, std430) readonly buffer TreeShapes { uvec4 contourShapes[]; };
+layout(binding = 24, std430) writeonly buffer TreeContourHistoryShape { uvec2 contourHistoryShape[]; };
+layout(binding = 25, std430) writeonly buffer TreeContourHistoryWins { uvec2 contourHistoryWins[]; };
+
+layout(push_constant, std430) uniform Push {
+  uint groupCount;
+  uint phase;
+  uint profile;
+  uint pad;
+  } push;
+
+shared uint selectedMeshlets;
+shared uint selectedTriangles;
+
+vec2 gradient(vec2 direction, vec2 uv[3], vec3 invW, vec2 center, float denominator) {
+  return ((uv[1] - center) * (invW[1] * direction.x) +
+          (uv[2] - center) * (invW[2] * direction.y) -
+          (uv[0] - center) * (invW[0] * (direction.x + direction.y))) * denominator;
+  }
+
+uint contourMip(uint firstWord, uint slot, mat4x3 object) {
+  vec2 screen[3], uv[3];
+  vec3 invW;
+  for(uint i = 0u; i < 3u; ++i) {
+    const TreeVertex v = treeDeform(firstWord + i, false, slot);
+    const vec4 clip = treeClipPosition(treeWorldPoint(v.position.xyz, object));
+    // A face straddling the near plane can grow arbitrarily large there.
+    // Submit the finest shape so this selection cannot remove its clipped edge.
+    if(!(clip.w > frame.params.x))
+      return 0u;
+    invW[i] = 1.0 / clip.w;
+    screen[i] = (0.5 * clip.xy * invW[i] + 0.5) * vec2(scene.screenRes);
+    uv[i] = v.uv.xy;
+    }
+
+  const vec2 edge1 = screen[1] - screen[0];
+  const vec2 edge2 = screen[2] - screen[0];
+  const float det = edge1.x * edge2.y - edge1.y * edge2.x;
+  if(!(abs(det) > 1e-12))
+    return 0u;
+  const float sum = invW.x + invW.y + invW.z;
+  const vec2 center = (uv[0] * invW.x + uv[1] * invW.y + uv[2] * invW.z) / sum;
+  const float denominator = 3.0 / (sum * det);
+  const vec2 dx = gradient(vec2(edge2.y, -edge1.y), uv, invW, center, denominator);
+  const vec2 dy = gradient(vec2(-edge2.x, edge1.x), uv, invW, center, denominator);
+  const float rho = 2048.0 * max(length(dx), length(dy));
+  const float mip = clamp(log2(max(rho, 8.0)), 3.0, 11.0);
+  return uint(floor(32.0 * mip + 0.5)) - 96u;
+  }
+
+void main() {
+  const uint tile = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x;
+  const uint lane = gl_LocalInvocationIndex;
+  if(push.phase == 2u) {
+    // A newly allocated history buffer has no defined stamps.
+    const uint at = tile * ContourTileSize + lane;
+    if(at < frame.contourControl.y * frame.control.w) {
+      contourHistoryShape[at] = uvec2(0u);
+      contourHistoryWins[at] = uvec2(0u);
+      }
+    return;
+    }
+
+  uint slot, firstFace, endFace, level;
+  if(!contourTileRange(tile, push.groupCount, slot, firstFace, endFace, level))
+    return;
+
+  const bool profile = push.profile != 0u && push.phase == 0u;
+  if(profile && lane == 0u) {
+    selectedMeshlets = 0u;
+    selectedTriangles = 0u;
+    }
+  if(profile)
+    barrier();
+
+  const uint face = firstFace + lane;
+  if(face < endFace) {
+    const uint index = treeContourCutIndex(slot, face, level);
+    if(push.phase == 1u) {
+      contourHistoryShape[index] = uvec2(contourCuts[index].x, contourStamp(level, frame.contourControl.z));
+      contourHistoryWins[index] = uvec2(0u);
+      } else {
+      const TreeSource source = contourFaces[face];
+      const mat4x3 object = treeCurrentTransformAt(slot);
+      uvec4 shape = uvec4(0u);
+      if(inFrustum(clipBox(source.lower.xyz, source.upper.xyz, object)))
+        shape = contourShapes[source.lod.y + contourMip(source.lod.x, slot, object)];
+      contourCuts[index] = shape.xy;
+      if(profile && shape.y != 0u) {
+        atomicAdd(selectedMeshlets, shape.y);
+        atomicAdd(selectedTriangles, shape.z);
+        }
+      }
+    }
+
+  if(profile) {
+    barrier();
+    if(lane == 0u && selectedMeshlets != 0u) {
+      atomicAdd(stats[0], selectedMeshlets);
+      atomicAdd(stats[1], selectedTriangles);
+      }
+    }
+  }
