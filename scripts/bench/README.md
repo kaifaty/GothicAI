@@ -481,7 +481,9 @@ The complete `<zone>` list (each produces all four columns above):
 `encode_water`, `encode_post`, `encode_ui`, `animation_npc_pass`, `melee_shadow`, `melee_contacts`,
 `interactive_animation`, `logical_body_sync`, `pfx_prepare`, `upload_wait`, `rt_scene`,
 `world_pre_frame`, `visuals_prepare`, `wind_prepare`, `morph_prepare`, `strands_prepare`, `trees_prepare`,
-`levels_prepare`, `prepare_uniforms`.
+`levels_prepare`, `prepare_uniforms`,
+`storage_plan_scan`, `storage_plan_copy`, `storage_plan_history`, `clusters_commit`, `houses_tick`,
+`lights_tick`, `grass_update`, `commit_ubo`, `visibility_cpu`, `lighting_prep`, `gbuffer_record`, `sky_prepare`.
 
 `animation_npc_pass`, `melee_shadow`, `melee_contacts`, `interactive_animation` and `logical_body_sync`
 split `parallel_animation`: the worker pass over NPCs (with the posing of their melee shadow bodies), then
@@ -507,6 +509,14 @@ them (index ranges / 3), the TLAS storage, the sum over the unique BLAS storage,
 `trees_prepare` and `levels_prepare` (the legacy wind, morphs, strands, tree fade and mesh LOD loops).
 `prepare_uniforms` is `Renderer::prepareUniforms`. They attribute the CPU preparation before command
 recording; the wind loop runs on the worker pool by default (`OPENGOTHIC_WIND_PARALLEL=0` keeps it on the caller).
+
+`storage_plan_scan`, `storage_plan_copy` and `storage_plan_history` split `InstanceStorage::planCommit`:
+the dirty-bit scan, the payload memcpy into the patch buffer, and the motion-history copy runs.
+`clusters_commit` is `DrawClusters::commit` (the dirty-cluster patch and its upload). `houses_tick`,
+`lights_tick`, `grass_update` and `commit_ubo` are the world-side steps of `WorldView::preFrameUpdate`;
+`visibility_cpu`, `sky_prepare`, `gbuffer_record` and `lighting_prep` attribute the rest of the encode
+preparation and recording. Small loops (lights tick, plan copy) measured negative on the worker pool
+under the stand's CPU quota: the dispatch wake and join cost more than the loop saves.
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The

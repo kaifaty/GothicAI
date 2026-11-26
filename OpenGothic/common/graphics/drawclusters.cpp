@@ -1,4 +1,5 @@
 #include "drawclusters.h"
+#include "frameprofile.h"
 #include "shaders.h"
 
 #include <cassert>
@@ -99,6 +100,7 @@ void DrawClusters::free(uint32_t id, uint32_t numCluster) {
   }
 
 bool DrawClusters::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  FrameProfile::Scope z(FrameProfile::Zone::ClustersCommit);
   commitLevels(cmd, fId);
   if(!clustersDurtyBit)
     return false;
