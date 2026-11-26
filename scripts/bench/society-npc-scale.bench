@@ -1,0 +1,15 @@
+# Population scale with frame zones (reports/engine/2026-11-26-npc-10k-logical/README.md, phase 0):
+# 10k civilians live their routines while the hero stands alone; the frame profile breaks the cost
+# down by zone, and the society export of the spawned world feeds the stand probe.
+# The society-npc-* name gives this scenario a FRAME_PROFILE=ON build in scripts/ryzen.sh.
+# @headless
+# @timeout 2400
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_XARDAS_TOWER_VALLEY_091
+npcscale stats start
+npcscale 10000
+wait 1500
+npcscale stats end
+society export world.json

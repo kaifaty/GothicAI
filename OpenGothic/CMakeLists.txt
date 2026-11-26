@@ -156,6 +156,9 @@ endif()
 list(FILTER OPENGOTHIC_SOURCES EXCLUDE REGEX "/common/society/")
 add_subdirectory(common/society)
 
+# The society world export is read by the bench command `society export` (engine library) and by the
+# runner's --society-export; compile it once into the library.
+list(APPEND OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/game/societyexport.cpp")
 target_sources(${PROJECT_NAME} PRIVATE ${OPENGOTHIC_SOURCES} ${ObjCSOURCES})
 
 # The movable-vob allowlist is data, embedded so installed builds do not depend
@@ -395,20 +398,22 @@ target_link_libraries(${PROJECT_NAME} StoryGraphRuntime)
 add_subdirectory(ai_bridge)
 target_link_libraries(Gothic2Notr PRIVATE AiBridge)
 
+# The society world export (game/societyexport.cpp, in the library for the bench command `society export`
+# and the runner's --society-export) names the engine's commit: refreshed on every build, the header is
+# rewritten only when the commit changes ("unknown" in a copy without .git).
+add_custom_target(gothic-engine-commit
+  COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}
+          -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/engine-commit/enginecommit.h
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EngineCommit.cmake
+  BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/engine-commit/enginecommit.h)
+add_dependencies(${PROJECT_NAME} gothic-engine-commit)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/engine-commit)
+
 # Uses the shared engine/CPU simulation without constructing a window or graphics/audio device.
 if(UNIX)
-  add_executable(gothic-body-runner game/bodyrunner.cpp game/societyexport.cpp)
+  add_executable(gothic-body-runner game/bodyrunner.cpp)
   target_compile_definitions(gothic-body-runner PRIVATE GOTHIC_NATIVE_V3=1)
   target_link_libraries(gothic-body-runner PRIVATE OpenGothic AiBridge)
-  # --society-export names the engine's commit: refreshed on every build of the runner, the header is
-  # rewritten only when the commit changes ("unknown" in a copy without .git).
-  add_custom_target(gothic-engine-commit
-    COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}
-            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/engine-commit/enginecommit.h
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EngineCommit.cmake
-    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/engine-commit/enginecommit.h)
-  add_dependencies(gothic-body-runner gothic-engine-commit)
-  target_include_directories(gothic-body-runner PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/engine-commit)
   # Pure production resolver/command gates: no assets, simulation or rendering device.
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
