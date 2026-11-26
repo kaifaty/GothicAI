@@ -1898,6 +1898,7 @@ void npcDayCheckpointForget(const Npc* npc);
 bool npcCommandsCommand(const NpcCommandsContext& context,const std::string& line,const std::vector<std::string>& a,
                         World& w,Npc& pl,PlayerControl& ctrl);
 bool npcScaleCommand(const std::vector<std::string>& a,World& w,Npc& pl);
+bool societyExportCommand(const std::vector<std::string>& a,World& w);
 
 ArcheryContext archeryContext();
 bool archeryCommand(const ArcheryContext& context,const std::string& line,const std::vector<std::string>& a,

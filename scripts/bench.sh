@@ -500,6 +500,11 @@ if [[ "$NAME" == streaming-flythrough ]]; then
   export OPENGOTHIC_FRAME_PROFILE="$OUT/frameprofile.csv" OPENGOTHIC_BENCH_VISIBLE=1 OPENGOTHIC_LOADPROBE=1
   BACKGROUND=0
 fi
+# The population scale probe reads its frame zones headless; the build already has FRAME_PROFILE=ON
+# by the society-npc-* name in scripts/ryzen.sh.
+if [[ "$NAME" == society-npc-scale ]]; then
+  export OPENGOTHIC_FRAME_PROFILE="$OUT/frameprofile.csv"
+fi
 GAME_RC=0
 RUN_MODE=window
 if [[ "$BENCH_HEADLESS" == 1 ]]; then
