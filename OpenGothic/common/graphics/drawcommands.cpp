@@ -37,8 +37,8 @@ struct LodPush {
   Vec4     forwardAndGuard;
   };
 
-LodPush clusterLodView(const DrawClusters& clusters, const SceneGlobals& scene) {
-  if(!clusters.hasLevels())
+LodPush clusterLodView(bool hasLevels, const SceneGlobals& scene) {
+  if(!hasLevels)
     return {};
 
   static const auto thresholdPx = [] {
@@ -175,10 +175,10 @@ bool DrawCommands::isViewEnabled(SceneGlobals::VisCamera viewport) const {
   }
 
 void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawCmd& cx, SceneGlobals::VisCamera v) {
-  static const DrawBuckets::Bucket nullBk;
+  static const DrawBuckets::BucketPub nullBk;
 
   const auto  bId = cx.bucketId;
-  const auto& bx  = cx.isBindless() ? nullBk : buckets.buckets()[bId];
+  const auto& bx  = cx.isBindless() ? nullBk : buckets.published()[bId];
 
   cmd.setBinding(L_Scene,    scene.uboGlobal[v]);
   cmd.setBinding(L_Payload,  views[v].visClusters);
@@ -191,27 +191,23 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     cmd.setBinding(L_Ibo, buckets.ibo());
     cmd.setBinding(L_Vbo, buckets.vbo());
     }
-  else if(bx.staticMesh!=nullptr) {
+  else {
+    // the published handles cover the static mesh, its bough page and the anim mesh alike
     cmd.setBinding(L_Ibo, bx.iboBuffer());
     cmd.setBinding(L_Vbo, bx.vboBuffer());
-    }
-  else {
-    cmd.setBinding(L_Ibo, bx.animMesh->ibo8);
-    cmd.setBinding(L_Vbo, bx.animMesh->vbo);
     }
 
   if(v==SceneGlobals::V_Main || cx.isTextureInShadowPass()) {
     if(cx.isBindless()) {
       cmd.setBinding(L_Diffuse, buckets.textures());
       }
-    else if(bx.mat.hasFrameAnimation()) {
+    else if(bx.frameAni) {
       uint64_t timeShift = 0;
-      auto     frame     = size_t((timeShift+scene.tickCount)/bx.mat.texAniFPSInv);
-      auto*    t         = bx.mat.frames[frame%bx.mat.frames.size()];
-      cmd.setBinding(L_Diffuse, *t);
+      auto     frame     = size_t((timeShift+scene.tickCount)/bx.texAniFPSInv);
+      cmd.setBinding(L_Diffuse, bx.frames[frame%bx.frames.size()]);
       }
     else {
-      cmd.setBinding(L_Diffuse, *bx.mat.tex);
+      cmd.setBinding(L_Diffuse, bx.tex);
       }
     auto smp = SceneGlobals::isShadowView(v) ? Sampler::trillinear() : Sampler::anisotrophy();
     cmd.setBinding(L_Sampler, smp);
@@ -225,13 +221,12 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
       if(cx.type==Landscape)
         cmd.setBinding(L_GrassBorder, scene.grassBorder!=nullptr ? *scene.grassBorder : scene.grassBorderNone);
       } else {
-      cmd.setBinding(L_Normal, bx.mat.normal!=nullptr ? *bx.mat.normal : Resources::fallbackTexture());
-      cmd.setBinding(L_Orm, bx.mat.orm!=nullptr ? *bx.mat.orm : Resources::fallbackTexture());
-      const auto& f = bx.mat.fringe;
-      const bool  on = bx.mat.hasFringe();
-      cmd.setBinding(L_FringeMain,   on ? *f.albedo : Resources::fallbackTexture());
-      cmd.setBinding(L_FringeNormal, on ? *f.normal : Resources::fallbackTexture());
-      cmd.setBinding(L_FringeOrm,    on ? *f.orm    : Resources::fallbackTexture());
+      cmd.setBinding(L_Normal, !bx.normal.isEmpty() ? bx.normal : Resources::fallbackTexture());
+      cmd.setBinding(L_Orm, !bx.orm.isEmpty() ? bx.orm : Resources::fallbackTexture());
+      const bool  on = bx.fringeOn;
+      cmd.setBinding(L_FringeMain,   on ? bx.frAlbedo : Resources::fallbackTexture());
+      cmd.setBinding(L_FringeNormal, on ? bx.frNormal : Resources::fallbackTexture());
+      cmd.setBinding(L_FringeOrm,    on ? bx.frOrm    : Resources::fallbackTexture());
       }
     }
 
@@ -245,9 +240,9 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     cmd.setBinding(L_MorphId,  buckets.morphId());
     cmd.setBinding(L_Morph,    buckets.morph());
     }
-  else if(cx.type==Morph && bx.staticMesh!=nullptr) {
-    cmd.setBinding(L_MorphId,  *bx.staticMesh->morph.index);
-    cmd.setBinding(L_Morph,    *bx.staticMesh->morph.samples);
+  else if(cx.type==Morph && !bx.morphId.isEmpty()) {
+    cmd.setBinding(L_MorphId,  bx.morphId);
+    cmd.setBinding(L_Morph,    bx.morph);
     }
 
   if(v==SceneGlobals::V_Main && cx.isSceneInfoRequired()) {
@@ -333,8 +328,11 @@ void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
       }
     }
 
-  if(!cmdDurtyBit && !cmdChg)
+  if(!cmdDurtyBit && !cmdChg) {
+    publish();
     return;
+    }
+  pubDirty |= cmdDurtyBit || cmdChg;
   cmdDurtyBit = false;
   history.dirty = true;
 
@@ -355,8 +353,10 @@ void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
 
   totalPayload = (totalPayload + 0xFF) & ~size_t(0xFF);
   this->maxPayload = totalPayload;
+  pubDirty |= layChg;
 
   if(!cmdChg && !layChg) {
+    publish();
     return;
     }
 
@@ -390,6 +390,28 @@ void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
       Resources::recycle(std::move(staging));
       }
     }
+  publish();
+  }
+
+void DrawCommands::publish() {
+  const size_t cc = clusters.size();
+  if(pub!=nullptr && !pubDirty && pub->clusterCount==cc && pub->hasLevels==clusters.hasLevels()) {
+    cur = pub.get();
+    return;
+    }
+  auto p = std::make_shared<Pub>();
+  p->cmd = cmd;
+  p->ord.resize(ord.size());
+  if(cmd.empty())
+    p->ord.clear();
+  for(size_t i=0; i<p->ord.size(); ++i)
+    p->ord[i] = &p->cmd[size_t(ord[i]-cmd.data())];
+  p->maxPayload   = maxPayload;
+  p->clusterCount = cc;
+  p->hasLevels    = clusters.hasLevels();
+  pub      = std::move(p);
+  cur      = pub.get();
+  pubDirty = false;
   }
 
 void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool useHistory) {
@@ -400,7 +422,7 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
   cmd.setFramebuffer({});
   if(pass==0) {
     for(auto& v:views) {
-      if(this->cmd.empty())
+      if(cur->cmd.empty())
         continue;
       if(!isViewEnabled(v.viewport))
         continue;
@@ -408,7 +430,7 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
       cmd.setBinding(T_Indirect, v.indirectCmd);
       cmd.setPushData(&isMeshShader, sizeof(isMeshShader));
       cmd.setPipeline(Shaders::inst().clusterInit);
-      cmd.dispatchThreads(this->cmd.size());
+      cmd.dispatchThreads(cur->cmd.size());
       }
     }
 
@@ -425,7 +447,7 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
 
     auto& view = views[viewport];
 
-    const size_t visClustersSz = maxPayload*sizeof(uint32_t)*4;
+    const size_t visClustersSz = cur->maxPayload*sizeof(uint32_t)*4;
     usesSsbo(view.visClusters, visClustersSz);
 
     struct Push {
@@ -436,10 +458,10 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
       } push = {};
     static_assert(offsetof(Push,lod)==16 && sizeof(Push)==64);
     push.firstMeshlet = 0;
-    push.meshletCount = uint32_t(clusters.size());
+    push.meshletCount = uint32_t(cur->clusterCount);
     push.znear        = scene.znear;
     push.ownMeshMask  = uint32_t(scene.isLandscapeMask() && ownMeshMask);
-    push.lod          = clusterLodView(clusters, scene);
+    push.lod          = clusterLodView(cur->hasLevels, scene);
 
     // bench `deterministic on`: one invocation appends the visible clusters in their canonical order (orderedClusters),
     // so the instance order of a draw (who wins equal depth, the order of blending) depends neither on how GPU threads
@@ -457,7 +479,7 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
       cmd.setBinding(10, buckets.treeHiZBounds());
       if(scene.isTreeOcclusionProbe()) {
         pso = ordered ? &Shaders::inst().visibilityPassHiZProbeOrd : &Shaders::inst().visibilityPassHiZProbe;
-        const std::vector<uint32_t> empty(clusters.size());
+        const std::vector<uint32_t> empty(cur->clusterCount);
         treeOcclusionDecisions = Resources::device().ssbo(Tempest::BufferHeap::Readback, empty);
         cmd.setBinding(11, treeOcclusionDecisions);
         } else if(useHistory) {
@@ -514,7 +536,7 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
 
 void DrawCommands::writeTreeOcclusionDecisions(std::ostream& out) {
   auto& device = Resources::device();
-  std::vector<uint32_t> flags(clusters.size());
+  std::vector<uint32_t> flags(cur->clusterCount);
   device.readBytes(treeOcclusionDecisions, flags.data(), flags.size()*sizeof(uint32_t));
   treeOcclusionDecisions = {};
 
@@ -570,7 +592,7 @@ void DrawCommands::visibilityStats(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     statsRead[fId] = device.ssbo(Tempest::BufferHeap::Readback, Tempest::Uninitialized, 4*sizeof(uint32_t));
 
   struct Push { uint32_t phase; uint32_t count; } push = {};
-  push.count = uint32_t(maxPayload);
+  push.count = uint32_t(cur->maxPayload);
   cmd.setDebugMarker("Visibility-stats");
   cmd.setFramebuffer({});
   cmd.setBinding(0, view.visClusters);
@@ -583,7 +605,7 @@ void DrawCommands::visibilityStats(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     push.phase = phase;
     cmd.setPushData(push);
     if(phase==1)
-      cmd.dispatchThreads(maxPayload); else
+      cmd.dispatchThreads(cur->maxPayload); else
       cmd.dispatch(1);
     }
   statsWritten[fId] = true;
@@ -591,7 +613,7 @@ void DrawCommands::visibilityStats(Encoder<CommandBuffer>& cmd, uint8_t fId) {
 
 const Tempest::StorageBuffer& DrawCommands::orderedClusters() {
   orderNext.clear();
-  for(size_t i=0; i<clusters.size(); ++i)
+  for(size_t i=0; i<cur->clusterCount; ++i)
     if(clusters[i].r>0)
       orderNext.push_back(uint32_t(i));
   // a cluster is named by what it draws: its sphere, then the meshlets of its mesh; ids, buckets and commands are
@@ -632,9 +654,9 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd, const StorageBuffe
     alignas(16) LodPush lod;
     } push = {};
   static_assert(offsetof(Push,lod)==16 && sizeof(Push)==64);
-  push.meshletCount = uint32_t(clusters.size());
+  push.meshletCount = uint32_t(cur->clusterCount);
   push.candidateCap = cap;
-  push.lod          = clusterLodView(clusters, scene);
+  push.lod          = clusterLodView(cur->hasLevels, scene);
 
   cmd.setBinding(T_Scene,    scene.uboGlobal[SceneGlobals::V_Vsm]);
   cmd.setBinding(T_Payload,  vsmCandidates);
@@ -700,8 +722,8 @@ void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   auto  viewId = SceneGlobals::V_Vsm;
   auto& view   = views[viewId];
 
-  for(size_t i=0; i<ord.size(); ++i) {
-    auto& cx = *ord[i];
+  for(size_t i=0; i<cur->ord.size(); ++i) {
+    auto& cx = *cur->ord[i];
     if(cx.maxPayload==0)
       continue;
     if(cx.alpha!=Material::Solid && cx.alpha!=Material::AlphaTest)
@@ -711,7 +733,7 @@ void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
     if((hiddenTypes>>cx.type) & 1u)
       continue;
 
-    auto id  = size_t(std::distance(this->cmd.data(), &cx));
+    auto id  = size_t(std::distance(cur->cmd.data(), &cx));
     push.commandId = uint32_t(id);
 
     // cmd.setUniforms(*cx.pVsm, desc[viewId], &push, sizeof(push));
@@ -725,7 +747,7 @@ void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
 
   if(false) {
     struct Push { uint32_t meshletCount; } push = {};
-    push.meshletCount = uint32_t(clusters.size());
+    push.meshletCount = uint32_t(cur->clusterCount);
 
     cmd.setFramebuffer({});
     cmd.setBinding(0, *scene.vsmPageData);
@@ -752,8 +774,8 @@ void DrawCommands::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   auto& view   = views[viewId];
   const auto hidden = scene.isLandscapeMask() && ownMeshMask ? ~(1u << Static) : hiddenTypes;
 
-  for(size_t i=0; i<ord.size(); ++i) {
-    auto& cx = *ord[i];
+  for(size_t i=0; i<cur->ord.size(); ++i) {
+    auto& cx = *cur->ord[i];
     if(cx.maxPayload==0)
       continue;
     if(cx.alpha!=Material::Solid && cx.alpha!=Material::AlphaTest)
@@ -765,7 +787,7 @@ void DrawCommands::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
     if((hidden>>cx.type) & 1u)
       continue;
 
-    auto id  = size_t(std::distance(this->cmd.data(), &cx));
+    auto id  = size_t(std::distance(cur->cmd.data(), &cx));
     push.firstMeshlet = cx.firstPayload;
     push.meshletCount = cx.maxPayload;
 
@@ -782,10 +804,10 @@ void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Sce
                               Material::AlphaFunc func, HistoryDraw historyDraw) {
   struct Push { uint32_t firstMeshlet; uint32_t meshletCount; } push = {};
 
-  auto b = std::lower_bound(ord.begin(), ord.end(), func, [](const DrawCmd* l, Material::AlphaFunc f){
+  auto b = std::lower_bound(cur->ord.begin(), cur->ord.end(), func, [](const DrawCmd* l, Material::AlphaFunc f){
     return l->alpha < f;
     });
-  auto e = std::upper_bound(ord.begin(), ord.end(), func, [](Material::AlphaFunc f, const DrawCmd* r){
+  auto e = std::upper_bound(cur->ord.begin(), cur->ord.end(), func, [](Material::AlphaFunc f, const DrawCmd* r){
     return f < r->alpha;
     });
 
@@ -823,7 +845,7 @@ void DrawCommands::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, Sce
     if(pso==nullptr)
       continue;
 
-    auto id  = size_t(std::distance(this->cmd.data(), &cx));
+    auto id  = size_t(std::distance(cur->cmd.data(), &cx));
     push.firstMeshlet = cx.firstPayload;
     push.meshletCount = cx.maxPayload;
 

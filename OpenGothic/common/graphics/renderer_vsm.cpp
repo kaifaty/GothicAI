@@ -122,7 +122,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fI
   auto& pageList    = usesSsboInit(vsm.pageList, shaders.vsmClear.sizeofBuffer(0, pageCount));
   auto& pageListTmp = usesSsbo(vsm.pageListTmp, shaders.vsmAllocPages.sizeofBuffer(3, pageCount));
 
-  const uint32_t lightsTotal  = omniLights ? uint32_t(wview.lights().size()) : 0;
+  const uint32_t lightsTotal  = omniLights ? uint32_t(wview.lights().publishedCount()) : 0;
   const size_t   numOmniPages = lightsTotal*6;
   auto& pageTblOmni   = usesSsbo(vsm.pageTblOmni,   shaders.vsmClearOmni.sizeofBuffer(0, numOmniPages));
   auto& visibleLights = usesSsbo(vsm.visibleLights, shaders.vsmClearOmni.sizeofBuffer(1, lightsTotal ));
@@ -152,7 +152,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fI
     cmd.setBinding(3, *scene.hiZ);
     cmd.setPushData(push);
     cmd.setPipeline(shaders.vsmCullLights);
-    cmd.dispatchThreads(wview.lights().size());
+    cmd.dispatchThreads(wview.lights().publishedCount());
     }
 
   cmd.setBinding(0, sceneUbo);
@@ -186,7 +186,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fI
     cmd.setBinding(0, pageTblOmni);
     cmd.setPushData(&lightsTotal, sizeof(lightsTotal));
     cmd.setPipeline(shaders.vsmPostprocessOmni);
-    cmd.dispatchThreads(wview.lights().size());
+    cmd.dispatchThreads(wview.lights().publishedCount());
     }
 
   // sky&fog
@@ -272,7 +272,7 @@ void Renderer::logVsmStats(const WorldView& wview) {
          ", demand = ", demand, (demand>cap ? " OVERFLOW" : ""), " (whole clusters ", h.clusterPairs, ")",
          ", candidates = ", h.candidateCount, (h.candidateCount>cap ? " LOST" : ""),
          ", spilled = ", h.pairSpill,
-         ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
+         ", lights = ", visibleLights, "/", uint32_t(wview.lights().publishedCount()),
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
   // the pairs of the lamps and of each sun's mip with any, and how many of them the bins left out this frame
   // (vsm_cull_meshlets.comp) did not draw

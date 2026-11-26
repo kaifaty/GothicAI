@@ -441,7 +441,7 @@ void vsmPairCapRecords(Tempest::Device& device) {
     const Tempest::Matrix4x4 shadows[] = {identity, identity};
     mainScene.setViewProject(view, identity, 1.f, 100000.f, shadows);
     VisualObjects::benchShadowLevels = mode;
-    trees.preFrameUpdate();
+    trees.preFrameUpdate(0);
     const std::vector<Cmd> counts(bark==nullptr ? 2 : 4, zero.front());
     const Frame f = run(false, Slots, {}, 0, counts, older, &trees);
     std::vector<DrawClusters::Cluster> clusters(trees.clusters().size());
@@ -524,7 +524,7 @@ void vsmPairCapRecords(Tempest::Device& device) {
     const auto savedEntries = entries;
     entries = {sunEntry(4)};
     for(bool fogOnly : {false, true}) {
-      trees.preFrameUpdate();
+      trees.preFrameUpdate(0);
       const auto frame = run(false, Slots, {}, 0, zero, older, &trees, fogOnly);
       const auto& draw = frame.draws[fogOnly ? 1 : 0];
       const auto* pairs = frame.packed.data() + size_t(draw.writeOffset)*4;

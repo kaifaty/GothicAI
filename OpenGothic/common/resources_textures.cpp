@@ -1040,7 +1040,7 @@ void Resources::implTextureDemand(const Material& material, TextureCategory cate
 void Resources::retireTexture(Texture2d&& texture) {
   if(texture.isEmpty())
     return;
-  auto& queue=recycled[recycledId];
+  auto& queue=recycled[recycleBin()];
   queue.textureBytes+=LoadProbe::textureBytes(texture);
   texture.markRetired();
   queue.textures.emplace_back(std::move(texture));

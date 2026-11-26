@@ -14,25 +14,39 @@ size_t tempestProbeGpuBufferCount() {
   return liveBuffers.load(std::memory_order_relaxed);
   }
 
+struct VideoBuffer::BufferAccounting {
+  BufferAccounting()  { liveBuffers.fetch_add(1,std::memory_order_relaxed); }
+  ~BufferAccounting() { liveBuffers.fetch_sub(1,std::memory_order_relaxed); }
+  };
+
 VideoBuffer::VideoBuffer(AbstractGraphicsApi::PBuffer&& impl, size_t size)
   :impl(std::move(impl)),sz(size) {
   if(sz!=0)
-    liveBuffers.fetch_add(1,std::memory_order_relaxed);
+    accounting = std::make_shared<BufferAccounting>();
   }
 
-VideoBuffer::VideoBuffer(VideoBuffer &&other)
-  :impl(std::move(other.impl)),sz(other.sz) {
+VideoBuffer::VideoBuffer(VideoBuffer &&other) noexcept
+  :impl(std::move(other.impl)),sz(other.sz),accounting(std::move(other.accounting)) {
   other.sz = 0;
   }
 
-VideoBuffer::~VideoBuffer(){
-  if(sz!=0)
-    liveBuffers.fetch_sub(1,std::memory_order_relaxed);
+VideoBuffer::VideoBuffer(const VideoBuffer &other)
+  :impl(other.impl),sz(other.sz),accounting(other.accounting) {
   }
 
-VideoBuffer &VideoBuffer::operator=(VideoBuffer &&other) {
+VideoBuffer::~VideoBuffer() = default;
+
+VideoBuffer &VideoBuffer::operator=(VideoBuffer &&other) noexcept {
   std::swap(impl,other.impl);
   std::swap(sz,  other.sz);
+  std::swap(accounting,other.accounting);
+  return *this;
+  }
+
+VideoBuffer &VideoBuffer::operator=(const VideoBuffer &other) {
+  impl       = other.impl;
+  sz         = other.sz;
+  accounting = other.accounting;
   return *this;
   }
 

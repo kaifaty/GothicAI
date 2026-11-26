@@ -36,9 +36,19 @@ class Renderer final {
 
     void drawScene(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
                    bool sceneActive);
+    void prepareScene(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
+                      bool sceneActive);
+    void recordScene(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
+                     bool sceneActive);
     Tempest::ZBuffer& uiDepthBuffer();
     void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
               WorldView& view, const Camera& camera);
+    // Pipeline split: prepareFrame mutates and publishes on the caller; recordFrame only records and may
+    // run on the recording thread while the caller simulates the next tick.
+    void prepareFrame(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
+                      WorldView& view, const Camera& camera);
+    void recordFrame(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
+                     WorldView& view, const Camera& camera);
 
     void dbgDraw(Tempest::Painter& painter);
 
@@ -57,6 +67,9 @@ class Renderer final {
     uint32_t treeProbeIndex = 0;
     Tempest::StorageImage landscapeDepth;
     bool captureLandscapeDepth = false;
+    bool prepBloodReady = false;
+    bool prepShotNative = false;
+    bool prepInWater    = false;
     void captureTreeOcclusion(Tempest::Attachment& result, uint8_t fId, WorldView& view, const Camera& camera, bool verify);
     struct {
       Tempest::Attachment winners, earlyOwners, referenceOwners;

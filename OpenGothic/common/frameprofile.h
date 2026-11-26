@@ -46,6 +46,7 @@ enum class Zone : size_t {
   // C2 diagnosis: the rest of the preparation (storage plan, clusters patch, world ticks, visibility, lighting prep).
   StoragePlanScan, StoragePlanCopy, StoragePlanHistory, ClustersCommit, HousesTick, LightsTick, GrassUpdate, CommitUbo,
   VisibilityCpu, LightingPrep, GBufferRecord, SkyPrepare,
+  EncodeRecord,
   Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
@@ -117,6 +118,11 @@ class TextureWork final {
   };
 // Capture the attempt at submission, never look up a reused cmdId on completion.
 void* gpuSubmitted();
+// Recording-thread handoff: adopt the dispatching frame's record so worker scopes and GPU
+// submissions attribute to it; records live for the process lifetime.
+void* captureContext();
+void adoptContext(void* record);
+void dropContext();
 void gpuCompleted(void* record, double startSeconds, double endSeconds);
 // Vulkan: the buffer's span from its timestamp queries; invalid leaves the attempt without gpu_ns.
 void gpuCompletedNs(void* record, uint64_t gpuNs, bool valid);
@@ -180,6 +186,9 @@ class TextureWork final {
     TextureWork& operator=(const TextureWork&)=delete;
   };
 constexpr void* gpuSubmitted() noexcept { return nullptr; }
+constexpr void* captureContext() noexcept { return nullptr; }
+constexpr void adoptContext(void*) noexcept {}
+constexpr void dropContext() noexcept {}
 constexpr void gpuCompleted(void*, double, double) noexcept {}
 constexpr void* geometrySubmitted() noexcept { return nullptr; }
 constexpr void geometryCompleted(void*, uint64_t, bool) noexcept {}

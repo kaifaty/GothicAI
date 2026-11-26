@@ -239,10 +239,12 @@ uint32_t LightGroup::cookieSlot(std::string_view name) {
   return uint32_t(cookieNames.size());
   }
 
-const Tempest::Texture2d& LightGroup::cookie(size_t slot) const {
-  if(slot<MaxCookies && cookieTex[slot]!=nullptr)
-    return *cookieTex[slot];
-  return *Resources::loadTexture(Tempest::Color(1,1,1,1));
+const Tempest::Texture2d& LightGroup::publishedCookie(size_t slot) const {
+  if(slot<MaxCookies && !pubCookie[slot].isEmpty())
+    return pubCookie[slot];
+  if(!pubCookieWhite.isEmpty())
+    return pubCookieWhite;
+  return Resources::fallbackTexture();
   }
 
 LightGroup::Light LightGroup::add(std::string_view preset) {
@@ -433,6 +435,15 @@ bool LightGroup::updateLights() {
   }
 
 void LightGroup::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  pubCount = lightSourceData.size();
+
+  // publish the cookie handles by value and load the white fallback here, at prep: recording (Renderer::drawLights)
+  // only reads publishedCookie, never cookieTex which tick/streaming mutate, nor a lazy loadTexture at record time
+  for(size_t i=0; i<MaxCookies; ++i)
+    pubCookie[i] = cookieTex[i]!=nullptr ? cookieTex[i]->shared() : Tempest::Texture2d();
+  if(const auto* white = Resources::loadTexture(Tempest::Color(1,1,1,1)))
+    pubCookieWhite = white->shared();
+
   std::vector<Path>      patchBlock;
   std::vector<LightSsbo> patchData;
 

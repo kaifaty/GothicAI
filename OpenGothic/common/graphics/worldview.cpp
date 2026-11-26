@@ -732,7 +732,7 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   FrameProfile::Scope pfx(FrameProfile::Zone::PfxPrepare);
   pfxGroup.preFrameUpdate(fId);
   }
-  visuals .preFrameUpdate();
+  visuals .preFrameUpdate(fId);
   }
 
 void WorldView::setMotionVectors(bool enabled, const Tempest::Matrix4x4& reprojectClip,
@@ -842,9 +842,13 @@ void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.drawVsm(cmd);
   }
 
+void WorldView::prepareGrassCpu(uint8_t fId) {
+  if(grass)
+    grass->prepare(fId);
+  }
+
 void WorldView::prepareGrass(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, const Texture2d& hiZ, float depthRoundoff) {
   if(grass) {
-    grass->prepare(fId);
     grass->cull(cmd, fId, hiZ, depthRoundoff);
     }
   }

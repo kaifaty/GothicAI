@@ -834,16 +834,31 @@ void Renderer::resetShadowmap() {
   }
 
 void Renderer::drawScene(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, bool sceneActive) {
+  prepareScene(result,cmd,fId,sceneActive);
+  recordScene(result,cmd,fId,sceneActive);
+  }
+
+void Renderer::prepareScene(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, bool sceneActive) {
   readBoughHiZDepth(fId);
   auto wview  = GameServices::inst().worldView();
   auto camera = GameServices::inst().camera();
 
   if(sceneActive && wview!=nullptr && camera!=nullptr) {
-    draw(result, cmd, fId, *wview, *camera);
-    cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
+    prepareFrame(result, cmd, fId, *wview, *camera);
     } else {
     taa.valid = false; // a video or no world: the next world frame starts over
     boughHiZDiag.valid = false;
+    }
+  }
+
+void Renderer::recordScene(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, bool sceneActive) {
+  auto wview  = GameServices::inst().worldView();
+  auto camera = GameServices::inst().camera();
+
+  if(sceneActive && wview!=nullptr && camera!=nullptr) {
+    recordFrame(result, cmd, fId, *wview, *camera);
+    cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
+    } else {
     cmd.setFramebuffer({{result, Vec4(), Tempest::Preserve}});
     }
   }
@@ -888,6 +903,11 @@ void Renderer::dbgDraw(Tempest::Painter& p) {
   }
 
 void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
+  prepareFrame(result,cmd,fId,wview,camera);
+  recordFrame(result,cmd,fId,wview,camera);
+  }
+
+void Renderer::prepareFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
   FrameProfile::Scope mainTiming(FrameProfile::Zone::EncodeMain);
   const auto gameTime  = GameServices::inst().worldTime();
   const auto tickCount = GameServices::inst().worldTickCount();
@@ -966,12 +986,29 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.preFrameUpdate(camera, tickCount, fId);
   wview.prepareGlobals(cmd,fId);
 
+  // Prep, ahead of the recording: the blood and grass CPU lists are built here, so recording only reads them
+  // (BloodDecals::draw, GrassField::draw). The guards keep the frames that never drew them (path trace, landscape
+  // depth capture, tree probe) from preparing them.
+  if(!captureLandscapeDepth && !settings.pathTraceEnabled)
+    wview.prepareGrassCpu(fId);
+  const auto* bloodWorld = GameServices::inst().bloodDecalSource();
+  const bool bloodReady = !captureLandscapeDepth && !settings.pathTraceEnabled && treeProbe==nullptr &&
+                          bloodWorld!=nullptr &&
+                          blood.prepare(fId, *bloodWorld, wview.sceneGlobals(), camera.listenerPosition().pos);
+  prepBloodReady = bloodReady;
+  prepShotNative = shotNative;
+  prepInWater    = camera.isInWater();
+  }
+
+void Renderer::recordFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
+  FrameProfile::Scope recTiming(FrameProfile::Zone::EncodeRecord);
+  const bool bloodReady = prepBloodReady;
+  const bool shotNative = prepShotNative;
   if(settings.pathTraceEnabled && !captureLandscapeDepth) {
     treeHistory.valid = false;
     boughHiZDiag.valid = false;
     ssao.valid = false; // no SSAO in this frame: its history is not the frame before the next one
     drawPathtrace(cmd, wview, fId);
-    mainTiming.finish();
     FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
     cmd.setDebugMarker("Tonemapping");
     drawTonemapping(result, cmd, wview);
@@ -1052,8 +1089,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     wview.postFrameupdate();
     return;
     }
-  const auto* world = GameServices::inst().bloodDecalSource();
-  if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
+  if(bloodReady)
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
                gbufNormal, zbuffer);
   const auto grassStudy = taa.shot && Shaders::options().doMaterialMaps ? GrassContact::study() : GrassContact::None;
@@ -1074,7 +1110,6 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
   // SSAO needs only the depth: ahead of the shadow maps its compute runs under their vertex work on Metal
   prepareSSAO(cmd, wview);
-  mainTiming.finish();
 
   drawShadowMap(cmd, fId, wview);
   prepareEpipolar(cmd, wview);
@@ -1123,7 +1158,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   // reads the depth of what lies behind them. They take the fog of their own depth.
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
   drawReflections(cmd, wview);
-  if(!camera.isInWater()) {
+  if(!prepInWater) {
     FrameProfile::Scope fogTiming(FrameProfile::Zone::EncodePost);
     cmd.setDebugMarker("Fog");
     drawFog(cmd, wview);
@@ -1156,7 +1191,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   //
 
   FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
-  if(camera.isInWater()) {
+  if(prepInWater) {
     cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, wview);
@@ -1474,7 +1509,7 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
   if(Shaders::options().doMaterialMaps)
     cmd.setBinding(12, gbufOrm, Sampler::nearest());
   for(size_t i=0; i<LightGroup::MaxCookies; ++i)
-    cmd.setBinding(13+i, wview.lights().cookie(i), Sampler::bilinear()); // u is the azimuth: it wraps
+    cmd.setBinding(13+i, wview.lights().publishedCookie(i), Sampler::bilinear()); // u is the azimuth: it wraps
   if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmHard ||
      lights.directLightPso==&shaders.lightsVsmProbe) {
     cmd.setBinding(5, vsm.pageTblOmni);
@@ -1510,7 +1545,7 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     cmd.setPushData(&push, sizeof(push)); else
     cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setPipeline(*lights.directLightPso);
-  cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().size());
+  cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().publishedCount());
   }
 
 void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
