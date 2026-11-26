@@ -1,0 +1,41 @@
+world-check NEWWORLD.ZEN
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+wait real 100
+overlay off
+ui off
+view full
+walkmode run
+watch player
+face 110
+goto pos 54140 1650 -10780
+clear 3000
+cam at 54140 1760 -10780 60000 2060 -10780
+set time 12 3
+wait real 5000
+pos
+perf sample perf-coverage/inside
+wait real 2500
+perf stop
+
+wait real 250
+perf fir-check
+cam game
+face 110
+goto pos 54500 1640 -12700
+face 110
+set time 12 9
+wait real 1650
+face 110
+press forward
+wait real 500
+pos
+perf sample perf-coverage/walk
+wait real 2500
+perf stop
+pos
+release forward
+wait real 250
+quit
