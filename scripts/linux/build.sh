@@ -38,6 +38,7 @@ flags=(
   '-DCMAKE_CXX_FLAGS_RELEASE=-O2 -DNDEBUG'
   "-DCMAKE_EXE_LINKER_FLAGS=$static_runtime"
   "-DCMAKE_SHARED_LINKER_FLAGS=$static_runtime"
+  '-DOPENGOTHIC_ENABLE_LTO=ON'
 )
 parallel=()
 if [[ -n "${JOBS:-}" ]]; then parallel=(--parallel "$JOBS"); fi

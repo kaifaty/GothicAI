@@ -1,6 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(OpenGothic LANGUAGES C CXX)
+
+# Whole-program link-time optimization. GCC -flto / Clang ThinLTO; off by default so
+# untested platforms and fast Debug iteration are unaffected. The perf stand and the
+# Linux release build enable it. OpenAL Soft is excluded (its SIMD mixer miscompiles
+# under GCC LTO — heap corruption in MixHrtfBlend/Voice::mix at startup).
+option(OPENGOTHIC_ENABLE_LTO "Link-time optimization for Release/RelWithDebInfo" OFF)
+if(OPENGOTHIC_ENABLE_LTO)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT OPENGOTHIC_IPO_SUPPORTED OUTPUT OPENGOTHIC_IPO_ERROR)
+  if(OPENGOTHIC_IPO_SUPPORTED)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
+  else()
+    message(WARNING "LTO requested but not supported: ${OPENGOTHIC_IPO_ERROR}")
+  endif()
+endif()
 include(cmake/CompilerCache.cmake)
 set(CMAKE_CXX_STANDARD 20)
 set(BUILD_SHARED_LIBS OFF)
