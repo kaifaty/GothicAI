@@ -1211,9 +1211,10 @@ void VisualObjects::logVsmShadowProbe(uint64_t frameNo) const {
 // to catch up. The test is the animation LOD's conservative one (world/animationlod.h): the main frustum, both
 // shadow cascades and a camera radius, the sphere grown by the wave amplitude and a margin. A cleared shadow
 // frustum rejects everything. OPENGOTHIC_WIND_LOD=0 computes every object every frame, as before.
-// OPENGOTHIC_WIND_PARALLEL=1 deals the objects to the worker pool: the matrix is pure, and the writes of
-// updateInstance are disjoint per object (instance slots, cluster spheres) or atomic (the dirty bits, the bough
-// transforms), so the result does not depend on the order; the join orders the writes before the storage commit.
+// OPENGOTHIC_WIND_PARALLEL=0 keeps the loop on the caller; by default the objects are dealt to the worker pool:
+// the matrix is pure, and the writes of updateInstance are disjoint per object (instance slots, cluster spheres)
+// or atomic (the dirty bits, the bough transforms), so the result does not depend on the order; the join orders
+// the writes before the storage commit.
 void VisualObjects::preFrameUpdateWind() {
   if(objectsWind.empty())
     return;
@@ -1223,7 +1224,7 @@ void VisualObjects::preFrameUpdateWind() {
     }();
   static const bool par = []{
     const char* e = std::getenv("OPENGOTHIC_WIND_PARALLEL");
-    return e!=nullptr && e[0]=='1';
+    return e==nullptr || e[0]!='0';
     }();
   constexpr float Margin       = 100.f;   // cm, on top of the wave amplitude
   constexpr float CameraRadius = 3000.f;  // cm, the animation LOD's shadow reach

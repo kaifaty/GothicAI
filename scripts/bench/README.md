@@ -506,7 +506,7 @@ them (index ranges / 3), the TLAS storage, the sum over the unique BLAS storage,
 `VisualObjects::preFrameUpdate` within it, split into `wind_prepare`, `morph_prepare`, `strands_prepare`,
 `trees_prepare` and `levels_prepare` (the legacy wind, morphs, strands, tree fade and mesh LOD loops).
 `prepare_uniforms` is `Renderer::prepareUniforms`. They attribute the CPU preparation before command
-recording; the wind loop can run on the worker pool with `OPENGOTHIC_WIND_PARALLEL=1`.
+recording; the wind loop runs on the worker pool by default (`OPENGOTHIC_WIND_PARALLEL=0` keeps it on the caller).
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The
