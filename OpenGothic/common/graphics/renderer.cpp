@@ -997,6 +997,7 @@ void Renderer::prepareFrame(Tempest::Attachment& result, Encoder<CommandBuffer>&
                           blood.prepare(fId, *bloodWorld, wview.sceneGlobals(), camera.listenerPosition().pos);
   prepBloodReady = bloodReady;
   prepShotNative = shotNative;
+  prepInWater    = camera.isInWater();
   }
 
 void Renderer::recordFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
@@ -1155,7 +1156,7 @@ void Renderer::recordFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& 
   // reads the depth of what lies behind them. They take the fog of their own depth.
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
   drawReflections(cmd, wview);
-  if(!camera.isInWater()) {
+  if(!prepInWater) {
     FrameProfile::Scope fogTiming(FrameProfile::Zone::EncodePost);
     cmd.setDebugMarker("Fog");
     drawFog(cmd, wview);
@@ -1188,7 +1189,7 @@ void Renderer::recordFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& 
   //
 
   FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
-  if(camera.isInWater()) {
+  if(prepInWater) {
     cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, wview);

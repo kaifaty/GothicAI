@@ -183,6 +183,14 @@ struct Recorder {
 // Process-lifetime storage protects a late async upload scope during shutdown.
 // The bounded diagnostic buffer is explicitly flushed after rendering stops.
 Recorder& recorder() { static Recorder* value=new Recorder; return *value; }
+
+// A recording thread adopts its frame's record so its scopes and GPU submissions attribute to that
+// frame, not to whichever attempt the main thread currently holds. Records live for the process
+// lifetime, so an adopted record stays valid after the main attempt ends.
+static thread_local Record* t_profileRecord = nullptr;
+static Record* curRecord() {
+  return t_profileRecord!=nullptr ? t_profileRecord : recorder().current.load(std::memory_order_acquire);
+  }
 TextureRecord* textureRecord(FrameProfile::TextureActivity activity) {
   auto& recorder=::recorder();
   if(recorder.textures==nullptr || recorder.closed.load())
@@ -226,9 +234,13 @@ bool FrameProfile::hasSample() {
   const auto* r=recorder().current.load(std::memory_order_acquire);
   return r!=nullptr && r->segment[0]!=0;
   }
+void* FrameProfile::captureContext() { return curRecord(); }
+void FrameProfile::adoptContext(void* record) { t_profileRecord = static_cast<Record*>(record); }
+void FrameProfile::dropContext() { t_profileRecord = nullptr; }
+
 FrameProfile::Scope::Scope(Zone zone, bool include):zone(zone) {
   if(!include || !enabled()) return;
-  if(include) record=recorder().current.load(std::memory_order_acquire);
+  if(include) record=curRecord();
   if(include && record==nullptr && zone==Zone::StorageUploadWorker)
     record=recorder().latest.load(std::memory_order_acquire);
   if(record!=nullptr) begin=ns();
@@ -273,13 +285,13 @@ void FrameProfile::Attempt::outcome(Outcome value) { if(record!=nullptr) static_
 void FrameProfile::Attempt::flag(Flag value) { if(record!=nullptr) static_cast<Record*>(record)->flags|=uint32_t(value); }
 void FrameProfile::add(Amount amount,uint64_t value) {
   if(!enabled()) return;
-  auto* r=recorder().current.load(std::memory_order_acquire);
+  auto* r=curRecord();
   if(r==nullptr && amount==Amount::UploadBytes) r=recorder().latest.load(std::memory_order_acquire);
   if(r!=nullptr) r->amounts[size_t(amount)].fetch_add(value,std::memory_order_relaxed);
   }
 void FrameProfile::npcAnimation(size_t tier,size_t policy,bool visible,uint64_t elapsedNs) {
   if(!enabled()) return;
-  if(auto* r=recorder().current.load(std::memory_order_acquire)) {
+  if(auto* r=curRecord()) {
     auto& cell=r->npcAnimation[(tier*4+policy)*2+size_t(visible)];
     cell.calls.fetch_add(1,std::memory_order_relaxed);
     cell.sum.fetch_add(elapsedNs,std::memory_order_relaxed);
@@ -328,7 +340,7 @@ void FrameProfile::gpuCompletedNs(void* record, uint64_t gpuNs, bool valid) {
 
 void* FrameProfile::geometrySubmitted() {
   if(!enabled()) return nullptr;
-  auto* record=recorder().current.load(std::memory_order_acquire);
+  auto* record=curRecord();
   if(record!=nullptr) record->geometryBuffers.fetch_add(1,std::memory_order_relaxed);
   return record;
   }
@@ -345,7 +357,7 @@ void FrameProfile::geometryCompleted(void* record, uint64_t triangles, bool vali
 
 void* FrameProfile::gpuPassesSubmitted() {
   if(!enabled()) return nullptr;
-  return recorder().current.load(std::memory_order_acquire);
+  return curRecord();
   }
 
 void FrameProfile::gpuPassesCompleted(void* record, std::vector<GpuPass>&& passes) {

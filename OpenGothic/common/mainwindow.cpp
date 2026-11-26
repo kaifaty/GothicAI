@@ -173,6 +173,8 @@ MainWindow::~MainWindow() {
   recCv.notify_all();
   if(recordTh.joinable())
     recordTh.join();
+  for(auto& e:recEnc)
+    delete e;
   Bench::openMenu = nullptr;
   GameMusic::inst().stopMusic();
   Gothic::inst().cancelLoading();
@@ -504,6 +506,8 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   }
 
 void MainWindow::resizeEvent(SizeEvent&) {
+  // The recording thread may still hold the old render target; join before replacing it.
+  joinRecord();
   for(auto& i:fence)
     i.wait();
   if(SystemApi::isOffscreen())
@@ -1588,18 +1592,21 @@ void MainWindow::recordLoop() {
     Tempest::Attachment* result = recResult;
     WorldView* wview        = recWview;
     const Camera* camera    = recCamera;
+    void* prof              = recProfile;
     lk.unlock();
+    FrameProfile::adoptContext(prof);
     try {
       Resources::setRecycleFrame(fId);
-      auto& enc = *recEnc[fId];
-      renderer.recordFrame(*result, enc, fId, *wview, *camera);
-      enc.setFramebuffer({{*result, Tempest::Preserve, Tempest::Preserve}});
+      std::unique_ptr<Tempest::Encoder<Tempest::CommandBuffer>> enc(recEnc[fId]);
+      recEnc[fId] = nullptr;
+      renderer.recordFrame(*result, *enc, fId, *wview, *camera);
+      enc->setFramebuffer({{*result, Tempest::Preserve, Tempest::Preserve}});
       {
       FrameProfile::Scope uiTiming(FrameProfile::Zone::EncodeUi);
-      enc.setDebugMarker("UI");
-      uiMesh[fId].draw(enc);
+      enc->setDebugMarker("UI");
+      uiMesh[fId].draw(*enc);
       }
-      recEnc[fId].reset();
+      enc.reset();
       fence[fId] = device.submit(commands[fId]);
       if(!SystemApi::isOffscreen())
         device.present(swapchain);
@@ -1609,6 +1616,7 @@ void MainWindow::recordLoop() {
       Resources::setRecycleFrame(-1);
       recErr = std::current_exception();
       }
+    FrameProfile::dropContext();
     std::lock_guard<std::mutex> g(recMtx);
     recDone = true;
     recCv.notify_all();
@@ -1671,10 +1679,23 @@ void MainWindow::render(){
     else if(Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
       Resources::updateTextures(nullptr);
       }
+    // The previous frame's recording must be done before a capture redraws or this frame's preparation
+    // republishes the draw state.
+    joinRecord();
+
     if(capture) {
       profile.flag(FrameProfile::Flag::CaptureRequested);
       Pixmap pm;
       const bool landscapeMask = Renderer::benchClusterLodMask;
+      if(pipeUsedLast && SystemApi::isOffscreen()) {
+        // Read back the frame the recording thread presented; a serial redraw would not validate it.
+        // Windowed swapchain images are not Texture2d-castable, so windowed captures stay serial.
+        fence[(cmdId+1u)%Resources::MaxFramesInFlight].wait();
+        pm = device.readPixels(frameImage());
+        profile.flag(FrameProfile::Flag::CaptureReadCompleted);
+        Bench::capture(pm,Gothic::interfaceScale(this));
+        }
+      else {
       // filming draws every frame of the video into one image: a new one each step costs an allocation
       auto tex = Bench::withUi() && !landscapeMask ? screenshotWithUi(std::move(captureImage))
             : renderer.screenshoot(cmdId,std::move(captureImage),!Bench::filming(),landscapeMask ? &pm : nullptr);
@@ -1693,9 +1714,7 @@ void MainWindow::render(){
         return;
         }
       }
-
-    // The previous frame's recording must be done before this frame's preparation republishes the draw state.
-    joinRecord();
+      }
 
     { FrameProfile::Scope timing(FrameProfile::Zone::Recycle); Resources::resetRecycled(cmdId); }
 
@@ -1727,11 +1746,11 @@ void MainWindow::render(){
       }();
     const bool pipeFrame = pipeEnv && !capture && wview!=nullptr && camera!=nullptr &&
                            Gothic::inst().checkLoading()==Gothic::LoadState::Idle &&
-                           !video.isActive() && inventory.isOpen()==InventoryMenu::State::Closed;
+                           !video.isActive() && !Bench::filming() && inventory.isOpen()==InventoryMenu::State::Closed;
     if(pipeFrame && !recordTh.joinable())
       recordTh = std::thread(&MainWindow::recordLoop,this);
     if(pipeFrame) {
-      recEnc[cmdId] = cmd.startEncoding(device);
+      recEnc[cmdId] = new Tempest::Encoder<Tempest::CommandBuffer>(cmd.startEncoding(device));
       renderer.prepareScene(frameImage(), *recEnc[cmdId], cmdId, true);
       {
       std::lock_guard<std::mutex> g(recMtx);
@@ -1741,12 +1760,15 @@ void MainWindow::render(){
       recCamera = camera;
       recDone   = false;
       recTask   = true;
+      recProfile = FrameProfile::captureContext();
       }
       recCv.notify_one();
+      pipeUsedLast = true;
       profile.flag(FrameProfile::Flag::SubmitCompleted);
       profile.flag(FrameProfile::Flag::PresentCompleted);
       }
     else {
+      pipeUsedLast = false;
       {
       FrameProfile::Scope timing(FrameProfile::Zone::Encode);
       auto enc = cmd.startEncoding(device);

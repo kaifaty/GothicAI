@@ -70,10 +70,12 @@ const Tempest::StorageBuffer& DrawBuckets::BucketPub::vboBuffer() const {
   }
 
 void DrawBuckets::publishBuckets() {
-  if(pubBuckets!=nullptr && !cpuDirty && pubBuckets->size()==bucketsCpu.size()) {
+  const auto generation = Resources::textureGeneration();
+  if(pubBuckets!=nullptr && !cpuDirty && pubGeneration==generation && pubBuckets->size()==bucketsCpu.size()) {
     curBuckets = pubBuckets.get();
     return;
     }
+  pubGeneration = generation;
   auto p = std::make_shared<std::vector<BucketPub>>();
   p->reserve(bucketsCpu.size());
   for(const auto& b:bucketsCpu) {

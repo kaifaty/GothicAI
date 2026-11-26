@@ -196,6 +196,7 @@ class DrawBuckets {
     std::vector<Bucket>      bucketsCpu;
     std::shared_ptr<std::vector<BucketPub>> pubBuckets;
     const std::vector<BucketPub>* curBuckets = nullptr;
+    uint64_t                 pubGeneration = 0;
     bool                     cpuDirty = true;
     void                     publishBuckets();
     Tempest::StorageBuffer   bucketsGpu;

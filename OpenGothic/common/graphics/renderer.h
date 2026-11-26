@@ -69,6 +69,7 @@ class Renderer final {
     bool captureLandscapeDepth = false;
     bool prepBloodReady = false;
     bool prepShotNative = false;
+    bool prepInWater    = false;
     void captureTreeOcclusion(Tempest::Attachment& result, uint8_t fId, WorldView& view, const Camera& camera, bool verify);
     struct {
       Tempest::Attachment winners, earlyOwners, referenceOwners;

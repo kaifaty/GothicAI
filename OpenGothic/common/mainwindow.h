@@ -148,19 +148,20 @@ class MainWindow : public Tempest::Window {
 
     // Render pipeline: frame N records on a dedicated thread while the main thread ticks N+1.
     // OPENGOTHIC_RENDER_PIPELINE=1 enables it; frames with capture/video/inventory stay serial.
-    bool                   pipeline = false;
     std::thread            recordTh;
     std::mutex             recMtx;
     std::condition_variable recCv;
     bool                   recTask = false;
     bool                   recDone = true;
     bool                   recStop = false;
+    bool                   pipeUsedLast = false;
+    void*                  recProfile = nullptr;
     std::exception_ptr     recErr;
     uint8_t                recFId = 0;
     Tempest::Attachment*   recResult = nullptr;
     WorldView*             recWview = nullptr;
     const Camera*          recCamera = nullptr;
-    std::optional<Tempest::Encoder<Tempest::CommandBuffer>> recEnc[Resources::MaxFramesInFlight];
+    Tempest::Encoder<Tempest::CommandBuffer>* recEnc[Resources::MaxFramesInFlight] = {};
     void                   recordLoop();
     void                   joinRecord();
 
