@@ -2089,6 +2089,15 @@ Compare only runs from the same build,
 base and environment. Days of one build are byte-identical on a host and between dev-ubuntu and Ryzen, so a difference is a real change, not noise; nothing in the simulation may depend on heap addresses ([why](../../docs/world-streaming.md#почему-сутки-перестали-повторяться-фаза-lod-анимации-2026-11-07)). A day writes about 55 MB.
 With `OPENGOTHIC_NPC_LOGIC_AUDIT=1`, `npc-day-heights.csv` compares sampled Simplified positions with a ground ray; movement itself does not cast these verification rays. The comparer splits position errors into `stationary_both` and `moving_either` from the existing body-state column, and accepts final-HP, matched-death and stationary-p95 guards.
 
+A Society ownership A/B runs the same day twice from one build: the control without Society variables,
+the other with `OPENGOTHIC_SOCIETY_WORLD=<out>/world.json`, `OPENGOTHIC_SOCIETY_PILOT_GROUP=32`,
+`OPENGOTHIC_SOCIETY_PILOT_WIDE=1`, `OPENGOTHIC_SOCIETY_PILOT_EARLY=1` and empty
+`OPENGOTHIC_SOCIETY_CONFIG`/`OPENGOTHIC_SOCIETY_WEIGHTS`. The transport uploads only the scenario, so
+`scripts/ryzen.sh` produces the export inside the run output with the same runner and base before the
+game starts (`gothic-body-runner --society-export`); a file already present is left as is. Compare with
+`--require-journal-identical true --require-done true --require-full-length true`
+([D1 note](../../reports/engine/2026-11-26-society-idle/README.md)).
+
 Use `npc-day-parity.tolerances.json` for Full and `OPENGOTHIC_NPC_SIMPLE_MOVE=0` controls against
 the current-main noise floor. It requires identical nonhero sample fields except `tier` and all
 nonhero events, including the final post-sample tick. Active Simplified/auto use
