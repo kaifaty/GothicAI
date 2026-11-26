@@ -42,7 +42,7 @@
 ## Журнал фазы 0
 
 - 2026-11-26, стенд Society (Mac, policy routine, seed 0): выгрузка 1053 NPC (раннер `--society-export`, 7,3 с) — сутки **2,32 мс**, 8890 событий; выгрузка 11 053 NPC (`npcscale 10000` + `society export`, спавн на Mac) — сутки **310,74 мс**, 120 058 событий, 12 914 поисков пути (кэш 6478), ~490 тыс. событий/с. Цена на событие выросла ~10× против 1053 (очереди за места, поиски пути), но абсолют дешёв: **сутки 10k жизней = 0,31 с**. Экстраполяция на 1M: ~11 млн событий → ~23–30 с/сутки. Для сравнения: движок на 10k ~20 с/кадр → сутки ≈ 2,62 млн кадров × 20 с ≈ 600 дней wall. Разрыв ~1,7 млн× — стена не в логике симуляции, а в нативном покадровом исполнении.
-- Артефакты: `.bench-out/export-1053/world.json`, `.bench-out/export-10k/world-10k.json`, `.bench-out/stand-1053/`, `.bench-out/stand-10k/`.
+- Артефакты: `/Users/kaifat/.local/share/gothic-ai-main/npc-10k-logical-bench/` (`export-1053/world.json`, `export-10k/world-10k.json`, `stand-1053/`, `stand-10k/` — журналы суток и `stand-summary.txt`; `zones-10k/` — frameprofile.csv, stats, выгрузка, логи). Marks CSV стенда (425 МБ) удалены как восстановимые: `gothic-society-day --world <выгрузка> --out <папка>` пересоздаёт за 0,3 с.
 - 2026-11-26, зоны цены (dev-ubuntu, `society-npc-scale`, сборка FRAME_PROFILE=ON, 46 кадров, 971 с wall, exit 0; первый заход упал на `-Werror=sign-compare` в `societyexport.cpp:344` — файл переехал из раннера в библиотеку со строгими флагами, правка кастом `int32_t(GIL_*)`):
 
 | Зона | мс/кадр | Доля |
