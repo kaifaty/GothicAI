@@ -6,6 +6,9 @@
 #if !defined(GL_VERTEX_SHADER)
 layout(local_size_x = 64) in;
 layout(triangles, max_vertices = MaxVert, max_primitives = MaxPrim) out;
+#ifdef TREE_COVERAGE
+layout(location = 11) flat out uint crownOwner[];
+#endif
 layout(location = 7) flat out uvec3 boughFadeOut[];
 layout(location = 8) flat out vec3 boughMaskOut[];
 #endif

@@ -1,0 +1,77 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform usampler2D winners;
+layout(binding = 1, std430) readonly buffer Data { uint data[]; };
+layout(binding = 2, std430) buffer Coverage { uint history[]; };
+
+// Combine repeated owners inside each tile before accessing the global histogram.
+// A collision goes straight to its owner's bin. Every contribution is counted.
+shared uint owners[64];
+shared uint sums[64];
+
+#include "tree_bough_coverage_owner.glsl"
+
+void flushOwner(uint id, uint count) {
+  uint entry = crownEntry(id);
+  if(entry!=0u)
+    atomicAdd(history[(entry-data[1])/8u*3u],count);
+  }
+
+void addOwner(uint id, uint count) {
+  if(id==0u || (id >> 31u)!=0u)
+    return;
+  const uint bin = ((id*2654435761u) >> 26u);
+  const uint key = atomicCompSwap(owners[bin],0u,id);
+  if(key==0u || key==id)
+    atomicAdd(sums[bin],count);
+  else
+    flushOwner(id,count);
+  }
+
+uvec4 sampleOwners2x2(ivec2 p, ivec2 size) {
+  if(all(lessThan(p+1,size)))
+    return textureGather(winners,vec2(p+1)/vec2(size));
+  uvec4 v = uvec4(0);
+  for(int i=0; i<4; ++i) {
+    ivec2 xy = p+ivec2(i&1,i>>1);
+    if(all(lessThan(xy,size)))
+      v[i] = texelFetch(winners,xy,0).r;
+    }
+  return v;
+  }
+
+uint takeOwner(inout uvec4 v, uint owner) {
+  bvec4 matches = equal(v,uvec4(owner));
+  v = mix(v,uvec4(0),matches);
+  uvec4 count = uvec4(matches);
+  return count.x+count.y+count.z+count.w;
+  }
+
+void main() {
+  uint lane = gl_LocalInvocationIndex;
+  owners[lane] = 0u;
+  sums[lane] = 0u;
+  barrier();
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy)*4;
+  ivec2 size = textureSize(winners,0);
+  uvec4 a = sampleOwners2x2(p,size), b = sampleOwners2x2(p+ivec2(2,0),size);
+  uvec4 c = sampleOwners2x2(p+ivec2(0,2),size), d = sampleOwners2x2(p+ivec2(2),size);
+  if(all(equal(a,a.xxxx)) && all(equal(b,a.xxxx)) &&
+     all(equal(c,a.xxxx)) && all(equal(d,a.xxxx))) {
+    addOwner(a.x,16u);
+    } else {
+    for(;;) {
+      uvec4 v = max(max(a,b),max(c,d));
+      uint id = max(max(v.x,v.y),max(v.z,v.w));
+      if(id==0u)
+        break;
+      uint count = takeOwner(a,id)+takeOwner(b,id)+takeOwner(c,id)+takeOwner(d,id);
+      addOwner(id,count);
+      }
+    }
+  barrier();
+  if(sums[lane]!=0u)
+    flushOwner(owners[lane],sums[lane]);
+  }

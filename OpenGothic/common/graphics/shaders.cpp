@@ -12,6 +12,7 @@
 #include "settings.h"
 #include "raytracingrule.h"
 #include "meshlevels.h"
+#include "treeboughdraw.h"
 
 #include "shader.h"
 #include "utils/string_frm.h"
@@ -740,6 +741,8 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     }
   const bool  history = historyFragment[0]!='\0';
   const char* historyGeometry = history && t!=DrawCommands::Pfx && bough!=Bough::Cards ? "_hist" : "";
+  if(pt==T_HistoryGBuffer && bough==Bough::Cards && TreeBough::coverageEnabled())
+    historyFragment = historyGeometry = "_coverage";
   const bool mapsMain = (pt==T_Main || history) && (alpha==Material::Solid || alpha==Material::AlphaTest);
   const bool mapsDepth = (pt==T_Depth || pt==T_Shadow) && alpha==Material::AlphaTest;
   const char* materialMaps = opts.doMaterialMaps && (mapsMain || mapsDepth) ? "_orm" : "";

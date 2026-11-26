@@ -1,0 +1,94 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D refDepth;
+layout(binding = 1) uniform usampler2D refOwners;
+layout(binding = 2) uniform sampler2D liveDepth;
+layout(binding = 3) uniform usampler2D liveOwners;
+layout(binding = 4, std430) readonly buffer Data { uint data[]; };
+layout(binding = 5, std430) readonly buffer History { uint history[]; };
+struct PixelOwner { uint id, cluster, previousAge, age, depthBits; };
+struct Difference { uvec2 pixel; PixelOwner reference[9], live[9]; };
+layout(binding = 6, std430) buffer Result { uint counts[14]; Difference differences[3]; };
+layout(binding = 7, std430) readonly buffer Dispatch { uint groups[]; };
+layout(binding = 8, std430) readonly buffer Previous { uint previous[]; };
+layout(push_constant, std430) uniform Push { uint token, recorded, sampleNumber, taaFrame, phase; };
+#include "tree_bough_coverage_owner.glsl"
+#include "tree_coverage_lod.glsl"
+
+const uint Missing = 0xffffffffu;
+
+PixelOwner ownerAt(usampler2D owners, sampler2D depth, ivec2 p, ivec2 size) {
+  PixelOwner o = PixelOwner(Missing,Missing,Missing,Missing,Missing);
+  if(any(lessThan(p,ivec2(0))) || any(greaterThanEqual(p,size)))
+    return o;
+  o.id = texelFetch(owners,p,0).r;
+  o.depthBits = floatBitsToUint(texelFetch(depth,p,0).r);
+  uint entry = crownEntry(o.id);
+  if(entry!=0u) {
+    uint at = (entry-data[1])/8u*3u;
+    o.cluster = data[entry];
+    if(previous[at+2u]!=0u && previous[at+2u]+2u==token)
+      o.previousAge = previous[at+1u];
+    if(history[at+2u]==token)
+      o.age = history[at+1u];
+    }
+  return o;
+  }
+
+void main() {
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 size = textureSize(refOwners,0);
+  if(any(greaterThanEqual(p,size)))
+    return;
+  uint i = uint(p.y*size.x+p.x);
+  if(i==0u) {
+    counts[5] = recorded!=0u ? groups[0]*groups[1] : 0u;
+    counts[6] = recorded;
+    counts[10] = token;
+    counts[11] = sampleNumber;
+    counts[12] = taaFrame;
+    counts[13] = phase;
+    }
+  uint h = 3u*i;
+  if(i<uint(history.length())/3u && history[h+2u]==token) {
+    bool coarse = history[h+1u]==CoverageLowFrames;
+    if(coarse)
+      atomicAdd(counts[4],1u);
+    if(previous[h+2u]!=0u && previous[h+2u]+2u==token) {
+      bool wasCoarse = previous[h+1u]==CoverageLowFrames;
+      if(wasCoarse!=coarse)
+        atomicAdd(counts[coarse ? 9 : 8],1u);
+      }
+    }
+  uint ref = texelFetch(refOwners,p,0).r;
+  uint entry = crownEntry(ref);
+  if(entry==0u)
+    return;
+  uint at = (entry-data[1])/8u*3u;
+  bool lowered = history[at+2u]==token && history[at+1u]==CoverageLowFrames &&
+                 ((ref>>30u)==1u || data[entry+7u]!=0u);
+  if(lowered)
+    return;
+  uint owner = texelFetch(liveOwners,p,0).r;
+  atomicAdd(counts[0],1u);
+  if(owner==0u)
+    atomicAdd(counts[1],1u);
+  if(owner!=ref)
+    atomicAdd(counts[2],1u);
+  bool depthDiff = floatBitsToUint(texelFetch(liveDepth,p,0).r)!=floatBitsToUint(texelFetch(refDepth,p,0).r);
+  if(depthDiff)
+    atomicAdd(counts[3],1u);
+  if(owner!=ref || depthDiff) {
+    uint slot = atomicAdd(counts[7],1u);
+    if(slot<uint(differences.length())) {
+      differences[slot].pixel = uvec2(p);
+      for(int cell=0; cell<9; ++cell) {
+        ivec2 q = p+ivec2(cell%3-1,cell/3-1);
+        differences[slot].reference[cell] = ownerAt(refOwners,refDepth,q,size);
+        differences[slot].live[cell] = ownerAt(liveOwners,liveDepth,q,size);
+        }
+      }
+    }
+  }

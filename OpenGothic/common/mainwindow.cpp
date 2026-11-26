@@ -1742,11 +1742,7 @@ void MainWindow::render(){
     CommandBuffer& cmd = commands[cmdId];
     auto* wview  = GameServices::inst().worldView();
     auto* camera = GameServices::inst().camera();
-    static const bool pipeEnv = []{
-      const char* e = std::getenv("OPENGOTHIC_RENDER_PIPELINE");
-      return e!=nullptr && e[0]=='1';
-      }();
-    const bool pipeFrame = pipeEnv && !capture && wview!=nullptr && camera!=nullptr &&
+    const bool pipeFrame = CommandLine::renderPipelineEnabled() && !capture && wview!=nullptr && camera!=nullptr &&
                            Gothic::inst().checkLoading()==Gothic::LoadState::Idle &&
                            !video.isActive() && !Bench::filming() && inventory.isOpen()==InventoryMenu::State::Closed;
     if(pipeFrame && !recordTh.joinable())

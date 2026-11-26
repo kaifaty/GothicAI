@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : enable
 
 #include "tree_bough_cut.glsl"
+#include "tree_coverage_lod.glsl"
 
 layout(local_size_x = 1) in;
 layout(binding = 0, std430) readonly buffer Nodes { BoughNode nodes[]; };
@@ -37,12 +38,21 @@ void boughEmit(uint i, uint transition, float weight) {
 
 void main() {
   const uint stride = uint(nodes.length()) + 1u;
+  uint age = 0u;
   for(uint sampleId = 0; sampleId < uint(views.length()); ++sampleId) {
     first = sampleId * stride;
     count = 0u;
     maskFailures = 0u;
     if(sampleId==0u)
       maskFailures = coverageFailures(BoughFadeActive, 0u) + coverageFailures(BoughFadeActive | BoughWeightMask, 0u);
+    BoughProjection view = views[sampleId];
+    // The second half replays ON. First frame/new owner, two zeros, a
+    // positive winner, then a camera cut while the previous age is nonzero.
+    if(sampleId>=uint(views.length())/2u) {
+      uint frame = (sampleId-uint(views.length())/2u)%6u;
+      age = coverageAge(age,frame==3u ? 1u : 0u,256.0,frame!=0u);
+      view.focalScale *= coverageScale(age);
+      }
     const uint joint = boughJointFade(joints[sampleId]);
     if(joint!=0u)
       maskFailures += coverageFailures(joint, 123u);
@@ -50,11 +60,11 @@ void main() {
     const uint nodeCount = uint(nodes.length()), slice = 1u + sampleId % 7u;
     bool compact = false;
     for(uint at = 0u; at < nodeCount; at += slice) {
-      if(boughMerges(at, min(at+slice, nodeCount), views[sampleId]))
+      if(boughMerges(at, min(at+slice, nodeCount), view))
         compact = true;
       }
     for(uint at = 0u; at < nodeCount; at += slice)
-      boughWalkSlice(at, min(at+slice, nodeCount), views[sampleId]);
+      boughWalkSlice(at, min(at+slice, nodeCount), view);
     cuts[first] = uvec4(count, uint(compact), maskFailures, joint);
     }
   }

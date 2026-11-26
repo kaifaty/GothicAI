@@ -31,6 +31,14 @@ static int intArg(std::string_view v) {
   return (std::stoi(std::string(v)));
   }
 
+bool CommandLine::renderPipelineEnabled() {
+  static const bool enabled = [] {
+    const char* env = std::getenv("OPENGOTHIC_RENDER_PIPELINE");
+    return env!=nullptr && env[0]=='1';
+    }();
+  return enabled;
+  }
+
 CommandLine::CommandLine(int argc, const char** argv) {
   instance = this;
   // OPENGOTHIC_VSM=0|1: the default of -vsm for benches and scripts that cannot pass flags; -vsm wins
