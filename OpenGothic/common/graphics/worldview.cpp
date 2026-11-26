@@ -732,7 +732,7 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   FrameProfile::Scope pfx(FrameProfile::Zone::PfxPrepare);
   pfxGroup.preFrameUpdate(fId);
   }
-  visuals .preFrameUpdate();
+  visuals .preFrameUpdate(fId);
   }
 
 void WorldView::setMotionVectors(bool enabled, const Tempest::Matrix4x4& reprojectClip,

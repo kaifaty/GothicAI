@@ -5,6 +5,7 @@
 #include <Tempest/Device>
 #include <future>
 #include <list>
+#include <mutex>
 
 #include "graphics/drawcommands.h"
 #include "engineconstants.h"
@@ -178,6 +179,8 @@ class Shaders {
       };
 
     mutable Tempest::RenderPipeline impostor[2][2];
+    // guards the lazy find-or-create of impostor and materials: recording and tick may ask at the same time
+    mutable std::mutex              pipelineSync;
 
     void                     setupOptions();
     void                     compileKeyShaders();

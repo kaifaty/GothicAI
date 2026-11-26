@@ -1077,34 +1077,37 @@ void PfxBucket::preFrameUpdate(const SceneGlobals& scene, uint8_t fId) {
   }
 
 void PfxBucket::drawGBuffer(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene,
-                            uint8_t fId, bool historyOwner) {
+                            uint8_t fId, bool historyOwner, const PubDraw& pub) {
   for(auto i:{Material::Solid, Material::AlphaTest}) {
-    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false, historyOwner);
-    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true,  historyOwner);
+    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false, pub, historyOwner);
+    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true,  pub, historyOwner);
     }
   }
 
-void PfxBucket::drawShadow(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId, int layer) {
+void PfxBucket::drawShadow(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId, int layer,
+                           const PubDraw& pub) {
   auto view = SceneGlobals::VisCamera(SceneGlobals::V_Shadow0 + layer);
   for(auto i:{Material::Solid, Material::AlphaTest}) {
-    drawCommon(cmd, scene, item[fId],    view, i, false);
-    drawCommon(cmd, scene, itemTrl[fId], view, i, true);
+    drawCommon(cmd, scene, item[fId],    view, i, false, pub);
+    drawCommon(cmd, scene, itemTrl[fId], view, i, true, pub);
     }
   }
 
-void PfxBucket::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+void PfxBucket::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId,
+                             const PubDraw& pub) {
   for(auto i:{Material::Multiply, Material::Multiply2}) {
-    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false);
-    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true);
+    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false, pub);
+    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true, pub);
     }
   }
 
-void PfxBucket::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
-  if(decl.hazeShift>0)
+void PfxBucket::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId,
+                                const PubDraw& pub) {
+  if(pub.hazeShift>0)
     return; // drawHaze
   for(auto i:{/*Material::Water, */Material::Transparent, Material::AdditiveLight, Material::Ghost}) {
-    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false);
-    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true);
+    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false, pub);
+    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true, pub);
     }
   }
 
@@ -1112,17 +1115,19 @@ bool PfxBucket::hasHaze(uint8_t fId) const {
   return decl.hazeShift>0 && item[fId].pMain!=nullptr && !item[fId].pfxGpu.isEmpty();
   }
 
-void PfxBucket::drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
-  if(decl.hazeShift>0)
-    drawCommon(cmd, scene, item[fId], SceneGlobals::V_Main, Material::Ghost, false);
+void PfxBucket::drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId,
+                         const PubDraw& pub) {
+  if(pub.hazeShift>0)
+    drawCommon(cmd, scene, item[fId], SceneGlobals::V_Main, Material::Ghost, false, pub);
   }
 
 void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, const Draw& itm,
-                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl, bool historyOwner) {
+                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl, const PubDraw& pub,
+                           bool historyOwner) {
   if(itm.pfxGpu.isEmpty())
     return;
 
-  if(decl.visMaterial.alpha!=func)
+  if(pub.mat.alpha!=func)
     return;
 
   const RenderPipeline* pso = nullptr;
@@ -1135,7 +1140,7 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
     case SceneGlobals::V_Main:
       pso = itm.pMain;
       if(historyOwner && pso!=nullptr)
-        pso = Shaders::inst().materialPipeline(decl.visMaterial, DrawCommands::Pfx, Shaders::T_HistoryGBuffer, false);
+        pso = Shaders::inst().materialPipeline(pub.mat, DrawCommands::Pfx, Shaders::T_HistoryGBuffer, false);
       break;
     case SceneGlobals::V_HiZ:
     case SceneGlobals::V_Count:
@@ -1144,19 +1149,18 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   if(pso==nullptr)
     return;
 
-  auto& mat = decl.visMaterial;
+  const auto& mat = pub.mat;
   if(view==SceneGlobals::V_Main || mat.isTextureInShadowPass()) {
     auto smp = SceneGlobals::isShadowView(SceneGlobals::VisCamera(view)) ? Sampler::trillinear() : Sampler::anisotrophy();
     if(trl) {
-      cmd.setBinding(L_Diffuse, *decl.trlTexture);
+      cmd.setBinding(L_Diffuse, pub.trl);
       }
     else if(mat.hasFrameAnimation()) {
       auto frame = size_t((itm.timeShift+scene.tickCount)/mat.texAniFPSInv);
-      auto t     = mat.frames[frame%mat.frames.size()];
-      cmd.setBinding(L_Diffuse, *t);
+      cmd.setBinding(L_Diffuse, pub.frames[frame%pub.frames.size()]);
       }
     else {
-      cmd.setBinding(L_Diffuse, *mat.tex);
+      cmd.setBinding(L_Diffuse, pub.tex);
       }
     cmd.setBinding(L_Sampler, smp);
     }
@@ -1169,7 +1173,7 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
 
   if(view==SceneGlobals::V_Main && mat.isSceneInfoRequired()) {
     // a haze shifts the finished frame (the copy made before its pass), a ghost the opaque scene
-    cmd.setBinding(L_SceneClr, decl.hazeShift>0 ? *scene.sceneHaze : *scene.sceneColor, Sampler::bilinear(ClampMode::MirroredRepeat));
+    cmd.setBinding(L_SceneClr, pub.hazeShift>0 ? *scene.sceneHaze : *scene.sceneColor, Sampler::bilinear(ClampMode::MirroredRepeat));
     cmd.setBinding(L_GDepth,   *scene.sceneDepth, Sampler::nearest (ClampMode::MirroredRepeat));
     }
 

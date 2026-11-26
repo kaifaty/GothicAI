@@ -9,10 +9,10 @@
 
 #include "graphics/visualobjects.h"
 #include "graphics/pfx/pfxslot.h"
+#include "graphics/pfx/pfxbucket.h"
 
 class SceneGlobals;
 class ParticleFx;
-class PfxBucket;
 class WorldView;
 
 class PfxObjects final {
@@ -43,6 +43,14 @@ class PfxObjects final {
     bool       hasHaze        (uint8_t fId) const;
     void       drawHaze       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
+    // Published buckets of the frame being recorded: tick writes `bucket`, recording reads pubBucket.
+    // Rebuilt at the end of preFrameUpdate.
+    struct PubBucket {
+      PfxBucket*         b = nullptr;
+      PfxBucket::PubDraw d;
+      };
+    const std::vector<PubBucket>& published() const { return pubBucket; }
+
   private:
     struct SpriteEmitter {
       asset::SpriteAlignment     visualCamAlign = asset::SpriteAlignment::NONE;
@@ -60,6 +68,7 @@ class PfxObjects final {
     std::recursive_mutex          sync;
 
     std::list<PfxBucket>          bucket;
+    std::vector<PubBucket>        pubBucket;
     std::vector<SpriteEmitter>    spriteEmit;
 
     Tempest::Vec3                 viewerPos={};

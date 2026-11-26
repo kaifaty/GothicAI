@@ -433,6 +433,8 @@ bool LightGroup::updateLights() {
   }
 
 void LightGroup::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  pubCount = lightSourceData.size();
+
   std::vector<Path>      patchBlock;
   std::vector<LightSsbo> patchData;
 

@@ -57,6 +57,54 @@ const Tempest::StorageBuffer& DrawBuckets::Bucket::vboBuffer() const {
   return staticMesh!=nullptr ? staticMesh->vboBuffer() : animMesh->vbo;
   }
 
+const Tempest::StorageBuffer& DrawBuckets::BucketPub::iboBuffer() const {
+  if(boughPage!=nullptr)
+    return boughPage->ibo;
+  return staticMesh!=nullptr ? staticMesh->ibo8Buffer() : animMesh->ibo8;
+  }
+
+const Tempest::StorageBuffer& DrawBuckets::BucketPub::vboBuffer() const {
+  if(boughPage!=nullptr)
+    return boughPage->vbo;
+  return staticMesh!=nullptr ? staticMesh->vboBuffer() : animMesh->vbo;
+  }
+
+void DrawBuckets::publishBuckets() {
+  if(pubBuckets!=nullptr && !cpuDirty && pubBuckets->size()==bucketsCpu.size()) {
+    curBuckets = pubBuckets.get();
+    return;
+    }
+  auto p = std::make_shared<std::vector<BucketPub>>();
+  p->reserve(bucketsCpu.size());
+  for(const auto& b:bucketsCpu) {
+    BucketPub pb;
+    pb.staticMesh = b.staticMesh;
+    pb.animMesh   = b.animMesh;
+    pb.boughPage  = b.boughPage;
+    if(b.mat.tex!=nullptr)
+      pb.tex = *b.mat.tex;
+    if(b.mat.normal!=nullptr)
+      pb.normal = *b.mat.normal;
+    if(b.mat.orm!=nullptr)
+      pb.orm = *b.mat.orm;
+    if(b.mat.hasFringe()) {
+      pb.frAlbedo = *b.mat.fringe.albedo;
+      pb.frNormal = *b.mat.fringe.normal;
+      pb.frOrm    = *b.mat.fringe.orm;
+      }
+    pb.fringeOn = b.mat.hasFringe();
+    pb.frames.reserve(b.mat.frames.size());
+    for(const auto* t:b.mat.frames)
+      pb.frames.push_back(*t);
+    pb.texAniFPSInv = b.mat.texAniFPSInv;
+    pb.frameAni     = b.mat.hasFrameAnimation();
+    p->push_back(std::move(pb));
+    }
+  pubBuckets = std::move(p);
+  curBuckets = pubBuckets.get();
+  cpuDirty   = false;
+  }
+
 DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh, const TreeBough::Page* page) {
   for(size_t i=0; i<bucketsCpu.size(); ++i) {
     auto& b = bucketsCpu[i];
@@ -76,6 +124,7 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh, 
       return Id(this,i);
       }
   bucketsCpu.emplace_back(std::move(bx));
+  cpuDirty = true;
   return Id(this, bucketsCpu.size()-1);
   }
 
@@ -92,6 +141,7 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const AnimMesh& mesh) {
 
   bucketsDurtyBit = true;
   bucketsCpu.emplace_back(std::move(bx));
+  cpuDirty = true;
   return Id(this, bucketsCpu.size()-1);
   }
 
@@ -101,6 +151,7 @@ void DrawBuckets::invalidate(const StaticMesh& mesh) {
     if(bucket.staticMesh==&mesh) {
       bucket = Bucket();
       bucketsDurtyBit = true;
+      cpuDirty = true;
       }
   }
 
@@ -318,6 +369,7 @@ void DrawBuckets::updatePrimitiveCounts(Encoder<CommandBuffer>& cmd) {
 bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   rebuiltTextureBank = false;
   currentFrame=fId;
+  publishBuckets();
   spheres.commit(cmd,fId);
   const auto generation=Resources::textureGeneration();
   if(!bucketsDurtyBit) {

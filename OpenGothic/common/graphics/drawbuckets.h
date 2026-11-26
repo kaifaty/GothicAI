@@ -3,7 +3,9 @@
 #include <Tempest/DescriptorArray>
 #include <Tempest/StorageBuffer>
 #include <array>
+#include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include "material.h"
 #include "graphics/meshletspheres.h"
@@ -26,6 +28,24 @@ class DrawBuckets {
       const Tempest::StorageBuffer& iboBuffer() const;
       const Tempest::StorageBuffer& vboBuffer() const;
       };
+
+    // Published bucket of the frame being recorded: texture handles copied by value (ref-counted),
+    // so a streaming publish that move-assigns the holder cannot change what recording binds.
+    struct BucketPub {
+      const StaticMesh* staticMesh = nullptr;
+      const AnimMesh*   animMesh   = nullptr;
+      const TreeBough::Page* boughPage = nullptr;
+      Tempest::Texture2d tex, normal, orm;
+      Tempest::Texture2d frAlbedo, frNormal, frOrm;
+      std::vector<Tempest::Texture2d> frames;
+      uint64_t texAniFPSInv = 0;
+      bool     frameAni     = false;
+      bool     fringeOn     = false;
+
+      const Tempest::StorageBuffer& iboBuffer() const;
+      const Tempest::StorageBuffer& vboBuffer() const;
+      };
+    const std::vector<BucketPub>& published() const { return *curBuckets; }
 
     class Id {
       public:
@@ -174,6 +194,10 @@ class DrawBuckets {
     std::vector<std::array<const Tempest::Texture2d*,3>> fringeMaps;
 
     std::vector<Bucket>      bucketsCpu;
+    std::shared_ptr<std::vector<BucketPub>> pubBuckets;
+    const std::vector<BucketPub>* curBuckets = nullptr;
+    bool                     cpuDirty = true;
+    void                     publishBuckets();
     Tempest::StorageBuffer   bucketsGpu;
     Tempest::StorageBuffer   treeHiZBoundsGpu;
     Tempest::StorageBuffer   primitiveOffsets, primitiveCounts;

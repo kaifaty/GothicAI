@@ -179,6 +179,20 @@ class DrawCommands {
     bool                     cmdDurtyBit = false;
     View                     views[SceneGlobals::V_Count];
 
+    // Published draw state of the frame being recorded: tick writes cmd/ord, recording reads cur.
+    // Rebuilt at commit only when the commands or the cluster count changed; otherwise reused.
+    struct Pub {
+      std::vector<DrawCmd>  cmd;
+      std::vector<DrawCmd*> ord;
+      size_t                maxPayload   = 0;
+      size_t                clusterCount = 0;
+      bool                  hasLevels    = false;
+      };
+    std::shared_ptr<Pub>     pub;
+    const Pub*               cur = nullptr;
+    bool                     pubDirty = true;
+    void                     publish();
+
     struct HistoryCommand {
       uint32_t first, blocks, flags, pad;
       bool operator==(const HistoryCommand&) const = default;

@@ -966,6 +966,16 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.preFrameUpdate(camera, tickCount, fId);
   wview.prepareGlobals(cmd,fId);
 
+  // Prep, ahead of the recording: the blood and grass CPU lists are built here, so recording only reads them
+  // (BloodDecals::draw, GrassField::draw). The guards keep the frames that never drew them (path trace, landscape
+  // depth capture, tree probe) from preparing them.
+  if(!captureLandscapeDepth && !settings.pathTraceEnabled)
+    wview.prepareGrass(cmd, fId, textureCast<const Texture2d&>(hiz.hiZ));
+  const auto* bloodWorld = GameServices::inst().bloodDecalSource();
+  const bool bloodReady = !captureLandscapeDepth && !settings.pathTraceEnabled && treeProbe==nullptr &&
+                          bloodWorld!=nullptr &&
+                          blood.prepare(fId, *bloodWorld, wview.sceneGlobals(), camera.listenerPosition().pos);
+
   if(settings.pathTraceEnabled && !captureLandscapeDepth) {
     treeHistory.valid = false;
     boughHiZDiag.valid = false;
@@ -1031,8 +1041,6 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     if(verify)
       bench->historyVerifyComplete(false);
     { FrameProfile::Scope z(FrameProfile::Zone::GBufferRecord);
-    if(!captureLandscapeDepth)
-      wview.prepareGrass(cmd, fId, textureCast<const Texture2d&>(hiz.hiZ));
     drawGBuffer(cmd, fId, wview);
       }
     }
@@ -1052,8 +1060,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     wview.postFrameupdate();
     return;
     }
-  const auto* world = GameServices::inst().bloodDecalSource();
-  if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
+  if(bloodReady)
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
                gbufNormal, zbuffer);
   const auto grassStudy = taa.shot && Shaders::options().doMaterialMaps ? GrassContact::study() : GrassContact::None;
@@ -1510,7 +1517,7 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     cmd.setPushData(&push, sizeof(push)); else
     cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setPipeline(*lights.directLightPso);
-  cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().size());
+  cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().publishedCount());
   }
 
 void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {

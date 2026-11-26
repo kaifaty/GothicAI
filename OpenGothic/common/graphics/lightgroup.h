@@ -51,6 +51,8 @@ class LightGroup final {
     Light  add(const asset::VLight& vob);
     Light  add(std::string_view preset);
     size_t size() const { return lightSourceData.size(); }
+    // the count as of the last prepareGlobals: what recording draws, while tick may add or free lights
+    size_t publishedCount() const { return pubCount; }
 
     void   tick(uint64_t time);
     bool   updateLights();
@@ -113,6 +115,7 @@ class LightGroup final {
     std::vector<size_t>              freeList;
     std::vector<LightSource>         lightSourceDesc;
     std::vector<LightSsbo>           lightSourceData;
+    size_t                           pubCount = 0;
     std::unordered_set<size_t>       animatedLights;
     std::vector<uint32_t>            duryBit;
 

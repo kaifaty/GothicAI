@@ -357,6 +357,8 @@ class Resources final {
       }
 
     static void resetRecycled(uint8_t fId);
+    // Tag the calling thread's recycles with a frame slot (the recording thread); -1 restores the main slot.
+    static void setRecycleFrame(int fId);
     static void recycle(Tempest::DescriptorArray&& arr);
     static void recycle(Tempest::StorageBuffer&& ssbo);
     static void recycle(Tempest::StorageImage&& img);
@@ -600,6 +602,7 @@ class Resources final {
       };
     DeleteQueue recycled[MaxFramesInFlight];
     uint8_t     recycledId = 0;
+    uint8_t     recycleBin() const;
 
     struct TextureRecord {
       Tempest::Texture2d* texture = nullptr;

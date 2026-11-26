@@ -124,41 +124,59 @@ void PfxObjects::preFrameUpdate(uint8_t fId) {
 
   for(auto& i:bucket)
     i.preFrameUpdate(scene, fId);
+
+  // the published list of the frame: the material and its texture handles by value, as DrawBuckets::BucketPub
+  pubBucket.clear();
+  pubBucket.reserve(bucket.size());
+  for(auto& i:bucket) {
+    PubBucket pb;
+    pb.b       = &i;
+    pb.d.mat   = i.decl.visMaterial;
+    if(i.decl.visMaterial.tex!=nullptr)
+      pb.d.tex = *i.decl.visMaterial.tex;
+    pb.d.frames.reserve(i.decl.visMaterial.frames.size());
+    for(const auto* t:i.decl.visMaterial.frames)
+      pb.d.frames.push_back(*t);
+    if(i.decl.trlTexture!=nullptr)
+      pb.d.trl = *i.decl.trlTexture;
+    pb.d.hazeShift = i.decl.hazeShift;
+    pubBucket.push_back(std::move(pb));
+    }
   }
 
 void PfxObjects::drawGBuffer(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool historyOwner) {
   if(hiddenByBench())
     return;
-  for(auto& i:bucket)
-    i.drawGBuffer(cmd, scene, fId, historyOwner);
+  for(const auto& i:pubBucket)
+    i.b->drawGBuffer(cmd, scene, fId, historyOwner, i.d);
   }
 
 void PfxObjects::drawShadow(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, int layer) {
   if(hiddenByBench())
     return;
-  for(auto& i:bucket)
-    i.drawShadow(cmd, scene, fId, layer);
+  for(const auto& i:pubBucket)
+    i.b->drawShadow(cmd, scene, fId, layer, i.d);
   }
 
 void PfxObjects::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
   if(hiddenByBench())
     return;
-  for(auto& i:bucket)
-    i.drawMultiply(cmd, scene, fId);
+  for(const auto& i:pubBucket)
+    i.b->drawMultiply(cmd, scene, fId, i.d);
   }
 
 void PfxObjects::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
   if(hiddenByBench())
     return;
-  for(auto& i:bucket)
-    i.drawTranslucent(cmd, scene, fId);
+  for(const auto& i:pubBucket)
+    i.b->drawTranslucent(cmd, scene, fId, i.d);
   }
 
 bool PfxObjects::hasHaze(uint8_t fId) const {
   if(hiddenByBench())
     return false;
-  for(auto& i:bucket)
-    if(i.hasHaze(fId))
+  for(const auto& i:pubBucket)
+    if(i.b->hasHaze(fId))
       return true;
   return false;
   }
@@ -166,8 +184,8 @@ bool PfxObjects::hasHaze(uint8_t fId) const {
 void PfxObjects::drawHaze(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
   if(hiddenByBench())
     return;
-  for(auto& i:bucket)
-    i.drawHaze(cmd, scene, fId);
+  for(const auto& i:pubBucket)
+    i.b->drawHaze(cmd, scene, fId, i.d);
   }
 
 PfxBucket& PfxObjects::getBucket(const ParticleFx &decl) {

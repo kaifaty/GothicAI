@@ -1505,6 +1505,18 @@ const Resources::VobTree* Resources::loadVobBundle(std::string_view name, bool (
   return inst->implLoadVobBundle(name,readLayer);
   }
 
+static thread_local int t_recycleFrame = -1;
+
+void Resources::setRecycleFrame(int fId) {
+  t_recycleFrame = fId;
+  }
+
+uint8_t Resources::recycleBin() const {
+  // A recording thread tags its own frame: its recycled resources must wait that frame's fence,
+  // not the main thread's current slot.
+  return t_recycleFrame>=0 ? uint8_t(t_recycleFrame) : recycledId;
+  }
+
 void Resources::resetRecycled(uint8_t fId) {
   std::lock_guard<std::recursive_mutex> g(inst->sync);
   inst->recycledId = fId;
@@ -1523,49 +1535,49 @@ void Resources::recycle(Tempest::DescriptorArray &&arr) {
   if(arr.isEmpty())
     return;
   std::lock_guard<std::recursive_mutex> g(inst->sync);
-  inst->recycled[inst->recycledId].arr.emplace_back(std::move(arr));
+  inst->recycled[inst->recycleBin()].arr.emplace_back(std::move(arr));
   }
 
 void Resources::recycle(Tempest::StorageBuffer&& ssbo) {
   if(ssbo.isEmpty())
     return;
   std::lock_guard<std::recursive_mutex> g(inst->sync);
-  inst->recycled[inst->recycledId].ssbo.emplace_back(std::move(ssbo));
+  inst->recycled[inst->recycleBin()].ssbo.emplace_back(std::move(ssbo));
   }
 
 void Resources::recycle(Tempest::StorageImage&& img) {
   if(img.isEmpty())
     return;
   std::lock_guard<std::recursive_mutex> g(inst->sync);
-  inst->recycled[inst->recycledId].img.emplace_back(std::move(img));
+  inst->recycled[inst->recycleBin()].img.emplace_back(std::move(img));
   }
 
 void Resources::recycle(Tempest::Attachment&& img) {
   if(img.isEmpty())
     return;
   std::lock_guard<std::recursive_mutex> g(inst->sync);
-  inst->recycled[inst->recycledId].att.emplace_back(std::move(img));
+  inst->recycled[inst->recycleBin()].att.emplace_back(std::move(img));
   }
 
 void Resources::recycle(Tempest::ZBuffer&& img) {
   if(img.isEmpty())
     return;
   std::lock_guard<std::recursive_mutex> g(inst->sync);
-  inst->recycled[inst->recycledId].zb.emplace_back(std::move(img));
+  inst->recycled[inst->recycleBin()].zb.emplace_back(std::move(img));
   }
 
 void Resources::recycle(Tempest::AccelerationStructure&& rtas) {
   if(rtas.isEmpty())
     return;
   std::lock_guard<std::recursive_mutex> g(inst->sync);
-  inst->recycled[inst->recycledId].rtas.emplace_back(std::move(rtas));
+  inst->recycled[inst->recycleBin()].rtas.emplace_back(std::move(rtas));
   }
 
 void Resources::recycle(std::shared_ptr<void>&& lifetime) {
   if(!lifetime)
     return;
   std::lock_guard<std::recursive_mutex> g(inst->sync);
-  inst->recycled[inst->recycledId].lifetime.emplace_back(std::move(lifetime));
+  inst->recycled[inst->recycleBin()].lifetime.emplace_back(std::move(lifetime));
   }
 
 const Resources::VobTree* Resources::implLoadVobBundle(std::string_view filename, bool (*readLayer)(VobTree&,std::string_view)) {
