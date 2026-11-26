@@ -41,6 +41,11 @@ enum class Zone : size_t {
   // WorldLogic outside Npc::tick; scopes enclose whole loops, never an individual NPC.
   NpcPreTick, NpcSort, NpcPolicy, CollisionZones, InteractiveTick, TriggersTick, NpcTickNear, NpcPerception,
   NpcAnimationCatchUp,
+  // C diagnosis: CPU preparation inside encode_main (renderer draw, before command recording).
+  WorldPreFrame, VisualsPrepare, WindPrepare, MorphPrepare, StrandsPrepare, TreesPrepare, LevelsPrepare, PrepareUniforms,
+  // C2 diagnosis: the rest of the preparation (storage plan, clusters patch, world ticks, visibility, lighting prep).
+  StoragePlanScan, StoragePlanCopy, StoragePlanHistory, ClustersCommit, HousesTick, LightsTick, GrassUpdate, CommitUbo,
+  VisibilityCpu, LightingPrep, GBufferRecord, SkyPrepare,
   Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,

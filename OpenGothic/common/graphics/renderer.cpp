@@ -962,7 +962,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
       });
     }
 
-  prepareUniforms(wview);
+  { FrameProfile::Scope z(FrameProfile::Zone::PrepareUniforms); prepareUniforms(wview); }
   wview.preFrameUpdate(camera, tickCount, fId);
   wview.prepareGlobals(cmd,fId);
 
@@ -980,9 +980,11 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     return;
     }
 
-  wview.visibilityPass(cmd, 0);
-  if(!captureLandscapeDepth)
+  { FrameProfile::Scope z(FrameProfile::Zone::VisibilityCpu); wview.visibilityPass(cmd, 0); }
+  if(!captureLandscapeDepth) {
+    FrameProfile::Scope z(FrameProfile::Zone::SkyPrepare);
     prepareSky(cmd, wview);
+    }
 
   // The SSAO depth sampler copies every texel when its output is full size.
   const auto copyProbeDepth = [&](StorageImage& dst) {
@@ -1009,9 +1011,11 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   const bool history = historyView && DrawCommands::treeHistoryEnabled() &&
                        wview.treeHistoryCommands().prepareHistory(cmd, textureCast<const Texture2d&>(
                            usesAttachment(treeHistory.winners, TextureFormat::R32U, zbuffer.size())), fId);
+  { FrameProfile::Scope z(FrameProfile::Zone::VisibilityCpu);
   wview.visibilityPass(cmd, 1, history);
   if(treeProbe==nullptr && !captureLandscapeDepth)
     wview.visibilityStats(cmd, fId);
+    }
   if(history) {
     const bool rebuiltTextureBank = wview.drawBuckets().textureBankRebuilt();
     if(rebuiltTextureBank)
@@ -1026,9 +1030,11 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
       }
     if(verify)
       bench->historyVerifyComplete(false);
+    { FrameProfile::Scope z(FrameProfile::Zone::GBufferRecord);
     if(!captureLandscapeDepth)
       wview.prepareGrass(cmd, fId, textureCast<const Texture2d&>(hiz.hiZ));
     drawGBuffer(cmd, fId, wview);
+      }
     }
   if(captureLandscapeDepth) {
     // Water is a separate depth-writing landscape pass. Give it valid inputs
@@ -1078,10 +1084,12 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   { FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain); prepareIrradiance(cmd, wview); }
   prepareExposure(cmd, wview);
   FrameProfile::Scope lightingTiming(FrameProfile::Zone::EncodeMain);
+  { FrameProfile::Scope z(FrameProfile::Zone::LightingPrep);
   prepareFogSkyVis(cmd, wview);
   prepareFog (cmd, wview);
   prepareGi  (cmd, fId, wview);
   prepareSurfels(cmd, wview);
+    }
 
   if(grassStudy!=GrassContact::None) {
     // Capture the shader's classes directly, before any exposure, fog or antialiasing.

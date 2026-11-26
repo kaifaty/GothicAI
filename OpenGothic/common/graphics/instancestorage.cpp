@@ -234,6 +234,7 @@ InstanceStorage::Plan InstanceStorage::planCommit(size_t gpuCapacity) {
 
   patchBlock.clear();
   size_t payloadSize = 0;
+  { FrameProfile::Scope z(FrameProfile::Zone::StoragePlanScan);
   for(size_t i = 0; i<blockCnt; ++i) {
     if(i%32==0 && durty[i/32]==0) {
       i+=31;
@@ -264,6 +265,8 @@ InstanceStorage::Plan InstanceStorage::planCommit(size_t gpuCapacity) {
       p.src       += p.size;
       }
     }
+    }
+  { FrameProfile::Scope z(FrameProfile::Zone::StoragePlanHistory);
   if(history) {
     // durtyPrev and fresh follow durty in alloc; a mismatch would be a bug, keep it harmless
     durtyPrev.resize(durty.size(), 0);
@@ -287,6 +290,7 @@ InstanceStorage::Plan InstanceStorage::planCommit(size_t gpuCapacity) {
     std::fill(fresh.begin(), fresh.end(), 0);
     historyValid = true;
     }
+    }
   std::memset(durty.data(), 0, durty.size()*sizeof(durty[0]));
 
   const bool copies = history && (saveBlock.size()>0 || freshBlock.size()>0);
@@ -297,6 +301,7 @@ InstanceStorage::Plan InstanceStorage::planCommit(size_t gpuCapacity) {
   const size_t saveSize   = copies ? saveBlock .size()*sizeof(Copy) : 0;
   const size_t freshSize  = copies ? freshBlock.size()*sizeof(Copy) : 0;
   patchCpu.resize(headerSize + payloadSize + saveSize + freshSize);
+  { FrameProfile::Scope z(FrameProfile::Zone::StoragePlanCopy);
   for(auto& i:patchBlock) {
     i.src += uint32_t(headerSize);
     std::memcpy(patchCpu.data()+i.src, dataCpu.data() + i.dst, i.size);
@@ -308,6 +313,7 @@ InstanceStorage::Plan InstanceStorage::planCommit(size_t gpuCapacity) {
     }
   if(headerSize>0)
     std::memcpy(patchCpu.data(), patchBlock.data(), headerSize);
+    }
 
   plan.upload     = true;
   plan.patchCount = uint32_t(patchBlock.size());
