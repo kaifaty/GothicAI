@@ -1,0 +1,15 @@
+# Far-ownership A/B at 10k (reports/engine/2026-11-27-society-far-ownership/README.md): 10k civilians
+# live their routines while the hero stands alone; `society start` engages the permanent Society pilot
+# on the export of the spawned world. The OFF control is this scenario without the `society start` line.
+# The society-npc-* name gives a FRAME_PROFILE=ON build in scripts/ryzen.sh.
+# @headless
+# @timeout 2400
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_XARDAS_TOWER_VALLEY_091
+npcscale stats start
+npcscale 10000
+society start world.json
+wait 1500
+npcscale stats end
