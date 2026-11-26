@@ -110,7 +110,7 @@ class Builder {
   public:
     Builder(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
             std::span<const uint8_t> boundary, BuildStats* stats, CensusVariant variant,
-            Profile profile = Profile::World);
+            Profile profile = Profile::World, std::span<const Skin> skin = {});
     Graph finish();
 
   private:
@@ -148,12 +148,16 @@ class Builder {
   };
 
 Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
-                 std::span<const uint8_t> boundary, BuildStats* stats, CensusVariant variant, Profile profile)
+                 std::span<const uint8_t> boundary, BuildStats* stats, CensusVariant variant, Profile profile,
+                 std::span<const Skin> skin)
   : stats(stats), variant(variant), profile(profile) {
   if(boundary.size() != vertices.size())
     throw std::invalid_argument("Cluster LOD requires one boundary flag per vertex");
+  if(!skin.empty() && skin.size() != vertices.size())
+    throw std::invalid_argument("Tree DAG requires one set of joint weights per vertex");
   offset(vertices.size());
   result.vertices.assign(vertices.begin(), vertices.end());
+  result.skin.assign(skin.begin(), skin.end());
   if(triangles.empty())
     return;
 
@@ -193,6 +197,9 @@ Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> tri
         materials.push_back(material);
         fixed.push_back(0);
         }
+      else if(!skin.empty() && skin[id] != skin[wedges[it->second].vertex]) {
+        throw std::invalid_argument("Tree DAG coincident vertices have different joint weights");
+        }
       if(boundary[id] || triangle.locked)
         fixed[it->second] = meshopt_SimplifyVertex_Lock;
       (triangle.locked ? locked : indices).push_back(it->second);
@@ -201,8 +208,11 @@ Builder::Builder(std::span<const Vertex> vertices, std::span<const Triangle> tri
 
   positions.resize(wedges.size());
   meshopt_generatePositionRemap(positions.data(), wedges.front().position.data(), wedges.size(), sizeof(Wedge));
-  for(size_t i = 0; i < wedges.size(); ++i)
+  for(size_t i = 0; i < wedges.size(); ++i) {
+    if(!skin.empty() && skin[wedges[i].vertex] != skin[wedges[positions[i]].vertex])
+      throw std::invalid_argument("Tree DAG coincident vertices have different joint weights");
     fixed[positions[i]] |= fixed[i];
+    }
   clusterize(indices, 0, NoGroup, live);
   if(!locked.empty()) {
     // Remove these faces from the partitioner. Pin their coincident positions
@@ -591,6 +601,9 @@ bool Builder::dilateBorders(const Indices& original, const Indices& simplified, 
   struct Offset { Vector direction{}; double length = 0; };
   std::map<uint32_t, Offset> offsets;
   double perimeter = 0;
+  // A triangulated opaque shoot can gain border-incident faces while
+  // shrinking overall. Use the foliage surface itself to measure that loss.
+  const bool preserveSurfaceArea = !result.skin.empty();
   const auto locked = [&](uint32_t id) { return (locks[id] & meshopt_SimplifyVertex_Lock) != 0; };
   const auto measure = [&](const Indices& indices, const Boundary& border, bool accumulate) {
     double area = 0;
@@ -618,7 +631,7 @@ bool Builder::dilateBorders(const Indices& original, const Indices& simplified, 
         if(outwardLength == 0)
           continue;
         const double length = std::sqrt(edgeSquared);
-        perimeter += length;
+        perimeter += preserveSurfaceArea && (locked(a) || locked(b)) ? length * 0.5 : length;
         for(uint32_t point : {a, b}) {
           if(locked(point))
             continue;
@@ -628,7 +641,7 @@ bool Builder::dilateBorders(const Indices& original, const Indices& simplified, 
             offset.direction[axis] += ca[axis] * (length / outwardLength);
           }
         }
-      if(touchesBorder) {
+      if(touchesBorder || preserveSurfaceArea) {
         const auto n = normal(wedges[indices[i]].position, wedges[indices[i+1]].position, wedges[indices[i+2]].position);
         area += 0.5 * std::sqrt(dot(n,n));
         }
@@ -684,6 +697,10 @@ void Builder::applyBorderMoves(Indices& simplified, const BorderMoves& moves, st
     if(inserted) {
       auto wedge = wedges[id];
       auto vertex = result.vertices[wedge.vertex];
+      if(!result.skin.empty()) {
+        const auto binding = result.skin[wedge.vertex];
+        result.skin.push_back(binding);
+        }
       vertex.position = wedge.position = moved->second;
       wedge.vertex = offset(result.vertices.size());
       result.vertices.push_back(vertex);
@@ -780,6 +797,7 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
 
   auto group = groupBounds(clusters);
   const uint32_t groupId = offset(result.groups.size());
+  const float localPositionError = positionError;
   float coverageError = 0, childCoverageError = 0;
   for(uint32_t id : clusters) {
     const uint32_t child = result.clusters[id].refinedGroup;
@@ -795,7 +813,8 @@ void Builder::finishGroup(const Indices& clusters, const std::vector<uint8_t>& l
     const float shapeError = std::max(seamError, foldError(original, simplified));
     constexpr float RoundingGuard = 1.f + 8 * std::numeric_limits<float>::epsilon();
     if(foliage) {
-      group.errorCm = enclosingRadius((double(group.errorCm) + std::max({error, positionError, shapeError}) +
+      const float localError = std::max({error, result.skin.empty() ? positionError : localPositionError, shapeError});
+      group.errorCm = enclosingRadius((double(group.errorCm) + localError +
                                       dilation) * RoundingGuard);
       applyBorderMoves(simplified, moves, nextFixed);
       }
@@ -851,9 +870,9 @@ Graph Builder::finish() {
 }
 
 size_t Graph::byteSize() const {
-  static_assert(sizeof(Vertex) == 36 && sizeof(Cluster) == 48 && sizeof(Group) == 20);
+  static_assert(sizeof(Vertex) == 36 && sizeof(Cluster) == 48 && sizeof(Group) == 20 && sizeof(Skin) == 8);
   return vertices.size() * sizeof(Vertex) + vertexIndices.size() * sizeof(uint32_t) + indices.size() +
-         clusters.size() * sizeof(Cluster) + groups.size() * sizeof(Group);
+         clusters.size() * sizeof(Cluster) + groups.size() * sizeof(Group) + skin.size() * sizeof(Skin);
   }
 
 Graph build(std::span<const Vertex> vertices, std::span<const Triangle> triangles, std::span<const uint8_t> boundary) {
@@ -867,10 +886,10 @@ Graph buildWithStats(std::span<const Vertex> vertices, std::span<const Triangle>
   }
 
 Graph buildFoliage(std::span<const Vertex> vertices, std::span<const Triangle> triangles,
-                   std::span<const uint8_t> boundary, BuildStats& stats, bool logical128) {
+                   std::span<const uint8_t> boundary, BuildStats& stats, bool logical128, std::span<const Skin> skin) {
   stats = {};
   const auto profile = logical128 ? Profile::Foliage128 : Profile::Foliage64;
-  return Builder(vertices, triangles, boundary, &stats, CensusVariant::Normal, profile).finish();
+  return Builder(vertices, triangles, boundary, &stats, CensusVariant::Normal, profile, skin).finish();
   }
 
 float projectError(const Group& group, const View& view) {

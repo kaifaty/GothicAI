@@ -15,6 +15,7 @@ constexpr std::array<size_t, 6> Strides = {36, 20, 20, 40, 4, 4};
 static_assert(std::endian::native == std::endian::little && std::numeric_limits<float>::is_iec559);
 static_assert(sizeof(Vertex) == Strides[0] && sizeof(Group) == Strides[1] &&
               sizeof(Cluster) == Strides[2] && sizeof(Meshlet) == Strides[3]);
+static_assert(sizeof(Bone) == 32 && sizeof(Skin) == 8);
 
 [[noreturn]] void reject(const char* reason) {
   throw std::runtime_error(std::string("Tree DAG: ") + reason);
@@ -57,6 +58,23 @@ void validate(const Asset& asset) {
     if(!finite(group.bounds.center) || !std::isfinite(group.bounds.radius) ||
        group.bounds.radius < 0.f || !(group.errorCm >= 0.f))
       reject("invalid transition");
+
+  if(!asset.bones.empty() || !asset.skin.empty()) {
+    if(asset.bones.empty() || asset.bones.size() > size_t(UINT16_MAX) + 1 || asset.skin.size() != asset.vertices.size())
+      reject("invalid rig section sizes");
+    for(size_t i = 0; i < asset.bones.size(); ++i) {
+      const auto& bone = asset.bones[i];
+      const float axisLength2 = bone.axis[0]*bone.axis[0] + bone.axis[1]*bone.axis[1] + bone.axis[2]*bone.axis[2];
+      if(!finite(bone.pivot) || !finite(bone.axis) || bone.kind > ShootBone ||
+         (i == 0 && (bone.parent != NoGroup || bone.kind != RootBone)) ||
+         (i > 0 && (bone.parent >= i || bone.kind == RootBone || axisLength2 < 1e-6f)))
+        reject("invalid bone");
+      }
+    for(const auto& skin : asset.skin)
+      if(skin.first >= asset.bones.size() || skin.second >= asset.bones.size() ||
+         std::ranges::any_of(skin.reserved, [](uint8_t b) { return b != 0; }))
+        reject("invalid vertex skin");
+    }
 
   if(asset.clusters.empty())
     reject("no clusters");
@@ -148,17 +166,23 @@ void write(const std::filesystem::path& path, const Asset& asset) {
   std::ofstream stream(path, std::ios::binary);
   if(!stream)
     reject("cannot open output");
+  const auto boneCount = uint32_t(asset.bones.size());
+  const uint32_t version = boneCount == 0 ? FormatVersion : WindFormatVersion;
   write(stream, Magic.data(), Magic.size());
-  write(stream, &FormatVersion, 1);
+  write(stream, &version, 1);
   write(stream, asset.sourceHash.data(), asset.sourceHash.size());
   write(stream, asset.materialHash.data(), asset.materialHash.size());
   write(stream, counts.data(), counts.size());
+  if(version == WindFormatVersion)
+    write(stream, &boneCount, 1);
   write(stream, asset.vertices);
   write(stream, asset.groups);
   write(stream, asset.clusters);
   write(stream, asset.meshlets);
   write(stream, asset.vertexIds);
   write(stream, asset.primitives);
+  write(stream, asset.bones);
+  write(stream, asset.skin);
   if(!stream.flush())
     reject("could not flush output");
   }
@@ -175,14 +199,23 @@ Asset load(const std::filesystem::path& path) {
   std::array<uint32_t, Strides.size()> counts;
   read(stream, magic.data(), magic.size());
   read(stream, &version, 1);
-  if(magic != Magic || version != FormatVersion)
+  if(magic != Magic || (version != FormatVersion && version != WindFormatVersion))
     reject("unsupported file format");
   read(stream, asset.sourceHash.data(), asset.sourceHash.size());
   read(stream, asset.materialHash.data(), asset.materialHash.size());
   read(stream, counts.data(), counts.size());
+  uint32_t boneCount = 0;
+  if(version == WindFormatVersion) {
+    read(stream, &boneCount, 1);
+    if(boneCount == 0 || boneCount > uint32_t(UINT16_MAX) + 1)
+      reject("invalid bone count");
+    }
   auto declaredSize = stream.tellg();
   for(size_t i = 0; i < counts.size(); ++i)
     declaredSize += std::streamoff(counts[i]) * std::streamoff(Strides[i]);
+  if(boneCount)
+    declaredSize += std::streamoff(boneCount) * std::streamoff(sizeof(Bone)) +
+                    std::streamoff(counts[0]) * std::streamoff(sizeof(Skin));
   if(fileSize != declaredSize)
     reject("invalid section sizes");
   read(stream, asset.vertices, counts[0]);
@@ -191,8 +224,35 @@ Asset load(const std::filesystem::path& path) {
   read(stream, asset.meshlets, counts[3]);
   read(stream, asset.vertexIds, counts[4]);
   read(stream, asset.primitives, counts[5]);
+  if(boneCount) {
+    read(stream, asset.bones, boneCount);
+    read(stream, asset.skin, counts[0]);
+    }
   validate(asset);
   return asset;
+  }
+
+float windTravel(const Asset& asset, uint32_t vertexId) {
+  const auto& vertex = asset.vertices[vertexId];
+  const auto& skin = asset.skin[vertexId];
+  const auto travel = [&](uint32_t bone) {
+    double sum = 0;
+    while(bone != NoGroup) {
+      const auto& node = asset.bones[bone];
+      const double x = double(vertex.position[0]) - node.pivot[0];
+      const double y = double(vertex.position[1]) - node.pivot[1];
+      const double z = double(vertex.position[2]) - node.pivot[2];
+      // Each local rotation moves the rest point by at most angle * radius.
+      // Every composed ancestor is rigid, so it preserves that length.
+      sum += WindAngleLimit[node.kind] * std::sqrt(x*x + y*y + z*z);
+      bone = node.parent;
+      }
+    return sum;
+    };
+  const double bound = (travel(skin.first) * skin.weight + travel(skin.second) * (255 - skin.weight)) / 255.;
+  const double guard = 1e-5 * (1. + bound + std::abs(vertex.position[0]) +
+                               std::abs(vertex.position[1]) + std::abs(vertex.position[2]));
+  return std::nextafter(float(bound + guard), Infinity);
   }
 
 bool clusterSelected(const Asset& asset, const Cluster& cluster, const View& view,

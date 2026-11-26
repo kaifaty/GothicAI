@@ -68,7 +68,7 @@
 //       Wall time of the stages (five runs) of the GLB and the cooked read, and of the world cloth.
 //   content-convert cluster-lod-census <world dir> [--out <file>]
 //       Cluster hierarchy totals for each draw GLB and the whole world, as TSV.
-//   content-convert cook-tree-nanite <glb> <materials.json> <out>
+//   content-convert cook-tree-nanite <glb|firg> <materials.json> <out> [rig.json]
 //       Build and verify an offline cluster DAG for the spruce pilot.
 //   content-convert --self-test
 //       Round trips of synthetic meshes, world data and presets; no game files.
@@ -1252,11 +1252,11 @@ int main(int argc, char** argv) {
     if(const auto stress=StressBase::run(args)) return *stress;
     if(const auto cooked=WorldCook::run(args)) return *cooked;
     if(!args.empty() && args[0]=="cook-tree-nanite") {
-      if(args.size()!=4) {
-        std::cerr << "usage: content-convert cook-tree-nanite <glb> <materials.json> <out>\n";
+      if(args.size()!=4 && args.size()!=5) {
+        std::cerr << "usage: content-convert cook-tree-nanite <glb|firg> <materials.json> <out> [rig.json]\n";
         return 2;
         }
-      cookTreeNanite(args[1],args[2],args[3]);
+      cookTreeNanite(args[1],args[2],args[3],args.size()==5 ? std::filesystem::path(args[4]) : std::filesystem::path{});
       return 0;
       }
     if(!args.empty() && (args[0]=="cook-mesh-lod" || (args.size()>=2 && args[0]=="cluster-lod-census" && args[1]=="--meshes"))) {
@@ -1430,7 +1430,7 @@ int main(int argc, char** argv) {
                  "       content-convert native-base <ready stock base> <new dir>\n"
                  "       content-convert native-base-v3 <ready stock base> <new dir>\n"
                  "       content-convert formats\n"
-                 "       content-convert cook-tree-nanite <glb> <materials.json> <out>\n" << StressBase::usage << WorldCook::usage <<
+                 "       content-convert cook-tree-nanite <glb|firg> <materials.json> <out> [rig.json]\n" << StressBase::usage << WorldCook::usage <<
                  "       " << clusterLodCensusUsage <<
                  "       content-convert --self-test\n";
     return 2;

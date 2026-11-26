@@ -15,6 +15,7 @@ import pytest
 
 import fir
 import fir_hierarchy
+import fir_nanite
 import fir_tree
 import tree_bough_lod
 import tree_density
@@ -526,6 +527,32 @@ def test_colour_0_is_laid_out_for_the_tree_wind(spruce):
     assert wood['material'].get('alphaMode') != 'MASK' and boughs['material']['alphaMode'] == 'MASK'
     assert boughs['material']['doubleSided'] and not wood['material']['doubleSided']
     assert wood['colour'].shape[1] == boughs['colour'].shape[1] == 4
+
+
+def test_nanite_fir_uses_one_skin_per_attachment_and_shares_the_blade_fold(spruce):
+    from shapely.geometry import Polygon
+
+    tree = spruce['tree']
+    bones, bark, cards = fir_nanite.rig(tree)
+    assert {kind: sum(bone[1] == kind for bone in bones) for kind in range(4)} == {0: 1, 1: 4, 2: 34, 3: 235}
+    assert all(-1 <= bone[0] < index and (bone[0] == -1) == (index == 0) for index, bone in enumerate(bones))
+    assert (bark[:, 3] == 1).all() and int(cards[:, 3].sum()) == len(tree.cards)
+    for card in tree.cards:
+        first = card['first']
+        assert (cards[first:first + card['count'], :3] == cards[first, :3]).all()
+    for skin in (bark, cards):
+        rigid = skin[:, 0] == skin[:, 1]
+        assert (skin[rigid, 2] == 255).all() and ((skin[~rigid, 2] > 0) & (skin[~rigid, 2] < 255)).all()
+
+    uv = np.array(((0., 0.), (1., 0.), (1., 1.), (0., 1.)), np.float32)
+    faces = np.array(((0, 1, 2), (0, 2, 3)))
+    shape = Polygon(((1., 4.), (4., 1.), (9., 6.), (6., 9.)))
+    barycentric, index, root, relief = fir_nanite.stencil(uv, faces, shape, dict(cell=(0, 0, 10, 10)), 10)
+    np.testing.assert_allclose(barycentric.sum(axis=1), 1.)
+    seam = np.flatnonzero((barycentric[:, 1] == 0) & (barycentric[:, 3] == 0))
+    assert len(seam) >= 2 and (relief[seam] == 0.).all()
+    assert sum(np.isin(face, seam).sum() == 2 for face in index) >= 2
+    assert ((barycentric[:, 0] == 1.) & root).any()
 
 
 def test_a_seed_and_a_scale_give_another_spruce_of_the_same_kind(config, spruce, tmp_path):

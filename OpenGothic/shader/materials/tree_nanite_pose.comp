@@ -1,0 +1,80 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+
+#define TREE_WIND
+#define TREE_FRAME_ONLY
+#include "tree_nanite_geometry.glsl"
+
+layout(local_size_x=32) in;
+
+struct TreeBone {
+  vec3 pivot;
+  uint parent;
+  vec3 axis;
+  uint kind;
+  };
+
+layout(set=0, binding=12, std430) writeonly buffer TreePoseBuffer { TreePose poses[]; };
+layout(set=0, binding=13, std430) readonly buffer TreeRigBuffer { TreeBone bones[]; };
+
+const float Tau = 6.28318530718;
+
+mat4 rotateAt(vec3 pivot, vec3 axis, float angle) {
+  const mat3 skew = mat3(0, axis.z, -axis.y, -axis.z, 0, axis.x, axis.y, -axis.x, 0);
+  const mat3 rotation = mat3(1.0) + skew*sin(angle) + (skew*skew)*(1.0-cos(angle));
+  const vec3 translation = pivot - rotation*pivot;
+  return mat4(vec4(rotation[0], 0), vec4(rotation[1], 0), vec4(rotation[2], 0), vec4(translation, 1));
+  }
+
+mat4 localPose(TreeBone bone, vec4 wind, vec4 fade) {
+  if(wind.y <= 0.0 || fade.x <= 0.0)
+    return mat4(1.0);
+  const vec3 windDir = normalize(vec3(wind.z, 0, wind.w));
+  const vec3 boneDir = normalize(bone.axis);
+  const float phase = fract(dot(bone.pivot, vec3(0.01367, 0.00191, 0.00611)));
+  if(bone.kind == 1u) {
+    // The stock tree's two sway harmonics, with pressure-dependent lean.
+    const float rate = round(5.688 + 33210.0/clamp(fade.w, 300.0, 6000.0));
+    const float a = Tau * fract(wind.x*rate/60.0 + 0.31);
+    const float b = Tau * fract(wind.x*(rate+3.0)/60.0 + 0.57);
+    const float sway = 0.6*sin(a) + 0.4*sin(b);
+    const float side = 0.6*cos(a) - 0.4*cos(b);
+    const vec3 turn = (0.72 + 0.28*sway)*cross(boneDir, windDir) + vec3(windDir.x, 0, windDir.z)*0.09*side;
+    const float length2 = dot(turn, turn);
+    return length2 > 1e-8 ? rotateAt(bone.pivot, turn*inversesqrt(length2),
+                                    min(sqrt(length2), 1.0)*wind.y*fade.x*0.022) : mat4(1.0);
+    }
+
+  // The front runs at 500 cm/s, as in the stock spruce wind field.
+  const float delayed = wind.x - bone.pivot.z/500.0;
+  const float wave = 0.5 + 0.5*sin(Tau*fract(delayed*(47.0/60.0) + phase));
+  if(bone.kind == 2u) {
+    const vec3 axis = cross(boneDir, windDir);
+    const float length2 = dot(axis, axis);
+    return length2 > 1e-8 ? rotateAt(bone.pivot, axis*inversesqrt(length2), wave*wind.y*fade.y*0.025) : mat4(1.0);
+    }
+
+  const float lift = 0.6*dot(windDir, boneDir);
+  const vec3 direction = windDir + vec3(0, lift, 0);
+  const vec3 axis = cross(boneDir, direction);
+  const float length2 = dot(axis, axis);
+  if(length2 <= 1e-8)
+    return mat4(1.0);
+  const float flutter = sin(Tau*fract(delayed*2.6 + phase)) + 0.5*sin(Tau*fract(delayed*3.8 + 1.618*phase));
+  const float angle = wind.y*(fade.y*(0.20 + 0.55*wave) + fade.z*0.16*flutter) * 0.10;
+  return rotateAt(bone.pivot, axis*inversesqrt(length2), angle*min(sqrt(length2), 1.0));
+  }
+
+void main() {
+  const uint id = gl_GlobalInvocationID.x;
+  if(id >= frame.control.z)
+    return;
+  const bool previous = gl_WorkGroupID.y != 0u;
+  const vec4 wind = previous ? frame.previousWind : frame.wind;
+  const vec4 fade = previous ? frame.previousWindFade : frame.windFade;
+  mat4 transform = mat4(1.0);
+  for(uint bone = id; bone != 0u; bone = bones[bone].parent)
+    transform = localPose(bones[bone], wind, fade)*transform;
+  const mat4 rows = transpose(transform);
+  poses[id + (previous ? frame.control.z : 0u)] = TreePose(rows[0], rows[1], rows[2]);
+  }

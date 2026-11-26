@@ -5,6 +5,8 @@
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
+#include <optional>
+#include <sstream>
 #include <string_view>
 
 namespace TreeNanite::Pilot {
@@ -45,12 +47,18 @@ bool viaVisibility(Mode mode) {
 
 class Renderer {
   public:
-    void setup(const Scene& scene, const std::string& shaderDir, std::string_view mode, std::ostream& out) {
-      gpu.open();
-      gpu.deviceJson(out, "before");
+    void setup(const Scene& scene, const std::string& shaderDir, std::string_view mode, std::ostream& out,
+               const std::filesystem::path& textureDir = {}, bool cards = false, bool lod = false) {
       const bool verify = mode == "verify";
-      const auto capacity = scene.prepare("dense-high");
-      size_t drawCount = capacity.draws.size(), instanceCount = capacity.instances.size();
+      const bool route = mode == "route";
+      gpu.open(route);
+      gpu.deviceJson(out, "before");
+      size_t drawCount = scene.meshlets.size(), instanceCount = 1;
+      if(!route) {
+        const auto capacity = scene.prepare("dense-high");
+        drawCount = capacity.draws.size();
+        instanceCount = capacity.instances.size();
+      }
       if(verify) {
         for(const auto name : Scene::testNames()) {
           const auto prepared = scene.prepare(name);
@@ -66,25 +74,65 @@ class Renderer {
                            ssbo | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
       data[4] = gpu.buffer(std::max(instanceCount, size_t(1)) * sizeof(Instance),
                            ssbo | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-      data[7] = gpu.buffer(sizeof(Frame), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true);
-      data[10] = staticBuffer(scene.materials);
+      data[7] = gpu.buffer(sizeof(Frame) + (route ? sizeof(RouteUniform) : 0), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true);
+      auto materialData = scene.materials;
+      if(route && !cards)
+        materialData[1].tint = {1.021f, 1.021f, 1.021f, 1.f};
+      data[10] = staticBuffer(materialData);
       recordUpload = gpu.buffer(data[3].size + data[4].size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
 
       constexpr VkImageUsageFlags ColorUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                                                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
       for(uint32_t i = 0; i < gbuffer.size(); ++i)
-        gbuffer[i] = gpu.image(GbufferFormats[i], Width, Height, ColorUsage);
-      depth = gpu.image(DepthFormat, Width, Height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-      if(verify || mode == "vb") {
+        gbuffer[i] = gpu.image(GbufferFormats[i], Width, Height, ColorUsage |
+                               (route ? VK_IMAGE_USAGE_SAMPLED_BIT : 0));
+      const VkImageUsageFlags depthUsage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+      depth = gpu.image(DepthFormat, Width, Height, depthUsage | (route ? VK_IMAGE_USAGE_SAMPLED_BIT : 0));
+      if(verify || mode == "vb" || route) {
         visibility = gpu.image(OwnerFormat, Width, Height, ColorUsage | VK_IMAGE_USAGE_SAMPLED_BIT);
         colorImage[6] = visibility;
       }
-      const auto materials = std::max(2u, uint32_t(scene.materials.size()));
-      colorImage[5] = makeTexture(materials, 0);
-      colorImage[8] = makeTexture(materials, 1);
-      colorImage[9] = makeTexture(materials, 2);
-      bindResources();
+      if(route) {
+        colorImage[5] = routeTexture(textureDir / "albedo.rgba", 2048u, VK_FORMAT_R8G8B8A8_SRGB);
+        colorImage[8] = routeTexture(textureDir / "normal.rgba", 2048u, VK_FORMAT_R8G8B8A8_UNORM);
+        colorImage[9] = routeTexture(textureDir / "orm.rgba", 1024u, VK_FORMAT_R8G8B8A8_UNORM);
+        data[11] = staticBuffer(scene.skin);
+        data[12] = gpu.buffer(2 * scene.bones.size() * sizeof(Pose), ssbo, true);
+        data[13] = staticBuffer(scene.bones);
+        shadowDepth = gpu.image(DepthFormat, Width, Height, depthUsage | VK_IMAGE_USAGE_SAMPLED_BIT);
+        presentation = gpu.image(GbufferFormats[0], Width, Height, ColorUsage);
+        colorImage[14] = gbuffer[0];
+        colorImage[15] = gbuffer[1];
+        colorImage[16] = depth;
+        colorImage[17] = shadowDepth;
+        colorImage[18] = gbuffer[2];
+        constexpr std::array atlasFiles{"impostor-albedo.rgba", "impostor-surface.rgba", "impostor-orm.rgba"};
+        for(size_t i = 0; i < atlasFiles.size(); ++i)
+          colorImage[19 + i] = lod ? routeTexture(textureDir / atlasFiles[i], 1536u,
+                                         i == 0 ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM, 1u, 5u) :
+                                     makeTexture(1, int(i));
+      } else {
+        const auto materials = std::max(2u, uint32_t(scene.materials.size()));
+        colorImage[5] = makeTexture(materials, 0);
+        colorImage[8] = makeTexture(materials, 1);
+        colorImage[9] = makeTexture(materials, 2);
+      }
+      bindResources(route);
+      if(route) {
+        pose = gpu.compute(shaderDir, "tree_nanite_pose.comp");
+        raster = gpu.pipeline(shaderDir, "tree_nanite_route.mesh", "tree_nanite_route_visibility.frag", true,
+                              {OwnerFormat}, DepthFormat);
+        shadow = gpu.pipeline(shaderDir, "tree_nanite_route.mesh", "tree_nanite_route_shadow.frag", true,
+                              {}, DepthFormat);
+        resolve = gpu.pipeline(shaderDir, "tree_nanite_resolve.vert", "tree_nanite_route_resolve.frag", false,
+                               GbufferFormats, VK_FORMAT_UNDEFINED);
+        paint = gpu.pipeline(shaderDir, "tree_nanite_resolve.vert", "tree_nanite_route.frag", false,
+                             {GbufferFormats[0]}, VK_FORMAT_UNDEFINED);
+        readback[1] = gpu.buffer(Pixels * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+        gpu.deviceJson(out, "resident");
+        return;
+      }
       if(verify || mode == "direct")
         direct = gpu.pipeline(shaderDir, "tree_nanite_direct.mesh", "tree_nanite_direct.frag", true,
                               GbufferFormats, DepthFormat);
@@ -119,6 +167,11 @@ class Renderer {
     }
 
     void upload(const Submission& submission) {
+      beginUpload(submission, nullptr);
+      gpu.submit();
+    }
+
+    void beginUpload(const Submission& submission, const RouteUniform* route) {
       const auto drawBytes = submission.draws.size() * sizeof(DrawRecord);
       const auto instanceBytes = submission.instances.size() * sizeof(Instance);
       if(drawBytes > data[3].size || instanceBytes > data[4].size)
@@ -126,6 +179,8 @@ class Renderer {
       auto frame = submission.frame;
       frame.control[0] = gpu.properties.limits.subPixelPrecisionBits;
       std::memcpy(data[7].map, &frame, sizeof(Frame));
+      if(route)
+        std::memcpy(static_cast<uint8_t*>(data[7].map) + sizeof(Frame), route, sizeof(*route));
       gpu.begin();
       const auto copy = [&](const auto& source, size_t size, size_t offset, Buffer target) {
         if(size) {
@@ -137,7 +192,52 @@ class Renderer {
       copy(submission.draws.data(), drawBytes, 0, data[3]);
       copy(submission.instances.data(), instanceBytes, data[3].size, data[4]);
       uploadBarrier();
+    }
+
+    void drawRoute(const Scene& scene, RouteFrame& route, std::vector<uint8_t>& rgb) {
+      beginUpload(route.shadow, &route.uniform);
+      computePose(route.view.frame.control[2]);
+      clearDepth(shadowDepth);
+      render({}, &shadowDepth, shadow, &route.shadow);
+      depthSampleReady(shadowDepth);
       gpu.submit();
+
+      scene.appendContourDraws(route, static_cast<const Pose*>(data[12].map));
+      beginUpload(route.view, &route.uniform);
+      commonClear();
+      clearColor(visibility, {});
+      colorReady(visibility);
+      render({visibility}, &depth, raster, &route.view);
+      colorSampleReady(visibility);
+      render({gbuffer[0], gbuffer[1], gbuffer[2], gbuffer[3]}, nullptr, resolve, nullptr);
+      colorSampleReady(gbuffer[0]);
+      colorSampleReady(gbuffer[1]);
+      colorSampleReady(gbuffer[2]);
+      depthSampleReady(depth);
+      render({presentation}, nullptr, paint, nullptr, true);
+      gpu.transition(presentation, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+      VkBufferImageCopy copy{};
+      copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+      copy.imageExtent = {Width, Height, 1};
+      vkCmdCopyImageToBuffer(gpu.cmd, presentation.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             readback[1].handle, 1, &copy);
+      gpu.memoryBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                        VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+      gpu.submit();
+      const auto* rgba = static_cast<const uint8_t*>(readback[1].map);
+      for(size_t i = 0; i < Pixels; ++i)
+        std::memcpy(rgb.data() + 3*i, rgba + 4*i, 3);
+    }
+
+    const Pose* readPose(const Frame& frame, const RouteUniform& uniform) {
+      std::memcpy(data[7].map, &frame, sizeof(Frame));
+      std::memcpy(static_cast<uint8_t*>(data[7].map) + sizeof(Frame), &uniform, sizeof(uniform));
+      gpu.begin();
+      computePose(frame.control[2]);
+      gpu.submit();
+      return static_cast<const Pose*>(data[12].map);
     }
 
     Timing draw(const Submission& submission, Mode mode, bool captured = false, bool fullCapture = false,
@@ -246,8 +346,19 @@ class Renderer {
 
     void uploadBarrier() {
       gpu.memoryBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
-                        VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                        VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                         VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    }
+
+    void computePose(uint32_t boneCount) {
+      vkCmdBindPipeline(gpu.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pose);
+      vkCmdBindDescriptorSets(gpu.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, gpu.pipelineLayout, 0, 1, &gpu.set, 0, nullptr);
+      vkCmdDispatch(gpu.cmd, (boneCount + 31u) / 32u, 2, 1);
+      gpu.memoryBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                        VK_PIPELINE_STAGE_HOST_BIT,
+                        VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_HOST_READ_BIT);
     }
 
     Image makeTexture(uint32_t layers, int channel) {
@@ -280,6 +391,38 @@ class Renderer {
           }
         }
       }
+      uploadTexture(image, texels, copies);
+      return image;
+    }
+
+    Image routeTexture(const std::filesystem::path& path, uint32_t size, VkFormat format,
+                       uint32_t layers = 2, uint32_t mips = 0) {
+      if(mips == 0)
+        mips = uint32_t(std::bit_width(size));
+      std::vector<VkBufferImageCopy> copies;
+      size_t bytes = 0;
+      for(uint32_t mip = 0; mip < mips; ++mip) {
+        const uint32_t side = size >> mip;
+        VkBufferImageCopy copy{};
+        copy.bufferOffset = bytes;
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, layers};
+        copy.imageExtent = {side, side, 1};
+        copies.push_back(copy);
+        bytes += size_t(side) * side * 4 * layers;
+      }
+      std::vector<uint8_t> texels(bytes);
+      std::ifstream stream(path, std::ios::binary);
+      if(!stream.read(reinterpret_cast<char*>(texels.data()), std::streamsize(bytes)) ||
+         stream.peek() != std::ifstream::traits_type::eof())
+        throw std::runtime_error("Invalid route texture size: " + path.string());
+      auto image = gpu.image(format, size, size, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                             layers, mips);
+      uploadTexture(image, texels, copies);
+      return image;
+    }
+
+    void uploadTexture(Image image, const std::vector<uint8_t>& texels,
+                       const std::vector<VkBufferImageCopy>& copies) {
       const auto staging = gpu.buffer(texels.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
       std::memcpy(staging.map, texels.data(), texels.size());
       gpu.begin();
@@ -291,14 +434,15 @@ class Renderer {
                      VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                      VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
       gpu.submit();
-      return image;
     }
 
-    void bindResources() {
+    void bindResources(bool route) {
       constexpr auto ssbo = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
       constexpr auto sample = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      const std::array types{ssbo, ssbo, ssbo, ssbo, ssbo, sample, sample,
-                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sample, sample, ssbo};
+      std::vector types{ssbo, ssbo, ssbo, ssbo, ssbo, sample, sample,
+                        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sample, sample, ssbo};
+      if(route)
+        types.insert(types.end(), {ssbo, ssbo, ssbo, sample, sample, sample, sample, sample, sample, sample, sample});
       gpu.descriptors(types);
       const auto linear = gpu.sampler(true);
       const auto nearest = gpu.sampler(false);
@@ -309,7 +453,7 @@ class Renderer {
         write.descriptorCount = 1;
         write.descriptorType = types[i];
         VkDescriptorBufferInfo buffer{data[i].handle, 0, data[i].size};
-        VkDescriptorImageInfo image{i == 6 ? nearest : linear, colorImage[i].view,
+        VkDescriptorImageInfo image{i == 6 || (i >= 14 && i <= 18) ? nearest : linear, colorImage[i].view,
                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         if(types[i] == sample && !image.imageView)
           continue;
@@ -334,6 +478,31 @@ class Renderer {
                      VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
     }
 
+    void colorSampleReady(Image image) {
+      gpu.transition(image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    }
+
+    void depthSampleReady(Image image) {
+      gpu.transition(image, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_ACCESS_SHADER_READ_BIT);
+    }
+
+    void clearDepth(Image image) {
+      gpu.transition(image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+      const VkClearDepthStencilValue depthClear{1.f, 0};
+      const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+      vkCmdClearDepthStencilImage(gpu.cmd, image.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &depthClear, 1, &range);
+      gpu.transition(image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                     VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    }
+
     void commonClear() {
       VkClearColorValue ground{{0.13f, 0.25f, 0.33f, 0.125f}};
       VkClearColorValue packed{};
@@ -346,15 +515,7 @@ class Renderer {
       for(auto image : gbuffer)
         colorReady(image);
 
-      gpu.transition(depth, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
-      const VkClearDepthStencilValue depthClear{1.f, 0};
-      const VkImageSubresourceRange range{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
-      vkCmdClearDepthStencilImage(gpu.cmd, depth.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &depthClear, 1, &range);
-      gpu.transition(depth, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                     VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-                     VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+      clearDepth(depth);
     }
 
     void render(std::initializer_list<Image> outputs, const Image* z, VkPipeline pipeline,
@@ -461,16 +622,178 @@ class Renderer {
     }
 
     Vulkan gpu;
-    std::array<Buffer, 11> data{};
-    std::array<Image, 11> colorImage{};
+    std::array<Buffer, 22> data{};
+    std::array<Image, 22> colorImage{};
     Buffer recordUpload;
     std::array<Buffer, 2> readback{};
     std::array<Image, 4> gbuffer{};
-    Image depth, edge, referenceOwner, visibility;
+    Image depth, edge, referenceOwner, visibility, shadowDepth, presentation;
     VkPipeline direct = VK_NULL_HANDLE, raster = VK_NULL_HANDLE, resolve = VK_NULL_HANDLE;
     VkPipeline directVerify = VK_NULL_HANDLE, resolveVerify = VK_NULL_HANDLE;
+    VkPipeline pose = VK_NULL_HANDLE, shadow = VK_NULL_HANDLE, paint = VK_NULL_HANDLE;
     std::array<VkPipeline, 3> resolveVariants{};
 };
+
+RouteInput readRouteInput(const std::string& line) {
+  std::istringstream stream(line);
+  std::array<float, 14> value{};
+  for(auto& x : value)
+    if(!(stream >> x) || !std::isfinite(x))
+      throw std::runtime_error("A route row requires 14 finite numbers");
+  std::string extra;
+  const auto direction = [&](size_t offset) {
+    return Point{value[offset], value[offset + 1], value[offset + 2]};
+  };
+  RouteInput result{direction(0), direction(3), value[6], value[7], value[8], value[9], direction(10), value[13]};
+  std::string lod;
+  if(stream >> lod) {
+    if(lod != "0" && lod != "1")
+      throw std::runtime_error("The optional route LOD flag must be 0 or 1");
+    result.lod = lod == "1";
+  }
+  const float dx = result.eye[0] - result.target[0], dy = result.eye[1] - result.target[1];
+  const float dz = result.eye[2] - result.target[2];
+  if((stream >> extra) || dx*dx + dy*dy + dz*dz < 1e-6f || result.pressure < 0.f || result.pressure > 1.f ||
+     result.windX*result.windX + result.windZ*result.windZ < 1e-6f || result.sun[1] <= 0.f || result.threshold < 0.f)
+    throw std::runtime_error("Invalid route camera, sun, wind, or LOD threshold");
+  return result;
+}
+
+float distanceTo(const Point& a, const Point& b) {
+  const float dx = a[0]-b[0], dy = a[1]-b[1], dz = a[2]-b[2];
+  return std::sqrt(dx*dx + dy*dy + dz*dz);
+}
+
+void checkWind(Renderer& renderer, const Asset& asset, const RouteFrame& route, std::ostream& log) {
+  constexpr float toleranceCm = 0.002f;
+  std::vector<float> envelope(asset.vertices.size());
+  std::vector<Point> posed(asset.vertices.size());
+  for(uint32_t id = 0; id < envelope.size(); ++id)
+    envelope[id] = windTravel(asset, id);
+  auto frame = route.view.frame;
+  auto uniform = route.uniform;
+  std::fill_n(uniform.windFade.begin(), 3, 1.f);
+  uniform.previousWindFade = uniform.windFade;
+  const std::array times{0.f, 0.31f, 0.67f, 1.11f, 1.55f, 2.09f, 2.73f, 3.47f};
+  float maximumTravel = 0.f, maximumRestError = 0.f;
+  for(size_t i = 0; i < times.size(); i += 2) {
+    uniform.wind = {times[i], i == 0 ? 0.f : 1.f, 0.85f, 0.527f};
+    uniform.previousWind = {times[i + 1], 1.f, -0.85f, -0.527f};
+    const auto* palette = renderer.readPose(frame, uniform);
+    for(size_t state = 0; state < 2; ++state) {
+      const bool rest = i == 0 && state == 0;
+      const auto* bones = palette + state * asset.bones.size();
+      for(size_t id = 0; id < posed.size(); ++id) {
+        const auto& vertex = asset.vertices[id];
+        const auto point = posedPosition(vertex.position, asset.skin[id], bones);
+        const auto distance = distanceTo(point, vertex.position);
+        if(!(distance <= envelope[id] + toleranceCm))
+          throw std::runtime_error("A posed vertex exceeds its analytical wind envelope");
+        posed[id] = point;
+        maximumTravel = std::max(maximumTravel, distance);
+        if(rest)
+          maximumRestError = std::max(maximumRestError, distance);
+      }
+      for(const auto& cluster : asset.clusters) {
+        const auto inGroup = [&](const Point& point, uint32_t id) {
+          if(id == NoGroup)
+            return true;
+          const auto& sphere = asset.groups[id].bounds;
+          return distanceTo(point, sphere.center) <= sphere.radius + toleranceCm;
+        };
+        for(uint32_t m = cluster.firstMeshlet; m < cluster.firstMeshlet + cluster.meshletCount; ++m) {
+          const auto& box = asset.meshlets[m];
+          for(uint32_t v = box.firstVertex; v < box.firstVertex + box.vertexCount; ++v) {
+            const auto& point = posed[asset.vertexIds[v]];
+            if(!inGroup(point, cluster.parentGroup) || !inGroup(point, cluster.refinedGroup))
+              throw std::runtime_error("A posed vertex exceeds a transition sphere");
+            for(size_t axis = 0; axis < 3; ++axis)
+              if(point[axis] < box.boxMin[axis] - toleranceCm || point[axis] > box.boxMax[axis] + toleranceCm)
+                throw std::runtime_error("A posed vertex exceeds a meshlet box");
+          }
+        }
+      }
+    }
+  }
+  if(maximumRestError > toleranceCm || maximumTravel <= toleranceCm)
+    throw std::runtime_error("Wind palette does not reproduce the rest pose and a nonzero gust");
+  log << "{\"type\":\"wind_check\",\"poses\":" << times.size() << ",\"vertices\":" << asset.vertices.size()
+      << ",\"bones\":" << asset.bones.size() << ",\"palette_bytes\":" << 2 * asset.bones.size() * sizeof(Pose)
+      << ",\"max_travel_cm\":" << maximumTravel << ",\"max_rest_error_cm\":" << maximumRestError
+      << ",\"meshlet_bounds_failures\":0,\"group_bounds_failures\":0}\n";
+}
+
+RouteLadder loadRouteLadder(const std::filesystem::path& path, bool cards) {
+  RouteLadder ladder;
+  std::ifstream bounds(path / "impostor-bounds.tsv");
+  for(auto& value : ladder.impostorSphere)
+    if(!(bounds >> value) || !std::isfinite(value))
+      throw std::runtime_error("Invalid route impostor sphere");
+  std::string extra;
+  if(ladder.impostorSphere[3] <= 0.f || !(bounds >> ladder.height) || !std::isfinite(ladder.height) ||
+     ladder.height <= 0.f || (bounds >> extra))
+    throw std::runtime_error("Invalid route impostor radius or tree height");
+  for(size_t i = 0; i < ladder.levels.size(); ++i)
+    ladder.levels[i] = load(path / ("cards-l" + std::to_string(i+1) + ".tndg"));
+  if(!cards) {
+    ladder.contours = Contours::load(path / "contours.bin");
+    ladder.cardCaster = load(path / "cards-l0.tndg");
+  }
+  return ladder;
+}
+
+void recordRoute(const char* shaderDir, const char* assetPath, const char* textureDir, std::string_view appearance,
+                 const char* framePath, const std::filesystem::path& output) {
+  if(appearance != "cards" && appearance != "opaque")
+    throw std::runtime_error("Route appearance must be cards or opaque");
+  const bool cards = appearance == "cards";
+  const auto asset = load(assetPath);
+  if(asset.bones.empty())
+    throw std::runtime_error("The route needs a rigged tree asset");
+  std::ifstream frameFile(framePath);
+  std::vector<RouteInput> inputs;
+  for(std::string line; std::getline(frameFile, line);)
+    inputs.push_back(readRouteInput(line));
+  if(inputs.empty())
+    throw std::runtime_error("The route needs at least one frame");
+  std::ofstream metadata(output / "route.jsonl");
+  if(!metadata)
+    throw std::runtime_error("Cannot open route metadata output");
+  metadata << std::setprecision(9);
+
+  Scene scene(&asset, Width, Height);
+  std::optional<RouteLadder> ladder;
+  if(std::ranges::any_of(inputs, &RouteInput::lod)) {
+    ladder = loadRouteLadder(textureDir, cards);
+    scene.addRouteLadder(*ladder);
+  }
+  Renderer renderer;
+  renderer.setup(scene, shaderDir, "route", std::cerr, textureDir, cards, ladder.has_value());
+  checkWind(renderer, asset, scene.prepareRoute(inputs.front(), inputs.front(), cards), std::cerr);
+  std::vector<uint8_t> rgb(Pixels * 3);
+  std::ios::sync_with_stdio(false);
+  for(size_t i = 0; i < inputs.size(); ++i) {
+    auto route = scene.prepareRoute(inputs[i], inputs[i == 0 ? 0 : i - 1], cards);
+    renderer.drawRoute(scene, route, rgb);
+    std::cout.write(reinterpret_cast<const char*>(rgb.data()), std::streamsize(rgb.size()));
+    if(!std::cout)
+      throw std::runtime_error("Cannot write route frame stream");
+    const auto& view = route.view;
+    const bool terminal = inputs[i].lod ? route.level == RouteLadder::Impostor :
+                                            view.selectedClusters == view.terminalClusters;
+    metadata << "{\"frame\":" << i << ",\"cut_triangles\":" << view.selectedPrimitivesBeforeCull
+             << ",\"triangles\":" << view.submittedPrimitives << ",\"cut_clusters\":" << view.selectedClusters
+             << ",\"terminal_clusters\":" << view.terminalClusters
+             << ",\"terminal\":" << (terminal ? "true" : "false")
+             << ",\"level\":" << unsigned(route.level) << ",\"fine_level\":" << unsigned(route.fineLevel)
+             << ",\"coarse_level\":" << unsigned(route.coarseLevel) << ",\"screen_height_px\":" << route.screenHeight
+             << ",\"impostor_weight\":" << route.uniform.lodCoverage[1][0]
+             << ",\"contour_faces\":" << route.contourFaces
+             << ",\"shadow_triangles\":" << route.shadow.submittedPrimitives << "}\n";
+  }
+  if(!metadata.flush() || !std::cout.flush())
+    throw std::runtime_error("Cannot flush route outputs");
+}
 
 VerificationExit verify(Renderer& pilot, const Scene& scene, std::ostream& out) {
   bool rasterPassed = true, materialPassed = true;
@@ -599,6 +922,12 @@ int main(int argc, char** argv) {
   using namespace TreeNanite;
   using namespace TreeNanite::Pilot;
   try {
+    if(argc >= 2 && std::string_view(argv[1]) == "route") {
+      if(argc != 8)
+        throw std::runtime_error("Usage: tree-nanite-pilot route SHADERS ASSET TEXTURES cards|opaque FRAMES OUTPUTDIR");
+      recordRoute(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]);
+      return 0;
+    }
     if(argc < 5 || argc > 7)
       throw std::runtime_error("Usage: tree-nanite-pilot SHADERS ASSET|- direct|vb|verify OUTPUT [WARMUP_SECONDS] [SAMPLES]");
     const std::string_view mode = argv[3];

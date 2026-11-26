@@ -69,7 +69,7 @@ class Vulkan {
       vkDestroyInstance(instance, nullptr);
     }
 
-    void open() {
+    void open(bool requireCompute) {
       VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
       app.pApplicationName = "Gothic tree visibility pilot";
       app.apiVersion = VK_API_VERSION_1_3;
@@ -120,11 +120,13 @@ class Vulkan {
       vkGetPhysicalDeviceQueueFamilyProperties(physical, &familyCount, nullptr);
       std::vector<VkQueueFamilyProperties> families(familyCount);
       vkGetPhysicalDeviceQueueFamilyProperties(physical, &familyCount, families.data());
-      const auto family = std::find_if(families.begin(), families.end(), [](const auto& queue) {
-        return (queue.queueFlags & VK_QUEUE_GRAPHICS_BIT) && queue.timestampValidBits != 0;
+      const auto family = std::find_if(families.begin(), families.end(), [requireCompute](const auto& queue) {
+        const VkQueueFlags required = VK_QUEUE_GRAPHICS_BIT | (requireCompute ? VK_QUEUE_COMPUTE_BIT : 0u);
+        return (queue.queueFlags & required) == required && queue.timestampValidBits != 0;
       });
       if(family == families.end())
-        throw std::runtime_error("No graphics queue with timestamps");
+        throw std::runtime_error(requireCompute ? "No graphics and compute queue with timestamps" :
+                                                  "No graphics queue with timestamps");
       const auto familyIndex = uint32_t(family - families.begin());
       timestampBits = family->timestampValidBits;
 
@@ -186,17 +188,25 @@ class Vulkan {
       }
     }
 
-    void descriptors(const std::array<VkDescriptorType, 11>& types) {
-      std::array<VkDescriptorSetLayoutBinding, 11> bindings{};
-      for(uint32_t i = 0; i < bindings.size(); ++i)
-        bindings[i] = {i, types[i], 1, VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+    void descriptors(const std::vector<VkDescriptorType>& types) {
+      std::vector<VkDescriptorSetLayoutBinding> bindings(types.size());
+      for(uint32_t i = 0; i < bindings.size(); ++i) {
+        VkShaderStageFlags stages = VK_SHADER_STAGE_FRAGMENT_BIT;
+        if(i <= 12u)
+          stages |= VK_SHADER_STAGE_MESH_BIT_EXT;
+        if(i == 7u || i == 12u || i == 13u)
+          stages |= VK_SHADER_STAGE_COMPUTE_BIT;
+        bindings[i] = {i, types[i], 1, stages, nullptr};
+      }
       VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
       li.bindingCount = uint32_t(bindings.size());
       li.pBindings = bindings.data();
       check(vkCreateDescriptorSetLayout(device, &li, nullptr, &setLayout), "vkCreateDescriptorSetLayout");
-      const std::array sizes{VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6},
+      const std::array sizes{VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                 uint32_t(std::count(types.begin(), types.end(), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER))},
                              VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
-                             VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4}};
+                             VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                                 uint32_t(std::count(types.begin(), types.end(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER))}};
       VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
       pi.maxSets = 1;
       pi.poolSizeCount = uint32_t(sizes.size());
@@ -214,6 +224,17 @@ class Vulkan {
       pci.pushConstantRangeCount = 1;
       pci.pPushConstantRanges = &push;
       check(vkCreatePipelineLayout(device, &pci, nullptr, &pipelineLayout), "vkCreatePipelineLayout");
+    }
+
+    VkPipeline compute(const std::string& dir, const char* stageName) {
+      VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+      info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
+                    shader(dir + "/" + stageName + ".spv"), "main", nullptr};
+      info.layout = pipelineLayout;
+      VkPipeline result;
+      check(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &result), "pose pipeline");
+      pipelines.push_back(result);
+      return result;
     }
 
     VkPipeline pipeline(const std::string& dir, const char* stageName, const char* fragmentName, bool mesh,
