@@ -32,7 +32,9 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "pfx_prepare","upload_wait","rt_scene",
   "npc_pre_tick","npc_sort","npc_policy","collision_zones","interactive_tick","triggers_tick","npc_tick_near","npc_perception",
   "npc_animation_catchup",
-  "world_pre_frame","visuals_prepare","wind_prepare","morph_prepare","strands_prepare","trees_prepare","levels_prepare","prepare_uniforms"};
+  "world_pre_frame","visuals_prepare","wind_prepare","morph_prepare","strands_prepare","trees_prepare","levels_prepare","prepare_uniforms",
+  "storage_plan_scan","storage_plan_copy","storage_plan_history","clusters_commit","houses_tick","lights_tick","grass_update","commit_ubo",
+  "visibility_cpu","lighting_prep","gbuffer_record","sky_prepare"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
   "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls",
   "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots",

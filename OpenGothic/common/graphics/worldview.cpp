@@ -714,17 +714,19 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   sGlobal.setUnderWater(camera.isInWater());
   sGlobal.setSky(gSky);
   sGlobal.setWorld(*this);
-  houses.tick(gSky.dayHour());
+  { FrameProfile::Scope z(FrameProfile::Zone::HousesTick); houses.tick(gSky.dayHour()); }
 
   pfxGroup.setViewerPos(camera.originLwc());
   // the same wind as the cloth's and the vegetation's, m/s -> cm/ms
   pfxGroup.setWind(WorldWind::sample(tickCount, sGlobal.windPeriod, sGlobal.zWindEnabled, sGlobal.windScale)*0.1f);
   pfxGroup.tick(tickCount);
-  gLights.tick(tickCount);
+  { FrameProfile::Scope z(FrameProfile::Zone::LightsTick); gLights.tick(tickCount); }
   sGlobal.setTime(tickCount);
-  if(grass)
+  if(grass) {
+    FrameProfile::Scope z(FrameProfile::Zone::GrassUpdate);
     grass->update();
-  sGlobal.commitUbo(fId);
+    }
+  { FrameProfile::Scope z(FrameProfile::Zone::CommitUbo); sGlobal.commitUbo(fId); }
 
   {
   FrameProfile::Scope pfx(FrameProfile::Zone::PfxPrepare);
