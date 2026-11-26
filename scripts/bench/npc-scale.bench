@@ -1,0 +1,14 @@
+# Population scale probe (reports/engine/2026-11-26-npc-scale/README.md): the world simulates
+# N peaceful civilians with their native routines while the hero stands alone in the valley,
+# nobody near. The day journal is not used: its per-tick poll would dominate the frame.
+# @headless
+# @timeout 5400
+# Ladder variants replace the count and the game-time window: 10k/10 min, 100k/5 min, 1M/2 min.
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_XARDAS_TOWER_VALLEY_091
+npcscale stats start
+npcscale 10000
+wait 600000
+npcscale stats end
