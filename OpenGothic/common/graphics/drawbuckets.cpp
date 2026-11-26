@@ -123,6 +123,7 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh, 
   for(size_t i=0;i<bucketsCpu.size();++i)
     if(bucketsCpu[i].staticMesh==nullptr && bucketsCpu[i].animMesh==nullptr) {
       bucketsCpu[i] = std::move(bx);
+      cpuDirty = true;
       return Id(this,i);
       }
   bucketsCpu.emplace_back(std::move(bx));

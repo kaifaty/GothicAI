@@ -1541,6 +1541,8 @@ void MainWindow::onBenchmarkFinished() {
   }
 
 void MainWindow::setGameImpl(std::unique_ptr<GameSession> &&w) {
+  // The recording thread may still read the old world's view/camera; join before teardown.
+  joinRecord();
   // clear pointers to outdated game-state
   inventory.onWorldChanged();
   dialogs  .onWorldChanged();

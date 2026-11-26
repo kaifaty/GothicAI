@@ -990,7 +990,7 @@ void Renderer::prepareFrame(Tempest::Attachment& result, Encoder<CommandBuffer>&
   // (BloodDecals::draw, GrassField::draw). The guards keep the frames that never drew them (path trace, landscape
   // depth capture, tree probe) from preparing them.
   if(!captureLandscapeDepth && !settings.pathTraceEnabled)
-    wview.prepareGrass(cmd, fId, textureCast<const Texture2d&>(hiz.hiZ));
+    wview.prepareGrassCpu(fId);
   const auto* bloodWorld = GameServices::inst().bloodDecalSource();
   const bool bloodReady = !captureLandscapeDepth && !settings.pathTraceEnabled && treeProbe==nullptr &&
                           bloodWorld!=nullptr &&
@@ -1068,6 +1068,8 @@ void Renderer::recordFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& 
     if(verify)
       bench->historyVerifyComplete(false);
     { FrameProfile::Scope z(FrameProfile::Zone::GBufferRecord);
+    if(!captureLandscapeDepth)
+      wview.prepareGrass(cmd, fId, textureCast<const Texture2d&>(hiz.hiZ));
     drawGBuffer(cmd, fId, wview);
       }
     }

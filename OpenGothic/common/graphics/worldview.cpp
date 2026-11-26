@@ -842,9 +842,13 @@ void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.drawVsm(cmd);
   }
 
+void WorldView::prepareGrassCpu(uint8_t fId) {
+  if(grass)
+    grass->prepare(fId);
+  }
+
 void WorldView::prepareGrass(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, const Texture2d& hiZ, float depthRoundoff) {
   if(grass) {
-    grass->prepare(fId);
     grass->cull(cmd, fId, hiZ, depthRoundoff);
     }
   }
