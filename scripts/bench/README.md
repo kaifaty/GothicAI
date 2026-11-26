@@ -479,7 +479,9 @@ The complete `<zone>` list (each produces all four columns above):
 `storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
 `destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `npc_logic_shadow`, `encode_shadows`, `encode_main`,
 `encode_water`, `encode_post`, `encode_ui`, `animation_npc_pass`, `melee_shadow`, `melee_contacts`,
-`interactive_animation`, `logical_body_sync`, `pfx_prepare`, `upload_wait`, `rt_scene`.
+`interactive_animation`, `logical_body_sync`, `pfx_prepare`, `upload_wait`, `rt_scene`,
+`world_pre_frame`, `visuals_prepare`, `wind_prepare`, `morph_prepare`, `strands_prepare`, `trees_prepare`,
+`levels_prepare`, `prepare_uniforms`.
 
 `animation_npc_pass`, `melee_shadow`, `melee_contacts`, `interactive_animation` and `logical_body_sync`
 split `parallel_animation`: the worker pass over NPCs (with the posing of their melee shadow bodies), then
@@ -499,6 +501,12 @@ instances that rays meet (the merged landscape and the visible slots), unique BL
 them (index ranges / 3), the TLAS storage, the sum over the unique BLAS storage, the CPU time of that frame's
 `RtScene::commit`, the slots given out and the buckets. The bytes are the Vulkan acceleration-structure sizes
 (`accelerationStructureSize`); Metal keeps none and writes `-1`.
+
+`world_pre_frame` is `WorldView::preFrameUpdate` inside the frame encode; `visuals_prepare` is
+`VisualObjects::preFrameUpdate` within it, split into `wind_prepare`, `morph_prepare`, `strands_prepare`,
+`trees_prepare` and `levels_prepare` (the legacy wind, morphs, strands, tree fade and mesh LOD loops).
+`prepare_uniforms` is `Renderer::prepareUniforms`. They attribute the CPU preparation before command
+recording; the wind loop can run on the worker pool with `OPENGOTHIC_WIND_PARALLEL=1`.
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The

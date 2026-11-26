@@ -698,6 +698,7 @@ bool WorldView::isInPfxRange(const Vec3& pos) const {
   }
 
 void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t fId) {
+  FrameProfile::Scope all(FrameProfile::Zone::WorldPreFrame);
   const auto ldir = gSky.sunLight().dir();
   Tempest::Matrix4x4 shadow   [Resources::ShadowLayers];
   Tempest::Matrix4x4 shadowLwc[Resources::ShadowLayers];

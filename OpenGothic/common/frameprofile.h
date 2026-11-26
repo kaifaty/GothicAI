@@ -41,6 +41,8 @@ enum class Zone : size_t {
   // WorldLogic outside Npc::tick; scopes enclose whole loops, never an individual NPC.
   NpcPreTick, NpcSort, NpcPolicy, CollisionZones, InteractiveTick, TriggersTick, NpcTickNear, NpcPerception,
   NpcAnimationCatchUp,
+  // C diagnosis: CPU preparation inside encode_main (renderer draw, before command recording).
+  WorldPreFrame, VisualsPrepare, WindPrepare, MorphPrepare, StrandsPrepare, TreesPrepare, LevelsPrepare, PrepareUniforms,
   Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
