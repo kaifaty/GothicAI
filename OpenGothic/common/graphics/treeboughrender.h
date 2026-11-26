@@ -19,7 +19,7 @@ class TreeBoughRender {
     void remove(uint32_t cluster);
     void setTransform(uint32_t cluster, const Tempest::Matrix4x4& transform);
     void commit();
-    bool ready() const { return !entries.empty() && !data.isEmpty(); }
+    bool ready() const { return pubEntryCount!=0 && !data.isEmpty(); }
     const Tempest::ComputePipeline& cull(Tempest::Encoder<Tempest::CommandBuffer>& enc, bool hiZ, bool probe,
                                          bool history, bool ordered, uint32_t& token);
     const Tempest::ComputePipeline& historyClassify();
@@ -81,6 +81,11 @@ class TreeBoughRender {
     std::unordered_map<uint32_t,Tempest::Matrix4x4> references;
     std::map<const StaticMesh*,Asset> assets;
     std::vector<Command> commands;
+    // Published snapshot of the frame being recorded: commit() copies the commands and the entry count after upload,
+    // so draw/cull/expand/diagnose read neither the live commands vector nor the entries map that tick/streaming
+    // mutate through addBough/removeBough. The counts match the entry table and indirect draws commit() uploaded.
+    std::vector<Command> pubCommands;
+    size_t               pubEntryCount = 0;
     uint32_t referenceSize = 0;
     uint32_t epoch = 0;
     bool dirty = true;

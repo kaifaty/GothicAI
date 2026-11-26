@@ -57,6 +57,53 @@ const Tempest::StorageBuffer& DrawBuckets::Bucket::vboBuffer() const {
   return staticMesh!=nullptr ? staticMesh->vboBuffer() : animMesh->vbo;
   }
 
+void DrawBuckets::publishBuckets() {
+  const auto generation = Resources::textureGeneration();
+  if(pubBuckets!=nullptr && !cpuDirty && pubGeneration==generation && pubBuckets->size()==bucketsCpu.size()) {
+    curBuckets = pubBuckets.get();
+    return;
+    }
+  pubGeneration = generation;
+  auto p = std::make_shared<std::vector<BucketPub>>();
+  p->reserve(bucketsCpu.size());
+  for(const auto& b:bucketsCpu) {
+    BucketPub pb;
+    // the mesh buffers by value: Bucket::iboBuffer/vboBuffer resolve the bough page, the static mesh (or its
+    // landscape page) or the anim mesh; the copied handles keep the allocation alive past a streaming teardown
+    if(b.staticMesh!=nullptr || b.animMesh!=nullptr) {
+      pb.ibo = b.iboBuffer();
+      pb.vbo = b.vboBuffer();
+      }
+    if(b.staticMesh!=nullptr) {
+      if(b.staticMesh->morph.index!=nullptr)
+        pb.morphId = *b.staticMesh->morph.index;
+      if(b.staticMesh->morph.samples!=nullptr)
+        pb.morph = *b.staticMesh->morph.samples;
+      }
+    if(b.mat.tex!=nullptr)
+      pb.tex = b.mat.tex->shared();
+    if(b.mat.normal!=nullptr)
+      pb.normal = b.mat.normal->shared();
+    if(b.mat.orm!=nullptr)
+      pb.orm = b.mat.orm->shared();
+    if(b.mat.hasFringe()) {
+      pb.frAlbedo = b.mat.fringe.albedo->shared();
+      pb.frNormal = b.mat.fringe.normal->shared();
+      pb.frOrm    = b.mat.fringe.orm->shared();
+      }
+    pb.fringeOn = b.mat.hasFringe();
+    pb.frames.reserve(b.mat.frames.size());
+    for(const auto* t:b.mat.frames)
+      pb.frames.push_back(t->shared());
+    pb.texAniFPSInv = b.mat.texAniFPSInv;
+    pb.frameAni     = b.mat.hasFrameAnimation();
+    p->push_back(std::move(pb));
+    }
+  pubBuckets = std::move(p);
+  curBuckets = pubBuckets.get();
+  cpuDirty   = false;
+  }
+
 DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh, const TreeBough::Page* page) {
   for(size_t i=0; i<bucketsCpu.size(); ++i) {
     auto& b = bucketsCpu[i];
@@ -73,9 +120,11 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh, 
   for(size_t i=0;i<bucketsCpu.size();++i)
     if(bucketsCpu[i].staticMesh==nullptr && bucketsCpu[i].animMesh==nullptr) {
       bucketsCpu[i] = std::move(bx);
+      cpuDirty = true;
       return Id(this,i);
       }
   bucketsCpu.emplace_back(std::move(bx));
+  cpuDirty = true;
   return Id(this, bucketsCpu.size()-1);
   }
 
@@ -92,6 +141,7 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const AnimMesh& mesh) {
 
   bucketsDurtyBit = true;
   bucketsCpu.emplace_back(std::move(bx));
+  cpuDirty = true;
   return Id(this, bucketsCpu.size()-1);
   }
 
@@ -101,6 +151,7 @@ void DrawBuckets::invalidate(const StaticMesh& mesh) {
     if(bucket.staticMesh==&mesh) {
       bucket = Bucket();
       bucketsDurtyBit = true;
+      cpuDirty = true;
       }
   }
 
@@ -318,6 +369,7 @@ void DrawBuckets::updatePrimitiveCounts(Encoder<CommandBuffer>& cmd) {
 bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   rebuiltTextureBank = false;
   currentFrame=fId;
+  publishBuckets();
   spheres.commit(cmd,fId);
   const auto generation=Resources::textureGeneration();
   if(!bucketsDurtyBit) {

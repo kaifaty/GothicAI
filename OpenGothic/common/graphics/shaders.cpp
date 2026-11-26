@@ -511,6 +511,7 @@ bool Shaders::isGi2Supported() {
   }
 
 const RenderPipeline& Shaders::impostorPipeline(bool history, bool joint) const {
+  std::lock_guard<std::mutex> guard(pipelineSync);
   auto& pipeline = impostor[history][joint];
   if(pipeline.isEmpty()) {
     RenderState state;
@@ -553,6 +554,8 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
   // skins, morphs and particles are drawn as they were
   const bool twoSided = (mat.twoSided!=Material::TwoSided::Off && t==DrawCommands::Movable);
 
+  // the whole find-or-create under the lock: a concurrent caller must not see a half-built entry
+  std::lock_guard<std::mutex> guard(pipelineSync);
   for(auto& i:materials) {
     if(i.alpha==alpha && i.type==t && i.pipelineType==pt && i.bindless==bl && i.trivial==trivial &&
        i.twoSided==twoSided && i.bough==bough)

@@ -29,20 +29,20 @@ bool DrawCommands::treeHistoryEnabled() {
   }
 
 uint32_t DrawCommands::historyClusterCount() const {
-  return uint32_t(clusters.size());
+  return uint32_t(cur->clusterCount);
   }
 
 bool DrawCommands::prepareHistory(Encoder<CommandBuffer>& enc, const Texture2d& winners, uint8_t fId) {
-  if(cmd.empty() || clusters.size()==0 || clusters.size()>=0xffffffu || maxPayload==0)
+  if(cur->cmd.empty() || cur->clusterCount==0 || cur->clusterCount>=0xffffffu || cur->maxPayload==0)
     return false;
   auto& device = Resources::device();
   if(history.dirty) {
     // The map follows capacities, not visible counts. Each block covers at most 128 consecutive
     // meshlets of one draw, so independent workgroups can compact without changing raster order.
-    std::vector<HistoryCommand> commands(cmd.size());
+    std::vector<HistoryCommand> commands(cur->cmd.size());
     uint32_t blockCount = 0;
-    for(size_t id=0; id<cmd.size(); ++id) {
-      const auto& cx = cmd[id];
+    for(size_t id=0; id<cur->cmd.size(); ++id) {
+      const auto& cx = cur->cmd[id];
       if(cx.pMain==nullptr || (cx.alpha!=Material::Solid && cx.alpha!=Material::AlphaTest) || cx.maxPayload==0)
         continue;
       if(cx.pHistoryGBuffer==nullptr || cx.pHistoryDepth==nullptr || cx.pHistoryVerify==nullptr)
@@ -77,11 +77,11 @@ bool DrawCommands::prepareHistory(Encoder<CommandBuffer>& enc, const Texture2d& 
       buffer = device.ssbo(Uninitialized, bytes);
       };
     reserve(history.compactScratch, size_t(blockCount)*5*sizeof(uint32_t));
-    reserve(history.view.visClusters, maxPayload*4*sizeof(uint32_t));
-    reserve(history.view.indirectCmd, cmd.size()*sizeof(IndirectCmd));
+    reserve(history.view.visClusters, cur->maxPayload*4*sizeof(uint32_t));
+    reserve(history.view.indirectCmd, cur->cmd.size()*sizeof(IndirectCmd));
     history.dirty = false;
     }
-  const size_t slots = (clusters.size()+1023) & ~size_t(1023);
+  const size_t slots = (cur->clusterCount+1023) & ~size_t(1023);
   if(history.status.byteSize()<slots*sizeof(uint32_t)) {
     Resources::recycle(std::move(history.status));
     history.status = device.ssbo(Uninitialized, slots*sizeof(uint32_t));
@@ -137,7 +137,7 @@ void DrawCommands::classifyHistory(Encoder<CommandBuffer>& enc, const Texture2d&
 void DrawCommands::compactHistory(Encoder<CommandBuffer>& enc, bool early) {
   auto& main = views[SceneGlobals::V_Main];
   struct Push { uint32_t phase, blockCount, commandCount, early; };
-  Push push = {0, history.blockCount, uint32_t(cmd.size()), uint32_t(early)};
+  Push push = {0, history.blockCount, uint32_t(cur->cmd.size()), uint32_t(early)};
   enc.setFramebuffer({});
   enc.setDebugMarker(early ? "HiZ-history-pack-seeds" : "HiZ-history-pack-final");
   enc.setBinding(0, main.visClusters);

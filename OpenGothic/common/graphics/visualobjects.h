@@ -122,7 +122,7 @@ class VisualObjects final {
     const DrawCommands& drawCommands() const { return drawCmd; }
     const DrawBuckets&  drawBuckets()  const { return bucketsMem; };
 
-    void preFrameUpdate ();
+    void preFrameUpdate (uint8_t fId);
     void prepareGlobals (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void postFrameupdate();
 
@@ -275,6 +275,9 @@ class VisualObjects final {
     void     freeLevelBand(Object& obj);
     uint32_t updateLevelBand(Object& obj, float height, float shadowHeight, bool shadowLevels, bool fullShadows,
                              MeshLevels::Selection& level, uint8_t& shadowLevel, bool& shadowCoarse);
+    // Builds the impostor instances of impostorDraws and uploads impostorBuffer[fId]; drawImpostors reads only
+    // the published runs and the buffer
+    void     prepareImpostors(uint8_t fId);
     void     drawImpostors(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, bool history);
     // the meshlets the object's cluster draws while visible: [first, first+count) of its bucket's mesh
     std::pair<uint32_t,uint32_t> drawnMeshlets(Object& obj);
@@ -349,6 +352,15 @@ class VisualObjects final {
     std::vector<size_t>           impostorDraws;
     std::vector<ImpostorInstance> impostorInstances;
     Tempest::StorageBuffer       impostorBuffer[Resources::MaxFramesInFlight];
+    // Published impostor runs of the frame being recorded (prepareImpostors): one per mesh, its instance range in
+    // impostorBuffer[fId], the push and the texture handles by value (ref-counted), as DrawBuckets::BucketPub
+    struct ImpostorPub {
+      Tempest::Vec4      push;
+      Tempest::Texture2d tex[3];
+      size_t             first = 0, count = 0;
+      bool               joint = false;
+      };
+    std::vector<ImpostorPub>      impostorPub[Resources::MaxFramesInFlight];
     std::unordered_set<size_t> objectsFree;
     mutable std::recursive_mutex textureSync;
     ChunkResidency*            textureResidency = nullptr;

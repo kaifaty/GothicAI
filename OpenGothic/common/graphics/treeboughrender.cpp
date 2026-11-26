@@ -314,14 +314,21 @@ void TreeBoughRender::uploadReference() {
   }
 
 void TreeBoughRender::commit() {
-  if(entries.empty())
+  if(entries.empty()) {
+    pubCommands.clear();
+    pubEntryCount = 0;
     return;
+    }
   if(dirty) {
     uploadData();
     dirty = false;
     }
   if(cpu)
     uploadReference();
+  // snapshot after upload: uploadData assigns the commands their firstPayload and builds the entry table/indirect
+  // draws from these containers, so the published copy matches what the GPU buffers of this frame hold
+  pubCommands   = commands;
+  pubEntryCount = entries.size();
   }
 
 const ComputePipeline& TreeBoughRender::cull(Encoder<CommandBuffer>& enc, bool hiZ, bool probe, bool history,
@@ -391,12 +398,12 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
     }
   enc.setPipeline(coverageRecorded ? coverageExpand : expandPipeline);
   enc.setPushData(Push{token,flags,scene.znear,1});
-  enc.dispatchThreads(std::max<size_t>(StatsCount,commands.size()));
+  enc.dispatchThreads(std::max<size_t>(StatsCount,pubCommands.size()));
   enc.setPushData(Push{token,flags,scene.znear,0});
-  enc.dispatch(entries.size());
+  enc.dispatch(pubEntryCount);
   if(Shaders::options().doMeshShading) {
     enc.setPushData(Push{token,flags,scene.znear,2});
-    enc.dispatchThreads(commands.size());
+    enc.dispatchThreads(pubCommands.size());
     }
   }
 
@@ -415,14 +422,14 @@ void TreeBoughRender::countCoverage(Encoder<CommandBuffer>& enc, const Texture2d
   }
 
 void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDraw history) {
-  for(size_t i=0; i<commands.size(); ++i) {
-    const auto& c = commands[i].draw;
+  for(size_t i=0; i<pubCommands.size(); ++i) {
+    const auto& c = pubCommands[i].draw;
     const auto pso = history==DrawCommands::HistoryDraw::Off ? c.pMain : c.pHistoryGBuffer;
     if(c.maxPayload==0 || pso==nullptr)
       continue;
     owner.setBindings(enc,c,SceneGlobals::V_Main);
     enc.setBinding(DrawCommands::L_Payload,payload);
-    const uint32_t push[] = {c.firstPayload,c.isMeshShader() ? commands[i].unit : c.maxPayload};
+    const uint32_t push[] = {c.firstPayload,c.isMeshShader() ? pubCommands[i].unit : c.maxPayload};
     enc.setPushData(push);
     enc.setPipeline(*pso);
     const size_t offset = i*sizeof(DrawCommands::IndirectCmd);
@@ -625,7 +632,7 @@ bool TreeBoughRender::diagnose(Encoder<CommandBuffer>& enc, uint8_t frame, const
   enc.dispatch(1);
   push.stage = 0;
   enc.setPushData(push);
-  enc.dispatch(entries.size());
+  enc.dispatch(pubEntryCount);
 
   if(verify)
     copyCommands(enc,slot.after);

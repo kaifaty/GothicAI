@@ -7,12 +7,12 @@
 #include <unordered_set>
 
 #include "graphics/pfx/pfxslot.h"
-#include "graphics/pfx/pfxobjects.h"
 #include "graphics/pfx/pfxmotion.h"
 #include "resources.h"
 
 class ParticleTarget;
 class ParticleFx;
+class PfxObjects;
 class VisualObjects;
 
 class PfxBucket {
@@ -78,6 +78,16 @@ class PfxBucket {
       uint32_t      colorB = 0;
       };
 
+    // Published draw state of the frame being recorded: the material and its texture handles copied by value
+    // (ref-counted), so a streaming publish that move-assigns a holder cannot change what recording binds.
+    // Built by PfxObjects::preFrameUpdate; the per-fId Draw items and the scene stay as they are.
+    struct PubDraw {
+      Material                       mat;
+      Tempest::Texture2d             tex, trl;
+      std::vector<Tempest::Texture2d> frames;
+      float                          hazeShift = 0;
+      };
+
     const ParticleFx&           decl;
     PfxObjects&                 parent;
     // the push data of main_pfx_f/_e (main.frag PushPfx); of a haze (main_pfx_x) hdrFrom is its shift and hdrInvRange
@@ -95,11 +105,15 @@ class PfxBucket {
 
     void                        preFrameUpdate(const SceneGlobals& scene, uint8_t fId);
     void                        drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene,
-                                                uint8_t fId, bool historyOwner);
-    void                        drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId, int layer);
-    void                        drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
-    void                        drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
-    void                        drawHaze       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
+                                                uint8_t fId, bool historyOwner, const PubDraw& pub);
+    void                        drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId, int layer,
+                                                const PubDraw& pub);
+    void                        drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId,
+                                                const PubDraw& pub);
+    void                        drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId,
+                                                const PubDraw& pub);
+    void                        drawHaze       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId,
+                                                const PubDraw& pub);
     bool                        hasHaze        (uint8_t fId) const;
 
     size_t                      allocEmitter();
@@ -172,7 +186,8 @@ class PfxBucket {
       };
 
     void                        drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, const Draw& itm,
-                                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl, bool historyOwner = false);
+                                           SceneGlobals::VisCamera view, Material::AlphaFunc func, bool trl, const PubDraw& pub,
+                                           bool historyOwner = false);
 
     void                        tickEmit(Block& p, ImplEmitter& emitter, uint64_t emited);
     bool                        shrink();

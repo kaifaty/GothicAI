@@ -921,13 +921,14 @@ void VisualObjects::prepareGlobals(Encoder<CommandBuffer>& enc, uint8_t fId) {
   bucketsMem.commit(enc, fId);
   }
 
-void VisualObjects::preFrameUpdate() {
+void VisualObjects::preFrameUpdate(uint8_t fId) {
   FrameProfile::Scope all(FrameProfile::Zone::VisualsPrepare);
   { FrameProfile::Scope z(FrameProfile::Zone::WindPrepare);    preFrameUpdateWind();    }
   { FrameProfile::Scope z(FrameProfile::Zone::MorphPrepare);   preFrameUpdateMorph();   }
   { FrameProfile::Scope z(FrameProfile::Zone::StrandsPrepare); preFrameUpdateStrands(); }
   { FrameProfile::Scope z(FrameProfile::Zone::TreesPrepare);   preFrameUpdateTrees();   }
   { FrameProfile::Scope z(FrameProfile::Zone::LevelsPrepare);  preFrameUpdateLevels();  }
+  prepareImpostors(fId);
   }
 
 // The wind of a tree fades with the distance (FoliageTree::fade; tree-wind.md, section 4), and a tree with less
@@ -1406,8 +1407,10 @@ void VisualObjects::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fI
   drawImpostors(cmd, fId, history!=DrawCommands::HistoryDraw::Off);
   }
 
-void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, bool history) {
-  if(impostorDraws.empty() || (DrawCommands::hiddenTypes & (1u << DrawCommands::Static))!=0)
+void VisualObjects::prepareImpostors(uint8_t fId) {
+  auto& pub = impostorPub[fId];
+  pub.clear();
+  if(impostorDraws.empty())
     return;
 
   const auto meshOf = [this](size_t id) { return objects[id].bucketId->staticMesh; };
@@ -1434,30 +1437,47 @@ void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t 
     }
   buffer.update(impostorInstances.data(), 0, bytes);
 
-  const auto sampler = Sampler::trillinear(ClampMode::ClampToEdge);
-  const auto& shaders = Shaders::inst();
-  bool joint = meshOf(impostorDraws.front())->treeBough!=nullptr;
-  cmd.setPipeline(shaders.impostorPipeline(history, joint));
-  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, buffer);
   for(size_t first=0; first<impostorDraws.size();) {
     const auto* mesh = meshOf(impostorDraws[first]);
     size_t end = first+1;
     while(end<impostorDraws.size() && meshOf(impostorDraws[end])==mesh)
       ++end;
-    if(joint!=(mesh->treeBough!=nullptr)) {
-      joint = mesh->treeBough!=nullptr;
-      cmd.setPipeline(shaders.impostorPipeline(history, joint));
-      }
+    ImpostorPub run;
+    run.joint = mesh->treeBough!=nullptr;
     const Vec3 lo = mesh->bbox.bbox[0], hi = mesh->bbox.bbox[1];
     const Vec3 center = (lo+hi)*0.5f;
-    cmd.setPushData(Vec4(center.x, center.y, center.z, (hi-lo).length()*0.5f));
-    cmd.setBinding(2, mesh->impostor.textures[0], sampler);
-    cmd.setBinding(3, mesh->impostor.textures[1], sampler);
-    if(Shaders::options().doMaterialMaps)
-      cmd.setBinding(4, mesh->impostor.textures[2], sampler);
-    cmd.draw(nullptr, 0, 6, first, end-first);
+    run.push  = Vec4(center.x, center.y, center.z, (hi-lo).length()*0.5f);
+    for(size_t t=0; t<3; ++t)
+      run.tex[t] = mesh->impostor.textures[t].shared();
+    run.first = first;
+    run.count = end-first;
+    pub.push_back(std::move(run));
     first = end;
+    }
+  }
+
+void VisualObjects::drawImpostors(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, bool history) {
+  const auto& pub = impostorPub[fId];
+  if(pub.empty() || (DrawCommands::hiddenTypes & (1u << DrawCommands::Static))!=0)
+    return;
+
+  const auto sampler = Sampler::trillinear(ClampMode::ClampToEdge);
+  const auto& shaders = Shaders::inst();
+  bool joint = pub.front().joint;
+  cmd.setPipeline(shaders.impostorPipeline(history, joint));
+  cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, impostorBuffer[fId]);
+  for(const auto& run:pub) {
+    if(joint!=run.joint) {
+      joint = run.joint;
+      cmd.setPipeline(shaders.impostorPipeline(history, joint));
+      }
+    cmd.setPushData(run.push);
+    cmd.setBinding(2, run.tex[0], sampler);
+    cmd.setBinding(3, run.tex[1], sampler);
+    if(Shaders::options().doMaterialMaps)
+      cmd.setBinding(4, run.tex[2], sampler);
+    cmd.draw(nullptr, 0, 6, run.first, run.count);
     }
   }
 
