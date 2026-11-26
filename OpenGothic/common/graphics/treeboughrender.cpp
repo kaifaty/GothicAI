@@ -433,7 +433,7 @@ void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDra
     }
   }
 
-void TreeBoughRender::withReferenceCut(Encoder<CommandBuffer>& enc, DrawCommands& commands, bool late,
+StorageBuffer TreeBoughRender::withReferenceCut(Encoder<CommandBuffer>& enc, DrawCommands& commands, bool late,
                                        const std::function<void()>& draw) {
   auto& b = *commands.boughs;
   auto& device = Resources::device();
@@ -452,19 +452,39 @@ void TreeBoughRender::withReferenceCut(Encoder<CommandBuffer>& enc, DrawCommands
   draw();
   std::swap(b.coverageHistory,fine);
   std::swap(main,copy);
-  Resources::recycle(std::move(fine));
+  // Preserve the previous cut before the live expansion advances its per-crown history.
+  const uint32_t historyWords = uint32_t(b.coverageHistory.byteSize()/sizeof(uint32_t));
+  b.copy(enc,b.coverageHistory,fine,0,historyWords,historyWords);
   Resources::recycle(std::move(copy));
+  return fine;
   }
+
+namespace {
+// The proof shader writes the 3x3 reference/live neighborhoods for the first three distinct differences.
+struct CoveragePixelOwner {
+  uint32_t id, cluster, previousAge, age, depthBits;
+  };
+struct CoverageDifference {
+  uint32_t x, y;
+  CoveragePixelOwner reference[9], live[9];
+  };
+struct CoverageResult {
+  uint32_t counts[14];
+  CoverageDifference pixels[3];
+  };
+static_assert(sizeof(CoverageDifference)==368 && offsetof(CoverageResult,pixels)==56);
+}
 
 void TreeBoughRender::compareCoverage(Encoder<CommandBuffer>& enc, DrawCommands& commands, uint8_t frame,
                                       const Texture2d& refDepth, const Texture2d& refOwners,
-                                      const Texture2d& depth, const Texture2d& owners) {
+                                      const Texture2d& depth, const Texture2d& owners, const StorageBuffer& previous,
+                                      uint32_t sample, uint32_t taaFrame, uint32_t phase) {
   auto& b = *commands.boughs;
   if(b.coverageProof.isEmpty())
     b.coverageProof = compute("tree_bough_coverage_verify.comp.sprv");
-  const uint32_t initial[7] = {};
+  const CoverageResult initial = {};
   auto& result = b.coverageProofRead[frame];
-  result = Resources::device().ssbo(BufferHeap::Readback,initial,sizeof(initial));
+  result = Resources::device().ssbo(BufferHeap::Readback,&initial,sizeof(initial));
   enc.setFramebuffer({});
   enc.setDebugMarker("Bough-coverage-verify");
   enc.setBinding(0,refDepth,Sampler::nearest());
@@ -475,7 +495,8 @@ void TreeBoughRender::compareCoverage(Encoder<CommandBuffer>& enc, DrawCommands&
   enc.setBinding(5,b.coverageHistory);
   enc.setBinding(6,result);
   enc.setBinding(7,b.coverageDispatch);
-  const uint32_t push[] = {b.expandedToken,uint32_t(b.coverageRecorded)};
+  enc.setBinding(8,previous);
+  const uint32_t push[] = {b.expandedToken,uint32_t(b.coverageRecorded),sample,taaFrame,phase};
   enc.setPushData(push);
   enc.setPipeline(b.coverageProof);
   enc.dispatchThreads(depth.size());
@@ -484,10 +505,24 @@ void TreeBoughRender::compareCoverage(Encoder<CommandBuffer>& enc, DrawCommands&
 void TreeBoughRender::readStats(Encoder<CommandBuffer>& enc, uint8_t frame, bool expanded) {
   auto& device = Resources::device();
   if(!coverageProofRead[frame].isEmpty()) {
-    uint32_t result[7] = {};
-    device.readBytes(coverageProofRead[frame],result,sizeof(result));
+    CoverageResult proof = {};
+    device.readBytes(coverageProofRead[frame],&proof,sizeof(proof));
+    const auto& result = proof.counts;
     Log::i("coverage_verify fine_pixels=",result[0]," clear_losses=",result[1]," owner_diff=",result[2],
            " depth_diff=",result[3]," coarse_age_crowns=",result[4]," count_groups=",result[5]," count_recorded=",result[6]);
+    Log::i("coverage_pair sample=",result[11]," token=",result[10]," taa_frame=",result[12]," phase=",result[13],
+           " distinct_pixels=",result[7]," promotions=",result[8]," demotions=",result[9]);
+    for(size_t i=0; i<std::min<size_t>(result[7],std::size(proof.pixels)); ++i) {
+      const auto& pixel = proof.pixels[i];
+      for(int cell=0; cell<9; ++cell) {
+        const auto& a = pixel.reference[cell];
+        const auto& b = pixel.live[cell];
+        Log::i("coverage_pixel sample=",result[11]," x=",pixel.x," y=",pixel.y," dx=",cell%3-1," dy=",cell/3-1,
+               " ref_id=",a.id," ref_cluster=",a.cluster," ref_previous_age=",a.previousAge,
+               " ref_age=",a.age," ref_depth_bits=",a.depthBits," live_id=",b.id," live_cluster=",b.cluster,
+               " live_previous_age=",b.previousAge," live_age=",b.age," live_depth_bits=",b.depthBits);
+        }
+      }
     coverageProofRead[frame] = {};
     }
   constexpr FrameProfile::Amount names[] = {FrameProfile::Amount::TreeBoughNodes,FrameProfile::Amount::TreeBoughSourceCards,

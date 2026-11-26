@@ -114,11 +114,12 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     commands.classifyHistory(cmd, *grassHiZ, quantization, true, false);
     }
   const auto mode = reset ? Draw::Unfiltered : Draw::Filtered;
+  StorageBuffer previousCoverage;
   if(coveragePair) {
     auto& owners = usesAttachment(treeHistory.referenceOwners, TextureFormat::R32U, zbuffer.size());
     view.prepareGrass(cmd, fId, *grassHiZ, reset ? 0.f : quantization);
     std::swap(diag.referenceDepth,zbuffer);
-    TreeBoughRender::withReferenceCut(cmd,commands,!reset,[&] {
+    previousCoverage = TreeBoughRender::withReferenceCut(cmd,commands,!reset,[&] {
       drawGBuffer(cmd,fId,view,mode,&owners);
       cmd.setFramebuffer({});
       });
@@ -191,10 +192,14 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     diag.valid = true;
     }
   const auto& winners = textureCast<const Texture2d&>(treeHistory.winners);
-  if(coveragePair)
+  if(coveragePair) {
+    const uint32_t taaFrame = taa.active ? taa.frame-1u : uint32_t(-1);
+    const uint32_t phase = taa.active ? taaFrame % (temporal.active ? temporal.phases : Taa::Phases) : uint32_t(-1);
     TreeBoughRender::compareCoverage(cmd,commands,fId,textureCast<const Texture2d&>(diag.referenceDepth),
                                      textureCast<const Texture2d&>(treeHistory.referenceOwners),
-                                     textureCast<const Texture2d&>(zbuffer),winners);
+                                     textureCast<const Texture2d&>(zbuffer),winners,previousCoverage,requested.number,taaFrame,phase);
+    Resources::recycle(std::move(previousCoverage));
+    }
   commands.finishHistory(cmd, winners, fId);
   treeHistory.valid = true;
   if(request) {
