@@ -47,6 +47,9 @@ layout(location = 1) in Varyings  shInp;
 #include "tree_bough_dissolve.glsl"
 #endif
 #if defined(TREE_BOUGH_CARDS)
+#ifdef TREE_COVERAGE
+layout(location = 11) flat in uint crownOwner;
+#endif
 layout(location = 7) in flat uvec3 boughFadeIn;
 layout(location = 8) in flat vec3 boughMaskIn;
 #endif
@@ -1273,6 +1276,8 @@ void main() {
 #if defined(HISTORY_OWNER)
 #if defined(HISTORY_PAYLOAD)
   outHistoryOwner = historyOwner;
+#elif defined(TREE_COVERAGE)
+  outHistoryOwner = 0x40000000u | crownOwner;
 #else
   // Opaque particles can win the pixel after a mesh and must clear its owner.
   outHistoryOwner = 0u;

@@ -1,4 +1,5 @@
 #include "staticmesh.h"
+#include "graphics/treeboughdraw.h"
 #include "loadprobe.h"
 
 #include <cassert>
@@ -299,7 +300,7 @@ void StaticMesh::initTreeHiZBoxes(const PackedMesh& mesh) {
      std::ranges::none_of(sub, [](const auto& s) { return FoliageTree::isTree(s.material.foliage); }))
     return;
 
-  if(!levels.empty() && MeshLevels::vsmFrameStatsEnabled() && MeshLevels::shadowProbePx()) {
+  if(!levels.empty() && ((MeshLevels::vsmFrameStatsEnabled() && MeshLevels::shadowProbePx()) || TreeBough::coverageEnabled())) {
     constexpr size_t stride = PackedMesh::MaxPrim*4;
     const size_t meshlets = mesh.indices8.size()/stride;
     shadowProbeTriangleEnds.resize(meshlets+1);

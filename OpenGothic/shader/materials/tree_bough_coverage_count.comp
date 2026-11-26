@@ -1,0 +1,65 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform usampler2D winners;
+layout(binding = 1, std430) readonly buffer Data { uint data[]; };
+layout(binding = 2, std430) buffer Coverage { uint history[]; };
+
+// Combine repeated owners inside each tile before accessing the global histogram.
+// A collision goes straight to its owner's bin. Every contribution is counted.
+shared uint owners[64];
+shared uint sums[64];
+
+void flushOwner(uint id, uint count) {
+  uint entry = 0u;
+  if((id >> 30u)==1u) {
+    const uint instance = id & 0x3fffffffu;
+    if(instance<data[3])
+      entry = data[data[2]+instance];
+    }
+  else if(id!=0u && id<=data[0]) {
+    entry = data[4u+id-1u];
+    }
+  if(entry!=0u)
+    atomicAdd(history[(entry-data[1])/8u*3u],count);
+  }
+
+void addOwner(uint id, uint count) {
+  if(id==0u || (id >> 31u)!=0u)
+    return;
+  const uint bin = ((id*2654435761u) >> 26u);
+  const uint key = atomicCompSwap(owners[bin],0u,id);
+  if(key==0u || key==id)
+    atomicAdd(sums[bin],count);
+  else
+    flushOwner(id,count);
+  }
+
+void main() {
+  const uint lane = gl_LocalInvocationIndex;
+  owners[lane] = 0u;
+  sums[lane] = 0u;
+  barrier();
+  const ivec2 p = ivec2(gl_GlobalInvocationID.xy)*2;
+  const ivec2 size = textureSize(winners,0);
+  if(all(lessThan(p+1,size))) {
+    const uvec4 ids = textureGather(winners,vec2(p+1)/vec2(size));
+    if(all(equal(ids,ids.xxxx)))
+      addOwner(ids.x,4u);
+    else {
+      for(int i=0; i<4; ++i)
+        addOwner(ids[i],1u);
+      }
+    }
+  else {
+    for(int y=0; y<2; ++y)
+      for(int x=0; x<2; ++x) {
+        const ivec2 xy = p+ivec2(x,y);
+        if(all(lessThan(xy,size)))
+          addOwner(texelFetch(winners,xy,0).r,1u);
+        }
+    }
+  barrier();
+  if(sums[lane]!=0u)
+    flushOwner(owners[lane],sums[lane]);
+  }

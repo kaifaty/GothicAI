@@ -9,6 +9,7 @@
 #include "settings.h"
 #include "shaders.h"
 #include "treeboughrender.h"
+#include "treeboughdraw.h"
 #include "visualobjects.h"
 
 using namespace Tempest;
@@ -175,6 +176,8 @@ void DrawCommands::sampleHistory(Encoder<CommandBuffer>& enc, const Texture2d& w
   }
 
 void DrawCommands::finishHistory(Encoder<CommandBuffer>& enc, const Texture2d& winners, uint8_t fId) {
+  if(boughExpanded && TreeBough::coverageEnabled())
+    boughs->countCoverage(enc,winners);
   enc.setDebugMarker("HiZ-history-owners");
   sampleHistory(enc, winners, 0);
   sampleHistory(enc, winners, 1);

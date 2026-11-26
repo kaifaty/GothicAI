@@ -54,6 +54,9 @@ void main() {
 #else
     bucketIdOut[laneID] = bucketId;
 #endif
+#ifdef TREE_COVERAGE
+    crownOwner[laneID] = vertTask.x;
+#endif
     boughFadeOut[laneID] = boughFade(vertTask, boughMaskOut[laneID]);
 #include "mesh_varyings.glsl"
     }

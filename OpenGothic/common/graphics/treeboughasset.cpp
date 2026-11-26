@@ -1,4 +1,6 @@
 #include "treeboughasset.h"
+#include "drawcommands.h"
+#include "treeboughdraw.h"
 
 #include <Tempest/Log>
 
@@ -409,6 +411,18 @@ bool enabled() {
     const bool ini = Settings::exists() && Settings::getI("INTERNAL","treeBoughLod")!=0;
     const bool value = MeshLevels::parse(env!=nullptr ? env : "",ini) && MeshLevels::enabled();
     Log::i("render: tree bough LOD = ",value ? "1" : "0");
+    return value;
+    }();
+  return on;
+  }
+
+bool coverageEnabled() {
+  static const bool on = [] {
+    const char* env = std::getenv("OPENGOTHIC_TREE_COVERAGE_LOD");
+    const bool ini = Settings::exists() && Settings::getI("INTERNAL","coverageLod")!=0;
+    const bool value = MeshLevels::parse(env ? env : "",ini) && enabled() && !cpuEnabled() &&
+                       DrawCommands::treeHistoryEnabled();
+    Log::i("render: tree coverage LOD = ",value ? "1" : "0");
     return value;
     }();
   return on;

@@ -23,6 +23,7 @@ class TreeBoughRender {
                                          bool history, bool ordered, uint32_t& token);
     const Tempest::ComputePipeline& historyClassify();
     void expand(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint32_t token, bool lateHiZ);
+    void countCoverage(Tempest::Encoder<Tempest::CommandBuffer>& enc, const Tempest::Texture2d& winners);
     void draw(Tempest::Encoder<Tempest::CommandBuffer>& enc, DrawCommands::HistoryDraw history);
     void readStats(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, bool expanded);
     bool diagnose(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, const Tempest::Texture2d& depth,
@@ -82,6 +83,8 @@ class TreeBoughRender {
     std::array<bool,Resources::MaxFramesInFlight> readPending = {};
     Tempest::ComputePipeline cullPipelines[4][2];
     Tempest::ComputePipeline expandPipeline, copyPipeline, historyPipeline;
+    Tempest::ComputePipeline coverageExpand, coverageCount;
+    Tempest::StorageBuffer coverageHistory;
     Tempest::ComputePipeline diagnosticPipeline;
     Tempest::StorageBuffer diagnosticCounts;
     std::array<DiagnosticRead,Resources::MaxFramesInFlight> diagnosticRead;

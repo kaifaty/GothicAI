@@ -25,6 +25,26 @@ layout(push_constant, std430) uniform Push {
 
 #include "materials/tree_bough_cut.glsl"
 
+#ifdef TREE_COVERAGE
+#include "tree_coverage_lod.glsl"
+layout(binding = 11, std430) buffer Coverage { uint coverageHistory[]; };
+shared uint age;
+
+float crownBoxPixels(mat4x3 object, vec3 low, vec3 high) {
+  vec2 lo = vec2(1.0), hi = vec2(-1.0);
+  for(uint i=0u; i<8u; ++i) {
+    const vec3 corner = mix(low,high,notEqual(uvec3(i) & uvec3(1,2,4),uvec3(0)));
+    const vec4 clip = scene.viewProject*vec4(object*vec4(corner,1),1);
+    if(clip.w<=push.nearZ)
+      return float(scene.screenRes.x)*float(scene.screenRes.y);
+    lo = min(lo,clip.xy/clip.w);
+    hi = max(hi,clip.xy/clip.w);
+    }
+  const vec2 size = max(vec2(0),clamp(hi,-1.0,1.0)-clamp(lo,-1.0,1.0))*0.5*vec2(scene.screenRes);
+  return size.x*size.y;
+  }
+#endif
+
 // The state prefix matches TreeBoughRender::readStats. Height is a maximum; the other counters are sums.
 const uint BoughStatsSumCount = 7u;
 const uint BoughStatsCount = BoughStatsSumCount + 1u;
@@ -135,6 +155,18 @@ void main() {
   const uint sliceFirst = min(lane*slice, nodeCount), sliceLast = min(sliceFirst+slice, nodeCount);
 
   const bool useReference = (push.flags & 1u)!=0u;
+#ifdef TREE_COVERAGE
+  if(lane==0u) {
+    const uint at = gl_WorkGroupID.x*3u;
+    const bool consecutive = (push.flags & 8u)!=0u && coverageHistory[at+2u]!=0u &&
+                             coverageHistory[at+2u]+2u==push.token;
+    const float pixels = crownBoxPixels(mat4x3(x,y,z,origin),readVec(asset+12u),readVec(asset+15u));
+    age = coverageAge(coverageHistory[at+1u],coverageHistory[at],pixels,consecutive);
+    coverageHistory[at] = 0u;
+    coverageHistory[at+1u] = age;
+    coverageHistory[at+2u] = push.token;
+    }
+#endif
   if(lane==0u)
     hasCompact = useReference ? reference[ref] : 0u;
   if((push.flags & 2u)!=0u) {
@@ -160,18 +192,36 @@ void main() {
   if(hasCompact==0u) {
     // No node has been merged and no band participates. The old full canopy is more compact.
     const uint command = data[entry+1u] & 0xffffu;
+#ifdef TREE_COVERAGE
+    const uint level = age==CoverageLowFrames ? data[entry+7u] : 0u;
+    const uint first = level!=0u ? data[level] : data[entry+2u];
+    const uint count = level!=0u ? data[level+1u] : data[entry+3u];
+#else
     const uint first = data[entry+2u], count = data[entry+3u];
+#endif
     if(lane==0u) {
       mainOffset = mainCmd[command].writeOffset + atomicAdd(mainCmd[command].instanceCount, count);
       if((push.flags & 2u)!=0u) {
+#ifdef TREE_COVERAGE
+        if(level!=0u)
+          atomicAdd(state[3],data[level+2u]);
+        else {
+#endif
         atomicAdd(state[0], data[asset+5u]);
         atomicAdd(state[1], data[asset+5u]);
         atomicAdd(state[3], data[asset+6u]);
+#ifdef TREE_COVERAGE
+          }
+#endif
         }
       }
     barrier();
     const uint bucket = cluster.bucketId_commandId >> 16u;
+#ifdef TREE_COVERAGE
+    const uint probeId = clusterId+1u;
+#else
     const uint probeId = (push.flags & 4u)!=0u ? clusterId : 0u;
+#endif
     for(uint i=lane; i<count; i+=gl_WorkGroupSize.x)
       mainPayload[mainOffset+i] = uvec4(instanceId, first+i, bucket, probeId);
     return;
@@ -185,6 +235,9 @@ void main() {
       }
     }
   else {
+#ifdef TREE_COVERAGE
+    projection = coverageCut(projection,age);
+#endif
     boughWalkSlice(sliceFirst, sliceLast, projection);
     }
 

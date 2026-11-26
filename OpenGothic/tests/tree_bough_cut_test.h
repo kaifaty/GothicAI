@@ -312,6 +312,10 @@ void treeBoughCutCases() {
   require(pipeline.sizeofBuffer(0, 2) == 2 * sizeof(Node), "tree bough node layout on GPU");
   require(pipeline.sizeofBuffer(1, 2) == 2 * sizeof(View), "tree bough projection layout on GPU");
 
+  const auto coverageViews = views;
+  views.insert(views.end(),coverageViews.begin(),coverageViews.end());
+  const auto coverageJoints = jointWeights;
+  jointWeights.insert(jointWeights.end(),coverageJoints.begin(),coverageJoints.end());
   const size_t stride = asset.nodes.size() + 1;
   std::vector<std::array<uint32_t, 4>> cuts(stride * views.size());
   const auto nodes = device.ssbo(asset.nodes);
@@ -342,6 +346,18 @@ void treeBoughCutCases() {
     const auto& view = views[sample].projection;
     const auto gpuCut = std::span(cuts).subspan(sample * stride, stride);
     const auto label = "tree bough cut at " + std::to_string(heights[sample]) + " px";
+    auto expected = view;
+    if(sample%6==2 || sample%6==5)
+      expected.focalScale *= 0.25f;
+    select(asset,expected,selected);
+    const auto biased = std::span(cuts).subspan((heights.size()+sample)*stride,stride);
+    require(biased[0][0]==selected.size() && biased[0][2]==0,label+" coverage cut count or mask differs");
+    for(size_t i=0; i<selected.size(); ++i) {
+      const auto& gpu = biased[i+1];
+      require(gpu[0]==selected[i].node && gpu[1]==selected[i].transition &&
+              std::abs(std::bit_cast<float>(gpu[2])-selected[i].weight)<0.0001f,
+              label+" coverage age, node order or transition differs");
+      }
     select(asset, view, selected);
     require(gpuCut[0][0] == selected.size(), label + " count differs on GPU");
     require(gpuCut[0][2] == 0, label + " two fade sides disagree on complementary coverage");

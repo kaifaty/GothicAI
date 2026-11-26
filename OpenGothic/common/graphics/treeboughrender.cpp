@@ -227,6 +227,16 @@ void TreeBoughRender::uploadData() {
       }
     asset.offset = base;
     }
+  // Full GLB winners carry cluster+1. Compact draws carry the instance slot. Both
+  // maps lead to the same record and are rebuilt with the resident crown table.
+  if(TreeBough::coverageEnabled()) {
+    words[2] = uint32_t(words.size());
+    for(const auto& [cluster,v]:entries)
+      words[3] = std::max(words[3], owner.clusters[cluster].instanceId+1u);
+    words.resize(words.size()+words[3]);
+    Resources::recycle(std::move(coverageHistory));
+    coverageHistory = device.ssbo(std::vector<uint32_t>(entries.size()*3));
+    }
   uint32_t entry = entryBase;
   uint32_t stateOffset = StatsCount;
   referenceSize = 0;
@@ -238,6 +248,17 @@ void TreeBoughRender::uploadData() {
     const uint32_t record[] = {cluster,v.commands,v.first,v.count,assets.at(v.mesh).offset,
                                stateOffset++,v.referenceOffset,0u};
     std::copy_n(record,8,words.data()+entry);
+    if(TreeBough::coverageEnabled()) {
+      words[words[2]+owner.clusters[cluster].instanceId] = entry;
+      const auto& mesh = *v.mesh;
+      const auto& sub = mesh.sub[mesh.treeBough->sourceSub];
+      const auto level = std::min<size_t>(2,mesh.levels.size());
+      const auto [first,count] = mesh.levelMeshlets(sub.iboOffset,sub.iboLength,level);
+      if(level!=0 && count!=0 && count<=v.count && first!=v.first) {
+        words[entry+7u] = uint32_t(words.size());
+        words.insert(words.end(),{first,count,mesh.shadowProbeTriangles(first,count)});
+        }
+      }
     entry += 8u;
     }
   Resources::recycle(std::move(data));
@@ -353,7 +374,13 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   enc.setBinding(8,indirect);
   enc.setBinding(9,payload);
   enc.setBinding(10,lateHiZ ? owner.history.status : data);
-  enc.setPipeline(expandPipeline);
+  const bool track = TreeBough::coverageEnabled() && owner.boughHistoryToken!=0;
+  if(track) {
+    if(coverageExpand.isEmpty())
+      coverageExpand = compute("tree_bough_coverage_expand.comp.sprv");
+    enc.setBinding(11,coverageHistory);
+    }
+  enc.setPipeline(track ? coverageExpand : expandPipeline);
   enc.setPushData(Push{token,flags,scene.znear,1});
   enc.dispatchThreads(std::max<size_t>(StatsCount,commands.size()));
   enc.setPushData(Push{token,flags,scene.znear,0});
@@ -362,6 +389,18 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
     enc.setPushData(Push{token,flags,scene.znear,2});
     enc.dispatchThreads(commands.size());
     }
+  }
+
+void TreeBoughRender::countCoverage(Encoder<CommandBuffer>& enc, const Texture2d& winners) {
+  if(coverageCount.isEmpty())
+    coverageCount = compute("tree_bough_coverage_count.comp.sprv");
+  enc.setFramebuffer({});
+  enc.setDebugMarker("Bough-coverage-count");
+  enc.setBinding(0,winners,Sampler::nearest());
+  enc.setBinding(1,data);
+  enc.setBinding(2,coverageHistory);
+  enc.setPipeline(coverageCount);
+  enc.dispatchThreads((winners.w()+1)/2,(winners.h()+1)/2);
   }
 
 void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDraw history) {
