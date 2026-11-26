@@ -1225,13 +1225,13 @@ void VisualObjects::preFrameUpdateLevels() {
       if(probeChanged)
         shadowCommand |= DrawClusters::ShadowProbeChanged;
       }
-    const auto countInView = obj.visible && !nanite ? mesh->levelMeshlets(obj.iboOff,obj.iboLen,level.glb).second : 0u;
-    if(level==obj.level && c.commandId==command && shadowLevel==obj.shadowLevel && c.meshletCount==countInView &&
-       c.shadowCommandId==shadowCommand)
+    if(level==obj.level && c.commandId==command && shadowLevel==obj.shadowLevel && c.shadowCommandId==shadowCommand &&
+       (nanite ? c.meshletCount==0 : c.meshletCount!=0 || !obj.visible || drawnMeshlets(obj).second==0))
       continue;
     obj.level = level;
     obj.shadowLevel = shadowLevel;
     const auto range = drawnMeshlets(obj);
+    const auto countInView = obj.visible && !nanite ? range.second : 0u;
     if(c.commandId!=command || c.firstMeshlet!=range.first || c.meshletCount!=countInView) {
       constexpr auto typeMask = DrawClusters::HistoryStatic;
       c.historyGeneration = (c.historyGeneration & typeMask) | ((c.historyGeneration+1) & ~typeMask);

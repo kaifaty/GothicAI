@@ -8,7 +8,7 @@ layout(set=0, binding=2) uniform sampler2D referenceDepth;
 layout(set=0, binding=3) uniform sampler2D actualDepth;
 layout(set=0, binding=4) uniform sampler2D referenceDiffuse;
 layout(set=0, binding=5) uniform sampler2D actualDiffuse;
-layout(set=0, binding=6, std430) buffer TreeVerification { uint results[8]; };
+layout(set=0, binding=6, std430) buffer TreeVerification { uint results[16]; };
 
 // There are at most 64 contributions to each byte in the group.
 shared uvec2 counts[64];
@@ -22,17 +22,26 @@ void main() {
     const uvec2 expected = texelFetch(referenceVisibility, pixel, 0).rg;
     const uvec2 actual = texelFetch(actualVisibility, pixel, 0).rg;
     const bool owner = any(notEqual(expected, actual));
-    const bool depth = floatBitsToUint(texelFetch(referenceDepth, pixel, 0).r)
-                       != floatBitsToUint(texelFetch(actualDepth, pixel, 0).r);
+    const uint expectedDepth = floatBitsToUint(texelFetch(referenceDepth, pixel, 0).r);
+    const uint observedDepth = floatBitsToUint(texelFetch(actualDepth, pixel, 0).r);
+    const bool depth = expectedDepth != observedDepth;
     // The reference resolves into its own attachments. World pixels retain
     // the shared world G-buffer and have no material result in this copy.
-    const bool flags = expected.x != 0u && actual.x != 0u &&
-                       uint(round(texelFetch(referenceDiffuse, pixel, 0).a*255.0))
-                       != uint(round(texelFetch(actualDiffuse, pixel, 0).a*255.0));
+    const uint expectedFlags = expected.x == 0u ? 0u : uint(round(texelFetch(referenceDiffuse, pixel, 0).a*255.0));
+    const uint observedFlags = actual.x == 0u ? 0u : uint(round(texelFetch(actualDiffuse, pixel, 0).a*255.0));
+    const bool flags = expected.x != 0u && actual.x != 0u && expectedFlags != observedFlags;
     count.x = 1u | (uint(owner && expected.x != 0u) << 8u) | (uint(owner) << 16u) | (uint(depth) << 24u);
     count.y = uint(flags) | (uint(owner && !depth) << 8u) | (uint(expected.x == 0u && actual.x != 0u) << 16u);
-    if(owner || depth || flags)
-      atomicCompSwap(results[7], 0u, uint(pixel.x + pixel.y*size.x) + 1u);
+    if((owner || depth || flags) && atomicCompSwap(results[7], 0u, uint(pixel.x + pixel.y*size.x) + 1u) == 0u) {
+      results[8] = expected.x;
+      results[9] = expected.y;
+      results[10] = actual.x;
+      results[11] = actual.y;
+      results[12] = expectedDepth;
+      results[13] = observedDepth;
+      results[14] = expectedFlags;
+      results[15] = observedFlags;
+      }
     }
   counts[lane] = count;
   barrier();

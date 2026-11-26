@@ -274,7 +274,8 @@ bool enabled() {
     const auto& options = Shaders::options();
     const auto& device = Resources::device().properties();
     const size_t attachments = options.doMaterialMaps ? 5 : 4;
-    const bool supported = options.doMeshShading && options.doBindless && device.meshlets.taskShader &&
+    const bool supported = options.doMeshShading && options.doBindless && device.meshlets.taskShader && device.storeAndAtomicVs &&
+                           device.render.maxClipCullDistances >= 5 &&
                            device.render.maxColorAttachments >= attachments && device.hasAttachFormat(TextureFormat::RG32U) &&
                            device.hasSamplerFormat(TextureFormat::RG32U) && device.hasStorageFormat(TextureFormat::R32F) &&
                            device.hasSamplerFormat(TextureFormat::R32F);

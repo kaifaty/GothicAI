@@ -22,7 +22,7 @@ namespace {
 constexpr uint32_t SelectWidth = 128;
 constexpr uint32_t MaxMeshGroups = 32768;
 constexpr uint32_t StatsCount = 7;
-constexpr uint32_t VerifyCount = 8;
+constexpr uint32_t VerifyCount = 16;
 constexpr uint32_t ShadowChunk = 65536;
 constexpr uint32_t ShadowCapacity = 64*ShadowChunk;
 
@@ -83,6 +83,8 @@ void Renderer::readTreeNaniteVerification(uint8_t fId) {
          ",\"segment\":\"",ns.verifySegment[fId],"\",\"tested_pixels\":",values[0],",\"lost_pixels\":",values[1],
          ",\"depth_mismatches\":",values[3],",\"id_mismatches\":",values[2],",\"flags_mismatches\":",values[4],
          ",\"tie_mismatches\":",values[5],",\"gained_pixels\":",values[6],",\"first_bad_pixel\":",values[7],
+         ",\"reference_id\":[",values[8],",",values[9],"],\"actual_id\":[",values[10],",",values[11],"]",
+         ",\"depth_bits\":[",values[12],",",values[13],"],\"material_flags\":[",values[14],",",values[15],"]",
          ",\"passed\":",passed ? "true}" : "false}");
   ns.verifyTick[fId] = 0;
   }
