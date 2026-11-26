@@ -91,4 +91,4 @@
 
 Дешёвый дальний путь (графовое движение по waynet, cadence, LOD поз), на котором суточный паритет держит ~1000 NPC при 100× реального времени, — не то, что меряет этот бенч: одновременный старт всего населения вне waynet отправляет всех в физическое движение и в очереди за общие точки. Это худший случай «жизни», а не типичный. Возможные следующие шаги (отдельные задачи, по решению пользователя): разложение 20 с по зонам frameprofile (движение / восприятие / брони), вариант спавна точно по waynet (дешёвый графовый путь), разбор памяти 150 КБ/NPC.
 
-Артефакты: `.bench-out/ladder-10k-c/` (stats start/end, bench.log, game.log, report), `.bench-out/ladder-30k/` (частичный), `.bench-out/sanity2/`; журнал gq dev-ubuntu `~/gothic-ai/queue/journal.jsonl` (memory_peak заявок).
+Артефакты: `/Users/kaifat/.local/share/gothic-ai-main/npc-scale-bench/` (`ladder-10k-c/` — stats start/end, bench.log, game.log, report; `ladder-30k/` — частичный; `ladder-10k/`, `ladder-10k-b/` — заходы 1–2; `sanity2/`; варианты сценариев); журнал gq dev-ubuntu `~/gothic-ai/queue/journal.jsonl` (memory_peak заявок).
