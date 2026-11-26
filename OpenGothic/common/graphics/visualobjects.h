@@ -330,6 +330,7 @@ class VisualObjects final {
 
     std::vector<Object>        objects;
     std::unordered_set<size_t> objectsWind;
+    std::vector<size_t>        windIds; // snapshot of objectsWind for the parallel pass
     std::unordered_set<size_t> objectsMorph;
     std::unordered_set<size_t> objectsStrand;
     std::unordered_set<size_t> objectsTree;

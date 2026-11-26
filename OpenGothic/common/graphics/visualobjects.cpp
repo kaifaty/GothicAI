@@ -22,6 +22,8 @@
 #include "loadprobe.h"
 #include "physics/worldwind.h"
 #include "shaders.h"
+#include "utils/workers.h"
+#include <atomic>
 
 using namespace Tempest;
 
@@ -920,11 +922,12 @@ void VisualObjects::prepareGlobals(Encoder<CommandBuffer>& enc, uint8_t fId) {
   }
 
 void VisualObjects::preFrameUpdate() {
-  preFrameUpdateWind();
-  preFrameUpdateMorph();
-  preFrameUpdateStrands();
-  preFrameUpdateTrees();
-  preFrameUpdateLevels();
+  FrameProfile::Scope all(FrameProfile::Zone::VisualsPrepare);
+  { FrameProfile::Scope z(FrameProfile::Zone::WindPrepare);    preFrameUpdateWind();    }
+  { FrameProfile::Scope z(FrameProfile::Zone::MorphPrepare);   preFrameUpdateMorph();   }
+  { FrameProfile::Scope z(FrameProfile::Zone::StrandsPrepare); preFrameUpdateStrands(); }
+  { FrameProfile::Scope z(FrameProfile::Zone::TreesPrepare);   preFrameUpdateTrees();   }
+  { FrameProfile::Scope z(FrameProfile::Zone::LevelsPrepare);  preFrameUpdateLevels();  }
   }
 
 // The wind of a tree fades with the distance (FoliageTree::fade; tree-wind.md, section 4), and a tree with less
@@ -1208,11 +1211,19 @@ void VisualObjects::logVsmShadowProbe(uint64_t frameNo) const {
 // to catch up. The test is the animation LOD's conservative one (world/animationlod.h): the main frustum, both
 // shadow cascades and a camera radius, the sphere grown by the wave amplitude and a margin. A cleared shadow
 // frustum rejects everything. OPENGOTHIC_WIND_LOD=0 computes every object every frame, as before.
+// OPENGOTHIC_WIND_PARALLEL=0 keeps the loop on the caller; by default the objects are dealt to the worker pool:
+// the matrix is pure, and the writes of updateInstance are disjoint per object (instance slots, cluster spheres)
+// or atomic (the dirty bits, the bough transforms), so the result does not depend on the order; the join orders
+// the writes before the storage commit.
 void VisualObjects::preFrameUpdateWind() {
   if(objectsWind.empty())
     return;
   static const bool lod = []{
     const char* e = std::getenv("OPENGOTHIC_WIND_LOD");
+    return e==nullptr || e[0]!='0';
+    }();
+  static const bool par = []{
+    const char* e = std::getenv("OPENGOTHIC_WIND_PARALLEL");
     return e==nullptr || e[0]!='0';
     }();
   constexpr float Margin       = 100.f;   // cm, on top of the wave amplitude
@@ -1221,8 +1232,8 @@ void VisualObjects::preFrameUpdateWind() {
   const auto& sh0  = scene.frustrum[SceneGlobals::V_Shadow0];
   const auto& sh1  = scene.frustrum[SceneGlobals::V_Shadow1];
   const Vec3  cam  = scene.camPos();
-  uint64_t computed = 0, skipped = 0;
-  for(auto id:objectsWind) {
+  std::atomic<uint64_t> computed{0}, skipped{0};
+  auto work = [&](size_t id) {
     auto& object = objects[id];
     if(lod) {
       const auto* mesh = object.bucketId->staticMesh;
@@ -1237,8 +1248,8 @@ void VisualObjects::preFrameUpdateWind() {
         const float r = mesh->bbox.rConservative*scale + object.bucketId->mat.waveMaxAmplitude + Margin;
         const bool near = (middle-cam).quadLength() < CameraRadius*CameraRadius;
         if(!near && !main.testPoint(middle,r) && !sh0.testPoint(middle,r) && !sh1.testPoint(middle,r)) {
-          ++skipped;
-          continue;
+          skipped.fetch_add(1,std::memory_order_relaxed);
+          return;
           }
         }
       }
@@ -1246,10 +1257,17 @@ void VisualObjects::preFrameUpdateWind() {
                                             scene.zWindEnabled, object.wind, object.windIntensity,
                                             scene.windScale, scene.legacyWind);
     updateInstance(id, &position);
-    ++computed;
+    computed.fetch_add(1,std::memory_order_relaxed);
+    };
+  if(par) {
+    windIds.assign(objectsWind.begin(),objectsWind.end());
+    Workers::parallelFor(windIds,work);
+    } else {
+    for(auto id:objectsWind)
+      work(id);
     }
-  FrameProfile::add(FrameProfile::Amount::WindComputed,computed);
-  FrameProfile::add(FrameProfile::Amount::WindSkipped,skipped);
+  FrameProfile::add(FrameProfile::Amount::WindComputed,computed.load());
+  FrameProfile::add(FrameProfile::Amount::WindSkipped,skipped.load());
   }
 
 // Levels of detail of strands (reports/content/2026-11-npc-hair/lod.md). A hair is thinner than a pixel, so the

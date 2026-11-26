@@ -962,7 +962,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
       });
     }
 
-  prepareUniforms(wview);
+  { FrameProfile::Scope z(FrameProfile::Zone::PrepareUniforms); prepareUniforms(wview); }
   wview.preFrameUpdate(camera, tickCount, fId);
   wview.prepareGlobals(cmd,fId);
 
