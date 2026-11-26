@@ -16,6 +16,7 @@ import fir_tree
 import numpy as np
 import shapely
 import tree_glb
+import tree_prefix
 from PIL import Image
 from scipy.ndimage import gaussian_filter
 from shapely.geometry import Polygon
@@ -93,6 +94,44 @@ def rig(tree: fir_tree.Tree):
         card_bind[first:first + card['count']] = (*skin, 0)
         card_bind[first, 3] = 1
     return bones, bark, card_bind
+
+
+def card_signature(part, start, end):
+    return tuple(part[name][start:end].tobytes() for name in ('uv', 'normal', 'colour'))
+
+
+def source_cards(tree, source, level, starts):
+    by_key = {card_signature(source, card['first'], card['first'] + card['count']): card
+              for card in tree.cards}
+    if len(by_key) != len(tree.cards):
+        raise ValueError('The reference needs a unique attribute signature for every card')
+    try:
+        return [by_key[card_signature(level, start, end)]
+                for start, end in zip(starts, np.r_[starts[1:], len(level['position'])])]
+    except KeyError as error:
+        raise ValueError('The far level contains a card with no source foliage binding') from error
+
+
+def bind_card_level(tree, source, skin, level):
+    """Recover exact source-card bindings from the attributes preserved by design_level."""
+    source_bark, source_leaves = source
+    bark_skin, leaf_skin = skin
+    bark, foliage = level
+    if (bark['name'], foliage['name']) != (source_bark['name'], source_leaves['name']):
+        raise ValueError('The far level must use the accepted bark and foliage materials')
+    wood_at = {tuple(point): joints for point, joints in zip(source_bark['position'], bark_skin)}
+    starts, by_vertex, _ = tree_prefix.cards(foliage)
+    cards = source_cards(tree, source_leaves, foliage, starts)
+    bindings = np.empty((len(foliage['position']), 4), np.uint16)
+    try:
+        bark_bindings = np.stack([wood_at[tuple(point)] for point in bark['position']])
+    except KeyError as error:
+        raise ValueError('The far level contains a vertex with no source bark binding') from error
+    source_starts = np.asarray([card['first'] for card in cards])
+    bindings[:, :3] = leaf_skin[source_starts[by_vertex], :3]
+    bindings[:, 3] = 0
+    bindings[starts, 3] = 1
+    return np.concatenate((bark_bindings, bindings))
 
 
 def contours(alpha, step, coverage):
@@ -251,6 +290,8 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--step', type=int, default=24, help='base atlas texel step for the opaque shoot contours')
     parser.add_argument('--coverage', type=float, default=1., help='fraction of the original integrated alpha to preserve')
+    parser.add_argument('--card-level', type=Path, action='append', default=[],
+                        help='write the shared wind rig for one accepted card LOD GLB')
     args = parser.parse_args()
     if args.step < 2 or not 0. < args.coverage < math.inf:
         parser.error('step must be at least 2 texels and coverage must be finite and positive')
@@ -270,6 +311,10 @@ def main():
     (args.output / 'geometry-rig.json').write_text(json.dumps(meta, separators=(',', ':')) + '\n')
     (args.output / 'cards-rig.json').write_text(json.dumps(dict(meta, vertices=np.concatenate((bark, cards)).tolist()),
                                                          separators=(',', ':')) + '\n')
+    for path in args.card_level:
+        weights = bind_card_level(tree, parts, (bark, cards), tree_glb.read(path))
+        (args.output / f'{path.stem}-rig.json').write_text(
+            json.dumps(dict(meta, vertices=weights.tolist()), separators=(',', ':')) + '\n')
     parts[0]['skin'] = bark
     crown, refined = opaque_crown(parts[1], tree, cards, alpha, config['atlas'], args.step, args.coverage)
     vertices, triangles = write_mesh(args.output / 'fir-a.firg', [parts[0], crown])

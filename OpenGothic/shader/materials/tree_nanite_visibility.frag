@@ -5,6 +5,9 @@
 #include "tree_nanite_geometry.glsl"
 
 #if defined(TREE_WIND)
+#if !defined(TREE_SHADOW)
+#include "tree_nanite_level_mask.glsl"
+#endif
 layout(location=0) perprimitiveEXT in flat uint treeLayer;
 layout(location=2) in vec2 treeUv;
 layout(set=0, binding=5) uniform sampler2DArray treeAlbedo;
@@ -18,8 +21,13 @@ layout(location=0) out uvec2 outVisibility;
 
 void main() {
 #if defined(TREE_WIND)
-  if(frame.control.w != 0u && treeLayer == 1u && texture(treeAlbedo, vec3(treeUv, float(treeLayer))).a < 0.5)
+  const uint layer = treeLayer & 1u;
+  if(frame.control.w != 0u && layer == 1u && texture(treeAlbedo, vec3(treeUv, float(layer))).a < 0.5)
     discard;
+#if !defined(TREE_SHADOW)
+  if(!treeLevelCovers(treeLayer >> 1u, gl_FragCoord.xy))
+    discard;
+#endif
 #endif
 #if !defined(TREE_SHADOW)
   outVisibility = treeVisibility(rasterOwner.x, rasterOwner.y, gl_FrontFacing);

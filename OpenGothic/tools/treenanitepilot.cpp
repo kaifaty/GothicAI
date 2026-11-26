@@ -5,6 +5,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <string_view>
 
@@ -47,7 +48,7 @@ bool viaVisibility(Mode mode) {
 class Renderer {
   public:
     void setup(const Scene& scene, const std::string& shaderDir, std::string_view mode, std::ostream& out,
-               const std::filesystem::path& textureDir = {}, bool cards = false) {
+               const std::filesystem::path& textureDir = {}, bool cards = false, bool lod = false) {
       const bool verify = mode == "verify";
       const bool route = mode == "route";
       gpu.open(route);
@@ -106,6 +107,11 @@ class Renderer {
         colorImage[16] = depth;
         colorImage[17] = shadowDepth;
         colorImage[18] = gbuffer[2];
+        constexpr std::array atlasFiles{"impostor-albedo.rgba", "impostor-surface.rgba", "impostor-orm.rgba"};
+        for(size_t i = 0; i < atlasFiles.size(); ++i)
+          colorImage[19 + i] = lod ? routeTexture(textureDir / atlasFiles[i], 1536u,
+                                         i == 0 ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM, 1u, 5u) :
+                                     makeTexture(1, int(i));
       } else {
         const auto materials = std::max(2u, uint32_t(scene.materials.size()));
         colorImage[5] = makeTexture(materials, 0);
@@ -160,7 +166,12 @@ class Renderer {
       gpu.deviceJson(out, "resident_with_diagnostics");
     }
 
-    void upload(const Submission& submission, const RouteUniform* route = nullptr) {
+    void upload(const Submission& submission) {
+      beginUpload(submission, nullptr);
+      gpu.submit();
+    }
+
+    void beginUpload(const Submission& submission, const RouteUniform* route) {
       const auto drawBytes = submission.draws.size() * sizeof(DrawRecord);
       const auto instanceBytes = submission.instances.size() * sizeof(Instance);
       if(drawBytes > data[3].size || instanceBytes > data[4].size)
@@ -181,20 +192,18 @@ class Renderer {
       copy(submission.draws.data(), drawBytes, 0, data[3]);
       copy(submission.instances.data(), instanceBytes, data[3].size, data[4]);
       uploadBarrier();
-      gpu.submit();
     }
 
-    void drawRoute(const RouteFrame& route, std::vector<uint8_t>& rgb) {
-      upload(route.shadow, &route.uniform);
-      gpu.begin();
+    void drawRoute(const Scene& scene, RouteFrame& route, std::vector<uint8_t>& rgb) {
+      beginUpload(route.shadow, &route.uniform);
       computePose(route.view.frame.control[2]);
       clearDepth(shadowDepth);
       render({}, &shadowDepth, shadow, &route.shadow);
       depthSampleReady(shadowDepth);
       gpu.submit();
 
-      upload(route.view, &route.uniform);
-      gpu.begin();
+      scene.appendContourDraws(route, static_cast<const Pose*>(data[12].map));
+      beginUpload(route.view, &route.uniform);
       commonClear();
       clearColor(visibility, {});
       colorReady(visibility);
@@ -386,19 +395,20 @@ class Renderer {
       return image;
     }
 
-    Image routeTexture(const std::filesystem::path& path, uint32_t size, VkFormat format) {
-      constexpr uint32_t Layers = 2;
-      const auto mips = uint32_t(std::bit_width(size));
+    Image routeTexture(const std::filesystem::path& path, uint32_t size, VkFormat format,
+                       uint32_t layers = 2, uint32_t mips = 0) {
+      if(mips == 0)
+        mips = uint32_t(std::bit_width(size));
       std::vector<VkBufferImageCopy> copies;
       size_t bytes = 0;
       for(uint32_t mip = 0; mip < mips; ++mip) {
         const uint32_t side = size >> mip;
         VkBufferImageCopy copy{};
         copy.bufferOffset = bytes;
-        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, Layers};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, layers};
         copy.imageExtent = {side, side, 1};
         copies.push_back(copy);
-        bytes += size_t(side) * side * 4 * Layers;
+        bytes += size_t(side) * side * 4 * layers;
       }
       std::vector<uint8_t> texels(bytes);
       std::ifstream stream(path, std::ios::binary);
@@ -406,7 +416,7 @@ class Renderer {
          stream.peek() != std::ifstream::traits_type::eof())
         throw std::runtime_error("Invalid route texture size: " + path.string());
       auto image = gpu.image(format, size, size, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                             Layers, mips);
+                             layers, mips);
       uploadTexture(image, texels, copies);
       return image;
     }
@@ -432,7 +442,7 @@ class Renderer {
       std::vector types{ssbo, ssbo, ssbo, ssbo, ssbo, sample, sample,
                         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sample, sample, ssbo};
       if(route)
-        types.insert(types.end(), {ssbo, ssbo, ssbo, sample, sample, sample, sample, sample});
+        types.insert(types.end(), {ssbo, ssbo, ssbo, sample, sample, sample, sample, sample, sample, sample, sample});
       gpu.descriptors(types);
       const auto linear = gpu.sampler(true);
       const auto nearest = gpu.sampler(false);
@@ -443,7 +453,7 @@ class Renderer {
         write.descriptorCount = 1;
         write.descriptorType = types[i];
         VkDescriptorBufferInfo buffer{data[i].handle, 0, data[i].size};
-        VkDescriptorImageInfo image{i == 6 || i >= 14 ? nearest : linear, colorImage[i].view,
+        VkDescriptorImageInfo image{i == 6 || (i >= 14 && i <= 18) ? nearest : linear, colorImage[i].view,
                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         if(types[i] == sample && !image.imageView)
           continue;
@@ -612,8 +622,8 @@ class Renderer {
     }
 
     Vulkan gpu;
-    std::array<Buffer, 19> data{};
-    std::array<Image, 19> colorImage{};
+    std::array<Buffer, 22> data{};
+    std::array<Image, 22> colorImage{};
     Buffer recordUpload;
     std::array<Buffer, 2> readback{};
     std::array<Image, 4> gbuffer{};
@@ -634,26 +644,19 @@ RouteInput readRouteInput(const std::string& line) {
   const auto direction = [&](size_t offset) {
     return Point{value[offset], value[offset + 1], value[offset + 2]};
   };
-  const RouteInput result{direction(0), direction(3), value[6], value[7], value[8], value[9], direction(10), value[13]};
+  RouteInput result{direction(0), direction(3), value[6], value[7], value[8], value[9], direction(10), value[13]};
+  std::string lod;
+  if(stream >> lod) {
+    if(lod != "0" && lod != "1")
+      throw std::runtime_error("The optional route LOD flag must be 0 or 1");
+    result.lod = lod == "1";
+  }
   const float dx = result.eye[0] - result.target[0], dy = result.eye[1] - result.target[1];
   const float dz = result.eye[2] - result.target[2];
   if((stream >> extra) || dx*dx + dy*dy + dz*dz < 1e-6f || result.pressure < 0.f || result.pressure > 1.f ||
      result.windX*result.windX + result.windZ*result.windZ < 1e-6f || result.sun[1] <= 0.f || result.threshold < 0.f)
     throw std::runtime_error("Invalid route camera, sun, wind, or LOD threshold");
   return result;
-}
-
-Point poseVertex(const Point& rest, const Skin& skin, const Pose* pose) {
-  const auto transform = [&](const Pose& bone) {
-    const auto dot = [&](const std::array<float, 4>& row) {
-      return row[0]*rest[0] + row[1]*rest[1] + row[2]*rest[2] + row[3];
-    };
-    return Point{dot(bone.x), dot(bone.y), dot(bone.z)};
-  };
-  const auto a = transform(pose[skin.first]);
-  const auto b = transform(pose[skin.second]);
-  const float w = float(skin.weight) / 255.f;
-  return {b[0]*(1.f-w) + a[0]*w, b[1]*(1.f-w) + a[1]*w, b[2]*(1.f-w) + a[2]*w};
 }
 
 float distanceTo(const Point& a, const Point& b) {
@@ -682,7 +685,7 @@ void checkWind(Renderer& renderer, const Asset& asset, const RouteFrame& route, 
       const auto* bones = palette + state * asset.bones.size();
       for(size_t id = 0; id < posed.size(); ++id) {
         const auto& vertex = asset.vertices[id];
-        const auto point = poseVertex(vertex.position, asset.skin[id], bones);
+        const auto point = posedPosition(vertex.position, asset.skin[id], bones);
         const auto distance = distanceTo(point, vertex.position);
         if(!(distance <= envelope[id] + toleranceCm))
           throw std::runtime_error("A posed vertex exceeds its analytical wind envelope");
@@ -720,6 +723,25 @@ void checkWind(Renderer& renderer, const Asset& asset, const RouteFrame& route, 
       << ",\"meshlet_bounds_failures\":0,\"group_bounds_failures\":0}\n";
 }
 
+RouteLadder loadRouteLadder(const std::filesystem::path& path, bool cards) {
+  RouteLadder ladder;
+  std::ifstream bounds(path / "impostor-bounds.tsv");
+  for(auto& value : ladder.impostorSphere)
+    if(!(bounds >> value) || !std::isfinite(value))
+      throw std::runtime_error("Invalid route impostor sphere");
+  std::string extra;
+  if(ladder.impostorSphere[3] <= 0.f || !(bounds >> ladder.height) || !std::isfinite(ladder.height) ||
+     ladder.height <= 0.f || (bounds >> extra))
+    throw std::runtime_error("Invalid route impostor radius or tree height");
+  for(size_t i = 0; i < ladder.levels.size(); ++i)
+    ladder.levels[i] = load(path / ("cards-l" + std::to_string(i+1) + ".tndg"));
+  if(!cards) {
+    ladder.contours = Contours::load(path / "contours.bin");
+    ladder.cardCaster = load(path / "cards-l0.tndg");
+  }
+  return ladder;
+}
+
 void recordRoute(const char* shaderDir, const char* assetPath, const char* textureDir, std::string_view appearance,
                  const char* framePath, const std::filesystem::path& output) {
   if(appearance != "cards" && appearance != "opaque")
@@ -739,23 +761,34 @@ void recordRoute(const char* shaderDir, const char* assetPath, const char* textu
     throw std::runtime_error("Cannot open route metadata output");
   metadata << std::setprecision(9);
 
-  const Scene scene(&asset, Width, Height);
+  Scene scene(&asset, Width, Height);
+  std::optional<RouteLadder> ladder;
+  if(std::ranges::any_of(inputs, &RouteInput::lod)) {
+    ladder = loadRouteLadder(textureDir, cards);
+    scene.addRouteLadder(*ladder);
+  }
   Renderer renderer;
-  renderer.setup(scene, shaderDir, "route", std::cerr, textureDir, cards);
+  renderer.setup(scene, shaderDir, "route", std::cerr, textureDir, cards, ladder.has_value());
   checkWind(renderer, asset, scene.prepareRoute(inputs.front(), inputs.front(), cards), std::cerr);
   std::vector<uint8_t> rgb(Pixels * 3);
   std::ios::sync_with_stdio(false);
   for(size_t i = 0; i < inputs.size(); ++i) {
-    const auto route = scene.prepareRoute(inputs[i], inputs[i == 0 ? 0 : i - 1], cards);
-    renderer.drawRoute(route, rgb);
+    auto route = scene.prepareRoute(inputs[i], inputs[i == 0 ? 0 : i - 1], cards);
+    renderer.drawRoute(scene, route, rgb);
     std::cout.write(reinterpret_cast<const char*>(rgb.data()), std::streamsize(rgb.size()));
     if(!std::cout)
       throw std::runtime_error("Cannot write route frame stream");
     const auto& view = route.view;
+    const bool terminal = inputs[i].lod ? route.level == RouteLadder::Impostor :
+                                            view.selectedClusters == view.terminalClusters;
     metadata << "{\"frame\":" << i << ",\"cut_triangles\":" << view.selectedPrimitivesBeforeCull
              << ",\"triangles\":" << view.submittedPrimitives << ",\"cut_clusters\":" << view.selectedClusters
              << ",\"terminal_clusters\":" << view.terminalClusters
-             << ",\"terminal\":" << (view.selectedClusters == view.terminalClusters ? "true" : "false")
+             << ",\"terminal\":" << (terminal ? "true" : "false")
+             << ",\"level\":" << unsigned(route.level) << ",\"fine_level\":" << unsigned(route.fineLevel)
+             << ",\"coarse_level\":" << unsigned(route.coarseLevel) << ",\"screen_height_px\":" << route.screenHeight
+             << ",\"impostor_weight\":" << route.uniform.lodCoverage[1][0]
+             << ",\"contour_faces\":" << route.contourFaces
              << ",\"shadow_triangles\":" << route.shadow.submittedPrimitives << "}\n";
   }
   if(!metadata.flush() || !std::cout.flush())

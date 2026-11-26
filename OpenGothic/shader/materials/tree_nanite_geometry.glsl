@@ -31,6 +31,8 @@ layout(set=0, binding=7, std140) uniform TreeFrame {
   vec4 eye, right, up, forward, sun;
   vec4 wind, previousWind; // seconds, pressure, horizontal direction
   vec4 windFade, previousWindFade; // trunk, whorl, shoot, asset height in cm
+  vec4 impostorSphere; // bind center and radius in cm, zero radius outside the band
+  vec4 lodCoverage[2]; // cumulative coarser coverage for thresholds L1–L4 and impostor
 #endif
   } frame;
 
@@ -71,6 +73,32 @@ TreeVertex treeDeform(uint address, bool previous) {
   const vec4 n = vec4(v.normal.xyz, 0.0);
   v.normal.xyz = mix(treeTransform(b, n), treeTransform(a, n), weight);
   return v;
+  }
+
+bool treeIsContour(uvec4 record) {
+  return (record.w & 0x80000000u) != 0u;
+  }
+
+uint treeDrawLevel(uvec4 record) {
+  return record.w & 7u;
+  }
+
+uint treeContourFace(uvec4 record) {
+  return (record.w & 0x7ffffff8u) >> 3u;
+  }
+
+TreeVertex treeRasterVertex(uvec4 record, uint address) {
+  if(!treeIsContour(record))
+    return treeDeform(address, false);
+  const uint face = treeContourFace(record);
+  const TreeVertex a = treeDeform(face + 0u, false);
+  const TreeVertex b = treeDeform(face + 1u, false);
+  const TreeVertex c = treeDeform(face + 2u, false);
+  const vec2 bary = unpackUnorm2x16(geometry[address]);
+  const float first = 1.0 - bary.x - bary.y;
+  return TreeVertex(a.position*first + b.position*bary.x + c.position*bary.y,
+                    a.normal*first + b.normal*bary.x + c.normal*bary.y,
+                    a.uv*first + b.uv*bary.x + c.uv*bary.y);
   }
 
 vec3 treePreviousDeformedDelta(uint address, vec3 world, TreeInstance instance) {

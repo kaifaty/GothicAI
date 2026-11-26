@@ -133,16 +133,25 @@ void main() {
   const uvec4 meshlet = meshlets[record.x];
   const uvec3 indices = treeTriangle(meshlet.y + (id.y & TreePrimitiveMask));
 #if defined(TREE_WIND)
-  const TreeVertex a = treeDeform(meshlet.x + indices.x, false);
-  const TreeVertex b = treeDeform(meshlet.x + indices.y, false);
-  const TreeVertex c = treeDeform(meshlet.x + indices.z, false);
+  // The microtriangles are on the source plane. Use its derivatives even for
+  // a thin contour ear, so its normal, color and motion match the card's chart.
+  const uvec3 address = treeIsContour(record) ? treeContourFace(record) + uvec3(0, 1, 2) : meshlet.x + indices;
+  const TreeVertex a = treeDeform(address.x, false);
+  const TreeVertex b = treeDeform(address.y, false);
+  const TreeVertex c = treeDeform(address.z, false);
 #else
   const TreeVertex a = treeVertex(meshlet.x + indices.x);
   const TreeVertex b = treeVertex(meshlet.x + indices.y);
   const TreeVertex c = treeVertex(meshlet.x + indices.z);
 #endif
   const TreeInstance instance = instances[record.y];
+#if defined(TREE_WIND)
+  TreeMaterial material = materials[record.z];
+  if(record.z == 1u && treeDrawLevel(record) != 0u)
+    material.tint.rgb = vec3(1.0);
+#else
   const TreeMaterial material = materials[record.z];
+#endif
   const uint flags = floatBitsToUint(material.uvScaleFlags.z);
 
   const mat3 position = mat3(treeWorldPosition(a, instance), treeWorldPosition(b, instance), treeWorldPosition(c, instance));
@@ -159,9 +168,9 @@ void main() {
   const vec3 normal = normals * weights;
   const mat3 prevStatic = mat3(treePreviousStatic(position[0]), treePreviousStatic(position[1]), treePreviousStatic(position[2]));
 #if defined(TREE_WIND)
-  const mat3 prevDelta = mat3(treePreviousDeformedDelta(meshlet.x + indices.x, position[0], instance),
-                             treePreviousDeformedDelta(meshlet.x + indices.y, position[1], instance),
-                             treePreviousDeformedDelta(meshlet.x + indices.z, position[2], instance));
+  const mat3 prevDelta = mat3(treePreviousDeformedDelta(address.x, position[0], instance),
+                             treePreviousDeformedDelta(address.y, position[1], instance),
+                             treePreviousDeformedDelta(address.z, position[2], instance));
 #else
   const mat3 prevDelta = mat3(treePreviousDelta(a, instance), treePreviousDelta(b, instance), treePreviousDelta(c, instance));
 #endif

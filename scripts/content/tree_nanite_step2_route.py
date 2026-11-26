@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 from fir_bough_pops import scores, standout
-from impostor_bake import dds_mips
+from impostor_bake import dds_mips, mesh_primitives, path_in
 
 WIDTH, HEIGHT, FPS = 1280, 720, 24
 SAMPLE_WIDTH, SAMPLE_HEIGHT = WIDTH // 8, HEIGHT // 8
@@ -28,7 +28,7 @@ SHOTS = (
 )
 
 
-def route(threshold: float):
+def route(threshold: float, card_levels: bool = False):
     index = 0
     for name, seconds, a, b, target, elevation in SHOTS:
         angle = math.radians(elevation)
@@ -44,8 +44,30 @@ def route(threshold: float):
             seconds_elapsed = index / FPS
             gust = math.exp(-((seconds_elapsed - 1.35) / .53) ** 2)
             pressure = .29 + .07 * math.sin(seconds_elapsed * 3.) + .62 * gust
-            yield name, (*eye, *target, seconds_elapsed, pressure, .85, .527, *sun, threshold)
+            row = (*eye, *target, seconds_elapsed, pressure, .85, .527, *sun, threshold)
+            if card_levels:
+                row = (*row, int(name in ('far', 'low-sun')))
+            yield name, row
             index += 1
+
+
+def prepare_card_levels(card_set: Path, output: Path):
+    meshes = card_set / 'meshes'
+    entry = json.loads((meshes / 'meshes.json').read_text())['OWN_TREE_FIR_A_4']
+    positions = np.concatenate([primitive[0] for primitive in mesh_primitives(path_in(meshes, entry['glb']))])
+    low, high = positions.min(axis=0), positions.max(axis=0)
+    center, extent = (low + high) / 2., high - low
+    bounds = (*center, float(np.linalg.norm(extent) / 2.), float(extent[1]))
+    (output / 'impostor-bounds.tsv').write_text(' '.join(format(value, '.9g') for value in bounds) + '\n')
+    impostor = entry['levels'][-1]['impostor']
+    shapes = [(n, n, 4) for n in (1536, 768, 384, 192, 96)]
+    for channel in ('albedo', 'surface', 'orm'):
+        mips = dds_mips(path_in(meshes, impostor[channel]))
+        if [image.shape for image in mips] != shapes:
+            raise ValueError(f'{channel}: expected the accepted 1536 px impostor mip chain')
+        with (output / f'impostor-{channel}.rgba').open('wb') as stream:
+            for mip in mips:
+                stream.write(mip.tobytes())
 
 
 def prepare(args):
@@ -53,7 +75,9 @@ def prepare(args):
         raise ValueError('The route requires a positive finite SSE threshold')
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / 'frames.tsv').write_text(''.join(' '.join(format(x, '.9g') for x in row) + '\n'
-                                                  for _, row in route(args.threshold)))
+                                                  for _, row in route(args.threshold, args.card_set is not None)))
+    if args.card_set is not None:
+        prepare_card_levels(args.card_set, args.output)
     for channel in ('albedo', 'normal', 'orm'):
         layers = [dds_mips(args.textures / f'{stem}-{channel}.dds') for stem in ('bark', 'boughs')]
         size = 1024 if channel == 'orm' else 2048
@@ -170,13 +194,17 @@ def report(args):
             old, new = opaque[index - 1], opaque[index]
             delta = new['cut_triangles'] - old['cut_triangles']
             terminal = new['terminal'] and not old['terminal']
-            if not delta and not terminal:
+            impostor_entry = new.get('impostor_weight', 0.) > 0 and old.get('impostor_weight', 0.) == 0
+            band_changed = any(new.get(key) != old.get(key) for key in ('fine_level', 'coarse_level', 'level'))
+            if not (delta or terminal or impostor_entry or band_changed):
                 continue
             peak, around, jump = standout(local, index - first, 1.5)
             events.append({
                 'shot': shot, 'frame': index, 'triangles_before': old['cut_triangles'],
                 'triangles_after': new['cut_triangles'], 'delta_triangles': delta,
-                'terminal_entry': terminal, 'peak_frame': first + peak, 'peak_ratio': local[peak],
+                'band_changed': band_changed, 'terminal_entry': terminal, 'impostor_entry': impostor_entry,
+                'screen_height_px': new.get('screen_height_px'), 'level': new.get('level'),
+                'peak_frame': first + peak, 'peak_ratio': local[peak],
                 'surrounding_ratio': around, 'control_ratio': control_scores[peak],
                 'adjacent_frame_delta': candidate[first + peak],
                 'control_frame_delta': control[first + peak], 'jump': jump,
@@ -189,13 +217,20 @@ def report(args):
     terminal = next((event for event in far if event['terminal_entry']), None)
     if terminal:
         key_frames.update(terminal_before=terminal['frame'] - 1, terminal_after=terminal['frame'])
+    impostor = next((event for event in far if event['impostor_entry']), None)
+    if impostor:
+        key_frames.update(impostor_before=impostor['frame'] - 1, impostor_after=impostor['frame'],
+                          impostor_end=max(range(len(opaque)), key=lambda i: opaque[i].get('impostor_weight', 0.)))
+    if len(rows[0]) == 15:
+        key_frames['withdrawal-240'] = 240
     args.output.mkdir(parents=True, exist_ok=True)
     for label, frame in key_frames.items():
         for name, path in [('cards', args.cards), ('opaque', args.opaque)]:
             image_at(path / 'route.mp4', frame, args.output / f'{label}-{name}.png')
     summary = {
         'frames': len(frames), 'fps': FPS, 'terminal_seen': any(row['terminal'] for row in opaque),
-        'terminal_crossing': terminal is not None, 'transitions': events, 'key_frames': key_frames,
+        'terminal_crossing': terminal is not None, 'impostor_crossing': impostor is not None,
+        'transitions': events, 'key_frames': key_frames,
     }
     (args.output / 'pops.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(f'{len(events)} cut changes, {sum(event["jump"] for event in events)} standout events, '
@@ -209,6 +244,7 @@ def main():
     prepare_parser.add_argument('textures', type=Path)
     prepare_parser.add_argument('output', type=Path)
     prepare_parser.add_argument('--threshold', type=float, default=11.)
+    prepare_parser.add_argument('--card-set', type=Path)
     prepare_parser.set_defaults(run=prepare)
     record_parser = subparsers.add_parser('record')
     for argument in ('pilot', 'shaders', 'asset', 'route_dir'):

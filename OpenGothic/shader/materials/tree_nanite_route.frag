@@ -5,6 +5,8 @@
 #define TREE_FRAME_ONLY
 #include "tree_nanite_geometry.glsl"
 #include "common.glsl"
+#include "tree_nanite_level_mask.glsl"
+#include "tree_nanite_impostor.glsl"
 
 layout(set=0, binding=14) uniform sampler2D routeAlbedo;
 layout(set=0, binding=15) uniform usampler2D routeNormal;
@@ -42,20 +44,32 @@ void main() {
   // Extract camera depth from the current perspective matrix representation.
   const float nearPlane = 50.0;
   const float zScale = 24000.0/(24000.0-nearPlane);
-  const float treeDistance = zScale*nearPlane/(zScale-depth);
+  float treeDistance = zScale*nearPlane/(zScale-depth);
+  bool hitTree = depth < 1.0;
+  RouteImpostorSample impostor = RouteImpostorSample(vec4(0), vec3(0), vec3(0), 0.0, 0);
+  if(frame.impostorSphere.w > 0.0) {
+    impostor = routeSampleImpostor(ray);
+    if(impostor.albedo.a >= 0.5 && impostor.depth >= nearPlane && impostor.depth < 24000.0) {
+      hitTree = true;
+      treeDistance = impostor.depth;
+      } else {
+      impostor.albedo.a = 0.0;
+      }
+    }
   const vec3 sun = frame.sun.xyz;
   const vec3 light = mix(vec3(0.83, 0.62, 0.40), vec3(0.91, 0.90, 0.84), smoothstep(0.07, 0.6, sun.y));
   vec3 color = sky;
-  if(depth < 1.0 && (ray.y >= 0.0 || treeDistance < groundDistance)) {
-    const vec4 albedo = texelFetch(routeAlbedo, pixel, 0);
-    const vec4 orm = texelFetch(routeOrm, pixel, 0);
-    const vec3 n = decodeNormal(texelFetch(routeNormal, pixel, 0).r);
+  if(hitTree && (ray.y >= 0.0 || treeDistance < groundDistance)) {
+    const bool isImpostor = impostor.albedo.a > 0.0;
+    const vec3 albedo = isImpostor ? impostor.albedo.rgb : texelFetch(routeAlbedo, pixel, 0).rgb;
+    const vec3 orm = isImpostor ? impostor.orm : texelFetch(routeOrm, pixel, 0).rgb;
+    const vec3 n = isImpostor ? impostor.normal : decodeNormal(texelFetch(routeNormal, pixel, 0).r);
     const vec3 point = frame.eye.xyz + ray*treeDistance;
     const float lambert = dot(n, sun);
     const float direct = max(lambert, 0.0) + max(-lambert, 0.0)*orm.b*0.5;
     const float lit = sunVisibility(point, 0.00025);
     const float ambient = mix(0.32, 0.56, 0.55 + 0.45*n.y)*mix(0.62, 1.0, orm.r);
-    color = albedo.rgb*(ambient*vec3(0.86, 0.95, 1.10) + light*direct*lit);
+    color = albedo*(ambient*vec3(0.86, 0.95, 1.10) + light*direct*lit);
     color = mix(color, sky, 0.12*smoothstep(2000.0, 16000.0, treeDistance));
     } else if(ray.y < 0.0 && groundDistance < 24000.0) {
     const vec3 point = frame.eye.xyz + ray*groundDistance;
