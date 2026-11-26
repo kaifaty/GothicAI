@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : enable
 
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(binding = 0) uniform usampler2D winners;
@@ -10,16 +11,10 @@ layout(binding = 2, std430) buffer Coverage { uint history[]; };
 shared uint owners[64];
 shared uint sums[64];
 
+#include "tree_bough_coverage_owner.glsl"
+
 void flushOwner(uint id, uint count) {
-  uint entry = 0u;
-  if((id >> 30u)==1u) {
-    const uint instance = id & 0x3fffffffu;
-    if(instance<data[3])
-      entry = data[data[2]+instance];
-    }
-  else if(id!=0u && id<=data[0]) {
-    entry = data[4u+id-1u];
-    }
+  uint entry = crownEntry(id);
   if(entry!=0u)
     atomicAdd(history[(entry-data[1])/8u*3u],count);
   }
@@ -35,29 +30,46 @@ void addOwner(uint id, uint count) {
     flushOwner(id,count);
   }
 
+uvec4 quad(ivec2 p, ivec2 size) {
+  if(all(lessThan(p+1,size)))
+    return textureGather(winners,vec2(p+1)/vec2(size));
+  uvec4 v = uvec4(0);
+  for(int i=0; i<4; ++i) {
+    ivec2 xy = p+ivec2(i&1,i>>1);
+    if(all(lessThan(xy,size)))
+      v[i] = texelFetch(winners,xy,0).r;
+    }
+  return v;
+  }
+
+uint takeOwner(inout uvec4 v, uint owner) {
+  bvec4 matches = equal(v,uvec4(owner));
+  v = mix(v,uvec4(0),matches);
+  uvec4 count = uvec4(matches);
+  return count.x+count.y+count.z+count.w;
+  }
+
 void main() {
-  const uint lane = gl_LocalInvocationIndex;
+  uint lane = gl_LocalInvocationIndex;
   owners[lane] = 0u;
   sums[lane] = 0u;
   barrier();
-  const ivec2 p = ivec2(gl_GlobalInvocationID.xy)*2;
-  const ivec2 size = textureSize(winners,0);
-  if(all(lessThan(p+1,size))) {
-    const uvec4 ids = textureGather(winners,vec2(p+1)/vec2(size));
-    if(all(equal(ids,ids.xxxx)))
-      addOwner(ids.x,4u);
-    else {
-      for(int i=0; i<4; ++i)
-        addOwner(ids[i],1u);
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy)*4;
+  ivec2 size = textureSize(winners,0);
+  uvec4 a = quad(p,size), b = quad(p+ivec2(2,0),size);
+  uvec4 c = quad(p+ivec2(0,2),size), d = quad(p+ivec2(2),size);
+  if(all(equal(a,a.xxxx)) && all(equal(b,a.xxxx)) &&
+     all(equal(c,a.xxxx)) && all(equal(d,a.xxxx))) {
+    addOwner(a.x,16u);
+    } else {
+    for(;;) {
+      uvec4 v = max(max(a,b),max(c,d));
+      uint id = max(max(v.x,v.y),max(v.z,v.w));
+      if(id==0u)
+        break;
+      uint count = takeOwner(a,id)+takeOwner(b,id)+takeOwner(c,id)+takeOwner(d,id);
+      addOwner(id,count);
       }
-    }
-  else {
-    for(int y=0; y<2; ++y)
-      for(int x=0; x<2; ++x) {
-        const ivec2 xy = p+ivec2(x,y);
-        if(all(lessThan(xy,size)))
-          addOwner(texelFetch(winners,xy,0).r,1u);
-        }
     }
   barrier();
   if(sums[lane]!=0u)

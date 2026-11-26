@@ -312,6 +312,47 @@ void treeBoughCutCases() {
   require(pipeline.sizeofBuffer(0, 2) == 2 * sizeof(Node), "tree bough node layout on GPU");
   require(pipeline.sizeofBuffer(1, 2) == 2 * sizeof(View), "tree bough projection layout on GPU");
 
+  // A mixed 4x4 cell, two owner encodings, one off-grid winning pixel and partial edge tiles.
+  {
+    constexpr int w = 35, h = 33;
+    Pixmap image(w,h,TextureFormat::R32U);
+    uint32_t mapping[72] = {};
+    mapping[0] = 64;
+    mapping[1] = 68;
+    mapping[2] = 69;
+    mapping[3] = 2;
+    mapping[4] = 68;
+    mapping[70] = 76;
+    const uint32_t root = 1, compact = 0x40000001u;
+    std::array<uint32_t,6> expected = {};
+    for(int i=0; i<w*h; ++i) {
+      uint32_t id = i%5==0 ? root : 0x80000001u;
+      if(i==w*h-1)
+        id = compact;
+      std::memcpy(static_cast<char*>(image.data())+i*sizeof(id),&id,sizeof(id));
+      expected[0] += id==root;
+      expected[3] += id==compact;
+      }
+    auto tex = device.texture(image,false);
+    auto table = device.ssbo(mapping,sizeof(mapping));
+    auto result = device.ssbo(std::vector<uint32_t>(6));
+    const auto code = GothicShader::get("tree_bough_coverage_count.comp.sprv");
+    auto histogram = device.pipeline(device.shader(code.data,code.len));
+    auto cb = device.commandBuffer();
+    {
+      auto enc = cb.startEncoding(device);
+      enc.setBinding(0,tex,Sampler::nearest());
+      enc.setBinding(1,table);
+      enc.setBinding(2,result);
+      enc.setPipeline(histogram);
+      enc.dispatch((w+31)/32,(h+31)/32);
+      }
+    device.submit(cb).wait();
+    std::array<uint32_t,6> counts;
+    device.readBytes(result,counts.data(),sizeof(counts));
+    require(counts==expected,"full-resolution crown histogram lost a winning pixel");
+  }
+
   const auto coverageViews = views;
   views.insert(views.end(),coverageViews.begin(),coverageViews.end());
   const auto coverageJoints = jointWeights;

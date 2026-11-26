@@ -7,8 +7,6 @@ uint coverageAge(uint previous, uint wins, float boxPixels, bool consecutive) {
   return min(previous+1u,CoverageLowFrames);
   }
 
-BoughProjection coverageCut(BoughProjection projection, uint age) {
-  if(age==CoverageLowFrames)
-    projection.focalScale *= 0.25;
-  return projection;
+float coverageScale(uint age) {
+  return age==CoverageLowFrames ? 0.25 : 1.0;
   }

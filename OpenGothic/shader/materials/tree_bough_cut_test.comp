@@ -51,7 +51,7 @@ void main() {
     if(sampleId>=uint(views.length())/2u) {
       uint frame = (sampleId-uint(views.length())/2u)%6u;
       age = coverageAge(age,frame==3u ? 1u : 0u,256.0,frame!=0u);
-      view = coverageCut(view,age);
+      view.focalScale *= coverageScale(age);
       }
     const uint joint = boughJointFade(joints[sampleId]);
     if(joint!=0u)

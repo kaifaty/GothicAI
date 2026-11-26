@@ -236,6 +236,8 @@ void TreeBoughRender::uploadData() {
     words.resize(words.size()+words[3]);
     Resources::recycle(std::move(coverageHistory));
     coverageHistory = device.ssbo(std::vector<uint32_t>(entries.size()*3));
+    if(coverageDispatch.isEmpty())
+      coverageDispatch = device.ssbo(std::vector<uint32_t>{0,1,1});
     }
   uint32_t entry = entryBase;
   uint32_t stateOffset = StatsCount;
@@ -374,13 +376,20 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   enc.setBinding(8,indirect);
   enc.setBinding(9,payload);
   enc.setBinding(10,lateHiZ ? owner.history.status : data);
-  const bool track = TreeBough::coverageEnabled() && owner.boughHistoryToken!=0;
-  if(track) {
+  // The CPU already selects the impostor command. Only possible 3D draws need coverage bindings.
+  coverageRecorded = TreeBough::coverageEnabled() && owner.boughHistoryToken!=0 &&
+                     std::ranges::any_of(entries,[&](const auto& entry) {
+                       const auto& c = owner.clusters[entry.first];
+                       return c.meshletCount!=0 && c.commandId==uint16_t(entry.second.commands) &&
+                              scene.frustrum[SceneGlobals::V_Main].testPoint(c.pos,c.r+1.f);
+                       });
+  if(coverageRecorded) {
     if(coverageExpand.isEmpty())
       coverageExpand = compute("tree_bough_coverage_expand.comp.sprv");
     enc.setBinding(11,coverageHistory);
+    enc.setBinding(12,coverageDispatch);
     }
-  enc.setPipeline(track ? coverageExpand : expandPipeline);
+  enc.setPipeline(coverageRecorded ? coverageExpand : expandPipeline);
   enc.setPushData(Push{token,flags,scene.znear,1});
   enc.dispatchThreads(std::max<size_t>(StatsCount,commands.size()));
   enc.setPushData(Push{token,flags,scene.znear,0});
@@ -392,6 +401,8 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   }
 
 void TreeBoughRender::countCoverage(Encoder<CommandBuffer>& enc, const Texture2d& winners) {
+  if(!coverageRecorded)
+    return;
   if(coverageCount.isEmpty())
     coverageCount = compute("tree_bough_coverage_count.comp.sprv");
   enc.setFramebuffer({});
@@ -400,7 +411,7 @@ void TreeBoughRender::countCoverage(Encoder<CommandBuffer>& enc, const Texture2d
   enc.setBinding(1,data);
   enc.setBinding(2,coverageHistory);
   enc.setPipeline(coverageCount);
-  enc.dispatchThreads((winners.w()+1)/2,(winners.h()+1)/2);
+  enc.dispatchIndirect(coverageDispatch,0);
   }
 
 void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDraw history) {
@@ -422,8 +433,63 @@ void TreeBoughRender::draw(Encoder<CommandBuffer>& enc, DrawCommands::HistoryDra
     }
   }
 
+void TreeBoughRender::withReferenceCut(Encoder<CommandBuffer>& enc, DrawCommands& commands, bool late,
+                                       const std::function<void()>& draw) {
+  auto& b = *commands.boughs;
+  auto& device = Resources::device();
+  auto& main = commands.views[SceneGlobals::V_Main].indirectCmd;
+  // Save the pre-expansion counts. Both expansions append after the same visibility payload prefix.
+  auto copy = device.ssbo(Uninitialized,main.byteSize());
+  const uint32_t words = uint32_t(main.byteSize()/sizeof(uint32_t));
+  b.copy(enc,main,copy,0,words,words);
+  auto fine = device.ssbo(std::vector<uint32_t>(b.entries.size()*3));
+  std::swap(main,copy);
+  std::swap(b.coverageHistory,fine);
+  b.expand(enc,commands.boughHistoryToken,late);
+  commands.boughExpanded = true;
+  if(late)
+    commands.compactHistory(enc,false);
+  draw();
+  std::swap(b.coverageHistory,fine);
+  std::swap(main,copy);
+  Resources::recycle(std::move(fine));
+  Resources::recycle(std::move(copy));
+  }
+
+void TreeBoughRender::compareCoverage(Encoder<CommandBuffer>& enc, DrawCommands& commands, uint8_t frame,
+                                      const Texture2d& refDepth, const Texture2d& refOwners,
+                                      const Texture2d& depth, const Texture2d& owners) {
+  auto& b = *commands.boughs;
+  if(b.coverageProof.isEmpty())
+    b.coverageProof = compute("tree_bough_coverage_verify.comp.sprv");
+  const uint32_t initial[7] = {};
+  auto& result = b.coverageProofRead[frame];
+  result = Resources::device().ssbo(BufferHeap::Readback,initial,sizeof(initial));
+  enc.setFramebuffer({});
+  enc.setDebugMarker("Bough-coverage-verify");
+  enc.setBinding(0,refDepth,Sampler::nearest());
+  enc.setBinding(1,refOwners,Sampler::nearest());
+  enc.setBinding(2,depth,Sampler::nearest());
+  enc.setBinding(3,owners,Sampler::nearest());
+  enc.setBinding(4,b.data);
+  enc.setBinding(5,b.coverageHistory);
+  enc.setBinding(6,result);
+  enc.setBinding(7,b.coverageDispatch);
+  const uint32_t push[] = {b.expandedToken,uint32_t(b.coverageRecorded)};
+  enc.setPushData(push);
+  enc.setPipeline(b.coverageProof);
+  enc.dispatchThreads(depth.size());
+  }
+
 void TreeBoughRender::readStats(Encoder<CommandBuffer>& enc, uint8_t frame, bool expanded) {
   auto& device = Resources::device();
+  if(!coverageProofRead[frame].isEmpty()) {
+    uint32_t result[7] = {};
+    device.readBytes(coverageProofRead[frame],result,sizeof(result));
+    Log::i("coverage_verify fine_pixels=",result[0]," clear_losses=",result[1]," owner_diff=",result[2],
+           " depth_diff=",result[3]," coarse_age_crowns=",result[4]," count_groups=",result[5]," count_recorded=",result[6]);
+    coverageProofRead[frame] = {};
+    }
   constexpr FrameProfile::Amount names[] = {FrameProfile::Amount::TreeBoughNodes,FrameProfile::Amount::TreeBoughSourceCards,
     FrameProfile::Amount::TreeBoughParentCards,FrameProfile::Amount::TreeBoughTriangles,FrameProfile::Amount::TreeBoughActiveBands,
     FrameProfile::Amount::TreeBoughVersionPairs,FrameProfile::Amount::TreeBoughBandTriangles,FrameProfile::Amount::TreeBoughHeightPx};

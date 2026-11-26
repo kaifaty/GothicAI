@@ -3,6 +3,7 @@
 #include <Tempest/StorageBuffer>
 
 #include <array>
+#include <functional>
 #include <map>
 #include <unordered_map>
 
@@ -25,6 +26,11 @@ class TreeBoughRender {
     void expand(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint32_t token, bool lateHiZ);
     void countCoverage(Tempest::Encoder<Tempest::CommandBuffer>& enc, const Tempest::Texture2d& winners);
     void draw(Tempest::Encoder<Tempest::CommandBuffer>& enc, DrawCommands::HistoryDraw history);
+    static void withReferenceCut(Tempest::Encoder<Tempest::CommandBuffer>& enc, DrawCommands& commands, bool late,
+                                 const std::function<void()>& draw);
+    static void compareCoverage(Tempest::Encoder<Tempest::CommandBuffer>& enc, DrawCommands& commands, uint8_t frame,
+                                const Tempest::Texture2d& refDepth, const Tempest::Texture2d& refOwners,
+                                const Tempest::Texture2d& depth, const Tempest::Texture2d& owners);
     void readStats(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, bool expanded);
     bool diagnose(Tempest::Encoder<Tempest::CommandBuffer>& enc, uint8_t frame, const Tempest::Texture2d& depth,
                   const Tempest::Matrix4x4& viewProject, bool verify, uint64_t stamp);
@@ -84,7 +90,10 @@ class TreeBoughRender {
     Tempest::ComputePipeline cullPipelines[4][2];
     Tempest::ComputePipeline expandPipeline, copyPipeline, historyPipeline;
     Tempest::ComputePipeline coverageExpand, coverageCount;
-    Tempest::StorageBuffer coverageHistory;
+    bool coverageRecorded = false;
+    Tempest::StorageBuffer coverageHistory, coverageDispatch;
+    Tempest::ComputePipeline coverageProof;
+    std::array<Tempest::StorageBuffer,Resources::MaxFramesInFlight> coverageProofRead;
     Tempest::ComputePipeline diagnosticPipeline;
     Tempest::StorageBuffer diagnosticCounts;
     std::array<DiagnosticRead,Resources::MaxFramesInFlight> diagnosticRead;

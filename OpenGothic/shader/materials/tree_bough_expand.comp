@@ -28,6 +28,7 @@ layout(push_constant, std430) uniform Push {
 #ifdef TREE_COVERAGE
 #include "tree_coverage_lod.glsl"
 layout(binding = 11, std430) buffer Coverage { uint coverageHistory[]; };
+layout(binding = 12, std430) buffer CoverageDispatch { uint groups[]; };
 shared uint age;
 
 float crownBoxPixels(mat4x3 object, vec3 low, vec3 high) {
@@ -97,6 +98,12 @@ void main() {
   const uint lane = gl_LocalInvocationIndex;
   if(push.stage==1u) {
     uint i = gl_GlobalInvocationID.x;
+#ifdef TREE_COVERAGE
+    if(i==0u) {
+      groups[0] = 0u;
+      groups[1] = (uint(scene.screenRes.y)+31u)/32u;
+      }
+#endif
     if(i<cmd.length())
       cmd[i].instanceCount = 0u;
     if(i<BoughStatsCount)
@@ -155,18 +162,6 @@ void main() {
   const uint sliceFirst = min(lane*slice, nodeCount), sliceLast = min(sliceFirst+slice, nodeCount);
 
   const bool useReference = (push.flags & 1u)!=0u;
-#ifdef TREE_COVERAGE
-  if(lane==0u) {
-    const uint at = gl_WorkGroupID.x*3u;
-    const bool consecutive = (push.flags & 8u)!=0u && coverageHistory[at+2u]!=0u &&
-                             coverageHistory[at+2u]+2u==push.token;
-    const float pixels = crownBoxPixels(mat4x3(x,y,z,origin),readVec(asset+12u),readVec(asset+15u));
-    age = coverageAge(coverageHistory[at+1u],coverageHistory[at],pixels,consecutive);
-    coverageHistory[at] = 0u;
-    coverageHistory[at+1u] = age;
-    coverageHistory[at+2u] = push.token;
-    }
-#endif
   if(lane==0u)
     hasCompact = useReference ? reference[ref] : 0u;
   if((push.flags & 2u)!=0u) {
@@ -188,6 +183,28 @@ void main() {
       }
     }
   barrier();
+
+#ifdef TREE_COVERAGE
+  if(lane==0u) {
+    age = 0u;
+    if(hasCompact!=0u || data[entry+7u]!=0u) {
+      const uint at = gl_WorkGroupID.x*3u;
+      const bool consecutive = (push.flags & 8u)!=0u && coverageHistory[at+2u]!=0u &&
+                               coverageHistory[at+2u]+2u==push.token;
+      const uint wins = coverageHistory[at];
+      if(consecutive && wins==0u) {
+        const float pixels = crownBoxPixels(mat4x3(x,y,z,origin),readVec(asset+12u),readVec(asset+15u));
+        age = coverageAge(coverageHistory[at+1u],wins,pixels,true);
+        }
+      coverageHistory[at] = 0u;
+      coverageHistory[at+1u] = age;
+      coverageHistory[at+2u] = push.token;
+      // Every tagged crown opens the same full-plane dispatch for its current observation.
+      atomicOr(groups[0],(uint(scene.screenRes.x)+31u)/32u);
+      }
+    }
+  barrier();
+#endif
 
   if(hasCompact==0u) {
     // No node has been merged and no band participates. The old full canopy is more compact.
@@ -236,7 +253,7 @@ void main() {
     }
   else {
 #ifdef TREE_COVERAGE
-    projection = coverageCut(projection,age);
+    projection.focalScale *= coverageScale(age);
 #endif
     boughWalkSlice(sliceFirst, sliceLast, projection);
     }

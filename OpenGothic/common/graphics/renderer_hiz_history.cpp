@@ -9,6 +9,8 @@
 
 #include "frameprofile.h"
 #include "renderer_internal.h"
+#include "treeboughrender.h"
+#include "treeboughdraw.h"
 
 using namespace Tempest;
 
@@ -34,9 +36,12 @@ void Renderer::readBoughHiZDepth(uint8_t fId) {
   }
 
 void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& view,
-                                const BenchProbe::HistoryVerifyRequest& request) {
+                                const BenchProbe::HistoryVerifyRequest& requested) {
   using Draw = DrawCommands::HistoryDraw;
   auto& commands = view.treeHistoryCommands();
+  const bool coveragePair = requested.segment=="coverage" && TreeBough::coverageEnabled() &&
+                            commands.hasPendingBoughExpansion() && FrameProfile::enabled();
+  const auto request = coveragePair ? BenchProbe::HistoryVerifyRequest{} : requested;
   const bool reset = !treeHistory.valid || !camHistory.continuous || !commands.hasHistory();
   const float quantization = zBufferFormat==TextureFormat::Depth16 ? 1.f/65535.f :
                              zBufferFormat==TextureFormat::Depth24x8 ? 1.f/16777215.f : 0.f;
@@ -52,7 +57,7 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
   auto& diag = boughHiZDiag;
   const bool sampleBough = diagnosticEvery!=0 && !reset && diag.valid && commands.hasPendingBoughExpansion() &&
                            diag.frames++%diagnosticEvery==0;
-  const bool verifyBough = sampleBough && !request && !diag.proved &&
+  const bool verifyBough = sampleBough && !request && !coveragePair && !diag.proved &&
                            (!FrameProfile::enabled() || FrameProfile::hasSample());
 
   commands.classifyHistory(cmd, textureCast<const Texture2d&>(hiz.hiZ), quantization, false, reset);
@@ -74,14 +79,16 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
       }
     }
 
-  if(verifyBough) {
+  if(verifyBough || coveragePair) {
     // Seed a separate target while the early command list is still available.
     auto& reference = usesZBuffer(diag.referenceDepth, zBufferFormat, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
     std::swap(reference, zbuffer);
     drawHiZ(cmd, view);
     cmd.setFramebuffer({}, {zbuffer, Preserve, Preserve});
-    commands.drawCommon(cmd, SceneGlobals::V_Main, Material::Solid, Draw::Early);
-    commands.drawCommon(cmd, SceneGlobals::V_Main, Material::AlphaTest, Draw::Early);
+    if(!reset) {
+      commands.drawCommon(cmd, SceneGlobals::V_Main, Material::Solid, Draw::Early);
+      commands.drawCommon(cmd, SceneGlobals::V_Main, Material::AlphaTest, Draw::Early);
+      }
     std::swap(reference, zbuffer);
     }
 
@@ -106,12 +113,24 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     grassHiZ = &textureCast<const Texture2d&>(pyramid);
     commands.classifyHistory(cmd, *grassHiZ, quantization, true, false);
     }
+  const auto mode = reset ? Draw::Unfiltered : Draw::Filtered;
+  if(coveragePair) {
+    auto& owners = usesAttachment(treeHistory.referenceOwners, TextureFormat::R32U, zbuffer.size());
+    view.prepareGrass(cmd, fId, *grassHiZ, reset ? 0.f : quantization);
+    std::swap(diag.referenceDepth,zbuffer);
+    TreeBoughRender::withReferenceCut(cmd,commands,!reset,[&] {
+      drawGBuffer(cmd,fId,view,mode,&owners);
+      cmd.setFramebuffer({});
+      });
+    std::swap(diag.referenceDepth,zbuffer);
+    }
   commands.finishBoughVisibility(cmd, fId, !reset);
   if(!reset)
     commands.compactHistory(cmd, false);
 
   // The reference pass and the live pass draw the same prepared grass.
-  view.prepareGrass(cmd, fId, *grassHiZ, reset ? 0.f : quantization);
+  if(!coveragePair)
+    view.prepareGrass(cmd, fId, *grassHiZ, reset ? 0.f : quantization);
   if(request) {
     auto& reference = usesZBuffer(treeHistory.referenceDepth, zBufferFormat, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
     auto& owners = usesAttachment(treeHistory.referenceOwners, TextureFormat::R32U, zbuffer.size());
@@ -133,7 +152,6 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     Resources::recycle(std::move(probe));
     }
 
-  const auto mode = reset ? Draw::Unfiltered : Draw::Filtered;
   size_t proofStride = 0;
   if(verifyBough) {
     // Both GBuffer passes see the same camera, grass, early depth and final draw lists.
@@ -173,6 +191,10 @@ void Renderer::drawTreeHistory(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldVi
     diag.valid = true;
     }
   const auto& winners = textureCast<const Texture2d&>(treeHistory.winners);
+  if(coveragePair)
+    TreeBoughRender::compareCoverage(cmd,commands,fId,textureCast<const Texture2d&>(diag.referenceDepth),
+                                     textureCast<const Texture2d&>(treeHistory.referenceOwners),
+                                     textureCast<const Texture2d&>(zbuffer),winners);
   commands.finishHistory(cmd, winners, fId);
   treeHistory.valid = true;
   if(request) {
