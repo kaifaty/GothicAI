@@ -26,6 +26,7 @@ from array import array
 from collections import Counter
 import argparse
 import csv
+import gzip
 import json
 import math
 import statistics
@@ -220,6 +221,25 @@ def transitions(frames, threshold, output):
     return changes
 
 
+def zero_runs(frames):
+    """Observed consecutive zero-win runs ending in a positive win on the next rendered frame."""
+    runs = []
+    for scope in ("all", "submitted"):
+        active = {}
+        for index, (attempt, data) in enumerate(frames):
+            for key, row in data.items():
+                if scope == "submitted" and row["tris"] == 0:
+                    active.pop(key, None)
+                elif row["wins"] == 0:
+                    active.setdefault(key, index)
+                elif key in active:
+                    start = active.pop(key)
+                    runs.append(dict(scope=scope, key=key, first_attempt=frames[start][0],
+                                     winner_attempt=attempt, length=index-start,
+                                     left_censored=start == 0, winner_px=row["wins"]))
+    return runs
+
+
 def analyze_capture(root, out):
     out.mkdir(parents=True, exist_ok=True)
     placement_rows = rows(root / "placements.csv")
@@ -237,16 +257,53 @@ def analyze_capture(root, out):
         if slot in last:
             next_slot[last[slot]] = attempt
         last[slot] = attempt
+    first_inside = next(a for a, r in profile.items() if r["segment"] == "perf-coverage/inside")
+    preceding = [a for a in profile if a < first_inside][-4:]
+    if len(preceding) != 4:
+        raise ValueError("Missing four immediately preceding inside submissions")
+    def stock_counter(attempt):
+        return int(profile[next_slot[attempt]]["tree_bough_triangles"])
+    preparation = []
+    stable = 0
+    for a in preceding:
+        triangles = stock_counter(a)
+        passed = 13080308 <= triangles <= 13198353
+        stable = stable + 1 if passed else 0
+        preparation.append(dict(attempt=a, read_attempt=next_slot[a], slot=profile[a]["cmd_id"],
+                                triangles=triangles, status="in_range" if passed else "skipped"))
+    write_table(out / "inside-preceding.csv", preparation)
     result = {}
     for scene in ("inside", "walk"):
         folders = sorted((root / "capture" / scene).iterdir(), key=lambda p: int(p.name))
         expected = [a for a, row in profile.items() if row["segment"] == "perf-coverage/" + scene]
         if len(expected) < 2 or [int(p.name) for p in folders] != expected:
             raise ValueError(f"{scene}: missing or extra submitted frames")
-        frames, summaries, buckets = [], [], []
+        spans, summaries, buckets, skips = [[]], [], [], []
+        stock = [stock_counter(a) for a in expected]
+        ready = scene != "inside" or stable == 4
+        drains = []
         for folder, attempt in zip(folders, expected):
+            warming = not ready
+            if warming:
+                stable = stable + 1 if 13080308 <= stock_counter(attempt) <= 13198353 else 0
+                ready = stable >= 4
+            receipt = (folder / "frame.txt").read_text()
+            if receipt.startswith("skipped "):
+                fields = dict(item.split("=", 1) for item in receipt.split()[1:])
+                if int(fields["attempt"]) != attempt or fields["slot"] != profile[attempt]["cmd_id"] or not fields["reasons"]:
+                    raise ValueError(f"{folder}: invalid skipped frame receipt")
+                skips.append(dict(**fields, triangles=int(profile[next_slot[attempt]]["tree_bough_triangles"])))
+                if spans[-1]:
+                    spans.append([])
+                continue
             data, tick, total = read_frame(folder, placements, profile, next_slot)
-            frames.append((attempt, data))
+            drains.append(dict(attempt=attempt, read_attempt=next_slot[attempt], slot=profile[attempt]["cmd_id"],
+                               tick=tick, triangles=total, after_window=next_slot[attempt] > expected[-1]))
+            if warming:
+                skips.append(dict(attempt=attempt, slot=profile[attempt]["cmd_id"], tick=tick, width=1280,
+                                  height=720, reasons="pre_window_unstable", triangles=total))
+                continue
+            spans[-1].append((attempt, data))
             dist = distribution([r for r in data.values() if r["tris"]], scene)
             for row in dist["buckets"]:
                 buckets.append(dict(attempt=attempt, **row))
@@ -257,10 +314,12 @@ def analyze_capture(root, out):
                                   front_crowns=front["crowns"], front_triangles=front["triangles"],
                                   front_wins=front["wins"], front_pct=100*front["wins"]/dist["wins"],
                                   wins_without_bough_cut=sum(r["wins"] for r in data.values() if not r["tris"])))
+        if not summaries:
+            raise ValueError(f"{scene}: no complete frames")
         if any(a["tick"] > b["tick"] for a, b in zip(summaries, summaries[1:])):
             raise ValueError(f"{scene}: scene tick went backwards")
         stats = {k: describe([r[k] for r in summaries]) for k in summaries[0] if k not in ("attempt", "tick")}
-        if scene == "inside" and not 13080308 <= stats["triangles"]["p50"] <= 13198353:
+        if scene == "inside" and not 13080308 <= statistics.median(stock) <= 13198353:
             raise ValueError("Inside median differs from the crown-fix reference")
         totals = {k: sum(r[k] for r in summaries) for k in ("triangles", "zero_triangles", "wins", "front_wins")}
         groups = []
@@ -273,24 +332,43 @@ def analyze_capture(root, out):
         changes, events, stability = [], [], {}
         for threshold in (1, 16, 256):
             new = []
-            per_frame = transitions(frames, threshold, new)
+            per_frame = [r for span in spans for r in transitions(span, threshold, new)]
             changes.extend(per_frame)
             events.extend(new)
-            stability[str(threshold)] = dict(promotions_per_frame=describe([r["promotions"] for r in per_frame]),
+            stability[str(threshold)] = dict(promotions_per_frame=describe([r["promotions"] for r in per_frame]) if per_frame else None,
                 promotions=len(new), demotions=sum(r["demotions"] for r in per_frame),
                 new_submitted_winners=sum(r["new_submitted_winners"] for r in per_frame),
                 max_low_frames=max((r["low_frames"] for r in new), default=0),
                 max_zero_frames=max((r["longest_zero_in_low_spell"] for r in new), default=0),
                 max_consecutive_zero_immediately_before=max((r["preceding_zero_frames"] for r in new), default=0))
+        with gzip.open(out / f"{scene}-crowns.csv.gz", "wt", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(("attempt", "key", "triangles", "winner_px", "compact"))
+            for span in spans:
+                for a, data in span:
+                    writer.writerows((a, k, r["tris"], r["wins"], int(r["compact"])) for k, r in data.items())
+        threshold_hist = Counter((r["threshold"], r["preceding_zero_frames"], r["longest_zero_in_low_spell"])
+                                 for r in events)
+        threshold_lengths = [dict(threshold=t, preceding_zero_frames=z, longest_zero_in_low_spell=m, promotions=n)
+                             for (t, z, m), n in sorted(threshold_hist.items())]
+        runs = [run for span in spans for run in zero_runs(span)]
+        histogram = Counter((r["scope"], r["length"], r["left_censored"]) for r in runs)
+        hist_rows = [dict(scope=scope, length=length, left_censored=censored, runs=n)
+                     for (scope, length, censored), n in sorted(histogram.items())]
         for suffix, table in (("frames", summaries), ("buckets", buckets), ("transitions", changes),
-                              ("bucket-summary", groups)):
-            write_table(out / f"{scene}-{suffix}.csv", table)
+                              ("bucket-summary", groups), ("zero-runs", runs), ("zero-lengths", hist_rows),
+                              ("skipped", skips), ("readbacks", drains), ("threshold-zero-lengths", threshold_lengths)):
+            if table:
+                write_table(out / f"{scene}-{suffix}.csv", table)
         with (out / f"{scene}-promotions.csv").open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=("attempt", "threshold", "key", "wins", "low_frames",
                                                    "preceding_zero_frames", "longest_zero_in_low_spell"))
             writer.writeheader()
             writer.writerows(events)
-        result[scene] = dict(frames=len(frames), first_tick=summaries[0]["tick"], last_tick=summaries[-1]["tick"],
+        result[scene] = dict(frames=len(summaries), submitted=len(expected), skipped=skips,
+                             contiguous_pairs=sum(max(0, len(span)-1) for span in spans),
+                             stock_triangles=describe(stock), totals=totals, zero_lengths=hist_rows,
+                             first_tick=summaries[0]["tick"], last_tick=summaries[-1]["tick"],
                              stats=stats, buckets=groups, stability=stability,
                              interval_s=(int(profile[expected[-1]]["begin_ns"]) -
                                          int(profile[expected[0]]["begin_ns"]))/1e9)
@@ -309,7 +387,12 @@ def analyze_saved_frames(root, out):
         if not (folder / "frame.txt").is_file():
             incomplete.append(f"{scene}/{folder.name}")
             continue
-        attempt, read_attempt, slot, tick, w, h, total = map(int, (folder / "frame.txt").read_text().split())
+        receipt = (folder / "frame.txt").read_text()
+        if receipt.startswith("skipped "):
+            incomplete.append(f"{scene}/{folder.name} {receipt.strip()}")
+            previous = None
+            continue
+        attempt, read_attempt, slot, tick, w, h, total = map(int, receipt.split())
         if str(attempt) != folder.name or read_attempt <= attempt or (w, h) != (1280, 720):
             raise ValueError(f"{folder}: inconsistent capture metadata")
         data = decode_owners(folder, placements, w, h, total)

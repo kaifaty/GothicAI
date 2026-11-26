@@ -14,13 +14,16 @@ goto pos 54140 1650 -10780
 clear 3000
 cam at 54140 1760 -10780 60000 2060 -10780
 set time 12 3
-wait real 5000
+wait real 14000
+streaming wait 12000
+set time 12 3
+wait real 1500
 pos
 perf sample perf-coverage/inside
 wait real 2500
 perf stop
 
-wait real 250
+wait real 500
 perf fir-check
 cam game
 face 110
