@@ -88,6 +88,11 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   WindComputed, WindSkipped,
   // WorldObjects interactive tick: objects parked at rest and skipped this frame
   InteractiveParked,
+  // Instance management (reports/engine/2026-11-27-instance-management): registered objects of the level and tree
+  // loops, fade/level evaluations computed and skipped by the interval caches, cache verify mismatches (0 is parity),
+  // and the instance storage growth events of the frame
+  ObjectsLevelsN, ObjectsTreeN, TreeFadeComputed, TreeFadeSkipped, LevelsComputed, LevelsSkipped,
+  LodCacheMismatch, StorageGrowths,
   Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error, Simulation };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
