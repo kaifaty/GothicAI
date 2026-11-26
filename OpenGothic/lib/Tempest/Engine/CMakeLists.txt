@@ -132,6 +132,18 @@ if(TEMPEST_BUILD_AUDIO)
   if(MSVC)
     target_compile_options(OpenAL PRIVATE /wd4060)
   endif()
+  # OpenAL Soft's SIMD mixer miscompiles under GCC LTO (heap corruption in
+  # MixHrtfBlend/Voice::mix at startup); keep LTO for the engine, exclude audio.
+  # Per-config properties are required: a global CMAKE_INTERPROCEDURAL_OPTIMIZATION_<CONFIG>
+  # is not overridden by the generic INTERPROCEDURAL_OPTIMIZATION target property.
+  foreach(tgt OpenAL alcommon)
+    if(TARGET ${tgt})
+      set_target_properties(${tgt} PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION OFF
+        INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
+        INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF)
+    endif()
+  endforeach()
 endif()
 
 ### Vulkan

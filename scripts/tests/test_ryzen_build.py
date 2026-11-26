@@ -12,6 +12,7 @@ HELPER = Path(__file__).resolve().parents[1] / "ryzen-build.sh"
 BUILD_FLAGS = [
     "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG",
     "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG",
+    "-DOPENGOTHIC_ENABLE_LTO=ON",
 ]
 SOURCE = r'''
 set -euo pipefail
