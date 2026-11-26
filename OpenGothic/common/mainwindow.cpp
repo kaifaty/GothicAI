@@ -166,6 +166,13 @@ MainWindow::MainWindow(Device& device)
   }
 
 MainWindow::~MainWindow() {
+  {
+  std::lock_guard<std::mutex> g(recMtx);
+  recStop = true;
+  }
+  recCv.notify_all();
+  if(recordTh.joinable())
+    recordTh.join();
   Bench::openMenu = nullptr;
   GameMusic::inst().stopMusic();
   Gothic::inst().cancelLoading();
@@ -1560,6 +1567,54 @@ void MainWindow::setFullscreen(bool fs) {
   setCursorShape(fs ? CursorShape::Hidden : CursorShape::Arrow);
   }
 
+void MainWindow::joinRecord() {
+  std::unique_lock<std::mutex> lk(recMtx);
+  recCv.wait(lk,[this]{ return recDone; });
+  auto e = recErr;
+  recErr = nullptr;
+  lk.unlock();
+  if(e)
+    std::rethrow_exception(e);
+  }
+
+void MainWindow::recordLoop() {
+  for(;;) {
+    std::unique_lock<std::mutex> lk(recMtx);
+    recCv.wait(lk,[this]{ return recTask || recStop; });
+    if(recStop)
+      return;
+    recTask = false;
+    const uint8_t fId       = recFId;
+    Tempest::Attachment* result = recResult;
+    WorldView* wview        = recWview;
+    const Camera* camera    = recCamera;
+    lk.unlock();
+    try {
+      Resources::setRecycleFrame(fId);
+      auto& enc = *recEnc[fId];
+      renderer.recordFrame(*result, enc, fId, *wview, *camera);
+      enc.setFramebuffer({{*result, Tempest::Preserve, Tempest::Preserve}});
+      {
+      FrameProfile::Scope uiTiming(FrameProfile::Zone::EncodeUi);
+      enc.setDebugMarker("UI");
+      uiMesh[fId].draw(enc);
+      }
+      recEnc[fId].reset();
+      fence[fId] = device.submit(commands[fId]);
+      if(!SystemApi::isOffscreen())
+        device.present(swapchain);
+      Resources::setRecycleFrame(-1);
+      }
+    catch(...) {
+      Resources::setRecycleFrame(-1);
+      recErr = std::current_exception();
+      }
+    std::lock_guard<std::mutex> g(recMtx);
+    recDone = true;
+    recCv.notify_all();
+    }
+  }
+
 void MainWindow::render(){
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
   AppCadence::beginAttempt();
@@ -1639,6 +1694,9 @@ void MainWindow::render(){
         }
       }
 
+    // The previous frame's recording must be done before this frame's preparation republishes the draw state.
+    joinRecord();
+
     { FrameProfile::Scope timing(FrameProfile::Zone::Recycle); Resources::resetRecycled(cmdId); }
 
     {
@@ -1661,16 +1719,45 @@ void MainWindow::render(){
     }
 
     CommandBuffer& cmd = commands[cmdId];
-    {
-    FrameProfile::Scope timing(FrameProfile::Zone::Encode);
-    auto enc = cmd.startEncoding(device);
-    drawGameFrame(renderer,frameImage(),enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
-    }
-    { FrameProfile::Scope timing(FrameProfile::Zone::Submit); sync = device.submit(cmd); }
-    profile.flag(FrameProfile::Flag::SubmitCompleted);
-    if(!SystemApi::isOffscreen()) {
-      { FrameProfile::Scope timing(FrameProfile::Zone::Present); device.present(swapchain); }
+    auto* wview  = GameServices::inst().worldView();
+    auto* camera = GameServices::inst().camera();
+    static const bool pipeEnv = []{
+      const char* e = std::getenv("OPENGOTHIC_RENDER_PIPELINE");
+      return e!=nullptr && e[0]=='1';
+      }();
+    const bool pipeFrame = pipeEnv && !capture && wview!=nullptr && camera!=nullptr &&
+                           Gothic::inst().checkLoading()==Gothic::LoadState::Idle &&
+                           !video.isActive() && inventory.isOpen()==InventoryMenu::State::Closed;
+    if(pipeFrame && !recordTh.joinable())
+      recordTh = std::thread(&MainWindow::recordLoop,this);
+    if(pipeFrame) {
+      recEnc[cmdId] = cmd.startEncoding(device);
+      renderer.prepareScene(frameImage(), *recEnc[cmdId], cmdId, true);
+      {
+      std::lock_guard<std::mutex> g(recMtx);
+      recFId    = cmdId;
+      recResult = &frameImage();
+      recWview  = wview;
+      recCamera = camera;
+      recDone   = false;
+      recTask   = true;
+      }
+      recCv.notify_one();
+      profile.flag(FrameProfile::Flag::SubmitCompleted);
       profile.flag(FrameProfile::Flag::PresentCompleted);
+      }
+    else {
+      {
+      FrameProfile::Scope timing(FrameProfile::Zone::Encode);
+      auto enc = cmd.startEncoding(device);
+      drawGameFrame(renderer,frameImage(),enc,cmdId,uiMesh[cmdId],numMesh[cmdId],inventory,video);
+      }
+      { FrameProfile::Scope timing(FrameProfile::Zone::Submit); sync = device.submit(cmd); }
+      profile.flag(FrameProfile::Flag::SubmitCompleted);
+      if(!SystemApi::isOffscreen()) {
+        { FrameProfile::Scope timing(FrameProfile::Zone::Present); device.present(swapchain); }
+        profile.flag(FrameProfile::Flag::PresentCompleted);
+        }
       }
     if(LoadProbe::enabled() && Gothic::inst().isInGame() && Gothic::inst().checkLoading()==Gothic::LoadState::Idle)
       LoadProbe::presented();

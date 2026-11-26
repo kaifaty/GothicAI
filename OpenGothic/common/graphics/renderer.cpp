@@ -834,16 +834,31 @@ void Renderer::resetShadowmap() {
   }
 
 void Renderer::drawScene(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, bool sceneActive) {
+  prepareScene(result,cmd,fId,sceneActive);
+  recordScene(result,cmd,fId,sceneActive);
+  }
+
+void Renderer::prepareScene(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, bool sceneActive) {
   readBoughHiZDepth(fId);
   auto wview  = GameServices::inst().worldView();
   auto camera = GameServices::inst().camera();
 
   if(sceneActive && wview!=nullptr && camera!=nullptr) {
-    draw(result, cmd, fId, *wview, *camera);
-    cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
+    prepareFrame(result, cmd, fId, *wview, *camera);
     } else {
     taa.valid = false; // a video or no world: the next world frame starts over
     boughHiZDiag.valid = false;
+    }
+  }
+
+void Renderer::recordScene(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, bool sceneActive) {
+  auto wview  = GameServices::inst().worldView();
+  auto camera = GameServices::inst().camera();
+
+  if(sceneActive && wview!=nullptr && camera!=nullptr) {
+    recordFrame(result, cmd, fId, *wview, *camera);
+    cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
+    } else {
     cmd.setFramebuffer({{result, Vec4(), Tempest::Preserve}});
     }
   }
@@ -888,6 +903,11 @@ void Renderer::dbgDraw(Tempest::Painter& p) {
   }
 
 void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
+  prepareFrame(result,cmd,fId,wview,camera);
+  recordFrame(result,cmd,fId,wview,camera);
+  }
+
+void Renderer::prepareFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
   FrameProfile::Scope mainTiming(FrameProfile::Zone::EncodeMain);
   const auto gameTime  = GameServices::inst().worldTime();
   const auto tickCount = GameServices::inst().worldTickCount();
@@ -975,13 +995,19 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   const bool bloodReady = !captureLandscapeDepth && !settings.pathTraceEnabled && treeProbe==nullptr &&
                           bloodWorld!=nullptr &&
                           blood.prepare(fId, *bloodWorld, wview.sceneGlobals(), camera.listenerPosition().pos);
+  prepBloodReady = bloodReady;
+  prepShotNative = shotNative;
+  }
 
+void Renderer::recordFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
+  FrameProfile::Scope recTiming(FrameProfile::Zone::EncodeRecord);
+  const bool bloodReady = prepBloodReady;
+  const bool shotNative = prepShotNative;
   if(settings.pathTraceEnabled && !captureLandscapeDepth) {
     treeHistory.valid = false;
     boughHiZDiag.valid = false;
     ssao.valid = false; // no SSAO in this frame: its history is not the frame before the next one
     drawPathtrace(cmd, wview, fId);
-    mainTiming.finish();
     FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
     cmd.setDebugMarker("Tonemapping");
     drawTonemapping(result, cmd, wview);
@@ -1081,7 +1107,6 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
   // SSAO needs only the depth: ahead of the shadow maps its compute runs under their vertex work on Metal
   prepareSSAO(cmd, wview);
-  mainTiming.finish();
 
   drawShadowMap(cmd, fId, wview);
   prepareEpipolar(cmd, wview);

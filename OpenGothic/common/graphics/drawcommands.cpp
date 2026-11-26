@@ -37,8 +37,8 @@ struct LodPush {
   Vec4     forwardAndGuard;
   };
 
-LodPush clusterLodView(const DrawClusters& clusters, const SceneGlobals& scene) {
-  if(!cur->hasLevels)
+LodPush clusterLodView(bool hasLevels, const SceneGlobals& scene) {
+  if(!hasLevels)
     return {};
 
   static const auto thresholdPx = [] {
@@ -397,7 +397,7 @@ void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
   }
 
 void DrawCommands::publish() {
-  const size_t cc = cur->clusterCount;
+  const size_t cc = clusters.size();
   if(pub!=nullptr && !pubDirty && pub->clusterCount==cc && pub->hasLevels==clusters.hasLevels()) {
     cur = pub.get();
     return;
@@ -405,7 +405,9 @@ void DrawCommands::publish() {
   auto p = std::make_shared<Pub>();
   p->cmd = cmd;
   p->ord.resize(ord.size());
-  for(size_t i=0; i<ord.size(); ++i)
+  if(cmd.empty())
+    p->ord.clear();
+  for(size_t i=0; i<p->ord.size(); ++i)
     p->ord[i] = &p->cmd[size_t(ord[i]-cmd.data())];
   p->maxPayload   = maxPayload;
   p->clusterCount = cc;
@@ -462,7 +464,7 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
     push.meshletCount = uint32_t(cur->clusterCount);
     push.znear        = scene.znear;
     push.ownMeshMask  = uint32_t(scene.isLandscapeMask() && ownMeshMask);
-    push.lod          = clusterLodView(clusters, scene);
+    push.lod          = clusterLodView(cur->hasLevels, scene);
 
     // bench `deterministic on`: one invocation appends the visible clusters in their canonical order (orderedClusters),
     // so the instance order of a draw (who wins equal depth, the order of blending) depends neither on how GPU threads
@@ -657,7 +659,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd, const StorageBuffe
   static_assert(offsetof(Push,lod)==16 && sizeof(Push)==64);
   push.meshletCount = uint32_t(cur->clusterCount);
   push.candidateCap = cap;
-  push.lod          = clusterLodView(clusters, scene);
+  push.lod          = clusterLodView(cur->hasLevels, scene);
 
   cmd.setBinding(T_Scene,    scene.uboGlobal[SceneGlobals::V_Vsm]);
   cmd.setBinding(T_Payload,  vsmCandidates);

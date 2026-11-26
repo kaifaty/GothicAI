@@ -21,6 +21,9 @@
 
 #include <vector>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <optional>
 
 #include "world/world.h"
 #include "world/focus.h"
@@ -142,6 +145,24 @@ class MainWindow : public Tempest::Window {
     Tempest::Fence         fence   [Resources::MaxFramesInFlight];
     Tempest::CommandBuffer commands[Resources::MaxFramesInFlight];
     uint8_t                cmdId = 0;
+
+    // Render pipeline: frame N records on a dedicated thread while the main thread ticks N+1.
+    // OPENGOTHIC_RENDER_PIPELINE=1 enables it; frames with capture/video/inventory stay serial.
+    bool                   pipeline = false;
+    std::thread            recordTh;
+    std::mutex             recMtx;
+    std::condition_variable recCv;
+    bool                   recTask = false;
+    bool                   recDone = true;
+    bool                   recStop = false;
+    std::exception_ptr     recErr;
+    uint8_t                recFId = 0;
+    Tempest::Attachment*   recResult = nullptr;
+    WorldView*             recWview = nullptr;
+    const Camera*          recCamera = nullptr;
+    std::optional<Tempest::Encoder<Tempest::CommandBuffer>> recEnc[Resources::MaxFramesInFlight];
+    void                   recordLoop();
+    void                   joinRecord();
 
     Tempest::Texture2d        background;
     const Tempest::Texture2d* loadBox=nullptr;

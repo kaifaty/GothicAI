@@ -82,20 +82,20 @@ void DrawBuckets::publishBuckets() {
     pb.animMesh   = b.animMesh;
     pb.boughPage  = b.boughPage;
     if(b.mat.tex!=nullptr)
-      pb.tex = *b.mat.tex;
+      pb.tex = b.mat.tex->shared();
     if(b.mat.normal!=nullptr)
-      pb.normal = *b.mat.normal;
+      pb.normal = b.mat.normal->shared();
     if(b.mat.orm!=nullptr)
-      pb.orm = *b.mat.orm;
+      pb.orm = b.mat.orm->shared();
     if(b.mat.hasFringe()) {
-      pb.frAlbedo = *b.mat.fringe.albedo;
-      pb.frNormal = *b.mat.fringe.normal;
-      pb.frOrm    = *b.mat.fringe.orm;
+      pb.frAlbedo = b.mat.fringe.albedo->shared();
+      pb.frNormal = b.mat.fringe.normal->shared();
+      pb.frOrm    = b.mat.fringe.orm->shared();
       }
     pb.fringeOn = b.mat.hasFringe();
     pb.frames.reserve(b.mat.frames.size());
     for(const auto* t:b.mat.frames)
-      pb.frames.push_back(*t);
+      pb.frames.push_back(t->shared());
     pb.texAniFPSInv = b.mat.texAniFPSInv;
     pb.frameAni     = b.mat.hasFrameAnimation();
     p->push_back(std::move(pb));

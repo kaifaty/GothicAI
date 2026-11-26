@@ -46,6 +46,7 @@ enum class Zone : size_t {
   // C2 diagnosis: the rest of the preparation (storage plan, clusters patch, world ticks, visibility, lighting prep).
   StoragePlanScan, StoragePlanCopy, StoragePlanHistory, ClustersCommit, HousesTick, LightsTick, GrassUpdate, CommitUbo,
   VisibilityCpu, LightingPrep, GBufferRecord, SkyPrepare,
+  EncodeRecord,
   Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,

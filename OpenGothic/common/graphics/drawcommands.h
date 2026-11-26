@@ -182,8 +182,8 @@ class DrawCommands {
     // Published draw state of the frame being recorded: tick writes cmd/ord, recording reads cur.
     // Rebuilt at commit only when the commands or the cluster count changed; otherwise reused.
     struct Pub {
-      std::vector<DrawCmd>  cmd;
-      std::vector<DrawCmd*> ord;
+      std::vector<DrawCmd>        cmd;
+      std::vector<const DrawCmd*> ord;
       size_t                maxPayload   = 0;
       size_t                clusterCount = 0;
       bool                  hasLevels    = false;

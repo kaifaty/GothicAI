@@ -1448,7 +1448,7 @@ void VisualObjects::prepareImpostors(uint8_t fId) {
     const Vec3 center = (lo+hi)*0.5f;
     run.push  = Vec4(center.x, center.y, center.z, (hi-lo).length()*0.5f);
     for(size_t t=0; t<3; ++t)
-      run.tex[t] = mesh->impostor.textures[t];
+      run.tex[t] = mesh->impostor.textures[t].shared();
     run.first = first;
     run.count = end-first;
     pub.push_back(std::move(run));

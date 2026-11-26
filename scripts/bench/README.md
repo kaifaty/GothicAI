@@ -483,7 +483,8 @@ The complete `<zone>` list (each produces all four columns above):
 `world_pre_frame`, `visuals_prepare`, `wind_prepare`, `morph_prepare`, `strands_prepare`, `trees_prepare`,
 `levels_prepare`, `prepare_uniforms`,
 `storage_plan_scan`, `storage_plan_copy`, `storage_plan_history`, `clusters_commit`, `houses_tick`,
-`lights_tick`, `grass_update`, `commit_ubo`, `visibility_cpu`, `lighting_prep`, `gbuffer_record`, `sky_prepare`.
+`lights_tick`, `grass_update`, `commit_ubo`, `visibility_cpu`, `lighting_prep`, `gbuffer_record`, `sky_prepare`,
+`encode_record`.
 
 `animation_npc_pass`, `melee_shadow`, `melee_contacts`, `interactive_animation` and `logical_body_sync`
 split `parallel_animation`: the worker pass over NPCs (with the posing of their melee shadow bodies), then
@@ -517,6 +518,9 @@ the dirty-bit scan, the payload memcpy into the patch buffer, and the motion-his
 `visibility_cpu`, `sky_prepare`, `gbuffer_record` and `lighting_prep` attribute the rest of the encode
 preparation and recording. Small loops (lights tick, plan copy) measured negative on the worker pool
 under the stand's CPU quota: the dispatch wake and join cost more than the loop saves.
+`encode_record` is the command-recording half of the frame when the render pipeline is on
+(`OPENGOTHIC_RENDER_PIPELINE=1`): it runs on the recording thread while the main thread ticks the next
+frame; `encode_main` then covers only the preparation half on the main thread.
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The

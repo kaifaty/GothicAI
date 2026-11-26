@@ -133,12 +133,12 @@ void PfxObjects::preFrameUpdate(uint8_t fId) {
     pb.b       = &i;
     pb.d.mat   = i.decl.visMaterial;
     if(i.decl.visMaterial.tex!=nullptr)
-      pb.d.tex = *i.decl.visMaterial.tex;
+      pb.d.tex = i.decl.visMaterial.tex->shared();
     pb.d.frames.reserve(i.decl.visMaterial.frames.size());
     for(const auto* t:i.decl.visMaterial.frames)
-      pb.d.frames.push_back(*t);
+      pb.d.frames.push_back(t->shared());
     if(i.decl.trlTexture!=nullptr)
-      pb.d.trl = *i.decl.trlTexture;
+      pb.d.trl = i.decl.trlTexture->shared();
     pb.d.hazeShift = i.decl.hazeShift;
     pubBucket.push_back(std::move(pb));
     }
