@@ -221,6 +221,13 @@ class VisualObjects final {
       uint8_t             strandLevel    = 0;    // ...the level: 2^(-level/8) of the list
       bool                tree           = false; // a tree in the wind: its sphere follows the wind's fade
       uint16_t            treeFade       = 0;     // ...the fade its sphere is grown by now (preFrameUpdateTrees)
+      // the fade's interval cache (foliagefadeinterval.h): the distance range where treeFade holds and the inputs
+      // it was derived from; fadeBound is re-evaluated only when the distance leaves the range or an input changes
+      float               fadeReach      = -1;
+      float               fadeScale      = -1;
+      float               fadePx         = -1;
+      float               fadeLo         = 0;
+      float               fadeHi         = 0;
       uint8_t             levelSub       = NoLevels; // its submesh of a mesh with levels of detail (meshlevels.h)
       MeshLevels::Selection level;                // ...the stage selected for this instance, 0 the mesh itself
       uint8_t             shadowLevel    = 0;
@@ -232,6 +239,15 @@ class VisualObjects final {
       uint16_t            bandCmd        = uint16_t(-1);
       uint32_t            bandReserve    = 0;
       uint32_t            bandWord       = 0;
+      // the level selection cache (preFrameUpdateLevels): the scene key and transform stamp of the last full
+      // selection, the deform count it was computed with, the heights the band replay takes, and the impostor
+      // frustum test's result; posStamp grows at setObjMatrix/setAsGhost
+      uint32_t            posStamp       = 0;
+      uint64_t            lodKey         = 0;
+      uint32_t            lodDeform      = 0;
+      float               lodHeight      = 0;
+      float               lodShadowHeight = 0;
+      bool                lodFrustum     = false;
       bool                clusterLod     = false;
       bool                isGhost       = false;
       bool                visible       = true;
@@ -338,6 +354,18 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsStrand;
     std::unordered_set<size_t> objectsTree;
     std::unordered_set<size_t> objectsLevels;
+    // the level cache's scene key: grows when any input of the preFrameUpdateLevels selection changes
+    uint32_t               lodSceneKey = 1;
+    struct LodSceneInputs {
+      Tempest::Vec3 cam;
+      float    py      = 0;
+      int      resY    = 0;
+      float    nearPx  = 0;
+      float    probePx = 0;
+      uint32_t flags   = 0;
+      bool operator==(const LodSceneInputs&) const = default;
+      };
+    LodSceneInputs         lodScenePrev;
     struct ShadowProbe {
       uint32_t coarseTrees = 0, changedTrees = 0;
       uint64_t coarseMeshlets = 0, coarseTriangles = 0;

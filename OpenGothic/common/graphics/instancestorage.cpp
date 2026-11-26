@@ -6,6 +6,7 @@
 #include <Tempest/Log>
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <atomic>
 
 using namespace Tempest;
@@ -179,6 +180,25 @@ size_t InstanceStorage::gpuBytes() const {
   return (dataCpu.size() + 0xFFF) & ~size_t(0xFFF);
   }
 
+// OPENGOTHIC_INSTANCE_RESERVE=0 sizes the GPU buffer exactly by the page-rounded data, as before: every crossing
+// of a page recreates it and uploads all of it (138 full uploads on the 10k-tree warmup). By default the capacity
+// grows geometrically (x2, floor 128 KiB, page-rounded): allocations within it keep the GPU buffer, and only the
+// new blocks go to it by the dirty patch, as any other change. The data stays exact-fit; the reserved tail past it
+// is never uploaded and never read.
+static bool instanceReserve() {
+  static const bool reserve = []{
+    const char* e = std::getenv("OPENGOTHIC_INSTANCE_RESERVE");
+    return e==nullptr || e[0]!='0';
+    }();
+  return reserve;
+  }
+
+size_t InstanceStorage::commitBytes() const {
+  if(!instanceReserve())
+    return gpuBytes();
+  return std::max(gpuCapacity, gpuBytes());
+  }
+
 void InstanceStorage::setHistory(bool enabled) {
   if(history==enabled)
     return;
@@ -220,7 +240,7 @@ void InstanceStorage::pushCopies(std::vector<Copy>& out, size_t firstBlock, size
 
 InstanceStorage::Plan InstanceStorage::planCommit(size_t gpuCapacity) {
   Plan plan;
-  if(gpuCapacity!=gpuBytes()) {
+  if(gpuCapacity!=commitBytes()) {
     // cur (and prev) are recreated from dataCpu: nothing is pending, no motion in this frame
     plan.grow = true;
     std::memset(durty.data(), 0, durty.size()*sizeof(uint32_t));
@@ -343,10 +363,11 @@ bool InstanceStorage::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   std::atomic_thread_fence(std::memory_order_acquire);
   join();
 
-  const size_t dataSize = gpuBytes();
+  const size_t dataSize = commitBytes();
   if(dataGpu.byteSize()!=dataSize) {
     FrameProfile::Scope growth(FrameProfile::Zone::StorageGrow);
     FrameProfile::add(FrameProfile::Amount::GrowBytes,dataCpu.size());
+    FrameProfile::add(FrameProfile::Amount::StorageGrowths,1);
     planCommit(dataGpu.byteSize());
     Resources::recycle(std::move(dataGpu));
     dataGpu = device.ssbo(BufferHeap::Device,Tempest::Uninitialized,dataSize);
@@ -457,6 +478,13 @@ InstanceStorage::Id InstanceStorage::alloc(const size_t size) {
   r.asize = size;
 
   dataCpu.resize(dataCpu.size() + nsize);
+  if(instanceReserve()) {
+    const size_t pages = gpuBytes();
+    if(pages>gpuCapacity) {
+      gpuCapacity = std::max({pages, gpuCapacity*2, size_t(131072)});
+      gpuCapacity = (gpuCapacity + 0xFFF) & ~size_t(0xFFF);
+      }
+    }
 
   blockCnt = (dataCpu.size()+blockSz-1)/blockSz;
   durty.resize((blockCnt+32-1)/32, 0);

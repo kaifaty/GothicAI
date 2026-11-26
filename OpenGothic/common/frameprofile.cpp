@@ -56,7 +56,9 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "npc_idle_wheel_deferred","npc_tier_candidates","npc_policy_candidates",
   "npc_rest_routine_deferred","npc_rest_routine_deadline",
   "wind_computed","wind_skipped",
-  "interactive_parked"};
+  "interactive_parked",
+  "objects_levels_n","objects_tree_n","tree_fade_computed","tree_fade_skipped","levels_computed","levels_skipped",
+  "lod_cache_mismatch","storage_growths"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }

@@ -19,6 +19,7 @@ struct InstanceStorageContractAccess {
   using Plan = InstanceStorage::Plan;
   static Plan plan(InstanceStorage& storage, size_t gpuCapacity) { return storage.planCommit(gpuCapacity); }
   static size_t gpuBytes(const InstanceStorage& storage) { return storage.gpuBytes(); }
+  static size_t commitBytes(const InstanceStorage& storage) { return storage.commitBytes(); }
   static const std::vector<uint8_t>& patch(const InstanceStorage& storage) { return storage.patchCpu; }
   static bool keepsHistoryState(const InstanceStorage& storage) {
     return storage.durtyPrev.size()>0 || storage.fresh.size()>0 || storage.saveBlock.size()>0 ||
@@ -30,6 +31,13 @@ struct InstanceStorageContractAccess {
 namespace {
   using Matrix = Tempest::Matrix4x4;
   constexpr size_t blockBytes = 64;
+
+  // The production switch, read the same way: the reserve amortizes GPU capacity growth (M3 of
+  // reports/engine/2026-11-27-instance-management); =0 keeps the exact page-rounded capacity.
+  bool reserveOn() {
+    const char* e = std::getenv("OPENGOTHIC_INSTANCE_RESERVE");
+    return e==nullptr || e[0]!='0';
+    }
 
   void require(bool condition, const char* message) {
     if(condition) return;
@@ -47,7 +55,7 @@ namespace {
     void commit(InstanceStorage& storage) {
       const auto& cpu=InstanceStorageContractAccess::cpu(storage);
       const auto& dirty=InstanceStorageContractAccess::dirty(storage);
-      const size_t capacity=((cpu.size()+4095)/4096)*4096;
+      const size_t capacity=InstanceStorageContractAccess::commitBytes(storage);
       if(bytes.size()!=capacity) {
         bytes.assign(capacity,0xcd);
         std::copy(cpu.begin(),cpu.end(),bytes.begin());
@@ -173,7 +181,10 @@ namespace {
     large.set(zeros.data());
     const auto oldCapacity=gpu.bytes.size();
     gpu.commit(storage);
-    require(gpu.bytes.size()>oldCapacity,"fixture must force a new GPU page capacity");
+    if(reserveOn())
+      require(gpu.bytes.size()>=oldCapacity,"reserve capacity must not shrink");
+    else
+      require(gpu.bytes.size()>oldCapacity,"fixture must force a new GPU page capacity");
     require(gpu.equal(begin(large),zeros.data(),8192),"GPU resize must initialize a byte-identical zero range");
     require(gpu.equal(begin(id),expanded.data(),256) && gpu.equal(begin(blocker),&other,64),
             "GPU resize must preserve every existing palette");
@@ -297,7 +308,7 @@ namespace {
       const auto& cpu=InstanceStorageContractAccess::cpu(storage);
       last=InstanceStorageContractAccess::plan(storage,cur.size());
       if(last.grow) {
-        const size_t capacity=InstanceStorageContractAccess::gpuBytes(storage);
+        const size_t capacity=InstanceStorageContractAccess::commitBytes(storage);
         require(capacity!=cur.size(),"growth is planned only for a new capacity");
         cur.assign(capacity,0xcd);
         std::copy(cpu.begin(),cpu.end(),cur.begin());
@@ -507,9 +518,11 @@ namespace {
     commitAndCheck(storage,gpu,fresh,"setup");
     m=marker(2);
     a.set(&m);
-    auto large=storage.alloc(8192);
+    // the reserve already holds 128 KiB: the fixture must cross it to force a real capacity growth
+    const size_t largeBytes = reserveOn() ? 131072 : 8192;
+    auto large=storage.alloc(largeBytes);
     fresh.add(large);
-    std::vector<Matrix> zeros(128);
+    std::vector<Matrix> zeros(largeBytes/sizeof(Matrix));
     large.set(zeros.data());
     const auto capacity=gpu.cur.size();
     commitAndCheck(storage,gpu,fresh,"(e) growth");
@@ -640,9 +653,45 @@ namespace {
     }
   }
 
+  // M3: the reserve amortizes GPU capacity growth; the exact mode keeps every page crossing. Both must carry the
+  // same bytes: 2000 palettes of 128 bytes, a commit after each, and the GPU image read back over the whole data.
+  void testReserveAmortization() {
+    InstanceStorage storage;
+    MockPage gpu;
+    gpu.commit(storage);
+    size_t grows=0, lastCap=gpu.bytes.size();
+    std::vector<InstanceStorage::Id> ids;
+    for(int i=0;i<2000;++i) {
+      ids.push_back(storage.alloc(128));
+      Matrix a=Matrix::mkIdentity(), b=Matrix::mkIdentity();
+      a.set(3,0,float(i));
+      b.set(3,1,float(-i));
+      Matrix pair[2]={a,b};
+      ids.back().set(pair);
+      gpu.commit(storage);
+      if(gpu.bytes.size()!=lastCap) {
+        ++grows;
+        lastCap=gpu.bytes.size();
+        }
+      }
+    const auto& cpu=InstanceStorageContractAccess::cpu(storage);
+    const size_t pages=((cpu.size()+4095)/4096)*4096;
+    require(gpu.bytes.size()>=pages,"capacity must cover the data");
+    require(gpu.equal(0,cpu.data(),cpu.size()),"every committed palette must read back byte-identical");
+    if(reserveOn()) {
+      require(grows<=12,"reserve must amortize growth (x2 from 128 KiB)");
+      require(gpu.bytes.size()<=pages*2+131072,"reserve slack must stay bounded");
+      }
+    else {
+      require(grows>=60,"exact mode must grow at every page crossing");
+      require(gpu.bytes.size()==pages,"exact mode capacity is the page-rounded data");
+      }
+    }
+
 int main() {
   require(!Resources::hasGraphicsDevice(),"CPU storage contract must not construct a graphics device");
   testZeroPaddingReuse();
+  testReserveAmortization();
   testMovedGrowthAndPageResize();
   testMovedReusedRange();
   testWordBoundaries();

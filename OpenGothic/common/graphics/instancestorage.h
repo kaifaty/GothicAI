@@ -94,6 +94,7 @@ class InstanceStorage {
       };
 
     size_t gpuBytes() const;
+    size_t commitBytes() const;
     Plan   planCommit(size_t gpuCapacity);
     void   markFresh(const Range& r);
     void   pushCopies(std::vector<Copy>& out, size_t firstBlock, size_t endBlock);
@@ -108,6 +109,7 @@ class InstanceStorage {
 
     Tempest::StorageBuffer  dataGpu;
     std::vector<uint8_t>    dataCpu;
+    size_t                  gpuCapacity = 0; // the GPU buffer's reserved capacity; dataCpu stays exact-fit
 
     // history: kept only while it is on
     bool                    history      = false;
