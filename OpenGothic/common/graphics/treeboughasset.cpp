@@ -16,6 +16,7 @@
 
 #include <rapidjson/document.h>
 
+#include "commandline.h"
 #include "graphics/foliagetree.h"
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "meshlevels.h"
@@ -420,8 +421,9 @@ bool coverageEnabled() {
   static const bool on = [] {
     const char* env = std::getenv("OPENGOTHIC_TREE_COVERAGE_LOD");
     const bool ini = Settings::exists() && Settings::getI("INTERNAL","coverageLod")!=0;
-    const bool value = MeshLevels::parse(env ? env : "",ini) && enabled() && !cpuEnabled() &&
-                       DrawCommands::treeHistoryEnabled();
+    // Coverage inspects live crown entries and clusters. Pipelined recording may overlap their next tick.
+    const bool value = !CommandLine::renderPipelineEnabled() && MeshLevels::parse(env ? env : "",ini) &&
+                       enabled() && !cpuEnabled() && DrawCommands::treeHistoryEnabled();
     Log::i("render: tree coverage LOD = ",value ? "1" : "0");
     return value;
     }();

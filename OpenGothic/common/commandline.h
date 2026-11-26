@@ -17,6 +17,7 @@ class CommandLine {
   public:
     CommandLine(int argc,const char** argv);
     static const CommandLine& inst();
+    static bool renderPipelineEnabled();
 
     enum GraphicBackend : uint8_t {
       Vulkan,

@@ -449,7 +449,7 @@ StorageBuffer TreeBoughRender::withReferenceCut(Encoder<CommandBuffer>& enc, Dra
   auto copy = device.ssbo(Uninitialized,main.byteSize());
   const uint32_t words = uint32_t(main.byteSize()/sizeof(uint32_t));
   b.copy(enc,main,copy,0,words,words);
-  auto fine = device.ssbo(std::vector<uint32_t>(b.entries.size()*3));
+  auto fine = device.ssbo(std::vector<uint32_t>(b.pubEntryCount*3));
   std::swap(main,copy);
   std::swap(b.coverageHistory,fine);
   b.expand(enc,commands.boughHistoryToken,late);
