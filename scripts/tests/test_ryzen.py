@@ -292,13 +292,15 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
         self.assert_option(options, '--archive', '/task/far-fight/chunk')
 
     def test_headless_bench_uses_batch_without_display_or_gpu_memory(self):
-        for settings, expected_class in (({}, 'batch'), ({'RYZEN_BENCH_CLASS': 'quick'}, 'quick')):
+        for settings, expected_class, expected_mem in (({}, 'batch', '6G'),
+                                                       ({'RYZEN_BENCH_CLASS': 'quick'}, 'quick', '6G'),
+                                                       ({'BENCH_MEM': '12G'}, 'batch', '12G')):
             with self.subTest(settings=settings):
                 result, requests = self.run_game('bench', headless=True, window=settings)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(len(requests), 2, requests)
                 options = self.queue_options(requests[-1])
-                for name, value in (('--class', expected_class), ('--threads', '4'), ('--mem', '6G'),
+                for name, value in (('--class', expected_class), ('--threads', '4'), ('--mem', expected_mem),
                                     ('--max', '9m'), ('--name', 'bench smoke')):
                     self.assert_option(options, name, value)
                 for option in ('--display', '--display-shared', '--display-exclusive', '--display-column',

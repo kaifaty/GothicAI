@@ -474,6 +474,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="arrows" && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
   else if((c=="npcequip" || c=="wander" || c=="stuck" || c=="fight") && npcCommandsCommand(npcCommandsContext(),line,a,w,pl,ctrl)) return;
   else if(c=="arc" && archeryCommand(archeryContext(),line,a,w,pl,ctrl)) return;
+  else if(c=="npcscale" && npcScaleCommand(a,w,pl)) return;
   else dispatched=false;
   if(dispatched) return;
   dispatched=true;

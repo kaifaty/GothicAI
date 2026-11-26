@@ -1539,7 +1539,7 @@ game_queue_args() {
   GAME_ENV=()
   if [[ "$ACTION" == bench ]]; then
     if [[ "${BENCH_HEADLESS:-0}" == 1 ]]; then
-      GQ_ARGS=(--class "${BENCH_CLASS:-batch}" --threads 4 --mem 6G --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
+      GQ_ARGS=(--class "${BENCH_CLASS:-batch}" --threads 4 --mem "${BENCH_MEM:-6G}" --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
     elif ! bench_window; then
       # Offscreen: the same game without --display, so no window slot to wait for.
       # Peak ~0.7 GB of video memory per offscreen game (2026-11-09), ~1 GB with ray tracing on by the device rule
