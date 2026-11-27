@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 
 REPO = "kaifaty/GothicAI"
@@ -23,11 +24,26 @@ def existing_pr(branch):
     return next((pr["url"] for pr in prs if not pr["isCrossRepository"]), None)
 
 
+def name_issue_workspace(issue):
+    worktree = Path.cwd()
+    run_id = os.environ.get("PLAYBOOK_RUN_ID")
+    if run_id != worktree.name:
+        return
+    try:
+        run = json.loads((worktree.parent.parent / "runs" / f"{run_id}.json").read_text())
+        if run.get("workspaceCreated") is not True or run["worktree"]["path"] != str(worktree):
+            return
+        title = f"#{issue['number']} · {issue['title']}"[:100]
+        subprocess.run(["paseo", "workspace", "rename", run["workspaceId"], title], check=True)
+    except (OSError, KeyError, ValueError, subprocess.CalledProcessError) as error:
+        print(f"Could not label the playbook workspace: {error}", file=sys.stderr)
+
+
 def handle_issue():
     number = os.environ["PLAYBOOK_INPUT_ISSUE_NUMBER"]
     if not number.isascii() or not number.isdecimal() or int(number) < 1:
         sys.exit("Expected a positive issue number.")
-    issue = gh_json("issue", "view", number, "--json", "state,url,labels,closedByPullRequestsReferences")
+    issue = gh_json("issue", "view", number, "--json", "number,title,state,url,labels,closedByPullRequestsReferences")
     if issue["url"] != f"{REPO_URL}/issues/{number}":
         sys.exit("Expected a GothicAI issue.")
     branch = f"paseo/issue-{number}"
@@ -44,6 +60,7 @@ def handle_issue():
     if step == "inspect":
         if url:
             return {"outcome": "handled", "summary": f"Issue #{number} already handled: {url}"}
+        name_issue_workspace(issue)
         return {"outcome": "ready", "summary": issue["url"]}
     if not url:
         if output("git", "status", "--porcelain"):

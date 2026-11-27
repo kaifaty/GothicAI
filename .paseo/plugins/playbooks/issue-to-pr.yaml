@@ -1,5 +1,5 @@
 title: Выбрать issue, исправить и открыть PR
-description: Выбрать открытую задачу GothicAI, проверить исправление в отдельной рабочей копии и открыть PR в main.
+description: Выбрать открытую задачу GothicAI, проверить исправление и открыть PR в main. Запускайте через «Start in a new workspace», чтобы у прогона была своя вкладка.
 manager: { mode: none }
 isolation: { mode: worktree, base: main }
 concurrency: 1
