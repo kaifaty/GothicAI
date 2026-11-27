@@ -157,8 +157,11 @@ bool Npc::perceptionProcess(Npc &pl, Npc* victim, float quadDist, PercType perc,
     if(deed!=nullptr)
       deed->witnessed(*this);
     GameHost::inst().emitExternalPerception(*this,pl,victim,perc);
-    trace("external_control",false,false);
-    return false;
+    // The action key can hand an idle NPC back to the native dialogue.
+    if(perc!=PERC_ASSESSTALK || externalCtrl) {
+      trace("external_control",false,false);
+      return false;
+      }
     }
   GameHost::inst().emitObservedPerception(*this,pl,victim,perc);
 

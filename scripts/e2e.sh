@@ -119,9 +119,10 @@
 #       visible wolf before it attacks the hero; the wolf never hears the phrase or asks its tone model.
 #       No model; combat-event speech is explicitly silent (GIVEN); TIMEOUT=360
 #   m5e: given: Xardas answers with fixed lines; body decisions are fixed.
-#       New game, no SAVE, LLM=off via auto, ASR=fake; talking without a window, typed line and talk key with the
+#       New game, no SAVE, LLM=off via auto, ASR=fake, TTS=fake; typed line and talk key with the
 #       hero's own focus, the addressee, the npc's body, the hero's doings, an interruption, a witness, the end
-#       of a conversation when the hero walks away, a walking npc answering on the move
+#       of a conversation when the hero walks away, a walking npc answering on the move, and the native
+#       dialogue options opening while the hero stays beside Xardas after his voice reply
 #   m6: npc's know the world from the scripts' dialogs as far as the story has got: Xardas's talk of chapter 1
 #       but not chapter 3, a dialog played from the menu becomes one the hero has heard, chapter 3 opens its
 #       talk; Lobart knows his field work and what farmers say; the knowledge is in the model's request and
