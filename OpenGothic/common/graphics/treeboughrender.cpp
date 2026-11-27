@@ -314,6 +314,12 @@ void TreeBoughRender::uploadReference() {
   }
 
 void TreeBoughRender::commit() {
+  // Publish visibility for the same camera and cluster commands as this frame's GPU buffers.
+  pubCoverageVisible = TreeBough::coverageEnabled() && std::ranges::any_of(entries,[&](const auto& entry) {
+    const auto& c = owner.clusters[entry.first];
+    return c.meshletCount!=0 && c.commandId==uint16_t(entry.second.commands) &&
+           owner.scene.frustrum[SceneGlobals::V_Main].testPoint(c.pos,c.r+1.f);
+    });
   if(entries.empty()) {
     pubCommands.clear();
     pubEntryCount = 0;
@@ -383,13 +389,7 @@ void TreeBoughRender::expand(Encoder<CommandBuffer>& enc, uint32_t token, bool l
   enc.setBinding(8,indirect);
   enc.setBinding(9,payload);
   enc.setBinding(10,lateHiZ ? owner.history.status : data);
-  // The CPU already selects the impostor command. Only possible 3D draws need coverage bindings.
-  coverageRecorded = TreeBough::coverageEnabled() && owner.boughHistoryToken!=0 &&
-                     std::ranges::any_of(entries,[&](const auto& entry) {
-                       const auto& c = owner.clusters[entry.first];
-                       return c.meshletCount!=0 && c.commandId==uint16_t(entry.second.commands) &&
-                              scene.frustrum[SceneGlobals::V_Main].testPoint(c.pos,c.r+1.f);
-                       });
+  coverageRecorded = pubCoverageVisible && owner.boughHistoryToken!=0;
   if(coverageRecorded) {
     if(coverageExpand.isEmpty())
       coverageExpand = compute("tree_bough_coverage_expand.comp.sprv");
@@ -646,19 +646,19 @@ bool TreeBoughRender::diagnose(Encoder<CommandBuffer>& enc, uint8_t frame, const
 
 void DrawCommands::addBough(const StaticMesh& mesh, uint32_t cluster, uint16_t main, uint16_t impostor,
                            uint32_t first, uint32_t count) {
-  if(!boughs)
-    boughs = std::make_unique<TreeBoughRender>(*this);
-  boughs->add(mesh,cluster,main,impostor,first,count);
+  if(!liveBoughs)
+    liveBoughs = std::make_unique<TreeBoughRender>(*this);
+  liveBoughs->add(mesh,cluster,main,impostor,first,count);
   }
 
 void DrawCommands::removeBough(uint32_t cluster) {
-  if(boughs)
-    boughs->remove(cluster);
+  if(liveBoughs)
+    liveBoughs->remove(cluster);
   }
 
 void DrawCommands::setBoughTransform(uint32_t cluster, const Matrix4x4& transform) {
-  if(boughs)
-    boughs->setTransform(cluster,transform);
+  if(liveBoughs)
+    liveBoughs->setTransform(cluster,transform);
   }
 
 void DrawCommands::finishBoughVisibility(Encoder<CommandBuffer>& enc, uint8_t fId, bool late) {

@@ -315,8 +315,13 @@ void DrawCommands::addClusters(uint16_t cmdId, uint32_t meshletCount) {
   }
 
 void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
+  boughs = liveBoughs.get();
   if(boughs)
     boughs->commit();
+  const auto* probe = BenchProbe::get();
+  pubOrdered = probe!=nullptr && probe->orderedVisibility();
+  if(pubOrdered)
+    prepareOrderedClusters();
   bool cmdChg = false;
   for(auto& v:views) {
     if(isViewEnabled(v.viewport)) {
@@ -463,16 +468,12 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
     push.ownMeshMask  = uint32_t(scene.isLandscapeMask() && ownMeshMask);
     push.lod          = clusterLodView(cur->hasLevels, scene);
 
-    // bench `deterministic on`: one invocation appends the visible clusters in their canonical order (orderedClusters),
+    // bench `deterministic on`: one invocation appends the visible clusters in their published canonical order,
     // so the instance order of a draw (who wins equal depth, the order of blending) depends neither on how GPU threads
     // race for atomicAdd nor on the order the streaming threads published chunks and vobs in
-    const auto* probe = BenchProbe::get();
-    const bool ordered = probe!=nullptr && probe->orderedVisibility();
-    const Tempest::StorageBuffer* order = nullptr;
-    if(ordered) {
-      order = &orderedClusters();
+    const bool ordered = pubOrdered;
+    if(ordered)
       push.meshletCount = uint32_t(orderIds.size());
-      }
     const auto* pso = ordered ? &Shaders::inst().visibilityPassShOrd : &Shaders::inst().visibilityPassSh;
     if(viewport==SceneGlobals::V_Main) {
       pso = ordered ? &Shaders::inst().visibilityPassHiZOrd : &Shaders::inst().visibilityPassHiZ;
@@ -500,8 +501,8 @@ void DrawCommands::visibilityPass(Encoder<CommandBuffer>& cmd, int pass, bool us
     cmd.setBinding(T_HiZ,      *scene.hiZ);
     cmd.setBinding(8,         clusters.levelIndicesSsbo());
     cmd.setBinding(9,         clusters.levelsSsbo());
-    if(order!=nullptr)
-      cmd.setBinding(T_Order,  *order);
+    if(ordered)
+      cmd.setBinding(T_Order,  orderSsbo);
     if(boughs && viewport==SceneGlobals::V_Main) {
       boughExpanded = false;
       boughHistoryToken = 0;
@@ -611,9 +612,9 @@ void DrawCommands::visibilityStats(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   statsWritten[fId] = true;
   }
 
-const Tempest::StorageBuffer& DrawCommands::orderedClusters() {
+void DrawCommands::prepareOrderedClusters() {
   orderNext.clear();
-  for(size_t i=0; i<cur->clusterCount; ++i)
+  for(size_t i=0; i<clusters.size(); ++i)
     if(clusters[i].r>0)
       orderNext.push_back(uint32_t(i));
   // a cluster is named by what it draws: its sphere, then the meshlets of its mesh; ids, buckets and commands are
@@ -635,7 +636,6 @@ const Tempest::StorageBuffer& DrawCommands::orderedClusters() {
       orderSsbo = Resources::device().ssbo(Tempest::BufferHeap::Upload, Tempest::Uninitialized, sizeof(uint32_t)); else
       orderSsbo = Resources::device().ssbo(Tempest::BufferHeap::Upload, orderIds);
     }
-  return orderSsbo;
   }
 
 void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd, const StorageBuffer* geometryStats) {

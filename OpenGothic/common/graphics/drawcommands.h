@@ -163,7 +163,7 @@ class DrawCommands {
       };
 
     bool                     isViewEnabled(SceneGlobals::VisCamera v) const;
-    const Tempest::StorageBuffer& orderedClusters();
+    void prepareOrderedClusters();
 
     void                     setBindings(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const DrawCmd& cx, SceneGlobals::VisCamera viewId);
     void                     sampleHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const Tempest::Texture2d& owners, uint32_t phase);
@@ -214,6 +214,7 @@ class DrawCommands {
 
     // bench `deterministic on`: cluster ids sorted by what they draw, not by the order they were allocated in
     std::vector<uint32_t>    orderIds, orderNext;
+    bool                     pubOrdered = false;
     Tempest::StorageBuffer   orderSsbo;
     Tempest::StorageBuffer   treeOcclusionDecisions;
     Tempest::StorageBuffer   vsmIndirectCmd;
@@ -224,7 +225,8 @@ class DrawCommands {
     Tempest::StorageBuffer   statsSum;
     Tempest::StorageBuffer   statsRead[Resources::MaxFramesInFlight];
     bool                     statsWritten[Resources::MaxFramesInFlight] = {};
-    std::unique_ptr<TreeBoughRender> boughs;
+    std::unique_ptr<TreeBoughRender> liveBoughs;
+    TreeBoughRender*         boughs = nullptr; // published at commit, before recording
     bool                     boughExpanded = false;
     uint32_t                 boughHistoryToken = 0;
     friend class TreeBoughRender;

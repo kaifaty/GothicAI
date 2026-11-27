@@ -86,6 +86,7 @@ class TreeBoughRender {
     // mutate through addBough/removeBough. The counts match the entry table and indirect draws commit() uploaded.
     std::vector<Command> pubCommands;
     size_t               pubEntryCount = 0;
+    bool                 pubCoverageVisible = false;
     uint32_t referenceSize = 0;
     uint32_t epoch = 0;
     bool dirty = true;

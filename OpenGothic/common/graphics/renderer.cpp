@@ -998,6 +998,7 @@ void Renderer::prepareFrame(Tempest::Attachment& result, Encoder<CommandBuffer>&
   prepBloodReady = bloodReady;
   prepShotNative = shotNative;
   prepInWater    = camera.isInWater();
+  prepareHistoryVerify();
   }
 
 void Renderer::recordFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
@@ -1040,10 +1041,7 @@ void Renderer::recordFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& 
   if(treeProbe!=nullptr)
     copyProbeDepth(treeProbe->occluderDepth);
 
-  auto* bench = taa.shot || treeProbe!=nullptr || captureLandscapeDepth ? nullptr : BenchProbe::get();
-  const auto verify = bench!=nullptr ? bench->historyVerifyRequest() : BenchProbe::HistoryVerifyRequest{};
-  if(verify.finish)
-    bench->historyVerifyComplete(treeHistory.verify.finish());
+  const auto& verify = treeHistory.request;
   const bool historyView = !taa.shot && treeProbe==nullptr && !captureLandscapeDepth;
   const bool history = historyView && DrawCommands::treeHistoryEnabled() &&
                        wview.treeHistoryCommands().prepareHistory(cmd, textureCast<const Texture2d&>(
@@ -1065,8 +1063,7 @@ void Renderer::recordFrame(Tempest::Attachment& result, Encoder<CommandBuffer>& 
       treeHistory.valid = false;
       boughHiZDiag.valid = false;
       }
-    if(verify)
-      bench->historyVerifyComplete(false);
+    treeHistory.verifyFailed = bool(verify);
     { FrameProfile::Scope z(FrameProfile::Zone::GBufferRecord);
     if(!captureLandscapeDepth)
       wview.prepareGrass(cmd, fId, textureCast<const Texture2d&>(hiz.hiZ));
@@ -1828,4 +1825,3 @@ Size Renderer::internalResolution(Tempest::Size src) const {
     return settings.taau ? Size(2*src.w/3, 2*src.h/3) : Size(3*src.w/4, 3*src.h/4);
   return Size(src.w/2, src.h/2);
   }
-
