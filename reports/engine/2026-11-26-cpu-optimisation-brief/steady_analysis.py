@@ -28,6 +28,7 @@ ZONES = (
     "storage_dispatch", "storage_join", "clusters_commit", "prepare_uniforms",
     "houses_tick", "grass_update", "commit_ubo", "bindless_rebuild", "bindless_patch", "rt_scene",
     "encode_main", "encode_record", "world_other", "visuals_other", "tree_level_loops",
+    "bucket_publish_residual",
 )
 
 
@@ -53,6 +54,10 @@ def main():
             return zone(row, "lights_tick") + zone(row, "lighting_prep")
         if name == "tree_level_loops":
             return zone(row, "trees_prepare") + zone(row, "levels_prepare")
+        if name == "bucket_publish_residual":
+            return zone(row, "encode_main") - sum(zone(row, z) for z in (
+                "world_pre_frame", "storage_commit", "clusters_commit", "rt_scene",
+                "bindless_rebuild", "bindless_patch", "lighting_prep"))
         if name == "world_other":
             return zone(row, "world_pre_frame") - sum(zone(row, z) for z in (
                 "visuals_prepare", "houses_tick", "lights_tick", "grass_update", "commit_ubo", "pfx_prepare"))
@@ -62,6 +67,9 @@ def main():
         if name == "frame_ms":
             return row[name]
         return zone(row, name)
+
+    def texture_publish(row):
+        return row.get("texture_activity", {}).get("publish", False)
 
     def resource_frame(row):
         activity = row.get("texture_activity", {})
@@ -88,9 +96,12 @@ def main():
         return result
 
     all_rows = {"far": [], "near": []}
+    all_resource_rows = {"far": [], "near": []}
+    all_publish_rows = {"far": [], "near": []}
     report = {"arms": {}, "classification": (
         "resource: any texture read/upload/complete/ready/publish, TLAS build, storage growth or bindless rebuild; "
-        "all other submitted-frame intervals are steady. The first 250 ms of each window is trimmed.")}
+        "all other submitted-frame intervals are steady. Steady summaries trim the first 250 ms of each window; "
+        "resource summaries keep the whole window, including its boundaries.")}
     for name, relative in ARMS.items():
         path = args.root / relative / "frameprofile.csv"
         groups, warnings = perf.samples_from_profile(path)
@@ -101,19 +112,25 @@ def main():
             rows = groups.get(("perf-10k", view), [])
             if not rows:
                 raise RuntimeError(f"{path}: no {view} frames")
+            resource = [row for row in rows if resource_frame(row)]
+            publish = [row for row in rows if texture_publish(row)]
+            all_resource_rows[view].extend(resource)
+            all_publish_rows[view].extend(publish)
             rows = [row for row in rows if row["begin_ns"] >= rows[0]["begin_ns"] + 250_000_000]
             all_rows[view].extend(rows)
-            resource = [row for row in rows if resource_frame(row)]
             steady = [row for row in rows if not resource_frame(row)]
-            arm[view] = {"all": summarize(rows), "steady": summarize(steady), "resource": summarize(resource)}
+            arm[view] = {"all": summarize(rows), "steady": summarize(steady), "resource": summarize(resource),
+                         "publish": summarize(publish)}
         report["arms"][name] = arm
     report["combined"] = {}
     for view, rows in all_rows.items():
-        resource = [row for row in rows if resource_frame(row)]
+        resource = all_resource_rows[view]
         steady = [row for row in rows if not resource_frame(row)]
-        report["combined"][view] = {"all": summarize(rows), "steady": summarize(steady), "resource": summarize(resource)}
+        report["combined"][view] = {"all": summarize(rows), "steady": summarize(steady), "resource": summarize(resource),
+                                    "publish": summarize(all_publish_rows[view])}
 
     report["native"] = {}
+    native_steady_rows, native_publish_rows = [], []
     for name, relative in NATIVE_ARMS.items():
         path = args.root / relative / "frameprofile.csv"
         groups, warnings = perf.samples_from_profile(path)
@@ -121,11 +138,16 @@ def main():
             raise RuntimeError(f"{path}: {warnings}")
         views = {}
         for (_, view), rows in groups.items():
-            rows = [row for row in rows if row["begin_ns"] >= rows[0]["begin_ns"] + 250_000_000]
             resource = [row for row in rows if resource_frame(row)]
+            publish = [row for row in rows if texture_publish(row)]
+            native_publish_rows.extend(publish)
+            rows = [row for row in rows if row["begin_ns"] >= rows[0]["begin_ns"] + 250_000_000]
             steady = [row for row in rows if not resource_frame(row)]
-            views[view] = {"all": summarize(rows), "steady": summarize(steady), "resource": summarize(resource)}
+            native_steady_rows.extend(steady)
+            views[view] = {"all": summarize(rows), "steady": summarize(steady), "resource": summarize(resource),
+                           "publish": summarize(publish)}
         report["native"][name] = views
+    report["native_combined"] = {"steady": summarize(native_steady_rows), "publish": summarize(native_publish_rows)}
 
     if args.output:
         args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
@@ -134,14 +156,14 @@ def main():
     print("arm view class frames " + " ".join(columns))
     for name, arm in report["arms"].items():
         for view in ("far", "near"):
-            for kind in ("steady", "resource"):
+            for kind in ("steady", "resource", "publish"):
                 summary = arm[view][kind]
                 if not summary["frames"]:
                     continue
                 values = [f"{summary[column]['p50']:.3f}" for column in columns]
                 print(name, view, kind, summary["frames"], *values)
     for view in ("far", "near"):
-        for kind in ("steady", "resource"):
+        for kind in ("steady", "resource", "publish"):
             summary = report["combined"][view][kind]
             if not summary["frames"]:
                 continue
@@ -149,7 +171,7 @@ def main():
             print("combined", view, kind, summary["frames"], *values)
     for name, views in report["native"].items():
         for view in sorted(views):
-            for kind in ("steady", "resource"):
+            for kind in ("steady", "resource", "publish"):
                 summary = views[view][kind]
                 if not summary["frames"]:
                     continue
