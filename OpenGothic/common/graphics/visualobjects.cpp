@@ -5,8 +5,6 @@
 #include <Tempest/Log>
 #include <Tempest/Painter>
 #include <algorithm>
-#include <array>
-#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cassert>
@@ -957,17 +955,12 @@ void VisualObjects::preFrameUpdate(uint8_t fId) {
 // and the scale are those the shaders of this frame get (SceneGlobals::commitUbo is ahead of this), the fade is
 // taken with a margin and in steps (fadeBound), so the sphere is never less than the motion. The box of the
 // bucket is one for all the instances of a mesh and keeps the whole of the travel
-// The wind fade's sphere: OPENGOTHIC_TREE_FADE_CACHE=0 keeps the 64-entry cache of the view update; by default each
-// tree holds the distance interval where its quantized fade code stands (foliagefadeinterval.h) and fadeBound is
+// Each tree holds the distance interval where its quantized fade code stands (foliagefadeinterval.h) and fadeBound is
 // re-evaluated only when the distance leaves the interval or reach/scale/px change. A still camera evaluates nothing.
 // OPENGOTHIC_LOD_CACHE_VERIFY=1 re-evaluates the fade on every skip and counts the mismatches (0 is parity).
 void VisualObjects::preFrameUpdateTrees() {
   if(objectsTree.empty())
     return;
-  static const bool cache = []{
-    const char* e = std::getenv("OPENGOTHIC_TREE_FADE_CACHE");
-    return e==nullptr || e[0]!='0';
-    }();
   static const bool verify = []{
     const char* e = std::getenv("OPENGOTHIC_LOD_CACHE_VERIFY");
     return e!=nullptr && e[0]=='1';
@@ -975,16 +968,6 @@ void VisualObjects::preFrameUpdateTrees() {
   FrameProfile::add(FrameProfile::Amount::ObjectsTreeN, objectsTree.size());
   refreshIds(objectsTree,treeIds,treeIdsDirty);
 
-  // The quantized fade depends on the full mesh and placement, which a tree's submeshes share.
-  // The cache lives for this view update. A collision only costs a fresh evaluation.
-  struct TreeFade {
-    const StaticMesh* mesh = nullptr;
-    Vec3              at, up;
-    FoliageTree::Fade fade;
-    float             reach = 0.f;
-    uint16_t          code = 0;
-    };
-  std::array<TreeFade,64> fades;
   const Vec3  camera = scene.camPos();
   const float px     = scene.foliageFade();
   const auto  wind   = FoliageWind::enabled();
@@ -998,55 +981,35 @@ void VisualObjects::preFrameUpdateTrees() {
     assert(FoliageTree::isTree(mat.foliage));
     const Vec3 at(obj.pos.at(3,0), obj.pos.at(3,1), obj.pos.at(3,2));
     const Vec3 up(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
-    if(cache) {
-      const float scale    = up.length();
-      const float distance = (at-camera).length();
-      const float reach    = FoliageTree::reach(mat.foliage, mesh->bbox.bbox[0], mesh->bbox.bbox[1]);
-      if(obj.fadeReach==reach && obj.fadeScale==scale && obj.fadePx==px &&
-         distance>=obj.fadeLo && distance<obj.fadeHi) {
-        if(verify) {
-          const auto fade = FoliageTree::fadeBound(treeAnchor, reach, scale, distance, px);
-          if(FoliageTree::fadeCode(fade)!=obj.treeFade)
-            FrameProfile::add(FrameProfile::Amount::LodCacheMismatch,1);
-          }
-        FrameProfile::add(FrameProfile::Amount::TreeFadeSkipped,1);
-        continue;
+    const float scale    = up.length();
+    const float distance = (at-camera).length();
+    const float reach    = FoliageTree::reach(mat.foliage, mesh->bbox.bbox[0], mesh->bbox.bbox[1]);
+    if(obj.fadeReach==reach && obj.fadeScale==scale && obj.fadePx==px &&
+       distance>=obj.fadeLo && distance<obj.fadeHi) {
+      if(verify) {
+        const auto fade = FoliageTree::fadeBound(treeAnchor, reach, scale, distance, px);
+        if(FoliageTree::fadeCode(fade)!=obj.treeFade)
+          FrameProfile::add(FrameProfile::Amount::LodCacheMismatch,1);
         }
-      const auto fade = FoliageTree::fadeBound(treeAnchor, reach, scale, distance, px);
-      const auto code = FoliageTree::fadeCode(fade);
-      const auto iv   = FoliageFadeInterval::of(treeAnchor, reach, scale, px, distance);
-      obj.fadeReach = reach;
-      obj.fadeScale = scale;
-      obj.fadePx    = px;
-      obj.fadeLo    = iv.lo;
-      obj.fadeHi    = iv.hi;
-      FrameProfile::add(FrameProfile::Amount::TreeFadeComputed,1);
-      if(code==obj.treeFade)
-        continue;
-      // Keep the material's own bend, flutter and radius growth for its cluster.
-      const auto bits = FoliageWind::pack(mat.foliage, wind);
-      obj.treeFade = code;
-      clustersMem[obj.clusterId].r = mesh->drawn.rConservative + mat.waveMaxAmplitude +
-                                     FoliageTree::travel(bits, reach, fade);
-      clustersMem.markClusters(obj.clusterId);
+      FrameProfile::add(FrameProfile::Amount::TreeFadeSkipped,1);
       continue;
       }
-    const auto x = std::bit_cast<uint32_t>(at.x);
-    const auto z = std::bit_cast<uint32_t>(at.z);
-    const auto hash = (x ^ (x >> 17)) ^ std::rotl(z ^ (z >> 11), 11);
-    auto& entry = fades[hash % fades.size()];
-    if(entry.mesh!=mesh || entry.at!=at || entry.up!=up) {
-      const float reach = FoliageTree::reach(mat.foliage, mesh->bbox.bbox[0], mesh->bbox.bbox[1]);
-      const auto  fade  = FoliageTree::fadeBound(treeAnchor, reach, up.length(), (at-camera).length(), px);
-      entry = {mesh, at, up, fade, reach, FoliageTree::fadeCode(fade)};
-      }
-    if(entry.code==obj.treeFade)
+    const auto fade = FoliageTree::fadeBound(treeAnchor, reach, scale, distance, px);
+    const auto code = FoliageTree::fadeCode(fade);
+    const auto iv   = FoliageFadeInterval::of(treeAnchor, reach, scale, px, distance);
+    obj.fadeReach = reach;
+    obj.fadeScale = scale;
+    obj.fadePx    = px;
+    obj.fadeLo    = iv.lo;
+    obj.fadeHi    = iv.hi;
+    FrameProfile::add(FrameProfile::Amount::TreeFadeComputed,1);
+    if(code==obj.treeFade)
       continue;
     // Keep the material's own bend, flutter and radius growth for its cluster.
     const auto bits = FoliageWind::pack(mat.foliage, wind);
-    obj.treeFade = entry.code;
+    obj.treeFade = code;
     clustersMem[obj.clusterId].r = mesh->drawn.rConservative + mat.waveMaxAmplitude +
-                                   FoliageTree::travel(bits, entry.reach, entry.fade);
+                                   FoliageTree::travel(bits, reach, fade);
     clustersMem.markClusters(obj.clusterId);
     }
   }
@@ -1129,23 +1092,19 @@ void VisualObjects::preFrameUpdateLevels() {
     shadowProbe = {};
   const bool drawStatic = (DrawCommands::hiddenTypes & (1u << DrawCommands::Static))==0;
   const bool materialMaps = Shaders::options().doMaterialMaps;
-  // OPENGOTHIC_LEVELS_CACHE=0 selects every object every frame, as before. By default an object whose scene key
-  // (camera, projection scale, resolution, the shadow/impostor/material flags) and transform stamp are unchanged
+  // An object whose scene key (camera position, projection scale, resolution, shadow/impostor/material flags)
+  // and transform stamp are unchanged
   // keeps its last selection: the pick is a piecewise constant function of the screen height with hysteresis, so
   // the same inputs give the same result. The band replay and the visibility-driven outputs (impostor list, probe
   // counters, the cluster record's compare) still run every frame. The forced bench impostor and the shadow probe
   // select by visibility or keep their own state: they take the full path. OPENGOTHIC_LOD_CACHE_VERIFY=1 predicts
   // from the cache, selects fully and counts the mismatches (0 is parity).
-  static const bool levelsCache = []{
-    const char* e = std::getenv("OPENGOTHIC_LEVELS_CACHE");
-    return e==nullptr || e[0]!='0';
-    }();
   static const bool levelsVerify = []{
     const char* e = std::getenv("OPENGOTHIC_LOD_CACHE_VERIFY");
     return e!=nullptr && e[0]=='1';
     }();
   LodSceneInputs in;
-  in.cam     = scene.camPos();
+  in.cam     = scene.originLwc; // camera.view() uses this origin; inverting the view adds rotation-dependent roundoff
   in.py      = py;
   in.resY    = resY;
   in.nearPx  = nearPx;
@@ -1167,7 +1126,7 @@ void VisualObjects::preFrameUpdateLevels() {
     const bool staticInstance = obj.type==DrawCommands::Static || obj.type==DrawCommands::Movable;
     const bool canImpostor = obj.impostorShadowCmd!=uint16_t(-1) && benchImpostors!=BenchImpostors::Off;
     const uint64_t key = (uint64_t(lodSceneKey)<<32) | obj.posStamp;
-    const bool cacheable = levelsCache && staticInstance && obj.deformCount==0 && py!=0.f && resY>0 &&
+    const bool cacheable = staticInstance && obj.deformCount==0 && py!=0.f && resY>0 &&
                            benchImpostors!=BenchImpostors::Force && !probePx;
     const bool hit = cacheable && obj.lodKey==key && obj.lodDeform==obj.deformCount;
     MeshLevels::Selection level;
@@ -1176,6 +1135,20 @@ void VisualObjects::preFrameUpdateLevels() {
     uint32_t sunFlags = 0;
     bool probeChanged = false;
     uint32_t joint = 0;
+    // Selection depends on distance, but an impostor can enter or leave the view on a turn in place.
+    auto drawImpostor = [&](MeshLevels::Selection lv, uint32_t j) {
+      if((!lv.impostor() && (j & ~MeshLevels::CanopyVertexNormal)==0) || obj.levelSub!=0 || !obj.visible || !drawStatic)
+        return false;
+      const auto& box = mesh->bbox.bbox;
+      Vec3 middle = (box[0]+box[1])*0.5f;
+      obj.pos.project(middle);
+      const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));
+      const Vec3 y(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
+      const Vec3 z(obj.pos.at(2,0), obj.pos.at(2,1), obj.pos.at(2,2));
+      const float scaleBound = std::sqrt(Vec3::dotProduct(x,x) + Vec3::dotProduct(y,y) + Vec3::dotProduct(z,z));
+      const float radius = (box[1]-box[0]).length()*0.5f*scaleBound;
+      return scene.frustrum[SceneGlobals::V_Main].testPoint(middle,radius);
+      };
     // the cached selection: the band replay takes the stored heights and the fresh visibility
     auto cached = [&](MeshLevels::Selection& lv, uint8_t& sh, uint32_t& j, uint32_t& sun, bool& coarse) {
       lv = obj.level;
@@ -1183,15 +1156,13 @@ void VisualObjects::preFrameUpdateLevels() {
       j  = obj.animPtr;
       if(obj.bandCluster!=uint32_t(-1))
         sun = updateLevelBand(obj, obj.lodHeight, obj.lodShadowHeight, shadowLevels, fullShadows, lv, sh, coarse);
+      return drawImpostor(lv,j);
       };
     if(hit && !levelsVerify) {
-      cached(level, shadowLevel, joint, sunFlags, shadowCoarse);
+      if(cached(level, shadowLevel, joint, sunFlags, shadowCoarse))
+        impostorDraws.push_back(id);
       if(obj.levelSub==0 && !level.impostor())
         ++count[level.glb];
-      // the push takes the joint before the crown's normal-map bit, as the full path does
-      const uint32_t jointPre = joint & ~MeshLevels::CanopyVertexNormal;
-      if((level.impostor() || jointPre!=0u) && obj.levelSub==0 && obj.visible && drawStatic && obj.lodFrustum)
-        impostorDraws.push_back(id);
       FrameProfile::add(FrameProfile::Amount::LevelsSkipped,1);
       }
     else {
@@ -1199,16 +1170,14 @@ void VisualObjects::preFrameUpdateLevels() {
       uint8_t pShadow = 0;
       uint32_t pJoint = 0, pSun = 0;
       bool pCoarse = false;
-      if(hit)
-        cached(pLevel, pShadow, pJoint, pSun, pCoarse);
+      const bool pushCache = hit && cached(pLevel, pShadow, pJoint, pSun, pCoarse);
       float height = 0, bandShadowHeight = 0;
-      bool frustum = false;
       if(obj.deformCount==0 && py!=0.f && resY>0) {
         const auto& box    = mesh->bbox.bbox;
         Vec3        middle = (box[0]+box[1])*0.5f;
         obj.pos.project(middle);
         const float scale  = Vec3(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2)).length();
-        const float distance = (middle-scene.camPos()).length();
+        const float distance = (middle-in.cam).length();
         const float worldHeight = (box[1].y-box[0].y)*scale;
         height = MeshLevels::screenHeight(worldHeight, distance, py, resY);
         const bool forceImpostor = canImpostor && benchImpostors==BenchImpostors::Force && obj.visible;
@@ -1261,17 +1230,6 @@ void VisualObjects::preFrameUpdateLevels() {
           bandShadowHeight = height*1080.f/float(resY);
           sunFlags = updateLevelBand(obj, height, bandShadowHeight, shadowLevels, fullShadows, level, shadowLevel, shadowCoarse);
           }
-        // the frustum test runs for the cache even when the object is hidden now: visibility changes every frame
-        if((level.impostor() || joint!=0u) && obj.levelSub==0 && drawStatic) {
-          const Vec3 x(obj.pos.at(0,0), obj.pos.at(0,1), obj.pos.at(0,2));
-          const Vec3 y(obj.pos.at(1,0), obj.pos.at(1,1), obj.pos.at(1,2));
-          const Vec3 z(obj.pos.at(2,0), obj.pos.at(2,1), obj.pos.at(2,2));
-          const float scaleBound = std::sqrt(Vec3::dotProduct(x,x) + Vec3::dotProduct(y,y) + Vec3::dotProduct(z,z));
-          const float radius = (box[1]-box[0]).length()*0.5f*scaleBound;
-          frustum = scene.frustrum[SceneGlobals::V_Main].testPoint(middle,radius);
-          if(frustum && obj.visible)
-            impostorDraws.push_back(id);
-          }
         if(staticInstance && materialMaps && !level.impostor() &&
            HiZOccluders::canopy(obj.bucketId->mat.foliage, obj.alpha==Material::AlphaTest)) {
           const bool cut = obj.type==DrawCommands::Static && mesh->treeBough && obj.levelSub==mesh->treeBough->sourceSub;
@@ -1289,21 +1247,19 @@ void VisualObjects::preFrameUpdateLevels() {
         }
       if(obj.levelSub==0 && !level.impostor())
         ++count[level.glb];
+      const bool pushFull = drawImpostor(level,joint);
+      if(pushFull)
+        impostorDraws.push_back(id);
       if(cacheable) {
         obj.lodKey          = key;
         obj.lodDeform       = obj.deformCount;
         obj.lodHeight       = height;
         obj.lodShadowHeight = bandShadowHeight;
-        obj.lodFrustum      = frustum;
         }
       if(obj.deformCount>0)
         obj.lodKey = 0; // a deformed object selects nothing; its return must select anew
       if(hit) {
-        // the push the skip path would make: the cached frustum against the fresh one, the joint before the normal bit
-        const uint32_t jointPre = joint & ~MeshLevels::CanopyVertexNormal;
-        const bool pushFull = (level.impostor() || jointPre!=0u) && obj.levelSub==0 && obj.visible && drawStatic && frustum;
-        const uint32_t pJointPre = pJoint & ~MeshLevels::CanopyVertexNormal;
-        const bool pushCache = (pLevel.impostor() || pJointPre!=0u) && obj.levelSub==0 && obj.visible && drawStatic && obj.lodFrustum;
+        FrameProfile::add(FrameProfile::Amount::LevelsVerified,1);
         if(!(level==pLevel && shadowLevel==pShadow && joint==pJoint && sunFlags==pSun && pushFull==pushCache))
           FrameProfile::add(FrameProfile::Amount::LodCacheMismatch,1);
         }

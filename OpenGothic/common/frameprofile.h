@@ -92,7 +92,7 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   // loops, fade/level evaluations computed and skipped by the interval caches, cache verify mismatches (0 is parity),
   // and the instance storage growth events of the frame
   ObjectsLevelsN, ObjectsTreeN, TreeFadeComputed, TreeFadeSkipped, LevelsComputed, LevelsSkipped,
-  LodCacheMismatch, StorageGrowths,
+  LodCacheMismatch, StorageGrowths, LevelsVerified,
   Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error, Simulation };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,

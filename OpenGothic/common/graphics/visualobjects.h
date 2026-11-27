@@ -240,14 +240,13 @@ class VisualObjects final {
       uint32_t            bandReserve    = 0;
       uint32_t            bandWord       = 0;
       // the level selection cache (preFrameUpdateLevels): the scene key and transform stamp of the last full
-      // selection, the deform count it was computed with, the heights the band replay takes, and the impostor
-      // frustum test's result; posStamp grows at setObjMatrix/setAsGhost
+      // selection, the deform count it was computed with and the heights the band replay takes;
+      // posStamp grows at setObjMatrix/setAsGhost
       uint32_t            posStamp       = 0;
       uint64_t            lodKey         = 0;
       uint32_t            lodDeform      = 0;
       float               lodHeight      = 0;
       float               lodShadowHeight = 0;
-      bool                lodFrustum     = false;
       bool                clusterLod     = false;
       bool                isGhost       = false;
       bool                visible       = true;

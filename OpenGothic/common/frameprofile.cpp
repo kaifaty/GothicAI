@@ -58,7 +58,7 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "wind_computed","wind_skipped",
   "interactive_parked",
   "objects_levels_n","objects_tree_n","tree_fade_computed","tree_fade_skipped","levels_computed","levels_skipped",
-  "lod_cache_mismatch","storage_growths"};
+  "lod_cache_mismatch","storage_growths","levels_verified"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }
