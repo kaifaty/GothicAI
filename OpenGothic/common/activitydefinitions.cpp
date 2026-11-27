@@ -2,7 +2,6 @@
 
 #include "definitionjson.h"
 
-#include <fstream>
 #include <stdexcept>
 
 namespace {
@@ -174,13 +173,12 @@ ActivityDefinitions::PointActivity point(const Json& json,int version) {
 
 ActivityDefinitions::Library ActivityDefinitions::read(const std::filesystem::path& base, std::string_view programSha256) {
   const auto file=base/"definitions"/programSha256/"activities.json";
+  return readJson(DefinitionJson::read(file),file,programSha256);
+  }
+
+ActivityDefinitions::Library ActivityDefinitions::readJson(const rapidjson::Value& doc, const std::filesystem::path& file,
+                                                           std::string_view programSha256) {
   try {
-    std::ifstream input(file,std::ios::binary);
-    require(bool(input),"cannot open file");
-    const std::string text{std::istreambuf_iterator<char>(input),{}};
-    rapidjson::Document doc;
-    doc.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
-    require(!doc.HasParseError(),"invalid JSON");
     require(string(at(doc,"format"))=="gothic-activity-definitions","unsupported format");
     const auto& version=at(doc,"version");
     require(version.IsInt() && version.GetInt()>=2 && version.GetInt()<=FormatVersion,"unsupported version");

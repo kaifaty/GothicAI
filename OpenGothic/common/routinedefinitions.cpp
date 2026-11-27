@@ -21,7 +21,11 @@ void time(const Json& value, int& hour, int& minute) {
 
 RoutineDefinitions::Library RoutineDefinitions::read(const std::filesystem::path& base,
                                                      std::string_view programSha256) {
-  const auto file=base/"definitions"/programSha256/"routines.json";
+  return readFile(base/"definitions"/programSha256/"routines.json",programSha256);
+  }
+
+RoutineDefinitions::Library RoutineDefinitions::readFile(const std::filesystem::path& file,
+                                                         std::string_view programSha256) {
   try {
     std::ifstream input(file,std::ios::binary);
     require(bool(input),"cannot open file");
