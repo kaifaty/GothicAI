@@ -1385,6 +1385,19 @@ void itemSelection(const fs::path& dir) {
   environment(hadPrevious ? saved.c_str() : nullptr);
   }
 
+void writeActivityRoutines(const NpcSnapshot::Program& program,const fs::path& file,
+                           std::initializer_list<const char*> states) {
+  std::ofstream rows(file);
+  rows<<"{\"format\":\"gothic-routine-definitions\",\"version\":1,\"program_name\":\""<<program.name
+      <<"\",\"program_sha256\":\""<<program.sha256
+      <<"\",\"string_encoding\":\"unicode-byte-mapping\","
+        "\"records\":[{\"symbol\":\"RTN_TEST\",\"status\":\"captured\",\"rows\":[";
+  for(auto state=states.begin();state!=states.end();++state)
+    rows<<(state!=states.begin() ? "," : "")<<"{\"start\":[8,0],\"end\":[20,0],\"waypoint\":\"TEST_WP\",\"state\":\""<<*state<<"\"}";
+  rows<<"]}]}";
+  check(bool(rows),"write activity routine fixture");
+  }
+
 // D4.1: the activity template in the synthetic program, the comparison with a fresh VM from disk,
 // and a tampered ready base.
 void activityDefinitions(const fs::path& dir) {
@@ -1414,27 +1427,53 @@ void activityDefinitions(const fs::path& dir) {
   std::ifstream a(file,std::ios::binary),b(second,std::ios::binary);
   check(std::string(std::istreambuf_iterator<char>(a),{})==std::string(std::istreambuf_iterator<char>(b),{}),
         "two activity imports are byte-identical");
-  std::ifstream input(file,std::ios::binary);
-  const std::string original{std::istreambuf_iterator<char>(input),{}};
-  auto tampered=original;
-  const auto at=tampered.find("\"BSANVIL\"");
-  check(at!=std::string::npos,"the anvil scheme is in the file");
-  tampered.replace(at,9,"\"BSFIRE\"");
-  {
-    std::ofstream out(file,std::ios::binary);
-    out<<tampered;
-  }
+  auto rejects=[&](const std::string& why) {
+    bool rejected=false;
+    try { rejected=NpcSnapshot::verifyActivities(program,file,routines)!=0; }
+    catch(const std::runtime_error&) { rejected=true; }
+    check(rejected,why);
+    };
+  auto original=read(file);
+  rapidjson::Document changed;
+  auto& allocator=changed.GetAllocator();
+  const auto anvilParameters=[](rapidjson::Value& doc) -> rapidjson::Value& {
+    for(auto& record:doc["records"].GetArray())
+      if(std::string_view(record["symbol"].GetString())=="ZS_SMITH_ANVIL")
+        return record["parameters"];
+    throw std::runtime_error("missing anvil fixture");
+    };
+  changed.CopyFrom(original,allocator);
+  anvilParameters(changed)["scheme"].SetString("BSFIRE");
+  write(file,changed);
   std::cerr<<"expected activity difference follows:\n";
   check(NpcSnapshot::verifyActivities(program,file,routines)!=0,"a changed object scheme in a ready base fails the comparison");
-  auto repeated=original;
-  repeated.insert(at+9,",\n                \"scheme\": \"BSFIRE\"");
-  {
-    std::ofstream out(file,std::ios::binary);
-    out<<repeated;
-  }
-  std::cerr<<"expected activity difference follows:\n";
-  check(NpcSnapshot::verifyActivities(program,file,routines)!=0,"a repeated parameter key in a ready base fails the comparison");
-  std::ofstream(file,std::ios::binary)<<original;
+  changed.CopyFrom(original,allocator);
+  anvilParameters(changed).AddMember("scheme","BSFIRE",allocator);
+  write(file,changed);
+  rejects("a repeated parameter key in a ready base fails the comparison");
+  changed.CopyFrom(original,allocator);
+  changed.AddMember("version",original["version"].GetInt(),allocator);
+  write(file,changed);
+  rejects("a repeated activity version fails verification");
+  changed.CopyFrom(original,allocator);
+  anvilParameters(changed)["walk_mode"].SetDouble(1.0);
+  write(file,changed);
+  rejects("a floating-point walk mode fails verification");
+  write(file,original);
+
+  auto badRoutines=read(routines);
+  for(auto& record:badRoutines["records"].GetArray()) {
+    auto& rows=record["rows"];
+    if(rows.Empty()) continue;
+    check(rows[0].RemoveMember("waypoint"),"the routine fixture has a waypoint to remove");
+    break;
+    }
+  write(routines,badRoutines);
+  rejects("verification rejects a routine row without a waypoint");
+  bool refused=false;
+  try { NpcSnapshot::writeActivities(program,file,routines); }
+  catch(const std::runtime_error& e) { refused=std::string_view(e.what()).find("missing field waypoint")!=std::string_view::npos; }
+  check(refused,"activity import rejects a routine row without a waypoint");
 
   // A point activity in an invented program, with a name unrelated to the installed guard.
   NpcDefinitionFixture::Fixture f;
@@ -1492,8 +1531,7 @@ void activityDefinitions(const fs::path& dir) {
   const auto encoded=ProgramData::encodeProgram(points.data); points.name=encoded.name; points.sha256=encoded.sha256;
   const auto pointBase=dir/"point-activity",pointDir=pointBase/"definitions"/points.sha256;
   fs::create_directories(pointDir);
-  std::ofstream(pointDir/"routines.json")<<"{\"program_sha256\":\""<<points.sha256
-    <<"\",\"records\":[{\"status\":\"captured\",\"rows\":[{\"state\":\"ZS_POINT_FIXTURE\"}]}]}";
+  writeActivityRoutines(points,pointDir/"routines.json",{"ZS_POINT_FIXTURE"});
   const auto pointCounts=NpcSnapshot::writeActivities(points,pointDir/"activities.json",pointDir/"routines.json");
   check(pointCounts.captured==1,"a point template is recognized without a state-name special case");
   check(NpcSnapshot::verifyActivities(points,pointDir/"activities.json",pointDir/"routines.json")==0,"point phase streams verify");
@@ -1535,11 +1573,7 @@ void pointMutations(const NpcSnapshot::Program& program,const fs::path& dir,bool
     const auto base=dir/"point-mutations",defs=base/"definitions"/changed.sha256;
     fs::create_directories(defs);
     const auto routines=defs/"routines.json",file=defs/"activities.json";
-    std::ofstream rows(routines);
-    rows<<"{\"program_sha256\":\""<<changed.sha256<<"\",\"records\":[{\"status\":\"captured\",\"rows\":[";
-    for(auto state=states.begin();state!=states.end();++state)
-      rows<<(state!=states.begin() ? "," : "")<<"{\"state\":\""<<*state<<"\"}";
-    rows<<"]}]}"; rows.close();
+    writeActivityRoutines(changed,routines,states);
     NpcSnapshot::writeActivities(changed,file,routines);
     check(NpcSnapshot::verifyActivities(changed,file,routines)==0,"mutated activities agree with a fresh VM");
     return ActivityDefinitions::read(base,changed.sha256);

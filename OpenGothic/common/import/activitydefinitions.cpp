@@ -1,10 +1,11 @@
 #include "baseimport.h"
 #include "npcsnapshot.h"
+#include "activitydefinitions.h"
 #include "definitionjson.h"
-#include "asset/activitydefinitions.h"
 #include "daedalus/classes.h"
 #include "daedalus/vm.h"
 #include "programdata.h"
+#include "routinedefinitions.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
@@ -908,30 +909,13 @@ class Recognizer {
     const std::string&          state;
   };
 
-// The human routine states: every state of a captured row of routines.json, by name. The file
-// must belong to the program; a row without a state or an uncaptured routine with rows fails.
+// The human routine states: every state of a captured row of routines.json, by name.
 std::vector<std::string> corpus(const NpcSnapshot::Program& program,const fs::path& routines) {
-  std::ifstream input(routines,std::ios::binary);
-  require(bool(input),"cannot read routine definitions: "+routines.string());
-  const std::string text{std::istreambuf_iterator<char>(input),{}};
-  rapidjson::Document json;
-  json.Parse(text.data(),text.size());
-  const auto where="routine definitions "+routines.string()+": ";
-  require(!json.HasParseError() && json.IsObject() && json.HasMember("records") && json["records"].IsArray(),where+"invalid JSON");
-  require(json.HasMember("program_sha256") && json["program_sha256"].IsString() &&
-          json["program_sha256"].GetString()==program.sha256,where+"program SHA differs");
+  const auto library=RoutineDefinitions::readFile(routines,program.sha256);
   std::set<std::string> states;
-  for(const auto& record:json["records"].GetArray()) {
-    require(record.IsObject() && record.HasMember("status") && record["status"].IsString() &&
-            record.HasMember("rows") && record["rows"].IsArray(),where+"record without status or rows");
-    const std::string_view status=record["status"].GetString();
-    require(status=="captured" || (status=="uncaptured" && record["rows"].Empty()),where+"unsupported routine record");
-    for(const auto& row:record["rows"].GetArray()) {
-      require(row.IsObject() && row.HasMember("state") && row["state"].IsString() && row["state"].GetStringLength()>0,
-              where+"row without a state");
-      states.insert(row["state"].GetString());
-      }
-    }
+  for(const auto& [name,rows]:library.routines)
+    for(const auto& row:rows)
+      states.insert(row.state);
   return {states.begin(),states.end()};
   }
 using DefinitionJson::text;
@@ -1086,20 +1070,13 @@ NpcSnapshot::ActivityCounts NpcSnapshot::writeActivities(const Program& program,
   }
 
 int NpcSnapshot::verifyActivities(const Program& program,const fs::path& file,const fs::path& routines) {
-  std::ifstream input(file,std::ios::binary);
-  require(bool(input),"cannot read activity definitions: "+file.string());
-  const std::string bytes{std::istreambuf_iterator<char>(input),{}};
-  rapidjson::Document json;
-  json.Parse<rapidjson::kParseFullPrecisionFlag | rapidjson::kParseValidateEncodingFlag>(bytes.data(),bytes.size());
-  require(!json.HasParseError() && json.IsObject(),"invalid activity definitions JSON: "+file.string());
+  auto json=DefinitionJson::read(file);
+  ActivityDefinitions::readJson(json,file,program.sha256);
   auto& allocator=json.GetAllocator();
   const auto expected=envelope(program,allocator);
   int errors=0;
-  for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it) {
-    require(json.HasMember(it->name),file.string()+": missing "+it->name.GetString());
+  for(auto it=expected.MemberBegin();it!=expected.MemberEnd();++it)
     difference(it->value,json[it->name],file.string()+"."+it->name.GetString(),errors,true);
-    }
-  require(json.HasMember("records") && json["records"].IsArray(),file.string()+": expected records array");
   const auto& records=json["records"];
   const auto states=corpus(program,routines);
   require(records.Size()==states.size(),file.string()+": activity record count differs");

@@ -1095,11 +1095,12 @@ void nativeNpcBehaviorContract(Gothic& gothic, const std::filesystem::path& case
   require(inside.has_value(),"quiet sound: the guest needs a line of sight and the same tagged floor");
   auto& script=gothic.world()->script();
   const auto stand=script.findFunction("ZS_STAND_WP");
+  const auto armsCrossed=script.findFunction("ZS_STAND_ARMSCROSSED");
   const auto observe=script.findFunction("ZS_OBSERVEPLAYER");
   const auto clear=script.findFunction("ZS_CLEARROOM");
   const auto portalCallback=script.findFunction("B_ASSESSPORTALCOLLISION");
-  require(stand.isValid() && observe.isValid() && clear.isValid() && portalCallback.isValid(),
-          "quiet sound: the stock stand, watch, clear and portal callback must exist");
+  require(stand.isValid() && armsCrossed.isValid() && observe.isValid() && clear.isValid() && portalCallback.isValid(),
+          "quiet sound: the stock routine states and perception callbacks must exist");
 
   const auto prepare=[&](bool sameRoom) {
     auto& world=*gothic.world();
@@ -1114,12 +1115,12 @@ void nativeNpcBehaviorContract(Gothic& gothic, const std::filesystem::path& case
     listener->setTarget(nullptr);
     listener->clearRoutine();
     listener->addRoutine(gtime(0,0),gtime(23,59),uint32_t(stand.ptr),postName);
+    listener->addRoutine(gtime(23,59),gtime(0,0),uint32_t(armsCrossed.ptr),postName);
     listener->setAttitude(ATT_NEUTRAL);
     world.assignRoomToGuild(farm,int32_t(GIL_PUBLIC));
     moveBehaviorHero(gothic,sameRoom ? *inside : separate);
     listener->setPosition(at);
     listener->updateTransform();
-    require(listener->startState(stand,postName),"quiet sound: listener must enter its normal activity");
     Contract::tickRoutine(*listener);
     for(size_t i=0;i<PERC_Count;++i)
       if(i!=PERC_ASSESSQUIETSOUND)
@@ -1219,6 +1220,43 @@ void nativeNpcBehaviorContract(Gothic& gothic, const std::filesystem::path& case
             "enter room: the collision callback keeps the original public and private policies");
     }
   std::puts("Native quiet sound: same room, separate room, height, private, friendly and portal branches");
+
+  {
+    auto& world=*gothic.world();
+    auto& session=*gothic.gameSession();
+    const auto savedTime=world.time();
+    auto& listener=*prepare(true);
+    auto& hero=*world.player();
+    ActivityCalls phases;
+    world.sendPassivePerc(hero,hero,hero,PERC_ASSESSQUIETSOUND);
+    stepBehaviorUntil(gothic,30,[&] { return phases.phase(listener,"B_ASSESSQUIETSOUND")!=0; },
+                      "routine interruption: a world tick must deliver the queued quiet sound");
+    const auto* queued=listener.aiQueueFront();
+    require(listener.isInState(stand) && queued && queued->act==AI_StartState &&
+            queued->func==observe && queued->target==&hero,
+            "routine interruption: the quiet-sound handler must queue observation");
+    // Leave before ObservePlayer enables the automatic dialogue perception.
+    const auto* outside=world.findWayPoint("NW_FARM1_OUT_01");
+    require(outside!=nullptr,"routine interruption: Lobart's farm needs an outdoor point beyond observation range");
+    moveBehaviorHero(gothic,outside->groundPos);
+    const auto observationRange=script.intConstant("PERC_DIST_INTERMEDIAT");
+    require(observationRange && listener.qDistTo(hero)>float(*observationRange)*float(*observationRange),
+            "routine interruption: the hero must be beyond observation range");
+    stepBehaviorUntil(gothic,120,[&] { return listener.isInState(observe) && listener.isStateStarted() && listener.stateOther()==&hero; },
+                      "routine interruption: the NPC tick must execute the queued observation");
+    stepBehaviorUntil(gothic,240,[&] { return listener.isInState(stand) && listener.isStateStarted(); },
+                      "routine interruption: the NPC must resume the first row when the source leaves");
+    require(phases.phase(listener,"ZS_OBSERVEPLAYER_END")==1 && listener.currentRoutineIndex()==0,
+            "routine interruption: observation must end once before the first row resumes");
+
+    session.setTime(gtime(savedTime.day(),23,59));
+    stepBehaviorUntil(gothic,120,[&] { return listener.isInState(armsCrossed) && listener.isStateStarted(); },
+                      "routine boundary: the NPC tick must start the next row when the clock reaches it");
+    require(listener.currentRoutineIndex()==1 && phases.phase(listener,"ZS_STAND_WP_END")==2,
+            "routine boundary: the NPC must end the resumed first row and select the second row");
+    session.setTime(savedTime);
+    std::puts("Native routine: quiet sound, queued observation, resumption and timed row transition");
+    }
 
   {
     auto* listener=prepare(true);
