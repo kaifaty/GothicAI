@@ -57,6 +57,16 @@ struct VisualObjects::MorphData {
   MorphDesc morph[Resources::MAX_MORPH_LAYERS];
   };
 
+// Rebuild a dense sorted id cache from its membership set, only when membership changed. Sorted ids give the frame
+// loops sequential access to objects[] (hardware prefetch) instead of scattered set nodes and random object slots.
+static void refreshIds(const std::unordered_set<size_t>& set, std::vector<size_t>& ids, bool& dirty) {
+  if(!dirty)
+    return;
+  ids.assign(set.begin(),set.end());
+  std::sort(ids.begin(),ids.end());
+  dirty = false;
+  }
+
 
 void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos) {
   setObjMatrix(pos,Vec3(pos[3][0],pos[3][1],pos[3][2]));
@@ -495,6 +505,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     obj.tree     = true;
     obj.treeFade = FoliageTree::fadeCode(FoliageTree::Fade());
     objectsTree.insert(id);
+    treeIdsDirty = true;
     }
   // levels of detail (meshlevels.h): the cluster draws its submesh's slice of the level the main view picks
   if(!obj.clusterLod && !mesh.levels.empty() && type!=DrawCommands::Morph)
@@ -502,6 +513,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
       if(mesh.sub[i].iboOffset==iboOff && mesh.sub[i].iboLength==iboLen) {
         obj.levelSub = uint8_t(i);
         objectsLevels.insert(id);
+        levelsIdsDirty = true;
         if(type==DrawCommands::Static && mesh.impostor.px>0.f)
           setImpostorShadow(obj, true);
         break;
@@ -666,10 +678,14 @@ void VisualObjects::free(size_t id) {
     objectsMorph.erase(id);
   if(obj.strandMeshlets>0)
     objectsStrand.erase(id);
-  if(obj.tree)
+  if(obj.tree) {
     objectsTree.erase(id);
-  if(obj.levelSub!=NoLevels)
+    treeIdsDirty = true;
+    }
+  if(obj.levelSub!=NoLevels) {
     objectsLevels.erase(id);
+    levelsIdsDirty = true;
+    }
 
   obj = Object();
   while(objects.size()>0) {
@@ -957,6 +973,7 @@ void VisualObjects::preFrameUpdateTrees() {
     return e!=nullptr && e[0]=='1';
     }();
   FrameProfile::add(FrameProfile::Amount::ObjectsTreeN, objectsTree.size());
+  refreshIds(objectsTree,treeIds,treeIdsDirty);
 
   // The quantized fade depends on the full mesh and placement, which a tree's submeshes share.
   // The cache lives for this view update. A collision only costs a fresh evaluation.
@@ -972,7 +989,7 @@ void VisualObjects::preFrameUpdateTrees() {
   const float px     = scene.foliageFade();
   const auto  wind   = FoliageWind::enabled();
   constexpr uint32_t treeAnchor = uint32_t(FoliageWind::AnchorTree) << 24;
-  for(auto id:objectsTree) {
+  for(auto id:treeIds) {
     auto&       obj  = objects[id];
     const auto* mesh = obj.bucketId->staticMesh;
     if(mesh==nullptr || obj.deformCount>0)
@@ -1036,7 +1053,8 @@ void VisualObjects::preFrameUpdateTrees() {
 
 void VisualObjects::writeTreeOcclusionProbe(std::ostream& out, std::ostream& decisions) {
   drawCmd.writeTreeOcclusionDecisions(decisions);
-  for(auto id : objectsLevels) {
+  refreshIds(objectsLevels,levelsIds,levelsIdsDirty);
+  for(auto id : levelsIds) {
     auto& obj = objects[id];
     const auto& bucket = *obj.bucketId;
     const auto& mat = bucket.mat;
@@ -1140,7 +1158,8 @@ void VisualObjects::preFrameUpdateLevels() {
     lodScenePrev = in;
     }
   FrameProfile::add(FrameProfile::Amount::ObjectsLevelsN, objectsLevels.size());
-  for(auto id:objectsLevels) {
+  refreshIds(objectsLevels,levelsIds,levelsIdsDirty);
+  for(auto id:levelsIds) {
     auto&       obj  = objects[id];
     const auto* mesh = obj.bucketId->staticMesh;
     if(mesh==nullptr)
