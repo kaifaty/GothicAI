@@ -46,7 +46,7 @@ enum class Zone : size_t {
   // C2 diagnosis: the rest of the preparation (storage plan, clusters patch, world ticks, visibility, lighting prep).
   StoragePlanScan, StoragePlanCopy, StoragePlanHistory, ClustersCommit, HousesTick, LightsTick, GrassUpdate, CommitUbo,
   VisibilityCpu, LightingPrep, GBufferRecord, SkyPrepare,
-  EncodeRecord,
+  EncodeRecord, BucketPublish,
   Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
@@ -93,6 +93,7 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   // and the instance storage growth events of the frame
   ObjectsLevelsN, ObjectsTreeN, TreeFadeComputed, TreeFadeSkipped, LevelsComputed, LevelsSkipped,
   LodCacheMismatch, StorageGrowths, LevelsVerified,
+  BucketsTotal, BucketsRefreshed,
   Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error, Simulation };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,

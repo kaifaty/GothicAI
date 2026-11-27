@@ -1309,6 +1309,21 @@ void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   require(pixel(material.orm)==std::array<uint8_t,4>{255,255,0,255},
           "ORM placeholder must be unoccluded, rough and nonmetallic");
   require(commit() && !commit(),"payload replacement must refresh bindless arrays without rebuilding buckets");
+  {
+  const auto& published=buckets.published();
+  const auto samePayload=[](const Tempest::Texture2d& left, const Tempest::Texture2d& right) {
+    return Tempest::Detail::ResourcePtr<Tempest::Texture2d>(left)==Tempest::Detail::ResourcePtr<Tempest::Texture2d>(right);
+    };
+  require(published.size()==1 && samePayload(published[0].tex,*material.tex) &&
+          samePayload(published[0].normal,*material.normal) && samePayload(published[0].orm,*material.orm),
+          "selective refresh must publish the replacement material payloads");
+  require(published[0].frames.size()==material.frames.size() &&
+          std::equal(published[0].frames.begin(),published[0].frames.end(),material.frames.begin(),
+                     [&](const Tempest::Texture2d& left, const Tempest::Texture2d* right) {
+                       return right!=nullptr && samePayload(left,*right);
+                       }),
+          "selective refresh must replace animation frames in place");
+  }
   if(!blas.isEmpty())
     require(rayScene.refreshTextures() && !rayScene.refreshTextures(),
             "payload replacement must refresh RT descriptors once without rebuilding the TLAS");
@@ -1566,6 +1581,10 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
     }
   require(!commit(0),"returning to an unchanged frame bank must not rewrite descriptors");
   checkColors(0xff00ff00u);
+  const size_t initialBucketsCount=buckets.published().size();
+  const size_t initialIboBytes=buckets.published()[0].ibo.byteSize();
+  const size_t initialVboBytes=buckets.published()[0].vbo.byteSize();
+  const Tempest::Detail::ResourcePtr<Tempest::Texture2d> unchangedPublishedPayload(buckets.published()[1].tex);
   auto oldOutput=device.ssbo(Tempest::Uninitialized,2*sizeof(uint32_t));
   auto oldCommand=device.commandBuffer();
   encodeProbe(oldCommand,oldOutput);
@@ -1599,6 +1618,19 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
             "mip replacement must preserve material pointers and the original mesh and bucket");
     require(commit(descriptorFrame) && !buckets.textureBankRebuilt() && !commit(descriptorFrame),
             "mip replacement must refresh descriptors once without recreating the texture bank");
+    {
+    const auto& published=buckets.published();
+    const auto samePayload=[](const Tempest::Texture2d& left, const Tempest::Texture2d& right) {
+      return Tempest::Detail::ResourcePtr<Tempest::Texture2d>(left)==Tempest::Detail::ResourcePtr<Tempest::Texture2d>(right);
+      };
+    require(published.size()==initialBucketsCount && samePayload(published[0].tex,*material.tex) &&
+            samePayload(published[0].normal,*material.normal) && samePayload(published[0].orm,*material.orm),
+            "selective refresh must publish the requested mip level");
+    require(Tempest::Detail::ResourcePtr<Tempest::Texture2d>(published[1].tex)==unchangedPublishedPayload &&
+            published[0].ibo.byteSize()==initialIboBytes &&
+            published[0].vbo.byteSize()==initialVboBytes,
+            "selective refresh must preserve the unchanged bucket and mesh buffer sizes");
+    }
     checkColors(wantFull ? 0xff0000ffu : 0xff00ff00u);
     };
 

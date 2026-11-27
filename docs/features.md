@@ -27,7 +27,7 @@ PR, который добавляет фичу или выключатель, д
 | Движок: память | [engine-memory.md](features/engine-memory.md) | 11 | Память мира, восприятие и навигация. |
 | Движок: физика Jolt | [engine-physics.md](features/engine-physics.md) | 66 | Физика Jolt, тела, предметы и ближний бой. |
 | Движок: анимация | [engine-animation.md](features/engine-animation.md) | 14 | Анимация и движение персонажей. |
-| Движок: рендер | [engine-render.md](features/engine-render.md) | 58 | Рендер, материалы, свет и эффекты. LOD по вкладу крон включён при GPU-срезе и истории HiZ, выключается через `OPENGOTHIC_TREE_COVERAGE_LOD=0`. |
+| Движок: рендер | [engine-render.md](features/engine-render.md) | 59 | Рендер, материалы, свет и эффекты. LOD по вкладу крон включён при GPU-срезе и истории HiZ, выключается через `OPENGOTHIC_TREE_COVERAGE_LOD=0`. |
 | Движок: стрельба | [engine-archery.md](features/engine-archery.md) | 3 | Стрельба, прицеливание и снаряды. |
 | Движок: ввод | [engine-input.md](features/engine-input.md) | 2 | Устройства ввода помимо клавиатуры и мыши: движение руки и мост к Joy-Con. |
 | Выключено по умолчанию | [off-by-default.md](features/off-by-default.md) | 27 | Экспериментальные и явно запускаемые возможности. |

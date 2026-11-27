@@ -35,7 +35,7 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "world_pre_frame","visuals_prepare","wind_prepare","morph_prepare","strands_prepare","trees_prepare","levels_prepare","prepare_uniforms",
   "storage_plan_scan","storage_plan_copy","storage_plan_history","clusters_commit","houses_tick","lights_tick","grass_update","commit_ubo",
   "visibility_cpu","lighting_prep","gbuffer_record","sky_prepare",
-  "encode_record"};
+  "encode_record","bucket_publish"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
   "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls",
   "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots",
@@ -58,7 +58,7 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "wind_computed","wind_skipped",
   "interactive_parked",
   "objects_levels_n","objects_tree_n","tree_fade_computed","tree_fade_skipped","levels_computed","levels_skipped",
-  "lod_cache_mismatch","storage_growths","levels_verified"};
+  "lod_cache_mismatch","storage_growths","levels_verified","buckets_total","buckets_refreshed"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }

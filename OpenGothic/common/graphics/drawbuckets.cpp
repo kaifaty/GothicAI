@@ -2,6 +2,9 @@
 
 #include <Tempest/Vec>
 #include <algorithm>
+#include <cassert>
+#include <cstdlib>
+#include <unordered_set>
 
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/mesh/submesh/animmesh.h"
@@ -58,9 +61,48 @@ const Tempest::StorageBuffer& DrawBuckets::Bucket::vboBuffer() const {
   }
 
 void DrawBuckets::publishBuckets() {
+  FrameProfile::Scope timing(FrameProfile::Zone::BucketPublish);
   const auto generation = Resources::textureGeneration();
+  FrameProfile::add(FrameProfile::Amount::BucketsTotal,bucketsCpu.size());
   if(pubBuckets!=nullptr && !cpuDirty && pubGeneration==generation && pubBuckets->size()==bucketsCpu.size()) {
     curBuckets = pubBuckets.get();
+    return;
+    }
+  static const bool selective = [] {
+    const char* env = std::getenv("OPENGOTHIC_BUCKET_SELECTIVE_REFRESH");
+    return env==nullptr || env[0]!='0';
+    }();
+  if(selective && pubBuckets!=nullptr && !cpuDirty && pubGeneration!=generation && pubBuckets->size()==bucketsCpu.size()) {
+    const auto changes = Resources::textureChanges(pubGeneration);
+    const std::unordered_set<const Texture2d*> changed(changes.begin(),changes.end());
+    size_t refreshed = 0;
+    for(size_t i=0; i<bucketsCpu.size(); ++i) {
+      const auto& b = bucketsCpu[i];
+      auto& pb = (*pubBuckets)[i];
+      assert(pb.frames.size()==b.mat.frames.size());
+      bool bucketChanged = false;
+      auto refresh = [&](const Texture2d* source, Texture2d& destination) {
+        if(source!=nullptr && changed.find(source)!=changed.end()) {
+          destination = source->shared();
+          bucketChanged = true;
+          }
+        };
+      refresh(b.mat.tex,pb.tex);
+      refresh(b.mat.normal,pb.normal);
+      refresh(b.mat.orm,pb.orm);
+      if(b.mat.hasFringe()) {
+        refresh(b.mat.fringe.albedo,pb.frAlbedo);
+        refresh(b.mat.fringe.normal,pb.frNormal);
+        refresh(b.mat.fringe.orm,pb.frOrm);
+        }
+      for(size_t frame=0; frame<b.mat.frames.size(); ++frame)
+        refresh(b.mat.frames[frame],pb.frames[frame]);
+      refreshed += bucketChanged ? 1u : 0u;
+      }
+    // prepareFrame runs after joinRecord: no recording thread is reading this vector during a texture-only refresh.
+    pubGeneration = generation;
+    curBuckets = pubBuckets.get();
+    FrameProfile::add(FrameProfile::Amount::BucketsRefreshed,refreshed);
     return;
     }
   pubGeneration = generation;
@@ -102,6 +144,7 @@ void DrawBuckets::publishBuckets() {
   pubBuckets = std::move(p);
   curBuckets = pubBuckets.get();
   cpuDirty   = false;
+  FrameProfile::add(FrameProfile::Amount::BucketsRefreshed,pubBuckets->size());
   }
 
 DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh, const TreeBough::Page* page) {
