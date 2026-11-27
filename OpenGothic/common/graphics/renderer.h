@@ -76,8 +76,11 @@ class Renderer final {
       Tempest::StorageImage pyramid, earlyDepth;
       Tempest::ZBuffer referenceDepth;
       HiZHistoryVerify verify;
+      BenchProbe::HistoryVerifyRequest request;
+      bool verifyFailed = false;
       bool valid = false;
       } treeHistory;
+    void prepareHistoryVerify();
     void drawTreeHistory(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view,
                          const BenchProbe::HistoryVerifyRequest& request);
     struct {

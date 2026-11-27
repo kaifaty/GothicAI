@@ -10,7 +10,7 @@ class Npc;
 class BenchProbe {
   public:
     struct HistoryVerifyRequest {
-      std::string_view segment;
+      std::string segment;
       uint32_t number = 0;
       uint32_t frame = 0;
       uint64_t elapsedMs = 0;

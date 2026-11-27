@@ -14,6 +14,18 @@
 
 using namespace Tempest;
 
+void Renderer::prepareHistoryVerify() {
+  // The following tick may advance the bench script while these commands are being recorded.
+  auto* bench = BenchProbe::get();
+  if(treeHistory.verifyFailed && bench!=nullptr)
+    bench->historyVerifyComplete(false);
+  treeHistory.verifyFailed = false;
+  const bool verifyView = !settings.pathTraceEnabled && !taa.shot && treeProbe==nullptr && !captureLandscapeDepth;
+  treeHistory.request = verifyView && bench!=nullptr ? bench->historyVerifyRequest() : BenchProbe::HistoryVerifyRequest{};
+  if(treeHistory.request.finish)
+    bench->historyVerifyComplete(treeHistory.verify.finish());
+  }
+
 void Renderer::readBoughHiZDepth(uint8_t fId) {
   auto& diag = boughHiZDiag;
   if(diag.proofStamp==0 || diag.proofSlot!=fId)
