@@ -354,6 +354,13 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsStrand;
     std::unordered_set<size_t> objectsTree;
     std::unordered_set<size_t> objectsLevels;
+    // Dense iteration caches of the two sets (reports/engine/2026-11-27-instance-management, next cycle): the sets
+    // stay the membership truth; the sorted id vectors give the frame loops sequential access to objects[] instead
+    // of a pointer chase through scattered set nodes and random object slots. Rebuilt only when membership changes.
+    std::vector<size_t>      treeIds;
+    std::vector<size_t>      levelsIds;
+    bool                     treeIdsDirty   = true;
+    bool                     levelsIdsDirty = true;
     // the level cache's scene key: grows when any input of the preFrameUpdateLevels selection changes
     uint32_t               lodSceneKey = 1;
     struct LodSceneInputs {
