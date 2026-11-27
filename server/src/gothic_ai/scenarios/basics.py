@@ -1431,7 +1431,8 @@ async def m5e_talk(
     key and the input line, through the bridge's own paths, with the hero's own focus); the server picks
     the addressee, the npc's body follows the behavioral model (a fixed stand-in here), the hero's doings,
     an interruption and a witness go into memory, the conversation ends when the hero walks away, and a
-    walking npc answers on the move. Replies are given for the speech queue."""
+    walking npc answers on the move. The action key can open the native menu after a voice reply.
+    Replies are given for the speech queue."""
     await link.wait_world()
     results: dict[str, str] = {}
     started: list[tuple[float, LineStarted]] = []
@@ -1475,6 +1476,7 @@ async def m5e_talk(
     )
 
     # 2. the talk key held: the voice (a wav through the ASR service) names the npc
+    results["native_dialog_after_voice"] = "failed (no voice reply)"
     if voice is not None:
         await _until(lambda: not dialogue.speaking(npc), 10)  # else the key would cut it off (step 4)
         off.given("дано: реплика Ксардаса на голос героя", who=npc, line="Я слышу тебя.")
@@ -1484,6 +1486,27 @@ async def m5e_talk(
         await link.debug("ptt", state="stop")
         ok = await _until(lambda: bool(lines_of(npc, t0)) and talk.last is not None, 30)
         results["voice"] = f"{'done' if ok else 'failed'} ({heard()})"
+        if ok and any(line.voiced for line in lines_of(npc, t0)):
+            finished = await _until(lambda: not dialogue.speaking(npc), 10)
+            if finished:
+                # The game keeps the speech queue busy for a short breath after the audio.
+                await asyncio.sleep(0.5)
+            distance = talk.people[npc].distance if npc in talk.people else None
+            listening = "listen" in talk.held.get(npc, set())
+            if finished and listening and distance is not None and distance <= 500:
+                await link.start_talk(npc)
+                opened = await _until_async(link.dialog_menu, bool, 15)
+                entries = await link.dialog_menu()
+                if opened:
+                    await link.story_effect(npc, [{"do": "end"}])
+                    await _until_async(link.story_state, lambda state: not state["dialog"], 5)
+                results["native_dialog_after_voice"] = (
+                    f"{'done' if opened else 'failed'} ({distance:.0f} cm away; options: {entries})"
+                )
+            else:
+                results["native_dialog_after_voice"] = (
+                    f"failed (reply finished: {finished}; listening: {listening}; distance: {distance})"
+                )
 
     # 3. the hero draws his weapon mid-conversation
     await link.debug("player_weapon", state="melee")

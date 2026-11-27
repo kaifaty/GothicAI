@@ -489,8 +489,12 @@ sys.exit('unexpected uv arguments: ' + repr(args))
                              PATH=str(root / 'bin') + os.pathsep + os.environ['PATH']),
                 )
                 self.assertEqual(startup.returncode, 0, startup.stdout + startup.stderr)
-                projects = ('server', *(json.loads(line)['project']
-                                        for line in (root / 'startup.jsonl').read_text().splitlines()))
+                started = [json.loads(line)['project']
+                           for line in (root / 'startup.jsonl').read_text().splitlines()]
+                # The services start concurrently, but the dependency probe checks TTS before ASR.
+                projects = ('server', *(project for project in ('tts-service', 'asr-service')
+                                        if project in started))
+                self.assertCountEqual(started, projects[1:])
                 harness = r'''
 set -euo pipefail
 ROOT="$TEST_ROOT/source"
@@ -524,9 +528,10 @@ remote_probe e2e "$TEST_ROOT/state" run "$TEST_SCENARIO"
                     self.assertTrue((source / project / '.venv/ready').exists())
                 self.assertEqual([json.loads(line) for line in calls.read_text().splitlines()], [
                     {'project': project, 'args': args}
-                    for args in (['sync', '--check', '--frozen'], ['sync', '--frozen'],
-                                 ['sync', '--check', '--frozen'])
-                    for project in projects
+                    for args, phase in ((['sync', '--check', '--frozen'], projects[:2]),
+                                        (['sync', '--frozen'], projects),
+                                        (['sync', '--check', '--frozen'], projects))
+                    for project in phase
                 ])
 
     def test_game_rejects_stale_engine_without_building(self):

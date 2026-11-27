@@ -1046,6 +1046,15 @@ void NpcController::perception(World& world, Npc& self, Npc& other, Npc* victim,
   if(it==npcs.end())
     return;
 
+  if(perc==PERC_ASSESSTALK && other.isPlayer() && self.hasPerc(perc) &&
+     !self.haveOutput() && !self.isVoiceSounding() && !it->act && !it->follow && !it->scripted) {
+    // Let the native talk state start before the routine can take over again.
+    release(*it,false);
+    emitDetached(it->symbol,"native_dialog");
+    npcs.erase(it);
+    return;
+    }
+
   const uint64_t now = world.tickCount();
   const uint64_t key = (uint64_t(it->instance)<<40) ^ (uint64_t(other.instanceSymbol())<<8) ^ uint64_t(perc);
   auto& last = percThrottle[key];
