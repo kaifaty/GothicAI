@@ -32,13 +32,6 @@ namespace {
   using Matrix = Tempest::Matrix4x4;
   constexpr size_t blockBytes = 64;
 
-  // The production switch, read the same way: the reserve amortizes GPU capacity growth (M3 of
-  // reports/engine/2026-11-27-instance-management); =0 keeps the exact page-rounded capacity.
-  bool reserveOn() {
-    const char* e = std::getenv("OPENGOTHIC_INSTANCE_RESERVE");
-    return e==nullptr || e[0]!='0';
-    }
-
   void require(bool condition, const char* message) {
     if(condition) return;
     std::fprintf(stderr,"FAIL: %s\n",message);
@@ -181,10 +174,7 @@ namespace {
     large.set(zeros.data());
     const auto oldCapacity=gpu.bytes.size();
     gpu.commit(storage);
-    if(reserveOn())
-      require(gpu.bytes.size()>=oldCapacity,"reserve capacity must not shrink");
-    else
-      require(gpu.bytes.size()>oldCapacity,"fixture must force a new GPU page capacity");
+    require(gpu.bytes.size()==oldCapacity,"allocation within the reserve must keep the GPU capacity");
     require(gpu.equal(begin(large),zeros.data(),8192),"GPU resize must initialize a byte-identical zero range");
     require(gpu.equal(begin(id),expanded.data(),256) && gpu.equal(begin(blocker),&other,64),
             "GPU resize must preserve every existing palette");
@@ -519,7 +509,7 @@ namespace {
     m=marker(2);
     a.set(&m);
     // the reserve already holds 128 KiB: the fixture must cross it to force a real capacity growth
-    const size_t largeBytes = reserveOn() ? 131072 : 8192;
+    const size_t largeBytes = gpu.cur.size();
     auto large=storage.alloc(largeBytes);
     fresh.add(large);
     std::vector<Matrix> zeros(largeBytes/sizeof(Matrix));
@@ -653,8 +643,7 @@ namespace {
     }
   }
 
-  // M3: the reserve amortizes GPU capacity growth; the exact mode keeps every page crossing. Both must carry the
-  // same bytes: 2000 palettes of 128 bytes, a commit after each, and the GPU image read back over the whole data.
+  // Commit after each palette to check both amortized growth and the final GPU image.
   void testReserveAmortization() {
     InstanceStorage storage;
     MockPage gpu;
@@ -678,14 +667,8 @@ namespace {
     const size_t pages=((cpu.size()+4095)/4096)*4096;
     require(gpu.bytes.size()>=pages,"capacity must cover the data");
     require(gpu.equal(0,cpu.data(),cpu.size()),"every committed palette must read back byte-identical");
-    if(reserveOn()) {
-      require(grows<=12,"reserve must amortize growth (x2 from 128 KiB)");
-      require(gpu.bytes.size()<=pages*2+131072,"reserve slack must stay bounded");
-      }
-    else {
-      require(grows>=60,"exact mode must grow at every page crossing");
-      require(gpu.bytes.size()==pages,"exact mode capacity is the page-rounded data");
-      }
+    require(grows<=12,"reserve must amortize growth (x2 from 128 KiB)");
+    require(gpu.bytes.size()<=pages*2+131072,"reserve slack must stay bounded");
     }
 
 int main() {
