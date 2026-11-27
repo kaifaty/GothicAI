@@ -279,7 +279,10 @@ void WorldObjects::tickNpcs(uint64_t dt, uint64_t dtPlayer, const Npc* pl, bool 
         continue;
         }
       simTicked += simplified ? 1 : 0;
-      npc.tick(owed);
+      if(simplified && NpcSimTiers::farClassProfile())
+        NpcSimTiers::profileFarTick(npc,owed,simTiers);
+      else
+        npc.tick(owed);
       }
     if(idlePeriod!=0 && !idleCadenceInvalid && dt<idlePeriod && &npc!=pl && tier==NpcSimTier::Simplified &&
        npc.weaponState()==WeaponState::Fist && !npc.graphMovementFallback() && NpcSimTick::qualifies(npc,cfg.scope))

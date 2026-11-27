@@ -8,6 +8,7 @@
 #include "worldchunksruntime.h"
 
 class ChunkResidency;
+class Npc;
 
 // NPC simulation tiers (world streaming, step 1, item 6). Every NPC is Full
 // while its 64 m chunk is Near in ChunkResidency (the same ring and exit
@@ -51,7 +52,21 @@ struct Stats {
   uint64_t graphFallbackGround = 0, graphFallbackSegment = 0, graphFallbackNpcTicks = 0;
   Mode     mode = Mode::Auto;
 
+  // Diagnostic only (OPENGOTHIC_FAR_CLASS_PROFILE): Simplified Npc::tick wall time and count,
+  // bucketed by movement class, to locate the far-tick cost. Cumulative since world creation.
+  double   classMsTotal[5] = {};
+  uint64_t classCount[5]   = {};
+
   std::string probeFields() const;
   };
+
+// Diagnostic bucket index for Stats::classMsTotal/classCount.
+enum FarClass : int { FarCombat=0, FarMobsi=1, FarFallback=2, FarGraph=3, FarOther=4 };
+
+// OPENGOTHIC_FAR_CLASS_PROFILE=1 enables per-Npc timing of the Simplified tick into FarClass buckets.
+// Read once; off by default, no clocks added to the normal path.
+bool farClassProfile();
+// Times npc.tick(owed) and accumulates into the FarClass bucket of s. Diagnostic path only.
+void profileFarTick(Npc& npc, uint64_t owed, Stats& s);
 
 }

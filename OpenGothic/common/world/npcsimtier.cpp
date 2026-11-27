@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 
 #include "chunkresidency.h"
 
@@ -77,18 +78,32 @@ NpcSimTier NpcSimTiers::desired(Mode mode, bool hero, bool alwaysFull, const Chu
   }
 
 std::string Stats::probeFields() const {
-  char buf[768];
+  char buf[1280];
   std::snprintf(buf,sizeof(buf),
                 "npc_full=%zu npc_simplified=%zu npc_to_full=%llu npc_to_simplified=%llu "
                 "npc_full_tick_ms=%.6f npc_simplified_tick_ms=%.6f npc_full_tick_ms_total=%.3f "
                 "npc_simplified_tick_ms_total=%.3f npc_tier_ticks=%llu npc_tier_mode=%s npc_native_combat_ticks=%llu "
                 "npc_native_mobsi_approach_ticks=%llu npc_graph_fp_load_resolutions=%llu "
-                "npc_graph_fallback_ground=%llu npc_graph_fallback_segment=%llu npc_graph_fallback_ticks=%llu",
+                "npc_graph_fallback_ground=%llu npc_graph_fallback_segment=%llu npc_graph_fallback_ticks=%llu "
+                "far_combat_ms=%.3f far_mobsi_ms=%.3f far_fallback_ms=%.3f far_graph_ms=%.3f far_other_ms=%.3f "
+                "far_combat_n=%llu far_mobsi_n=%llu far_fallback_n=%llu far_graph_n=%llu far_other_n=%llu",
                 full,simplified,(unsigned long long)toFull,(unsigned long long)toSimplified,
                 fullTickMs,simplifiedTickMs,fullTickMsTotal,simplifiedTickMsTotal,
                 (unsigned long long)ticks,name(mode),(unsigned long long)nativeCombatNpcTicks,
                 (unsigned long long)nativeMobsiApproachNpcTicks,(unsigned long long)fpLoadResolutions,
                 (unsigned long long)graphFallbackGround,(unsigned long long)graphFallbackSegment,
-                (unsigned long long)graphFallbackNpcTicks);
+                (unsigned long long)graphFallbackNpcTicks,
+                classMsTotal[FarCombat],classMsTotal[FarMobsi],classMsTotal[FarFallback],classMsTotal[FarGraph],classMsTotal[FarOther],
+                (unsigned long long)classCount[FarCombat],(unsigned long long)classCount[FarMobsi],
+                (unsigned long long)classCount[FarFallback],(unsigned long long)classCount[FarGraph],
+                (unsigned long long)classCount[FarOther]);
   return buf;
+  }
+
+bool NpcSimTiers::farClassProfile() {
+  static const bool on = []{
+    const char* v = std::getenv("OPENGOTHIC_FAR_CLASS_PROFILE");
+    return v!=nullptr && std::string_view(v)=="1";
+    }();
+  return on;
   }
