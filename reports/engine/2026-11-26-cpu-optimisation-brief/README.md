@@ -67,7 +67,22 @@
 
 `DrawBuckets::publishBuckets()` получил selective-путь по `Resources::textureChanges(pubGeneration)` с обновлением существующего вектора по месту. Добавлены зона `bucket_publish`, счётчики `buckets_total/buckets_refreshed` и откат `OPENGOTHIC_BUCKET_SELECTIVE_REFRESH=0`. Полная пересборка сохранена для `cpuDirty`, смены числа бакетов и mesh/streaming публикаций; steady-путь без смены поколения не изменился.
 
-Существующий `gothic-material-texture-test` дополнен проверками заменённых albedo/normal/ORM и animation frames, запрошенного mip и сохранения соседнего материала. Focused-вариант на Ryzen прошёл **2 546 501** проверку selective и **2 546 477** проверок full fallback; логи и SHA-256 бинарников — `/mnt/shared/gothic-ai/cpu-steady-analysis/{test-receipt,focused-receipt}/`. Вне задачи: полный тест на Ryzen останавливается в независимом `vsmRecords` и в fallback, поэтому focused-вариант исключал только этот тест, а не проверки mip. Игровые прогоны и замеры publication-кадров ещё не запускались.
+Существующий `gothic-material-texture-test` дополнен проверками заменённых albedo/normal/ORM и animation frames, запрошенного mip и сохранения соседнего материала. Focused-вариант на Ryzen прошёл **2 546 501** проверку selective и **2 546 477** проверок full fallback; логи и SHA-256 бинарников — `/mnt/shared/gothic-ai/cpu-steady-analysis/{test-receipt,focused-receipt}/`. Вне задачи: полный тест на Ryzen останавливается в независимом `vsmRecords` и в fallback, поэтому focused-вариант исключал только этот тест, а не проверки mip.
+
+### Приёмка A/B/B/A на Ryzen
+
+Один бинарник и fingerprint во всех плечах. A1 `72ee99e03f05` (full), B1 `4a0a75af7557` (selective), B2 `c8969d7c0df8` (selective), A2 `7004761656c3` (full), по рынку и лесу без автопрогрева GPU. На 11–12 кадрах фактической публикации:
+
+| Метрика P50 | A1 full | B1 selective | B2 selective | A2 full | Выигрыш A1/B1 | Выигрыш B2/A2 |
+|---|---:|---:|---:|---:|---:|---:|
+| `bucket_publish`, мс | 1,381 | 0,139 | 0,133 | 1,363 | **1,242** | **1,229** |
+| Остаток R, мс | 1,484 | 0,250 | 0,239 | 1,480 | **1,234** | **1,241** |
+| Полный кадр, мс | 8,794 | 7,445 | 7,350 | 8,519 | **1,349** | **1,169** |
+| `buckets_refreshed` | 5 475 | 7 | 7 | 5 475 | −5 468 | −5 468 |
+
+Все три гейта ≥0,5 мс пройдены в обоих сравнениях. На steady-кадрах `buckets_refreshed=0`, R остаётся 0,103–0,104 мс, `bucket_publish` — ноль; полный кадр не показывает регрессии. `encode_record` меняется лишь на 0,015/0,035 мс, поэтому эффект относится к подготовке CPU-снимка, а не к descriptor-записи. Полный JSON — `/mnt/shared/gothic-ai/cpu-steady-analysis/price.json`, квитанции — `queue.json`.
+
+Бюджет с учётом остановленных заявок: первая сборка `27c72523fdf0` остановлена на последней линковке за 225,436 с; доводка `5f715e16c66b` — 38,513 с. Автопрогrev `10664fe5290a` остановлен за 226,338 с до измерительных окон. Четыре успешных плеча заняли 107,637 + 107,901 + 107,651 + 108,634 = 431,823 с. Всего **922,110 с из 1 140 с** с учётом разрешённых доводки и повтора A1; максимум ожидания очереди — 36,142 с при лимите 180 с.
 
 ### P2. Конвейер × coverage и включение конвейера
 
