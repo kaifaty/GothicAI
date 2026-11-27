@@ -1,0 +1,56 @@
+title: Выбрать issue, исправить и открыть PR
+description: Выбрать открытую задачу GothicAI, проверить исправление и открыть PR в main. Запускайте через «Start in a new workspace», чтобы у прогона была своя вкладка.
+manager: { mode: none }
+isolation: { mode: worktree, base: main }
+concurrency: 1
+outputs:
+  selection: { type: string, description: Выбранная issue и причина выбора. }
+  report: { type: string, description: Результат проверки и исправления. }
+  url: { type: string, description: Ссылка из шага публикации. }
+
+steps:
+  - id: select
+    title: Выбрать открытую issue
+    role:
+      name: issue-selector
+      prompt: Choose one open kaifaty/GothicAI issue using the current queue and the source in {{ worktree }}.
+    outputs:
+      issue_number: { type: number }
+      selection: { type: string }
+    outcomes: [selected, empty, failure]
+    on: { empty: end }
+    timeout: 15m
+
+  - id: inspect
+    title: Проверить issue и связанные PR
+    needs: [select]
+    inputs: [issue_number]
+    script: { run: issue-pr.py }
+    outcomes: [ready, handled]
+    on: { handled: { goto: select, max_loops: 2 } }
+
+  - id: fix
+    title: Исправить и проверить
+    needs: [inspect]
+    inputs: [issue_number, selection]
+    role:
+      name: issue-fixer
+      prompt: |
+        Resolve kaifaty/GothicAI issue #{{ inputs.issue_number }} in {{ worktree }}.
+        Selection: {{ inputs.selection }}
+    outputs:
+      report: { type: string, description: Исправление и результаты проверок либо причина завершения. }
+    outcomes: [fixed, no_change, needs_input, failure]
+    on:
+      no_change: { goto: select, max_loops: 2 }
+      needs_input: { ask: "Какое поведение ожидается в этой issue?", max_loops: 2 }
+    timeout: 2h
+
+  - id: publish
+    title: Открыть PR в main
+    needs: [fix]
+    inputs: [issue_number, report]
+    script: { run: issue-pr.py }
+    outputs:
+      url: { type: string, description: Ссылка на PR или уже закрытую issue. }
+    timeout: 3m
