@@ -1,0 +1,32 @@
+title: Разбор рефлексии
+description: Проверить уроки и предложения проекта по коду, документации и GitHub. Результат появится в отчёте запуска.
+manager: { mode: none }
+concurrency: 1
+inputs:
+  workspace_ids:
+    type: string
+    default: all
+    description: Все пространства проекта (all) или ID через пробел для выборочного разбора.
+steps:
+  - id: collect
+    title: Найти новые уроки и неразобранные предложения
+    inputs: [workspace_ids]
+    script: { run: reflect-window.py }
+    outcomes: [ready, unchanged]
+    on: { unchanged: end }
+    outputs:
+      window: { type: string }
+    timeout: 1m
+  - id: review
+    title: Проверить записи и подготовить решения
+    needs: [collect]
+    inputs: [window]
+    role:
+      name: reflection-reviewer
+      prompt: |
+        Review this window of the project's paseo-reflect registries.
+        {{ inputs.window }}
+    outputs:
+      report: { type: string, description: Решения, исходные записи и проверенные ссылки. }
+      reviewed_proposals: { type: list, description: ID предложений с проверенным решением в этом отчёте. }
+    timeout: 20m
