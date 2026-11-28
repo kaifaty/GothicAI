@@ -963,6 +963,14 @@ endif()
     COMMAND $<TARGET_FILE:gothic-followtrail-contract>
     DEPENDS gothic-followtrail-contract USES_TERMINAL)
 
+# Phase 0 modkit runtime spike: upstream Luau (Common, Ast, Bytecode, Compiler, VM) and standalone microbenchmark.
+add_subdirectory(lib/luau EXCLUDE_FROM_ALL)
+add_executable(gothic-mod-bench EXCLUDE_FROM_ALL tests/mod_bench.cpp)
+target_link_libraries(gothic-mod-bench PRIVATE Luau.VM Luau.Compiler)
+if(NOT MSVC)
+  target_compile_options(gothic-mod-bench PRIVATE -Wall -Wconversion -Werror)
+endif()
+
 # installation
 install(TARGETS Gothic2Notr DESTINATION bin)
 install(FILES "$<TARGET_FILE_DIR:Gothic2Notr>/native-catalog-version.txt" DESTINATION bin)

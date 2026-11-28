@@ -16,6 +16,7 @@ automatically; to update one, copy the needed parts of a newer upstream version 
 | `rapidjson/` | https://github.com/Tencent/rapidjson | f54b0e47a08782a6131cc3d60f94d038fa6e0a51 (v1.1.0) | MIT | everything but `include/` (header-only) |
 | `cgltf/` | https://github.com/jkuhlmann/cgltf | 360db1a95480fe102ae9c69b27c5d101167ff5ba (v1.15) | MIT | everything but `cgltf.h` and `LICENSE` (single-header GLB parser) |
 | `TinySoundFont/` | https://github.com/schellingb/TinySoundFont | 92a8f0e9fe3c98358be7d8564db21fc4b1142d04 | MIT | `examples/`, `sfotool/` |
+| `luau/` | https://github.com/luau-lang/luau | 3d91c9d5c280c95bfc4be63aac46012cf861d394 (0.748) | MIT (`LICENSE.txt`, `lua_LICENSE.txt`) | everything except `Common/`, `Ast/`, `Bytecode/`, `Compiler/`, `VM/` and licenses (`Analysis/`, `CodeGen/`, `CLI/`, `Config/`, `Inliner/`, `Require/`, `extern/`, `tests/`, `bench/`, `fuzz/`, `tools/` omitted); local minimal CMake builds the five static libraries |
 | `edd-dbg/`, `miniz/` | as in upstream OpenGothic | — | see the directories | — |
 
 Git metadata of the libraries (`.git`, `.github`, `.gitmodules`, `.gitignore`) was not copied.
