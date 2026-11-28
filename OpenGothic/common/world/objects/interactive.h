@@ -10,6 +10,7 @@
 #include "graphics/objvisual.h"
 #include "world/triggers/abstracttrigger.h"
 #include "game/inventory.h"
+#include "modkit/entityid.h"
 #include "utils/keycodec.h"
 #include "vob.h"
 #include "animationsound.h"
@@ -54,6 +55,8 @@ class Interactive : public Vob, public AnimationSound, public AnimationInteracti
     // Parked by the idle state machine: the world's tick walk skips it until a mutator wakes it.
     bool                isParked() const { return parked.load(std::memory_order_relaxed); }
     uint32_t            zenId() const { return vobObjectID; }
+    modkit::EntityId    entityId() const { return entId; }
+    void                setEntityId(modkit::EntityId id) { entId = id; }
     const ObjVisual&    objVisual() const { return visual; }
     int32_t             stateCount() const { return stateNum; }
     bool                setMobState(std::string_view scheme,int32_t st) override;
@@ -193,4 +196,5 @@ class Interactive : public Vob, public AnimationSound, public AnimationInteracti
 
     std::vector<Pos>    attPos;
     ObjVisual           visual;
+    modkit::EntityId    entId{};
   };

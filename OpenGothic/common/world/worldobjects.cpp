@@ -106,6 +106,8 @@ void WorldObjects::load(Serialize &fin) {
     source.item=nullptr;
   itemArr.clear();
   items.clear();
+  npcByEntityId.clear();
+  itemByEntityId.clear();
 
   uint32_t sz = fin.directorySize("worlds/",fin.worldName(),"/npc/");
   invalidateNpcOrder();
@@ -157,6 +159,8 @@ void WorldObjects::load(Serialize &fin) {
   for(auto& i:routines)
     i.load(fin);
 
+  loadEntityIds(fin);
+
   for(auto& i:interactiveObj)
     i->postValidate();
   for(auto& i:npcArr)
@@ -191,6 +195,8 @@ void WorldObjects::save(Serialize &fout) {
   fout.write(uint32_t(routines.size()));
   for(auto& i:routines)
     i.save(fout);
+
+  saveEntityIds(fout);
   }
 
 void WorldObjects::saveItemPhysics(Serialize& fout) const {
@@ -666,6 +672,189 @@ uint32_t WorldObjects::npcId(const Npc *ptr) const {
   return uint32_t(-1);
   }
 
+void WorldObjects::registerNpcEntity(Npc& npc) {
+  if(!npc.entityId().valid())
+    npc.setEntityId(owner.allocEntityId()); else
+    owner.observeEntityId(npc.entityId());
+  npcByEntityId[npc.entityId().raw] = &npc;
+  }
+
+void WorldObjects::unregisterNpcEntity(const Npc& npc) {
+  if(!npc.entityId().valid())
+    return;
+  auto it = npcByEntityId.find(npc.entityId().raw);
+  if(it!=npcByEntityId.end() && it->second==&npc)
+    npcByEntityId.erase(it);
+  }
+
+void WorldObjects::registerInteractiveEntity(Interactive& obj) {
+  if(!obj.entityId().valid())
+    obj.setEntityId(owner.allocEntityId()); else
+    owner.observeEntityId(obj.entityId());
+  mobsiByEntityId[obj.entityId().raw] = &obj;
+  }
+
+void WorldObjects::registerItemEntity(Item& item) {
+  if(!item.entityId().valid())
+    item.setEntityId(owner.allocEntityId()); else
+    owner.observeEntityId(item.entityId());
+  itemByEntityId[item.entityId().raw] = &item;
+  }
+
+void WorldObjects::unregisterItemEntity(const Item& item) {
+  if(!item.entityId().valid())
+    return;
+  auto it = itemByEntityId.find(item.entityId().raw);
+  if(it!=itemByEntityId.end() && it->second==&item)
+    itemByEntityId.erase(it);
+  }
+
+Npc* WorldObjects::findNpcByEntityId(modkit::EntityId id) const {
+  if(!id.valid())
+    return nullptr;
+  auto it = npcByEntityId.find(id.raw);
+  return it==npcByEntityId.end() ? nullptr : it->second;
+  }
+
+Interactive* WorldObjects::findInteractiveByEntityId(modkit::EntityId id) const {
+  if(!id.valid())
+    return nullptr;
+  auto it = mobsiByEntityId.find(id.raw);
+  return it==mobsiByEntityId.end() ? nullptr : it->second;
+  }
+
+Item* WorldObjects::findItemByEntityId(modkit::EntityId id) const {
+  if(!id.valid())
+    return nullptr;
+  auto it = itemByEntityId.find(id.raw);
+  return it==itemByEntityId.end() ? nullptr : it->second;
+  }
+
+void WorldObjects::saveEntityIds(Serialize& fout) const {
+  static constexpr uint32_t Magic  = 0x31444945u; // "EID1"
+  static constexpr uint16_t Schema = 1;
+  fout.setEntry("worlds/",fout.worldName(),"/entity-ids");
+  fout.write(Magic,Schema);
+  fout.write(uint32_t(npcArr.size()));
+  for(const auto& n:npcArr)
+    fout.write(n->entityId().raw);
+  fout.write(uint32_t(npcInvalid.size()));
+  for(const auto& n:npcInvalid)
+    fout.write(n->entityId().raw);
+  fout.write(uint32_t(itemArr.size()));
+  for(const auto& it:itemArr)
+    fout.write(it->entityId().raw);
+  fout.write(uint32_t(interactiveObj.size()));
+  for(const auto* m:interactiveObj)
+    fout.write(m->zenId(),m->entityId().raw);
+  }
+
+void WorldObjects::loadEntityIds(Serialize& fin) {
+  npcByEntityId.clear();
+  itemByEntityId.clear();
+  mobsiByEntityId.clear();
+
+  for(auto& n:npcArr)
+    n->setEntityId({});
+  for(auto& n:npcInvalid)
+    n->setEntityId({});
+  for(auto& it:itemArr)
+    it->setEntityId({});
+
+  if(fin.setEntry("worlds/",fin.worldName(),"/entity-ids")) {
+    try {
+      static constexpr uint32_t Magic  = 0x31444945u; // "EID1"
+      static constexpr uint16_t Schema = 1;
+      uint32_t magic  = 0;
+      uint16_t schema = 0;
+      fin.read(magic,schema);
+      if(magic==Magic && schema==Schema) {
+        uint32_t nCnt = 0;
+        fin.read(nCnt);
+        std::vector<uint64_t> nIds(nCnt);
+        for(auto& id:nIds)
+          fin.read(id);
+
+        uint32_t invCnt = 0;
+        fin.read(invCnt);
+        std::vector<uint64_t> invIds(invCnt);
+        for(auto& id:invIds)
+          fin.read(id);
+
+        uint32_t itmCnt = 0;
+        fin.read(itmCnt);
+        std::vector<uint64_t> itmIds(itmCnt);
+        for(auto& id:itmIds)
+          fin.read(id);
+
+        uint32_t mobCnt = 0;
+        fin.read(mobCnt);
+        std::vector<std::pair<uint32_t,uint64_t>> mobIds(mobCnt);
+        for(auto& [zen,id]:mobIds)
+          fin.read(zen,id);
+
+        if(nIds.size()==npcArr.size()) {
+          for(size_t i=0; i<npcArr.size(); ++i)
+            if(nIds[i]!=0)
+              npcArr[i]->setEntityId(modkit::EntityId{nIds[i]});
+          }
+        if(invIds.size()==npcInvalid.size()) {
+          for(size_t i=0; i<npcInvalid.size(); ++i)
+            if(invIds[i]!=0)
+              npcInvalid[i]->setEntityId(modkit::EntityId{invIds[i]});
+          }
+        if(itmIds.size()==itemArr.size()) {
+          for(size_t i=0; i<itemArr.size(); ++i)
+            if(itmIds[i]!=0)
+              itemArr[i]->setEntityId(modkit::EntityId{itmIds[i]});
+          }
+
+        bool matchedByOrder = (mobIds.size()==interactiveObj.size());
+        if(matchedByOrder) {
+          size_t idx = 0;
+          for(const auto* m:interactiveObj) {
+            if(m->zenId()!=mobIds[idx++].first) {
+              matchedByOrder = false;
+              break;
+              }
+            }
+          }
+        if(matchedByOrder) {
+          size_t idx = 0;
+          for(auto* m:interactiveObj) {
+            const uint64_t savedId = mobIds[idx++].second;
+            if(savedId!=0)
+              m->setEntityId(modkit::EntityId{savedId});
+            }
+          } else {
+          std::unordered_map<uint32_t,uint64_t> byZen;
+          byZen.reserve(mobIds.size());
+          for(const auto& [zen,id]:mobIds)
+            if(zen!=0 && id!=0)
+              byZen.emplace(zen,id);
+          for(auto* m:interactiveObj) {
+            auto it = byZen.find(m->zenId());
+            if(it!=byZen.end())
+              m->setEntityId(modkit::EntityId{it->second});
+            }
+          }
+        }
+      }
+    catch(const std::exception& e) {
+      Log::e("world entity-ids load: ",e.what());
+      }
+    }
+
+  for(auto& n:npcArr)
+    registerNpcEntity(*n);
+  for(auto& n:npcInvalid)
+    registerNpcEntity(*n);
+  for(auto& it:itemArr)
+    registerItemEntity(*it);
+  for(auto* m:interactiveObj)
+    registerInteractiveEntity(*m);
+  }
+
 uint32_t WorldObjects::itmId(const void *ptr) const {
   for(size_t i=0;i<itemArr.size();++i)
     if(&itemArr[i]->handle()==ptr)
@@ -711,6 +900,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
     npcInvalid.emplace_back(npc);
     }
 
+  registerNpcEntity(*npc);
   return npc;
   }
 
@@ -730,6 +920,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, const Vec3& pos) {
 
   invalidateNpcOrder();
   npcArr.emplace_back(npc);
+  registerNpcEntity(*npc);
   return npc;
   }
 
@@ -752,6 +943,7 @@ Npc* WorldObjects::insertPlayer(std::unique_ptr<Npc> &&npc, std::string_view at)
   npc->updateTransform();
   invalidateNpcOrder();
   npcArr.emplace_back(std::move(npc));
+  registerNpcEntity(*npcArr.back());
   return npcArr.back().get();
   }
 
@@ -766,6 +958,7 @@ std::unique_ptr<Npc> WorldObjects::takeNpc(const Npc* ptr) {
       invalidateNpcOrder();
       auto ret=std::move(npcArr[i]);
       npcArr.erase(npcArr.begin() + int32_t(i));
+      unregisterNpcEntity(*ret);
       return ret;
       }
     }
@@ -1281,6 +1474,8 @@ std::unique_ptr<Item> WorldObjects::takeItem(Item &it) {
       i = std::move(itemArr.back());
       itemArr.pop_back();
       items.del(ret.get());
+      unregisterItemEntity(*ret);
+      ret->setEntityId({});
       ret->setPhysicsDisable();
       if(ret->isPlacedItem()) {
         for(auto& source:placedItems)
@@ -1361,6 +1556,7 @@ Item* WorldObjects::addItem(size_t itemInstance, const Tempest::Vec3& pos, const
   auto* it=ptr.get();
   itemArr.emplace_back(std::move(ptr));
   items.add(itemArr.back().get());
+  registerItemEntity(*it);
 
   it->setPosition (pos.x, pos.y, pos.z);
   it->setDirection(dir.x, dir.y, dir.z);
@@ -1384,6 +1580,7 @@ Item* WorldObjects::addItemDyn(size_t itemInstance, const Tempest::Matrix4x4& po
   it->handle().owner = ownerNpc==size_t(-1) ? 0 : int32_t(ownerNpc);
   itemArr.emplace_back(std::move(ptr));
   items.add(itemArr.back().get());
+  registerItemEntity(*it);
 
   it->setObjMatrix(pos);
 
@@ -1392,6 +1589,8 @@ Item* WorldObjects::addItemDyn(size_t itemInstance, const Tempest::Matrix4x4& po
 
 void WorldObjects::addInteractive(Interactive* obj) {
   interactiveObj.add(obj);
+  if(obj!=nullptr)
+    registerInteractiveEntity(*obj);
   }
 
 void WorldObjects::addStatic(StaticObj* obj) {
@@ -1722,8 +1921,10 @@ void WorldObjects::resetPositionToTA() {
   const bool keepBodies = Settings::physicsFlags().bodyTraces;
   std::vector<std::unique_ptr<Npc>> retired;
   for(auto& i:npcInvalid) {
-    if(i->handlePtr().use_count()<=1)
+    if(i->handlePtr().use_count()<=1) {
+      unregisterNpcEntity(*i);
       npcRemoved.push_back(std::move(i));
+      }
     else if(keepBodies && i->isDead())
       retired.push_back(std::move(i)); // retired earlier: it would only be retired again
     else

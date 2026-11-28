@@ -23,8 +23,8 @@
 class SaveArchive {
   public:
     enum Version : uint16_t {
-      Current    = 57, // keep the launcher's SAVE_VERSION in sync
-      MinVersion = Current,
+      Current    = 58, // keep the launcher's SAVE_VERSION in sync
+      MinVersion = 57, // keep reading v57 saves alongside v58
 
       Last_2025  = 53,
       Last_2024  = 49,

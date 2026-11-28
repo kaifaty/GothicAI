@@ -100,6 +100,7 @@ LAYER_RULES: list[tuple[str, str]] = [
     # The AI bridge and the independent society simulation used by the RPG world.
     ("ai_bridge/*", "bridge"),
     ("common/society/*", "rpg"),
+    ("common/modkit/*", "rpg"),
     # Gothic itself: the script VM and its bindings, G2 rules, Gothic's app shell and menus,
     # Gothic's media formats at runtime.
     ("common/daedalus/*", "gothic"),

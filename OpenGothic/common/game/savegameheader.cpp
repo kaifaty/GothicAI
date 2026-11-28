@@ -62,13 +62,14 @@ SaveGameHeader::SaveGameHeader(Serialize &fin) {
   }
 
 bool SaveGameHeader::isCompatible() const {
-  return version==Serialize::Current;
+  return version>=Serialize::MinVersion && version<=Serialize::Current;
   }
 
 void SaveGameHeader::requireCompatible() const {
   if(!isCompatible())
     throw std::runtime_error("Unsupported save version "+std::to_string(version)+
-                             " (expected "+std::to_string(Serialize::Current)+")");
+                             " (expected "+std::to_string(Serialize::MinVersion)+"-"+
+                             std::to_string(Serialize::Current)+")");
   }
 
 void SaveGameHeader::save(Serialize &fout) const {

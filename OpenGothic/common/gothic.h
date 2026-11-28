@@ -270,6 +270,9 @@ class Gothic final : public GameServices, public GameHost {
     Tempest::SoundEffect loadSound(GameSession& session, const Tempest::Sound& sound) override;
     Tempest::SoundEffect loadSound(GameSession& session, const SoundFx& sound, bool& looped) override;
     void updateListenerPos(GameSession& session, const Camera::ListenerPos& position) override;
+    modkit::IdGenerator* sessionModIds(GameSession& session) override;
+    modkit::ContentRegistry* sessionContentRegistry(GameSession& session) override;
+    const modkit::ContentRegistry* sessionContentRegistry(const GameSession& session) const override;
 
     Settings                                settings;
     std::mt19937                            randGen;

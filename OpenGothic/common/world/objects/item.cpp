@@ -39,6 +39,7 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
   LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Item);
   LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Item,sizeof(Item));
   assert(itemInstance!=size_t(-1));
+  itemUid = owner.allocItemUid();
   hitem = owner.rules().createItem(*this,itemInstance,itemInstanceSymbol);
   setCount(1);
   // Mass and native inertia are fixed when physics is created. The default
@@ -59,7 +60,7 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
   }
 
 Item::Item(World& owner, std::shared_ptr<ItemRecord> record, uint32_t instance)
-  :Vob(owner), hitem(std::move(record)), itemInstanceSymbol(instance) {
+  :Vob(owner), hitem(std::move(record)), itemInstanceSymbol(instance), itemUid(owner.allocItemUid()) {
   owner.rules().attachItem(hitem,*this);
   setCount(1);
   setObjMatrix(Tempest::Matrix4x4::mkIdentity());
@@ -73,6 +74,25 @@ Item::Item(World &owner, Serialize &fin, Type type)
   fin.read(pos,equipped,itSlot);
   fin.read(mat);
   setLocalTransform(mat);
+
+  if(fin.version()>=58) {
+    uint64_t rawUid   = 0;
+    uint8_t  hasProps = 0;
+    fin.read(rawUid,hasProps);
+    if(rawUid!=0) {
+      itemUid = modkit::ItemUid{rawUid};
+      owner.observeItemUid(itemUid);
+      } else {
+      itemUid = owner.allocItemUid();
+      }
+    if(hasProps!=0) {
+      auto loaded = modkit::ItemInstanceProps::load(fin);
+      if(!loaded.empty())
+        instanceProps = std::make_unique<modkit::ItemInstanceProps>(std::move(loaded));
+      }
+    } else {
+    itemUid = owner.allocItemUid();
+    }
 
   if(type!=T_Inventory) {
     const auto* residency=world.chunkResidency();
@@ -93,7 +113,11 @@ Item::Item(World &owner, Serialize &fin, Type type)
 Item::Item(Item &&it)
   : Vob(it.world), hitem(std::move(it.hitem)),itemInstanceSymbol(it.itemInstanceSymbol),
     pos(it.pos),amount(it.amount),equipped(it.equipped),itSlot(it.itSlot),
-    placedZenId(it.placedZenId),placedAllowed(it.placedAllowed),proto(it.proto),visual(std::move(it.visual)) {
+    placedZenId(it.placedZenId),placedAllowed(it.placedAllowed),
+    itemUid(it.itemUid),entId(it.entId),instanceProps(std::move(it.instanceProps)),
+    proto(it.proto),visual(std::move(it.visual)) {
+  it.itemUid = {};
+  it.entId   = {};
   world.rules().attachItem(hitem,*this);
   setLocalTransform(it.localTransform());
   physic = std::move(it.physic);
@@ -141,6 +165,34 @@ void Item::save(Serialize &fout) const {
   fout.write(amount);
   fout.write(pos,equipped,itSlot);
   fout.write(localTransform());
+  const uint8_t hasProps = (instanceProps!=nullptr && !instanceProps->empty()) ? 1 : 0;
+  fout.write(itemUid.raw,hasProps);
+  if(hasProps!=0)
+    instanceProps->save(fout);
+  }
+
+modkit::ItemInstanceProps& Item::mutableProps() {
+  if(instanceProps==nullptr)
+    instanceProps = std::make_unique<modkit::ItemInstanceProps>();
+  return *instanceProps;
+  }
+
+void Item::setProps(std::optional<modkit::ItemInstanceProps> p) {
+  if(p.has_value() && !p->empty())
+    instanceProps = std::make_unique<modkit::ItemInstanceProps>(std::move(*p)); else
+    instanceProps.reset();
+  }
+
+std::unique_ptr<modkit::ItemInstanceProps> Item::cloneProps() const {
+  if(instanceProps==nullptr || instanceProps->empty())
+    return nullptr;
+  return std::make_unique<modkit::ItemInstanceProps>(*instanceProps);
+  }
+
+bool Item::canStackWith(const Item& other) const {
+  if(clsId()!=other.clsId())
+    return false;
+  return modkit::ItemInstanceProps::canStack(instanceProps.get(),other.instanceProps.get());
   }
 
 void Item::savePhysics(Serialize& fout) const {

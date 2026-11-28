@@ -1175,6 +1175,42 @@ Item *World::itmById(uint32_t id) {
   return nullptr;
   }
 
+modkit::EntityId World::allocEntityId() {
+  if(auto* gen = GameHost::inst().sessionModIds(game))
+    return gen->allocEntity();
+  return fallbackModIds.allocEntity();
+  }
+
+void World::observeEntityId(modkit::EntityId id) {
+  if(auto* gen = GameHost::inst().sessionModIds(game))
+    gen->observeEntity(id); else
+    fallbackModIds.observeEntity(id);
+  }
+
+modkit::ItemUid World::allocItemUid() {
+  if(auto* gen = GameHost::inst().sessionModIds(game))
+    return gen->allocItem();
+  return fallbackModIds.allocItem();
+  }
+
+void World::observeItemUid(modkit::ItemUid uid) {
+  if(auto* gen = GameHost::inst().sessionModIds(game))
+    gen->observeItem(uid); else
+    fallbackModIds.observeItem(uid);
+  }
+
+modkit::ContentRegistry& World::contentRegistry() {
+  if(auto* reg = GameHost::inst().sessionContentRegistry(game))
+    return *reg;
+  return fallbackRegistry;
+  }
+
+const modkit::ContentRegistry& World::contentRegistry() const {
+  if(const auto* reg = GameHost::inst().sessionContentRegistry(game))
+    return *reg;
+  return fallbackRegistry;
+  }
+
 void World::runEffect(Effect&& e) {
   wobj.runEffect(std::move(e));
   }

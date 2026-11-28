@@ -177,6 +177,107 @@ void Npc::dropItem(size_t id, size_t count) {
   invent.delItem(id,count,*this);
   }
 
+void Npc::addItemByUid(modkit::ItemUid uid, Interactive& chest, size_t count) {
+  auto* item = chest.inventory().findByUid(uid);
+  if(item==nullptr)
+    return;
+  if(!isPlayer() && isServerDeed("take_item") &&
+     (serverDeedSimulationError()!=nullptr || item->isMission()))
+    return;
+  auto deed = HeroDeed::capture(*this,"take_item",nullptr,item,&chest,
+                                std::min(count,item->count()));
+  if(deed!=nullptr && !isPlayer())
+    deed->collectWitnesses(*this,nullptr);
+  const size_t moved = Inventory::transferByUid(invent,chest.inventory(),nullptr,uid,count,owner);
+  if(deed!=nullptr && moved>0) {
+    deed->count = moved;
+    if(isPlayer())
+      if(auto use = chest.heroUseDeed())
+        deed->witnesses = use->witnesses;
+    GameHost::inst().emitHeroDeed(*deed);
+    }
+  }
+
+void Npc::addItemByUid(modkit::ItemUid uid, Npc& from, size_t count) {
+  Inventory::transferByUid(invent,from.invent,&from,uid,count,owner);
+  }
+
+void Npc::moveItemByUid(modkit::ItemUid uid, Interactive& to, size_t count) {
+  Inventory::transferByUid(to.inventory(),invent,this,uid,count,owner);
+  }
+
+void Npc::sellItemByUid(modkit::ItemUid uid, Npc& to, size_t count) {
+  auto* it = invent.findByUid(uid);
+  if(it==nullptr || it->isGold())
+    return;
+  const int32_t price = it->sellCost();
+  const size_t  moved = Inventory::transferByUid(to.invent,invent,this,uid,count,owner);
+  if(moved>0 && price>0)
+    invent.addItem(owner.rules().goldItemId(),size_t(price)*moved,owner);
+  }
+
+void Npc::buyItemByUid(modkit::ItemUid uid, Npc& from, size_t count) {
+  auto* it = from.invent.findByUid(uid);
+  if(it==nullptr || it->isGold())
+    return;
+
+  const int32_t price = it->cost();
+  if(price>0 && size_t(price)*count>invent.goldCount()) {
+    count = invent.goldCount()/size_t(price);
+    }
+  if(count==0) {
+    owner.rules().printCannotBuyError(*this);
+    return;
+    }
+
+  const size_t moved = Inventory::transferByUid(invent,from.invent,nullptr,uid,count,owner);
+  if(moved==0)
+    return;
+  if(price>=0)
+    invent.delItem(owner.rules().goldItemId(),size_t( price)*moved,*this); else
+    invent.addItem(owner.rules().goldItemId(),size_t(-price)*moved,owner);
+  }
+
+void Npc::dropItemByUid(modkit::ItemUid uid, size_t count) {
+  syncDeferredAnimation();
+  Item* src = invent.findByUid(uid);
+  if(src==nullptr)
+    return;
+  const size_t cnt = src->count();
+  if(count>cnt)
+    count = cnt;
+  if(count<1)
+    return;
+
+  auto sk = visual.visualSkeleton();
+  if(sk==nullptr)
+    return;
+
+  size_t rightHand = sk->findNode("ZS_RIGHTHAND");
+  if(rightHand==size_t(-1))
+    return;
+
+  if(!setAnim(Anim::ItmDrop))
+    return;
+
+  auto mat = visual.transform();
+  if(rightHand<visual.pose().boneCount())
+    mat = visual.pose().bone(rightHand);
+
+  const size_t clsId = src->clsId();
+  const bool fullStack = (count==cnt);
+  auto clonedProps = src->cloneProps();
+  auto it = owner.addItemDyn(clsId,mat,npcInstanceSymbol);
+  if(it!=nullptr) {
+    it->setCount(count);
+    if(clonedProps!=nullptr)
+      it->setProps(*clonedProps);
+    if(fullStack)
+      it->setUid(uid);
+    }
+  invent.delItemByUid(uid,count,*this);
+  }
+
 void Npc::clearInventory() {
   invent.clear(owner.rules(),*this);
   }
@@ -201,6 +302,10 @@ size_t Npc::itemCount(size_t id) const {
   return invent.itemCount(id);
   }
 
+size_t Npc::itemCountByUid(modkit::ItemUid uid) const {
+  return invent.countByUid(uid);
+  }
+
 Item* Npc::activeWeapon() {
   return invent.activeWeapon();
   }
@@ -209,8 +314,16 @@ Item *Npc::getItem(size_t id) {
   return invent.getItem(id);
   }
 
+Item* Npc::getItemByUid(modkit::ItemUid uid) {
+  return invent.findByUid(uid);
+  }
+
 void Npc::delItem(size_t item, uint32_t amount) {
   invent.delItem(item,amount,*this);
+  }
+
+void Npc::delItemByUid(modkit::ItemUid uid, uint32_t amount) {
+  invent.delItemByUid(uid,amount,*this);
   }
 
 void Npc::useItem(size_t item) {
@@ -219,6 +332,14 @@ void Npc::useItem(size_t item) {
 
 void Npc::useItem(size_t item, uint8_t slotHint, bool force) {
   invent.use(item,*this,slotHint,force);
+  }
+
+void Npc::useItemByUid(modkit::ItemUid uid) {
+  useItemByUid(uid,Item::NSLOT,false);
+  }
+
+void Npc::useItemByUid(modkit::ItemUid uid, uint8_t slotHint, bool force) {
+  invent.useByUid(uid,*this,slotHint,force);
   }
 
 bool Npc::hasItemUseAnimation() const {
@@ -394,4 +515,8 @@ void Npc::setCurrentItem(size_t item) {
 
 void Npc::unequipItem(size_t item) {
   invent.unequip(item,*this);
+  }
+
+void Npc::unequipItemByUid(modkit::ItemUid uid) {
+  invent.unequipByUid(uid,*this);
   }

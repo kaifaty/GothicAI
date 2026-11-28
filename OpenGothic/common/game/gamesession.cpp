@@ -218,6 +218,11 @@ GameSession::GameSession(Serialize &fin) {
   if(!fin.setEntry(OwnSymbols::SaveEntry) || !vm->loadDirectorState(fin))
     throw std::runtime_error("Invalid director state in save");
 
+  if(fin.setEntry("game/modkit-ids")) {
+    if(!modIds.load(fin))
+      Log::e("Invalid game/modkit-ids entry in save; continuing with monotonic fallback");
+    }
+
   if(true) {
     setWorld(std::unique_ptr<World>(new World(*this,*vm,wname,false,[&](int v){
       Gothic::inst().setLoadingProgress(int(v*0.55));
@@ -290,6 +295,15 @@ void GameSession::save(Serialize &fout, std::string_view name, const Pixmap& scr
 
   fout.setEntry(OwnSymbols::SaveEntry);
   vm->ownSymbols().save(fout);
+
+  fout.setEntry("game/modkit-ids");
+  modIds.save(fout);
+
+  {
+  const std::string manifest = modRegistry.serializeManifestJson(activeMods);
+  fout.setEntry("mods/manifest.json");
+  fout.writeBytes(manifest.data(),manifest.size());
+  }
 
   fout.setEntry("game/camera");
   saveCamera(fout,*cam);

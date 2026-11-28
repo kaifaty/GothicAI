@@ -6,6 +6,11 @@
 #include <string>
 
 #include "game/rpgvocabulary.h"
+#include "modkit/entityid.h"
+
+namespace modkit {
+struct ItemInstanceProps;
+}
 
 class Item;
 class World;
@@ -61,22 +66,32 @@ class Inventory final {
 
     int32_t      priceOf(size_t item) const;
     int32_t      sellPriceOf(size_t item) const;
+    int32_t      priceOfUid(modkit::ItemUid uid) const;
+    int32_t      sellPriceOfUid(modkit::ItemUid uid) const;
     size_t       goldCount() const;
     size_t       itemCount(const size_t id) const;
+    size_t       countByUid(modkit::ItemUid uid) const;
 
-    static void  transfer(Inventory& to, Inventory& from, Npc *fromNpc, size_t cls, size_t count, World &wrld);
+    static void   transfer(Inventory& to, Inventory& from, Npc *fromNpc, size_t cls, size_t count, World &wrld);
+    static size_t transferByUid(Inventory& to, Inventory& from, Npc* fromNpc,
+                                modkit::ItemUid uid, size_t count, World& wrld);
 
-    Item*  getItem(size_t instance);
-    Item*  itemByIndex(uint32_t index) const;
-    uint32_t indexOf(const Item* item) const;
-    Item*  addItem(std::unique_ptr<Item>&& p);
-    Item*  addItem(std::string_view name, size_t count, World &owner);
-    Item*  addItem(size_t cls, size_t count, World &owner);
-    void   delItem(size_t cls, size_t count, Npc &owner);
-    bool   use    (size_t cls, Npc &owner, uint8_t slotHint, bool force);
-    bool   equip  (size_t cls, Npc &owner, bool force);
-    bool   unequip(size_t cls, Npc &owner);
-    void   unequip(Item*  cls, Npc &owner);
+    Item*        getItem(size_t instance);
+    Item*        findByUid(modkit::ItemUid uid);
+    const Item*  findByUid(modkit::ItemUid uid) const;
+    Item*        itemByIndex(uint32_t index) const;
+    uint32_t     indexOf(const Item* item) const;
+    Item*        addItem(std::unique_ptr<Item>&& p);
+    Item*        addItem(std::string_view name, size_t count, World &owner);
+    Item*        addItem(size_t cls, size_t count, World &owner);
+    void         delItem(size_t cls, size_t count, Npc &owner);
+    void         delItemByUid(modkit::ItemUid uid, size_t count, Npc& owner);
+    bool         use    (size_t cls, Npc &owner, uint8_t slotHint, bool force);
+    bool         useByUid(modkit::ItemUid uid, Npc& owner, uint8_t slotHint, bool force);
+    bool         equip  (size_t cls, Npc &owner, bool force);
+    bool         unequip(size_t cls, Npc &owner);
+    bool         unequipByUid(modkit::ItemUid uid, Npc& owner);
+    void         unequip(Item*  cls, Npc &owner);
     void   invalidateCond(Npc &owner);
     void   autoEquipWeapons(Npc &owner);
     void   equipArmor           (int32_t cls, Npc &owner);
@@ -149,6 +164,8 @@ class Inventory final {
     void   applyArmor  (Item& it, Npc &owner, int32_t sgn);
 
     Item*  findByClass(size_t cls);
+    Item*  findStackable(size_t cls, const modkit::ItemInstanceProps* props);
+    bool   useItem    (Item* it, Npc& owner, uint8_t slotHint, bool force);
     void   delItem    (Item* it, size_t count, Npc& owner);
     void   invalidateCond(Item*& slot,  Npc &owner);
 

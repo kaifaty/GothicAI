@@ -19,6 +19,10 @@ class Npc;
 class SoundFx;
 struct HeroDeed;
 struct PhysicsNoise;
+namespace modkit {
+class ContentRegistry;
+class IdGenerator;
+}
 
 // Services supplied by the game program to the RPG framework. Without a host,
 // modes and dialogs are off, sounds are empty and notifications have no listeners.
@@ -81,6 +85,9 @@ class GameHost {
     virtual Tempest::SoundEffect loadSound(GameSession&, const Tempest::Sound&) { return {}; }
     virtual Tempest::SoundEffect loadSound(GameSession&, const SoundFx&, bool& looped) { looped = false; return {}; }
     virtual void updateListenerPos(GameSession&, const Camera::ListenerPos&) {}
+    virtual modkit::IdGenerator* sessionModIds(GameSession&) { return nullptr; }
+    virtual modkit::ContentRegistry* sessionContentRegistry(GameSession&) { return nullptr; }
+    virtual const modkit::ContentRegistry* sessionContentRegistry(const GameSession&) const { return nullptr; }
 
   protected:
     GameHost() { instance = this; }
