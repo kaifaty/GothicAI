@@ -12,6 +12,9 @@
 #include "resources.h"
 #include "dmusic.h"
 
+#include <condition_variable>
+#include <thread>
+
 using namespace Tempest;
 
 static constexpr uint16_t SAMPLE_RATE = 44100;
@@ -20,23 +23,27 @@ struct GameMusic::MusicProvider : Tempest::SoundProducer {
   using Tempest::SoundProducer::SoundProducer;
 
   public:
-    virtual void stopTheme() {
-      std::lock_guard<std::recursive_mutex> guard(pendingSync);
-      pendingMusic.reset();
+    ~MusicProvider() override {
+      stopLoader();
+      }
+
+    void stopTheme() {
+      std::lock_guard<std::mutex> guard(pendingSync);
+      cancelTheme();
       }
 
     void setEnabled(bool b) {
-      if(enable == b)
+      std::lock_guard<std::mutex> guard(pendingSync);
+      if(enable.load() == b)
         return;
 
-      std::lock_guard<std::recursive_mutex> guard(pendingSync);
+      enable.store(b);
       if(b) {
-        hasPending = true;
-        reloadTheme = true;
-        enable.store(true);
+        hasPending = pendingMusic.has_value();
+        ++requestVersion;
+        pendingChanged.notify_one();
         } else {
-        enable.store(false);
-        stopTheme();
+        cancelTheme();
         }
       }
 
@@ -45,28 +52,46 @@ struct GameMusic::MusicProvider : Tempest::SoundProducer {
       }
 
     void playTheme(const Def::MusicTheme &theme, GameMusic::Tags tags) {
-      std::lock_guard<std::recursive_mutex> guard(pendingSync);
-      reloadTheme  = !pendingMusic || pendingMusic->file != theme.file;
+      std::lock_guard<std::mutex> guard(pendingSync);
+      if(pendingMusic && pendingMusic->file == theme.file && appliedVersion == requestVersion)
+        return;
       pendingMusic = theme;
       pendingTags  = tags;
       hasPending   = true;
+      ++requestVersion;
+      pendingChanged.notify_one();
       }
 
   protected:
-    bool updateTheme(Def::MusicTheme& theme, Tags& tags) {
-      bool reloadTheme = false;
+    struct ThemeRequest {
+      Def::MusicTheme theme;
+      Tags            tags;
+      Tags            previousTags;
+      uint64_t        version;
+      };
 
-      std::lock_guard<std::recursive_mutex> guard(pendingSync);
-      if(hasPending && pendingMusic && enable.load()) {
-        hasPending  = false;
-        reloadTheme = this->reloadTheme;
-        theme       = this->pendingMusic.value();
-        tags        = this->pendingTags;
-        }
-
-      this->reloadTheme = false;
-      return reloadTheme;
+    void startLoader() {
+      loader = std::thread([this] { loaderMain(); });
       }
+
+    void stopLoader() {
+      {
+      std::lock_guard<std::mutex> guard(pendingSync);
+      quitting = true;
+      ++requestVersion;
+      }
+      pendingChanged.notify_one();
+      if(loader.joinable())
+        loader.join();
+      }
+
+    // Called with pendingSync held after the mixer accepts a benchmark theme.
+    void noteBenchmarkTheme(std::string& name) {
+      benchmarkTheme.swap(name);
+      pendingChanged.notify_one();
+      }
+
+    virtual void prepareTheme(const ThemeRequest& request) = 0;
 
     static Def::MusicTransitionEffect computeTransitionEffect(Tags nextTags, Tags currTags, Def::MusicTransitionEffect transtype) {
       const int cur  = currTags & (Tags::Std | Tags::Fgt | Tags::Thr);
@@ -91,69 +116,121 @@ struct GameMusic::MusicProvider : Tempest::SoundProducer {
       }
 
   private:
+    void cancelTheme() {
+      pendingMusic.reset();
+      hasPending = false;
+      stopPending = true;
+      themeStopped.store(true);
+      ++requestVersion;
+      }
+
+    void loaderMain() {
+      for(;;) {
+        std::unique_lock<std::mutex> guard(pendingSync);
+        pendingChanged.wait(guard, [this] {
+          return quitting || !benchmarkTheme.empty() || (hasPending && enable.load());
+          });
+        if(!benchmarkTheme.empty()) {
+          std::string name;
+          name.swap(benchmarkTheme);
+          guard.unlock();
+          Log::i("Dx8 music: ", name);
+          continue;
+          }
+        if(quitting)
+          return;
+
+        ThemeRequest request{*pendingMusic, pendingTags, currentTags, requestVersion};
+        hasPending = false;
+        guard.unlock();
+        try {
+          if(request.theme.file.empty()) {
+            guard.lock();
+            if(request.version == requestVersion)
+              cancelTheme();
+            continue;
+            }
+          prepareTheme(request);
+          }
+        catch(const std::runtime_error&) {
+          Log::e("unable to load sound: \"", request.theme.file, "\"");
+          guard.lock();
+          if(request.version == requestVersion)
+            cancelTheme();
+          }
+        catch(const std::bad_alloc&) {
+          Log::e("out of memory for sound: \"", request.theme.file, "\"");
+          guard.lock();
+          if(request.version == requestVersion)
+            cancelTheme();
+          }
+        }
+      }
+
     std::atomic_bool     enable{true};
 
-    std::recursive_mutex pendingSync;
+    std::condition_variable pendingChanged;
+    std::thread          loader;
+    bool                 quitting = false;
     bool                 hasPending  = false;
-    bool                 reloadTheme = false;
     Tags                 pendingTags = Tags::Day;
     std::optional<Def::MusicTheme> pendingMusic;
+    std::string          benchmarkTheme;
 
   protected:
+    std::mutex           pendingSync;
+    uint64_t             requestVersion = 0;
+    uint64_t             appliedVersion = 0;
+    bool                 stopPending = false;
+    std::atomic_bool     themeStopped{false};
     Tags                 currentTags = Tags::Day;
   };
 
 struct GameMusic::OpenGothicMusicProvider : GameMusic::MusicProvider {
-  using GameMusic::MusicProvider::MusicProvider;
+  OpenGothicMusicProvider(uint16_t rate, uint16_t channels) : MusicProvider(rate, channels) {
+    startLoader();
+    }
+
+  ~OpenGothicMusicProvider() override {
+    stopLoader();
+    }
 
   void renderSound(int16_t *out, size_t n) override {
-    if(!isEnabled()) {
+    {
+    std::unique_lock<std::mutex> guard(pendingSync, std::try_to_lock);
+    if(guard && ready && ready->version == requestVersion && ready->version != appliedVersion && isEnabled()) {
+      mix.setMusic(ready->music, ready->embellishment);
+      mix.setMusicVolume(ready->volume);
+      if(Bench::isActive())
+        noteBenchmarkTheme(ready->name);
+      currentTags = ready->tags;
+      appliedVersion = ready->version;
+      themeStopped.store(false);
+      }
+    }
+    if(!isEnabled() || themeStopped.load()) {
       std::memset(out, 0, n * sizeof(out[0]) * 2);
       return;
       }
-    updateTheme();
     mix.mix(out, n);
     }
 
-  void updateTheme() {
-    Def::MusicTheme theme;
-    Tags                tags;
-    if(!GameMusic::MusicProvider::updateTheme(theme, tags))
-      return;
-
-    if(theme.file.empty()) {
-      stopTheme();
-      return;
-      }
-
-    try {
-      if(/*reloadTheme*/true) {
-        Dx8::PatternList p = loadDxMusic(theme.file);
-
-        Dx8::Music m;
-        m.addPattern(p);
-
-        auto effect = computeTransitionEffect(tags, currentTags, theme.transtype);
-        Dx8::DMUS_EMBELLISHT_TYPES em = computeEmbellishment(effect);
-        mix.setMusic(m, em);
-        if(Bench::isActive())
-          Log::i("Dx8 music: ",theme.file);
-        currentTags = tags;
-        }
-      mix.setMusicVolume(theme.vol);
-      }
-    catch (std::runtime_error &) {
-      Log::e("unable to load sound: \"", theme.file, "\"");
-      stopTheme();
-      }
-    catch (std::bad_alloc &) {
-      Log::e("out of memory for sound: \"", theme.file, "\"");
-      stopTheme();
-      }
+  void prepareTheme(const ThemeRequest& request) override {
+    auto next = std::make_unique<PreparedTheme>();
+    next->music.addPattern(loadDxMusic(request.theme.file));
+    next->name = request.theme.file;
+    const auto effect = computeTransitionEffect(request.tags, request.previousTags, request.theme.transtype);
+    next->embellishment = computeEmbellishment(effect);
+    next->volume = request.theme.vol;
+    next->music.setVolume(next->volume);
+    next->tags = request.tags;
+    next->version = request.version;
+    {
+    std::lock_guard<std::mutex> guard(pendingSync);
+    if(request.version == requestVersion && isEnabled())
+      ready.swap(next);
     }
-
-  void stopTheme() override {
-    GameMusic::MusicProvider::stopTheme();
+    // Release superseded preparations on the loader, outside the audio lock.
     }
 
   static Dx8::DMUS_EMBELLISHT_TYPES computeEmbellishment(Def::MusicTransitionEffect ef) {
@@ -177,6 +254,16 @@ struct GameMusic::OpenGothicMusicProvider : GameMusic::MusicProvider {
     }
 
   private:
+    struct PreparedTheme {
+      Dx8::Music              music;
+      Dx8::DMUS_EMBELLISHT_TYPES embellishment = Dx8::DMUS_EMBELLISHT_NORMAL;
+      float                   volume = 1.f;
+      Tags                    tags = Tags::Day;
+      uint64_t                version = 0;
+      std::string             name;
+      };
+
+    std::unique_ptr<PreparedTheme> ready;
     Dx8::Mixer mix;
   };
 
@@ -236,50 +323,61 @@ struct GameMusic::GothicKitMusicProvider : GameMusic::MusicProvider {
     if(rv != DmResult_SUCCESS) {
       Log::e("Unable to create DmPerformance object. Out of memory?");
       }
+    startLoader();
     }
 
   ~GothicKitMusicProvider() override {
+    stopLoader();
     DmPerformance_release(performance);
     }
 
   void renderSound(int16_t *out, size_t n) override {
-    if(!isEnabled()) {
+    {
+    std::unique_lock<std::mutex> guard(pendingSync, std::try_to_lock);
+    if(guard) {
+      if(stopPending) {
+        DmPerformance_playTransition(performance, nullptr, DmEmbellishment_NONE, DmTiming_INSTANT);
+        stopPending = false;
+        }
+      if(ready && ready->version == requestVersion && ready->version != appliedVersion && isEnabled()) {
+        const auto rv = DmPerformance_playTransition(performance, ready->segment.get(), ready->embellishment, ready->timing);
+        if(rv != DmResult_SUCCESS) {
+          Log::e("Failed to play theme: ", ready->name);
+          themeStopped.store(true);
+          } else {
+          DmPerformance_setVolume(performance, ready->volume);
+          currentTags = ready->tags;
+          themeStopped.store(false);
+          }
+        appliedVersion = ready->version;
+        }
+      }
+    }
+    if(!isEnabled() || themeStopped.load()) {
       std::memset(out, 0, n * sizeof(out[0]) * 2);
       return;
       }
-    updateTheme();
     DmPerformance_renderPcm(performance, out, n * 2, DmRenderOptions(DmRender_SHORT | DmRender_STEREO));
     }
 
-  void updateTheme() {
-    Def::MusicTheme theme;
-    Tags                tags;
-    if(!GameMusic::MusicProvider::updateTheme(theme, tags))
-      return;
-
-    if(theme.file.empty()) {
-      stopTheme();
-      return;
-      }
-
-    auto effect = computeTransitionEffect(tags, currentTags, theme.transtype);
-    auto [timing, embellishment] = computeEmbellishmentAndTiming(effect, theme.transsubtype);
-
-    DmSegment* sgt = Resources::loadMusicSegment(theme.file.c_str());
-    DmResult rv = DmPerformance_playTransition(performance, sgt, embellishment, timing);
-    if(rv != DmResult_SUCCESS) {
-      Log::e("Failed to play theme: ", theme.file);
-      stopTheme();
-      }
-
-    DmPerformance_setVolume(performance, theme.vol);
-    DmSegment_release(sgt);
-    currentTags = tags;
+  void prepareTheme(const ThemeRequest& request) override {
+    auto next = std::make_unique<PreparedTheme>();
+    next->segment.reset(Resources::loadMusicSegment(request.theme.file.c_str()));
+    if(!next->segment)
+      throw std::runtime_error("music segment not found");
+    const auto effect = computeTransitionEffect(request.tags, request.previousTags, request.theme.transtype);
+    const auto transition = computeEmbellishmentAndTiming(effect, request.theme.transsubtype);
+    next->timing = transition.first;
+    next->embellishment = transition.second;
+    next->volume = request.theme.vol;
+    next->tags = request.tags;
+    next->version = request.version;
+    next->name = request.theme.file;
+    {
+    std::lock_guard<std::mutex> guard(pendingSync);
+    if(request.version == requestVersion && isEnabled())
+      ready.swap(next);
     }
-
-  void stopTheme() override {
-    GameMusic::MusicProvider::stopTheme();
-    DmPerformance_playTransition(performance, nullptr, DmEmbellishment_NONE, DmTiming_INSTANT);
     }
 
   DmEmbellishmentType computeEmbellishment(Tags nextTags, Tags currTags, Def::MusicTransitionEffect transtype) const {
@@ -329,6 +427,17 @@ struct GameMusic::GothicKitMusicProvider : GameMusic::MusicProvider {
     }
 
   private:
+    struct PreparedTheme {
+      std::unique_ptr<DmSegment, decltype(&DmSegment_release)> segment{nullptr, &DmSegment_release};
+      DmTiming            timing = DmTiming_MEASURE;
+      DmEmbellishmentType embellishment = DmEmbellishment_NONE;
+      float               volume = 1.f;
+      Tags                tags = Tags::Day;
+      uint64_t            version = 0;
+      std::string         name;
+      };
+
+    std::unique_ptr<PreparedTheme> ready;
     DmPerformance *performance = nullptr;
   };
 
