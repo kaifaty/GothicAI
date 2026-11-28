@@ -181,3 +181,28 @@
 3. **Интерпретатор Luau достаточен на весь дорожный план (включая Phase 4):** полная формула ближнего боя с множителями скорости/угла и свойствами предмета считается за `0,44 мкс` (`50` ударов в кадр = `0,022 мс`). `Luau.CodeGen` не вендорится — экономим `1,7 МБ` исходников и избегаем `W^X`/JIT-осложнений.
 4. **Слои движка не нарушены:** `scripts/engine_layers.py check --base origin/main` — `0` новых нарушений включений и `0` новых чужих определений.
 
+---
+
+## 7. Итоги Phase 1 (фундамент ядра и формат сохранений v58)
+
+Реализованы все пять опорных блоков ядра в слое `rpg` (`common/modkit/*` в [`scripts/engine_layers.py`](../../../scripts/engine_layers.py)):
+
+1. **Стабильные 64-битные идентификаторы и O(1)-индексы:**
+   - [`OpenGothic/common/modkit/entityid.h`](../../../OpenGothic/common/modkit/entityid.h) / [`entityid.cpp`](../../../OpenGothic/common/modkit/entityid.cpp): `EntityId`, `ItemUid`, `IdGenerator` (монотонный генератор сессии, `SaveMagic="MID1"`, сохраняется в `game/modkit-ids`).
+   - `Npc`, `Interactive` и `Item` несут `EntityId`; `WorldObjects` и `World` поддерживают `O(1)`-поиск `findNpcByEntityId` / `findInteractiveByEntityId` / `findItemByEntityId` по всем путям добавления, изъятия, переноса и загрузки, с персистенцией в `worlds/<w>/entity-ids` (`"EID1"`).
+   - Доступ из `World` (слой `rpg`) к `GameSession` (слой `gothic`) проведён через `GameHost` (`sessionModIds`, `sessionContentRegistry`) без нарушения границ слоёв.
+2. **Свойства экземпляров предметов и разделение стеков:**
+   - [`OpenGothic/common/modkit/itemprops.h`](../../../OpenGothic/common/modkit/itemprops.h) / [`itemprops.cpp`](../../../OpenGothic/common/modkit/itemprops.cpp): опциональный `ItemInstanceProps` (`quality`, `durability`, `maxDurability`, `temperature`, `unique`, отсортированный `custom`-словарь скаляров), канонический FNV-1a `stackKey` с нормализацией `-0.0`, `canStack`, `tooltipRows()` и бинарная сериализация в `SaveArchive`. У ванильных предметов `unique_ptr<ItemInstanceProps>` остаётся `nullptr` (нулевой оверхед в RAM).
+   - `Inventory`, `Npc` и `InventoryMenu` переведены на `*ByUid`-операции (`findByUid`, `transferByUid`, `useByUid`, `unequipByUid`, `delItemByUid`, `dropItemByUid`, `sellItemByUid`, `buyItemByUid`, `moveItemByUid`, `addItemByUid`) с сохранением и клонированием свойств при полном/частичном переносе и выбросе в мир; исправлены возврат живого указателя в `Inventory::addItem`, удаление по указателю в `Inventory::delItem` и суммирование `Inventory::itemCount` по всем стекам архетипа; `InventoryMenu::drawInfo` показывает строки `tooltipRows()`.
+3. **Двухпроходный `ContentRegistry`:**
+   - [`OpenGothic/common/modkit/contentregistry.h`](../../../OpenGothic/common/modkit/contentregistry.h) / [`contentregistry.cpp`](../../../OpenGothic/common/modkit/contentregistry.cpp): валидация namespace, детерминированная топологическая сортировка `resolveLoadOrder` (`base_gothic` → `dependencies` → `loadAfter` → лексикографический tie-break, проверка конфликтов и циклов), Pass 1 (`data/*.json` с `ModItemIdBase = 0x10000000`), Pass 2 (`patches/*.json` с provenance-предупреждениями о конфликтах), `freeze()` с кросс-проверкой рецептов, `recipesForStation` (case-insensitive), `mods/manifest.json` и `buildSaveRemap` для устойчивости сейвов к смене порядка модов и удалению модов.
+4. **Сейв v58 с обратной совместимостью чтения v57:**
+   - `SaveArchive::Current = 58`, `SaveArchive::MinVersion = 57`; `SaveGameHeader::isCompatible()` и лаунчер (`launcher/core/src/gothic_launcher/commands.py`) принимают `57..58` и отклоняют `≤56` / `≥59`.
+   - `GameSession::save` пишет `game/modkit-ids` и `mods/manifest.json`; `Item` пишет `itemUid` и опциональный `ItemInstanceProps`; на сейвах v57 новые записи пропускаются, а `EntityId`/`ItemUid` выдаются монотонно.
+5. **Проверки и контракты:**
+   - `gothic-modkit-phase1-contract` (Mac AppleClang 21 + Ryzen Linux GCC 15.2): все 5 автономных групп (`IdGenerator`, `ItemInstanceProps`, `ContentRegistry load order & validation`, `Data Stage & Save Remap`, `SaveGameHeader v57/v58`) — **PASS**.
+   - `gothic-modkit-phase1-contract --world` на Ryzen (`NEWWORLD.ZEN`, база v3 `fab0e9d2b263`): два клинка с разными свойствами не сливаются, идентичные сливаются, частичный `transferByUid` клонирует свойства с новым `ItemUid`, `O(1)`-индексы `EntityId` и все `ItemUid`/`ItemInstanceProps` переживают полный v58 save/reload — **PASS**.
+   - `gothic-native-story-contract` (ветка Беннета + отказ v56 + v58 reload) и `--npc-inventory` на Ryzen — **PASS**.
+   - `engine_layers.py check --base origin/main` (0 новых нарушений), `engine_link_census.py --check-native-v3` (чисто), `launcher/core` pytest (131 passed, 7 Windows-only skipped).
+
+

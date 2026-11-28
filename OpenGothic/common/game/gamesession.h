@@ -5,6 +5,8 @@
 #include <memory>
 
 #include "game/gamescript.h"
+#include "modkit/contentregistry.h"
+#include "modkit/entityid.h"
 #include "camera.h"
 #include "gametime.h"
 
@@ -41,6 +43,12 @@ class GameSession final {
 
     WorldView*   view()   const;
     GameScript*  script() const { return vm.get(); }
+
+    modkit::IdGenerator&                   modIdGenerator()        { return modIds; }
+    const modkit::IdGenerator&             modIdGenerator() const  { return modIds; }
+    modkit::ContentRegistry&               contentRegistry()       { return modRegistry; }
+    const modkit::ContentRegistry&         contentRegistry() const { return modRegistry; }
+    const std::vector<modkit::ModManifest>& loadedMods() const     { return activeMods; }
 
     Camera&      camera()       { return     *cam; }
 
@@ -96,6 +104,10 @@ class GameSession final {
     std::unique_ptr<Camera>        cam;
     std::unique_ptr<GameScript>    vm;
     std::unique_ptr<World>         wrld;
+
+    modkit::IdGenerator                 modIds;
+    modkit::ContentRegistry             modRegistry;
+    std::vector<modkit::ModManifest>    activeMods;
 
     uint64_t                       ticks = 0, wrldTimePart = 0;
     uint64_t                       timeMul = 1000, timeMulFract = 0;

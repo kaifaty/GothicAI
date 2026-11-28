@@ -77,7 +77,8 @@ MANAGED_ENV = ("OPENAI_API_KEY", "INWORLD_API_KEY", "OPENGOTHIC_BODY_NET")
 FOREIGN_ENV = ("VIRTUAL_ENV",)  # the launcher's own venv: `uv run` of a service would warn and ignore it
 SAVE_RE = re.compile(r"save_slot_(\d+)\.sav")
 SAVE_TAG = b"OpenGothic/Save\0"
-SAVE_VERSION = 57  # SaveArchive::Current
+SAVE_VERSION = 58  # SaveArchive::Current
+MIN_SAVE_VERSION = 57  # SaveArchive::MinVersion
 
 
 class LaunchError(Exception):
@@ -473,7 +474,7 @@ def preparation(
 def latest_save(game_home: Path) -> str | None:
     """Slot of the newest save supported by this build (quick save is slot 0)."""
     latest: tuple[float, str] | None = None
-    prefix = SAVE_TAG + SAVE_VERSION.to_bytes(2, "little")
+    header_len = len(SAVE_TAG) + 2
     for path in game_home.glob("save_slot_*.sav"):
         slot = SAVE_RE.fullmatch(path.name)
         if slot is None:
@@ -483,8 +484,11 @@ def latest_save(game_home: Path) -> str | None:
             if latest is not None and modified <= latest[0]:
                 continue
             with zipfile.ZipFile(path) as archive, archive.open("header") as header:
-                if header.read(len(prefix)) == prefix:
-                    latest = modified, slot.group(1)
+                raw = header.read(header_len)
+                if len(raw) == header_len and raw.startswith(SAVE_TAG):
+                    version = int.from_bytes(raw[len(SAVE_TAG) :], "little")
+                    if MIN_SAVE_VERSION <= version <= SAVE_VERSION:
+                        latest = modified, slot.group(1)
         except (OSError, KeyError, RuntimeError, zipfile.BadZipFile, zlib.error):
             continue
     return latest[1] if latest else None

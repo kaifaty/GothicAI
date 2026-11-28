@@ -467,13 +467,13 @@ void InventoryMenu::onItemAction(uint8_t slotHint) {
     return;
 
   if(state==State::Equip) {
-    const size_t clsId = it->clsId();
+    const modkit::ItemUid uid = it->uid();
     if(it.isEquipped() && slotHint==Item::NSLOT) {
-      player->unequipItem(clsId);
+      player->unequipItemByUid(uid);
       } else {
-      player->useItem(clsId,slotHint,false);
+      player->useItemByUid(uid,slotHint,false);
       auto it2 = page.get(sel.sel);
-      if((!it2.isValid() || it2->clsId()!=clsId) && sel.sel>0)
+      if((!it2.isValid() || it2->uid()!=uid) && sel.sel>0)
         --sel.sel;
       }
     }
@@ -513,27 +513,28 @@ void InventoryMenu::onTakeStuff() {
     itemCount = it.count();
     }
 
+  const modkit::ItemUid uid = it->uid();
   if(state==State::Chest) {
     if(page.is(&player->inventory())) {
-      player->moveItem(it->clsId(),*chest,itemCount);
+      player->moveItemByUid(uid,*chest,itemCount);
       } else {
-      player->addItem (it->clsId(),*chest,itemCount);
+      player->addItemByUid (uid,*chest,itemCount);
       }
     }
   else if(state==State::Trade) {
     if(page.is(&player->inventory())) {
-      player->sellItem(it->clsId(),*trader,itemCount);
+      player->sellItemByUid(uid,*trader,itemCount);
       } else {
-      player->buyItem (it->clsId(),*trader,itemCount);
+      player->buyItemByUid (uid,*trader,itemCount);
       }
     }
   else if(state==State::Ransack) {
     if(page.is(&trader->inventory())) {
-      player->addItem(it->clsId(),*trader,itemCount);
+      player->addItemByUid(uid,*trader,itemCount);
       }
     }
   else if(state==State::Equip) {
-    player->dropItem(it->clsId(),itemCount);
+    player->dropItemByUid(uid,itemCount);
     }
   adjustScroll();
   }
@@ -733,12 +734,14 @@ void InventoryMenu::drawInfo(Painter &p) {
 
   fnt.drawText(p,x+(dw-tw)/2,y+int(fnt.pixelSize()),desc);
 
+  bool rowUsed[Item::MAX_UI_ROWS] = {};
   for(size_t i=0;i<Item::MAX_UI_ROWS;++i){
     auto    txt = r.uiText(i);
     int32_t val = r.uiValue(i);
 
     if(txt.empty())
       continue;
+    rowUsed[i] = true;
 
     if(i+1==Item::MAX_UI_ROWS && state==State::Trade && player!=nullptr && pg.is(&player->inventory())){
       val = r.sellCost();
@@ -750,6 +753,20 @@ void InventoryMenu::drawInfo(Painter &p) {
     fnt.drawText(p, x+20,  y+int(i+2)*fnt.pixelSize(), txt);
     if(val!=0)
       fnt.drawText(p,x+dw-tw-20,y+int(i+2)*fnt.pixelSize(),vint);
+    }
+
+  if(const auto* props = r.props()) {
+    const auto extraRows = props->tooltipRows();
+    size_t extraIdx = 0;
+    for(size_t i=0; i+1<Item::MAX_UI_ROWS && extraIdx<extraRows.size(); ++i) {
+      if(rowUsed[i])
+        continue;
+      const auto& [label, valStr] = extraRows[extraIdx++];
+      const int vtw = fnt.textSize(valStr).w;
+      fnt.drawText(p, x+20, y+int(i+2)*fnt.pixelSize(), label);
+      if(!valStr.empty())
+        fnt.drawText(p, x+dw-vtw-20, y+int(i+2)*fnt.pixelSize(), valStr);
+      }
     }
 
   const int sz = dh;

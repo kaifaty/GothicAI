@@ -206,18 +206,64 @@ int32_t Inventory::sellPriceOf(size_t cls) const {
   return 0;
   }
 
-size_t Inventory::goldCount() const {
-  for(auto& i:items)
-    if(i->isGold())
-      return i->count();
+int32_t Inventory::priceOfUid(modkit::ItemUid uid) const {
+  if(const auto* it = findByUid(uid))
+    return it->cost();
   return 0;
   }
 
+int32_t Inventory::sellPriceOfUid(modkit::ItemUid uid) const {
+  if(const auto* it = findByUid(uid))
+    return it->sellCost();
+  return 0;
+  }
+
+size_t Inventory::goldCount() const {
+  size_t total = 0;
+  for(auto& i:items)
+    if(i->isGold())
+      total += i->count();
+  return total;
+  }
+
 size_t Inventory::itemCount(const size_t cls) const {
+  size_t total = 0;
   for(auto& i:items)
     if(i->clsId()==cls)
-      return i->count();
+      total += i->count();
+  return total;
+  }
+
+size_t Inventory::countByUid(modkit::ItemUid uid) const {
+  if(const auto* it = findByUid(uid))
+    return it->count();
   return 0;
+  }
+
+Item* Inventory::findByUid(modkit::ItemUid uid) {
+  if(!uid.valid())
+    return nullptr;
+  for(auto& i:items)
+    if(i->uid()==uid)
+      return i.get();
+  return nullptr;
+  }
+
+const Item* Inventory::findByUid(modkit::ItemUid uid) const {
+  if(!uid.valid())
+    return nullptr;
+  for(auto& i:items)
+    if(i->uid()==uid)
+      return i.get();
+  return nullptr;
+  }
+
+Item* Inventory::findStackable(size_t cls, const modkit::ItemInstanceProps* props) {
+  for(auto& i:items) {
+    if(i->clsId()==cls && modkit::ItemInstanceProps::canStack(i->props(),props))
+      return i.get();
+    }
+  return nullptr;
   }
 
 Item* Inventory::addItem(std::unique_ptr<Item> &&p) {
@@ -227,16 +273,15 @@ Item* Inventory::addItem(std::unique_ptr<Item> &&p) {
 
   const auto cls = p->clsId();
   p->clearView();
-  Item* it=findByClass(cls);
+  Item* it=findStackable(cls,p->props());
   if(it==nullptr) {
-    p->clearView();
     items.emplace_back(std::move(p));
     return items.back().get();
     } else {
     it->setCount(it->count()+p->count());
     it->handle().owner       = p->handle().owner;
     it->handle().owner_guild = p->handle().owner_guild;
-    return p.get();
+    return it;
     }
   }
 
@@ -253,29 +298,68 @@ Item* Inventory::addItem(size_t itemSymbol, size_t count, World &owner) {
     return nullptr;
   sorted=false;
 
-  Item* it=findByClass(itemSymbol);
-  if(it==nullptr) {
-    try {
-      std::unique_ptr<Item> ptr{new Item(owner,itemSymbol,Item::T_Inventory)};
-      ptr->setCount(count);
-      items.emplace_back(std::move(ptr));
-      return items.back().get();
+  const modkit::ItemArchetype* arch = nullptr;
+  if(itemSymbol <= std::numeric_limits<uint32_t>::max())
+    arch = owner.contentRegistry().findItemByRuntimeId(uint32_t(itemSymbol));
+
+  const bool stackable = (arch==nullptr) ? true : arch->stackable;
+  const modkit::ItemInstanceProps* defProps =
+      (arch!=nullptr && arch->defaultProps.has_value() && !arch->defaultProps->empty())
+          ? &(*arch->defaultProps)
+          : nullptr;
+
+  if(stackable) {
+    if(Item* it=findStackable(itemSymbol,defProps)) {
+      it->setCount(it->count()+count);
+      return it;
       }
-    catch(const std::runtime_error& call) {
-      Log::e("[invalid call in VM, while initializing item: ",itemSymbol,"]");
-      return nullptr;
+    }
+
+  try {
+    if(!stackable && count>1) {
+      Item* last = nullptr;
+      for(size_t n=0; n<count; ++n) {
+        std::unique_ptr<Item> ptr{new Item(owner,itemSymbol,Item::T_Inventory)};
+        ptr->setCount(1);
+        if(defProps!=nullptr)
+          ptr->setProps(*defProps);
+        ptr->mutableProps().unique = true;
+        items.emplace_back(std::move(ptr));
+        last = items.back().get();
+        }
+      return last;
       }
-    } else {
-    it->setCount(it->count()+count);
-    return it;
+    std::unique_ptr<Item> ptr{new Item(owner,itemSymbol,Item::T_Inventory)};
+    ptr->setCount(count);
+    if(defProps!=nullptr)
+      ptr->setProps(*defProps);
+    if(!stackable)
+      ptr->mutableProps().unique = true;
+    items.emplace_back(std::move(ptr));
+    return items.back().get();
+    }
+  catch(const std::runtime_error&) {
+    Log::e("[invalid call in VM, while initializing item: ",itemSymbol,"]");
+    return nullptr;
     }
   }
 
 void Inventory::delItem(size_t itemSymbol, size_t count, Npc& owner) {
-  if(count<=0)
+  size_t remaining = count;
+  while(remaining>0) {
+    Item* it = findByClass(itemSymbol);
+    if(it==nullptr)
+      return;
+    const size_t take = std::min(remaining,it->count());
+    delItem(it,take,owner);
+    remaining -= take;
+    }
+  }
+
+void Inventory::delItemByUid(modkit::ItemUid uid, size_t count, Npc& owner) {
+  if(count==0)
     return;
-  Item* it=findByClass(itemSymbol);
-  return delItem(it,count,owner);
+  delItem(findByUid(uid),count,owner);
   }
 
 void Inventory::delItem(Item *it, size_t count, Npc& owner) {
@@ -303,25 +387,26 @@ void Inventory::delItem(Item *it, size_t count, Npc& owner) {
   sorted=false;
 
   for(size_t i=0;i<items.size();++i)
-    if(items[i]->clsId()==it->clsId()){
+    if(items[i].get()==it){
       items.erase(items.begin()+int(i));
       break;
       }
   }
 
 void Inventory::transfer(Inventory &to, Inventory &from, Npc* fromNpc, size_t itemSymbol, size_t count, World &wrld) {
-  for(size_t i=0;i<from.items.size();++i){
+  size_t remaining = count;
+  for(size_t i=0; i<from.items.size() && remaining>0; ) {
     auto& it = *from.items[i];
-    if(it.clsId()!=itemSymbol)
+    if(it.clsId()!=itemSymbol) {
+      ++i;
       continue;
+      }
 
     from.sorted = false;
     to.sorted   = false;
 
-    if(count>it.count())
-      count=it.count();
-
-    if(it.count()==count) {
+    const size_t take = std::min(remaining,it.count());
+    if(it.count()==take) {
       if(it.isEquipped()) {
         if(fromNpc==nullptr){
           Log::e("Inventory: invalid transfer call");
@@ -332,10 +417,55 @@ void Inventory::transfer(Inventory &to, Inventory &from, Npc* fromNpc, size_t it
       to.addItem(std::move(from.items[i]));
       from.items.erase(from.items.begin()+int(i));
       } else {
-      it.setCount(it.count()-count);
-      to.addItem(itemSymbol,count,wrld);
+      it.setCount(it.count()-take);
+      auto split = std::make_unique<Item>(wrld,itemSymbol,Item::T_Inventory);
+      split->setCount(take);
+      if(auto cloned = it.cloneProps())
+        split->setProps(std::move(*cloned));
+      to.addItem(std::move(split));
+      ++i;
       }
+    remaining -= take;
     }
+  }
+
+size_t Inventory::transferByUid(Inventory& to, Inventory& from, Npc* fromNpc,
+                                modkit::ItemUid uid, size_t count, World& wrld) {
+  if(!uid.valid() || count==0)
+    return 0;
+  for(size_t i=0; i<from.items.size(); ++i) {
+    auto& it = *from.items[i];
+    if(it.uid()!=uid)
+      continue;
+
+    from.sorted = false;
+    to.sorted   = false;
+
+    const size_t moved = std::min(count,it.count());
+    if(moved==0)
+      return 0;
+
+    if(it.count()==moved) {
+      if(it.isEquipped()) {
+        if(fromNpc==nullptr) {
+          Log::e("Inventory: invalid transfer call");
+          return 0;
+          }
+        from.unequip(&it,*fromNpc);
+        }
+      to.addItem(std::move(from.items[i]));
+      from.items.erase(from.items.begin()+int(i));
+      } else {
+      it.setCount(it.count()-moved);
+      auto split = std::make_unique<Item>(wrld,it.clsId(),Item::T_Inventory);
+      split->setCount(moved);
+      if(auto cloned = it.cloneProps())
+        split->setProps(std::move(*cloned));
+      to.addItem(std::move(split));
+      }
+    return moved;
+    }
+  return 0;
   }
 
 Item *Inventory::getItem(size_t instance) {
@@ -344,6 +474,14 @@ Item *Inventory::getItem(size_t instance) {
 
 bool Inventory::unequip(size_t cls, Npc &owner) {
   Item* it=findByClass(cls);
+  if(it==nullptr || !it->isEquipped())
+    return false;
+  unequip(it,owner);
+  return true;
+  }
+
+bool Inventory::unequipByUid(modkit::ItemUid uid, Npc& owner) {
+  Item* it=findByUid(uid);
   if(it==nullptr || !it->isEquipped())
     return false;
   unequip(it,owner);
@@ -865,7 +1003,14 @@ void Inventory::applyArmor(Item &it, Npc &owner, int32_t sgn) {
   }
 
 bool Inventory::use(size_t cls, Npc &owner, uint8_t slotHint, bool force) {
-  Item* it=findByClass(cls);
+  return useItem(findByClass(cls),owner,slotHint,force);
+  }
+
+bool Inventory::useByUid(modkit::ItemUid uid, Npc& owner, uint8_t slotHint, bool force) {
+  return useItem(findByUid(uid),owner,slotHint,force);
+  }
+
+bool Inventory::useItem(Item* it, Npc& owner, uint8_t slotHint, bool force) {
   if(it==nullptr)
     return false;
 
@@ -929,7 +1074,7 @@ bool Inventory::use(size_t cls, Npc &owner, uint8_t slotHint, bool force) {
   owner.beginItemUseEffect(*it);
 
   if(deleteLater)
-    owner.delItem(cls,1);
+    delItem(it,1,owner);
 
   return true;
   }
@@ -938,7 +1083,7 @@ bool Inventory::equip(size_t cls, Npc &owner, bool force) {
   Item* it=findByClass(cls);
   if(it==nullptr || it->isEquipped())
     return false;
-  return use(cls,owner,Item::NSLOT,force);
+  return useItem(it,owner,Item::NSLOT,force);
   }
 
 void Inventory::invalidateCond(Npc &owner) {
@@ -1090,8 +1235,8 @@ bool Inventory::less(const Item &il, const Item &ir) {
     rV = ir.cost();
     }
 
-  return std::make_tuple(il.mainFlag(), -il.handle().damage_total, -lV, -il.clsId())
-      <  std::make_tuple(ir.mainFlag(), -ir.handle().damage_total, -rV, -ir.clsId());
+  return std::make_tuple(il.mainFlag(), -il.handle().damage_total, -lV, -il.clsId(), il.uid().raw)
+      <  std::make_tuple(ir.mainFlag(), -ir.handle().damage_total, -rV, -ir.clsId(), ir.uid().raw);
   }
 
 int Inventory::orderId(const Item& i) {

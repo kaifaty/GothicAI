@@ -11,6 +11,7 @@
 #include "game/gametime.h"
 #include "game/movealgo.h"
 #include "game/inventory.h"
+#include "modkit/entityid.h"
 #include "game/fightalgo.h"
 #include "game/archerai.h"
 #include "game/gamerules.h"
@@ -216,6 +217,9 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     auto       world() -> World&;
     auto       world() const -> const World&;
+
+    modkit::EntityId entityId() const { return entId; }
+    void             setEntityId(modkit::EntityId id) { entId = id; }
 
     auto       centerPosition() const -> Tempest::Vec3;
     auto       collosionCenter() const -> Tempest::Vec3;
@@ -793,27 +797,39 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
 
     auto      inventory() const -> const Inventory& { return invent; }
     size_t    itemCount  (size_t id) const;
+    size_t    itemCountByUid(modkit::ItemUid uid) const;
     Item*     activeWeapon();
     Item*     getItem    (size_t id);
+    Item*     getItemByUid(modkit::ItemUid uid);
     Item*     addItem    (size_t id, size_t amount);
     Item*     addItem    (std::unique_ptr<Item>&& i);
     Item*     takeItem   (Item& i);
     void      onWldItemRemoved(const Item& itm);
     void      delItem    (size_t id, uint32_t amount);
+    void      delItemByUid(modkit::ItemUid uid, uint32_t amount);
     void      useItem    (size_t item);
     void      useItem    (size_t item, uint8_t slotHint, bool force);
+    void      useItemByUid(modkit::ItemUid uid);
+    void      useItemByUid(modkit::ItemUid uid, uint8_t slotHint, bool force);
     void      beginItemUseEffect(const Item& item);
     bool      startItemUse(const Item& item, bool allowMissing);
     std::string itemUseInHandAnimation(const Item& item) const;
     bool      isUsingItemInHand() const;
     void      setCurrentItem(size_t item);
     void      unequipItem(size_t item);
+    void      unequipItemByUid(modkit::ItemUid uid);
     void      addItem    (size_t id, Interactive& chest, size_t count=1);
     void      addItem    (size_t id, Npc& from,          size_t count=1);
     void      moveItem   (size_t id, Interactive& to,    size_t count=1);
     void      sellItem   (size_t id, Npc& to,            size_t count=1);
     void      buyItem    (size_t id, Npc& from,          size_t count=1);
     void      dropItem   (size_t id,                     size_t count=1);
+    void      addItemByUid (modkit::ItemUid uid, Interactive& chest, size_t count=1);
+    void      addItemByUid (modkit::ItemUid uid, Npc& from,          size_t count=1);
+    void      moveItemByUid(modkit::ItemUid uid, Interactive& to,    size_t count=1);
+    void      sellItemByUid(modkit::ItemUid uid, Npc& to,            size_t count=1);
+    void      buyItemByUid (modkit::ItemUid uid, Npc& from,          size_t count=1);
+    void      dropItemByUid(modkit::ItemUid uid,                     size_t count=1);
     void      clearInventory();
     Item*     currentArmor();
     Item*     currentMeleeWeapon();
@@ -1528,6 +1544,7 @@ class Npc final : public AnimationGroundSound, public ParticleTarget, public Cam
     float                          runAng   = 0.f;
 
     Sound                          sfxWeapon;
+    modkit::EntityId               entId{};
 
   friend class GameScript;
   friend class SocietyProjection;

@@ -261,7 +261,7 @@ def test_content_without_materials_is_not_enabled(tmp_path, monkeypatch, exists)
 
 def test_latest_save(tmp_path):
     assert latest_save(tmp_path) is None
-    for i, (slot, version) in enumerate([("1", 57), ("0", 57), ("12", 57), ("13", 56), ("14", 58)]):
+    for i, (slot, version) in enumerate([("1", 57), ("0", 57), ("12", 58), ("13", 56), ("14", 59)]):
         p = tmp_path / f"save_slot_{slot}.sav"
         with ZipFile(p, "w") as archive:
             archive.writestr("header", b"OpenGothic/Save\0" + version.to_bytes(2, "little"))
@@ -271,6 +271,12 @@ def test_latest_save(tmp_path):
     os.utime(corrupt, (time.time() + 10, time.time() + 10))
     (tmp_path / "save_slot_x.sav").write_bytes(b"")
     assert latest_save(tmp_path) == "12"
+    # Backward-compatible v57 save is still accepted when it is the newest valid slot.
+    v57 = tmp_path / "save_slot_7.sav"
+    with ZipFile(v57, "w") as archive:
+        archive.writestr("header", b"OpenGothic/Save\0" + (57).to_bytes(2, "little"))
+    os.utime(v57, (time.time() + 20, time.time() + 20))
+    assert latest_save(tmp_path) == "7"
 
 
 def test_the_inherited_environment_cannot_override_the_settings(monkeypatch):

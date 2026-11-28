@@ -3,8 +3,13 @@
 #include "world/records/itemrecord.h"
 
 #include "graphics/objvisual.h"
+#include "modkit/entityid.h"
+#include "modkit/itemprops.h"
 #include "physics/dynamicworld.h"
 #include "vob.h"
+
+#include <memory>
+#include <optional>
 
 class World;
 class Npc;
@@ -108,6 +113,17 @@ class Item : public Vob {
     const std::shared_ptr<ItemRecord>&    handlePtr()    { return hitem; }
     size_t                              clsId() const;
 
+    modkit::ItemUid                      uid() const { return itemUid; }
+    void                                 setUid(modkit::ItemUid id) { itemUid = id; }
+    modkit::EntityId                     entityId() const { return entId; }
+    void                                 setEntityId(modkit::EntityId id) { entId = id; }
+
+    const modkit::ItemInstanceProps*     props() const { return instanceProps.get(); }
+    modkit::ItemInstanceProps&           mutableProps();
+    void                                 setProps(std::optional<modkit::ItemInstanceProps> p);
+    std::unique_ptr<modkit::ItemInstanceProps> cloneProps() const;
+    bool                                 canStackWith(const Item& other) const;
+
   protected:
     void                moveEvent() override;
     void                setPhysicsEnable(const ProtoMesh* mesh);
@@ -130,6 +146,10 @@ class Item : public Vob {
     uint8_t                        itSlot   = NSLOT;
     uint32_t                       placedZenId = uint32_t(-1);
     bool                           placedAllowed = true;
+
+    modkit::ItemUid                itemUid{};
+    modkit::EntityId               entId{};
+    std::unique_ptr<modkit::ItemInstanceProps> instanceProps;
 
     const ProtoMesh*               proto = nullptr;
     ObjVisual                      visual;

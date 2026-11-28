@@ -84,6 +84,18 @@ void Gothic::updateListenerPos(GameSession& session, const Camera::ListenerPos& 
   session.updateListenerPos(position);
   }
 
+modkit::IdGenerator* Gothic::sessionModIds(GameSession& session) {
+  return &session.modIdGenerator();
+  }
+
+modkit::ContentRegistry* Gothic::sessionContentRegistry(GameSession& session) {
+  return &session.contentRegistry();
+  }
+
+const modkit::ContentRegistry* Gothic::sessionContentRegistry(const GameSession& session) const {
+  return &session.contentRegistry();
+  }
+
 GameHost::ParticleNameCheck Gothic::particleNameCheck() {
   return ParticleContent::nameChecker();
   }

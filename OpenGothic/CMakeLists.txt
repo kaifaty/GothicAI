@@ -971,6 +971,16 @@ if(NOT MSVC)
   target_compile_options(gothic-mod-bench PRIVATE -Wall -Wconversion -Werror)
 endif()
 
+# Phase 1 modkit foundation contract tests (EntityId, ItemInstanceProps, ContentRegistry, Save v58).
+add_executable(gothic-modkit-phase1-contract EXCLUDE_FROM_ALL tests/modkit_phase1_contract.cpp)
+target_link_libraries(gothic-modkit-phase1-contract PRIVATE OpenGothic AiBridge)
+if(NOT MSVC)
+  target_compile_options(gothic-modkit-phase1-contract PRIVATE -Wall -Wconversion -Werror)
+endif()
+add_custom_target(check-modkit-phase1
+  COMMAND $<TARGET_FILE:gothic-modkit-phase1-contract>
+  DEPENDS gothic-modkit-phase1-contract USES_TERMINAL)
+
 # installation
 install(TARGETS Gothic2Notr DESTINATION bin)
 install(FILES "$<TARGET_FILE_DIR:Gothic2Notr>/native-catalog-version.txt" DESTINATION bin)

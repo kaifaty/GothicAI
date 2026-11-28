@@ -18,6 +18,7 @@
 #include "game/gametime.h"
 #include "game/perceptionmsg.h"
 #include "game/rpgvocabulary.h"
+#include "modkit/entityid.h"
 #include "objects/vob.h"
 #include "npcsimtier.h"
 #include "npcsimtick.h"
@@ -135,6 +136,9 @@ class WorldObjects final {
     void           detectItem(const float x, const float y, const float z, const float r, const std::function<void(Item&)>& f);
 
     uint32_t       npcId(const Npc *ptr) const;
+    Npc*           findNpcByEntityId(modkit::EntityId id) const;
+    Interactive*   findInteractiveByEntityId(modkit::EntityId id) const;
+    Item*          findItemByEntityId(modkit::EntityId id) const;
     size_t         npcCount()    const { return npcArr.size(); }
     // Active and retired (npcInvalid) NPCs: both are kept in a save.
     template<class F>
@@ -355,6 +359,16 @@ class WorldObjects final {
     std::vector<std::unique_ptr<Npc>>  npcInvalid; // dead or invalid TA
     std::vector<std::unique_ptr<Npc>>  npcRemoved; // removed, but may have a dangling references in game
     std::vector<Npc*>                  npcNear;
+    std::unordered_map<uint64_t,Npc*>         npcByEntityId;
+    std::unordered_map<uint64_t,Interactive*> mobsiByEntityId;
+    std::unordered_map<uint64_t,Item*>        itemByEntityId;
+    void registerNpcEntity(Npc& npc);
+    void unregisterNpcEntity(const Npc& npc);
+    void registerInteractiveEntity(Interactive& obj);
+    void registerItemEntity(Item& item);
+    void unregisterItemEntity(const Item& item);
+    void saveEntityIds(Serialize& fout) const;
+    void loadEntityIds(Serialize& fin);
     NpcSimTiers::Stats                 simTiers;
     bool                               npcBodiesSuspended = false;
     static bool                       keepsFullSimulation(const Npc& npc);

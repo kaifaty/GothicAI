@@ -20,6 +20,8 @@
 #include "graphics/itemview.h"
 #include "game/gamerules.h"
 #include "game/rpgvocabulary.h"
+#include "modkit/contentregistry.h"
+#include "modkit/entityid.h"
 #include "physics/dynamicworld.h"
 #include "worldobjects.h"
 #include "worldsound.h"
@@ -183,6 +185,16 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
 
     uint32_t             itmId(const void* ptr) const;
     Item*                itmById(uint32_t id);
+
+    modkit::EntityId     allocEntityId();
+    void                 observeEntityId(modkit::EntityId id);
+    modkit::ItemUid      allocItemUid();
+    void                 observeItemUid(modkit::ItemUid uid);
+    modkit::ContentRegistry&       contentRegistry();
+    const modkit::ContentRegistry& contentRegistry() const;
+    Npc*                 findNpcByEntityId(modkit::EntityId id) const { return wobj.findNpcByEntityId(id); }
+    Interactive*         findInteractiveByEntityId(modkit::EntityId id) const { return wobj.findInteractiveByEntityId(id); }
+    Item*                findItemByEntityId(modkit::EntityId id) const { return wobj.findItemByEntityId(id); }
 
     const WayPoint*      findPoint(std::string_view name, bool inexact=true) const;
     const WayPoint*      findWayPoint(std::string_view name) const;
@@ -429,6 +441,8 @@ class World final : public ClothWorld, public BloodDecalSource, public PhysicsHo
       };
     std::vector<SpellField>               spellFields;
     std::unique_ptr<Npc>                  lvlInspector;
+    modkit::IdGenerator                   fallbackModIds;
+    modkit::ContentRegistry               fallbackRegistry;
 
     auto         roomAt(const asset::BspNode &node) -> std::string_view;
     auto         portalAt(std::string_view tag) -> BspSector*;
